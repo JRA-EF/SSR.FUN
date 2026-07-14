@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "BYOR"
+version = "1.0.0"
+id = "artifacts/byor"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24671
+
+[services.development]
+run = "pnpm --filter @workspace/byor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/byor", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/byor/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24671"
+BASE_PATH = "/"
