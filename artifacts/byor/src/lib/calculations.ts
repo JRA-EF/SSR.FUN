@@ -1,10 +1,17 @@
-// Reusable trading/portfolio math for the BYOR simulation.
+// Reusable trading/portfolio math for the SSR.FUN simulation.
 // Kept pure and deterministic so the store stays a thin wrapper around these.
 
-import type { DTR, Holding, TradeQuote } from "./types";
+import type { DTR, DTRAsset, Holding, TradeQuote } from "./types";
 
-/** BYOR secondary-market trading fee, applied on both buy and sell. */
-export const TRADING_FEE_RATE = 0.001; // 0.10%
+/** Fixed SSR.FUN-routed secondary-market fee, applied on both buy and sell. */
+export const TRADING_FEE_RATE = 0.001; // 10 basis points
+
+/** Default fee floors offered when creating a new DTR. */
+export const DEFAULT_MINT_FEE_BPS = 50; // 0.50%
+export const DEFAULT_TVL_FEE_BPS = 100; // 1.00% annualized
+export const DEFAULT_MANAGER_TAX_BPS = 0;
+/** Discount applied when Mint Fee is settled in SSR instead of USDC. */
+export const SSR_SETTLEMENT_DISCOUNT = 0.25; // 25%
 
 /** Fictional reference prices used only to value non-DTR wallet balances. */
 export const SSR_PRICE_USDC = 0.42;
@@ -121,4 +128,58 @@ export function formatTokenAmount(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
   }).format(value);
+}
+
+export function formatBps(bps: number): string {
+  return `${(bps / 100).toFixed(2)}%`;
+}
+
+/** Mint Fee owed, in USDC, with the optional SSR-settlement discount applied. */
+export function calcMintFee(
+  usdcAmount: number,
+  mintFeeBps: number,
+  settleInSsr: boolean,
+): number {
+  const gross = usdcAmount * (mintFeeBps / 10_000);
+  return settleInSsr ? gross * (1 - SSR_SETTLEMENT_DISCOUNT) : gross;
+}
+
+/**
+ * Applies a manual rebalance to a DTR's composition.
+ * `edits` maps asset symbol -> new target weight (fraction of 1).
+ * When `adjustRemaining` is true, non-edited assets are scaled proportionally
+ * so the basket returns to 100%. When false, non-edited weights are left
+ * untouched and the shortfall becomes the Unallocated USDC Reserve.
+ */
+export function applyRebalance(
+  composition: DTRAsset[],
+  edits: Record<string, number>,
+  adjustRemaining: boolean,
+): { composition: DTRAsset[]; unallocatedPct: number } {
+  const editedSymbols = new Set(Object.keys(edits));
+  const edited = composition.map((a) =>
+    editedSymbols.has(a.symbol) ? { ...a, weight: edits[a.symbol] } : a,
+  );
+
+  if (!adjustRemaining) {
+    const total = edited.reduce((sum, a) => sum + a.weight, 0);
+    return { composition: edited, unallocatedPct: Math.max(0, 1 - total) };
+  }
+
+  const editedSum = edited
+    .filter((a) => editedSymbols.has(a.symbol))
+    .reduce((sum, a) => sum + a.weight, 0);
+  const remaining = Math.max(0, 1 - editedSum);
+  const othersOriginalSum = composition
+    .filter((a) => !editedSymbols.has(a.symbol))
+    .reduce((sum, a) => sum + a.weight, 0);
+
+  const scaled = edited.map((a) => {
+    if (editedSymbols.has(a.symbol)) return a;
+    if (othersOriginalSum <= 0) return a;
+    const original = composition.find((o) => o.symbol === a.symbol)!.weight;
+    return { ...a, weight: remaining * (original / othersOriginalSum) };
+  });
+
+  return { composition: scaled, unallocatedPct: 0 };
 }

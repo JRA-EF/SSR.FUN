@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useParams, Link } from "wouter";
-import { getDtrById } from "@/lib/seed-data";
-import { useAppStore } from "@/store/useAppStore";
+import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { 
   calcTokensReceived, 
   calcUsdcReceived, 
@@ -44,8 +43,8 @@ const CHART_COLORS = [
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const dtr = getDtrById(dtrId || "");
-  const { wallet, holdings, buyDTRToken, sellDTRToken } = useAppStore();
+  const { wallet, holdings, dtrs, buyDTRToken, sellDTRToken } = useAppStore();
+  const dtr = dtrs.find((d) => d.id === (dtrId || ""));
   const { toast } = useToast();
   
   const [priceRange, setPriceRange] = useState<"24H" | "7D" | "30D" | "All">("7D");
@@ -187,15 +186,23 @@ export function DTRDetail() {
               </div>
             </div>
             
-            <div className="bg-card/40 border border-border/50 rounded-xl p-4 min-w-[200px] shrink-0">
-              <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider font-semibold">Token Price</p>
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className="text-3xl font-mono font-bold text-foreground">{formatUsdc(dtr.tokenPrice)}</span>
+            <div className="flex flex-col items-end gap-3 shrink-0">
+              <div className="bg-card/40 border border-border/50 rounded-xl p-4 min-w-[200px]">
+                <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider font-semibold">Token Price</p>
+                <div className="flex items-baseline gap-2 mb-1">
+                  <span className="text-3xl font-mono font-bold text-foreground">{formatUsdc(dtr.tokenPrice)}</span>
+                </div>
+                <p className={`text-sm font-mono flex items-center ${dtr.change24h >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                  {dtr.change24h >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />}
+                  {Math.abs(dtr.change24h).toFixed(2)}% <span className="text-muted-foreground ml-1">(24h)</span>
+                </p>
               </div>
-              <p className={`text-sm font-mono flex items-center ${dtr.change24h >= 0 ? 'text-primary' : 'text-destructive'}`}>
-                {dtr.change24h >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />}
-                {Math.abs(dtr.change24h).toFixed(2)}% <span className="text-muted-foreground ml-1">(24h)</span>
-              </p>
+              
+              {isManagerOrDelegate(dtr, wallet.address) && (
+                <Button asChild variant="outline" className="w-full border-primary/50 text-primary hover:bg-primary/10">
+                  <Link href={`/dtr/${dtr.id}/manage`}>Manage Reserve</Link>
+                </Button>
+              )}
             </div>
           </div>
 
@@ -462,7 +469,7 @@ export function DTRDetail() {
                           Trading Fee
                           <Tooltip>
                             <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                            <TooltipContent>BYOR protocol fee (0.10%)</TooltipContent>
+                            <TooltipContent>SSR.FUN protocol fee (0.10%)</TooltipContent>
                           </Tooltip>
                         </span>
                         <span className="font-mono text-destructive">-{formatTokenAmount(buyQuote.fee)} {dtr.ticker}</span>
@@ -543,7 +550,7 @@ export function DTRDetail() {
                           Trading Fee
                           <Tooltip>
                             <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                            <TooltipContent>BYOR protocol fee (0.10%)</TooltipContent>
+                            <TooltipContent>SSR.FUN protocol fee (0.10%)</TooltipContent>
                           </Tooltip>
                         </span>
                         <span className="font-mono text-destructive">-{formatUsdc(sellQuote.fee)}</span>

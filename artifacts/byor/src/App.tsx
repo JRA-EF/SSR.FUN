@@ -8,6 +8,8 @@ import { Navbar } from '@/components/layout/Navbar';
 import { Home } from '@/pages/Home';
 import { Portfolio } from '@/pages/Portfolio';
 import { DTRDetail } from '@/pages/DTRDetail';
+import { CreateDTR } from '@/pages/CreateDTR';
+import { ManageDTR } from '@/pages/ManageDTR';
 
 const queryClient = new QueryClient();
 
@@ -18,7 +20,9 @@ function Router() {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/portfolio" component={Portfolio} />
+        <Route path="/create" component={CreateDTR} />
         <Route path="/dtr/:dtrId" component={DTRDetail} />
+        <Route path="/dtr/:dtrId/manage" component={ManageDTR} />
         <Route component={NotFound} />
       </Switch>
     </div>

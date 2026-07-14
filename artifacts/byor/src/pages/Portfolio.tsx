@@ -1,5 +1,4 @@
 import { useAppStore } from "@/store/useAppStore";
-import { DTRS, getDtrById } from "@/lib/seed-data";
 import { calcHoldingValue, calcUnrealizedPnl, calcUnrealizedPnlPct, calcPortfolioValue, formatUsdc, formatPercent, SSR_PRICE_USDC, SOL_PRICE_USDC } from "@/lib/calculations";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -10,7 +9,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
 export function Portfolio() {
-  const { wallet, holdings } = useAppStore();
+  const { wallet, holdings, dtrs } = useAppStore();
 
   const isConnected = wallet.connected;
   
@@ -22,7 +21,7 @@ export function Portfolio() {
         </div>
         <h1 className="text-3xl font-display font-bold mb-4">Wallet Not Connected</h1>
         <p className="text-muted-foreground text-center max-w-md mb-8">
-          Connect a wallet to view your BYOR portfolio, simulated balances, and DTR Token holdings.
+          Connect a wallet to view your SSR.FUN portfolio, simulated balances, and DTR Token holdings.
         </p>
         {/* We can't trigger the modal directly from here without a global state for the modal, 
             so we'll just encourage them to use the nav button */}
@@ -33,9 +32,9 @@ export function Portfolio() {
     );
   }
 
-  const portfolioValue = calcPortfolioValue(wallet, holdings, DTRS);
+  const portfolioValue = calcPortfolioValue(wallet, holdings, dtrs);
   const totalDtrValue = holdings.reduce((sum, h) => {
-    const dtr = getDtrById(h.dtrId);
+    const dtr = dtrs.find((d) => d.id === h.dtrId);
     return sum + calcHoldingValue(h, dtr);
   }, 0);
 
@@ -144,7 +143,7 @@ export function Portfolio() {
                 </TableHeader>
                 <TableBody>
                   {holdings.map((holding) => {
-                    const dtr = getDtrById(holding.dtrId);
+                    const dtr = dtrs.find((d) => d.id === holding.dtrId);
                     if (!dtr) return null;
 
                     const currentValue = calcHoldingValue(holding, dtr);

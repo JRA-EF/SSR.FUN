@@ -1,4 +1,4 @@
-// Core domain types for the BYOR simulation.
+// Core domain types for the SSR.FUN simulation.
 // Everything here is fictional -- no real Solana or market data.
 
 export interface DTRAsset {
@@ -6,6 +6,36 @@ export interface DTRAsset {
   name: string;
   /** Portfolio weight as a fraction of 1 (e.g. 0.4 = 40%) */
   weight: number;
+}
+
+/** Granular powers the root DTR Manager can delegate to another wallet. */
+export interface ManagerPermissions {
+  manageDelegates: boolean;
+  rebalance: boolean;
+  feeAdmin: boolean;
+  pause: boolean;
+  metadata: boolean;
+}
+
+export function emptyPermissions(): ManagerPermissions {
+  return { manageDelegates: false, rebalance: false, feeAdmin: false, pause: false, metadata: false };
+}
+
+export interface Delegate {
+  address: string;
+  permissions: ManagerPermissions;
+  addedAt: number;
+}
+
+export interface FeeConfig {
+  /** Immutable at inception, in basis points, charged on new-issuance minting. */
+  mintFeeBps: number;
+  /** Annualized TVL fee, in basis points, accrued to the DTR Manager. */
+  tvlFeeBps: number;
+  /** Optional additional buy/sell tax set by the DTR Manager, in basis points. */
+  managerTaxBps: number;
+  /** Wallet address that receives the Manager's share of Mint Fee revenue. */
+  creatorFeeDestination: string;
 }
 
 export interface PricePoint {
@@ -22,10 +52,14 @@ export interface DTR {
   ticker: string;
   description: string;
   category: string;
+  tags: string[];
   /** Deterministic seed used to render a generated logo mark */
   logoSeed: string;
   dtrAddress: string;
+  /** Root DTR Manager wallet address -- ultimate authority over this DTR. */
   managerAddress: string;
+  delegates: Delegate[];
+  feeConfig: FeeConfig;
   /** Current fictional secondary-market price of one DTR Token, in USDC */
   tokenPrice: number;
   /** Net asset value per DTR Token, in USDC */
@@ -39,6 +73,10 @@ export interface DTR {
   /** Number of fictional holders */
   holders: number;
   composition: DTRAsset[];
+  /** Unallocated portion of the target basket, held as USDC Reserve, fraction of 1. */
+  unallocatedPct: number;
+  /** True for DTRs deployed by the connected wallet during this session. */
+  isUserCreated: boolean;
   priceHistory: Record<PriceRange, PricePoint[]>;
 }
 
@@ -67,3 +105,27 @@ export interface TradeQuote {
   fee: number;
   netAmount: number;
 }
+
+export interface CreateDTRAssetInput {
+  symbol: string;
+  name: string;
+  /** Target weight as a fraction of 1 */
+  weight: number;
+}
+
+export interface CreateDTRInput {
+  name: string;
+  ticker: string;
+  description: string;
+  category: string;
+  tags: string[];
+  composition: CreateDTRAssetInput[];
+  /** Initial USDC used to seed the reserve; also determines starting AUM. */
+  initialSeedUsdc: number;
+  mintFeeBps: number;
+  tvlFeeBps: number;
+  managerTaxBps: number;
+  creatorFeeDestination: string;
+}
+
+export type RebalanceEdits = Record<string, number>;

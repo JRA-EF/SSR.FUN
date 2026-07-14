@@ -2,7 +2,8 @@
 // No live data is ever fetched -- everything here is generated from fixed seeds
 // so numbers stay stable across reloads and sessions.
 
-import type { DTR, DTRAsset, PricePoint, PriceRange } from "./types";
+import type { DTR, DTRAsset, FeeConfig, PricePoint, PriceRange } from "./types";
+import { DEFAULT_MANAGER_TAX_BPS, DEFAULT_MINT_FEE_BPS, DEFAULT_TVL_FEE_BPS } from "./calculations";
 
 // --- Deterministic PRNG (mulberry32) seeded from a string hash ---------
 
@@ -221,17 +222,30 @@ function fictionalAddress(seedKey: string): string {
   return out;
 }
 
+function defaultFeeConfig(managerAddress: string): FeeConfig {
+  return {
+    mintFeeBps: DEFAULT_MINT_FEE_BPS,
+    tvlFeeBps: DEFAULT_TVL_FEE_BPS,
+    managerTaxBps: DEFAULT_MANAGER_TAX_BPS,
+    creatorFeeDestination: managerAddress,
+  };
+}
+
 export const DTRS: DTR[] = DTR_SEEDS.map((seed) => {
   const tokenPrice = seed.nav * (1 + seed.premiumPct / 100);
+  const managerAddress = fictionalAddress(`${seed.id}-manager`);
   return {
     id: seed.id,
     name: seed.name,
     ticker: seed.ticker,
     description: seed.description,
     category: seed.category,
+    tags: [seed.category],
     logoSeed: seed.id,
     dtrAddress: fictionalAddress(`${seed.id}-dtr`),
-    managerAddress: fictionalAddress(`${seed.id}-manager`),
+    managerAddress,
+    delegates: [],
+    feeConfig: defaultFeeConfig(managerAddress),
     tokenPrice,
     nav: seed.nav,
     aum: seed.aum,
@@ -239,6 +253,8 @@ export const DTRS: DTR[] = DTR_SEEDS.map((seed) => {
     change7d: seed.change7d,
     holders: seed.holders,
     composition: seed.composition,
+    unallocatedPct: 0,
+    isUserCreated: false,
     priceHistory: buildPriceHistory(seed.id, tokenPrice),
   };
 });

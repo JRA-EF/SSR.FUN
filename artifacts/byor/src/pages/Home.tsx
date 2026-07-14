@@ -1,7 +1,8 @@
 import { Link } from "wouter";
 import { ArrowUpRight, ArrowDownRight, TrendingUp, Users, Activity, BarChart3 } from "lucide-react";
-import { DTRS, FEATURED_DTR_ID, TRENDING_DTR_IDS, getDtrById } from "@/lib/seed-data";
+import { FEATURED_DTR_ID, TRENDING_DTR_IDS } from "@/lib/seed-data";
 import { formatUsdc, formatPercent } from "@/lib/calculations";
+import { useAppStore } from "@/store/useAppStore";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -11,17 +12,20 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export function Home() {
   const [searchFilter, setSearchFilter] = useState("");
+  const dtrs = useAppStore((s) => s.dtrs);
 
-  const totalAum = DTRS.reduce((sum, dtr) => sum + dtr.aum, 0);
-  const totalHolders = DTRS.reduce((sum, dtr) => sum + dtr.holders, 0);
-  const activeDtrs = DTRS.length;
+  const totalAum = dtrs.reduce((sum, dtr) => sum + dtr.aum, 0);
+  const totalHolders = dtrs.reduce((sum, dtr) => sum + dtr.holders, 0);
+  const activeDtrs = dtrs.length;
   // Fictional 24h volume approx 5% of AUM
   const volume24h = totalAum * 0.054;
 
-  const featuredDtr = getDtrById(FEATURED_DTR_ID)!;
-  const trendingDtrs = TRENDING_DTR_IDS.map(id => getDtrById(id)!).filter(Boolean);
+  const featuredDtr = dtrs.find((d) => d.id === FEATURED_DTR_ID) ?? dtrs[0];
+  const trendingDtrs = TRENDING_DTR_IDS.map((id) => dtrs.find((d) => d.id === id)).filter(
+    (d): d is (typeof dtrs)[number] => Boolean(d),
+  );
 
-  const filteredDtrs = DTRS.filter(dtr => 
+  const filteredDtrs = dtrs.filter(dtr => 
     dtr.name.toLowerCase().includes(searchFilter.toLowerCase()) || 
     dtr.ticker.toLowerCase().includes(searchFilter.toLowerCase()) ||
     dtr.category.toLowerCase().includes(searchFilter.toLowerCase())
@@ -37,17 +41,24 @@ export function Home() {
           
           <div className="container mx-auto px-4 md:px-8 relative z-10">
             <div className="max-w-3xl">
-              <Badge variant="outline" className="mb-6 border-primary/30 text-primary bg-primary/10">An SSR Protocol</Badge>
+              <Badge variant="outline" className="mb-6 border-primary/30 text-primary bg-primary/10">Solana DTR Protocol</Badge>
               <h1 className="font-display text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight mb-6">
-                Build <br/>
-                <span className="text-muted-foreground">Your Own</span> <br/>
-                <span className="text-primary">Reserve</span>
+                Create, Manage, and Trade <br/>
+                <span className="text-primary">Decentralized Token Reserves</span>
               </h1>
-              <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl leading-relaxed">
-                Create, manage, and trade Decentralized Token Reserves (DTRs) on Solana. 
-                Gain instant exposure to curated asset baskets with algorithmic rebalancing and zero middleman risk.
+              <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl leading-relaxed font-sans">
+                Gain instant exposure to curated asset baskets with algorithmic rebalancing and zero middleman risk. Deploy your own reserve in minutes.
               </p>
               
+              <div className="flex items-center gap-4 mb-10">
+                <Button asChild size="lg" className="font-bold">
+                  <Link href="/create">Deploy a Reserve</Link>
+                </Button>
+                <Button asChild variant="outline" size="lg">
+                  <a href="#directory">Explore Reserves</a>
+                </Button>
+              </div>
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8 pt-8 border-t border-border/50">
                 <div>
                   <p className="text-sm text-muted-foreground mb-1">Total DTR AUM</p>
@@ -185,7 +196,7 @@ export function Home() {
           </div>
 
           {/* All DTRs */}
-          <div className="space-y-6">
+          <div id="directory" className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-2">
                 <Activity className="w-5 h-5 text-primary" />
@@ -277,7 +288,7 @@ export function Home() {
       </main>
       <footer className="border-t border-border/40 py-8 text-center text-sm text-muted-foreground bg-card/20">
         <div className="container mx-auto px-4">
-          <p>BYOR Simulation • Build Your Own Reserve</p>
+          <p>SSR.FUN • Decentralized Token Reserves</p>
           <p className="mt-2 text-xs opacity-60">This is a simulated environment. Fictional data only.</p>
         </div>
       </footer>

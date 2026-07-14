@@ -7,19 +7,22 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/store/useAppStore";
-import { searchDtrs } from "@/lib/seed-data";
 import { formatUsdc } from "@/lib/calculations";
 import { SiSolana } from "react-icons/si";
 
 export function Navbar() {
   const [, setLocation] = useLocation();
-  const { wallet, connectWallet, disconnectWallet, addDemoUSDC, resetSimulation } = useAppStore();
+  const { wallet, dtrs, connectWallet, disconnectWallet, addDemoUSDC, resetSimulation } = useAppStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
-  const searchResults = searchDtrs(searchQuery).slice(0, 5);
+  const q = searchQuery.trim().toLowerCase();
+  const searchResults = (q
+    ? dtrs.filter((d) => d.name.toLowerCase().includes(q) || d.ticker.toLowerCase().includes(q))
+    : dtrs
+  ).slice(0, 5);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -47,21 +50,19 @@ export function Navbar() {
       <div className="container mx-auto flex h-16 items-center justify-between px-4 md:px-8">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2">
-            <div className="flex flex-col">
-              <span className="font-display font-bold leading-none tracking-tight">BUILD</span>
-              <span className="font-display font-bold leading-none tracking-tight">YOUR</span>
-              <span className="font-display font-bold leading-none tracking-tight">OWN</span>
-              <span className="font-display font-bold leading-none tracking-tight text-primary">RESERVE</span>
-            </div>
+            <span className="font-display font-bold text-2xl tracking-tighter text-foreground">
+              SSR<span className="text-primary">.FUN</span>
+            </span>
           </Link>
 
-          <Badge variant="outline" className="hidden sm:inline-flex bg-muted/50 text-muted-foreground border-border ml-2" title="Fictional balances, prices and transactions. No real assets are being used.">
-            BYOR Simulation Mode
+          <Badge variant="outline" className="hidden sm:inline-flex bg-primary/5 text-primary border-primary/20 ml-2" title="Fictional balances, prices and transactions. No real assets are being used.">
+            Simulation Mode
           </Badge>
 
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-muted-foreground ml-6">
             <Link href="/" className="hover:text-primary transition-colors">Home</Link>
             <Link href="/portfolio" className="hover:text-primary transition-colors">Portfolio</Link>
+            <Link href="/create" className="hover:text-primary transition-colors">Deploy a Reserve</Link>
           </nav>
         </div>
 
@@ -173,7 +174,7 @@ export function Navbar() {
                 <DialogHeader>
                   <DialogTitle className="font-display text-xl">Connect Wallet</DialogTitle>
                   <DialogDescription>
-                    Select a wallet to connect to the BYOR Simulation. No real transactions will occur.
+                    Select a wallet to connect to the SSR.FUN Simulation. No real transactions will occur.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-3 py-4">
@@ -224,6 +225,7 @@ export function Navbar() {
       <div className="md:hidden border-t border-border/40 bg-muted/20 px-4 py-2 flex items-center gap-4 text-sm font-medium">
         <Link href="/" className="hover:text-primary transition-colors py-1">Home</Link>
         <Link href="/portfolio" className="hover:text-primary transition-colors py-1">Portfolio</Link>
+        <Link href="/create" className="hover:text-primary transition-colors py-1">Deploy</Link>
       </div>
     </header>
   );
