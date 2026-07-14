@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Wallet, ChevronDown, LogOut, RefreshCw, PlusCircle, LayoutDashboard, Wallet as WalletIcon } from "lucide-react";
+import { Search, Wallet, ChevronDown, LogOut, RefreshCw, PlusCircle, LayoutDashboard, Wallet as WalletIcon, Ghost, Flame, Backpack } from "lucide-react";
+import ssrLogo from "@/assets/ssr-logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +51,7 @@ export function Navbar() {
       <div className="container mx-auto flex h-16 items-center justify-between px-4 md:px-8">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2">
+            <img src={ssrLogo} alt="SSR.FUN" className="h-8 w-8 rounded-full object-cover" />
             <span className="font-display font-bold text-2xl tracking-tighter text-foreground">
               SSR<span className="text-primary">.FUN</span>
             </span>
@@ -186,8 +188,8 @@ export function Navbar() {
                   ) : (
                     <>
                       <Button variant="outline" className="h-14 justify-start px-4 text-left border-border hover:bg-muted hover:border-primary/50 transition-colors" onClick={() => handleWalletConnect("phantom")}>
-                        <div className="w-8 h-8 mr-3 rounded-full bg-[#AB9FF2] flex items-center justify-center">
-                          <img src="https://cryptologos.cc/logos/phantom-logo.png" alt="Phantom" className="w-5 h-5 object-contain brightness-0 invert" onError={(e) => e.currentTarget.style.display = 'none'} />
+                        <div className="w-8 h-8 mr-3 rounded-full bg-[#AB9FF2] flex items-center justify-center shrink-0">
+                          <Ghost className="w-5 h-5 text-white" strokeWidth={2.25} />
                         </div>
                         <div className="flex flex-col">
                           <span className="font-semibold">Phantom</span>
@@ -195,8 +197,8 @@ export function Navbar() {
                         </div>
                       </Button>
                       <Button variant="outline" className="h-14 justify-start px-4 text-left border-border hover:bg-muted hover:border-primary/50 transition-colors" onClick={() => handleWalletConnect("solflare")}>
-                        <div className="w-8 h-8 mr-3 rounded-full bg-[#FC7A1D] flex items-center justify-center">
-                          <div className="w-4 h-4 bg-white rounded-sm transform rotate-45" />
+                        <div className="w-8 h-8 mr-3 rounded-full bg-[#FC7A1D] flex items-center justify-center shrink-0">
+                          <Flame className="w-5 h-5 text-white" strokeWidth={2.25} />
                         </div>
                         <div className="flex flex-col">
                           <span className="font-semibold">Solflare</span>
@@ -204,8 +206,8 @@ export function Navbar() {
                         </div>
                       </Button>
                       <Button variant="outline" className="h-14 justify-start px-4 text-left border-border hover:bg-muted hover:border-primary/50 transition-colors" onClick={() => handleWalletConnect("backpack")}>
-                        <div className="w-8 h-8 mr-3 rounded-full bg-[#E33E3F] flex items-center justify-center">
-                           <div className="w-4 h-5 border-2 border-white rounded-sm" />
+                        <div className="w-8 h-8 mr-3 rounded-full bg-[#E33E3F] flex items-center justify-center shrink-0">
+                          <Backpack className="w-5 h-5 text-white" strokeWidth={2.25} />
                         </div>
                         <div className="flex flex-col">
                           <span className="font-semibold">Backpack</span>
