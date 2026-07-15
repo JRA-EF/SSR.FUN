@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { formatBps, formatUsdc } from "@/lib/calculations";
+import { formatPct, formatUsdc } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
 import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -274,18 +274,22 @@ export function ManageDTR() {
                   <CardTitle className="text-xl font-display">Fee Configuration</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Mint Fee</p>
-                      <p className="font-mono font-medium">{formatBps(dtr.feeConfig.mintFeeBps)} <span className="text-xs text-muted-foreground ml-1">({dtr.feeConfig.mintFeeBps} bps)</span></p>
+                      <p className="font-mono font-medium">{formatPct(dtr.feeConfig.mintFeePct)}</p>
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Annualized TVL Fee</p>
-                      <p className="font-mono font-medium">{formatBps(dtr.feeConfig.tvlFeeBps)} <span className="text-xs text-muted-foreground ml-1">({dtr.feeConfig.tvlFeeBps} bps)</span></p>
+                      <p className="font-mono font-medium">{formatPct(dtr.feeConfig.tvlFeePct)}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-muted-foreground mb-1">Buy/Sell Tax</p>
-                      <p className="font-mono font-medium">{formatBps(dtr.feeConfig.managerTaxBps)} <span className="text-xs text-muted-foreground ml-1">({dtr.feeConfig.managerTaxBps} bps)</span></p>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Buy Tax</p>
+                      <p className="font-mono font-medium">{formatPct(dtr.feeConfig.managerBuyTaxPct)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Sell Tax</p>
+                      <p className="font-mono font-medium">{formatPct(dtr.feeConfig.managerSellTaxPct)}</p>
                     </div>
                   </div>
                   <div className="pt-4 border-t border-border/50">

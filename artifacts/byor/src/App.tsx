@@ -3,6 +3,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
+import { ThemeProvider } from '@/hooks/use-theme';
 
 import { Navbar } from '@/components/layout/Navbar';
 import { Home } from '@/pages/Home';
@@ -12,6 +13,7 @@ import { CreateDTR } from '@/pages/CreateDTR';
 import { ManageDTR } from '@/pages/ManageDTR';
 import { Earn } from '@/pages/Earn';
 import { HowItWorks } from '@/pages/HowItWorks';
+import { Profile } from '@/pages/Profile';
 
 const queryClient = new QueryClient();
 
@@ -27,6 +29,8 @@ function Router() {
         <Route path="/how-it-works" component={HowItWorks} />
         <Route path="/dtr/:dtrId" component={DTRDetail} />
         <Route path="/dtr/:dtrId/manage" component={ManageDTR} />
+        <Route path="/profile/:address" component={Profile} />
+        <Route path="/profile" component={Profile} />
         <Route component={NotFound} />
       </Switch>
     </div>
@@ -35,14 +39,16 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+            <Router />
+          </WouterRouter>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 

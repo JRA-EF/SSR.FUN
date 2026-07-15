@@ -10,6 +10,8 @@ import type {
   Delegate,
   Holding,
   ManagerPermissions,
+  ProfileSocials,
+  UserProfile,
   WalletProviderId,
   WalletState,
 } from "@/lib/types";
@@ -60,6 +62,7 @@ interface AppState {
   wallet: WalletState;
   holdings: Holding[];
   dtrs: DTR[];
+  profiles: Record<string, UserProfile>;
 
   connectWallet: (provider: WalletProviderId) => Promise<void>;
   disconnectWallet: () => void;
@@ -73,6 +76,8 @@ interface AppState {
   updateDelegatePermissions: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   removeDelegate: (dtrId: string, address: string) => ActionResult;
   rebalanceDTR: (dtrId: string, edits: Record<string, number>, adjustRemaining: boolean) => ActionResult;
+
+  updateProfile: (address: string, updates: { displayName: string; bio: string; avatarUrl?: string; socials: ProfileSocials }) => ActionResult;
 }
 
 const initialWallet: WalletState = {
@@ -111,6 +116,7 @@ export const useAppStore = create<AppState>()(
       wallet: initialWallet,
       holdings: [],
       dtrs: SEED_DTRS,
+      profiles: {},
 
       connectWallet: async (provider) => {
         set((state) => ({ wallet: { ...state.wallet, connecting: true } }));
@@ -153,6 +159,7 @@ export const useAppStore = create<AppState>()(
           usdcAmount,
           dtr.tokenPrice,
           dtr.liquidityUsdc,
+          dtr.feeConfig.managerBuyTaxPct,
         );
         const existing = holdings.find((h) => h.dtrId === dtrId);
         const newAvgPrice = calcAvgPurchasePrice(
@@ -220,6 +227,7 @@ export const useAppStore = create<AppState>()(
           tokenAmount,
           dtr.tokenPrice,
           dtr.liquidityUsdc,
+          dtr.feeConfig.managerSellTaxPct,
         );
         const remainingBalance = existing.tokenBalance - tokenAmount;
         const closedOut = remainingBalance <= 1e-9;
@@ -339,9 +347,10 @@ export const useAppStore = create<AppState>()(
             addedAt: now,
           })),
           feeConfig: {
-            mintFeeBps: input.mintFeeBps,
-            tvlFeeBps: input.tvlFeeBps,
-            managerTaxBps: input.managerTaxBps,
+            mintFeePct: input.mintFeePct,
+            tvlFeePct: input.tvlFeePct,
+            managerBuyTaxPct: input.managerBuyTaxPct,
+            managerSellTaxPct: input.managerSellTaxPct,
             creatorFeeDestination: input.creatorFeeDestination || wallet.address,
             feeRecipients,
           },
@@ -442,24 +451,60 @@ export const useAppStore = create<AppState>()(
         });
         return { success: true, message: "Rebalance executed and vault weights updated." };
       },
+
+      updateProfile: (address, updates) => {
+        if (!address) return { success: false, message: "Connect a wallet first." };
+        const { profiles } = get();
+        const now = Date.now();
+        const existing = profiles[address];
+        const profile: UserProfile = {
+          address,
+          displayName: updates.displayName.trim(),
+          bio: updates.bio.trim(),
+          avatarUrl: updates.avatarUrl,
+          socials: updates.socials,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        };
+        set({ profiles: { ...profiles, [address]: profile } });
+        return { success: true, message: "Profile saved." };
+      },
     }),
     {
       name: "ssrfun-simulation",
-      version: 1,
+      version: 2,
       // Backfill fields added after a user's simulation state was already
       // persisted to localStorage -- e.g. DTRs created before the logo-art
-      // pool or the AMM liquidity economy existed. Without this, "historic"
-      // self-created DTRs would keep showing letter-initial avatars and
-      // NaN pricing forever, while freshly-created DTRs look fine.
+      // pool, the AMM liquidity economy, the buy/sell tax split, or the
+      // percent-based fee settings existed. Without this, "historic"
+      // self-created DTRs would keep showing letter-initial avatars, NaN
+      // pricing, or stale bps-shaped fee configs forever.
       migrate: (persisted) => {
-        const state = persisted as { dtrs?: DTR[] };
+        const state = persisted as { dtrs?: DTR[]; profiles?: Record<string, UserProfile> };
         if (state?.dtrs) {
-          state.dtrs = state.dtrs.map((d) => ({
-            ...d,
-            logoSeed: d.logoSeed ?? d.id,
-            logoUrl: d.logoUrl ?? pickLogoForId(d.id),
-            liquidityUsdc: d.liquidityUsdc ?? initialLiquidityForAum(d.aum ?? 0),
-          }));
+          state.dtrs = state.dtrs.map((d) => {
+            const legacyFee = d.feeConfig as unknown as {
+              mintFeeBps?: number;
+              tvlFeeBps?: number;
+              managerTaxBps?: number;
+            };
+            return {
+              ...d,
+              logoSeed: d.logoSeed ?? d.id,
+              logoUrl: d.logoUrl ?? pickLogoForId(d.id),
+              liquidityUsdc: d.liquidityUsdc ?? initialLiquidityForAum(d.aum ?? 0),
+              feeConfig: {
+                ...d.feeConfig,
+                mintFeePct: d.feeConfig.mintFeePct ?? (legacyFee.mintFeeBps ?? 50) / 100,
+                tvlFeePct: d.feeConfig.tvlFeePct ?? (legacyFee.tvlFeeBps ?? 100) / 100,
+                managerBuyTaxPct: d.feeConfig.managerBuyTaxPct ?? (legacyFee.managerTaxBps ?? 0) / 100,
+                managerSellTaxPct: d.feeConfig.managerSellTaxPct ?? (legacyFee.managerTaxBps ?? 0) / 100,
+              },
+            };
+          });
+        }
+        if (!state?.profiles) {
+          state.profiles = {};
         }
         return state as AppState;
       },

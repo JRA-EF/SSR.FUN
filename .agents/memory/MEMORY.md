@@ -4,3 +4,4 @@
 - [Frontend-only artifact package placement](frontend-only-package-placement.md) — `pnpm add` defaults to `dependencies`; client-only Vite artifacts conventionally put everything in `devDependencies`.
 - [Design-subagent handoff for stateful sims](design-subagent-domain-first.md) — build domain/store layer yourself first, then delegate full UI/rebrand to a design subagent against that fixed contract.
 - [Byor floating-card drag/collision physics](byor-floating-card-physics.md) — infinite-mass dragged body + restitution >1 impulse collisions for arcade-y "throw and clash" card physics.
+- [Byor persisted-store migrations](byor-store-migration-pattern.md) — bump the zustand-persist `version` and backfill both renamed/reshaped fields and brand-new top-level slices in `migrate()` whenever a field shape changes.

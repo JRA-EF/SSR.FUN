@@ -35,12 +35,14 @@ export interface FeeRecipient {
 }
 
 export interface FeeConfig {
-  /** Immutable at inception, in basis points, charged on new-issuance minting. */
-  mintFeeBps: number;
-  /** Annualized TVL fee, in basis points, accrued to the DTR Manager. */
-  tvlFeeBps: number;
-  /** Optional additional buy/sell tax set by the DTR Manager, in basis points. */
-  managerTaxBps: number;
+  /** Immutable at inception, as a percent (0.5 = 0.5%), charged on new-issuance minting. */
+  mintFeePct: number;
+  /** Annualized TVL fee, as a percent, accrued to the DTR Manager. */
+  tvlFeePct: number;
+  /** Optional additional tax set by the DTR Manager on buys, as a percent. */
+  managerBuyTaxPct: number;
+  /** Optional additional tax set by the DTR Manager on sells, as a percent. */
+  managerSellTaxPct: number;
   /** Wallet address that receives the Manager's share of Mint Fee revenue (and any fee revenue not routed to a recipient below). */
   creatorFeeDestination: string;
   /** Additional wallets that split off a percentage of total fee revenue. */
@@ -139,14 +141,34 @@ export interface CreateDTRInput {
   composition: CreateDTRAssetInput[];
   /** Initial USDC used to seed the reserve; also determines starting AUM. */
   initialSeedUsdc: number;
-  mintFeeBps: number;
-  tvlFeeBps: number;
-  managerTaxBps: number;
+  mintFeePct: number;
+  tvlFeePct: number;
+  managerBuyTaxPct: number;
+  managerSellTaxPct: number;
   creatorFeeDestination: string;
   /** Additional wallets that split off a percentage of total fee revenue. */
   feeRecipients: FeeRecipient[];
   /** Wallet addresses to add as delegate managers on the newly-deployed DTR. */
   additionalManagers: string[];
+}
+
+/** Social handles/links a user can attach to their profile. All optional and freeform. */
+export interface ProfileSocials {
+  twitter?: string;
+  discord?: string;
+  telegram?: string;
+  website?: string;
+}
+
+/** A lightweight user profile keyed by wallet address -- no real identity/auth, purely simulation flavor. */
+export interface UserProfile {
+  address: string;
+  displayName: string;
+  bio: string;
+  avatarUrl?: string;
+  socials: ProfileSocials;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export type RebalanceEdits = Record<string, number>;

@@ -50,6 +50,49 @@
 }
 
 :root {
+  --background: 260 30% 98%;
+  --foreground: 258 30% 10%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 258 30% 10%;
+  --card-border: 258 20% 90%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 258 30% 10%;
+  --popover-border: 258 20% 90%;
+
+  --primary: 258 90% 56%;
+  --primary-foreground: 270 24% 98%;
+
+  --secondary: 258 20% 93%;
+  --secondary-foreground: 258 30% 10%;
+
+  --muted: 258 20% 93%;
+  --muted-foreground: 258 12% 42%;
+
+  --accent: 258 90% 56%;
+  --accent-foreground: 270 24% 98%;
+
+  --destructive: 354 75% 52%;
+  --destructive-foreground: 270 24% 98%;
+
+  --positive: 155 60% 34%;
+  --positive-foreground: 270 24% 98%;
+
+  --border: 258 20% 88%;
+  --input: 258 20% 88%;
+  --ring: 258 90% 56%;
+
+  --chart-1: 258 90% 56%;
+  --chart-2: 155 58% 38%;
+  --chart-3: 32 92% 48%;
+  --chart-4: 199 89% 45%;
+  --chart-5: 330 75% 52%;
+
+  --radius: 0.5rem;
+}
+
+.dark {
   --background: 257 24% 6%;
   --foreground: 270 24% 96%;
 
@@ -88,8 +131,6 @@
   --chart-3: 38 92% 60%;
   --chart-4: 199 89% 62%;
   --chart-5: 330 81% 68%;
-
-  --radius: 0.5rem;
 }
 
 @layer base {
@@ -98,6 +139,20 @@
   }
   body {
     @apply font-sans antialiased text-foreground;
+    background-color: hsl(260 40% 97%);
+    background-image:
+      radial-gradient(60% 50% at 105% -10%, hsla(268, 85%, 75%, 0.45), transparent 68%),
+      radial-gradient(46% 60% at 88% 8%, hsla(280, 70%, 78%, 0.4), transparent 70%),
+      radial-gradient(38% 42% at 118% 32%, hsla(258, 90%, 80%, 0.32), transparent 72%),
+      radial-gradient(55% 48% at 78% -6%, hsla(300, 55%, 82%, 0.25), transparent 65%),
+      radial-gradient(32% 38% at 96% 46%, hsla(250, 65%, 85%, 0.28), transparent 70%),
+      radial-gradient(70% 60% at 62% 78%, hsla(265, 40%, 92%, 0.4), transparent 62%),
+      radial-gradient(90% 70% at 8% 112%, hsla(257, 60%, 95%, 0.6), transparent 60%),
+      radial-gradient(120% 100% at 50% 100%, hsla(257, 40%, 98%, 1), transparent 45%);
+    background-repeat: no-repeat;
+    background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed;
+  }
+  .dark body {
     background-color: hsl(257 30% 4%);
     background-image:
       radial-gradient(60% 50% at 105% -10%, hsla(268, 85%, 55%, 0.55), transparent 68%),
@@ -108,8 +163,6 @@
       radial-gradient(70% 60% at 62% 78%, hsla(265, 40%, 12%, 0.55), transparent 62%),
       radial-gradient(90% 70% at 8% 112%, hsla(257, 60%, 8%, 0.9), transparent 60%),
       radial-gradient(120% 100% at 50% 100%, hsla(257, 40%, 3%, 1), transparent 45%);
-    background-repeat: no-repeat;
-    background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed;
   }
   h1, h2, h3, h4, h5, h6 {
     @apply font-display tracking-tight;

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Wallet, ChevronDown, LogOut, RefreshCw, PlusCircle, LayoutDashboard, Wallet as WalletIcon, Ghost, Flame, Backpack } from "lucide-react";
+import { Search, Wallet, ChevronDown, LogOut, RefreshCw, PlusCircle, LayoutDashboard, Wallet as WalletIcon, Ghost, Flame, Backpack, User, Sun, Moon } from "lucide-react";
 import ssrLogo from "@/assets/ssr-logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,10 +10,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { useAppStore } from "@/store/useAppStore";
 import { formatUsdc } from "@/lib/calculations";
 import { SiSolana } from "react-icons/si";
+import { useTheme } from "@/hooks/use-theme";
 
 export function Navbar() {
   const [, setLocation] = useLocation();
   const { wallet, dtrs, connectWallet, disconnectWallet, addDemoUSDC, resetSimulation } = useAppStore();
+  const { theme, toggleTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -113,6 +115,16 @@ export function Navbar() {
             )}
           </div>
 
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-foreground shrink-0"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+
           {wallet.connected ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -152,6 +164,11 @@ export function Navbar() {
                 <DropdownMenuItem asChild>
                   <Link href="/portfolio" className="cursor-pointer flex w-full items-center">
                     <LayoutDashboard className="mr-2 h-4 w-4" /> Portfolio
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/profile/${wallet.address}`} className="cursor-pointer flex w-full items-center">
+                    <User className="mr-2 h-4 w-4" /> My Profile
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={addDemoUSDC} className="cursor-pointer">

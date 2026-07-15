@@ -50,9 +50,10 @@ export function CreateDTR() {
   const [assetSearch, setAssetSearch] = useState("");
   
   const [initialSeedUsdc, setInitialSeedUsdc] = useState("");
-  const [mintFeeBps, setMintFeeBps] = useState(50);
-  const [tvlFeeBps, setTvlFeeBps] = useState(100);
-  const [managerTaxBps, setManagerTaxBps] = useState(0);
+  const [mintFeePct, setMintFeePct] = useState(0.5);
+  const [tvlFeePct, setTvlFeePct] = useState(1);
+  const [managerBuyTaxPct, setManagerBuyTaxPct] = useState(0);
+  const [managerSellTaxPct, setManagerSellTaxPct] = useState(0);
   const [feeDestination, setFeeDestination] = useState(wallet.address || "");
   const [feeRecipients, setFeeRecipients] = useState<FeeRecipient[]>([]);
   const [newRecipientAddress, setNewRecipientAddress] = useState("");
@@ -135,9 +136,10 @@ export function CreateDTR() {
       tags: [category],
       composition: assets,
       initialSeedUsdc: parseFloat(initialSeedUsdc) || 0,
-      mintFeeBps,
-      tvlFeeBps,
-      managerTaxBps,
+      mintFeePct,
+      tvlFeePct,
+      managerBuyTaxPct,
+      managerSellTaxPct,
       creatorFeeDestination: feeDestination || wallet.address || "",
       feeRecipients,
       additionalManagers,
@@ -418,49 +420,63 @@ export function CreateDTR() {
               </div>
 
               <div className="space-y-6">
-                <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Fee Configuration (Basis Points)</h3>
+                <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Fee Configuration</h3>
                 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Mint Fee</span>
-                      <span className="font-mono text-primary">{mintFeeBps} bps</span>
+                      <span className="font-mono text-primary">{mintFeePct.toFixed(2)}%</span>
                     </Label>
                     <Slider 
-                      value={[mintFeeBps]} 
-                      max={500} 
-                      step={5}
-                      onValueChange={(v) => setMintFeeBps(v[0])}
+                      value={[mintFeePct]} 
+                      max={5} 
+                      step={0.05}
+                      onValueChange={(v) => setMintFeePct(v[0])}
                     />
-                    <p className="text-xs text-muted-foreground">Charged on new issuance. Protocol default is 50 bps.</p>
+                    <p className="text-xs text-muted-foreground">Charged on new issuance. Protocol default is 0.50%.</p>
                   </div>
                   
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Annualized TVL Fee</span>
-                      <span className="font-mono text-primary">{tvlFeeBps} bps</span>
+                      <span className="font-mono text-primary">{tvlFeePct.toFixed(2)}%</span>
                     </Label>
                     <Slider 
-                      value={[tvlFeeBps]} 
-                      max={500} 
-                      step={5}
-                      onValueChange={(v) => setTvlFeeBps(v[0])}
+                      value={[tvlFeePct]} 
+                      max={5} 
+                      step={0.05}
+                      onValueChange={(v) => setTvlFeePct(v[0])}
                     />
-                    <p className="text-xs text-muted-foreground">Accrues to Manager. Protocol default is 100 bps.</p>
+                    <p className="text-xs text-muted-foreground">Accrues to Manager. Protocol default is 1.00%.</p>
                   </div>
                   
                   <div className="space-y-3">
                     <Label className="flex justify-between">
-                      <span>Buy/Sell Tax</span>
-                      <span className="font-mono text-primary">{managerTaxBps} bps</span>
+                      <span>Buy Tax</span>
+                      <span className="font-mono text-primary">{managerBuyTaxPct.toFixed(2)}%</span>
                     </Label>
                     <Slider 
-                      value={[managerTaxBps]} 
-                      max={200} 
-                      step={5}
-                      onValueChange={(v) => setManagerTaxBps(v[0])}
+                      value={[managerBuyTaxPct]} 
+                      max={2} 
+                      step={0.05}
+                      onValueChange={(v) => setManagerBuyTaxPct(v[0])}
                     />
-                    <p className="text-xs text-muted-foreground">Optional additional tax charged on buys and sells. Default is 0 bps.</p>
+                    <p className="text-xs text-muted-foreground">Optional additional tax charged on buys. Default is 0%.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label className="flex justify-between">
+                      <span>Sell Tax</span>
+                      <span className="font-mono text-primary">{managerSellTaxPct.toFixed(2)}%</span>
+                    </Label>
+                    <Slider 
+                      value={[managerSellTaxPct]} 
+                      max={2} 
+                      step={0.05}
+                      onValueChange={(v) => setManagerSellTaxPct(v[0])}
+                    />
+                    <p className="text-xs text-muted-foreground">Optional additional tax charged on sells. Default is 0%.</p>
                   </div>
                 </div>
               </div>
@@ -609,15 +625,19 @@ export function CreateDTR() {
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Mint Fee</span>
-                      <span className="font-mono font-medium">{mintFeeBps} bps</span>
+                      <span className="font-mono font-medium">{mintFeePct.toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">TVL Fee</span>
-                      <span className="font-mono font-medium">{tvlFeeBps} bps</span>
+                      <span className="font-mono font-medium">{tvlFeePct.toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Buy/Sell Tax</span>
-                      <span className="font-mono font-medium">{managerTaxBps} bps</span>
+                      <span className="text-muted-foreground">Buy Tax</span>
+                      <span className="font-mono font-medium">{managerBuyTaxPct.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Sell Tax</span>
+                      <span className="font-mono font-medium">{managerSellTaxPct.toFixed(2)}%</span>
                     </div>
                   </div>
                 </div>

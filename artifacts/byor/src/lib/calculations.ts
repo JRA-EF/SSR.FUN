@@ -18,10 +18,11 @@ export function initialLiquidityForAum(aum: number): number {
   return Math.max(aum * LIQUIDITY_TO_AUM_RATIO, MIN_LIQUIDITY_USDC);
 }
 
-/** Default fee floors offered when creating a new DTR. */
-export const DEFAULT_MINT_FEE_BPS = 50; // 0.50%
-export const DEFAULT_TVL_FEE_BPS = 100; // 1.00% annualized
-export const DEFAULT_MANAGER_TAX_BPS = 0;
+/** Default fee floors offered when creating a new DTR, all expressed as plain percentages (0.5 = 0.5%). */
+export const DEFAULT_MINT_FEE_PCT = 0.5;
+export const DEFAULT_TVL_FEE_PCT = 1.0; // annualized
+export const DEFAULT_MANAGER_BUY_TAX_PCT = 0;
+export const DEFAULT_MANAGER_SELL_TAX_PCT = 0;
 
 /** Longest ticker in the seeded catalog (SSRRES) -- caps user-created tickers to a normal, real-world length. */
 export const TICKER_MAX_LENGTH = 6;
@@ -43,6 +44,7 @@ export function calcTokensReceived(
   usdcAmount: number,
   tokenPrice: number,
   liquidityUsdc: number,
+  buyTaxPct: number = 0,
 ): TradeQuote {
   if (usdcAmount <= 0 || tokenPrice <= 0 || liquidityUsdc <= 0) {
     return { grossAmount: 0, fee: 0, netAmount: 0, newPrice: tokenPrice, priceImpactPct: 0 };
@@ -52,7 +54,7 @@ export function calcTokensReceived(
   const newUsdcReserve = liquidityUsdc + usdcAmount;
   const newTokenReserve = k / newUsdcReserve;
   const grossAmount = tokenReserve - newTokenReserve;
-  const fee = grossAmount * TRADING_FEE_RATE;
+  const fee = grossAmount * (TRADING_FEE_RATE + buyTaxPct / 100);
   const netAmount = grossAmount - fee;
   const newPrice = newUsdcReserve / newTokenReserve;
   const priceImpactPct = ((newPrice - tokenPrice) / tokenPrice) * 100;
@@ -68,6 +70,7 @@ export function calcUsdcReceived(
   tokenAmount: number,
   tokenPrice: number,
   liquidityUsdc: number,
+  sellTaxPct: number = 0,
 ): TradeQuote {
   if (tokenAmount <= 0 || tokenPrice <= 0 || liquidityUsdc <= 0) {
     return { grossAmount: 0, fee: 0, netAmount: 0, newPrice: tokenPrice, priceImpactPct: 0 };
@@ -77,7 +80,7 @@ export function calcUsdcReceived(
   const newTokenReserve = tokenReserve + tokenAmount;
   const newUsdcReserve = k / newTokenReserve;
   const grossAmount = liquidityUsdc - newUsdcReserve;
-  const fee = grossAmount * TRADING_FEE_RATE;
+  const fee = grossAmount * (TRADING_FEE_RATE + sellTaxPct / 100);
   const netAmount = grossAmount - fee;
   const newPrice = newUsdcReserve / newTokenReserve;
   const priceImpactPct = ((newPrice - tokenPrice) / tokenPrice) * 100;
@@ -198,17 +201,17 @@ export function formatTokenAmount(value: number): string {
   }).format(value);
 }
 
-export function formatBps(bps: number): string {
-  return `${(bps / 100).toFixed(2)}%`;
+export function formatPct(pct: number): string {
+  return `${pct.toFixed(2)}%`;
 }
 
 /** Mint Fee owed, in USDC, with the optional SSR-settlement discount applied. */
 export function calcMintFee(
   usdcAmount: number,
-  mintFeeBps: number,
+  mintFeePct: number,
   settleInSsr: boolean,
 ): number {
-  const gross = usdcAmount * (mintFeeBps / 10_000);
+  const gross = usdcAmount * (mintFeePct / 100);
   return settleInSsr ? gross * (1 - SSR_SETTLEMENT_DISCOUNT) : gross;
 }
 

@@ -8,7 +8,7 @@ export function Earn() {
   
   // Calculate fictional earning stats based on existing data
   const totalAum = dtrs.reduce((sum, dtr) => sum + dtr.aum, 0);
-  const avgTvlFee = dtrs.reduce((sum, dtr) => sum + dtr.feeConfig.tvlFeeBps, 0) / (dtrs.length || 1);
+  const avgTvlFee = dtrs.reduce((sum, dtr) => sum + dtr.feeConfig.tvlFeePct * 100, 0) / (dtrs.length || 1);
   const projectedAnnualYield = totalAum * (avgTvlFee / 10000);
 
   return (

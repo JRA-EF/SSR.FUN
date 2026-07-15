@@ -3,7 +3,7 @@
 // so numbers stay stable across reloads and sessions.
 
 import type { DTR, DTRAsset, FeeConfig, PricePoint, PriceRange } from "./types";
-import { DEFAULT_MANAGER_TAX_BPS, DEFAULT_MINT_FEE_BPS, DEFAULT_TVL_FEE_BPS, initialLiquidityForAum } from "./calculations";
+import { DEFAULT_MANAGER_BUY_TAX_PCT, DEFAULT_MANAGER_SELL_TAX_PCT, DEFAULT_MINT_FEE_PCT, DEFAULT_TVL_FEE_PCT, initialLiquidityForAum } from "./calculations";
 
 import blueLogo from "@/assets/dtr-logos/blue.png";
 import memeLogo from "@/assets/dtr-logos/meme.png";
@@ -249,9 +249,10 @@ function fictionalAddress(seedKey: string): string {
 
 function defaultFeeConfig(managerAddress: string): FeeConfig {
   return {
-    mintFeeBps: DEFAULT_MINT_FEE_BPS,
-    tvlFeeBps: DEFAULT_TVL_FEE_BPS,
-    managerTaxBps: DEFAULT_MANAGER_TAX_BPS,
+    mintFeePct: DEFAULT_MINT_FEE_PCT,
+    tvlFeePct: DEFAULT_TVL_FEE_PCT,
+    managerBuyTaxPct: DEFAULT_MANAGER_BUY_TAX_PCT,
+    managerSellTaxPct: DEFAULT_MANAGER_SELL_TAX_PCT,
     creatorFeeDestination: managerAddress,
     feeRecipients: [],
   };
