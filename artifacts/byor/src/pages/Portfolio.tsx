@@ -5,7 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { Wallet, PieChart, ArrowUpRight, ArrowDownRight, ArrowRightLeft, Search } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
 export function Portfolio() {
@@ -156,6 +156,7 @@ export function Portfolio() {
                         <TableCell className="py-4">
                           <Link href={`/dtr/${dtr.id}`} className="flex items-center gap-3 group cursor-pointer">
                             <Avatar className="h-8 w-8 border border-border group-hover:border-primary transition-colors">
+                              {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
                               <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
                                 {dtr.ticker.slice(0, 2)}
                               </AvatarFallback>

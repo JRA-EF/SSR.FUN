@@ -55,6 +55,8 @@ export interface DTR {
   tags: string[];
   /** Deterministic seed used to render a generated logo mark */
   logoSeed: string;
+  /** Optional imported logo image path; falls back to ticker-initial avatar when absent. */
+  logoUrl?: string;
   dtrAddress: string;
   /** Root DTR Manager wallet address -- ultimate authority over this DTR. */
   managerAddress: string;

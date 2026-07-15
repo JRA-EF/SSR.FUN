@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatBps, formatUsdc } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
 import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export function ManageDTR() {
   const { dtrId } = useParams();
@@ -172,6 +172,7 @@ export function ManageDTR() {
         </Link>
         <div className="flex items-start gap-4">
           <Avatar className="h-16 w-16 border-2 border-border shadow-md">
+            {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
             <AvatarFallback className="bg-primary/10 text-primary text-xl font-display font-bold">
               {dtr.ticker.slice(0, 2)}
             </AvatarFallback>

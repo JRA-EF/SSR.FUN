@@ -5,6 +5,22 @@
 import type { DTR, DTRAsset, FeeConfig, PricePoint, PriceRange } from "./types";
 import { DEFAULT_MANAGER_TAX_BPS, DEFAULT_MINT_FEE_BPS, DEFAULT_TVL_FEE_BPS } from "./calculations";
 
+import blueLogo from "@/assets/dtr-logos/blue.png";
+import memeLogo from "@/assets/dtr-logos/meme.png";
+import sdefiLogo from "@/assets/dtr-logos/sdefi.png";
+import ssrresLogo from "@/assets/dtr-logos/ssrres.png";
+import infraLogo from "@/assets/dtr-logos/infra.png";
+import gamingLogo from "@/assets/dtr-logos/gaming.png";
+
+const DTR_LOGOS: Record<string, string> = {
+  blue: blueLogo,
+  meme: memeLogo,
+  sdefi: sdefiLogo,
+  ssrres: ssrresLogo,
+  infra: infraLogo,
+  gaming: gamingLogo,
+};
+
 // --- Deterministic PRNG (mulberry32) seeded from a string hash ---------
 
 function hashSeed(str: string): number {
@@ -242,6 +258,7 @@ export const DTRS: DTR[] = DTR_SEEDS.map((seed) => {
     category: seed.category,
     tags: [seed.category],
     logoSeed: seed.id,
+    logoUrl: DTR_LOGOS[seed.id],
     dtrAddress: fictionalAddress(`${seed.id}-dtr`),
     managerAddress,
     delegates: [],

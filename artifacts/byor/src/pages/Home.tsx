@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect, useRef } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 type FloatBody = {
   x: number;
@@ -49,14 +49,31 @@ function layoutBodies(containerRect: DOMRect, count: number): FloatBody[] {
   });
 }
 
-/** Live DTR Universe panel: bodies drift slowly, bounce off walls, and gently separate from each other. */
+/** Collision restitution > 1 exaggerates the "clash" -- the struck card flies off faster than the impact. */
+const CLASH_RESTITUTION = 1.55;
+
+type DragState = {
+  index: number;
+  grabOffsetX: number;
+  grabOffsetY: number;
+  lastX: number;
+  lastY: number;
+  lastT: number;
+  vx: number;
+  vy: number;
+};
+
+/** Live DTR Universe panel: bodies drift slowly, bounce off walls, collide with real impulse physics,
+ *  and can be grabbed and flung at each other with the mouse. */
 function LiveDtrUniverse({ dtrs }: { dtrs: any[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bodiesRef = useRef<FloatBody[]>([]);
   const requestRef = useRef<number | undefined>(undefined);
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const hoveredIndexRef = useRef<number | null>(null);
+  const dragStateRef = useRef<DragState | null>(null);
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
 
   useEffect(() => {
     hoveredIndexRef.current = hoveredId ? dtrs.findIndex((d) => d.id === hoveredId) : null;
@@ -73,14 +90,23 @@ function LiveDtrUniverse({ dtrs }: { dtrs: any[] }) {
     const animate = () => {
       const bounds = container.getBoundingClientRect();
       const bodies = bodiesRef.current;
+      const drag = dragStateRef.current;
 
       for (let i = 0; i < bodies.length; i++) {
         const b = bodies[i];
+        if (drag && drag.index === i) continue; // position is driven directly by the pointer while dragged
+
         const isHovered = i === hoveredIndexRef.current;
         const speedMul = isHovered ? 0.15 : 1;
-
         b.x += b.vx * speedMul;
         b.y += b.vy * speedMul;
+
+        // Bleed off a thrown card's excess speed so it settles back into a gentle drift.
+        const speed = Math.hypot(b.vx, b.vy);
+        if (speed > 3) {
+          b.vx *= 0.965;
+          b.vy *= 0.965;
+        }
 
         if (b.x <= 0) { b.x = 0; b.vx = Math.abs(b.vx); }
         else if (b.x >= bounds.width - b.w) { b.x = bounds.width - b.w; b.vx = -Math.abs(b.vx); }
@@ -88,22 +114,42 @@ function LiveDtrUniverse({ dtrs }: { dtrs: any[] }) {
         else if (b.y >= bounds.height - b.h) { b.y = bounds.height - b.h; b.vy = -Math.abs(b.vy); }
       }
 
-      // Gentle mutual separation so cards drift apart instead of overlapping.
+      // Circle-circle collisions with real impulse response. A dragged card acts as an
+      // immovable "cue" -- it keeps following the pointer, but whatever it clashes into
+      // gets launched away at an exaggerated speed.
       for (let i = 0; i < bodies.length; i++) {
         for (let j = i + 1; j < bodies.length; j++) {
           const a = bodies[i];
           const b = bodies[j];
+          const ar = Math.max(a.w, a.h) * 0.28;
+          const br = Math.max(b.w, b.h) * 0.28;
           const ax = a.x + a.w / 2, ay = a.y + a.h / 2;
           const bx = b.x + b.w / 2, by = b.y + b.h / 2;
           const dx = bx - ax, dy = by - ay;
-          const minDist = (a.w + b.w) / 2 * 0.72;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const dist = Math.hypot(dx, dy) || 0.0001;
+          const minDist = ar + br;
+
           if (dist < minDist) {
-            const push = (minDist - dist) / dist * 0.06;
-            a.vx -= dx * push * 0.02;
-            a.vy -= dy * push * 0.02;
-            b.vx += dx * push * 0.02;
-            b.vy += dy * push * 0.02;
+            const nx = dx / dist, ny = dy / dist;
+            const overlap = minDist - dist;
+            const aInvMass = drag && drag.index === i ? 0 : 1;
+            const bInvMass = drag && drag.index === j ? 0 : 1;
+            const totalInv = aInvMass + bInvMass || 1;
+
+            a.x -= nx * overlap * (aInvMass / totalInv);
+            a.y -= ny * overlap * (aInvMass / totalInv);
+            b.x += nx * overlap * (bInvMass / totalInv);
+            b.y += ny * overlap * (bInvMass / totalInv);
+
+            const relVx = b.vx - a.vx, relVy = b.vy - a.vy;
+            const velAlongNormal = relVx * nx + relVy * ny;
+            if (velAlongNormal < 0) {
+              const j = (-(1 + CLASH_RESTITUTION) * velAlongNormal) / totalInv;
+              a.vx -= j * nx * aInvMass;
+              a.vy -= j * ny * aInvMass;
+              b.vx += j * nx * bInvMass;
+              b.vy += j * ny * bInvMass;
+            }
           }
         }
       }
@@ -127,8 +173,78 @@ function LiveDtrUniverse({ dtrs }: { dtrs: any[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dtrs.length]);
 
+  const handlePointerDown = (index: number, e: React.PointerEvent) => {
+    const container = containerRef.current;
+    const body = bodiesRef.current[index];
+    if (!container || !body) return;
+    const bounds = container.getBoundingClientRect();
+    const pointerX = e.clientX - bounds.left;
+    const pointerY = e.clientY - bounds.top;
+    dragStateRef.current = {
+      index,
+      grabOffsetX: pointerX - body.x,
+      grabOffsetY: pointerY - body.y,
+      lastX: pointerX,
+      lastY: pointerY,
+      lastT: performance.now(),
+      vx: 0,
+      vy: 0,
+    };
+    setDraggingIndex(index);
+    setHoveredId(null);
+  };
+
+  useEffect(() => {
+    if (draggingIndex === null) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const container = containerRef.current;
+      const drag = dragStateRef.current;
+      const body = bodiesRef.current[draggingIndex];
+      if (!container || !drag || !body) return;
+      const bounds = container.getBoundingClientRect();
+      const pointerX = e.clientX - bounds.left;
+      const pointerY = e.clientY - bounds.top;
+
+      const now = performance.now();
+      const dt = Math.max(now - drag.lastT, 1);
+      drag.vx = ((pointerX - drag.lastX) / dt) * 16.67;
+      drag.vy = ((pointerY - drag.lastY) / dt) * 16.67;
+      drag.lastX = pointerX;
+      drag.lastY = pointerY;
+      drag.lastT = now;
+
+      body.x = Math.min(Math.max(pointerX - drag.grabOffsetX, 0), bounds.width - body.w);
+      body.y = Math.min(Math.max(pointerY - drag.grabOffsetY, 0), bounds.height - body.h);
+      body.vx = drag.vx;
+      body.vy = drag.vy;
+    };
+
+    const handlePointerUp = () => {
+      const drag = dragStateRef.current;
+      const body = drag ? bodiesRef.current[drag.index] : null;
+      if (body && drag) {
+        // Flick it: launch the released card with a boosted version of its final drag velocity.
+        body.vx = drag.vx * 1.8;
+        body.vy = drag.vy * 1.8;
+      }
+      dragStateRef.current = null;
+      setDraggingIndex(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [draggingIndex]);
+
   return (
-    <div ref={containerRef} className="flex-1 relative bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/5 via-background/50 to-background overflow-hidden">
+    <div
+      ref={containerRef}
+      className="flex-1 relative bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/5 via-background/50 to-background overflow-hidden touch-none"
+    >
       {dtrs.map((dtr, i) => {
         const body = bodiesRef.current[i];
         if (!body) return null;
@@ -138,7 +254,9 @@ function LiveDtrUniverse({ dtrs }: { dtrs: any[] }) {
             dtr={dtr}
             body={body}
             isHovered={hoveredId === dtr.id}
+            isDragging={draggingIndex === i}
             onHover={(hovered) => setHoveredId(hovered ? dtr.id : null)}
+            onPointerDown={(e) => handlePointerDown(i, e)}
           />
         );
       })}
@@ -146,26 +264,50 @@ function LiveDtrUniverse({ dtrs }: { dtrs: any[] }) {
   );
 }
 
-// Floating card component
-function FloatingDTRCard({ dtr, body, isHovered, onHover }: { dtr: any; body: FloatBody; isHovered: boolean; onHover: (hovered: boolean) => void }) {
+// Floating, draggable card component
+function FloatingDTRCard({
+  dtr,
+  body,
+  isHovered,
+  isDragging,
+  onHover,
+  onPointerDown,
+}: {
+  dtr: any;
+  body: FloatBody;
+  isHovered: boolean;
+  isDragging: boolean;
+  onHover: (hovered: boolean) => void;
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
   const isPositive = dtr.change24h >= 0;
+  const active = isHovered || isDragging;
 
   return (
     <div
-      className={`absolute transition-shadow duration-300 ${isHovered ? 'z-50 shadow-2xl' : 'z-10 shadow-lg'}`}
+      className={`absolute select-none touch-none ${isDragging ? 'cursor-grabbing z-[60]' : 'cursor-grab'} ${active && !isDragging ? 'z-50 shadow-2xl' : 'z-10 shadow-lg'} ${isDragging ? '' : 'transition-shadow duration-300'}`}
       style={{
-        transform: `translate(${body.x}px, ${body.y}px) scale(${isHovered ? Math.min(body.scale * 1.08, 1.15) : body.scale})`,
+        transform: `translate(${body.x}px, ${body.y}px) scale(${isDragging ? Math.min(body.scale * 1.14, 1.22) : isHovered ? Math.min(body.scale * 1.08, 1.15) : body.scale})`,
         transformOrigin: "top left",
         width: 256,
+        transition: isDragging ? "none" : "transform 60ms linear",
       }}
-      onMouseEnter={() => onHover(true)}
-      onMouseLeave={() => onHover(false)}
+      onPointerDown={onPointerDown}
+      onMouseEnter={() => !isDragging && onHover(true)}
+      onMouseLeave={() => !isDragging && onHover(false)}
     >
-      <div className="bg-card/80 backdrop-blur-md border border-white/5 rounded-xl p-4 flex flex-col gap-2 cursor-pointer group hover:bg-card/95 hover:border-primary/30 transition-colors">
+      <div
+        className={`bg-card/80 backdrop-blur-md border rounded-xl p-4 flex flex-col gap-2 group transition-colors ${
+          isDragging
+            ? 'border-primary/60 bg-card/95 shadow-[0_0_36px_rgba(132,81,255,0.4)]'
+            : 'border-white/5 hover:bg-card/95 hover:border-primary/30'
+        }`}
+      >
         <div className="flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <Avatar className="h-8 w-8 border border-white/10">
-              <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold font-display">
+          <div className="flex items-center gap-3">
+            <Avatar className="h-12 w-12 border border-white/10 shadow-md">
+              {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} draggable={false} />}
+              <AvatarFallback className="bg-primary/20 text-primary text-sm font-bold font-display">
                 {dtr.ticker.slice(0, 2)}
               </AvatarFallback>
             </Avatar>
@@ -182,7 +324,7 @@ function FloatingDTRCard({ dtr, body, isHovered, onHover }: { dtr: any; body: Fl
           </div>
         </div>
 
-        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isHovered ? 'max-h-24 opacity-100 mt-2 pt-2 border-t border-white/5' : 'max-h-0 opacity-0'}`}>
+        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isHovered && !isDragging ? 'max-h-24 opacity-100 mt-2 pt-2 border-t border-white/5' : 'max-h-0 opacity-0'}`}>
           <div className="flex justify-between text-xs mb-2">
             <span className="text-muted-foreground">TVL</span>
             <span className="font-mono text-foreground">{formatUsdc(dtr.aum, { compact: true })}</span>
@@ -226,7 +368,7 @@ export function Home() {
   );
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background">
+    <div className="min-h-[100dvh] flex flex-col">
       <main className="flex-1">
         {/* Hero Section - 42/58 Split */}
         <section className="relative overflow-hidden pt-12 pb-16 md:pt-20 md:pb-24">
@@ -329,6 +471,7 @@ export function Home() {
                     <div className="flex-1">
                       <div className="flex items-center gap-4 mb-6">
                         <Avatar className="h-16 w-16 border border-white/10 shadow-lg">
+                          {featuredDtr.logoUrl && <AvatarImage src={featuredDtr.logoUrl} alt={featuredDtr.ticker} />}
                           <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold font-display">
                             {featuredDtr.ticker.slice(0, 2)}
                           </AvatarFallback>
@@ -400,6 +543,7 @@ export function Home() {
                       <Card className="border-white/5 hover:border-primary/30 transition-colors cursor-pointer bg-card/40 backdrop-blur-sm group">
                         <CardContent className="p-4 flex items-center gap-4">
                           <Avatar className="h-10 w-10 border border-white/10">
+                            {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
                             <AvatarFallback className="bg-white/5 text-muted-foreground font-display text-xs">
                               {dtr.ticker.slice(0, 2)}
                             </AvatarFallback>
@@ -453,6 +597,7 @@ export function Home() {
                     <CardHeader className="pb-4 border-b border-white/5">
                       <div className="flex justify-between items-start mb-4">
                         <Avatar className="h-12 w-12 border border-white/10 shadow-sm">
+                          {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
                           <AvatarFallback className="bg-primary/20 text-primary font-display font-bold">
                             {dtr.ticker.slice(0, 2)}
                           </AvatarFallback>
@@ -517,7 +662,7 @@ export function Home() {
 
         </div>
       </main>
-      <footer className="border-t border-white/5 py-8 text-center text-sm text-muted-foreground bg-background">
+      <footer className="border-t border-white/5 py-8 text-center text-sm text-muted-foreground">
         <div className="container mx-auto px-4">
           <p className="font-mono text-xs tracking-widest uppercase">SSR.FUN • Decentralized Token Reserves</p>
           <p className="mt-4 text-xs opacity-40">This is a simulated environment. Fictional data only.</p>

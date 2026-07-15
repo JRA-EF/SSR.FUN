@@ -17,7 +17,7 @@ const queryClient = new QueryClient();
 
 function Router() {
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background text-foreground selection:bg-primary/30">
+    <div className="min-h-[100dvh] flex flex-col text-foreground selection:bg-primary/30">
       <Navbar />
       <Switch>
         <Route path="/" component={Home} />
