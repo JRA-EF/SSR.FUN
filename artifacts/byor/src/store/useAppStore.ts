@@ -255,6 +255,11 @@ export const useAppStore = create<AppState>()(
         if (input.initialSeedUsdc > wallet.usdc)
           return { success: false, message: "Insufficient USDC to seed this DTR." };
 
+        const feeRecipients = (input.feeRecipients || []).filter((r) => r.address.trim() && r.pct > 0);
+        const feeRecipientTotal = feeRecipients.reduce((sum, r) => sum + r.pct, 0);
+        if (feeRecipientTotal > 100 + 1e-6)
+          return { success: false, message: "Fee recipient percentages cannot exceed 100% of total fees." };
+
         const nav = 10; // deterministic initial NAV per share
         const now = Date.now();
         const flatSeries = (points: number, stepMs: number) =>
@@ -268,18 +273,31 @@ export const useAppStore = create<AppState>()(
           name: input.name.trim(),
           ticker: input.ticker.trim().toUpperCase(),
           description: input.description.trim(),
-          category: input.category || "Custom",
+          category: input.category.trim() || "Custom",
           tags: input.tags,
           logoSeed: id,
           logoUrl: pickLogoForId(id),
           dtrAddress: generateFictionalAddress(),
           managerAddress: wallet.address,
-          delegates: [],
+          delegates: Array.from(
+            new Set(
+              (input.additionalManagers || [])
+                .map((a) => a.trim())
+                .filter((a) => a && a !== wallet.address),
+            ),
+          ).map((address) => ({
+            address,
+            // Additional managers added at deploy time get full operational control,
+            // short of managing other delegates -- only the root Manager can do that.
+            permissions: { manageDelegates: false, rebalance: true, feeAdmin: true, pause: true, metadata: true },
+            addedAt: now,
+          })),
           feeConfig: {
             mintFeeBps: input.mintFeeBps,
             tvlFeeBps: input.tvlFeeBps,
             managerTaxBps: input.managerTaxBps,
             creatorFeeDestination: input.creatorFeeDestination || wallet.address,
+            feeRecipients,
           },
           tokenPrice: nav,
           nav,

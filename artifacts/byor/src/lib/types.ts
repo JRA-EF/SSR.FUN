@@ -27,6 +27,13 @@ export interface Delegate {
   addedAt: number;
 }
 
+/** A secondary wallet that receives a slice of total fee revenue instead of the primary fee destination. */
+export interface FeeRecipient {
+  address: string;
+  /** Share of total fee revenue routed to this wallet, as a percent of 100. */
+  pct: number;
+}
+
 export interface FeeConfig {
   /** Immutable at inception, in basis points, charged on new-issuance minting. */
   mintFeeBps: number;
@@ -34,8 +41,10 @@ export interface FeeConfig {
   tvlFeeBps: number;
   /** Optional additional buy/sell tax set by the DTR Manager, in basis points. */
   managerTaxBps: number;
-  /** Wallet address that receives the Manager's share of Mint Fee revenue. */
+  /** Wallet address that receives the Manager's share of Mint Fee revenue (and any fee revenue not routed to a recipient below). */
   creatorFeeDestination: string;
+  /** Additional wallets that split off a percentage of total fee revenue. */
+  feeRecipients: FeeRecipient[];
 }
 
 export interface PricePoint {
@@ -128,6 +137,10 @@ export interface CreateDTRInput {
   tvlFeeBps: number;
   managerTaxBps: number;
   creatorFeeDestination: string;
+  /** Additional wallets that split off a percentage of total fee revenue. */
+  feeRecipients: FeeRecipient[];
+  /** Wallet addresses to add as delegate managers on the newly-deployed DTR. */
+  additionalManagers: string[];
 }
 
 export type RebalanceEdits = Record<string, number>;

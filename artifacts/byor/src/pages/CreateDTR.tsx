@@ -12,7 +12,8 @@ import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Info, Rocket }
 import { useToast } from "@/hooks/use-toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
-import { type CreateDTRAssetInput } from "@/lib/types";
+import { type CreateDTRAssetInput, type FeeRecipient } from "@/lib/types";
+import { CATEGORY_SUGGESTIONS } from "@/lib/seed-data";
 
 const ALL_ASSETS = [
   { symbol: "SOL", name: "Solana" },
@@ -53,6 +54,11 @@ export function CreateDTR() {
   const [tvlFeeBps, setTvlFeeBps] = useState(100);
   const [managerTaxBps, setManagerTaxBps] = useState(0);
   const [feeDestination, setFeeDestination] = useState(wallet.address || "");
+  const [feeRecipients, setFeeRecipients] = useState<FeeRecipient[]>([]);
+  const [newRecipientAddress, setNewRecipientAddress] = useState("");
+  const [newRecipientPct, setNewRecipientPct] = useState("");
+  const [additionalManagers, setAdditionalManagers] = useState<string[]>([]);
+  const [newManagerAddress, setNewManagerAddress] = useState("");
 
   if (!wallet.connected) {
     return (
@@ -91,6 +97,32 @@ export function CreateDTR() {
   const totalWeight = assets.reduce((sum, a) => sum + a.weight, 0);
   const unallocatedWeight = Math.max(0, 1 - totalWeight);
 
+  const feeRecipientTotalPct = feeRecipients.reduce((sum, r) => sum + r.pct, 0);
+
+  const addFeeRecipient = () => {
+    const pct = parseFloat(newRecipientPct);
+    if (!newRecipientAddress.trim() || !pct || pct <= 0) return;
+    if (feeRecipients.some((r) => r.address === newRecipientAddress.trim())) return;
+    setFeeRecipients([...feeRecipients, { address: newRecipientAddress.trim(), pct }]);
+    setNewRecipientAddress("");
+    setNewRecipientPct("");
+  };
+
+  const removeFeeRecipient = (address: string) => {
+    setFeeRecipients(feeRecipients.filter((r) => r.address !== address));
+  };
+
+  const addManager = () => {
+    const address = newManagerAddress.trim();
+    if (!address || additionalManagers.includes(address) || address === wallet.address) return;
+    setAdditionalManagers([...additionalManagers, address]);
+    setNewManagerAddress("");
+  };
+
+  const removeManager = (address: string) => {
+    setAdditionalManagers(additionalManagers.filter((a) => a !== address));
+  };
+
   const handleSubmit = async () => {
     setIsSubmitting(true);
     await new Promise(r => setTimeout(r, 1000));
@@ -106,7 +138,9 @@ export function CreateDTR() {
       mintFeeBps,
       tvlFeeBps,
       managerTaxBps,
-      creatorFeeDestination: feeDestination || wallet.address || ""
+      creatorFeeDestination: feeDestination || wallet.address || "",
+      feeRecipients,
+      additionalManagers,
     });
 
     setIsSubmitting(false);
@@ -192,20 +226,19 @@ export function CreateDTR() {
               
               <div className="space-y-2">
                 <Label htmlFor="category">Category</Label>
-                <select 
+                <Input
                   id="category"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  list="category-suggestions"
+                  placeholder="e.g. DeFi, or name your own"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                >
-                  <option value="Custom">Custom</option>
-                  <option value="Blue Chip">Blue Chip</option>
-                  <option value="DeFi">DeFi</option>
-                  <option value="Meme">Meme</option>
-                  <option value="Infrastructure">Infrastructure</option>
-                  <option value="Gaming">Gaming</option>
-                  <option value="Strategic">Strategic</option>
-                </select>
+                />
+                <datalist id="category-suggestions">
+                  {CATEGORY_SUGGESTIONS.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+                <p className="text-xs text-muted-foreground">Pick a suggestion or type your own category name.</p>
               </div>
 
               <div className="space-y-2">
@@ -418,7 +451,7 @@ export function CreateDTR() {
                   
                   <div className="space-y-3">
                     <Label className="flex justify-between">
-                      <span>Manager Tax</span>
+                      <span>Buy/Sell Tax</span>
                       <span className="font-mono text-primary">{managerTaxBps} bps</span>
                     </Label>
                     <Slider 
@@ -427,7 +460,7 @@ export function CreateDTR() {
                       step={5}
                       onValueChange={(v) => setManagerTaxBps(v[0])}
                     />
-                    <p className="text-xs text-muted-foreground">Optional additional buy/sell tax. Default is 0 bps.</p>
+                    <p className="text-xs text-muted-foreground">Optional additional tax charged on buys and sells. Default is 0 bps.</p>
                   </div>
                 </div>
               </div>
@@ -435,14 +468,97 @@ export function CreateDTR() {
               <div className="space-y-4">
                 <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Fee Routing</h3>
                 <div className="space-y-2">
-                  <Label htmlFor="dest">Creator Fee Destination Wallet</Label>
+                  <Label htmlFor="dest">Primary Fee Destination Wallet</Label>
                   <Input 
                     id="dest" 
                     value={feeDestination}
                     onChange={(e) => setFeeDestination(e.target.value)}
                     className="font-mono text-sm"
                   />
-                  <p className="text-xs text-muted-foreground">Address that receives the Manager's share of revenue.</p>
+                  <p className="text-xs text-muted-foreground">Address that receives the Manager's share of revenue, plus whatever isn't routed to a recipient below.</p>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  <Label className="flex justify-between items-center">
+                    <span>Additional Fee Recipients</span>
+                    <span className={`font-mono text-xs ${feeRecipientTotalPct > 100 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                      {feeRecipientTotalPct.toFixed(1)}% of total fees
+                    </span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground">Split off a percentage of total fee revenue to other wallets. Whatever's left goes to the primary destination above.</p>
+
+                  {feeRecipients.length > 0 && (
+                    <div className="space-y-2">
+                      {feeRecipients.map((r) => (
+                        <div key={r.address} className="flex items-center justify-between gap-3 p-2 rounded-lg border border-border bg-muted/20">
+                          <span className="font-mono text-xs truncate">{r.address}</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant="secondary" className="font-mono">{r.pct}%</Badge>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeFeeRecipient(r.address)}>
+                              <X className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Recipient wallet address"
+                      className="font-mono text-sm"
+                      value={newRecipientAddress}
+                      onChange={(e) => setNewRecipientAddress(e.target.value)}
+                    />
+                    <Input
+                      type="number"
+                      placeholder="%"
+                      className="w-24 font-mono"
+                      min="0"
+                      max="100"
+                      value={newRecipientPct}
+                      onChange={(e) => setNewRecipientPct(e.target.value)}
+                    />
+                    <Button variant="outline" onClick={addFeeRecipient} className="shrink-0 gap-1.5">
+                      <Plus className="w-4 h-4" /> Add
+                    </Button>
+                  </div>
+                  {feeRecipientTotalPct > 100 && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>Recipient percentages exceed 100% of total fees. Please adjust.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Additional Managers</h3>
+                <p className="text-xs text-muted-foreground">Add other wallets as DTR Managers. They'll be able to rebalance, manage fees, and pause the reserve, but won't be able to manage other delegates -- only the root Manager (you) can do that.</p>
+
+                {additionalManagers.length > 0 && (
+                  <div className="space-y-2">
+                    {additionalManagers.map((address) => (
+                      <div key={address} className="flex items-center justify-between gap-3 p-2 rounded-lg border border-border bg-muted/20">
+                        <span className="font-mono text-xs truncate">{address}</span>
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0" onClick={() => removeManager(address)}>
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Manager wallet address"
+                    className="font-mono text-sm"
+                    value={newManagerAddress}
+                    onChange={(e) => setNewManagerAddress(e.target.value)}
+                  />
+                  <Button variant="outline" onClick={addManager} className="shrink-0 gap-1.5">
+                    <Plus className="w-4 h-4" /> Add
+                  </Button>
                 </div>
               </div>
 
@@ -453,7 +569,7 @@ export function CreateDTR() {
               </Button>
               <Button 
                 onClick={handleNext} 
-                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || parseFloat(initialSeedUsdc) > wallet.usdc} 
+                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || parseFloat(initialSeedUsdc) > wallet.usdc || feeRecipientTotalPct > 100} 
                 className="font-bold gap-2"
               >
                 Review <ChevronRight className="w-4 h-4" />
@@ -500,7 +616,7 @@ export function CreateDTR() {
                       <span className="font-mono font-medium">{tvlFeeBps} bps</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Manager Tax</span>
+                      <span className="text-muted-foreground">Buy/Sell Tax</span>
                       <span className="font-mono font-medium">{managerTaxBps} bps</span>
                     </div>
                   </div>
@@ -527,6 +643,36 @@ export function CreateDTR() {
                   )}
                 </div>
               </div>
+
+              <div>
+                <p className="text-sm font-semibold text-muted-foreground mb-3">Fee Routing</p>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                    <span className="font-mono text-xs truncate">{feeDestination || wallet.address}</span>
+                    <Badge variant="outline" className="bg-background shrink-0">Primary</Badge>
+                  </div>
+                  {feeRecipients.map((r) => (
+                    <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                      <span className="font-mono text-xs truncate">{r.address}</span>
+                      <span className="font-mono font-bold shrink-0">{r.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {additionalManagers.length > 0 && (
+                <div>
+                  <p className="text-sm font-semibold text-muted-foreground mb-3">Additional Managers</p>
+                  <div className="space-y-2">
+                    {additionalManagers.map((address) => (
+                      <div key={address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                        <span className="font-mono text-xs truncate">{address}</span>
+                        <Badge variant="secondary" className="shrink-0">Delegate</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
             </CardContent>
             <CardFooter className="justify-between border-t border-border/40 pt-6">

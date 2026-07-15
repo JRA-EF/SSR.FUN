@@ -253,8 +253,26 @@ function defaultFeeConfig(managerAddress: string): FeeConfig {
     tvlFeeBps: DEFAULT_TVL_FEE_BPS,
     managerTaxBps: DEFAULT_MANAGER_TAX_BPS,
     creatorFeeDestination: managerAddress,
+    feeRecipients: [],
   };
 }
+
+/** Predefined category suggestions, plus any custom categories already in use across the catalog. */
+export const CATEGORY_SUGGESTIONS = [
+  "Blue Chip",
+  "DeFi",
+  "Meme",
+  "Infrastructure",
+  "Gaming",
+  "Strategic",
+  "Stablecoin",
+  "AI",
+  "DePIN",
+  "RWA",
+  "NFT",
+  "Layer 2",
+  "Custom",
+];
 
 export const DTRS: DTR[] = DTR_SEEDS.map((seed) => {
   const tokenPrice = seed.nav * (1 + seed.premiumPct / 100);

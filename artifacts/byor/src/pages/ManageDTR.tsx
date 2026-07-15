@@ -284,14 +284,27 @@ export function ManageDTR() {
                       <p className="font-mono font-medium">{formatBps(dtr.feeConfig.tvlFeeBps)} <span className="text-xs text-muted-foreground ml-1">({dtr.feeConfig.tvlFeeBps} bps)</span></p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-muted-foreground mb-1">Manager Tax</p>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Buy/Sell Tax</p>
                       <p className="font-mono font-medium">{formatBps(dtr.feeConfig.managerTaxBps)} <span className="text-xs text-muted-foreground ml-1">({dtr.feeConfig.managerTaxBps} bps)</span></p>
                     </div>
                   </div>
                   <div className="pt-4 border-t border-border/50">
-                    <p className="text-sm font-semibold text-muted-foreground mb-1">Fee Destination</p>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Primary Fee Destination</p>
                     <p className="font-mono text-sm break-all">{dtr.feeConfig.creatorFeeDestination}</p>
                   </div>
+                  {dtr.feeConfig.feeRecipients.length > 0 && (
+                    <div className="pt-4 border-t border-border/50">
+                      <p className="text-sm font-semibold text-muted-foreground mb-2">Additional Fee Recipients</p>
+                      <div className="space-y-2">
+                        {dtr.feeConfig.feeRecipients.map((r) => (
+                          <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                            <span className="font-mono text-xs break-all">{r.address}</span>
+                            <span className="font-mono font-bold shrink-0 ml-3">{r.pct}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
