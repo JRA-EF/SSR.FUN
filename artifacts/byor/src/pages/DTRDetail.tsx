@@ -348,8 +348,9 @@ export function DTRDetail() {
                       </Pie>
                       <RechartsTooltip 
                         formatter={(value: number) => [`${(value * 100).toFixed(1)}%`, "Weight"]}
-                        contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '0.5rem' }}
-                        itemStyle={{ fontWeight: 'bold' }}
+                        contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '0.5rem', color: 'hsl(var(--foreground))' }}
+                        itemStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold' }}
+                        labelStyle={{ color: 'hsl(var(--foreground))', marginBottom: '4px' }}
                       />
                     </RechartsPieChart>
                   </ResponsiveContainer>
