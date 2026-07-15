@@ -10,17 +10,21 @@ import { Portfolio } from '@/pages/Portfolio';
 import { DTRDetail } from '@/pages/DTRDetail';
 import { CreateDTR } from '@/pages/CreateDTR';
 import { ManageDTR } from '@/pages/ManageDTR';
+import { Earn } from '@/pages/Earn';
+import { HowItWorks } from '@/pages/HowItWorks';
 
 const queryClient = new QueryClient();
 
 function Router() {
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground selection:bg-primary/30">
+    <div className="min-h-[100dvh] flex flex-col bg-background text-foreground selection:bg-primary/30">
       <Navbar />
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/portfolio" component={Portfolio} />
         <Route path="/create" component={CreateDTR} />
+        <Route path="/earn" component={Earn} />
+        <Route path="/how-it-works" component={HowItWorks} />
         <Route path="/dtr/:dtrId" component={DTRDetail} />
         <Route path="/dtr/:dtrId/manage" component={ManageDTR} />
         <Route component={NotFound} />

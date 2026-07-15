@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "BYOR"
+title = "SSR.FUN"
 version = "1.0.0"
 id = "artifacts/byor"
 router = "path"

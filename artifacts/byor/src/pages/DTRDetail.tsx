@@ -192,7 +192,7 @@ export function DTRDetail() {
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className="text-3xl font-mono font-bold text-foreground">{formatUsdc(dtr.tokenPrice)}</span>
                 </div>
-                <p className={`text-sm font-mono flex items-center ${dtr.change24h >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                <p className={`text-sm font-mono flex items-center ${dtr.change24h >= 0 ? 'text-positive' : 'text-destructive'}`}>
                   {dtr.change24h >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />}
                   {Math.abs(dtr.change24h).toFixed(2)}% <span className="text-muted-foreground ml-1">(24h)</span>
                 </p>
@@ -241,7 +241,7 @@ export function DTRDetail() {
                     <TooltipContent>Difference between market price and NAV. Premium implies high demand.</TooltipContent>
                   </Tooltip>
                 </div>
-                <p className={`text-xl font-mono font-semibold ${isPremium ? 'text-primary' : 'text-destructive'}`}>
+                <p className={`text-xl font-mono font-semibold ${isPremium ? 'text-positive' : 'text-destructive'}`}>
                   {isPremium ? '+' : ''}{(premiumDiscount * 100).toFixed(2)}%
                 </p>
               </CardContent>
@@ -251,7 +251,7 @@ export function DTRDetail() {
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   7D Performance
                 </div>
-                <p className={`text-xl font-mono font-semibold ${dtr.change7d >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                <p className={`text-xl font-mono font-semibold ${dtr.change7d >= 0 ? 'text-positive' : 'text-destructive'}`}>
                   {dtr.change7d >= 0 ? '+' : ''}{dtr.change7d.toFixed(2)}%
                 </p>
               </CardContent>

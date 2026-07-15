@@ -48,33 +48,35 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="container mx-auto flex h-16 items-center justify-between px-4 md:px-8">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-2">
+      <div className="container mx-auto flex h-16 items-center justify-between gap-3 px-4 md:px-6">
+        <div className="flex items-center gap-3 lg:gap-4 min-w-0">
+          <Link href="/" className="flex items-center gap-2 shrink-0">
             <img src={ssrLogo} alt="SSR.FUN" className="h-8 w-8 rounded-full object-cover" />
-            <span className="font-display font-bold text-2xl tracking-tighter text-foreground">
+            <span className="font-display font-bold text-xl tracking-tighter text-foreground">
               SSR<span className="text-primary">.FUN</span>
             </span>
           </Link>
 
-          <Badge variant="outline" className="hidden sm:inline-flex bg-primary/5 text-primary border-primary/20 ml-2" title="Fictional balances, prices and transactions. No real assets are being used.">
+          <Badge variant="outline" className="hidden xl:inline-flex bg-primary/5 text-primary border-primary/20 shrink-0" title="Fictional balances, prices and transactions. No real assets are being used.">
             Simulation Mode
           </Badge>
 
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-muted-foreground ml-6">
-            <Link href="/" className="hover:text-primary transition-colors">Home</Link>
+          <nav className="hidden lg:flex items-center gap-4 text-sm font-medium text-muted-foreground whitespace-nowrap">
+            <a href="/#directory" className="hover:text-primary transition-colors cursor-pointer">Discover DTRs</a>
+            <Link href="/create" className="hover:text-primary transition-colors">Create a DTR</Link>
             <Link href="/portfolio" className="hover:text-primary transition-colors">Portfolio</Link>
-            <Link href="/create" className="hover:text-primary transition-colors">Deploy a Reserve</Link>
+            <Link href="/earn" className="hover:text-primary transition-colors">Earn</Link>
+            <Link href="/how-it-works" className="hover:text-primary transition-colors">How It Works</Link>
           </nav>
         </div>
 
-        <div className="flex items-center gap-4 flex-1 justify-end">
-          <div className="relative w-full max-w-sm hidden sm:block" ref={searchRef}>
+        <div className="flex items-center gap-3 justify-end shrink-0">
+          <div className="relative w-44 lg:w-56 xl:w-72 hidden md:block" ref={searchRef}>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 type="search"
-                placeholder="Search DTRs by name or ticker..."
+                placeholder="Search DTRs..."
                 className="w-full bg-muted/50 pl-9 border-border focus-visible:ring-primary h-9"
                 value={searchQuery}
                 onChange={(e) => {
@@ -224,10 +226,12 @@ export function Navbar() {
       </div>
       
       {/* Mobile nav links */}
-      <div className="md:hidden border-t border-border/40 bg-muted/20 px-4 py-2 flex items-center gap-4 text-sm font-medium">
-        <Link href="/" className="hover:text-primary transition-colors py-1">Home</Link>
-        <Link href="/portfolio" className="hover:text-primary transition-colors py-1">Portfolio</Link>
-        <Link href="/create" className="hover:text-primary transition-colors py-1">Deploy</Link>
+      <div className="lg:hidden border-t border-border/40 bg-muted/20 px-4 py-2 flex items-center gap-4 text-sm font-medium overflow-x-auto">
+        <a href="/#directory" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Discover DTRs</a>
+        <Link href="/create" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Create</Link>
+        <Link href="/portfolio" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Portfolio</Link>
+        <Link href="/earn" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Earn</Link>
+        <Link href="/how-it-works" className="hover:text-primary transition-colors py-1 whitespace-nowrap">How It Works</Link>
       </div>
     </header>
   );

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Lexend+Giga:wght@700&family=Work+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&family=Inter:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @plugin "@tailwindcss/typography";
@@ -34,11 +34,14 @@
 
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+  
+  --color-positive: hsl(var(--positive));
+  --color-positive-foreground: hsl(var(--positive-foreground));
 
-  --font-sans: 'Work Sans', sans-serif;
-  --font-display: 'Lexend Giga', sans-serif;
-  --font-accent: 'Space Grotesk', sans-serif;
-  --font-mono: 'Space Mono', monospace;
+  --font-sans: 'Inter', sans-serif;
+  --font-display: 'Geist', sans-serif;
+  --font-accent: 'Inter', sans-serif;
+  --font-mono: 'Geist Mono', monospace;
 
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
@@ -47,45 +50,40 @@
 }
 
 :root {
-  --background: 252 22% 95%;
-  --foreground: 258 30% 12%;
+  --background: 257 24% 6%;
+  --foreground: 270 24% 96%;
 
-  --card: 0 0% 100%;
-  --card-foreground: 258 30% 12%;
-  --card-border: 255 18% 87%;
+  --card: 258 22% 9%;
+  --card-foreground: 270 24% 96%;
+  --card-border: 260 11% 15%;
 
-  --popover: 0 0% 100%;
-  --popover-foreground: 258 30% 12%;
-  --popover-border: 255 18% 87%;
+  --popover: 258 22% 9%;
+  --popover-foreground: 270 24% 96%;
+  --popover-border: 260 11% 15%;
 
-  --primary: 265 72% 42%;
-  --primary-foreground: 0 0% 100%;
+  --primary: 258 100% 66%;
+  --primary-foreground: 270 24% 96%;
 
-  --secondary: 255 25% 92%;
-  --secondary-foreground: 265 72% 38%;
+  --secondary: 260 11% 15%;
+  --secondary-foreground: 270 24% 96%;
 
-  --muted: 253 20% 91%;
-  --muted-foreground: 258 12% 40%;
+  --muted: 260 11% 15%;
+  --muted-foreground: 260 11% 62%;
 
-  --accent: 322 70% 46%;
-  --accent-foreground: 0 0% 100%;
+  --accent: 258 100% 66%;
+  --accent-foreground: 270 24% 96%;
 
-  --destructive: 0 78% 52%;
-  --destructive-foreground: 0 0% 98%;
+  --destructive: 354 82% 67%;
+  --destructive-foreground: 270 24% 96%;
+  
+  --positive: 155 58% 50%;
+  --positive-foreground: 257 24% 6%;
 
-  --border: 254 16% 85%;
-  --input: 254 16% 85%;
-  --ring: 265 72% 42%;
+  --border: 260 11% 15%;
+  --input: 260 11% 15%;
+  --ring: 258 100% 66%;
 
   --radius: 0.5rem;
-
-  --chart-1: 265 72% 42%;
-  --chart-2: 322 70% 46%;
-  --chart-3: 335 68% 52%;
-  --chart-4: 245 65% 48%;
-  --chart-5: 280 65% 40%;
-
-  --hero-dark: 258 45% 10%;
 }
 
 @layer base {
