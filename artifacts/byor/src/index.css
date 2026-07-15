@@ -92,13 +92,18 @@
   }
   body {
     @apply font-sans antialiased text-foreground;
-    background-color: hsl(257 24% 6%);
+    background-color: hsl(257 30% 4%);
     background-image:
-      radial-gradient(1200px circle at 100% -8%, hsla(262, 75%, 42%, 0.4), transparent 58%),
-      radial-gradient(900px circle at 108% 22%, hsla(266, 60%, 28%, 0.32), transparent 55%),
-      linear-gradient(200deg, hsla(258, 45%, 14%, 0.4) 0%, transparent 42%);
+      radial-gradient(60% 50% at 105% -10%, hsla(268, 85%, 55%, 0.55), transparent 68%),
+      radial-gradient(46% 60% at 88% 8%, hsla(280, 70%, 40%, 0.5), transparent 70%),
+      radial-gradient(38% 42% at 118% 32%, hsla(258, 90%, 48%, 0.42), transparent 72%),
+      radial-gradient(55% 48% at 78% -6%, hsla(300, 55%, 35%, 0.3), transparent 65%),
+      radial-gradient(32% 38% at 96% 46%, hsla(250, 65%, 30%, 0.35), transparent 70%),
+      radial-gradient(70% 60% at 62% 78%, hsla(265, 40%, 12%, 0.55), transparent 62%),
+      radial-gradient(90% 70% at 8% 112%, hsla(257, 60%, 8%, 0.9), transparent 60%),
+      radial-gradient(120% 100% at 50% 100%, hsla(257, 40%, 3%, 1), transparent 45%);
     background-repeat: no-repeat;
-    background-attachment: fixed, fixed, fixed;
+    background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed;
   }
   h1, h2, h3, h4, h5, h6 {
     @apply font-display tracking-tight;

@@ -21,6 +21,15 @@ const DTR_LOGOS: Record<string, string> = {
   gaming: gamingLogo,
 };
 
+/** Shared logo art pool -- every DTR (seeded or user-created) gets a real image, never just letters. */
+export const DTR_LOGO_POOL: string[] = Object.values(DTR_LOGOS);
+
+/** Deterministically picks a logo for any DTR id/ticker so user-created DTRs also get a real image. */
+export function pickLogoForId(id: string): string {
+  const hash = hashSeed(id);
+  return DTR_LOGO_POOL[hash % DTR_LOGO_POOL.length];
+}
+
 // --- Deterministic PRNG (mulberry32) seeded from a string hash ---------
 
 function hashSeed(str: string): number {

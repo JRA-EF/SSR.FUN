@@ -10,3 +10,5 @@ Draggable "fling and collide" physics for freely-floating absolutely-positioned 
 - React state (`draggingIndex`) only drives styling; the actual per-frame physics stays in refs mutated inside the `requestAnimationFrame` loop to avoid re-render overhead.
 
 **Why:** the user wanted mouse-draggable, throwable cards that knock each other away at higher speed on impact — plain physical elastic collision (e=1) felt too subtle for that "clash" request.
+
+**Pitfall:** applying restitution > 1 to *every* pairwise collision (not just the dragged "cue" hit) compounds energy each time two free-floating bodies bounce, producing a runaway "frenzy" loop instead of a single clash. Fix: branch restitution per-collision — use the exaggerated value only when one side has `invMass === 0` (i.e. is the actively-dragged/cue body); use normal restitution (~0.85–1) for all other free-body collisions so the speed boost never propagates past the first hit.

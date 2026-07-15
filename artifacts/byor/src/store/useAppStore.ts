@@ -14,7 +14,7 @@ import type {
   WalletState,
 } from "@/lib/types";
 import { emptyPermissions } from "@/lib/types";
-import { DTRS as SEED_DTRS } from "@/lib/seed-data";
+import { DTRS as SEED_DTRS, pickLogoForId } from "@/lib/seed-data";
 import {
   applyRebalance,
   calcAvgPurchasePrice,
@@ -268,6 +268,7 @@ export const useAppStore = create<AppState>()(
           category: input.category || "Custom",
           tags: input.tags,
           logoSeed: id,
+          logoUrl: pickLogoForId(id),
           dtrAddress: generateFictionalAddress(),
           managerAddress: wallet.address,
           delegates: [],

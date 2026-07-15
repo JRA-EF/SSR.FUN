@@ -144,11 +144,17 @@ function LiveDtrUniverse({ dtrs }: { dtrs: any[] }) {
             const relVx = b.vx - a.vx, relVy = b.vy - a.vy;
             const velAlongNormal = relVx * nx + relVy * ny;
             if (velAlongNormal < 0) {
-              const j = (-(1 + CLASH_RESTITUTION) * velAlongNormal) / totalInv;
-              a.vx -= j * nx * aInvMass;
-              a.vy -= j * ny * aInvMass;
-              b.vx += j * nx * bInvMass;
-              b.vy += j * ny * bInvMass;
+              // Only a clash against the card the user is actively dragging/throwing gets the
+              // exaggerated "clash" restitution. Free-floating cards bouncing off each other use
+              // normal (non-amplified) restitution so a single throw can't chain into a runaway
+              // frenzy -- the boosted speed never propagates past the first card it hits.
+              const isCueHit = aInvMass === 0 || bInvMass === 0;
+              const restitution = isCueHit ? CLASH_RESTITUTION : 0.85;
+              const jImpulse = (-(1 + restitution) * velAlongNormal) / totalInv;
+              a.vx -= jImpulse * nx * aInvMass;
+              a.vy -= jImpulse * ny * aInvMass;
+              b.vx += jImpulse * nx * bInvMass;
+              b.vy += jImpulse * ny * bInvMass;
             }
           }
         }
@@ -465,7 +471,7 @@ export function Home() {
                 <h2 className="text-2xl font-display font-bold">Featured Reserve</h2>
               </div>
               <Card className="bg-card/40 border-white/5 overflow-hidden relative group backdrop-blur-sm hover:border-primary/20 transition-colors">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-[80px] -mr-10 -mt-10 group-hover:bg-primary/10 transition-colors duration-700"></div>
+                <div className="pointer-events-none absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-[80px] -mr-10 -mt-10 group-hover:bg-primary/10 transition-colors duration-700"></div>
                 <CardContent className="p-8">
                   <div className="flex flex-col md:flex-row gap-8 items-start md:items-center">
                     <div className="flex-1">
