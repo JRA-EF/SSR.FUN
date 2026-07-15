@@ -412,20 +412,12 @@ export function Home() {
               <div className="w-full lg:w-[58%] h-[500px] lg:h-[600px] relative">
                 <div className="absolute inset-0 bg-card rounded-[2rem] border border-white/5 shadow-2xl overflow-hidden flex flex-col">
                   <div className="p-6 border-b border-white/5 flex justify-between items-center bg-black/20">
-                    <div className="flex items-center gap-3">
-                      <div className="flex gap-1.5">
-                        <div className="w-3 h-3 rounded-full bg-white/10"></div>
-                        <div className="w-3 h-3 rounded-full bg-white/10"></div>
-                        <div className="w-3 h-3 rounded-full bg-white/10"></div>
-                      </div>
-                      <span className="font-mono text-sm text-muted-foreground uppercase tracking-wider ml-2">Live DTR Universe</span>
-                    </div>
                     <div className="flex items-center gap-2">
                       <span className="relative flex h-2 w-2">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-positive opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-positive"></span>
                       </span>
-                      <span className="font-mono text-xs text-muted-foreground">System Operational</span>
+                      <span className="font-mono text-sm text-muted-foreground uppercase tracking-wider">SSR.FUN Live DTR Universe</span>
                     </div>
                   </div>
                   
