@@ -395,7 +395,7 @@ export function Home() {
                 </h1>
                 
                 <p className="text-lg text-muted-foreground mb-10 max-w-md leading-relaxed font-sans">
-                  Deploy your reserve on SSR.FUN and start earning fees.
+                  Deploy your reserve on SSR.FUN and start earning fees, today!
                 </p>
                 
                 <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
