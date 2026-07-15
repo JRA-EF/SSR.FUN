@@ -91,10 +91,10 @@ export function DTRDetail() {
 
   // Trading Calculations
   const numBuyAmount = parseFloat(buyAmount) || 0;
-  const buyQuote = calcTokensReceived(numBuyAmount, dtr.tokenPrice);
+  const buyQuote = calcTokensReceived(numBuyAmount, dtr.tokenPrice, dtr.liquidityUsdc);
   
   const numSellAmount = parseFloat(sellAmount) || 0;
-  const sellQuote = calcUsdcReceived(numSellAmount, dtr.tokenPrice);
+  const sellQuote = calcUsdcReceived(numSellAmount, dtr.tokenPrice, dtr.liquidityUsdc);
 
   const handleBuy = async () => {
     setIsProcessing(true);
@@ -479,6 +479,18 @@ export function DTRDetail() {
                         <span>You Receive</span>
                         <span className="font-mono text-primary">{formatTokenAmount(buyQuote.netAmount)} {dtr.ticker}</span>
                       </div>
+                      {numBuyAmount > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            Price Impact
+                            <Tooltip>
+                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                              <TooltipContent>Buys push this DTR's price up against its liquidity depth -- larger orders move it more.</TooltipContent>
+                            </Tooltip>
+                          </span>
+                          <span className="font-mono text-positive">+{buyQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(buyQuote.newPrice)}</span>
+                        </div>
+                      )}
                     </div>
 
                     <Button 
@@ -560,6 +572,18 @@ export function DTRDetail() {
                         <span>You Receive</span>
                         <span className="font-mono text-foreground">{formatUsdc(sellQuote.netAmount)}</span>
                       </div>
+                      {numSellAmount > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            Price Impact
+                            <Tooltip>
+                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                              <TooltipContent>Sells push this DTR's price down against its liquidity depth -- larger orders move it more.</TooltipContent>
+                            </Tooltip>
+                          </span>
+                          <span className="font-mono text-destructive">{sellQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(sellQuote.newPrice)}</span>
+                        </div>
+                      )}
                     </div>
 
                     <Button 

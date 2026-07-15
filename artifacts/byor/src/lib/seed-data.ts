@@ -3,7 +3,7 @@
 // so numbers stay stable across reloads and sessions.
 
 import type { DTR, DTRAsset, FeeConfig, PricePoint, PriceRange } from "./types";
-import { DEFAULT_MANAGER_TAX_BPS, DEFAULT_MINT_FEE_BPS, DEFAULT_TVL_FEE_BPS } from "./calculations";
+import { DEFAULT_MANAGER_TAX_BPS, DEFAULT_MINT_FEE_BPS, DEFAULT_TVL_FEE_BPS, initialLiquidityForAum } from "./calculations";
 
 import blueLogo from "@/assets/dtr-logos/blue.png";
 import memeLogo from "@/assets/dtr-logos/meme.png";
@@ -293,6 +293,7 @@ export const DTRS: DTR[] = DTR_SEEDS.map((seed) => {
     tokenPrice,
     nav: seed.nav,
     aum: seed.aum,
+    liquidityUsdc: initialLiquidityForAum(seed.aum),
     change24h: seed.change24h,
     change7d: seed.change7d,
     holders: seed.holders,

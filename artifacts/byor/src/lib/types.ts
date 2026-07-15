@@ -77,6 +77,8 @@ export interface DTR {
   nav: number;
   /** AUM in USDC */
   aum: number;
+  /** Virtual USDC depth backing the secondary-market trading curve; deeper pools resist price impact. */
+  liquidityUsdc: number;
   /** 24h token price change, percent (e.g. 3.2 = +3.2%) */
   change24h: number;
   /** 7d token price change, percent */
@@ -115,6 +117,10 @@ export interface TradeQuote {
   grossAmount: number;
   fee: number;
   netAmount: number;
+  /** Token price after this trade settles against the DTR's liquidity pool. */
+  newPrice: number;
+  /** Signed percent move in tokenPrice this trade causes (e.g. 2.4 = +2.4%). */
+  priceImpactPct: number;
 }
 
 export interface CreateDTRAssetInput {

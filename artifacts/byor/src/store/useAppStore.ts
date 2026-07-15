@@ -17,9 +17,14 @@ import { emptyPermissions } from "@/lib/types";
 import { DTRS as SEED_DTRS, pickLogoForId } from "@/lib/seed-data";
 import {
   applyRebalance,
+  appendPricePoint,
   calcAvgPurchasePrice,
+  calcRecentChanges,
   calcTokensReceived,
   calcUsdcReceived,
+  DEFAULT_NEW_DTR_LIQUIDITY_USDC,
+  initialLiquidityForAum,
+  MIN_LIQUIDITY_USDC as MIN_LIQUIDITY_FLOOR,
   TICKER_MAX_LENGTH,
 } from "@/lib/calculations";
 
@@ -144,7 +149,11 @@ export const useAppStore = create<AppState>()(
         if (usdcAmount > wallet.usdc)
           return { success: false, message: "Insufficient USDC balance." };
 
-        const { netAmount } = calcTokensReceived(usdcAmount, dtr.tokenPrice);
+        const { netAmount, newPrice } = calcTokensReceived(
+          usdcAmount,
+          dtr.tokenPrice,
+          dtr.liquidityUsdc,
+        );
         const existing = holdings.find((h) => h.dtrId === dtrId);
         const newAvgPrice = calcAvgPurchasePrice(
           existing?.tokenBalance ?? 0,
@@ -165,17 +174,33 @@ export const useAppStore = create<AppState>()(
             )
           : [...holdings, { dtrId, tokenBalance: netAmount, avgPurchasePrice: newAvgPrice }];
 
+        const now = Date.now();
+        const nextPriceHistory = appendPricePoint(dtr.priceHistory, newPrice, now);
+        const { change24h, change7d } = calcRecentChanges(nextPriceHistory, newPrice);
+
         set({
           wallet: { ...wallet, usdc: wallet.usdc - usdcAmount },
           holdings: nextHoldings,
           dtrs: dtrs.map((d) =>
-            d.id === dtrId ? { ...d, holders: d.holders + (existing ? 0 : 1) } : d,
+            d.id === dtrId
+              ? {
+                  ...d,
+                  holders: d.holders + (existing ? 0 : 1),
+                  tokenPrice: newPrice,
+                  // Buys deepen the pool with the USDC that came in, so the curve gets
+                  // sturdier (less slippage-prone) as a DTR attracts more buy volume.
+                  liquidityUsdc: d.liquidityUsdc + usdcAmount,
+                  priceHistory: nextPriceHistory,
+                  change24h,
+                  change7d,
+                }
+              : d,
           ),
         });
 
         return {
           success: true,
-          message: `Bought ${netAmount.toFixed(4)} ${dtr.ticker} for ${usdcAmount.toFixed(2)} USDC.`,
+          message: `Bought ${netAmount.toFixed(4)} ${dtr.ticker} for ${usdcAmount.toFixed(2)} USDC. New price: ${newPrice.toFixed(4)}.`,
         };
       },
 
@@ -191,7 +216,11 @@ export const useAppStore = create<AppState>()(
         if (!existing || tokenAmount > existing.tokenBalance)
           return { success: false, message: "Insufficient DTR Token balance." };
 
-        const { netAmount } = calcUsdcReceived(tokenAmount, dtr.tokenPrice);
+        const { netAmount, newPrice } = calcUsdcReceived(
+          tokenAmount,
+          dtr.tokenPrice,
+          dtr.liquidityUsdc,
+        );
         const remainingBalance = existing.tokenBalance - tokenAmount;
         const closedOut = remainingBalance <= 1e-9;
 
@@ -201,17 +230,34 @@ export const useAppStore = create<AppState>()(
               h.dtrId === dtrId ? { ...h, tokenBalance: remainingBalance } : h,
             );
 
+        const now = Date.now();
+        const nextPriceHistory = appendPricePoint(dtr.priceHistory, newPrice, now);
+        const { change24h, change7d } = calcRecentChanges(nextPriceHistory, newPrice);
+        // Sells drain USDC out of the pool, so the curve gets thinner (more
+        // slippage-prone) -- floored so it never fully dries out.
+        const nextLiquidity = Math.max(MIN_LIQUIDITY_FLOOR, dtr.liquidityUsdc - netAmount);
+
         set({
           wallet: { ...wallet, usdc: wallet.usdc + netAmount },
           holdings: nextHoldings,
           dtrs: dtrs.map((d) =>
-            d.id === dtrId ? { ...d, holders: Math.max(0, d.holders - (closedOut ? 1 : 0)) } : d,
+            d.id === dtrId
+              ? {
+                  ...d,
+                  holders: Math.max(0, d.holders - (closedOut ? 1 : 0)),
+                  tokenPrice: newPrice,
+                  liquidityUsdc: nextLiquidity,
+                  priceHistory: nextPriceHistory,
+                  change24h,
+                  change7d,
+                }
+              : d,
           ),
         });
 
         return {
           success: true,
-          message: `Sold ${tokenAmount.toFixed(4)} ${dtr.ticker} for ${netAmount.toFixed(2)} USDC.`,
+          message: `Sold ${tokenAmount.toFixed(4)} ${dtr.ticker} for ${netAmount.toFixed(2)} USDC. New price: ${newPrice.toFixed(4)}.`,
         };
       },
 
@@ -302,6 +348,10 @@ export const useAppStore = create<AppState>()(
           tokenPrice: nav,
           nav,
           aum: input.initialSeedUsdc,
+          liquidityUsdc: Math.max(
+            DEFAULT_NEW_DTR_LIQUIDITY_USDC,
+            initialLiquidityForAum(input.initialSeedUsdc),
+          ),
           change24h: 0,
           change7d: 0,
           holders: 1,

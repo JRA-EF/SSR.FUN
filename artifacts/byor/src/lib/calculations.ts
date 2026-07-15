@@ -1,10 +1,22 @@
 // Reusable trading/portfolio math for the SSR.FUN simulation.
 // Kept pure and deterministic so the store stays a thin wrapper around these.
 
-import type { DTR, DTRAsset, Holding, TradeQuote } from "./types";
+import type { DTR, DTRAsset, Holding, PricePoint, PriceRange, TradeQuote } from "./types";
 
 /** Fixed SSR.FUN-routed secondary-market fee, applied on both buy and sell. */
 export const TRADING_FEE_RATE = 0.001; // 10 basis points
+
+/** Share of AUM that backs the secondary-market trading curve (deeper AUM = deeper liquidity = less slippage). */
+export const LIQUIDITY_TO_AUM_RATIO = 0.06;
+/** Floor so thin/new DTRs still have a tradeable, not-infinitely-volatile curve. */
+export const MIN_LIQUIDITY_USDC = 5_000;
+/** Starting liquidity depth granted to a freshly deployed (user-created) DTR. */
+export const DEFAULT_NEW_DTR_LIQUIDITY_USDC = 25_000;
+
+/** Derives a DTR's curve liquidity depth from its AUM. */
+export function initialLiquidityForAum(aum: number): number {
+  return Math.max(aum * LIQUIDITY_TO_AUM_RATIO, MIN_LIQUIDITY_USDC);
+}
 
 /** Default fee floors offered when creating a new DTR. */
 export const DEFAULT_MINT_FEE_BPS = 50; // 0.50%
@@ -21,37 +33,90 @@ export const SSR_PRICE_USDC = 0.42;
 export const SOL_PRICE_USDC = 178.5;
 
 /**
- * Buying: user spends `usdcAmount` and receives DTR Tokens at `tokenPrice`.
+ * Buying: user spends `usdcAmount` against a constant-product (x*y=k) curve
+ * seeded from the DTR's current price and liquidity depth. This makes buys
+ * push the price up -- more so for larger trades against thinner liquidity --
+ * instead of filling at a flat, unmoving price.
  * Fee is taken out of the tokens received.
  */
 export function calcTokensReceived(
   usdcAmount: number,
   tokenPrice: number,
+  liquidityUsdc: number,
 ): TradeQuote {
-  if (usdcAmount <= 0 || tokenPrice <= 0) {
-    return { grossAmount: 0, fee: 0, netAmount: 0 };
+  if (usdcAmount <= 0 || tokenPrice <= 0 || liquidityUsdc <= 0) {
+    return { grossAmount: 0, fee: 0, netAmount: 0, newPrice: tokenPrice, priceImpactPct: 0 };
   }
-  const grossAmount = usdcAmount / tokenPrice;
+  const tokenReserve = liquidityUsdc / tokenPrice;
+  const k = liquidityUsdc * tokenReserve;
+  const newUsdcReserve = liquidityUsdc + usdcAmount;
+  const newTokenReserve = k / newUsdcReserve;
+  const grossAmount = tokenReserve - newTokenReserve;
   const fee = grossAmount * TRADING_FEE_RATE;
   const netAmount = grossAmount - fee;
-  return { grossAmount, fee, netAmount };
+  const newPrice = newUsdcReserve / newTokenReserve;
+  const priceImpactPct = ((newPrice - tokenPrice) / tokenPrice) * 100;
+  return { grossAmount, fee, netAmount, newPrice, priceImpactPct };
 }
 
 /**
- * Selling: user sells `tokenAmount` DTR Tokens at `tokenPrice` and receives USDC.
+ * Selling: user sells `tokenAmount` DTR Tokens against the same constant-product
+ * curve, pushing the price down -- more so for larger trades against thinner liquidity.
  * Fee is taken out of the USDC received.
  */
 export function calcUsdcReceived(
   tokenAmount: number,
   tokenPrice: number,
+  liquidityUsdc: number,
 ): TradeQuote {
-  if (tokenAmount <= 0 || tokenPrice <= 0) {
-    return { grossAmount: 0, fee: 0, netAmount: 0 };
+  if (tokenAmount <= 0 || tokenPrice <= 0 || liquidityUsdc <= 0) {
+    return { grossAmount: 0, fee: 0, netAmount: 0, newPrice: tokenPrice, priceImpactPct: 0 };
   }
-  const grossAmount = tokenAmount * tokenPrice;
+  const tokenReserve = liquidityUsdc / tokenPrice;
+  const k = liquidityUsdc * tokenReserve;
+  const newTokenReserve = tokenReserve + tokenAmount;
+  const newUsdcReserve = k / newTokenReserve;
+  const grossAmount = liquidityUsdc - newUsdcReserve;
   const fee = grossAmount * TRADING_FEE_RATE;
   const netAmount = grossAmount - fee;
-  return { grossAmount, fee, netAmount };
+  const newPrice = newUsdcReserve / newTokenReserve;
+  const priceImpactPct = ((newPrice - tokenPrice) / tokenPrice) * 100;
+  return { grossAmount, fee, netAmount, newPrice, priceImpactPct };
+}
+
+/**
+ * Appends a fresh price point (now, newPrice) onto every range bucket of a
+ * DTR's price history so charts reflect trades immediately, trimming each
+ * bucket back to a sane max length so history doesn't grow unbounded.
+ */
+export function appendPricePoint(
+  priceHistory: Record<PriceRange, PricePoint[]>,
+  newPrice: number,
+  now: number,
+): Record<PriceRange, PricePoint[]> {
+  const MAX_POINTS = 400;
+  const point: PricePoint = { t: now, price: newPrice };
+  const ranges: PriceRange[] = ["24H", "7D", "30D", "All"];
+  const next = {} as Record<PriceRange, PricePoint[]>;
+  for (const range of ranges) {
+    const series = [...priceHistory[range], point];
+    next[range] = series.length > MAX_POINTS ? series.slice(series.length - MAX_POINTS) : series;
+  }
+  return next;
+}
+
+/** 24h/7d percent change derived from the earliest point still inside each history window vs. the latest price. */
+export function calcRecentChanges(
+  priceHistory: Record<PriceRange, PricePoint[]>,
+  currentPrice: number,
+): { change24h: number; change7d: number } {
+  const change = (series: PricePoint[]): number => {
+    if (series.length === 0) return 0;
+    const base = series[0].price;
+    if (base <= 0) return 0;
+    return ((currentPrice - base) / base) * 100;
+  };
+  return { change24h: change(priceHistory["24H"]), change7d: change(priceHistory["7D"]) };
 }
 
 /** Volume-weighted average purchase price after adding a new lot. */
