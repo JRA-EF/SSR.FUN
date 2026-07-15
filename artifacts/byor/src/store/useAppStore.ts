@@ -445,6 +445,24 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "ssrfun-simulation",
+      version: 1,
+      // Backfill fields added after a user's simulation state was already
+      // persisted to localStorage -- e.g. DTRs created before the logo-art
+      // pool or the AMM liquidity economy existed. Without this, "historic"
+      // self-created DTRs would keep showing letter-initial avatars and
+      // NaN pricing forever, while freshly-created DTRs look fine.
+      migrate: (persisted) => {
+        const state = persisted as { dtrs?: DTR[] };
+        if (state?.dtrs) {
+          state.dtrs = state.dtrs.map((d) => ({
+            ...d,
+            logoSeed: d.logoSeed ?? d.id,
+            logoUrl: d.logoUrl ?? pickLogoForId(d.id),
+            liquidityUsdc: d.liquidityUsdc ?? initialLiquidityForAum(d.aum ?? 0),
+          }));
+        }
+        return state as AppState;
+      },
     },
   ),
 );
