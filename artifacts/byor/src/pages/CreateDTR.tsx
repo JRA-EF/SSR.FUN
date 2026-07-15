@@ -11,7 +11,7 @@ import { Slider } from "@/components/ui/slider";
 import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Info, Rocket } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatUsdc } from "@/lib/calculations";
+import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
 import { type CreateDTRAssetInput } from "@/lib/types";
 
 const ALL_ASSETS = [
@@ -182,9 +182,11 @@ export function CreateDTR() {
                     id="ticker" 
                     placeholder="e.g. BLUE" 
                     className="uppercase"
+                    maxLength={TICKER_MAX_LENGTH}
                     value={ticker} 
-                    onChange={(e) => setTicker(e.target.value.toUpperCase())} 
+                    onChange={(e) => setTicker(e.target.value.toUpperCase().slice(0, TICKER_MAX_LENGTH))} 
                   />
+                  <p className="text-xs text-muted-foreground">Up to {TICKER_MAX_LENGTH} characters, like a normal ticker symbol.</p>
                 </div>
               </div>
               

@@ -20,6 +20,7 @@ import {
   calcAvgPurchasePrice,
   calcTokensReceived,
   calcUsdcReceived,
+  TICKER_MAX_LENGTH,
 } from "@/lib/calculations";
 
 const STARTING_BALANCES = {
@@ -236,6 +237,8 @@ export const useAppStore = create<AppState>()(
           return { success: false, message: "Connect a wallet to deploy a DTR." };
         if (!input.name.trim() || !input.ticker.trim())
           return { success: false, message: "Name and ticker are required." };
+        if (input.ticker.trim().length > TICKER_MAX_LENGTH)
+          return { success: false, message: `Ticker must be ${TICKER_MAX_LENGTH} characters or fewer.` };
 
         const id = slugify(input.ticker) || slugify(input.name);
         if (!id) return { success: false, message: "Enter a valid ticker." };

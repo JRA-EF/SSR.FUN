@@ -10,6 +10,9 @@ export const TRADING_FEE_RATE = 0.001; // 10 basis points
 export const DEFAULT_MINT_FEE_BPS = 50; // 0.50%
 export const DEFAULT_TVL_FEE_BPS = 100; // 1.00% annualized
 export const DEFAULT_MANAGER_TAX_BPS = 0;
+
+/** Longest ticker in the seeded catalog (SSRRES) -- caps user-created tickers to a normal, real-world length. */
+export const TICKER_MAX_LENGTH = 6;
 /** Discount applied when Mint Fee is settled in SSR instead of USDC. */
 export const SSR_SETTLEMENT_DISCOUNT = 0.25; // 25%
 
