@@ -53,8 +53,8 @@ export function Navbar() {
       <div className="container mx-auto flex h-16 items-center justify-between gap-3 px-4 md:px-6">
         <div className="flex items-center gap-3 lg:gap-4 min-w-0">
           <Link href="/" className="flex items-center gap-2 shrink-0">
-            <img src={ssrLogo} alt="SSR.FUN" className="h-8 w-8 rounded-full object-cover" />
-            <span className="font-display font-bold text-xl tracking-tighter text-foreground">
+            <img src={ssrLogo} alt="SSR.FUN" className="h-8 w-8 rounded-full object-cover self-center" />
+            <span className="font-display font-bold text-xl tracking-tighter text-foreground leading-none self-center">
               SSR<span className="text-primary">.FUN</span>
             </span>
           </Link>
