@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Search, Wallet, ChevronDown, LogOut, RefreshCw, PlusCircle, LayoutDashboard, Wallet as WalletIcon, Ghost, Flame, Backpack, User, Sun, Moon } from "lucide-react";
-import ssrLogo from "@/assets/ssr-logo.jpg";
+import ssrLogo from "@/assets/ssr-logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -53,7 +53,7 @@ export function Navbar() {
       <div className="container mx-auto flex h-16 items-center justify-between gap-3 px-4 md:px-6">
         <div className="flex items-center gap-3 lg:gap-4 min-w-0">
           <Link href="/" className="inline-flex items-center gap-2 shrink-0">
-            <img src={ssrLogo} alt="SSR.FUN" className="block h-8 w-8 rounded-full object-cover" style={{verticalAlign: 'middle'}} />
+            <img src={ssrLogo} alt="SSR.FUN" className="block h-8 w-8 object-contain" style={{verticalAlign: 'middle'}} />
             <span className="font-display font-bold text-xl tracking-tighter text-foreground" style={{lineHeight: '2rem', display: 'inline-block', verticalAlign: 'middle'}}>
               SSR<span className="text-primary">.FUN</span>
             </span>
