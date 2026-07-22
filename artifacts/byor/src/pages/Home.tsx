@@ -179,144 +179,141 @@ function FeaturedReserveCard({ dtr }: { dtr: any }) {
   );
 }
 
-// ─── Hero Animation: connected floating nodes + isometric platform ─────────────
+// ─── Hero Animation: isometric platform scene ─────────────────────────────────
 
 function HeroAnimation() {
-  const offsetRef = useRef(0);
-  const targetRef = useRef(0);
-  const [offsetState, setOffsetState] = useState(0);
-  const isDraggingRef = useRef(false);
-  const dragStartRef = useRef({ clientX: 0, baseOffset: 0 });
+  const tiltRef = useRef({ rx: 0, ry: 0 });
+  const targetRef = useRef({ rx: 0, ry: 0 });
+  const [tilt, setTilt] = useState({ rx: 0, ry: 0 });
   const rafRef = useRef<number | undefined>(undefined);
 
-  const MAX_DRAG = 24;
-
-  // Spring loop
   useEffect(() => {
     const tick = () => {
-      offsetRef.current += (targetRef.current - offsetRef.current) * 0.09;
-      setOffsetState(offsetRef.current);
+      tiltRef.current.rx += (targetRef.current.rx - tiltRef.current.rx) * 0.07;
+      tiltRef.current.ry += (targetRef.current.ry - tiltRef.current.ry) * 0.07;
+      setTilt({ rx: tiltRef.current.rx, ry: tiltRef.current.ry });
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+    return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); };
   }, []);
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    isDraggingRef.current = true;
-    dragStartRef.current = { clientX: e.clientX, baseOffset: offsetRef.current };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const nx = (e.clientX - rect.left) / rect.width - 0.5;
+    const ny = (e.clientY - rect.top) / rect.height - 0.5;
+    targetRef.current = { rx: ny * 12, ry: -nx * 12 };
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDraggingRef.current) return;
-    const dx = e.clientX - dragStartRef.current.clientX;
-    targetRef.current = Math.max(-MAX_DRAG, Math.min(MAX_DRAG, dragStartRef.current.baseOffset + dx));
-  };
+  // ── Isometric projection ──────────────────────────────────────────────────
+  const W = 540, H = 460;
+  const TW = 44, TH = 20, TZ = 40;
+  const ox = W * 0.50, oy = H * 0.60;
 
-  const release = () => {
-    isDraggingRef.current = false;
-    targetRef.current = 0;
-  };
-
-  // Nodes: x/y as % of container, depth controls how much they shift
-  const nodes = [
-    { id: "a", x: 47, y: 10, size: 70, depth: 0.22 },
-    { id: "b", x: 22, y: 28, size: 56, depth: 0.40 },
-    { id: "c", x: 72, y: 27, size: 56, depth: 0.40 },
-    { id: "d", x: 12, y: 53, size: 50, depth: 0.60 },
-    { id: "e", x: 47, y: 50, size: 62, depth: 0.52 },
-    { id: "f", x: 82, y: 52, size: 50, depth: 0.62 },
+  const proj = (x: number, y: number, z: number): [number, number] => [
+    ox + (x - y) * TW,
+    oy + (x + y) * TH - z * TZ,
   ];
 
-  const edges: [number, number][] = [
-    [0, 1], [0, 2],
-    [1, 3], [1, 4],
-    [2, 4], [2, 5],
+  const isoPath = (corners: [number, number, number][]) =>
+    corners.map(([x, y, z], i) => {
+      const [sx, sy] = proj(x, y, z);
+      return `${i === 0 ? "M" : "L"}${sx.toFixed(1)},${sy.toFixed(1)}`;
+    }).join("") + "Z";
+
+  interface Blk { gx: number; gy: number; gz: number; w: number; d: number; h: number }
+
+  const faces = ({ gx, gy, gz, w, d, h }: Blk) => ({
+    left:  isoPath([[gx,   gy, gz+h],[gx+w, gy, gz+h],[gx+w, gy, gz  ],[gx,   gy, gz  ]]),
+    right: isoPath([[gx+w, gy, gz+h],[gx+w, gy+d, gz+h],[gx+w, gy+d, gz],[gx+w, gy, gz]]),
+    top:   isoPath([[gx,   gy, gz+h],[gx+w, gy, gz+h],[gx+w, gy+d, gz+h],[gx, gy+d, gz+h]]),
+  });
+
+  // ── Scene geometry ────────────────────────────────────────────────────────
+  const PW = 4.6, PD = 4.6, PH = 0.7;
+  const platform: Blk = { gx: -PW/2, gy: -PD/2, gz: 0, w: PW, d: PD, h: PH };
+
+  const BW = 1.45, BD = 1.45, BH = 0.62;
+  const half = BW / 2;
+
+  // [cx, cy, gz]  — 9 small platforms arranged above the large one
+  const centers: [number, number, number][] = [
+    [-1.1, -2.9, 2.2],
+    [ 0.5, -3.2, 1.9],
+    [ 1.9, -2.5, 2.6],
+    [-2.5, -0.9, 2.0],
+    [-0.1, -1.7, 3.3],
+    [ 2.0, -0.4, 2.4],
+    [-1.6,  0.5, 2.0],
+    [ 0.5,  0.3, 2.7],
+    [ 2.1,  0.9, 1.8],
   ];
 
-  const platformDepth = 0.9;
-  const platformX = 47;
-  const platformY = 80;
-  const platformEdges = [3, 4, 5];
+  const smalls: (Blk & { cx: number; cy: number })[] = centers.map(([cx, cy, gz]) => ({
+    cx, cy, gz, gx: cx - half, gy: cy - half, w: BW, d: BD, h: BH,
+  }));
 
-  const factor = 0.38;
-  const cx = nodes.map((n) => n.x + n.depth * offsetState * factor);
-  const pcx = platformX + platformDepth * offsetState * factor;
+  // paint back→front
+  const sorted = [...smalls].sort((a, b) => (a.gx + a.gy) - (b.gx + b.gy));
+  const platTopZ = PH;
+
+  // ── Colours ───────────────────────────────────────────────────────────────
+  const P_TOP = "#ede9fe", P_LEFT = "#a78bfa", P_RIGHT = "#7c3aed";
+  const S_TOP = "rgba(255,255,255,0.90)", S_LEFT = "#c4b5fd", S_RIGHT = "#8b5cf6";
 
   return (
     <div
-      className="absolute inset-0 select-none touch-none cursor-grab active:cursor-grabbing overflow-hidden"
-      style={{ background: "radial-gradient(ellipse at 60% 70%, rgba(139,92,246,0.13) 0%, transparent 68%)" }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={release}
-      onPointerLeave={release}
+      className="absolute inset-0 overflow-hidden"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => { targetRef.current = { rx: 0, ry: 0 }; }}
+      style={{ perspective: "1200px" }}
     >
-      {/* Connection lines */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none">
-        {edges.map(([a, b], i) => (
-          <line key={i}
-            x1={`${cx[a]}%`} y1={`${nodes[a].y}%`}
-            x2={`${cx[b]}%`} y2={`${nodes[b].y}%`}
-            stroke="rgba(139,92,246,0.28)" strokeWidth="1"
-          />
-        ))}
-        {platformEdges.map((ni, i) => (
-          <line key={`p${i}`}
-            x1={`${pcx}%`} y1={`${platformY - 11}%`}
-            x2={`${cx[ni]}%`} y2={`${nodes[ni].y}%`}
-            stroke="rgba(139,92,246,0.20)" strokeWidth="1"
-          />
-        ))}
-      </svg>
-
-      {/* Floating square nodes */}
-      {nodes.map((node, i) => (
-        <div key={node.id}
-          className="absolute rounded-2xl border border-white/15"
-          style={{
-            left: `${cx[i]}%`,
-            top: `${node.y}%`,
-            width: node.size,
-            height: node.size,
-            transform: "translate(-50%, -50%)",
-            background: "rgba(255,255,255,0.045)",
-            backdropFilter: "blur(10px)",
-            boxShadow: "0 4px 24px rgba(139,92,246,0.14), inset 0 1px 0 rgba(255,255,255,0.10)",
-          }}
-        />
-      ))}
-
-      {/* Isometric platform */}
       <div
-        className="absolute"
-        style={{
-          left: `${pcx}%`,
-          top: `${platformY}%`,
-          transform: "translate(-50%, -50%)",
-          perspective: 1000,
-          perspectiveOrigin: "50% 0%",
-        }}
+        className="w-full h-full flex items-center justify-center"
+        style={{ transform: `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg)`, willChange: "transform" }}
       >
-        <div
-          className="rounded-[22px]"
-          style={{
-            width: 210,
-            height: 210,
-            background: "linear-gradient(135deg, rgba(139,92,246,0.55) 0%, rgba(99,102,241,0.42) 55%, rgba(67,56,202,0.32) 100%)",
-            border: "1px solid rgba(139,92,246,0.55)",
-            boxShadow: "0 28px 72px rgba(139,92,246,0.38), 0 6px 0 rgba(99,102,241,0.55), inset 0 1px 0 rgba(255,255,255,0.18)",
-            transform: "rotateX(54deg) rotateZ(-28deg)",
-            transformStyle: "preserve-3d",
-          }}
-        />
-      </div>
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
+          style={{ overflow: "visible", maxWidth: "100%", height: "auto" }}>
+          <defs>
+            <radialGradient id="isoGlow" cx="50%" cy="60%" r="50%">
+              <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.55" />
+              <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
+            </radialGradient>
+          </defs>
 
-      {/* Subtle drag hint */}
-      <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/35 font-mono pointer-events-none">
-        ← drag →
-      </p>
+          {/* Purple glow beneath platform */}
+          <ellipse cx={ox} cy={oy + 28} rx={TW * PW * 0.78} ry={TH * PD * 1.55} fill="url(#isoGlow)" />
+
+          {/* Large platform */}
+          {(() => { const { left, right, top } = faces(platform); return (
+            <g>
+              <path d={left}  fill={P_LEFT} />
+              <path d={right} fill={P_RIGHT} />
+              <path d={top}   fill={P_TOP} />
+            </g>
+          ); })()}
+
+          {/* Dotted vertical connectors */}
+          {smalls.map((b, i) => {
+            const [sx, ty] = proj(b.cx, b.cy, b.gz);
+            const [,  by] = proj(b.cx, b.cy, platTopZ + 0.05);
+            return <line key={i} x1={sx} y1={by} x2={sx} y2={ty}
+              stroke="rgba(139,92,246,0.38)" strokeWidth="1" strokeDasharray="3 4" />;
+          })}
+
+          {/* Small floating platforms */}
+          {sorted.map((b, i) => {
+            const { left, right, top } = faces(b);
+            return (
+              <g key={i}>
+                <path d={left}  fill={S_LEFT} />
+                <path d={right} fill={S_RIGHT} />
+                <path d={top}   fill={S_TOP} />
+              </g>
+            );
+          })}
+        </svg>
+      </div>
     </div>
   );
 }
