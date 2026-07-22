@@ -147,7 +147,7 @@ export const useAppStore = create<AppState>()(
       buyDTRToken: (dtrId, usdcAmount) => {
         const { wallet, holdings, dtrs } = get();
         const dtr = dtrs.find((d) => d.id === dtrId);
-        if (!dtr) return { success: false, message: "DTR not found." };
+        if (!dtr) return { success: false, message: "Reserve not found." };
         if (!wallet.connected)
           return { success: false, message: "Connect a wallet first." };
         if (usdcAmount <= 0)
@@ -215,13 +215,13 @@ export const useAppStore = create<AppState>()(
         const { wallet, holdings, dtrs } = get();
         const dtr = dtrs.find((d) => d.id === dtrId);
         const existing = holdings.find((h) => h.dtrId === dtrId);
-        if (!dtr) return { success: false, message: "DTR not found." };
+        if (!dtr) return { success: false, message: "Reserve not found." };
         if (!wallet.connected)
           return { success: false, message: "Connect a wallet first." };
         if (tokenAmount <= 0)
           return { success: false, message: "Enter an amount greater than 0." };
         if (!existing || tokenAmount > existing.tokenBalance)
-          return { success: false, message: "Insufficient DTR Token balance." };
+          return { success: false, message: "Insufficient Reserve Token balance." };
 
         const { netAmount, newPrice } = calcUsdcReceived(
           tokenAmount,
@@ -288,7 +288,7 @@ export const useAppStore = create<AppState>()(
       createDTR: (input) => {
         const { wallet, dtrs } = get();
         if (!wallet.connected || !wallet.address)
-          return { success: false, message: "Connect a wallet to deploy a DTR." };
+          return { success: false, message: "Connect a wallet to deploy a Reserve." };
         if (!input.name.trim() || !input.ticker.trim())
           return { success: false, message: "Name and ticker are required." };
         if (input.ticker.trim().length > TICKER_MAX_LENGTH)
@@ -297,7 +297,7 @@ export const useAppStore = create<AppState>()(
         const id = slugify(input.ticker) || slugify(input.name);
         if (!id) return { success: false, message: "Enter a valid ticker." };
         if (dtrs.some((d) => d.id === id))
-          return { success: false, message: `A DTR with ticker ${input.ticker.toUpperCase()} already exists.` };
+          return { success: false, message: `A Reserve with ticker ${input.ticker.toUpperCase()} already exists.` };
         if (input.composition.length === 0)
           return { success: false, message: "Select at least one asset for the basket." };
 
@@ -307,7 +307,7 @@ export const useAppStore = create<AppState>()(
         if (input.initialSeedUsdc <= 0)
           return { success: false, message: "Enter an initial seed amount." };
         if (input.initialSeedUsdc > wallet.usdc)
-          return { success: false, message: "Insufficient USDC to seed this DTR." };
+          return { success: false, message: "Insufficient USDC to seed this Reserve." };
 
         const feeRecipients = (input.feeRecipients || []).filter((r) => r.address.trim() && r.pct > 0);
         const feeRecipientTotal = feeRecipients.reduce((sum, r) => sum + r.pct, 0);
@@ -384,13 +384,13 @@ export const useAppStore = create<AppState>()(
           ],
         });
 
-        return { success: true, message: `${newDtr.ticker} deployed. You are the root DTR Manager.`, dtrId: id };
+        return { success: true, message: `${newDtr.ticker} deployed. You are the root Reserve Manager.`, dtrId: id };
       },
 
       addDelegate: (dtrId, address, permissions) => {
         const { dtrs, wallet } = get();
         const dtr = dtrs.find((d) => d.id === dtrId);
-        if (!dtr) return { success: false, message: "DTR not found." };
+        if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
           return { success: false, message: "You do not have delegate-management permission." };
         if (!address.trim()) return { success: false, message: "Enter a wallet address." };
@@ -409,7 +409,7 @@ export const useAppStore = create<AppState>()(
       updateDelegatePermissions: (dtrId, address, permissions) => {
         const { dtrs, wallet } = get();
         const dtr = dtrs.find((d) => d.id === dtrId);
-        if (!dtr) return { success: false, message: "DTR not found." };
+        if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
           return { success: false, message: "You do not have delegate-management permission." };
 
@@ -426,7 +426,7 @@ export const useAppStore = create<AppState>()(
       removeDelegate: (dtrId, address) => {
         const { dtrs, wallet } = get();
         const dtr = dtrs.find((d) => d.id === dtrId);
-        if (!dtr) return { success: false, message: "DTR not found." };
+        if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
           return { success: false, message: "You do not have delegate-management permission." };
 
@@ -439,7 +439,7 @@ export const useAppStore = create<AppState>()(
       rebalanceDTR: (dtrId, edits, adjustRemaining) => {
         const { dtrs, wallet } = get();
         const dtr = dtrs.find((d) => d.id === dtrId);
-        if (!dtr) return { success: false, message: "DTR not found." };
+        if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canRebalance(dtr, wallet.address))
           return { success: false, message: "You do not have rebalancing permission." };
         if (Object.keys(edits).length === 0)

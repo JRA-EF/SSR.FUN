@@ -396,7 +396,7 @@ export function Home() {
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-positive" />
                       </span>
                       <span className="font-mono text-sm text-muted-foreground uppercase tracking-wider">
-                        SSR.FUN Live DTR Universe
+                        SSR.FUN Live Reserve Universe
                       </span>
                     </div>
                   </div>
@@ -416,7 +416,7 @@ export function Home() {
           <div className="container mx-auto px-4 md:px-8">
             <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-white/5 py-8">
               <div className="px-6 flex flex-col items-center md:items-start text-center md:text-left">
-                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">Total DTR AUM</p>
+                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">Total Reserve AUM</p>
                 <p className="text-3xl font-mono font-bold text-foreground">{formatUsdc(totalAum, { compact: true })}</p>
               </div>
               <div className="px-6 flex flex-col items-center md:items-start text-center md:text-left">
@@ -424,11 +424,11 @@ export function Home() {
                 <p className="text-3xl font-mono font-bold text-foreground">{formatUsdc(volume24h, { compact: true })}</p>
               </div>
               <div className="px-6 flex flex-col items-center md:items-start text-center md:text-left pt-6 md:pt-0">
-                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">Active DTRs</p>
+                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">Active Reserves</p>
                 <p className="text-3xl font-mono font-bold text-foreground">{dtrs.length}</p>
               </div>
               <div className="px-6 flex flex-col items-center md:items-start text-center md:text-left pt-6 md:pt-0">
-                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">DTR Token Holders</p>
+                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">Reserve Token Holders</p>
                 <p className="text-3xl font-mono font-bold text-foreground">{totalHolders.toLocaleString()}</p>
               </div>
             </div>
@@ -554,7 +554,7 @@ export function Home() {
 
       <footer className="border-t border-white/5 py-8 text-center text-sm text-muted-foreground">
         <div className="container mx-auto px-4">
-          <p className="font-mono text-xs tracking-widest uppercase">SSR.FUN • Decentralized Token Reserves</p>
+          <p className="font-mono text-xs tracking-widest uppercase">SSR.FUN • Reserve Asset Protocol</p>
           <p className="mt-4 text-xs opacity-40">This is a simulated environment. Fictional data only.</p>
         </div>
       </footer>

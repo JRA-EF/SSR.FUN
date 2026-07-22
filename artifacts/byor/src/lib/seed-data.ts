@@ -114,7 +114,7 @@ const DTR_SEEDS: DTRSeed[] = [
     name: "Solana Blue Chips",
     ticker: "BLUE",
     description:
-      "A DTR of the most established, highest-liquidity assets in the Solana ecosystem. Built for holders who want broad exposure without picking individual winners.",
+      "A reserve of the most established, highest-liquidity assets in the Solana ecosystem. Built for holders who want broad exposure without picking individual winners.",
     category: "Blue Chip",
     nav: 18.42,
     premiumPct: 1.8,

@@ -68,7 +68,7 @@ export function CreateDTR() {
           <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-display font-bold">Connect Wallet to Deploy</h1>
           <p className="text-muted-foreground">
-            You need to connect a wallet to deploy and manage a Decentralized Token Reserve.
+            You need to connect a wallet to deploy and manage a Reserve.
           </p>
           <div className="p-4 bg-muted/50 rounded-lg border border-border">
             <p className="text-sm font-medium">Use the "Connect Wallet" button in the navigation bar to proceed.</p>
@@ -166,7 +166,7 @@ export function CreateDTR() {
     <div className="container max-w-4xl mx-auto px-4 py-12">
       <div className="mb-8">
         <h1 className="text-4xl font-display font-bold mb-2">Deploy a Reserve</h1>
-        <p className="text-muted-foreground">Create a new Decentralized Token Reserve (DTR) on SSR.FUN.</p>
+        <p className="text-muted-foreground">Create a new Reserve on SSR.FUN.</p>
       </div>
 
       <div className="flex justify-between mb-8 relative">
@@ -550,7 +550,7 @@ export function CreateDTR() {
 
               <div className="space-y-4">
                 <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Additional Managers</h3>
-                <p className="text-xs text-muted-foreground">Add other wallets as DTR Managers. They'll be able to rebalance, manage fees, and pause the reserve, but won't be able to manage other delegates -- only the root Manager (you) can do that.</p>
+                <p className="text-xs text-muted-foreground">Add other wallets as Reserve Managers. They'll be able to rebalance, manage fees, and pause the reserve, but won't be able to manage other delegates — only the root Manager (you) can do that.</p>
 
                 {additionalManagers.length > 0 && (
                   <div className="space-y-2">

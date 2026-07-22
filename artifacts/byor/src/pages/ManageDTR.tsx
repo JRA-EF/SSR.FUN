@@ -237,7 +237,7 @@ export function ManageDTR() {
                     <p className="font-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.managerAddress}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-muted-foreground mb-1">DTR Contract</p>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Contract</p>
                     <p className="font-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.dtrAddress}</p>
                   </div>
                 </CardContent>

@@ -16,7 +16,7 @@ export function Earn() {
       <div className="mb-12 text-center">
         <h1 className="text-4xl md:text-5xl font-display font-bold mb-4">Earn on SSR.FUN</h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Deploy reserves, attract liquidity, and earn protocol fees. The Decentralized Token Reserve protocol aligns incentives between creators and holders.
+          Deploy reserves, attract liquidity, and earn protocol fees. The Reserve Asset Protocol aligns incentives between creators and holders.
         </p>
       </div>
 
@@ -28,7 +28,7 @@ export function Earn() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-mono font-bold text-foreground">{formatUsdc(totalAum, { compact: true })}</div>
-            <p className="text-sm text-muted-foreground mt-1">Across all active DTRs</p>
+            <p className="text-sm text-muted-foreground mt-1">Across all active Reserves</p>
           </CardContent>
         </Card>
 
@@ -65,7 +65,7 @@ export function Earn() {
           <div className="space-y-4">
             <h3 className="text-xl font-display font-bold">1. Mint Fees</h3>
             <p className="text-muted-foreground leading-relaxed">
-              When users deposit USDC to mint new DTR tokens, a one-time mint fee is charged. The Manager configures this fee (default 0.50%), generating immediate upfront revenue for successful distribution.
+              When users deposit USDC to mint new Reserve tokens, a one-time mint fee is charged. The Manager configures this fee (default 0.50%), generating immediate upfront revenue for successful distribution.
             </p>
           </div>
           <div className="space-y-4">

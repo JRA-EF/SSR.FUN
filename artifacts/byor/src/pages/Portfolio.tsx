@@ -21,7 +21,7 @@ export function Portfolio() {
         </div>
         <h1 className="text-3xl font-display font-bold mb-4">Wallet Not Connected</h1>
         <p className="text-muted-foreground text-center max-w-md mb-8">
-          Connect a wallet to view your SSR.FUN portfolio, simulated balances, and DTR Token holdings.
+          Connect a wallet to view your SSR.FUN portfolio, simulated balances, and Reserve Token holdings.
         </p>
         {/* We can't trigger the modal directly from here without a global state for the modal, 
             so we'll just encourage them to use the nav button */}
@@ -60,7 +60,7 @@ export function Portfolio() {
                 <p className="font-mono text-lg">{formatUsdc(totalWalletValue)}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">DTR Holdings</p>
+                <p className="text-xs text-muted-foreground mb-1">Reserve Holdings</p>
                 <p className="font-mono text-lg">{formatUsdc(totalDtrValue)}</p>
               </div>
             </div>
@@ -109,7 +109,7 @@ export function Portfolio() {
       </div>
 
       <div className="space-y-6">
-        <h2 className="text-2xl font-display font-bold">DTR Holdings</h2>
+        <h2 className="text-2xl font-display font-bold">Reserve Holdings</h2>
         
         {holdings.length === 0 ? (
           <Card className="border-dashed border-border/60 bg-transparent">
@@ -119,7 +119,7 @@ export function Portfolio() {
               </div>
               <h3 className="text-xl font-semibold mb-2">No Reserves Yet</h3>
               <p className="text-muted-foreground max-w-md mb-6">
-                Your portfolio is empty. Explore available DTRs and start building your position.
+                Your portfolio is empty. Explore available Reserves and start building your position.
               </p>
               <Button asChild>
                 <Link href="/">Explore Reserves</Link>

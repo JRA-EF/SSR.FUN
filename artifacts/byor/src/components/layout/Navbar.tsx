@@ -64,8 +64,8 @@ export function Navbar() {
           </Badge>
 
           <nav className="hidden lg:flex items-center gap-4 text-sm font-medium text-muted-foreground whitespace-nowrap">
-            <a href="/#directory" className="hover:text-primary transition-colors cursor-pointer">Discover DTRs</a>
-            <Link href="/create" className="hover:text-primary transition-colors">Create a DTR</Link>
+            <a href="/#directory" className="hover:text-primary transition-colors cursor-pointer">Discover Reserves</a>
+            <Link href="/create" className="hover:text-primary transition-colors">Create a Reserve</Link>
             <Link href="/portfolio" className="hover:text-primary transition-colors">Portfolio</Link>
             <Link href="/earn" className="hover:text-primary transition-colors">Earn</Link>
             <Link href="/how-it-works" className="hover:text-primary transition-colors">How It Works</Link>
@@ -78,7 +78,7 @@ export function Navbar() {
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 type="search"
-                placeholder="Search DTRs..."
+                placeholder="Search Reserves..."
                 className="w-full bg-muted/50 pl-9 border-border focus-visible:ring-primary h-9"
                 value={searchQuery}
                 onChange={(e) => {
@@ -244,7 +244,7 @@ export function Navbar() {
       
       {/* Mobile nav links */}
       <div className="lg:hidden border-t border-border/40 bg-muted/20 px-4 py-2 flex items-center gap-4 text-sm font-medium overflow-x-auto">
-        <a href="/#directory" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Discover DTRs</a>
+        <a href="/#directory" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Discover Reserves</a>
         <Link href="/create" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Create</Link>
         <Link href="/portfolio" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Portfolio</Link>
         <Link href="/earn" className="hover:text-primary transition-colors py-1 whitespace-nowrap">Earn</Link>

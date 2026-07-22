@@ -59,7 +59,7 @@ export function DTRDetail() {
     return (
       <div className="container mx-auto px-4 py-24 text-center">
         <h1 className="text-3xl font-display font-bold mb-4">Reserve Not Found</h1>
-        <p className="text-muted-foreground mb-8">The requested DTR does not exist or has been removed.</p>
+        <p className="text-muted-foreground mb-8">The requested Reserve does not exist or has been removed.</p>
         <Button asChild>
           <Link href="/">Return Home</Link>
         </Button>
@@ -486,7 +486,7 @@ export function DTRDetail() {
                             Price Impact
                             <Tooltip>
                               <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>Buys push this DTR's price up against its liquidity depth -- larger orders move it more.</TooltipContent>
+                              <TooltipContent>Buys push this Reserve's price up against its liquidity depth — larger orders move it more.</TooltipContent>
                             </Tooltip>
                           </span>
                           <span className="font-mono text-positive">+{buyQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(buyQuote.newPrice)}</span>
@@ -579,7 +579,7 @@ export function DTRDetail() {
                             Price Impact
                             <Tooltip>
                               <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>Sells push this DTR's price down against its liquidity depth -- larger orders move it more.</TooltipContent>
+                              <TooltipContent>Sells push this Reserve's price down against its liquidity depth — larger orders move it more.</TooltipContent>
                             </Tooltip>
                           </span>
                           <span className="font-mono text-destructive">{sellQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(sellQuote.newPrice)}</span>
