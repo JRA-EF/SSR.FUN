@@ -358,9 +358,9 @@ export function Home() {
 
               {/* Left 42% */}
               <div className="w-full lg:w-[42%] flex flex-col items-start text-left">
-                <Badge variant="outline" className="mb-6 border-white/10 text-muted-foreground bg-white/5 font-mono uppercase tracking-wider text-xs py-1">
-                  Decentralized Token Reserve Protocol
-                </Badge>
+                <p className="mb-6 font-mono text-xs tracking-widest uppercase text-muted-foreground">
+                  Tokenized Reserve Protocol
+                </p>
 
                 <h1 className="font-display text-5xl sm:text-6xl lg:text-6xl xl:text-7xl font-bold tracking-tight mb-6 text-foreground leading-[1.1]">
                   One token.<br />
@@ -380,31 +380,14 @@ export function Home() {
                   </Button>
                   <Button asChild variant="outline" size="lg"
                     className="w-full sm:w-auto rounded-full px-8 h-12 border-white/10 hover:bg-white/5">
-                    <a href="#directory">Discover DTRs</a>
+                    <a href="#directory">Discover Reserves</a>
                   </Button>
                 </div>
               </div>
 
-              {/* Right 58% — new animation */}
-              <div className="w-full lg:w-[58%] h-[500px] lg:h-[600px] relative">
-                <div className="absolute inset-0 bg-card rounded-[2rem] border border-white/5 shadow-2xl overflow-hidden flex flex-col">
-                  {/* Panel header */}
-                  <div className="p-6 border-b border-white/5 flex justify-between items-center bg-black/20 shrink-0">
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-positive opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-positive" />
-                      </span>
-                      <span className="font-mono text-sm text-muted-foreground uppercase tracking-wider">
-                        SSR.FUN Live Reserve Universe
-                      </span>
-                    </div>
-                  </div>
-                  {/* Animation canvas */}
-                  <div className="flex-1 relative">
-                    <HeroAnimation />
-                  </div>
-                </div>
+              {/* Right 58% — floating animation, no card wrapper */}
+              <div className="w-full lg:w-[58%] h-[380px] lg:h-[480px] relative">
+                <HeroAnimation />
               </div>
 
             </div>
