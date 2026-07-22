@@ -182,16 +182,18 @@ function FeaturedReserveCard({ dtr }: { dtr: any }) {
 // ─── Hero Animation: isometric platform scene ─────────────────────────────────
 
 function HeroAnimation() {
-  const tiltRef = useRef({ rx: 0, ry: 0 });
-  const targetRef = useRef({ rx: 0, ry: 0 });
-  const [tilt, setTilt] = useState({ rx: 0, ry: 0 });
+  const springRef = useRef({ rx: 0, ry: 0, tx: 0, ty: 0 });
+  const targetRef = useRef({ rx: 0, ry: 0, tx: 0, ty: 0 });
+  const [spring, setSpring] = useState({ rx: 0, ry: 0, tx: 0, ty: 0 });
   const rafRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
+    const K = 0.072;
     const tick = () => {
-      tiltRef.current.rx += (targetRef.current.rx - tiltRef.current.rx) * 0.07;
-      tiltRef.current.ry += (targetRef.current.ry - tiltRef.current.ry) * 0.07;
-      setTilt({ rx: tiltRef.current.rx, ry: tiltRef.current.ry });
+      const s = springRef.current, t = targetRef.current;
+      s.rx += (t.rx - s.rx) * K; s.ry += (t.ry - s.ry) * K;
+      s.tx += (t.tx - s.tx) * K; s.ty += (t.ty - s.ty) * K;
+      setSpring({ ...s });
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -202,113 +204,168 @@ function HeroAnimation() {
     const rect = e.currentTarget.getBoundingClientRect();
     const nx = (e.clientX - rect.left) / rect.width - 0.5;
     const ny = (e.clientY - rect.top) / rect.height - 0.5;
-    targetRef.current = { rx: ny * 12, ry: -nx * 12 };
+    targetRef.current = { rx: ny * -11, ry: nx * 11, tx: nx * 24, ty: ny * 12 };
   };
 
-  // ── Isometric projection ──────────────────────────────────────────────────
+  // ── Projection ────────────────────────────────────────────────────────────
   const W = 540, H = 460;
-  const TW = 44, TH = 20, TZ = 40;
-  const ox = W * 0.50, oy = H * 0.60;
+  const TW = 44, TH = 20, TZ = 44;
+  const ox = W * 0.50, oy = H * 0.58;
 
   const proj = (x: number, y: number, z: number): [number, number] => [
     ox + (x - y) * TW,
     oy + (x + y) * TH - z * TZ,
   ];
 
-  const isoPath = (corners: [number, number, number][]) =>
-    corners.map(([x, y, z], i) => {
-      const [sx, sy] = proj(x, y, z);
-      return `${i === 0 ? "M" : "L"}${sx.toFixed(1)},${sy.toFixed(1)}`;
-    }).join("") + "Z";
+  // Rounded-corner quad path — quadratic bezier at each corner
+  function roundedQuad(pts: [number, number][], r: number): string {
+    const n = pts.length;
+    let d = '';
+    for (let i = 0; i < n; i++) {
+      const prev = pts[(i - 1 + n) % n];
+      const cur  = pts[i];
+      const next = pts[(i + 1) % n];
+      const dxP = prev[0] - cur[0], dyP = prev[1] - cur[1];
+      const dxN = next[0] - cur[0], dyN = next[1] - cur[1];
+      const lenP = Math.hypot(dxP, dyP) || 1;
+      const lenN = Math.hypot(dxN, dyN) || 1;
+      const ra = Math.min(r, lenP / 3, lenN / 3);
+      const p1: [number, number] = [cur[0] + dxP / lenP * ra, cur[1] + dyP / lenP * ra];
+      const p2: [number, number] = [cur[0] + dxN / lenN * ra, cur[1] + dyN / lenN * ra];
+      d += i === 0 ? `M${p1[0].toFixed(1)},${p1[1].toFixed(1)}` : ` L${p1[0].toFixed(1)},${p1[1].toFixed(1)}`;
+      d += ` Q${cur[0].toFixed(1)},${cur[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    return d + ' Z';
+  }
 
+  // ── Block geometry ────────────────────────────────────────────────────────
   interface Blk { gx: number; gy: number; gz: number; w: number; d: number; h: number }
 
-  const faces = ({ gx, gy, gz, w, d, h }: Blk) => ({
-    left:  isoPath([[gx,   gy, gz+h],[gx+w, gy, gz+h],[gx+w, gy, gz  ],[gx,   gy, gz  ]]),
-    right: isoPath([[gx+w, gy, gz+h],[gx+w, gy+d, gz+h],[gx+w, gy+d, gz],[gx+w, gy, gz]]),
-    top:   isoPath([[gx,   gy, gz+h],[gx+w, gy, gz+h],[gx+w, gy+d, gz+h],[gx, gy+d, gz+h]]),
-  });
+  function blkFaces(b: Blk, cr: number) {
+    const { gx, gy, gz, w, d, h } = b;
+    const lp: [number,number][] = [proj(gx,gy,gz+h), proj(gx+w,gy,gz+h), proj(gx+w,gy,gz), proj(gx,gy,gz)];
+    const rp: [number,number][] = [proj(gx+w,gy,gz+h), proj(gx+w,gy+d,gz+h), proj(gx+w,gy+d,gz), proj(gx+w,gy,gz)];
+    const tp: [number,number][] = [proj(gx,gy,gz+h), proj(gx+w,gy,gz+h), proj(gx+w,gy+d,gz+h), proj(gx,gy+d,gz+h)];
+    return { left: roundedQuad(lp, cr), right: roundedQuad(rp, cr), top: roundedQuad(tp, cr) };
+  }
 
-  // ── Scene geometry ────────────────────────────────────────────────────────
-  const PW = 4.6, PD = 4.6, PH = 0.7;
+  // ── Scene definition ──────────────────────────────────────────────────────
+  const PW = 4.8, PD = 4.8, PH = 1.25;
   const platform: Blk = { gx: -PW/2, gy: -PD/2, gz: 0, w: PW, d: PD, h: PH };
 
-  const BW = 1.45, BD = 1.45, BH = 0.62;
+  const BW = 1.45, BD = 1.45, BH = 0.95;
   const half = BW / 2;
 
-  // [cx, cy, gz]  — 9 small platforms arranged above the large one
+  // [cx, cy, gz] — 9 small platforms with generous spacing
   const centers: [number, number, number][] = [
-    [-1.1, -2.9, 2.2],
-    [ 0.5, -3.2, 1.9],
-    [ 1.9, -2.5, 2.6],
-    [-2.5, -0.9, 2.0],
-    [-0.1, -1.7, 3.3],
-    [ 2.0, -0.4, 2.4],
-    [-1.6,  0.5, 2.0],
-    [ 0.5,  0.3, 2.7],
-    [ 2.1,  0.9, 1.8],
+    [-1.5, -3.6, 2.1],
+    [ 0.5, -4.0, 1.8],
+    [ 2.6, -3.3, 2.5],
+    [-3.1, -1.4, 2.2],
+    [-0.1, -2.2, 3.5],
+    [ 2.9, -1.0, 2.2],
+    [-2.2,  0.2, 2.0],
+    [ 0.7,  0.0, 2.8],
+    [ 2.8,  0.6, 1.7],
   ];
 
   const smalls: (Blk & { cx: number; cy: number })[] = centers.map(([cx, cy, gz]) => ({
     cx, cy, gz, gx: cx - half, gy: cy - half, w: BW, d: BD, h: BH,
   }));
 
-  // paint back→front
   const sorted = [...smalls].sort((a, b) => (a.gx + a.gy) - (b.gx + b.gy));
   const platTopZ = PH;
-
-  // ── Colours ───────────────────────────────────────────────────────────────
-  const P_TOP = "#ede9fe", P_LEFT = "#a78bfa", P_RIGHT = "#7c3aed";
-  const S_TOP = "rgba(255,255,255,0.90)", S_LEFT = "#c4b5fd", S_RIGHT = "#8b5cf6";
 
   return (
     <div
       className="absolute inset-0 overflow-hidden"
       onMouseMove={handleMouseMove}
-      onMouseLeave={() => { targetRef.current = { rx: 0, ry: 0 }; }}
-      style={{ perspective: "1200px" }}
+      onMouseLeave={() => { targetRef.current = { rx: 0, ry: 0, tx: 0, ty: 0 }; }}
+      style={{ perspective: "1400px", perspectiveOrigin: "50% 45%" }}
     >
+      {/* Entire scene — platform + blocks + glow + connectors — all move as one */}
       <div
         className="w-full h-full flex items-center justify-center"
-        style={{ transform: `rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg)`, willChange: "transform" }}
+        style={{
+          transform: `translateX(${spring.tx}px) translateY(${spring.ty}px) rotateX(${spring.rx}deg) rotateY(${spring.ry}deg)`,
+          willChange: "transform",
+        }}
       >
         <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
           style={{ overflow: "visible", maxWidth: "100%", height: "auto" }}>
           <defs>
-            <radialGradient id="isoGlow" cx="50%" cy="60%" r="50%">
-              <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.55" />
+            <radialGradient id="isoGlow" cx="50%" cy="55%" r="50%">
+              <stop offset="0%"   stopColor="#7c3aed" stopOpacity="0.72" />
+              <stop offset="55%"  stopColor="#8b5cf6" stopOpacity="0.28" />
               <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
             </radialGradient>
+            <linearGradient id="plTop" x1="0.2" y1="0" x2="0.8" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%"   stopColor="#faf8ff" />
+              <stop offset="100%" stopColor="#ddd6fe" />
+            </linearGradient>
+            <linearGradient id="plLeft" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%"   stopColor="#a78bfa" />
+              <stop offset="100%" stopColor="#6d28d9" />
+            </linearGradient>
+            <linearGradient id="plRight" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%"   stopColor="#7c3aed" />
+              <stop offset="100%" stopColor="#4c1d95" />
+            </linearGradient>
+            <linearGradient id="smTop" x1="0.2" y1="0" x2="0.8" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%"   stopColor="#ffffff" />
+              <stop offset="100%" stopColor="#ede9fe" />
+            </linearGradient>
+            <linearGradient id="smLeft" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%"   stopColor="#c4b5fd" />
+              <stop offset="100%" stopColor="#8b5cf6" />
+            </linearGradient>
+            <linearGradient id="smRight" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%"   stopColor="#8b5cf6" />
+              <stop offset="100%" stopColor="#5b21b6" />
+            </linearGradient>
+            <filter id="blkDrop" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="0" dy="6" stdDeviation="9" floodColor="#6d28d9" floodOpacity="0.28" />
+            </filter>
           </defs>
 
-          {/* Purple glow beneath platform */}
-          <ellipse cx={ox} cy={oy + 28} rx={TW * PW * 0.78} ry={TH * PD * 1.55} fill="url(#isoGlow)" />
+          {/* Soft ambient glow beneath platform */}
+          <ellipse cx={ox} cy={oy + 36} rx={TW * PW * 0.9} ry={TH * PD * 1.9} fill="url(#isoGlow)" />
 
-          {/* Large platform */}
-          {(() => { const { left, right, top } = faces(platform); return (
-            <g>
-              <path d={left}  fill={P_LEFT} />
-              <path d={right} fill={P_RIGHT} />
-              <path d={top}   fill={P_TOP} />
-            </g>
-          ); })()}
+          {/* Base platform */}
+          {(() => {
+            const { left, right, top } = blkFaces(platform, 20);
+            return (
+              <g filter="url(#blkDrop)">
+                <path d={left}  fill="url(#plLeft)"  stroke="#5b21b6" strokeWidth="0.7" />
+                <path d={right} fill="url(#plRight)" stroke="#3b0764" strokeWidth="0.7" />
+                <path d={top}   fill="url(#plTop)"   stroke="#c4b5fd" strokeWidth="0.7" />
+              </g>
+            );
+          })()}
 
-          {/* Dotted vertical connectors */}
+          {/* Dotted vertical connectors — very subtle */}
           {smalls.map((b, i) => {
-            const [sx, ty] = proj(b.cx, b.cy, b.gz);
-            const [,  by] = proj(b.cx, b.cy, platTopZ + 0.05);
-            return <line key={i} x1={sx} y1={by} x2={sx} y2={ty}
-              stroke="rgba(139,92,246,0.38)" strokeWidth="1" strokeDasharray="3 4" />;
+            const [sx, blockBottomY] = proj(b.cx, b.cy, b.gz);
+            const [,  platSurfY]     = proj(b.cx, b.cy, platTopZ + 0.04);
+            return (
+              <line key={i}
+                x1={sx} y1={platSurfY}
+                x2={sx} y2={blockBottomY}
+                stroke="rgba(167,139,250,0.22)"
+                strokeWidth="0.75"
+                strokeDasharray="2 5"
+              />
+            );
           })}
 
-          {/* Small floating platforms */}
+          {/* Floating small platforms — identical shape, smaller scale */}
           {sorted.map((b, i) => {
-            const { left, right, top } = faces(b);
+            const { left, right, top } = blkFaces(b, 11);
             return (
-              <g key={i}>
-                <path d={left}  fill={S_LEFT} />
-                <path d={right} fill={S_RIGHT} />
-                <path d={top}   fill={S_TOP} />
+              <g key={i} filter="url(#blkDrop)">
+                <path d={left}  fill="url(#smLeft)"  stroke="#7c3aed" strokeWidth="0.5" />
+                <path d={right} fill="url(#smRight)" stroke="#4c1d95" strokeWidth="0.5" />
+                <path d={top}   fill="url(#smTop)"   stroke="#e9d5ff" strokeWidth="0.5" />
               </g>
             );
           })}
