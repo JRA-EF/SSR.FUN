@@ -179,33 +179,38 @@ function FeaturedReserveCard({ dtr }: { dtr: any }) {
   );
 }
 
-// ─── Hero Animation: interactive isometric reserve platform ───────────────────
+// ─── Hero Animation: isometric floating reserve platform ─────────────────────
 
-// ── Module-level constants (stable, never re-allocated) ──────────────────────
+// ── Module-level geometry constants ──────────────────────────────────────────
 const ISO_W = 620, ISO_H = 500;
 const ISO_TW = 39, ISO_TH = 17, ISO_TZ = 38;
-const ISO_OX = ISO_W * 0.51, ISO_OY = ISO_H * 0.68;
+const ISO_OX = ISO_W * 0.50, ISO_OY = ISO_H * 0.70;
 
-// Base platform
-const PW = 5.4, PD = 4.9, PH = 0.58;
-// Small block
-const BW = 1.05, BD = 1.05, BH = 0.24, HB = BW / 2;
+// Base platform — flat and wide, thick side band
+const PW = 5.6, PD = 5.0, PH = 0.62;
+// Small blocks — very thin, heavily rounded
+const BW = 1.10, BD = 1.10, BH = 0.20, HB = BW / 2;
 
-// [cx, cy, gz, parallaxDepth] — spread wide, none over the base footprint
+// [cx, cy, gz, floatDepth]
+// 8 blocks, spread wide, none over base footprint, matching reference composition
 const BLOCK_CENTERS: readonly [number, number, number, number][] = [
-  [-4.6, -1.6, 2.8, 0.76],   // far-left back
-  [-2.1, -3.8, 3.6, 0.70],   // left back
-  [ 0.4, -4.6, 4.2, 0.74],   // center back
-  [ 2.8, -3.4, 3.1, 0.80],   // right back
-  [ 4.9, -1.5, 2.4, 0.71],   // far-right back
-  [-4.0,  1.2, 2.0, 0.83],   // far-left front
-  [-1.7,  3.3, 1.8, 0.77],   // left front
-  [ 1.1,  3.6, 2.2, 0.90],   // center front
-  [ 3.9,  2.2, 1.6, 0.73],   // right front
+  [-3.6, -1.0, 3.4, 0.79],   // far-left back
+  [ 0.1, -3.6, 4.7, 0.68],   // center back (tallest — longest connector)
+  [ 2.8, -2.1, 3.2, 0.82],   // right back
+  [-2.4,  0.1, 2.6, 0.84],   // medium left
+  [ 0.9, -1.0, 2.9, 1.00],   // center-right (slightly more prominent depth)
+  [-1.1,  1.4, 1.6, 0.76],   // close front-left (short connector)
+  [ 2.5,  0.6, 2.4, 0.88],   // right medium
+  [ 3.9,  1.6, 1.8, 0.73],   // far-right front
 ];
 const N_BLOCKS = BLOCK_CENTERS.length;
 
-// ── Pure geometry helpers (module-level) ──────────────────────────────────────
+// Float animation — each block bobs independently
+const FLOAT_PHASES: readonly number[] = [0.0, 1.30, 2.60, 0.85, 2.05, 3.40, 1.15, 2.80];
+const FLOAT_SPEED  = 0.55;  // rad/s — gentle, premium feel
+const FLOAT_AMP_PX = 6.5;   // screen-pixel amplitude
+
+// ── Pure geometry (module-level) ──────────────────────────────────────────────
 function isoProj(x: number, y: number, z: number): [number, number] {
   return [ISO_OX + (x - y) * ISO_TW, ISO_OY + (x + y) * ISO_TH - z * ISO_TZ];
 }
@@ -218,7 +223,7 @@ function isoRoundedQuad(pts: [number, number][], r: number): string {
     const dxP = prev[0] - cur[0], dyP = prev[1] - cur[1];
     const dxN = next[0] - cur[0], dyN = next[1] - cur[1];
     const lP = Math.hypot(dxP, dyP) || 1, lN = Math.hypot(dxN, dyN) || 1;
-    const ra = Math.min(r, lP / 2.65, lN / 2.65);
+    const ra = Math.min(r, lP / 2.6, lN / 2.6);
     const p1: [number, number] = [cur[0] + dxP / lP * ra, cur[1] + dyP / lP * ra];
     const p2: [number, number] = [cur[0] + dxN / lN * ra, cur[1] + dyN / lN * ra];
     d += i === 0 ? `M${p1[0].toFixed(2)},${p1[1].toFixed(2)}` : ` L${p1[0].toFixed(2)},${p1[1].toFixed(2)}`;
@@ -239,9 +244,9 @@ function isoBlkFaces(b: IsoBlk, cr: number): IsoFaces {
   };
 }
 
-// ── Precomputed scene geometry (module-level, never changes) ──────────────────
+// ── Precomputed stable geometry ───────────────────────────────────────────────
 const PLAT_BLK: IsoBlk = { gx: -PW/2, gy: -PD/2, gz: 0, w: PW, d: PD, h: PH };
-const PLAT_FACES = isoBlkFaces(PLAT_BLK, 24);
+const PLAT_FACES = isoBlkFaces(PLAT_BLK, 28);
 const [PLAT_TCX, PLAT_TCY] = isoProj(0, 0, PH);
 
 interface SmallMeta {
@@ -253,11 +258,11 @@ interface SmallMeta {
 }
 
 const SMALLS: SmallMeta[] = BLOCK_CENTERS.map(([cx, cy, gz, depth], i) => {
-  const [topCx, topCy] = isoProj(cx, cy, gz + BH);
+  const [topCx, topCy]       = isoProj(cx, cy, gz + BH);
   const [connBotX, connBotY] = isoProj(cx, cy, gz);
-  const [connTopX, connTopY] = isoProj(cx, cy, PH + 0.03);
+  const [connTopX, connTopY] = isoProj(cx, cy, PH + 0.04);
   const blk: IsoBlk = { gx: cx - HB, gy: cy - HB, gz, w: BW, d: BD, h: BH };
-  return { origIdx: i, cx, cy, depth, topCx, topCy, connBotX, connBotY, connTopX, connTopY, faces: isoBlkFaces(blk, 8.5) };
+  return { origIdx: i, cx, cy, depth, topCx, topCy, connBotX, connBotY, connTopX, connTopY, faces: isoBlkFaces(blk, 13) };
 });
 
 const SMALLS_SORTED = [...SMALLS].sort((a, b) => (a.cx - a.cy) - (b.cx - b.cy));
@@ -265,77 +270,95 @@ const SMALLS_SORTED = [...SMALLS].sort((a, b) => (a.cx - a.cy) - (b.cx - b.cy));
 // ── Component ─────────────────────────────────────────────────────────────────
 function HeroAnimation() {
   type Vec2 = { x: number; y: number };
-  const zero2 = (): Vec2 => ({ x: 0, y: 0 });
+  const zero2  = (): Vec2 => ({ x: 0, y: 0 });
   const zeroes = (): Vec2[] => Array.from({ length: N_BLOCKS }, zero2);
 
-  // ── Spring mutable refs ─────────────────────────────────────────────────
-  const sceneRef  = useRef<Vec2>(zero2());
-  const sceneTgt  = useRef<Vec2>(zero2());
-  const tiltRef   = useRef({ rx: 0, ry: 0 });
-  const tiltTgt   = useRef({ rx: 0, ry: 0 });
-  const blockRef  = useRef<Vec2[]>(zeroes());
-  const blockTgt  = useRef<Vec2[]>(zeroes());
+  // ── Spring refs ─────────────────────────────────────────────────────────
+  const sceneRef = useRef<Vec2>(zero2());
+  const sceneTgt = useRef<Vec2>(zero2());
+  const tiltRef  = useRef({ rx: 0, ry: 0 });
+  const tiltTgt  = useRef({ rx: 0, ry: 0 });
+  const blockRef = useRef<Vec2[]>(zeroes());
+  const blockTgt = useRef<Vec2[]>(zeroes());
+  const floatRef = useRef<number[]>(Array.from({ length: N_BLOCKS }, () => 0));
 
   // ── Render state ────────────────────────────────────────────────────────
-  const [scenePos,    setScenePos]    = useState<Vec2>(zero2());
-  const [tilt,        setTilt]        = useState({ rx: 0, ry: 0 });
-  const [blockOffsets,setBlockOffsets]= useState<Vec2[]>(zeroes);
-  const [isDragging,  setIsDragging]  = useState(false);
+  const [scenePos,      setScenePos]      = useState<Vec2>(zero2);
+  const [tilt,          setTilt]          = useState({ rx: 0, ry: 0 });
+  const [blockOffsets,  setBlockOffsets]  = useState<Vec2[]>(zeroes);
+  const [floatOffsets,  setFloatOffsets]  = useState<number[]>(() => Array.from({ length: N_BLOCKS }, () => 0));
+  const [isDragging,    setIsDragging]    = useState(false);
 
-  // ── RAF spring loop ─────────────────────────────────────────────────────
+  // ── RAF loop: springs + float ────────────────────────────────────────────
   const rafRef = useRef<number | undefined>(undefined);
   useEffect(() => {
-    const KS = 0.088, KT = 0.076, KB = 0.095;
-    const tick = () => {
+    const KS = 0.088, KT = 0.075, KB = 0.095;
+
+    const tick = (timestamp: number) => {
+      const t = timestamp / 1000; // seconds
+
+      // Scene spring
       const sc = sceneRef.current, st = sceneTgt.current;
       sc.x += (st.x - sc.x) * KS;
       sc.y += (st.y - sc.y) * KS;
 
+      // Tilt spring
       const ti = tiltRef.current, tt = tiltTgt.current;
       ti.rx += (tt.rx - ti.rx) * KT;
       ti.ry += (tt.ry - ti.ry) * KT;
 
+      // Block drag springs
       const bl = blockRef.current, bt = blockTgt.current;
       let bc = false;
       for (let i = 0; i < N_BLOCKS; i++) {
         const dx = bt[i].x - bl[i].x, dy = bt[i].y - bl[i].y;
-        if (Math.abs(dx) > 0.015 || Math.abs(dy) > 0.015) {
+        if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
           bl[i].x += dx * KB; bl[i].y += dy * KB; bc = true;
         }
+      }
+
+      // Float bob — independent sine per block
+      const fl = floatRef.current;
+      let fc = false;
+      for (let i = 0; i < N_BLOCKS; i++) {
+        const next = Math.sin(t * FLOAT_SPEED + FLOAT_PHASES[i]) * FLOAT_AMP_PX;
+        if (Math.abs(next - fl[i]) > 0.02) { fl[i] = next; fc = true; }
       }
 
       setScenePos({ x: sc.x, y: sc.y });
       setTilt({ rx: ti.rx, ry: ti.ry });
       if (bc) setBlockOffsets(bl.map(b => ({ ...b })));
+      if (fc) setFloatOffsets([...fl]);
       rafRef.current = requestAnimationFrame(tick);
     };
+
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); };
   }, []);
 
-  // ── Drag refs ───────────────────────────────────────────────────────────
-  const dragMode  = useRef<'none' | 'scene' | number>('none');
-  const dragStart = useRef({ px: 0, py: 0, ox: 0, oy: 0 });
+  // ── Drag refs ────────────────────────────────────────────────────────────
+  const dragMode     = useRef<'none' | 'scene' | number>('none');
+  const dragStart    = useRef({ px: 0, py: 0, ox: 0, oy: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef       = useRef<SVGSVGElement>(null);
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────
   const getSvgScale = (): number => {
     const r = svgRef.current?.getBoundingClientRect();
     return r && r.width > 0 ? ISO_W / r.width : 1;
   };
 
-  const clientToSvg = (clientX: number, clientY: number): [number, number] => {
+  const clientToSvg = (cx: number, cy: number): [number, number] => {
     const r = svgRef.current!.getBoundingClientRect();
     const s = ISO_W / (r.width || ISO_W);
-    return [(clientX - r.left) * s, (clientY - r.top) * s];
+    return [(cx - r.left) * s, (cy - r.top) * s];
   };
 
   const getBounds = () => {
     const el = containerRef.current;
     if (!el) return { minX: -180, maxX: 180, minY: -110, maxY: 110 };
     const { width, height } = el.getBoundingClientRect();
-    return { minX: -width * 0.27, maxX: width * 0.27, minY: -height * 0.21, maxY: height * 0.21 };
+    return { minX: -width * 0.27, maxX: width * 0.27, minY: -height * 0.22, maxY: height * 0.22 };
   };
 
   const elastic = (val: number, lo: number, hi: number): number => {
@@ -344,22 +367,22 @@ function HeroAnimation() {
     return edge + (val - edge) * 0.22;
   };
 
-  const hitTest = (svgX: number, svgY: number): 'scene' | number | 'none' => {
-    // Front-to-back (reversed sorted order = front blocks first)
+  const hitTest = (sx: number, sy: number): 'scene' | number | 'none' => {
     for (let k = SMALLS_SORTED.length - 1; k >= 0; k--) {
       const b = SMALLS_SORTED[k];
       const off = blockRef.current[b.origIdx];
-      const ex = (svgX - b.topCx - off.x) / 48;
-      const ey = (svgY - b.topCy - off.y) / 25;
+      const fy  = floatRef.current[b.origIdx];
+      const ex  = (sx - b.topCx - off.x) / 50;
+      const ey  = (sy - b.topCy - off.y - fy) / 26;
       if (ex * ex + ey * ey < 1) return b.origIdx;
     }
-    const px = (svgX - PLAT_TCX) / (ISO_TW * PW * 0.76);
-    const py = (svgY - PLAT_TCY) / (ISO_TH * PD * 1.55);
+    const px = (sx - PLAT_TCX) / (ISO_TW * PW * 0.76);
+    const py = (sy - PLAT_TCY) / (ISO_TH * PD * 1.55);
     if (px * px + py * py < 1) return 'scene';
     return 'none';
   };
 
-  // ── Pointer handlers ────────────────────────────────────────────────────
+  // ── Pointer handlers ─────────────────────────────────────────────────────
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!svgRef.current) return;
     const [sx, sy] = clientToSvg(e.clientX, e.clientY);
@@ -373,16 +396,15 @@ function HeroAnimation() {
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (dragMode.current === 'none') {
-      // Hover tilt only
       const el = containerRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      const nx = (e.clientX - r.left) / r.width - 0.5;
-      const ny = (e.clientY - r.top) / r.height - 0.5;
-      tiltTgt.current = { rx: ny * -4.8, ry: nx * 5.5 };
+      tiltTgt.current = {
+        rx: ((e.clientY - r.top) / r.height - 0.5) * -4.5,
+        ry: ((e.clientX - r.left) / r.width - 0.5) * 5.0,
+      };
       return;
     }
-
     const dx = e.clientX - dragStart.current.px;
     const dy = e.clientY - dragStart.current.py;
 
@@ -393,20 +415,18 @@ function HeroAnimation() {
         y: elastic(dragStart.current.oy + dy, b.minY, b.maxY),
       };
       tiltTgt.current = {
-        rx: Math.max(-4.5, Math.min(4.5, -dy * 0.016)),
-        ry: Math.max(-5.5, Math.min(5.5,  dx * 0.016)),
+        rx: Math.max(-4.5, Math.min(4.5, -dy * 0.015)),
+        ry: Math.max(-5.0, Math.min(5.0,  dx * 0.015)),
       };
     } else {
       const idx = dragMode.current as number;
       const s = getSvgScale();
-      const bx = dx * s, by = dy * s;
-      blockTgt.current[idx] = { x: bx, y: by };
-      // Falloff influence to nearby blocks
+      blockTgt.current[idx] = { x: dx * s, y: dy * s };
       for (let i = 0; i < N_BLOCKS; i++) {
         if (i === idx) continue;
         const dist = Math.hypot(SMALLS[i].cx - SMALLS[idx].cx, SMALLS[i].cy - SMALLS[idx].cy);
-        const inf = Math.max(0, 1 - dist / 4.8) * 0.20;
-        blockTgt.current[i] = { x: bx * inf, y: by * inf };
+        const inf  = Math.max(0, 1 - dist / 4.8) * 0.20;
+        blockTgt.current[i] = { x: dx * s * inf, y: dy * s * inf };
       }
     }
   };
@@ -414,17 +434,15 @@ function HeroAnimation() {
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (dragMode.current === 'none') return;
     if (dragMode.current === 'scene') {
-      // Clamp to valid bounds (spring back if over-shot)
       const b = getBounds();
       sceneTgt.current = {
         x: Math.max(b.minX, Math.min(b.maxX, sceneRef.current.x)),
         y: Math.max(b.minY, Math.min(b.maxY, sceneRef.current.y)),
       };
     } else {
-      // Spring all blocks back to formation positions
       for (let i = 0; i < N_BLOCKS; i++) blockTgt.current[i] = { x: 0, y: 0 };
     }
-    tiltTgt.current = { rx: 0, ry: 0 };
+    tiltTgt.current  = { rx: 0, ry: 0 };
     dragMode.current = 'none';
     setIsDragging(false);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
@@ -437,7 +455,7 @@ function HeroAnimation() {
 
   const handleDoubleClick = () => {
     sceneTgt.current = { x: 0, y: 0 };
-    tiltTgt.current = { rx: 0, ry: 0 };
+    tiltTgt.current  = { rx: 0, ry: 0 };
     for (let i = 0; i < N_BLOCKS; i++) blockTgt.current[i] = { x: 0, y: 0 };
     dragMode.current = 'none';
     setIsDragging(false);
@@ -460,7 +478,7 @@ function HeroAnimation() {
         cursor: isDragging ? 'grabbing' : 'default',
         touchAction: 'none',
       }}
-      aria-label="Interactive reserve platform formation"
+      aria-label="Interactive reserve platform"
     >
       <div
         className="flex h-full w-full items-center justify-center"
@@ -482,96 +500,105 @@ function HeroAnimation() {
           <defs>
             {/* Glow */}
             <radialGradient id="rGlow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%"   stopColor="#7c3aed" stopOpacity="0.55"/>
-              <stop offset="45%"  stopColor="#8b5cf6" stopOpacity="0.22"/>
+              <stop offset="0%"   stopColor="#7c3aed" stopOpacity="0.52"/>
+              <stop offset="45%"  stopColor="#8b5cf6" stopOpacity="0.20"/>
               <stop offset="100%" stopColor="#a78bfa" stopOpacity="0"/>
             </radialGradient>
 
-            {/* Platform — both sides opaque purple, same material family */}
-            <linearGradient id="pTop" x1="0" y1="0" x2="1" y2="1">
+            {/* ── Base platform ── white top, rich uniform purple sides ── */}
+            <linearGradient id="pTop" x1="0" y1="0" x2="0.9" y2="1">
               <stop offset="0%"   stopColor="#ffffff"/>
-              <stop offset="100%" stopColor="#ede8ff"/>
+              <stop offset="60%"  stopColor="#faf8ff"/>
+              <stop offset="100%" stopColor="#eae4ff"/>
             </linearGradient>
-            <linearGradient id="pLeft" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%"   stopColor="#b390f7"/>  {/* lighter purple — light-facing */}
-              <stop offset="100%" stopColor="#8b5cf6"/>
+            {/* Left face — lighter purple */}
+            <linearGradient id="pLeft" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#9b78f0"/>
+              <stop offset="100%" stopColor="#7c3aed"/>
             </linearGradient>
-            <linearGradient id="pRight" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%"   stopColor="#7d4ee0"/>  {/* slightly darker — shadow-facing */}
-              <stop offset="100%" stopColor="#5b21b6"/>
+            {/* Right face — same purple family, barely darker */}
+            <linearGradient id="pRight" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#8b5cf6"/>
+              <stop offset="100%" stopColor="#6825d4"/>
             </linearGradient>
 
-            {/* Small blocks — lighter, same purple family */}
-            <linearGradient id="bTop" x1="0" y1="0" x2="1" y2="1">
+            {/* ── Small blocks ── white top, matching purple trim ── */}
+            <linearGradient id="bTop" x1="0" y1="0" x2="0.9" y2="1">
               <stop offset="0%"   stopColor="#ffffff"/>
-              <stop offset="100%" stopColor="#f0eaff"/>
+              <stop offset="100%" stopColor="#f0ecff"/>
             </linearGradient>
-            <linearGradient id="bLeft" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%"   stopColor="#c4b5fd"/>  {/* light lavender */}
-              <stop offset="100%" stopColor="#a07be8"/>
+            {/* Left face */}
+            <linearGradient id="bLeft" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#ab8ef8"/>
+              <stop offset="100%" stopColor="#8b5cf6"/>
             </linearGradient>
-            <linearGradient id="bRight" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%"   stopColor="#9b6ef5"/>  {/* slightly deeper */}
+            {/* Right face — barely distinguishable */}
+            <linearGradient id="bRight" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#9b72f0"/>
               <stop offset="100%" stopColor="#7c3aed"/>
             </linearGradient>
 
             {/* Shadows */}
-            <filter id="pShadow" x="-40%" y="-50%" width="180%" height="220%">
-              <feDropShadow dx="0" dy="8" stdDeviation="11" floodColor="#6d28d9" floodOpacity="0.28"/>
+            <filter id="pShadow" x="-35%" y="-45%" width="170%" height="210%">
+              <feDropShadow dx="0" dy="10" stdDeviation="12" floodColor="#5b21b6" floodOpacity="0.30"/>
             </filter>
-            <filter id="bShadow" x="-60%" y="-80%" width="220%" height="260%">
-              <feDropShadow dx="0" dy="3" stdDeviation="5"  floodColor="#7c3aed" floodOpacity="0.20"/>
+            <filter id="bShadow" x="-55%" y="-75%" width="210%" height="250%">
+              <feDropShadow dx="0" dy="4"  stdDeviation="6"  floodColor="#7c3aed" floodOpacity="0.22"/>
             </filter>
-            <filter id="glowBlur" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur stdDeviation="15"/>
+            <filter id="glowBlur" x="-55%" y="-55%" width="210%" height="210%">
+              <feGaussianBlur stdDeviation="16"/>
             </filter>
           </defs>
 
-          {/* Ambient glow beneath platform */}
+          {/* Ambient glow */}
           <ellipse
-            cx={ISO_OX + 8} cy={ISO_OY + 52} rx={192} ry={88}
+            cx={ISO_OX} cy={ISO_OY + 55} rx={195} ry={90}
             fill="url(#rGlow)" filter="url(#glowBlur)" pointerEvents="none"
           />
 
-          {/* Base platform — drag target */}
+          {/* Base platform */}
           <g filter="url(#pShadow)" style={{ cursor: 'grab' }}>
-            <path d={PLAT_FACES.left}  fill="url(#pLeft)"  stroke="#9e7cf0" strokeWidth="0.7"/>
-            <path d={PLAT_FACES.right} fill="url(#pRight)" stroke="#5b21b6" strokeWidth="0.7"/>
-            <path d={PLAT_FACES.top}   fill="url(#pTop)"   stroke="#c4b5fd" strokeWidth="0.85"/>
+            <path d={PLAT_FACES.left}  fill="url(#pLeft)"  stroke="#8b5cf6" strokeWidth="0.65"/>
+            <path d={PLAT_FACES.right} fill="url(#pRight)" stroke="#6d28d9" strokeWidth="0.65"/>
+            <path d={PLAT_FACES.top}   fill="url(#pTop)"   stroke="#c4b5fd" strokeWidth="0.80"/>
           </g>
 
-          {/* Connectors — anchored at platform surface, stretch to block bottom */}
+          {/* Connectors — anchor fixed at platform, bottom follows block float+drag */}
           {SMALLS.map((b) => {
             const off = blockOffsets[b.origIdx] ?? { x: 0, y: 0 };
+            const fy  = floatOffsets[b.origIdx] ?? 0;
             return (
               <line
                 key={`c${b.origIdx}`}
                 x1={b.connTopX}           y1={b.connTopY}
-                x2={b.connBotX + off.x}   y2={b.connBotY + off.y}
-                stroke="#a78bfa" strokeOpacity={0.16} strokeWidth={0.6}
-                strokeDasharray="1.5 4.5" strokeLinecap="round"
+                x2={b.connBotX + off.x}   y2={b.connBotY + off.y + fy}
+                stroke="rgba(167,139,250,0.30)" strokeWidth="0.70"
+                strokeDasharray="1.8 4.0" strokeLinecap="round"
                 pointerEvents="none"
               />
             );
           })}
 
-          {/* Floating small platforms — painter-sorted back→front */}
+          {/* Floating small platforms — painter-sorted, individually bobbing */}
           {SMALLS_SORTED.map((b) => {
             const off = blockOffsets[b.origIdx] ?? { x: 0, y: 0 };
+            const fy  = floatOffsets[b.origIdx] ?? 0;
             return (
               <g
                 key={`b${b.origIdx}`}
                 filter="url(#bShadow)"
-                transform={`translate(${off.x.toFixed(2)} ${off.y.toFixed(2)})`}
+                transform={`translate(${off.x.toFixed(2)} ${(off.y + fy).toFixed(2)})`}
                 style={{ cursor: 'grab' }}
               >
-                <path d={b.faces.left}  fill="url(#bLeft)"  stroke="#b09ef7" strokeWidth="0.5"/>
-                <path d={b.faces.right} fill="url(#bRight)" stroke="#6d28d9" strokeWidth="0.5"/>
-                <path d={b.faces.top}   fill="url(#bTop)"   stroke="#e2d4ff" strokeWidth="0.68"/>
-                {/* Inner top highlight */}
-                <path d={b.faces.top} fill="none"
-                  stroke="rgba(255,255,255,0.55)" strokeWidth="0.38"
-                  transform="translate(0 -0.3)"
+                <path d={b.faces.left}  fill="url(#bLeft)"  stroke="#9b72f0" strokeWidth="0.55"/>
+                <path d={b.faces.right} fill="url(#bRight)" stroke="#7c3aed" strokeWidth="0.55"/>
+                <path d={b.faces.top}   fill="url(#bTop)"   stroke="#d8c6ff" strokeWidth="0.72"/>
+                {/* Subtle inner highlight on top */}
+                <path d={b.faces.top}
+                  fill="none"
+                  stroke="rgba(255,255,255,0.50)"
+                  strokeWidth="0.36"
+                  transform="translate(0 -0.28)"
                 />
               </g>
             );
