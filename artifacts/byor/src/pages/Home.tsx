@@ -187,7 +187,7 @@ const ISO_TW = 39, ISO_TH = 17, ISO_TZ = 38;
 const ISO_OX = ISO_W * 0.50, ISO_OY = ISO_H * 0.70;
 
 // Base platform — flat and wide, thick side band
-const PW = 5.6, PD = 5.0, PH = 0.95;
+const PW = 5.6, PD = 5.0, PH = 0.62;
 // Small blocks — very thin, heavily rounded
 const BH = 0.20;
 
@@ -251,7 +251,9 @@ type IsoFaces = { left: string; right: string; top: string };
 function isoBlkFaces(b: IsoBlk, cr: number): IsoFaces {
   const { gx, gy, gz, w, d, h } = b;
   return {
-    left:  isoRoundedQuad([isoProj(gx,gy,gz+h), isoProj(gx+w,gy,gz+h), isoProj(gx+w,gy,gz), isoProj(gx,gy,gz)], cr),
+    // left  = max-y face (lower-left in screen space) — actually visible below top face
+    left:  isoRoundedQuad([isoProj(gx,gy+d,gz+h), isoProj(gx+w,gy+d,gz+h), isoProj(gx+w,gy+d,gz), isoProj(gx,gy+d,gz)], cr),
+    // right = max-x face (lower-right in screen space) — actually visible below top face
     right: isoRoundedQuad([isoProj(gx+w,gy,gz+h), isoProj(gx+w,gy+d,gz+h), isoProj(gx+w,gy+d,gz), isoProj(gx+w,gy,gz)], cr),
     top:   isoRoundedQuad([isoProj(gx,gy,gz+h), isoProj(gx+w,gy,gz+h), isoProj(gx+w,gy+d,gz+h), isoProj(gx,gy+d,gz+h)], cr),
   };
