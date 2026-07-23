@@ -228,40 +228,91 @@ function isoProj(x: number, y: number, z: number): [number, number] {
   return [ISO_OX + (x - y) * ISO_TW, ISO_OY + (x + y) * ISO_TH - z * ISO_TZ];
 }
 
-function isoRoundedQuad(pts: [number, number][], r: number): string {
-  const n = pts.length;
-  let d = '';
-  for (let i = 0; i < n; i++) {
-    const prev = pts[(i - 1 + n) % n], cur = pts[i], next = pts[(i + 1) % n];
-    const dxP = prev[0] - cur[0], dyP = prev[1] - cur[1];
-    const dxN = next[0] - cur[0], dyN = next[1] - cur[1];
-    const lP = Math.hypot(dxP, dyP) || 1, lN = Math.hypot(dxN, dyN) || 1;
-    const ra = Math.min(r, lP / 2.6, lN / 2.6);
-    const p1: [number, number] = [cur[0] + dxP / lP * ra, cur[1] + dyP / lP * ra];
-    const p2: [number, number] = [cur[0] + dxN / lN * ra, cur[1] + dyN / lN * ra];
-    d += i === 0 ? `M${p1[0].toFixed(2)},${p1[1].toFixed(2)}` : ` L${p1[0].toFixed(2)},${p1[1].toFixed(2)}`;
-    d += ` Q${cur[0].toFixed(2)},${cur[1].toFixed(2)} ${p2[0].toFixed(2)},${p2[1].toFixed(2)}`;
-  }
-  return d + ' Z';
-}
-
-interface IsoBlk { gx: number; gy: number; gz: number; w: number; d: number; h: number }
 type IsoFaces = { left: string; right: string; top: string };
 
-function isoBlkFaces(b: IsoBlk, cr: number): IsoFaces {
-  const { gx, gy, gz, w, d, h } = b;
-  return {
-    // left  = max-y face (lower-left in screen space) — actually visible below top face
-    left:  isoRoundedQuad([isoProj(gx,gy+d,gz+h), isoProj(gx+w,gy+d,gz+h), isoProj(gx+w,gy+d,gz), isoProj(gx,gy+d,gz)], cr),
-    // right = max-x face (lower-right in screen space) — actually visible below top face
-    right: isoRoundedQuad([isoProj(gx+w,gy,gz+h), isoProj(gx+w,gy+d,gz+h), isoProj(gx+w,gy+d,gz), isoProj(gx+w,gy,gz)], cr),
-    top:   isoRoundedQuad([isoProj(gx,gy,gz+h), isoProj(gx+w,gy,gz+h), isoProj(gx+w,gy+d,gz+h), isoProj(gx,gy+d,gz+h)], cr),
-  };
+// ── Extruded rounded block — single shared corner geometry ────────────────────
+// Corners: P0=back, P1=right-back, P2=front(visible), P3=left-back  (in screen)
+// Side panels are derived from the SAME arc data as the top face, so corners
+// are identical — no mismatches, no seams.
+function isoExtrudedFaces(
+  gx: number, gy: number, gz: number,
+  w: number, d: number, h: number, cr: number
+): IsoFaces {
+  const hs = h * ISO_TZ; // extrusion height in screen-px
+
+  const P0 = isoProj(gx,   gy,   gz+h);
+  const P1 = isoProj(gx+w, gy,   gz+h);
+  const P2 = isoProj(gx+w, gy+d, gz+h); // front corner (visible)
+  const P3 = isoProj(gx,   gy+d, gz+h);
+  const pts: [number,number][] = [P0, P1, P2, P3];
+
+  // Compute corner arcs for all four corners (same formula as isoRoundedQuad)
+  const arcs = pts.map((cur, i) => {
+    const prev = pts[(i+3)%4], next = pts[(i+1)%4];
+    const dxP = prev[0]-cur[0], dyP = prev[1]-cur[1];
+    const dxN = next[0]-cur[0], dyN = next[1]-cur[1];
+    const lP  = Math.hypot(dxP, dyP)||1, lN = Math.hypot(dxN, dyN)||1;
+    const ra  = Math.min(cr, lP/2.6, lN/2.6);
+    return {
+      p1:   [cur[0]+dxP/lP*ra, cur[1]+dyP/lP*ra] as [number,number],
+      p2:   [cur[0]+dxN/lN*ra, cur[1]+dyN/lN*ra] as [number,number],
+      ctrl: cur as [number,number],
+    };
+  });
+
+  const f = (n: number) => n.toFixed(2);
+
+  // Top face — standard rounded quad, same output as old isoRoundedQuad
+  const top = arcs.map((a, i) =>
+    (i===0 ? `M${f(a.p1[0])},${f(a.p1[1])}` : ` L${f(a.p1[0])},${f(a.p1[1])}`)
+    + ` Q${f(a.ctrl[0])},${f(a.ctrl[1])} ${f(a.p2[0])},${f(a.p2[1])}`
+  ).join('') + ' Z';
+
+  // Front corner (P2, index 2): split bezier at t=0.5 for the two side panels
+  const A  = arcs[2].p1;   // entry to P2 arc from P1→P2
+  const B  = arcs[2].p2;   // exit from P2 arc toward P3
+  const Pc = arcs[2].ctrl; // P2 (bezier control)
+
+  // Midpoint of the P2 arc  (shared seam between the two panels)
+  const mid: [number,number] = [
+    0.25*A[0]+0.5*Pc[0]+0.25*B[0],
+    0.25*A[1]+0.5*Pc[1]+0.25*B[1],
+  ];
+  // Sub-control points for each half
+  const cR: [number,number] = [0.5*A[0]+0.5*Pc[0], 0.5*A[1]+0.5*Pc[1]];
+  const cL: [number,number] = [0.5*Pc[0]+0.5*B[0], 0.5*Pc[1]+0.5*B[1]];
+
+  // RIGHT face (max-x, lower-right in screen)
+  // Top edge: arcs[1].p2 → A → half-arc → mid
+  // Bottom:   same coords shifted down by hs, reversed
+  const rS = arcs[1].p2;
+  const right =
+      `M${f(rS[0])},${f(rS[1])}`
+    + ` L${f(A[0])},${f(A[1])}`
+    + ` Q${f(cR[0])},${f(cR[1])} ${f(mid[0])},${f(mid[1])}`
+    + ` L${f(mid[0])},${f(mid[1]+hs)}`
+    + ` Q${f(cR[0])},${f(cR[1]+hs)} ${f(A[0])},${f(A[1]+hs)}`
+    + ` L${f(rS[0])},${f(rS[1]+hs)}`
+    + ' Z';
+
+  // LEFT face (max-y, lower-left in screen)
+  // Top edge: mid → half-arc → B → arcs[3].p1
+  // Bottom:   same shifted down by hs, reversed
+  const lE = arcs[3].p1;
+  const left =
+      `M${f(mid[0])},${f(mid[1])}`
+    + ` Q${f(cL[0])},${f(cL[1])} ${f(B[0])},${f(B[1])}`
+    + ` L${f(lE[0])},${f(lE[1])}`
+    + ` L${f(lE[0])},${f(lE[1]+hs)}`
+    + ` L${f(B[0])},${f(B[1]+hs)}`
+    + ` Q${f(cL[0])},${f(cL[1]+hs)} ${f(mid[0])},${f(mid[1]+hs)}`
+    + ' Z';
+
+  return { left, right, top };
 }
 
 // ── Precomputed stable geometry ───────────────────────────────────────────────
-const PLAT_BLK: IsoBlk = { gx: -PW/2, gy: -PD/2, gz: 0, w: PW, d: PD, h: PH };
-const PLAT_FACES = isoBlkFaces(PLAT_BLK, 28);
+const PLAT_FACES = isoExtrudedFaces(-PW/2, -PD/2, 0, PW, PD, PH, 28);
 const [PLAT_TCX, PLAT_TCY] = isoProj(0, 0, PH);
 
 interface SmallMeta {
@@ -278,8 +329,8 @@ const SMALLS: SmallMeta[] = BLOCK_CENTERS.map(([cx, cy, gz, depth], i) => {
   const [topCx, topCy]       = isoProj(cx, cy, gz + BH);
   const [connBotX, connBotY] = isoProj(cx, cy, gz);
   const [connTopX, connTopY] = isoProj(cx, cy, PH + 0.04);
-  const blk: IsoBlk = { gx: cx - hbw, gy: cy - hbd, gz, w: bw, d: bd, h: BH };
-  return { origIdx: i, cx, cy, depth, topCx, topCy, connBotX, connBotY, connTopX, connTopY, faces: isoBlkFaces(blk, 13) };
+  return { origIdx: i, cx, cy, depth, topCx, topCy, connBotX, connBotY, connTopX, connTopY,
+    faces: isoExtrudedFaces(cx - hbw, cy - hbd, gz, bw, bd, BH, 13) };
 });
 
 const SMALLS_SORTED = [...SMALLS].sort((a, b) => (a.cx - a.cy) - (b.cx - b.cy));
@@ -522,36 +573,36 @@ function HeroAnimation() {
               <stop offset="100%" stopColor="#a78bfa" stopOpacity="0"/>
             </radialGradient>
 
-            {/* ── Base platform ── white top, rich uniform purple sides ── */}
-            <linearGradient id="pTop" x1="0" y1="0" x2="0.9" y2="1">
+            {/* ── Base platform ── */}
+            <linearGradient id="pTop" x1="0" y1="0" x2="0.85" y2="1">
               <stop offset="0%"   stopColor="#ffffff"/>
-              <stop offset="60%"  stopColor="#faf8ff"/>
-              <stop offset="100%" stopColor="#eae4ff"/>
+              <stop offset="55%"  stopColor="#f8f5ff"/>
+              <stop offset="100%" stopColor="#ede7ff"/>
             </linearGradient>
-            {/* Left face — all deep purple, subtle top highlight only */}
+            {/* Left side (max-y, lower-left — slightly darker) */}
             <linearGradient id="pLeft" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#9d6ff5"/>
+              <stop offset="0%"   stopColor="#8b5cf6"/>
               <stop offset="100%" stopColor="#4c1d95"/>
             </linearGradient>
-            {/* Right face — slightly deeper / shadow side */}
+            {/* Right side (max-x, lower-right — slightly brighter) */}
             <linearGradient id="pRight" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#7c3aed"/>
-              <stop offset="100%" stopColor="#3b0764"/>
+              <stop offset="0%"   stopColor="#a78bfa"/>
+              <stop offset="100%" stopColor="#6d28d9"/>
             </linearGradient>
 
-            {/* ── Small blocks ── white top, matching purple trim ── */}
-            <linearGradient id="bTop" x1="0" y1="0" x2="0.9" y2="1">
+            {/* ── Small blocks ── */}
+            <linearGradient id="bTop" x1="0" y1="0" x2="0.85" y2="1">
               <stop offset="0%"   stopColor="#ffffff"/>
               <stop offset="100%" stopColor="#f0ecff"/>
             </linearGradient>
-            {/* Left face */}
+            {/* Left side */}
             <linearGradient id="bLeft" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#ab8ef8"/>
-              <stop offset="100%" stopColor="#8b5cf6"/>
+              <stop offset="0%"   stopColor="#8b5cf6"/>
+              <stop offset="100%" stopColor="#5b21b6"/>
             </linearGradient>
-            {/* Right face — barely distinguishable */}
+            {/* Right side — slightly brighter */}
             <linearGradient id="bRight" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#9b72f0"/>
+              <stop offset="0%"   stopColor="#a78bfa"/>
               <stop offset="100%" stopColor="#7c3aed"/>
             </linearGradient>
 
@@ -575,9 +626,9 @@ function HeroAnimation() {
 
           {/* Base platform */}
           <g filter="url(#pShadow)" style={{ cursor: 'grab' }}>
-            <path d={PLAT_FACES.left}  fill="url(#pLeft)"  stroke="#8b5cf6" strokeWidth="0.65"/>
-            <path d={PLAT_FACES.right} fill="url(#pRight)" stroke="#6d28d9" strokeWidth="0.65"/>
-            <path d={PLAT_FACES.top}   fill="url(#pTop)"   stroke="#c4b5fd" strokeWidth="0.80"/>
+            <path d={PLAT_FACES.left}  fill="url(#pLeft)"  />
+            <path d={PLAT_FACES.right} fill="url(#pRight)" />
+            <path d={PLAT_FACES.top}   fill="url(#pTop)"   stroke="#ddd6ff" strokeWidth="0.6"/>
           </g>
 
           {/* Connectors — anchor fixed at platform, bottom follows block float+drag */}
@@ -607,16 +658,9 @@ function HeroAnimation() {
                 transform={`translate(${off.x.toFixed(2)} ${(off.y + fy).toFixed(2)})`}
                 style={{ cursor: 'grab' }}
               >
-                <path d={b.faces.left}  fill="url(#bLeft)"  stroke="#9b72f0" strokeWidth="0.55"/>
-                <path d={b.faces.right} fill="url(#bRight)" stroke="#7c3aed" strokeWidth="0.55"/>
-                <path d={b.faces.top}   fill="url(#bTop)"   stroke="#d8c6ff" strokeWidth="0.72"/>
-                {/* Subtle inner highlight on top */}
-                <path d={b.faces.top}
-                  fill="none"
-                  stroke="rgba(255,255,255,0.50)"
-                  strokeWidth="0.36"
-                  transform="translate(0 -0.28)"
-                />
+                <path d={b.faces.left}  fill="url(#bLeft)"  />
+                <path d={b.faces.right} fill="url(#bRight)" />
+                <path d={b.faces.top}   fill="url(#bTop)"   stroke="#ddd6ff" strokeWidth="0.5"/>
               </g>
             );
           })}
