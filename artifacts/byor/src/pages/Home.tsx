@@ -179,193 +179,593 @@ function FeaturedReserveCard({ dtr }: { dtr: any }) {
   );
 }
 
-// ─── Hero Animation: isometric platform scene ─────────────────────────────────
+// ─── Hero Animation: interactive isometric reserve platform ───────────────────
 
 function HeroAnimation() {
-  const springRef = useRef({ rx: 0, ry: 0, tx: 0, ty: 0 });
-  const targetRef = useRef({ rx: 0, ry: 0, tx: 0, ty: 0 });
-  const [spring, setSpring] = useState({ rx: 0, ry: 0, tx: 0, ty: 0 });
+  type MotionState = {
+    rx: number;
+    ry: number;
+    tx: number;
+    ty: number;
+  };
+
+  interface Blk {
+    gx: number;
+    gy: number;
+    gz: number;
+    w: number;
+    d: number;
+    h: number;
+  }
+
+  interface FloatingBlk extends Blk {
+    cx: number;
+    cy: number;
+    depth: number;
+  }
+
+  const springRef = useRef<MotionState>({
+    rx: 0,
+    ry: 0,
+    tx: 0,
+    ty: 0,
+  });
+
+  const targetRef = useRef<MotionState>({
+    rx: 0,
+    ry: 0,
+    tx: 0,
+    ty: 0,
+  });
+
+  const dragOffsetRef = useRef({
+    x: 0,
+    y: 0,
+  });
+
+  const dragStartRef = useRef({
+    pointerX: 0,
+    pointerY: 0,
+    sceneX: 0,
+    sceneY: 0,
+  });
+
+  const isDraggingRef = useRef(false);
+
+  const [spring, setSpring] = useState<MotionState>({
+    rx: 0,
+    ry: 0,
+    tx: 0,
+    ty: 0,
+  });
+
+  const [isDragging, setIsDragging] = useState(false);
+
   const rafRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    const K = 0.072;
+    const easing = 0.085;
+
     const tick = () => {
-      const s = springRef.current, t = targetRef.current;
-      s.rx += (t.rx - s.rx) * K; s.ry += (t.ry - s.ry) * K;
-      s.tx += (t.tx - s.tx) * K; s.ty += (t.ty - s.ty) * K;
-      setSpring({ ...s });
+      const current = springRef.current;
+      const target = targetRef.current;
+
+      current.rx += (target.rx - current.rx) * easing;
+      current.ry += (target.ry - current.ry) * easing;
+      current.tx += (target.tx - current.tx) * easing;
+      current.ty += (target.ty - current.ty) * easing;
+
+      setSpring({ ...current });
+
       rafRef.current = requestAnimationFrame(tick);
     };
+
     rafRef.current = requestAnimationFrame(tick);
-    return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); };
+
+    return () => {
+      if (rafRef.current !== undefined) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
   }, []);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const nx = (e.clientX - rect.left) / rect.width - 0.5;
-    const ny = (e.clientY - rect.top) / rect.height - 0.5;
-    targetRef.current = { rx: ny * -11, ry: nx * 11, tx: nx * 24, ty: ny * 12 };
+  const updateHoverMotion = (
+    element: HTMLDivElement,
+    clientX: number,
+    clientY: number,
+  ) => {
+    const rect = element.getBoundingClientRect();
+
+    const nx = (clientX - rect.left) / rect.width - 0.5;
+    const ny = (clientY - rect.top) / rect.height - 0.5;
+
+    targetRef.current = {
+      rx: ny * -6.5,
+      ry: nx * 7.5,
+      tx: dragOffsetRef.current.x + nx * 15,
+      ty: dragOffsetRef.current.y + ny * 8,
+    };
   };
 
-  // ── Projection ────────────────────────────────────────────────────────────
-  const W = 540, H = 460;
-  const TW = 44, TH = 20, TZ = 44;
-  const ox = W * 0.50, oy = H * 0.58;
+  const handlePointerDown = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    isDraggingRef.current = true;
+    setIsDragging(true);
 
-  const proj = (x: number, y: number, z: number): [number, number] => [
+    dragStartRef.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      sceneX: dragOffsetRef.current.x,
+      sceneY: dragOffsetRef.current.y,
+    };
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (isDraggingRef.current) {
+      const dx = event.clientX - dragStartRef.current.pointerX;
+      const dy = event.clientY - dragStartRef.current.pointerY;
+
+      const nextX = dragStartRef.current.sceneX + dx;
+      const nextY = dragStartRef.current.sceneY + dy;
+
+      dragOffsetRef.current = {
+        x: nextX,
+        y: nextY,
+      };
+
+      targetRef.current = {
+        rx: Math.max(-7, Math.min(7, -dy * 0.025)),
+        ry: Math.max(-8, Math.min(8, dx * 0.025)),
+        tx: nextX,
+        ty: nextY,
+      };
+
+      return;
+    }
+
+    updateHoverMotion(
+      event.currentTarget,
+      event.clientX,
+      event.clientY,
+    );
+  };
+
+  const stopDragging = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (!isDraggingRef.current) {
+      return;
+    }
+
+    isDraggingRef.current = false;
+    setIsDragging(false);
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    targetRef.current = {
+      rx: 0,
+      ry: 0,
+      tx: dragOffsetRef.current.x,
+      ty: dragOffsetRef.current.y,
+    };
+  };
+
+  const handlePointerLeave = () => {
+    if (isDraggingRef.current) {
+      return;
+    }
+
+    targetRef.current = {
+      rx: 0,
+      ry: 0,
+      tx: dragOffsetRef.current.x,
+      ty: dragOffsetRef.current.y,
+    };
+  };
+
+  const resetPosition = () => {
+    dragOffsetRef.current = {
+      x: 0,
+      y: 0,
+    };
+
+    targetRef.current = {
+      rx: 0,
+      ry: 0,
+      tx: 0,
+      ty: 0,
+    };
+  };
+
+  const W = 620;
+  const H = 500;
+
+  const TW = 39;
+  const TH = 17;
+  const TZ = 39;
+
+  const ox = W * 0.51;
+  const oy = H * 0.69;
+
+  const proj = (
+    x: number,
+    y: number,
+    z: number,
+  ): [number, number] => [
     ox + (x - y) * TW,
     oy + (x + y) * TH - z * TZ,
   ];
 
-  // Rounded-corner quad path — quadratic bezier at each corner
-  function roundedQuad(pts: [number, number][], r: number): string {
-    const n = pts.length;
-    let d = '';
-    for (let i = 0; i < n; i++) {
-      const prev = pts[(i - 1 + n) % n];
-      const cur  = pts[i];
-      const next = pts[(i + 1) % n];
-      const dxP = prev[0] - cur[0], dyP = prev[1] - cur[1];
-      const dxN = next[0] - cur[0], dyN = next[1] - cur[1];
-      const lenP = Math.hypot(dxP, dyP) || 1;
-      const lenN = Math.hypot(dxN, dyN) || 1;
-      const ra = Math.min(r, lenP / 3, lenN / 3);
-      const p1: [number, number] = [cur[0] + dxP / lenP * ra, cur[1] + dyP / lenP * ra];
-      const p2: [number, number] = [cur[0] + dxN / lenN * ra, cur[1] + dyN / lenN * ra];
-      d += i === 0 ? `M${p1[0].toFixed(1)},${p1[1].toFixed(1)}` : ` L${p1[0].toFixed(1)},${p1[1].toFixed(1)}`;
-      d += ` Q${cur[0].toFixed(1)},${cur[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  function roundedQuad(
+    points: [number, number][],
+    radius: number,
+  ): string {
+    const count = points.length;
+    let path = "";
+
+    for (let i = 0; i < count; i += 1) {
+      const previous = points[(i - 1 + count) % count];
+      const current = points[i];
+      const next = points[(i + 1) % count];
+
+      const previousDx = previous[0] - current[0];
+      const previousDy = previous[1] - current[1];
+      const nextDx = next[0] - current[0];
+      const nextDy = next[1] - current[1];
+
+      const previousLength =
+        Math.hypot(previousDx, previousDy) || 1;
+
+      const nextLength =
+        Math.hypot(nextDx, nextDy) || 1;
+
+      const resolvedRadius = Math.min(
+        radius,
+        previousLength / 2.65,
+        nextLength / 2.65,
+      );
+
+      const start: [number, number] = [
+        current[0] +
+          (previousDx / previousLength) * resolvedRadius,
+        current[1] +
+          (previousDy / previousLength) * resolvedRadius,
+      ];
+
+      const end: [number, number] = [
+        current[0] +
+          (nextDx / nextLength) * resolvedRadius,
+        current[1] +
+          (nextDy / nextLength) * resolvedRadius,
+      ];
+
+      path +=
+        i === 0
+          ? `M${start[0].toFixed(2)},${start[1].toFixed(2)}`
+          : ` L${start[0].toFixed(2)},${start[1].toFixed(2)}`;
+
+      path +=
+        ` Q${current[0].toFixed(2)},${current[1].toFixed(2)}` +
+        ` ${end[0].toFixed(2)},${end[1].toFixed(2)}`;
     }
-    return d + ' Z';
+
+    return `${path} Z`;
   }
 
-  // ── Block geometry ────────────────────────────────────────────────────────
-  interface Blk { gx: number; gy: number; gz: number; w: number; d: number; h: number }
+  function blkFaces(block: Blk, cornerRadius: number) {
+    const { gx, gy, gz, w, d, h } = block;
 
-  function blkFaces(b: Blk, cr: number) {
-    const { gx, gy, gz, w, d, h } = b;
-    const lp: [number,number][] = [proj(gx,gy,gz+h), proj(gx+w,gy,gz+h), proj(gx+w,gy,gz), proj(gx,gy,gz)];
-    const rp: [number,number][] = [proj(gx+w,gy,gz+h), proj(gx+w,gy+d,gz+h), proj(gx+w,gy+d,gz), proj(gx+w,gy,gz)];
-    const tp: [number,number][] = [proj(gx,gy,gz+h), proj(gx+w,gy,gz+h), proj(gx+w,gy+d,gz+h), proj(gx,gy+d,gz+h)];
-    return { left: roundedQuad(lp, cr), right: roundedQuad(rp, cr), top: roundedQuad(tp, cr) };
+    const leftPoints: [number, number][] = [
+      proj(gx, gy, gz + h),
+      proj(gx + w, gy, gz + h),
+      proj(gx + w, gy, gz),
+      proj(gx, gy, gz),
+    ];
+
+    const rightPoints: [number, number][] = [
+      proj(gx + w, gy, gz + h),
+      proj(gx + w, gy + d, gz + h),
+      proj(gx + w, gy + d, gz),
+      proj(gx + w, gy, gz),
+    ];
+
+    const topPoints: [number, number][] = [
+      proj(gx, gy, gz + h),
+      proj(gx + w, gy, gz + h),
+      proj(gx + w, gy + d, gz + h),
+      proj(gx, gy + d, gz + h),
+    ];
+
+    return {
+      left: roundedQuad(leftPoints, cornerRadius),
+      right: roundedQuad(rightPoints, cornerRadius),
+      top: roundedQuad(topPoints, cornerRadius),
+    };
   }
 
-  // ── Scene definition ──────────────────────────────────────────────────────
-  const PW = 4.8, PD = 4.8, PH = 1.25;
-  const platform: Blk = { gx: -PW/2, gy: -PD/2, gz: 0, w: PW, d: PD, h: PH };
+  const platformWidth = 5.25;
+  const platformDepth = 4.75;
+  const platformHeight = 0.62;
 
-  const BW = 1.45, BD = 1.45, BH = 0.95;
-  const half = BW / 2;
+  const platform: Blk = {
+    gx: -platformWidth / 2,
+    gy: -platformDepth / 2,
+    gz: 0,
+    w: platformWidth,
+    d: platformDepth,
+    h: platformHeight,
+  };
 
-  // [cx, cy, gz] — 9 small platforms with generous spacing
-  const centers: [number, number, number][] = [
-    [-1.5, -3.6, 2.1],
-    [ 0.5, -4.0, 1.8],
-    [ 2.6, -3.3, 2.5],
-    [-3.1, -1.4, 2.2],
-    [-0.1, -2.2, 3.5],
-    [ 2.9, -1.0, 2.2],
-    [-2.2,  0.2, 2.0],
-    [ 0.7,  0.0, 2.8],
-    [ 2.8,  0.6, 1.7],
+  const blockWidth = 1.05;
+  const blockDepth = 1.05;
+  const blockHeight = 0.26;
+  const halfBlock = blockWidth / 2;
+
+  const centers: Array<
+    [number, number, number, number]
+  > = [
+    [-2.35, -1.75, 2.55, 0.82],
+    [0.00, -2.35, 4.00, 0.68],
+    [2.35, -1.65, 3.08, 0.84],
+
+    [-2.25, 0.15, 1.92, 0.90],
+    [0.00, -0.45, 2.65, 1.08],
+    [2.25, 0.10, 2.00, 0.88],
+
+    [-1.70, 1.75, 1.45, 0.73],
+    [0.75, 1.45, 2.02, 1.00],
+    [2.55, 1.65, 1.45, 0.72],
   ];
 
-  const smalls: (Blk & { cx: number; cy: number })[] = centers.map(([cx, cy, gz]) => ({
-    cx, cy, gz, gx: cx - half, gy: cy - half, w: BW, d: BD, h: BH,
-  }));
+  const smalls: FloatingBlk[] = centers.map(
+    ([cx, cy, gz, depth]) => ({
+      cx,
+      cy,
+      gz,
+      depth,
+      gx: cx - halfBlock,
+      gy: cy - halfBlock,
+      w: blockWidth,
+      d: blockDepth,
+      h: blockHeight,
+    }),
+  );
 
-  const sorted = [...smalls].sort((a, b) => (a.gx + a.gy) - (b.gx + b.gy));
-  const platTopZ = PH;
+  const sortedSmalls = [...smalls].sort(
+    (a, b) => a.gx + a.gy - (b.gx + b.gy),
+  );
+
+  const platformTopZ = platformHeight;
 
   return (
     <div
-      className="absolute inset-0 overflow-hidden"
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => { targetRef.current = { rx: 0, ry: 0, tx: 0, ty: 0 }; }}
-      style={{ perspective: "1400px", perspectiveOrigin: "50% 45%" }}
+      className="absolute inset-0 overflow-hidden select-none"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={stopDragging}
+      onPointerCancel={stopDragging}
+      onPointerLeave={handlePointerLeave}
+      onDoubleClick={resetPosition}
+      style={{
+        perspective: "1500px",
+        perspectiveOrigin: "50% 48%",
+        cursor: isDragging ? "grabbing" : "grab",
+        touchAction: "none",
+      }}
+      aria-label="Interactive reserve platform"
     >
-      {/* Entire scene — platform + blocks + glow + connectors — all move as one */}
       <div
-        className="w-full h-full flex items-center justify-center"
+        className="flex h-full w-full items-center justify-center"
         style={{
-          transform: `translateX(${spring.tx}px) translateY(${spring.ty}px) rotateX(${spring.rx}deg) rotateY(${spring.ry}deg)`,
+          transform:
+            `translate3d(${spring.tx}px, ${spring.ty}px, 0)` +
+            ` rotateX(${spring.rx}deg)` +
+            ` rotateY(${spring.ry}deg)`,
+          transformStyle: "preserve-3d",
+          transformOrigin: "50% 56%",
           willChange: "transform",
         }}
       >
-        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
-          style={{ overflow: "visible", maxWidth: "100%", height: "auto" }}>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          width={W}
+          height={H}
+          role="presentation"
+          style={{
+            width: "min(100%, 620px)",
+            height: "auto",
+            overflow: "visible",
+          }}
+        >
           <defs>
-            <radialGradient id="isoGlow" cx="50%" cy="55%" r="50%">
-              <stop offset="0%"   stopColor="#7c3aed" stopOpacity="0.72" />
-              <stop offset="55%"  stopColor="#8b5cf6" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
+            <radialGradient
+              id="reserveAmbientGlow"
+              cx="50%"
+              cy="50%"
+              r="50%"
+            >
+              <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.58" />
+              <stop offset="43%" stopColor="#8b5cf6" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#a78bfa" stopOpacity="0" />
             </radialGradient>
-            <linearGradient id="plTop" x1="0.2" y1="0" x2="0.8" y2="1" gradientUnits="objectBoundingBox">
-              <stop offset="0%"   stopColor="#faf8ff" />
-              <stop offset="100%" stopColor="#ddd6fe" />
+
+            <linearGradient id="reserveBaseTop" x1="0.12" y1="0" x2="0.88" y2="1">
+              <stop offset="0%" stopColor="#ffffff" />
+              <stop offset="65%" stopColor="#fbfaff" />
+              <stop offset="100%" stopColor="#eee9ff" />
             </linearGradient>
-            <linearGradient id="plLeft" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
-              <stop offset="0%"   stopColor="#a78bfa" />
-              <stop offset="100%" stopColor="#6d28d9" />
-            </linearGradient>
-            <linearGradient id="plRight" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
-              <stop offset="0%"   stopColor="#7c3aed" />
-              <stop offset="100%" stopColor="#4c1d95" />
-            </linearGradient>
-            <linearGradient id="smTop" x1="0.2" y1="0" x2="0.8" y2="1" gradientUnits="objectBoundingBox">
-              <stop offset="0%"   stopColor="#ffffff" />
-              <stop offset="100%" stopColor="#ede9fe" />
-            </linearGradient>
-            <linearGradient id="smLeft" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
-              <stop offset="0%"   stopColor="#c4b5fd" />
-              <stop offset="100%" stopColor="#8b5cf6" />
-            </linearGradient>
-            <linearGradient id="smRight" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
-              <stop offset="0%"   stopColor="#8b5cf6" />
+
+            <linearGradient id="reserveBaseLeft" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#a855f7" />
+              <stop offset="48%" stopColor="#7c3aed" />
               <stop offset="100%" stopColor="#5b21b6" />
             </linearGradient>
-            <filter id="blkDrop" x="-50%" y="-50%" width="200%" height="200%">
-              <feDropShadow dx="0" dy="6" stdDeviation="9" floodColor="#6d28d9" floodOpacity="0.28" />
+
+            <linearGradient id="reserveBaseRight" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#8b5cf6" />
+              <stop offset="54%" stopColor="#6d28d9" />
+              <stop offset="100%" stopColor="#4c1d95" />
+            </linearGradient>
+
+            <linearGradient id="reserveBlockTop" x1="0.12" y1="0" x2="0.88" y2="1">
+              <stop offset="0%" stopColor="#ffffff" />
+              <stop offset="78%" stopColor="#fdfcff" />
+              <stop offset="100%" stopColor="#eee9ff" />
+            </linearGradient>
+
+            <linearGradient id="reserveBlockLeft" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#c084fc" />
+              <stop offset="52%" stopColor="#8b5cf6" />
+              <stop offset="100%" stopColor="#6d28d9" />
+            </linearGradient>
+
+            <linearGradient id="reserveBlockRight" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#9f67f5" />
+              <stop offset="52%" stopColor="#7c3aed" />
+              <stop offset="100%" stopColor="#5b21b6" />
+            </linearGradient>
+
+            <filter id="reserveBaseShadow" x="-50%" y="-60%" width="200%" height="240%">
+              <feDropShadow
+                dx="0"
+                dy="9"
+                stdDeviation="12"
+                floodColor="#6d28d9"
+                floodOpacity="0.28"
+              />
+            </filter>
+
+            <filter id="reserveBlockShadow" x="-80%" y="-100%" width="260%" height="300%">
+              <feDropShadow
+                dx="0"
+                dy="4"
+                stdDeviation="5"
+                floodColor="#7c3aed"
+                floodOpacity="0.25"
+              />
+            </filter>
+
+            <filter id="reserveSoftBlur" x="-70%" y="-70%" width="240%" height="240%">
+              <feGaussianBlur stdDeviation="12" />
             </filter>
           </defs>
 
-          {/* Soft ambient glow beneath platform */}
-          <ellipse cx={ox} cy={oy + 36} rx={TW * PW * 0.9} ry={TH * PD * 1.9} fill="url(#isoGlow)" />
+          <ellipse
+            cx={ox + 8}
+            cy={oy + 45}
+            rx={170}
+            ry={78}
+            fill="url(#reserveAmbientGlow)"
+            filter="url(#reserveSoftBlur)"
+            pointerEvents="none"
+          />
 
-          {/* Base platform */}
           {(() => {
-            const { left, right, top } = blkFaces(platform, 20);
+            const faces = blkFaces(platform, 24);
+
             return (
-              <g filter="url(#blkDrop)">
-                <path d={left}  fill="url(#plLeft)"  stroke="#5b21b6" strokeWidth="0.7" />
-                <path d={right} fill="url(#plRight)" stroke="#3b0764" strokeWidth="0.7" />
-                <path d={top}   fill="url(#plTop)"   stroke="#c4b5fd" strokeWidth="0.7" />
+              <g filter="url(#reserveBaseShadow)">
+                <path
+                  d={faces.left}
+                  fill="url(#reserveBaseLeft)"
+                  stroke="#7c3aed"
+                  strokeWidth="0.7"
+                />
+
+                <path
+                  d={faces.right}
+                  fill="url(#reserveBaseRight)"
+                  stroke="#5b21b6"
+                  strokeWidth="0.7"
+                />
+
+                <path
+                  d={faces.top}
+                  fill="url(#reserveBaseTop)"
+                  stroke="#c4b5fd"
+                  strokeWidth="0.85"
+                />
               </g>
             );
           })()}
 
-          {/* Dotted vertical connectors — very subtle */}
-          {smalls.map((b, i) => {
-            const [sx, blockBottomY] = proj(b.cx, b.cy, b.gz);
-            const [,  platSurfY]     = proj(b.cx, b.cy, platTopZ + 0.04);
+          {smalls.map((block, index) => {
+            const [connectorX, blockBottomY] = proj(
+              block.cx,
+              block.cy,
+              block.gz,
+            );
+
+            const [, platformSurfaceY] = proj(
+              block.cx,
+              block.cy,
+              platformTopZ + 0.03,
+            );
+
             return (
-              <line key={i}
-                x1={sx} y1={platSurfY}
-                x2={sx} y2={blockBottomY}
-                stroke="rgba(167,139,250,0.22)"
-                strokeWidth="0.75"
-                strokeDasharray="2 5"
+              <line
+                key={`connector-${index}`}
+                x1={connectorX}
+                y1={platformSurfaceY}
+                x2={connectorX}
+                y2={blockBottomY}
+                stroke="#a78bfa"
+                strokeOpacity={0.19}
+                strokeWidth={0.7}
+                strokeDasharray="1.5 4"
+                strokeLinecap="round"
+                pointerEvents="none"
               />
             );
           })}
 
-          {/* Floating small platforms — identical shape, smaller scale */}
-          {sorted.map((b, i) => {
-            const { left, right, top } = blkFaces(b, 11);
+          {sortedSmalls.map((block, index) => {
+            const faces = blkFaces(block, 8.5);
+
+            const parallaxX = spring.ry * block.depth * 0.28;
+            const parallaxY = spring.rx * block.depth * -0.18;
+
             return (
-              <g key={i} filter="url(#blkDrop)">
-                <path d={left}  fill="url(#smLeft)"  stroke="#7c3aed" strokeWidth="0.5" />
-                <path d={right} fill="url(#smRight)" stroke="#4c1d95" strokeWidth="0.5" />
-                <path d={top}   fill="url(#smTop)"   stroke="#e9d5ff" strokeWidth="0.5" />
+              <g
+                key={`floating-reserve-${index}`}
+                filter="url(#reserveBlockShadow)"
+                transform={`translate(${parallaxX} ${parallaxY})`}
+              >
+                <path
+                  d={faces.left}
+                  fill="url(#reserveBlockLeft)"
+                  stroke="#8b5cf6"
+                  strokeWidth="0.55"
+                />
+
+                <path
+                  d={faces.right}
+                  fill="url(#reserveBlockRight)"
+                  stroke="#6d28d9"
+                  strokeWidth="0.55"
+                />
+
+                <path
+                  d={faces.top}
+                  fill="url(#reserveBlockTop)"
+                  stroke="#d8b4fe"
+                  strokeWidth="0.72"
+                />
+
+                <path
+                  d={faces.top}
+                  fill="none"
+                  stroke="rgba(255,255,255,0.72)"
+                  strokeWidth="0.42"
+                  transform="translate(0 -0.35)"
+                />
               </g>
             );
           })}
@@ -374,6 +774,7 @@ function HeroAnimation() {
     </div>
   );
 }
+
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
