@@ -1,0 +1,186 @@
+import { useState, type ReactNode } from 'react'
+import { Link, navigate, usePath } from '../lib/router'
+import { useStore } from '../state/store'
+import { MY_WALLET_LABEL } from '../data/reserves'
+
+const LINKS = [
+  { to: '/discover', label: 'Discover Reserves' },
+  { to: '/create', label: 'Create a Reserve' },
+  { to: '/portfolio', label: 'Portfolio' },
+  { to: '/manage', label: 'Manage' },
+]
+
+function NavSearch() {
+  const [q, setQ] = useState('')
+  return (
+    <form
+      className="nav-search"
+      role="search"
+      onSubmit={e => {
+        e.preventDefault()
+        navigate(q.trim() ? `/discover?q=${encodeURIComponent(q.trim())}` : '/discover')
+        setQ('')
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </svg>
+      <input
+        placeholder="Search Reserves..."
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        aria-label="Search Reserves"
+      />
+    </form>
+  )
+}
+
+type Theme = 'dark' | 'light'
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState<Theme>(() =>
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
+  )
+
+  function toggle() {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    if (next === 'light') document.documentElement.dataset.theme = 'light'
+    else delete document.documentElement.dataset.theme
+    localStorage.setItem('ssrfun-theme', next)
+  }
+
+  return (
+    <button
+      type="button"
+      className="theme-btn"
+      onClick={toggle}
+      aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+    >
+      {theme === 'dark' ? (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </svg>
+      ) : (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
+export function Shell({ children }: { children: ReactNode }) {
+  const path = usePath()
+  const { toasts, connected, dispatch, toast } = useStore()
+
+  return (
+    <>
+      <a
+        href="#main"
+        style={{ position: 'absolute', left: -9999, top: 0, zIndex: 100, background: 'var(--surface)', padding: 8 }}
+        onFocus={e => {
+          e.currentTarget.style.left = '8px'
+        }}
+        onBlur={e => {
+          e.currentTarget.style.left = '-9999px'
+        }}
+      >
+        Skip to content
+      </a>
+
+      <header className="nav">
+        <div className="container nav-inner">
+          <Link to="/" className="nav-logo" ariaLabel="SSR.fun home">
+            <img src="/favicon.svg" alt="" />
+            <span>
+              SSR<span className="fun">.fun</span>
+            </span>
+          </Link>
+          <span className="sim-badge" title="Simulated environment — all data is mocked; nothing is on-chain.">
+            Simulation Mode
+          </span>
+          <nav className="nav-links" aria-label="Primary">
+            {LINKS.map(l => (
+              <Link key={l.to} to={l.to} className={`nav-link${path.startsWith(l.to) ? ' active' : ''}`}>
+                {l.label}
+              </Link>
+            ))}
+          </nav>
+          <NavSearch />
+          <ThemeToggle />
+          {connected ? (
+            <button
+              type="button"
+              className="wallet-chip"
+              title="Simulated wallet — click to disconnect"
+              onClick={() => dispatch({ type: 'disconnect' })}
+            >
+              <span className="dot" aria-hidden="true" />
+              {MY_WALLET_LABEL}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ padding: '8px 18px', fontSize: 13 }}
+              onClick={() => {
+                dispatch({ type: 'connect' })
+                toast('Wallet connected (simulated)', `${MY_WALLET_LABEL} — no real wallet is involved.`)
+              }}
+            >
+              Connect Wallet
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main id="main">{children}</main>
+
+      <footer className="footer">
+        <div className="container footer-grid">
+          <div>
+            <div className="brand">SSR.fun</div>
+            <p>
+              A launchpad for tokenized reserves. Create, launch, and trade decentralized tokenized reserves on Solana.
+            </p>
+            <p style={{ marginTop: 12 }}>
+              Prototype interface with mock data — no wallet, network, or on-chain program is connected. Reserve Tokens do
+              not confer ownership of any company. Nothing here is a guarantee of value, liquidity, or performance.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 40 }}>
+            <div>
+              <div style={{ color: 'var(--text-2)', marginBottom: 8, fontWeight: 600 }}>Product</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <Link to="/discover" className="faint">Discover Reserves</Link>
+                <Link to="/create" className="faint">Create a Reserve</Link>
+                <Link to="/portfolio" className="faint">Portfolio</Link>
+                <Link to="/manage" className="faint">Reserve Manager</Link>
+              </div>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-2)', marginBottom: 8, fontWeight: 600 }}>Understand</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <Link to="/#how" className="faint">How it works</Link>
+                <Link to="/#fees" className="faint">Fee model</Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      <div className="toasts" aria-live="polite">
+        {toasts.map(t => (
+          <div key={t.id} className="toast">
+            <div className="t">{t.title}</div>
+            {t.body && <div className="b">{t.body}</div>}
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
