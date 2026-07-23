@@ -1,0 +1,215 @@
+/* Styling for the ported SSR.FUN-MERGE pages (Discover, Create, Portfolio, Manage,
+ * Reserve detail). Everything here is scoped under .merge-scope so it can never
+ * bleed into the approved FABLE homepage/navbar, which use their own hand-written
+ * theme in ../index.css.
+ *
+ * Preflight is intentionally skipped (theme+utilities layers only) so Tailwind
+ * never resets element defaults document-wide -- FABLE's own index.css reset
+ * already covers the homepage, and every shadcn component here styles itself
+ * explicitly via utility classes regardless.
+ *
+ * Two theme tokens are renamed from MERGE's originals because they'd otherwise
+ * collide with FABLE's own :root variables of the same name (Tailwind's @theme
+ * block is always emitted at :root, so these can't be scoped like the color
+ * tokens below can): --font-display -> --font-merge-display, --font-mono ->
+ * --font-merge-mono. Usages were renamed to match (font-display -> font-merge-display,
+ * font-mono -> font-merge-mono) across the copied page/component files.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&family=Inter:wght@400;500;600;700&display=swap');
+
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.merge-scope.dark, .merge-scope.dark *));
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-card-border: hsl(var(--card-border));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-popover-border: hsl(var(--popover-border));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-positive: hsl(var(--positive));
+  --color-positive-foreground: hsl(var(--positive-foreground));
+
+  --font-sans: 'Inter', sans-serif;
+  --font-merge-display: 'Geist', sans-serif;
+  --font-accent: 'Inter', sans-serif;
+  --font-merge-mono: 'Geist Mono', monospace;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.75rem;
+
+  --shadow-xs: 0 1px 2px 0 rgba(30, 20, 64, 0.04);
+  --shadow-sm: 0 1px 2px 0 rgba(30, 20, 64, 0.04), 0 2px 6px -2px rgba(30, 20, 64, 0.05);
+  --shadow-md: 0 4px 10px -2px rgba(30, 20, 64, 0.07), 0 2px 6px -3px rgba(30, 20, 64, 0.05);
+  --shadow-lg: 0 16px 32px -12px rgba(30, 20, 64, 0.14), 0 4px 10px -4px rgba(30, 20, 64, 0.06);
+  --shadow-glow: 0 12px 28px -8px rgba(124, 58, 237, 0.28), 0 2px 8px -2px rgba(124, 58, 237, 0.16);
+}
+
+/* Color tokens are scoped to .merge-scope (not :root) so they never override
+ * FABLE's own --accent, --border, etc. FABLE's theme toggle sets
+ * [data-theme="light"] on <html> for light mode and leaves it absent for dark
+ * (its default) -- .merge-scope mirrors that same switch instead of requiring
+ * a separate .dark class. */
+.merge-scope {
+  color-scheme: dark;
+
+  --background: 257 24% 6%;
+  --foreground: 270 24% 96%;
+
+  --card: 258 22% 9%;
+  --card-foreground: 270 24% 96%;
+  --card-border: 260 11% 15%;
+
+  --popover: 258 22% 9%;
+  --popover-foreground: 270 24% 96%;
+  --popover-border: 260 11% 15%;
+
+  --primary: 258 100% 66%;
+  --primary-foreground: 270 24% 96%;
+
+  --secondary: 260 11% 15%;
+  --secondary-foreground: 270 24% 96%;
+
+  --muted: 260 11% 15%;
+  --muted-foreground: 260 11% 62%;
+
+  --accent: 258 100% 66%;
+  --accent-foreground: 270 24% 96%;
+
+  --destructive: 354 82% 67%;
+  --destructive-foreground: 270 24% 96%;
+
+  --positive: 155 58% 50%;
+  --positive-foreground: 257 24% 6%;
+
+  --border: 260 11% 15%;
+  --input: 260 11% 15%;
+  --ring: 258 100% 66%;
+
+  --chart-1: 258 100% 66%;
+  --chart-2: 155 58% 50%;
+  --chart-3: 38 92% 60%;
+  --chart-4: 199 89% 62%;
+  --chart-5: 330 81% 68%;
+
+  --radius: 0.625rem;
+}
+
+:root[data-theme='light'] .merge-scope {
+  color-scheme: light;
+
+  --background: 260 32% 99%;
+  --foreground: 256 28% 12%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 256 28% 12%;
+  --card-border: 258 24% 92%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 256 28% 12%;
+  --popover-border: 258 24% 92%;
+
+  --primary: 258 88% 58%;
+  --primary-foreground: 270 30% 99%;
+
+  --secondary: 258 28% 95.5%;
+  --secondary-foreground: 256 28% 14%;
+
+  --muted: 258 28% 95.5%;
+  --muted-foreground: 258 12% 45%;
+
+  --accent: 258 88% 58%;
+  --accent-foreground: 270 30% 99%;
+
+  --destructive: 354 75% 52%;
+  --destructive-foreground: 270 24% 98%;
+
+  --positive: 155 60% 32%;
+  --positive-foreground: 270 24% 98%;
+
+  --border: 258 22% 91%;
+  --input: 258 22% 90%;
+  --ring: 258 88% 58%;
+
+  --chart-1: 258 88% 58%;
+  --chart-2: 155 58% 38%;
+  --chart-3: 32 92% 48%;
+  --chart-4: 199 89% 45%;
+  --chart-5: 330 75% 52%;
+}
+
+.merge-scope,
+.merge-scope * {
+  @apply border-border;
+}
+
+.merge-scope {
+  @apply font-sans antialiased relative;
+  color: hsl(var(--foreground));
+  isolation: isolate;
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(60% 50% at 105% -10%, hsla(268, 85%, 55%, 0.5), transparent 68%),
+    radial-gradient(46% 60% at 88% 8%, hsla(280, 70%, 40%, 0.45), transparent 70%),
+    radial-gradient(38% 42% at 118% 32%, hsla(258, 90%, 48%, 0.38), transparent 72%),
+    radial-gradient(55% 48% at 78% -6%, hsla(300, 55%, 35%, 0.28), transparent 65%),
+    radial-gradient(32% 38% at 96% 46%, hsla(250, 65%, 30%, 0.32), transparent 70%);
+  background-repeat: no-repeat;
+  background-attachment: local, local, local, local, local;
+}
+
+:root[data-theme='light'] .merge-scope {
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(38% 34% at 96% -6%, hsla(262, 82%, 74%, 0.1), transparent 70%),
+    radial-gradient(30% 30% at 84% 6%, hsla(276, 70%, 78%, 0.08), transparent 72%),
+    radial-gradient(34% 36% at 6% 96%, hsla(258, 70%, 80%, 0.07), transparent 72%),
+    radial-gradient(26% 26% at -4% 40%, hsla(250, 60%, 82%, 0.06), transparent 70%);
+}
+
+.merge-scope :is(h1, h2, h3, h4, h5, h6) {
+  @apply font-merge-display tracking-tight;
+}
+
+@layer utilities {
+  /* Hides the scrollbar on horizontally-scrollable control rows (e.g. the
+     DTRDetail chart timeframe picker on mobile) without hiding the ability to scroll. */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

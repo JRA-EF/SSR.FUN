@@ -16,6 +16,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Ported SSR.FUN-MERGE pages under src/merge use their own "@/..." import
+       convention and import from "wouter" (shimmed onto FABLE's own router). */
+    "paths": {
+      "@/*": ["./src/merge/*"],
+      "wouter": ["./src/merge/lib/wouter-shim.tsx"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

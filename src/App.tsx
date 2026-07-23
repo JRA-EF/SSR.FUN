@@ -2,20 +2,69 @@ import { RouterProvider, matchPath, usePath } from './lib/router'
 import { StoreProvider } from './state/store'
 import { Shell } from './components/Shell'
 import { Home } from './pages/Home'
-import { Discover } from './pages/Discover'
-import { ReserveDetail } from './pages/ReserveDetail'
-import { Create } from './pages/Create'
-import { Portfolio } from './pages/Portfolio'
-import { Manage } from './pages/Manage'
+import { MergeLayout } from './merge/MergeLayout'
+import { MergeParamsContext } from './merge/lib/wouter-shim'
+import { Discover } from './merge/pages/Discover'
+import { CreateDTR } from './merge/pages/CreateDTR'
+import { Portfolio } from './merge/pages/Portfolio'
+import { Manage } from './merge/pages/Manage'
+import { ManageDTR } from './merge/pages/ManageDTR'
+import { DTRDetail } from './merge/pages/DTRDetail'
 
 function Routes() {
   const path = usePath()
-  const reserve = matchPath('/reserve/:address', path)
-  if (reserve) return <ReserveDetail address={reserve.address} />
-  if (matchPath('/discover', path)) return <Discover />
-  if (matchPath('/create', path)) return <Create />
-  if (matchPath('/portfolio', path)) return <Portfolio />
-  if (matchPath('/manage', path)) return <Manage />
+
+  const dtrManage = matchPath('/dtr/:dtrId/manage', path)
+  if (dtrManage) {
+    return (
+      <MergeLayout>
+        <MergeParamsContext.Provider value={dtrManage}>
+          <ManageDTR />
+        </MergeParamsContext.Provider>
+      </MergeLayout>
+    )
+  }
+
+  const dtr = matchPath('/dtr/:dtrId', path)
+  if (dtr) {
+    return (
+      <MergeLayout>
+        <MergeParamsContext.Provider value={dtr}>
+          <DTRDetail />
+        </MergeParamsContext.Provider>
+      </MergeLayout>
+    )
+  }
+
+  if (matchPath('/discover', path)) {
+    return (
+      <MergeLayout>
+        <Discover />
+      </MergeLayout>
+    )
+  }
+  if (matchPath('/create', path)) {
+    return (
+      <MergeLayout>
+        <CreateDTR />
+      </MergeLayout>
+    )
+  }
+  if (matchPath('/portfolio', path)) {
+    return (
+      <MergeLayout>
+        <Portfolio />
+      </MergeLayout>
+    )
+  }
+  if (matchPath('/manage', path)) {
+    return (
+      <MergeLayout>
+        <Manage />
+      </MergeLayout>
+    )
+  }
+
   return <Home />
 }
 

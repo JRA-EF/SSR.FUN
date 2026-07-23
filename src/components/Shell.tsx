@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link, navigate, usePath } from '../lib/router'
 import { useStore } from '../state/store'
-import { MY_WALLET_LABEL } from '../data/reserves'
+import { useAppStore } from '@/store/useAppStore'
 
 const LINKS = [
   { to: '/discover', label: 'Discover Reserves' },
@@ -75,7 +75,9 @@ function ThemeToggle() {
 
 export function Shell({ children }: { children: ReactNode }) {
   const path = usePath()
-  const { toasts, connected, dispatch, toast } = useStore()
+  const { toasts, toast } = useStore()
+  const { wallet, connectWallet, disconnectWallet } = useAppStore()
+  const [connecting, setConnecting] = useState(false)
 
   return (
     <>
@@ -112,27 +114,30 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
           <NavSearch />
           <ThemeToggle />
-          {connected ? (
+          {wallet.connected ? (
             <button
               type="button"
               className="wallet-chip"
               title="Simulated wallet — click to disconnect"
-              onClick={() => dispatch({ type: 'disconnect' })}
+              onClick={() => disconnectWallet()}
             >
               <span className="dot" aria-hidden="true" />
-              {MY_WALLET_LABEL}
+              {wallet.address?.slice(0, 4)}…{wallet.address?.slice(-4)}
             </button>
           ) : (
             <button
               type="button"
               className="btn btn-primary"
               style={{ padding: '8px 18px', fontSize: 13 }}
-              onClick={() => {
-                dispatch({ type: 'connect' })
-                toast('Wallet connected (simulated)', `${MY_WALLET_LABEL} — no real wallet is involved.`)
+              disabled={connecting}
+              onClick={async () => {
+                setConnecting(true)
+                await connectWallet('phantom')
+                setConnecting(false)
+                toast('Wallet connected (simulated)', 'No real wallet is involved — this is a prototype.')
               }}
             >
-              Connect Wallet
+              {connecting ? 'Connecting…' : 'Connect Wallet'}
             </button>
           )}
         </div>
