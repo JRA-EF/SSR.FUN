@@ -189,20 +189,33 @@ const ISO_OX = ISO_W * 0.50, ISO_OY = ISO_H * 0.70;
 // Base platform — flat and wide, thick side band
 const PW = 5.6, PD = 5.0, PH = 0.62;
 // Small blocks — very thin, heavily rounded
-const BW = 1.10, BD = 1.10, BH = 0.20, HB = BW / 2;
+const BH = 0.20;
 
 // [cx, cy, gz, floatDepth]
-// 8 blocks, spread wide, none over base footprint, matching reference composition
+// 8 blocks — block 7 moved to upper-left (was far-right front)
 const BLOCK_CENTERS: readonly [number, number, number, number][] = [
   [-3.6, -1.0, 3.4, 0.79],   // far-left back
   [ 0.1, -3.6, 4.7, 0.68],   // center back (tallest — longest connector)
   [ 2.8, -2.1, 3.2, 0.82],   // right back
   [-2.4,  0.1, 2.6, 0.84],   // medium left
-  [ 0.9, -1.0, 2.9, 1.00],   // center-right (slightly more prominent depth)
+  [ 0.9, -1.0, 2.9, 1.00],   // center-right
   [-1.1,  1.4, 1.6, 0.76],   // close front-left (short connector)
   [ 2.5,  0.6, 2.4, 0.88],   // right medium
-  [ 3.9,  1.6, 1.8, 0.73],   // far-right front
+  [-5.0, -2.8, 4.8, 0.73],   // upper-left (moved from far-right front)
 ];
+
+// Per-block [w, d] sizes — randomized; avg ≈ current*1.25, min current*1.15, max current*2.0
+// current base = 1.10 → min 1.265, max 2.20, avg target ≈ 1.375
+const BLOCK_SIZES: readonly [number, number][] = [
+  [1.27, 1.27], // 0 far-left back
+  [1.52, 1.52], // 1 center back — biggest, tallest connector
+  [1.38, 1.38], // 2 right back
+  [1.30, 1.30], // 3 medium left
+  [1.44, 1.44], // 4 center-right
+  [1.28, 1.28], // 5 close front-left
+  [1.42, 1.42], // 6 right medium
+  [1.35, 1.35], // 7 upper-left
+]; // avg = 1.37 (+25%)
 const N_BLOCKS = BLOCK_CENTERS.length;
 
 // Float animation — each block bobs independently
@@ -258,10 +271,12 @@ interface SmallMeta {
 }
 
 const SMALLS: SmallMeta[] = BLOCK_CENTERS.map(([cx, cy, gz, depth], i) => {
+  const [bw, bd] = BLOCK_SIZES[i];
+  const hbw = bw / 2, hbd = bd / 2;
   const [topCx, topCy]       = isoProj(cx, cy, gz + BH);
   const [connBotX, connBotY] = isoProj(cx, cy, gz);
   const [connTopX, connTopY] = isoProj(cx, cy, PH + 0.04);
-  const blk: IsoBlk = { gx: cx - HB, gy: cy - HB, gz, w: BW, d: BD, h: BH };
+  const blk: IsoBlk = { gx: cx - hbw, gy: cy - hbd, gz, w: bw, d: bd, h: BH };
   return { origIdx: i, cx, cy, depth, topCx, topCy, connBotX, connBotY, connTopX, connTopY, faces: isoBlkFaces(blk, 13) };
 });
 
@@ -511,15 +526,17 @@ function HeroAnimation() {
               <stop offset="60%"  stopColor="#faf8ff"/>
               <stop offset="100%" stopColor="#eae4ff"/>
             </linearGradient>
-            {/* Left face — lighter purple */}
+            {/* Left face — rich premium purple, top highlight into deep base */}
             <linearGradient id="pLeft" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#9b78f0"/>
-              <stop offset="100%" stopColor="#7c3aed"/>
+              <stop offset="0%"   stopColor="#c4a9ff"/>
+              <stop offset="12%"  stopColor="#8b5cf6"/>
+              <stop offset="100%" stopColor="#5b21b6"/>
             </linearGradient>
-            {/* Right face — same purple family, barely darker */}
+            {/* Right face — same family, slightly deeper for shadow side */}
             <linearGradient id="pRight" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#8b5cf6"/>
-              <stop offset="100%" stopColor="#6825d4"/>
+              <stop offset="0%"   stopColor="#a78bfa"/>
+              <stop offset="12%"  stopColor="#7c3aed"/>
+              <stop offset="100%" stopColor="#4c1d95"/>
             </linearGradient>
 
             {/* ── Small blocks ── white top, matching purple trim ── */}
