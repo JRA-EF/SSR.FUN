@@ -170,9 +170,12 @@ export function CreateDTR() {
       </div>
 
       <div className="flex justify-between mb-8 relative">
-        <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-border -z-10 -translate-y-1/2"></div>
-        <div 
-          className="absolute top-1/2 left-0 h-0.5 bg-primary -z-10 -translate-y-1/2 transition-all duration-300"
+        {/* Anchored to top-4 (16px = half of the w-8/h-8 circle below), not top-1/2 of the
+            whole step item -- top-1/2 measured against the full circle+label height, which
+            sits the line below the circles' true center. */}
+        <div className="absolute top-4 left-0 right-0 h-0.5 bg-border -z-10 -translate-y-1/2"></div>
+        <div
+          className="absolute top-4 left-0 h-0.5 bg-primary -z-10 -translate-y-1/2 transition-all duration-300"
           style={{ width: `${((step - 1) / 3) * 100}%` }}
         ></div>
         
@@ -394,7 +397,7 @@ export function CreateDTR() {
             <CardContent className="space-y-8">
               
               <div className="space-y-4">
-                <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Initial Liquidity</h3>
+                <h3 className="font-semibold text-lg pb-2">Initial Liquidity</h3>
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="seed" className="flex items-center gap-2">
                     Seed Amount (USDC)
