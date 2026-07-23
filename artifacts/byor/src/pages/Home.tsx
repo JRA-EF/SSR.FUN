@@ -526,16 +526,16 @@ function HeroAnimation() {
               <stop offset="60%"  stopColor="#faf8ff"/>
               <stop offset="100%" stopColor="#eae4ff"/>
             </linearGradient>
-            {/* Left face — rich premium purple, top highlight into deep base */}
+            {/* Left face — solid deep purple, hairline specular at top edge */}
             <linearGradient id="pLeft" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#c4a9ff"/>
-              <stop offset="12%"  stopColor="#8b5cf6"/>
+              <stop offset="0%"   stopColor="#a78bfa"/>
+              <stop offset="6%"   stopColor="#7c3aed"/>
               <stop offset="100%" stopColor="#5b21b6"/>
             </linearGradient>
-            {/* Right face — same family, slightly deeper for shadow side */}
+            {/* Right face — slightly darker for shadow differentiation */}
             <linearGradient id="pRight" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#a78bfa"/>
-              <stop offset="12%"  stopColor="#7c3aed"/>
+              <stop offset="0%"   stopColor="#8b5cf6"/>
+              <stop offset="6%"   stopColor="#6d28d9"/>
               <stop offset="100%" stopColor="#4c1d95"/>
             </linearGradient>
 
