@@ -187,7 +187,7 @@ const ISO_TW = 39, ISO_TH = 17, ISO_TZ = 38;
 const ISO_OX = ISO_W * 0.50, ISO_OY = ISO_H * 0.70;
 
 // Base platform — flat and wide, thick side band
-const PW = 5.6, PD = 5.0, PH = 0.62;
+const PW = 5.6, PD = 5.0, PH = 0.95;
 // Small blocks — very thin, heavily rounded
 const BH = 0.20;
 
@@ -526,17 +526,15 @@ function HeroAnimation() {
               <stop offset="60%"  stopColor="#faf8ff"/>
               <stop offset="100%" stopColor="#eae4ff"/>
             </linearGradient>
-            {/* Left face — solid deep purple, hairline specular at top edge */}
+            {/* Left face — all deep purple, subtle top highlight only */}
             <linearGradient id="pLeft" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#a78bfa"/>
-              <stop offset="6%"   stopColor="#7c3aed"/>
-              <stop offset="100%" stopColor="#5b21b6"/>
-            </linearGradient>
-            {/* Right face — slightly darker for shadow differentiation */}
-            <linearGradient id="pRight" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#8b5cf6"/>
-              <stop offset="6%"   stopColor="#6d28d9"/>
+              <stop offset="0%"   stopColor="#9d6ff5"/>
               <stop offset="100%" stopColor="#4c1d95"/>
+            </linearGradient>
+            {/* Right face — slightly deeper / shadow side */}
+            <linearGradient id="pRight" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#7c3aed"/>
+              <stop offset="100%" stopColor="#3b0764"/>
             </linearGradient>
 
             {/* ── Small blocks ── white top, matching purple trim ── */}
