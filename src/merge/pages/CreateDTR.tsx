@@ -223,9 +223,9 @@ export function CreateDTR() {
                     className="uppercase"
                     maxLength={TICKER_MAX_LENGTH}
                     value={ticker} 
-                    onChange={(e) => setTicker(e.target.value.toUpperCase().slice(0, TICKER_MAX_LENGTH))} 
+                    onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, TICKER_MAX_LENGTH))}
                   />
-                  <p className="text-xs text-muted-foreground">Up to {TICKER_MAX_LENGTH} characters, like a normal ticker symbol.</p>
+                  <p className="text-xs text-muted-foreground">Up to {TICKER_MAX_LENGTH} letters, no numbers.</p>
                 </div>
               </div>
               
@@ -423,7 +423,7 @@ export function CreateDTR() {
               </div>
 
               <div className="space-y-6">
-                <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Fee Configuration</h3>
+                <h3 className="font-semibold text-lg pb-2">Fee Configuration</h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="space-y-3">
@@ -485,7 +485,7 @@ export function CreateDTR() {
               </div>
 
               <div className="space-y-4">
-                <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Fee Routing</h3>
+                <h3 className="font-semibold text-lg pb-2">Fee Routing</h3>
                 <div className="space-y-2">
                   <Label htmlFor="dest">Primary Fee Destination Wallet</Label>
                   <Input 
@@ -552,7 +552,7 @@ export function CreateDTR() {
               </div>
 
               <div className="space-y-4">
-                <h3 className="font-semibold text-lg border-b border-border/50 pb-2">Additional Managers</h3>
+                <h3 className="font-semibold text-lg pb-2">Additional Managers</h3>
                 <p className="text-xs text-muted-foreground">Add other wallets as Reserve Managers. They'll be able to rebalance, manage fees, and pause the reserve, but won't be able to manage other delegates -- only the root Manager (you) can do that.</p>
 
                 {additionalManagers.length > 0 && (
