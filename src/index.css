@@ -274,7 +274,13 @@ input, select, textarea {
 
 .nav-logo:hover { text-decoration: none; }
 
-.nav-logo img { width: 22px; height: 22px; }
+.nav-logo img {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
 
 .nav-links {
   display: flex;

@@ -97,9 +97,9 @@ export function Shell({ children }: { children: ReactNode }) {
       <header className="nav">
         <div className="container nav-inner">
           <Link to="/" className="nav-logo" ariaLabel="SSR.fun home">
-            <img src="/favicon.svg" alt="" />
+            <img src="/ssr-seal.png" alt="" />
             <span>
-              SSR<span className="fun">.fun</span>
+              SSR<span className="fun">.FUN</span>
             </span>
           </Link>
           <span className="sim-badge" title="Simulated environment — all data is mocked; nothing is on-chain.">
