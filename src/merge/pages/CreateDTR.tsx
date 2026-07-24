@@ -165,8 +165,8 @@ export function CreateDTR() {
   return (
     <div className="container max-w-4xl mx-auto px-4 py-12">
       <div className="mb-8">
-        <h1 className="text-4xl font-merge-display font-bold mb-2">Deploy a Reserve</h1>
-        <p className="text-muted-foreground">Create a new Reserve on SSR.FUN.</p>
+        <h1 className="text-4xl font-merge-display font-bold mb-2">Launch Reserve</h1>
+        <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN.</p>
       </div>
 
       <div className="flex justify-between mb-8 relative">
@@ -710,7 +710,7 @@ export function CreateDTR() {
                 {isSubmitting ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Deploying...</>
                 ) : (
-                  <><Rocket className="w-4 h-4" /> Deploy Reserve</>
+                  <><Rocket className="w-4 h-4" /> Launch Reserve</>
                 )}
               </Button>
             </CardFooter>

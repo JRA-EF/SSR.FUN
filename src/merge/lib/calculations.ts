@@ -268,6 +268,19 @@ export function calcUnrealizedPnlPct(holding: Holding, dtr: DTR | undefined): nu
   return ((dtr.tokenPrice - holding.avgPurchasePrice) / holding.avgPurchasePrice) * 100;
 }
 
+/** Cost basis of a holding (what was actually paid for it), in USDC. */
+export function calcCostBasis(holding: Holding): number {
+  return holding.avgPurchasePrice * holding.tokenBalance;
+}
+
+/** Estimated USDC P&L on a holding over the last 24h, derived from the DTR's 24h price change. */
+export function calc24hPnl(holding: Holding, dtr: DTR | undefined): number {
+  if (!dtr) return 0;
+  const currentValue = calcHoldingValue(holding, dtr);
+  const prevValue = currentValue / (1 + dtr.change24h / 100);
+  return currentValue - prevValue;
+}
+
 /** Total value of all DTR Token holdings, in USDC. */
 export function calcTotalDtrValue(holdings: Holding[], dtrs: DTR[]): number {
   return holdings.reduce((sum, h) => {

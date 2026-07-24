@@ -2,10 +2,11 @@ import { useState, type ReactNode } from 'react'
 import { Link, navigate, usePath } from '../lib/router'
 import { useStore } from '../state/store'
 import { useAppStore } from '@/store/useAppStore'
+import { WalletModal } from './WalletModal'
 
 const LINKS = [
   { to: '/discover', label: 'Discover Reserves' },
-  { to: '/create', label: 'Create a Reserve' },
+  { to: '/create', label: 'Launch Reserve' },
   { to: '/portfolio', label: 'Portfolio' },
   { to: '/manage', label: 'Manage' },
 ]
@@ -75,9 +76,9 @@ function ThemeToggle() {
 
 export function Shell({ children }: { children: ReactNode }) {
   const path = usePath()
-  const { toasts, toast } = useStore()
-  const { wallet, connectWallet, disconnectWallet } = useAppStore()
-  const [connecting, setConnecting] = useState(false)
+  const { toasts } = useStore()
+  const { wallet, disconnectWallet } = useAppStore()
+  const [walletModalOpen, setWalletModalOpen] = useState(false)
 
   return (
     <>
@@ -129,15 +130,9 @@ export function Shell({ children }: { children: ReactNode }) {
               type="button"
               className="btn btn-primary"
               style={{ padding: '8px 18px', fontSize: 13 }}
-              disabled={connecting}
-              onClick={async () => {
-                setConnecting(true)
-                await connectWallet('phantom')
-                setConnecting(false)
-                toast('Wallet connected (simulated)', 'No real wallet is involved — this is a prototype.')
-              }}
+              onClick={() => setWalletModalOpen(true)}
             >
-              {connecting ? 'Connecting…' : 'Connect Wallet'}
+              Connect Wallet
             </button>
           )}
         </div>
@@ -162,7 +157,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <div style={{ color: 'var(--text-2)', marginBottom: 8, fontWeight: 600 }}>Product</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Link to="/discover" className="faint">Discover Reserves</Link>
-                <Link to="/create" className="faint">Create a Reserve</Link>
+                <Link to="/create" className="faint">Launch Reserve</Link>
                 <Link to="/portfolio" className="faint">Portfolio</Link>
                 <Link to="/manage" className="faint">Reserve Manager</Link>
               </div>
@@ -186,6 +181,8 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         ))}
       </div>
+
+      <WalletModal open={walletModalOpen} onClose={() => setWalletModalOpen(false)} />
     </>
   )
 }

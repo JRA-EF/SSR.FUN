@@ -1,61 +1,47 @@
-import type { CSSProperties } from 'react'
 import { Link } from '../lib/router'
 import { useStore } from '../state/store'
 import { fmtNum, fmtSigned, fmtUsd, fmtUsdExact } from '../lib/format'
 import { navPerToken, type Reserve } from '../domain/types'
-import { Sparkline } from '../components/charts'
 import { HeroPlatforms } from '../components/HeroPlatforms'
+import { ReserveCard } from '../components/ReserveCard'
 import { bpsPct, ssrFeeBps } from '../lib/fees'
+import { ASSETS } from '../data/assets'
+import { avatarStyle } from '../lib/avatarStyle'
 
 const FEE_EXAMPLES = [0, 100, 400, 2000]
 
-/** Deterministic avatar gradient derived from the ticker. */
-function avatarStyle(ticker: string): CSSProperties {
-  let h = 0
-  for (const ch of ticker) h = (h * 31 + ch.charCodeAt(0)) % 360
-  return {
-    background: `linear-gradient(135deg, hsl(${h} 72% 56%), hsl(${(h + 42) % 360} 68% 40%))`,
-  }
+function topAssetSymbols(r: Reserve, n = 3): string[] {
+  return [...r.allocations]
+    .sort((a, b) => b.targetBps - a.targetBps)
+    .slice(0, n)
+    .map(a => ASSETS.find(x => x.id === a.assetId)?.symbol ?? a.assetId.toUpperCase())
 }
 
 function FeaturedCard({ r }: { r: Reserve }) {
   const s = r.navSeries
   const change24h = ((s[s.length - 1] - s[s.length - 2]) / s[s.length - 2]) * 100
   const price = r.marketPrice ?? navPerToken(r)
-  const up = change24h >= 0
   return (
-    <div className="fcard">
-      <div className="fcard-head">
-        <div className="fcard-name">
-          <span className="favatar" style={avatarStyle(r.ticker)}>{r.ticker.slice(0, 2)}</span>
-          <span className="nm">{r.name}</span>
-          <span className="badge">{r.ticker}</span>
-        </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div className="num" style={{ fontWeight: 600, fontSize: 15 }}>{fmtUsdExact(price)}</div>
-          <div className={`num ${up ? 'up' : 'down'}`} style={{ fontSize: 12 }}>{fmtSigned(change24h, 2)}</div>
-        </div>
-      </div>
-      <p className="fcard-desc lc2">{r.description}</p>
-      <Sparkline data={s.slice(-30)} width={300} height={60} stretch />
-      <div className="fcard-foot">
-        <div style={{ display: 'flex', gap: 18 }}>
-          <div className="cell">
-            <div className="k">TVL</div>
-            <div className="v">{fmtUsd(r.navUsd)}</div>
-          </div>
-          <div className="cell">
-            <div className="k">Price / Token</div>
-            <div className="v">{fmtUsdExact(price)}</div>
-          </div>
-          <div className="cell">
-            <div className="k">24h Change</div>
-            <div className={`v ${up ? 'up' : 'down'}`}>{fmtSigned(change24h, 2)}</div>
-          </div>
-        </div>
-        <Link to={`/reserve/${r.address}`} className="btn btn-trade btn-sm">Trade</Link>
-      </div>
-    </div>
+    <ReserveCard
+      name={r.name}
+      ticker={r.ticker}
+      description={r.description}
+      avatarLabel={r.ticker.slice(0, 2)}
+      avatarStyle={avatarStyle(r.ticker)}
+      priceFormatted={fmtUsdExact(price)}
+      changePct={change24h}
+      changeFormatted={fmtSigned(change24h, 2)}
+      sparkline={s.slice(-30)}
+      topAssets={topAssetSymbols(r)}
+      metrics={[
+        { key: 'tvl', label: 'TVL', value: fmtUsd(r.navUsd) },
+        { key: 'price', label: 'Price / Token', value: fmtUsdExact(price) },
+        { key: 'chg', label: '24h Change', value: fmtSigned(change24h, 2), tone: change24h >= 0 ? 'up' : 'down' },
+      ]}
+      renderCta={({ className, children }) => (
+        <Link to={`/reserve/${r.address}`} className={className}>{children}</Link>
+      )}
+    />
   )
 }
 
@@ -79,9 +65,12 @@ export function Home() {
               <br />
               <span className="grad">Infinite possibilities.</span>
             </h1>
-            <p className="lede">Deploy your reserve on SSR.fun and start earning fees, today!</p>
+            <p className="lede">
+              SSR.fun is where anyone can create, launch, and trade decentralized tokenized reserves. Build a basket
+              of Solana assets, set your fees, and issue a Reserve Token backed by transparent, on-chain holdings.
+            </p>
             <div className="hero-ctas">
-              <Link to="/create" className="btn btn-primary btn-lg">Deploy Your Reserve</Link>
+              <Link to="/create" className="btn btn-primary btn-lg">Launch Reserve</Link>
               <Link to="/discover" className="btn btn-ghost btn-lg">Discover Reserves</Link>
             </div>
           </div>
@@ -180,7 +169,7 @@ export function Home() {
                 separately before you sign — never combined into one unexplained number.
               </p>
               <p className="muted" style={{ fontSize: 14, marginTop: 12 }}>
-                Create your reserve and start earning fees today.
+                Launch your Reserve and start earning fees today.
               </p>
               <Link to="/create" className="btn btn-ghost" style={{ marginTop: 18 }}>Start creating</Link>
             </div>

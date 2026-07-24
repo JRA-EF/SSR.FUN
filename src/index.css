@@ -22,6 +22,7 @@
 
   --accent: #8b45ff;
   --accent-hover: #9c60ff;
+  --accent-active: #7536e6;
   --accent-soft: rgba(139, 69, 255, 0.13);
   --accent-ink: #c9adff;
 
@@ -77,6 +78,7 @@
 
   --accent: #7a2bff;
   --accent-hover: #6a1fe8;
+  --accent-active: #5a17c9;
   --accent-soft: rgba(122, 43, 255, 0.1);
   --accent-ink: #6524d6;
 
@@ -212,7 +214,13 @@ input, select, textarea {
 
 /* ---------------------------------- layout ---------------------------------- */
 
-.container {
+/* :not(.merge-scope *) -- "container" is also Tailwind's own utility class name,
+   used throughout the ported .merge-scope pages (Discover, Portfolio, Create, etc.)
+   together with Tailwind padding utilities such as py-10 and px-8. This rule is
+   unlayered CSS, so without the exclusion it would always beat those utilities
+   regardless of specificity (unlayered CSS wins over any @layer'd rule, Tailwind's
+   utilities included), silently zeroing out their vertical padding. */
+.container:not(.merge-scope *) {
   max-width: var(--maxw);
   margin: 0 auto;
   padding: 0 24px;
@@ -414,6 +422,8 @@ input, select, textarea {
 }
 
 .btn-primary:hover { background: var(--accent-hover); }
+
+.btn-primary:active { background: var(--accent-active); }
 
 .btn-primary:disabled {
   background: var(--surface-3);
@@ -809,6 +819,144 @@ input, select, textarea {
   margin-bottom: 4px;
 }
 
+/* ---------------------------------- wallet modal ---------------------------------- */
+
+.wm-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wm-close {
+  color: var(--text-3);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.wm-close:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.wm-sub {
+  font-size: 13.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin-top: 6px;
+}
+
+.wm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.wm-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-raise);
+  padding: 12px 14px;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.wm-option:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: translateY(-1px);
+}
+
+.wm-option-name {
+  font-weight: 600;
+  font-size: 14px;
+  flex: 1;
+}
+
+.wm-option-hint {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.wm-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 18px 4px 6px;
+}
+
+.wm-status-text {
+  font-weight: 600;
+  font-size: 15px;
+  margin-top: 4px;
+}
+
+.wm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.wm-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wm-icon-success {
+  background: color-mix(in srgb, var(--up) 16%, transparent);
+  color: var(--up);
+}
+
+.wm-icon-fail {
+  background: color-mix(in srgb, var(--down) 14%, transparent);
+  color: var(--down);
+}
+
+.wm-spinner {
+  position: relative;
+  animation: wm-pulse 1.1s ease-in-out infinite;
+}
+
+.wm-spinner::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  animation: wm-spin 0.85s linear infinite;
+}
+
+@keyframes wm-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes wm-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+
 .toasts {
   position: fixed;
   bottom: 20px;
@@ -982,17 +1130,26 @@ input, select, textarea {
 }
 
 .hero h1 .grad {
-  background-image: linear-gradient(100deg, var(--accent) 20%, #a855f7 90%);
+  background-image: linear-gradient(100deg, #3b1478 0%, var(--accent) 48%, #d8c2ff 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  text-shadow:
+    0 0 26px color-mix(in srgb, var(--accent) 32%, transparent),
+    0 0 64px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+:root[data-theme='light'] .hero h1 .grad {
+  background-image: linear-gradient(100deg, #3b1478 0%, var(--accent) 48%, #9b6bf5 100%);
+  text-shadow: 0 0 20px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .hero .lede {
   margin-top: 20px;
   font-size: 17px;
+  line-height: 1.55;
   color: var(--text-2);
-  max-width: 40ch;
+  max-width: 48ch;
 }
 
 .hero-ctas {
@@ -1071,21 +1228,21 @@ input, select, textarea {
   letter-spacing: -0.02em;
 }
 
-/* featured reserve cards */
+/* standard reserve card — shared by Featured Reserves and Discover Reserves */
 .fcards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
+  gap: 22px;
 }
 
 .fcard {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 18px 18px 14px;
+  border-radius: 18px;
+  padding: 22px 22px 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   transition: transform 0.18s ease, border-color 0.18s, box-shadow 0.18s;
 }
 
@@ -1103,49 +1260,97 @@ input, select, textarea {
 }
 
 .favatar {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.favatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .fcard-name {
   display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.fcard-titles {
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.fcard-titles .nm-row {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 7px;
   min-width: 0;
 }
 
 .fcard-name .nm {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 16px;
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.fcard-price {
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .fcard-desc {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--text-2);
-  line-height: 1.45;
-  min-height: 38px;
+  line-height: 1.5;
+  min-height: 61px;
+}
+
+.fcard-assets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fcard-asset-pill {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 
 .fcard-foot {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
+  flex-wrap: wrap;
   border-top: 1px solid var(--line);
-  padding-top: 12px;
+  padding-top: 14px;
+  margin-top: auto;
+}
+
+.fcard-metrics {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
 }
 
 .fcard-foot .cell .k {
@@ -1176,10 +1381,10 @@ input, select, textarea {
   color: #fff;
 }
 
-.lc2 {
+.lc3 {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1659,7 +1864,7 @@ input, select, textarea {
   .detail-grid { grid-template-columns: 1fr; }
   .trade-panel { position: static; }
   .rcards { grid-template-columns: repeat(2, 1fr); }
-  .fcards { grid-template-columns: 1fr; }
+  .fcards { grid-template-columns: repeat(2, 1fr); }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .kpi-cell:nth-child(2) { border-right: none; }
   .kpi-cell:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
@@ -1678,6 +1883,7 @@ input, select, textarea {
 
 @media (max-width: 640px) {
   .rcards { grid-template-columns: 1fr; }
+  .fcards { grid-template-columns: 1fr; }
   .nav-links { display: none; }
   .sim-badge { display: none; }
   .kpi-grid { grid-template-columns: 1fr; }

@@ -8,7 +8,6 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { Shield } from "lucide-react";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
-import { Button } from "@/components/ui/button";
 import { MergeParamsContext } from "@/lib/wouter-shim";
 import { ManageDTR } from "./ManageDTR";
 
@@ -40,9 +39,12 @@ export function Manage() {
           <Shield className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Reserve Manager</h1>
           <p className="text-muted-foreground">You do not manage any Reserves yet.</p>
-          <Button asChild>
-            <Link href="/create">Create your Reserve</Link>
-          </Button>
+          {/* Native .btn-primary, not the shadcn Button: FABLE's unlayered
+              `a { color: var(--accent-ink) }` base rule always beats Tailwind's
+              layered text-primary-foreground utility, which made the shadcn
+              button render low-contrast purple-on-purple text here. .btn-primary
+              sets a literal `color: #fff` that wins on unlayered specificity. */}
+          <Link href="/create" className="btn btn-primary btn-lg">Launch Reserve</Link>
         </div>
       </div>
     );

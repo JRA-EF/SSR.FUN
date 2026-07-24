@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { Reserve } from '../domain/types'
 import { assetById } from '../data/assets'
 import { shortAddr } from '../lib/format'
@@ -122,6 +122,15 @@ export function Addr({ value, label }: { value: string; label?: string }) {
 /* ------------------------------ modal ------------------------------ */
 
 export function Modal({ open, onClose, children, labelledBy }: { open: boolean; onClose: () => void; children: ReactNode; labelledBy?: string }) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   if (!open) return null
   return (
     <div
