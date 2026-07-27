@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Activity, SearchX } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
-import { formatUsdc } from "@/lib/calculations";
+import { formatUsdc, buildLineSeries } from "@/lib/calculations";
 import type { DTR } from "@/lib/types";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
@@ -119,6 +119,7 @@ export function Discover() {
             .sort((a, b) => b.weight - a.weight)
             .slice(0, 3)
             .map((a) => a.symbol);
+          const recentHistory = buildLineSeries(dtr.priceHistory, "7d");
 
           return (
             <ReserveCard
@@ -133,7 +134,9 @@ export function Discover() {
               priceFormatted={formatUsdc(dtr.tokenPrice)}
               changePct={dtr.change24h}
               changeFormatted={`${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`}
-              sparkline={dtr.priceHistory.slice(-30).map((p) => p.price)}
+              sparkline={recentHistory.map((p) => p.price)}
+              sparklineTimestamps={recentHistory.map((p) => p.t)}
+              sparklineValueFmt={formatUsdc}
               topAssets={topAssets}
               metrics={[
                 { key: "price", label: "Price", value: formatUsdc(dtr.tokenPrice) },

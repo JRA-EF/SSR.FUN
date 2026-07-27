@@ -1002,6 +1002,19 @@ input, select, textarea {
 .viz-tip .k { color: var(--text-3); }
 .viz-tip .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
+.spark-tip {
+  top: -42px;
+}
+
+.spark-axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: -4px;
+}
+
 /* ---------------------------------- charts ---------------------------------- */
 
 .chart-wrap { position: relative; }

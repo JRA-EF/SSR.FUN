@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Link } from '../lib/router'
 import { useStore } from '../state/store'
 import { fmtNum, fmtSigned, fmtUsd, fmtUsdExact } from '../lib/format'
@@ -7,6 +8,7 @@ import { ReserveCard } from '../components/ReserveCard'
 import { bpsPct, ssrFeeBps } from '../lib/fees'
 import { ASSETS } from '../data/assets'
 import { avatarStyle } from '../lib/avatarStyle'
+import { hashSeed, hourlySeries7d } from '../data/mock'
 
 const FEE_EXAMPLES = [0, 100, 400, 2000]
 
@@ -21,6 +23,9 @@ function FeaturedCard({ r }: { r: Reserve }) {
   const s = r.navSeries
   const change24h = ((s[s.length - 1] - s[s.length - 2]) / s[s.length - 2]) * 100
   const price = r.marketPrice ?? navPerToken(r)
+  // Same 7-day, ~hourly-resolution shape as Discover Reserves' real trade history,
+  // synthesized here since native Reserves only track one NAV point per day.
+  const history = useMemo(() => hourlySeries7d(hashSeed(r.address), price), [r.address, price])
   return (
     <ReserveCard
       name={r.name}
@@ -31,7 +36,8 @@ function FeaturedCard({ r }: { r: Reserve }) {
       priceFormatted={fmtUsdExact(price)}
       changePct={change24h}
       changeFormatted={fmtSigned(change24h, 2)}
-      sparkline={s.slice(-30)}
+      sparkline={history.map(p => p.price)}
+      sparklineTimestamps={history.map(p => p.t)}
       topAssets={topAssetSymbols(r)}
       metrics={[
         { key: 'tvl', label: 'TVL', value: fmtUsd(r.navUsd) },

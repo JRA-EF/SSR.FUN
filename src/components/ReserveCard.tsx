@@ -20,6 +20,10 @@ export interface ReserveCardProps {
   changePct: number
   changeFormatted: string
   sparkline?: number[]
+  /** Per-point unix-ms timestamps aligned with `sparkline`, for an accurate hover tooltip. */
+  sparklineTimestamps?: number[]
+  /** Formats the hovered sparkline value; defaults to the sparkline's own default. */
+  sparklineValueFmt?: (v: number) => string
   topAssets?: string[]
   metrics: ReserveCardMetric[]
   ctaLabel?: string
@@ -44,6 +48,8 @@ export function ReserveCard({
   changePct,
   changeFormatted,
   sparkline,
+  sparklineTimestamps,
+  sparklineValueFmt,
   topAssets,
   metrics,
   ctaLabel = 'Trade',
@@ -73,7 +79,16 @@ export function ReserveCard({
 
       <p className="fcard-desc lc3">{description}</p>
 
-      {sparkline && sparkline.length > 1 && <Sparkline data={sparkline} width={300} height={60} stretch />}
+      {sparkline && sparkline.length > 1 && (
+        <Sparkline
+          data={sparkline}
+          timestamps={sparklineTimestamps}
+          valueFmt={sparklineValueFmt}
+          width={300}
+          height={60}
+          stretch
+        />
+      )}
 
       {topAssets && topAssets.length > 0 && (
         <div className="fcard-assets">

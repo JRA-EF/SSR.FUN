@@ -42,12 +42,13 @@ export function fmtDate(ts: number): string {
   return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export function fmtDateTime(ts: number): string {
+/** Hour-precision timestamp (no minutes) -- e.g. "Jul 24, 1 AM". Used for chart hover
+ *  labels so the displayed granularity matches the underlying ~hourly chart resolution. */
+export function fmtHour(ts: number): string {
   return new Date(ts).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
-    minute: '2-digit',
   })
 }
 

@@ -1,5 +1,5 @@
 import { useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { fmtDate, fmtPct, fmtUsdExact } from '../lib/format'
+import { fmtDate, fmtHour, fmtPct, fmtUsdExact } from '../lib/format'
 import { DAY } from '../data/mock'
 
 /* Categorical slots as CSS variables — each theme supplies its own validated steps (see index.css tokens). */
@@ -11,45 +11,95 @@ export const OTHER_COLOR = 'var(--s-other)'
 
 export function Sparkline({
   data,
+  timestamps,
   width = 120,
   height = 36,
   stretch = false,
+  valueFmt = fmtUsdExact,
 }: {
   data: number[]
+  /** Per-point unix-ms timestamps, same length as `data`. When omitted, points are
+   *  assumed to be one-per-day, oldest first, ending today (matches how Reserve
+   *  nav/price series are seeded elsewhere in this app). */
+  timestamps?: number[]
   width?: number
   height?: number
   /** Scale the SVG to fill its container width (keeps aspect ratio). */
   stretch?: boolean
+  valueFmt?: (v: number) => string
 }) {
   const id = useId()
+  const [hover, setHover] = useState<{ i: number; xPct: number } | null>(null)
   if (data.length < 2) return null
+  const n = data.length
   const min = Math.min(...data)
   const max = Math.max(...data)
   const span = max - min || 1
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * (width - 2) + 1
-    const y = height - 3 - ((v - min) / span) * (height - 6)
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  })
-  const up = data[data.length - 1] >= data[0]
+  const xAt = (i: number) => (i / (n - 1)) * (width - 2) + 1
+  const yAt = (v: number) => height - 3 - ((v - min) / span) * (height - 6)
+  const pts = data.map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`)
+  const up = data[n - 1] >= data[0]
   const color = up ? 'var(--up)' : 'var(--down)'
+  const dateAt = (i: number) => (timestamps ? timestamps[i] : Date.now() - (n - 1 - i) * DAY)
+  /** Hover label is always hour-precision -- keeps Featured Reserves and Discover Reserves reading the same way. */
+  const dateFmt = fmtHour
+  /** Short "Jul 17" axis label -- drops the year fmtDate() includes, same trick PriceChart uses for its own x-axis. */
+  const axisFmt = (ts: number) => fmtDate(ts).replace(/, \d{4}$/, '')
+
+  function onMove(e: ReactMouseEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const relX = ((e.clientX - rect.left) / rect.width) * width
+    const i = Math.max(0, Math.min(n - 1, Math.round(((relX - 1) / (width - 2)) * (n - 1))))
+    setHover({ i, xPct: (xAt(i) / width) * 100 })
+  }
+
   return (
-    <svg
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      style={stretch ? { width: '100%', height: 'auto', display: 'block' } : undefined}
-      aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id={`sg-${id}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" style={{ stopColor: up ? 'var(--up)' : 'var(--down)' }} stopOpacity="0.22" />
-          <stop offset="100%" style={{ stopColor: up ? 'var(--up)' : 'var(--down)' }} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={`1,${height - 1} ${pts.join(' ')} ${width - 1},${height - 1}`} fill={`url(#sg-${id})`} />
-      <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
+    <div className="chart-wrap" style={stretch ? undefined : { width, height }}>
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        style={stretch ? { width: '100%', height: 'auto', display: 'block' } : undefined}
+        role="img"
+        aria-label={`Price sparkline, currently ${valueFmt(data[n - 1])}`}
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        <defs>
+          <linearGradient id={`sg-${id}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" style={{ stopColor: up ? 'var(--up)' : 'var(--down)' }} stopOpacity="0.22" />
+            <stop offset="100%" style={{ stopColor: up ? 'var(--up)' : 'var(--down)' }} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <polygon points={`1,${height - 1} ${pts.join(' ')} ${width - 1},${height - 1}`} fill={`url(#sg-${id})`} />
+        <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        {/* Wide invisible hit-target so hover/tooltip tracking works between the sparse real data points too. */}
+        <rect x="0" y="0" width={width} height={height} fill="transparent" />
+        {hover && (
+          <g>
+            <line x1={xAt(hover.i)} x2={xAt(hover.i)} y1="1" y2={height - 1} stroke="var(--axis)" strokeWidth="1" />
+            <circle cx={xAt(hover.i)} cy={yAt(data[hover.i])} r="3" fill={color} stroke="var(--surface)" strokeWidth="1.5" />
+          </g>
+        )}
+      </svg>
+
+      {hover && (
+        <div
+          className="viz-tip spark-tip"
+          style={{
+            left: `min(max(0px, calc(${hover.xPct.toFixed(1)}% - 52px)), calc(100% - 104px))`,
+          }}
+        >
+          <div className="k">{dateFmt(dateAt(hover.i))}</div>
+          <div className="v">{valueFmt(data[hover.i])}</div>
+        </div>
+      )}
+
+      <div className="spark-axis">
+        <span>{axisFmt(dateAt(0))}</span>
+        <span>{axisFmt(dateAt(n - 1))}</span>
+      </div>
+    </div>
   )
 }
 
