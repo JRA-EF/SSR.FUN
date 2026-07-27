@@ -77,7 +77,7 @@ export function Home() {
             </p>
             <div className="hero-ctas">
               <Link to="/create" className="btn btn-primary btn-lg">Launch Reserve</Link>
-              <Link to="/discover" className="btn btn-ghost btn-lg">Discover Reserves</Link>
+              <Link to="/discover" className="btn btn-ghost btn-lg">Browse Reserves</Link>
             </div>
           </div>
           <HeroPlatforms />
