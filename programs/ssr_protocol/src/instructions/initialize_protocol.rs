@@ -22,8 +22,8 @@ pub struct InitializeProtocol<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(
-    ctx: Context<InitializeProtocol>,
+pub fn handler<'info>(
+    ctx: Context<'info, InitializeProtocol<'info>>,
     max_reserve_assets: u8,
     default_protocol_fee_bps: u16,
     default_protocol_fee_destination: Pubkey,

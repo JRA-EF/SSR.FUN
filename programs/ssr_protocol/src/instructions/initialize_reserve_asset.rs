@@ -60,7 +60,7 @@ pub struct InitializeReserveAsset<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<InitializeReserveAsset>, target_weight_bps: u16) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, InitializeReserveAsset<'info>>, target_weight_bps: u16) -> Result<()> {
     let reserve = &ctx.accounts.reserve;
     require!(
         reserve.status == ReserveStatus::Created || reserve.status == ReserveStatus::AssetsInitializing,

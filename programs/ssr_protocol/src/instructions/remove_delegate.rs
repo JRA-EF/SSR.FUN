@@ -33,7 +33,7 @@ pub struct RemoveDelegate<'info> {
     pub signer: Signer<'info>,
 }
 
-pub fn handler(ctx: Context<RemoveDelegate>) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, RemoveDelegate<'info>>) -> Result<()> {
     let reserve_key = ctx.accounts.reserve.key();
     let signer_key = ctx.accounts.signer.key();
 
@@ -41,7 +41,7 @@ pub fn handler(ctx: Context<RemoveDelegate>) -> Result<()> {
         require_reserve_permission(
             &ctx.accounts.reserve,
             &reserve_key,
-            &ctx.accounts.acting_delegate.to_account_info(),
+            &ctx.accounts.acting_delegate,
             &signer_key,
             permission_flags::REMOVE_RESTRICTED_DELEGATE,
             ctx.program_id,

@@ -38,8 +38,8 @@ pub struct AddDelegate<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(
-    ctx: Context<AddDelegate>,
+pub fn handler<'info>(
+    ctx: Context<'info, AddDelegate<'info>>,
     delegate_wallet: Pubkey,
     permissions: u16,
     restricted: bool,
@@ -55,7 +55,7 @@ pub fn handler(
         require_reserve_permission(
             &ctx.accounts.reserve,
             &reserve_key,
-            &ctx.accounts.acting_delegate.to_account_info(),
+            &ctx.accounts.acting_delegate,
             &ctx.accounts.signer.key(),
             permission_flags::ADD_RESTRICTED_DELEGATE,
             ctx.program_id,

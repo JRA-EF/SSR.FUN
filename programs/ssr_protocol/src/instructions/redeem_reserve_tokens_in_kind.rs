@@ -52,8 +52,8 @@ pub struct RedeemReserveTokensInKind<'info> {
     // in ReserveAsset.order_index order. See instructions/common.rs::load_asset_legs.
 }
 
-pub fn handler(
-    ctx: Context<RedeemReserveTokensInKind>,
+pub fn handler<'info>(
+    ctx: Context<'info, RedeemReserveTokensInKind<'info>>,
     reserve_tokens_to_redeem: u64,
     min_asset_amounts_out: Vec<u64>,
 ) -> Result<()> {
@@ -110,7 +110,7 @@ pub fn handler(
         from: ctx.accounts.redeemer_reserve_token_account.to_account_info(),
         authority: ctx.accounts.redeemer.to_account_info(),
     };
-    let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
+    let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     token::burn(cpi_ctx, reserve_tokens_to_redeem)?;
 
     let vault_authority_bump = ctx.accounts.reserve.vault_authority_bump;

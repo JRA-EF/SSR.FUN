@@ -37,7 +37,7 @@ pub struct AccrueFees<'info> {
     pub reserve_token_mint: Account<'info, SplMint>,
 }
 
-pub fn handler(ctx: Context<AccrueFees>) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
     let reserve = &ctx.accounts.reserve;
     let now = Clock::get()?.unix_timestamp;
     let elapsed_seconds = now.checked_sub(reserve.fee_config.last_fee_accrual_ts).ok_or(error!(SsrError::MathUnderflow))?;

@@ -2,10 +2,10 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
-use crate::constants::{MINT_AUTHORITY_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED};
+use crate::constants::{MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED};
 use crate::errors::SsrError;
 use crate::events::FeesCollected;
-use crate::state::Reserve;
+use crate::state::{ProtocolConfig, Reserve};
 
 /// Permissionless -- like `accrue_fees`, this only mints already-accounted
 /// pending shares to fixed, Reserve-configured destinations; the caller
@@ -13,6 +13,9 @@ use crate::state::Reserve;
 /// either destination doesn't have one yet.
 #[derive(Accounts)]
 pub struct CollectFees<'info> {
+    #[account(seeds = [PROTOCOL_CONFIG_SEED], bump = protocol_config.bump)]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+
     #[account(
         mut,
         seeds = [RESERVE_SEED, reserve.reserve_id.to_le_bytes().as_ref()],
@@ -54,10 +57,11 @@ pub struct CollectFees<'info> {
     )]
     pub protocol_fee_destination_token_account: Account<'info, SplTokenAccount>,
     /// CHECK: only used as the associated-token-account authority above;
-    /// address is not independently constrained here -- see
-    /// docs/protocol/SECURITY_INVARIANTS.md open item: this should be
-    /// validated against `ProtocolConfig.default_protocol_fee_destination`
-    /// or a per-Reserve equivalent once that field is finalized.
+    /// checked in the handler against
+    /// `protocol_config.default_protocol_fee_destination` -- closes the gap
+    /// flagged in docs/protocol/SECURITY_INVARIANTS.md (was previously
+    /// unvalidated, meaning any caller-supplied address could receive the
+    /// protocol's fee share).
     pub protocol_fee_destination: UncheckedAccount<'info>,
 
     #[account(mut)]
@@ -68,10 +72,15 @@ pub struct CollectFees<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<CollectFees>) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, CollectFees<'info>>) -> Result<()> {
     require_keys_eq!(
         ctx.accounts.manager_fee_destination.key(),
         ctx.accounts.reserve.fee_config.fee_destination,
+        SsrError::InvalidFeeShareSplit
+    );
+    require_keys_eq!(
+        ctx.accounts.protocol_fee_destination.key(),
+        ctx.accounts.protocol_config.default_protocol_fee_destination,
         SsrError::InvalidFeeShareSplit
     );
 
@@ -90,7 +99,7 @@ pub fn handler(ctx: Context<CollectFees>) -> Result<()> {
             to: ctx.accounts.manager_fee_destination_token_account.to_account_info(),
             authority: ctx.accounts.mint_authority.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
         token::mint_to(cpi_ctx, manager_shares)?;
     }
     if protocol_shares > 0 {
@@ -99,7 +108,7 @@ pub fn handler(ctx: Context<CollectFees>) -> Result<()> {
             to: ctx.accounts.protocol_fee_destination_token_account.to_account_info(),
             authority: ctx.accounts.mint_authority.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
         token::mint_to(cpi_ctx, protocol_shares)?;
     }
 

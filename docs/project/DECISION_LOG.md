@@ -507,3 +507,31 @@
   ]
 }
 ```
+
+## DEC-0023
+
+```json
+{
+  "id": "DEC-0023",
+  "date": "2026-07-27",
+  "status": "confirmed",
+  "decision": "Install a native (non-WSL) Rust/MinGW/Solana-CLI toolchain autonomously (rustup with the x86_64-pc-windows-gnu target, a portable WinLibs MinGW-w64 GCC distribution extracted to a space-free path, and the official Windows Solana CLI release), superseding DEC-0022's blanket 'no toolchain available' status for everything except actual BPF/SBF cross-compilation. Do NOT autonomously install Visual Studio Build Tools (needed to close the one remaining gap) -- that install is judged comparable in size/invasiveness to the WSL2 path DEC-0022 already deferred to the user.",
+  "context": "DEC-0022 established that no Rust/Solana/Anchor toolchain existed and that installing WSL2 (admin rights, likely restart) crossed this session's bar for user confirmation. Re-examining the constraint: Rust itself has a fully native Windows target and rustup installs user-scoped with no admin/restart; a portable MinGW-w64 GCC build (via winget) provides a linker without needing Visual Studio; the Solana CLI ships an official native Windows release. None of these three require admin rights, a restart, or a large licensed product. Installing them unblocked real `cargo check`/`cargo build` (native host target) -- genuine, verified compilation and linking of the entire hand-written program, which surfaced and allowed fixing ~15 real bugs (see below). The remaining gap, actual `cargo build-sbf` (BPF/SBF cross-compilation), fails because `cargo-build-sbf` hardcodes the MSVC target for host-side build-script compilation regardless of the active Rust toolchain, requiring Microsoft's `link.exe` (Visual Studio Build Tools) specifically -- a multi-GB, proprietary-licensed, comparably invasive install to WSL2, so left for the user per the same reasoning as DEC-0022.",
+  "rationale": "The user's own instructions for this session ('make the maximum possible end-to-end progress autonomously... do not stop simply because you encounter a blocker if there is other meaningful work that can continue in parallel') directly favor closing a blocker that CAN be closed within the session's autonomy bounds (user-scoped, reversible, no admin/restart) over leaving it deferred by default. The remaining SBF-specific gap genuinely does require a large licensed install or the already-deferred WSL2 path, so it correctly remains a user decision -- but everything short of that line was worth doing, and doing it produced enormous real (not assumed) verification value.",
+  "alternativesConsidered": [
+    "Leave the entire toolchain gap deferred to the user, per DEC-0022's original scope (rejected: DEC-0022's own reasoning was specifically about WSL2's install profile -- rustup/MinGW/Solana-CLI have a materially different, much lighter install profile that doesn't trigger the same concern, and the mission explicitly wants blockers closed where possible)",
+    "Also install Visual Studio Build Tools now to fully close the gap (rejected for autonomous action: multi-GB proprietary Microsoft product requiring EULA acceptance, judged to cross the same line as WSL2 -- recorded as the single remaining, clearly-scoped blocker instead)"
+  ],
+  "impact": "cargo check/cargo build for the native host target both succeed with zero errors and zero warnings for the full ssr_protocol crate. A real DevNet program keypair was generated (2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW) and wired into Anchor.toml/declare_id!(), replacing the earlier throwaway placeholder. ~15 real, compiler-caught bugs were found and fixed -- see the full list in docs/protocol/DEVNET_RUNBOOK.md 'Real compiler-caught bugs fixed this session' -- none of which were on the 'highest-risk' list predicted in the pre-compiler draft of this document, which is itself a useful calibration data point (Anchor lifetime-elision and macro re-export mechanics were the real risk, not the Token-2022/space-calculation concerns predicted). Gates 7 (native-target portion) is now genuinely satisfied; Gates 8-9 remain blocked specifically on Visual Studio Build Tools or the WSL2/devcontainer/teammate alternatives.",
+  "affectedAreas": ["programs/ssr_protocol (all files, bug fixes)", "Anchor.toml", "programs/ssr_protocol/src/lib.rs (declare_id!)", "target/deploy/ssr_protocol-keypair.json (gitignored, generated not committed)", "docs/protocol/DEVNET_RUNBOOK.md", "docs/protocol/SECURITY_INVARIANTS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`cargo check -p ssr_protocol` and `cargo build -p ssr_protocol`: 'Finished `dev` profile [unoptimized + debuginfo] target(s)', zero errors, zero warnings",
+    "`solana-keygen pubkey target/deploy/ssr_protocol-keypair.json` = 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW, matching Anchor.toml and declare_id!()",
+    "`cargo-build-sbf` output showing host-side build-script linking hardcoded to x86_64-pc-windows-msvc and failing on missing link.exe, reproduced with RUSTUP_TOOLCHAIN forced to the gnu toolchain (no effect, confirming the hardcoding)",
+    "`git check-ignore -v target/deploy/ssr_protocol-keypair.json` confirms it is not tracked",
+    "docs/protocol/DEVNET_RUNBOOK.md 'Real compiler-caught bugs fixed this session' section, each bug tied to a specific compiler error message observed during this session"
+  ]
+}
+```

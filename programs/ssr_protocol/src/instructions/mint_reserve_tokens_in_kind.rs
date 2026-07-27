@@ -54,8 +54,8 @@ pub struct MintReserveTokensInKind<'info> {
     // in ReserveAsset.order_index order. See instructions/common.rs::load_asset_legs.
 }
 
-pub fn handler(
-    ctx: Context<MintReserveTokensInKind>,
+pub fn handler<'info>(
+    ctx: Context<'info, MintReserveTokensInKind<'info>>,
     reserve_tokens_requested: u64,
     min_reserve_tokens_out: u64,
     max_asset_amounts: Vec<u64>,
@@ -130,7 +130,7 @@ pub fn handler(
         to: ctx.accounts.depositor_reserve_token_account.to_account_info(),
         authority: ctx.accounts.mint_authority.to_account_info(),
     };
-    let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds);
+    let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
     token::mint_to(cpi_ctx, net_shares_out)?;
 
     emit!(ReserveTokensMinted {

@@ -3,15 +3,17 @@
 //! operate over a Reserve's full, variable-length asset list
 //! (seed/mint/redeem) in one call.
 //!
-//! HIGH-RISK-OF-NEEDING-ADJUSTMENT NOTE: this module has not been compiled
-//! or run against a live Anchor toolchain (none was available in the
-//! environment this was written in -- see docs/protocol/DEVNET_RUNBOOK.md).
-//! The remaining-accounts loading and generic SPL-Token/Token-2022
-//! `transfer_checked` CPI pattern below is the single most intricate part of
-//! the program; verify it first once `anchor build` is available.
+//! UPDATE: this module now compiles and links cleanly (`cargo check`/`cargo
+//! build`, zero errors/warnings) against anchor-lang/anchor-spl 1.1.2 -- see
+//! docs/protocol/DEVNET_RUNBOOK.md "Real compiler-caught bugs fixed this
+//! session" for the actual issues the compiler found here (lifetime
+//! decoupling in `require_reserve_permission`/`load_asset_legs`, the
+//! `CpiContext::new` Pubkey-not-AccountInfo signature). Still NOT executed
+//! against a running validator/test -- runtime CPI behavior remains
+//! unverified until `cargo build-sbf`'s toolchain gap closes.
 
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface};
+use anchor_spl::token_interface::{self, Mint, TokenAccount};
 
 use crate::constants::{RESERVE_ASSET_SEED, RESERVE_VAULT_SEED};
 use crate::errors::SsrError;
@@ -29,10 +31,28 @@ use crate::state::{Delegate, Reserve, ReserveAsset};
 /// vary across Anchor versions and can't be verified without a compiler
 /// here -- manual `Account::try_from` plus an explicit PDA-address check is
 /// unambiguous regardless of Anchor version.
-pub fn require_reserve_permission<'info>(
-    reserve: &Account<'info, Reserve>,
+///
+/// Takes `delegate_info: &'info AccountInfo<'info>` -- callers pass
+/// `&ctx.accounts.delegate` directly (NOT `.to_account_info()`, which clones
+/// into a fresh, short-lived owned value): `UncheckedAccount<'info>` is
+/// defined as `struct UncheckedAccount<'info>(&'info AccountInfo<'info>)`
+/// (anchor-lang 1.1.2, `accounts/unchecked_account.rs`) and derefs to it, so
+/// `&ctx.accounts.delegate` deref-coerces straight to the *original*
+/// `&'info AccountInfo<'info>` reborrowed through `ctx.accounts: &'info mut
+/// T` -- genuinely `'info`-lived, unlike a fresh clone.
+/// Note: `reserve` and `delegate_info` deliberately use INDEPENDENT lifetime
+/// parameters (`'r`, `'d`) rather than a single shared `'info`. The function
+/// only reads `reserve.manager` (a `Pubkey`, no lifetime entanglement) and
+/// builds a fresh `Account<'d, Delegate>` purely from `delegate_info` -- there
+/// is no reason to force the two reborrows (each independently inferred at
+/// the call site, from two different fields of `ctx.accounts`) into a single
+/// shared lifetime, and doing so is exactly what caused
+/// "lifetime may not live long enough" errors here before this fix, since
+/// `Account`/`AccountInfo` are invariant over their lifetime parameter.
+pub fn require_reserve_permission<'r, 'd>(
+    reserve: &Account<'r, Reserve>,
     reserve_key: &Pubkey,
-    delegate_info: &AccountInfo<'info>,
+    delegate_info: &'d AccountInfo<'d>,
     signer: &Pubkey,
     flag: u16,
     program_id: &Pubkey,
@@ -47,7 +67,7 @@ pub fn require_reserve_permission<'info>(
     );
     require_keys_eq!(expected_delegate_key, delegate_info.key(), SsrError::DelegateNotFound);
 
-    let delegate: Account<'info, Delegate> = Account::try_from(delegate_info)
+    let delegate = Account::<Delegate>::try_from(delegate_info)
         .map_err(|_| error!(SsrError::DelegateNotFound))?;
     require_keys_eq!(delegate.reserve, *reserve_key, SsrError::DelegateNotFound);
     require_keys_eq!(delegate.wallet, *signer, SsrError::DelegateNotFound);
@@ -73,7 +93,11 @@ pub struct AssetLeg<'info> {
     pub vault: InterfaceAccount<'info, TokenAccount>,
     pub owner_token_account: InterfaceAccount<'info, TokenAccount>,
     pub mint: InterfaceAccount<'info, Mint>,
-    pub token_program: AccountInfo<'info>,
+    /// The token program's own ID -- `CpiContext::new`/`new_with_signer` take
+    /// the program ID directly (Anchor 1.0 removed the program `AccountInfo`
+    /// from `CpiContext`; see anchor-lang 1.1.2's `context.rs`), so there is
+    /// no need to hold onto the `AccountInfo` itself here.
+    pub token_program: Pubkey,
 }
 
 /// Loads and validates `reserve.asset_count` groups of 5 accounts from
@@ -89,10 +113,15 @@ pub struct AssetLeg<'info> {
 /// docs/protocol/ACCOUNT_MODEL.md's isolation diagram); the mint matches the
 /// `ReserveAsset`'s registered mint; and the owner token account's mint
 /// matches too.
-pub fn load_asset_legs<'info>(
-    reserve: &Account<'info, Reserve>,
+/// Note: `reserve`'s lifetime (`'r`) is independent of `remaining_accounts`'s
+/// (`'info`, which the returned `Vec<AssetLeg<'info>>` is actually built
+/// from) -- see the note on `require_reserve_permission` above for why
+/// forcing these into one shared lifetime causes spurious borrow-checker
+/// errors despite being sound.
+pub fn load_asset_legs<'r, 'info>(
+    reserve: &Account<'r, Reserve>,
     reserve_key: &Pubkey,
-    remaining_accounts: &[AccountInfo<'info>],
+    remaining_accounts: &'info [AccountInfo<'info>],
     program_id: &Pubkey,
 ) -> Result<Vec<AssetLeg<'info>>> {
     let expected_count = reserve.asset_count as usize;
@@ -146,7 +175,7 @@ pub fn load_asset_legs<'info>(
             vault,
             owner_token_account,
             mint,
-            token_program: token_program_info.clone(),
+            token_program: *token_program_info.key,
         });
     }
 
@@ -157,10 +186,12 @@ pub fn load_asset_legs<'info>(
 /// `ReserveAsset` config (no vault/mint/token transfer involved) -- e.g.
 /// `update_targets`. `remaining_accounts` must be exactly
 /// `reserve.asset_count` `ReserveAsset` accounts, in `order_index` order.
-pub fn load_reserve_asset_configs<'info>(
-    reserve: &Account<'info, Reserve>,
+/// Note: `reserve`'s lifetime (`'r`) is independent of `remaining_accounts`'s
+/// (`'info`) -- see the note on `require_reserve_permission` above.
+pub fn load_reserve_asset_configs<'r, 'info>(
+    reserve: &Account<'r, Reserve>,
     reserve_key: &Pubkey,
-    remaining_accounts: &[AccountInfo<'info>],
+    remaining_accounts: &'info [AccountInfo<'info>],
     program_id: &Pubkey,
 ) -> Result<Vec<Account<'info, ReserveAsset>>> {
     let expected_count = reserve.asset_count as usize;
@@ -198,7 +229,7 @@ pub fn transfer_into_vault<'info>(
         to: leg.vault.to_account_info(),
         authority: owner.clone(),
     };
-    let cpi_ctx = CpiContext::new(leg.token_program.clone(), cpi_accounts);
+    let cpi_ctx = CpiContext::new(leg.token_program, cpi_accounts);
     token_interface::transfer_checked(cpi_ctx, amount, leg.mint.decimals)
 }
 
@@ -219,7 +250,7 @@ pub fn transfer_out_of_vault<'info>(
         authority: vault_authority.clone(),
     };
     let signer_seeds: &[&[&[u8]]] = &[vault_authority_seeds];
-    let cpi_ctx = CpiContext::new_with_signer(leg.token_program.clone(), cpi_accounts, signer_seeds);
+    let cpi_ctx = CpiContext::new_with_signer(leg.token_program, cpi_accounts, signer_seeds);
     token_interface::transfer_checked(cpi_ctx, amount, leg.mint.decimals)
 }
 
@@ -251,8 +282,15 @@ pub fn mul_div_floor(a: u64, b: u64, c: u64) -> Result<u64> {
     u64::try_from(result).map_err(|_| error!(SsrError::MathOverflow))
 }
 
-/// UNVERIFIED -- written without a working compiler/toolchain, see the
-/// module-level note at the top of this file. Rejects Token-2022 mints
+/// TYPE-CHECKED but RUNTIME-UNVERIFIED: this function's API surface (the
+/// `spl_token_2022::extension` imports, `ExtensionType` variant names) now
+/// compiles cleanly against the installed `anchor-spl` 1.1.2, so the
+/// concerns originally flagged here about wrong import paths/renamed
+/// variants did NOT materialize. What's still unverified is runtime
+/// behavior -- whether it actually correctly identifies/rejects each
+/// extension when run against a real Token-2022 mint, which needs an
+/// executed test (none exist yet for Token-2022 assets specifically -- see
+/// docs/protocol/TEST_PLAN.md). Rejects Token-2022 mints
 /// carrying an extension SSR's balance-delta-based mint/redeem accounting
 /// cannot safely handle, directly modeled on the reference protocol's
 /// "Weird ERC20s" support-matrix pattern (RESERVE_REFERENCE_ANALYSIS.md

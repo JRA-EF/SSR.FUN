@@ -1,99 +1,109 @@
 <!--
   Operational runbook for building, testing, and deploying the SSR Protocol
-  program to Solana DevNet. Written at a point where NO Rust/Solana/Anchor
-  toolchain was available in the working environment -- this document is
-  both "how to do it" and an honest record of exactly what's blocked and why.
+  program to Solana DevNet. Originally written when NO Rust/Solana/Anchor
+  toolchain was available; mid-session, a native (non-WSL) toolchain was
+  installed and the program now compiles and links cleanly. This document
+  tracks both states honestly -- see "Current environment status."
 -->
 
 # DevNet Runbook
 
-## Current environment status (as of this writing)
+## Current environment status (updated: toolchain now installed)
 
-Checked and confirmed absent from the working environment (Windows, no WSL):
-`rustc`, `cargo`, `solana` CLI, `anchor` CLI, `avm`. `wsl --list` reports
-"Windows Subsystem for Linux is not installed." Node.js/npm and git ARE
-available and were used for everything in this workspace that doesn't
-require compiling Rust/BPF/SBF code.
+**Now installed, natively on Windows (no WSL, no admin rights, no reboot required):**
+- Rust `1.97.1`, via `rustup`, **default toolchain switched to `stable-x86_64-pc-windows-gnu`** (not the default MSVC target -- see "Why GNU, not MSVC" below). Installed to the default `%USERPROFILE%\.cargo`/`.rustup`.
+- A portable WinLibs MinGW-w64 GCC/ld distribution (`gcc 16.1.0`, `mingw-w64ucrt 14.0.0`), extracted to `C:\devtools\mingw64` (**not** the user profile -- see "The space-in-username problem" below).
+- Solana CLI `4.1.2` (Agave) + `cargo-build-sbf 4.1.0` (bundles `platform-tools v1.54`), extracted to `C:\devtools\solana\solana-release`.
+- A real DevNet program keypair, generated via `solana-keygen`, at `target/deploy/ssr_protocol-keypair.json` (gitignored, never committed). Public key: `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` -- already wired into `Anchor.toml` and `declare_id!()`.
 
-**This blocks, completely, until resolved:**
-- `cargo build` / `anchor build` (compiling `programs/ssr_protocol`)
-- `anchor test` / any local-validator-based test run
-- `solana-keygen new` (generating the real program keypair/ID)
-- `anchor deploy` / `solana program deploy` to DevNet
-- Gates 7 (build/lint/Rust-side of local validation), 8, 9 of the mission
+**Verified working (real command output, not assumed):**
+- `cargo check -p ssr_protocol` -- **zero errors, zero warnings.**
+- `cargo build -p ssr_protocol` (native host target, full compile + link) -- **succeeds.**
+- `packages/sdk` and `tests/ssr_protocol.ts` -- typecheck cleanly (`npx tsc --noEmit`) against the real installed `@anchor-lang/core@1.1.2` etc.
 
-**Not blocked, and already done in this workspace:**
-- All Rust/Anchor source code (written, not compiled -- see the uncompiled-notice comments in `lib.rs` and `instructions/common.rs`)
-- All architecture/decision documentation
-- TypeScript SDK (`packages/sdk`) and the Anchor test suite (`tests/`) -- both typecheck successfully against the real, currently-installed `@anchor-lang/core@1.1.2`, `@solana/web3.js`, `@solana/spl-token` packages (verified via `npx tsc --noEmit`)
-- Frontend inspection, reference-protocol research and analysis
+**Still blocked:**
+- `cargo build-sbf` (actual Solana BPF/SBF cross-compilation, the artifact that would actually be deployable) -- fails while compiling HOST-side build-scripts/proc-macros (`proc-macro2`, `serde`, `thiserror`, etc., which must run on the host during the build regardless of the final target). `cargo-build-sbf` hardcodes `x86_64-pc-windows-msvc` for this host-side compilation regardless of the default Rust toolchain, and this environment has no MSVC linker (`link.exe`) -- Visual Studio itself isn't installed, only the portable MinGW GCC (which the SBF host-tooling ignores). Fixing this requires installing **Visual Studio Build Tools** ("C++ build tools" workload, Microsoft, proprietary license, multi-GB) -- a install of comparable size/invasiveness to the WSL2 path, so it was **not done automatically**; see "Closing the remaining gap" below.
+- `anchor test` / any local-validator-based execution (needs the SBF `.so` above).
+- Actual DevNet deployment (needs the SBF `.so` above).
+- Gates 8-9 of the mission remain blocked on this one specific gap; Gate 7 (Rust build/lint) is otherwise satisfied for the native-target portion.
 
-## Closing the toolchain gap
+## Why GNU, not MSVC (the default Rust target on Windows)
 
-Three options, in order of typical suitability for this repo (Windows host, no WSL currently):
+`rustup`'s default Windows target is `x86_64-pc-windows-msvc`, which needs Microsoft's `link.exe` (from Visual Studio Build Tools) -- not installed, and installing it was judged too large/invasive to do autonomously (see below). The `x86_64-pc-windows-gnu` target pairs with a portable MinGW-w64 GCC distribution instead, installable via `winget` with no admin rights and no Visual Studio at all. This unblocked `cargo check`/`cargo build` for the native host target completely. It does **not** unblock `cargo build-sbf`, because that tool's host-side build-script compilation hardcodes the MSVC target internally (confirmed by inspecting its linker invocation), ignoring the active Rust toolchain default.
 
-1. **Install WSL2 + the Linux toolchain inside it** (`wsl --install`, then inside the WSL Ubuntu shell: `rustup`, `solana-cli` via the install script, `cargo install anchor-cli` or `avm install latest && avm use latest`). This is the path the rest of this runbook assumes, since Solana/Anchor tooling is developed and tested primarily for Linux/macOS. **Not done automatically by this session** -- installing WSL is a Windows feature change that typically requires a restart and admin rights, which crosses into "ask before doing" territory per this session's operating rules.
-2. **Use a Linux devcontainer / remote dev environment** (a cloud VM, GitHub Codespaces, or similar) with the toolchain pre-installed or installed there instead of on this Windows host.
-3. **Have a teammate with an existing macOS/Linux Solana dev setup run the build/test/deploy steps** using the source already committed in this workspace, reporting back the program ID/deployment signature to record here.
+## The space-in-username problem (a real, separate gotcha, documented in case it recurs)
 
-## Toolchain versions this workspace targets
+The Windows user profile on this machine is `C:\Users\JRA DEVNET\...` -- the space in "JRA DEVNET" breaks GCC's own internally-computed library search paths (GCC resolves its own install location via the OS's canonical/long-form path API, which cannot be worked around by invoking it through the legacy 8.3 short-path form like `JRADEV~1`, since that only affects argv[0], not what GCC computes internally). **Fix:** the MinGW distribution must be extracted to a path with no spaces anywhere in it (`C:\devtools\mingw64` here) -- installing it via a normal installer into the default (space-containing) user-scoped location reproduces the bug. If this machine's toolchain is ever reinstalled, keep it at a space-free path.
 
-Verified live against crates.io/npm at the time this workspace was scaffolded (2026-07-27) -- **do not assume these are still latest** by the time you actually install; re-check.
+## Closing the remaining gap (real BPF/SBF compilation)
 
-| Component | Version targeted | Source of truth |
+Three options, in order of typical suitability:
+
+1. **Install Visual Studio Build Tools** (`winget install --id Microsoft.VisualStudio.2022.BuildTools`, "C++ build tools" workload). Confirmed available via `winget show` (proprietary license, multi-GB). **Not done automatically this session** -- comparable in size/invasiveness to the WSL2 path below, so left for an explicit decision rather than silently committing several GB and minutes of install time to a licensed Microsoft product.
+2. **Install WSL2 + the Linux toolchain inside it** (`wsl --install`, then `rustup`/`solana-cli`/`avm install latest && avm use latest` inside Ubuntu). Solana/Anchor tooling is developed and tested primarily for Linux/macOS, so this is the most-likely-to-just-work path long-term. Requires a restart and admin rights.
+3. **Use a Linux devcontainer / remote dev environment**, or **have a teammate with an existing macOS/Linux Solana setup** build/test/deploy the source already committed here and report back the program ID/deployment signature.
+
+## Toolchain versions this workspace targets (still accurate)
+
+| Component | Version | Source of truth |
 |---|---|---|
-| `anchor-lang` / `anchor-spl` (Rust) | `1.1.2` | crates.io, `anchor-lang` repository moved to `solana-foundation/anchor` per its own CHANGELOG (also mirrored at `otter-sec/anchor` per crates.io metadata -- if these two ever point at genuinely different code, `solana-foundation/anchor`'s CHANGELOG is the more authoritative source, since it's the one that explicitly narrates the release history used here) |
-| `@anchor-lang/core` (TypeScript) | `^1.1.2` | npm; **note the package rename** from the older `@coral-xyz/anchor` -- an Anchor 1.0 breaking change |
-| Anchor CLI test runner | `litesvm` template (default since Anchor 1.0) for fast in-process Rust tests; `surfpool` (default local validator for `anchor test`/`anchor localnet`, replacing `solana-test-validator` as the default) | Anchor CHANGELOG 1.0.0 entry |
+| `anchor-lang` / `anchor-spl` (Rust) | `1.1.2` | crates.io; confirmed compiles clean against this workspace |
+| `@anchor-lang/core` (TypeScript) | `^1.1.2` | npm; note the package rename from the older `@coral-xyz/anchor` |
+| Solana CLI / Agave | `4.1.2` | `solana --version`, installed this session |
+| `cargo-build-sbf` / platform-tools | `4.1.0` / `v1.54` | bundled with the Solana CLI release |
+| Rust | `1.97.1` (both `-msvc` and `-gnu` toolchains installed; `-gnu` is default) | `rustc --version` |
 | `@solana/web3.js` | `^1.98.4` | npm |
 | `@solana/spl-token` | `^0.4.15` | npm |
-| `solana-program` (Rust, if ever needed directly) | `4.0.0` on crates.io | crates.io -- likely NOT a direct dependency of this program (Anchor's prelude covers what's needed) |
 
-**Once a toolchain is available, run in this order** to catch discrepancies between what's written here and reality as early as possible:
+## Once the SBF gap is closed, run in this order
 
 ```
-solana-keygen new --outfile ~/.config/solana/id.json   # DevNet dev wallet, NOT a mainnet key
+export PATH="$HOME/.cargo/bin:/c/devtools/mingw64/bin:/c/devtools/solana/solana-release/bin:$PATH"
 solana config set --url https://api.devnet.solana.com
-solana airdrop 2                                        # DevNet SOL only, never request/use a mainnet seed phrase
+solana airdrop 2 --keypair target/deploy/ssr_protocol-keypair.json   # DevNet SOL only
 
 cd <repo root>
-anchor build
-anchor keys list                                        # get the REAL program ID
+cargo-build-sbf --manifest-path programs/ssr_protocol/Cargo.toml
+# or, once Visual Studio Build Tools / WSL close the gap: anchor build
 ```
 
-Then:
-1. Replace the placeholder `SSRPro11111111111111111111111111111111111` in **both** `Anchor.toml` (`[programs.localnet]`/`[programs.devnet]`) and `programs/ssr_protocol/src/lib.rs`'s `declare_id!(...)` with the real ID from `anchor keys list`.
-2. `anchor build` again (the program ID is baked into the binary via `declare_id!`).
-3. `anchor test` -- this is the first real signal on whether the hand-written Rust in this workspace actually compiles and behaves as designed. **Expect to need fixes** -- see "Highest-risk code to check first" below.
-4. Once tests pass locally: `anchor deploy --provider.cluster devnet` (or `solana program deploy` directly with the built `.so`).
-5. Record the deployment here (see "Deployment record" below) -- do not just note it in chat/PR description, this file is the source of truth per CLAUDE.md's project-status conventions.
+The program keypair and ID are already generated and wired in (see above) -- no need to re-run `anchor keys list` unless the keypair is regenerated.
 
-## Highest-risk code to check first once a compiler exists
+1. `cargo-build-sbf` (or `anchor build`) -- produces the deployable `.so`.
+2. Exercise `tests/ssr_protocol.ts` against a local validator (`solana-test-validator`, bundled in the same release at `C:\devtools\solana\solana-release\bin`) or `anchor test`.
+3. Once tests pass locally: `solana program deploy target/deploy/ssr_protocol.so --keypair target/deploy/ssr_protocol-keypair.json --url devnet` (or `anchor deploy --provider.cluster devnet`).
+4. Record the deployment in "Deployment record" below -- this file is the source of truth per CLAUDE.md's project-status conventions, not chat/PR description.
 
-In descending order of "most likely to need a fix":
+## Real compiler-caught bugs fixed this session (for anyone touching this code next)
 
-1. **`programs/ssr_protocol/src/instructions/common.rs::validate_asset_mint_extensions`** -- the `spl_token_2022::extension::ExtensionType`/`StateWithExtensions` API surface was written from memory without a compiler; variant names and the exact re-export path through `anchor_spl::token_2022::spl_token_2022` are the single most likely spot to need adjustment.
-2. **Anchor account-space calculations** (`Reserve::SPACE`, `ProtocolConfig::SPACE`, etc.) -- manually computed byte counts; a Rust enum's Borsh-encoded size assumption (1 byte per unit-variant enum) should be double-checked against whatever `anchor-lang` 1.1.2 actually does (`InitSpace` derive macro, if available in this version, would be a more robust replacement -- consider adopting it instead of manual `SPACE` constants once compiling).
-3. **`seed_reserve.rs`/`mint_reserve_tokens_in_kind.rs`'s remaining-accounts + `InterfaceAccount<TokenAccount>::reload()`** pattern -- verify `reload()` exists with this exact signature on the installed `anchor-spl` 1.1.2's `InterfaceAccount`.
-4. **The `#[instruction(delegate_wallet: Pubkey)]` attribute on `AddDelegate`** -- confirm Anchor 1.1.2 still resolves instruction-argument references inside `seeds = [...]` constraints exactly as in the 0.3x lineage (nothing in the CHANGELOG's breaking-changes list suggests this changed, but it's untested).
-5. **Cargo dependency resolution** -- `anchor-spl`'s `features = ["token", "associated_token", "token_2022"]` list should be double-checked against the actual current feature names in the installed crate.
+All found via actual `cargo check`/`cargo build` output, not guessed -- listed since they're exactly the kind of subtle Anchor/Rust issues likely to recur if similar patterns are copied elsewhere in the codebase later:
+
+1. **`init_if_needed` requires an explicit Cargo feature.** Added `features = ["init-if-needed"]` to `anchor-lang` in `programs/ssr_protocol/Cargo.toml` -- used by `collect_fees.rs`, `mint_reserve_tokens_in_kind.rs`, `seed_reserve.rs`.
+2. **`CpiContext::new`/`new_with_signer` take the program's `Pubkey` directly, not its `AccountInfo`** (an actual Anchor 1.0 breaking change -- "Remove program account info from CPI context"). Every `CpiContext::new(ctx.accounts.token_program.to_account_info(), ...)` call had to become `CpiContext::new(ctx.accounts.token_program.key(), ...)`; `instructions/common.rs::AssetLeg.token_program` changed from `AccountInfo<'info>` to `Pubkey` accordingly.
+3. **Every handler function needs an EXPLICIT, unified lifetime: `pub fn handler<'info>(ctx: Context<'info, Foo<'info>>, ...)`, never the elided `Context<Foo>`.** Eliding it creates two INDEPENDENT anonymous lifetimes (one for `Context` itself, one for `Foo`'s own parameter) instead of one shared lifetime -- harmless until a handler body passes two different `ctx.accounts` fields (or a field plus `ctx.remaining_accounts`) to the same downstream call, since `Account`/`AccountInfo` are invariant over their lifetime parameter and Rust can't unify two independently-elided lifetimes after the fact. This affected all 17 instruction handlers AND all 17 dispatch wrappers in `lib.rs`'s `#[program]` module -- both needed the fix.
+4. **Helper functions taking multiple `Account`/`AccountInfo` references should use INDEPENDENT lifetime parameters per argument** (e.g. `fn f<'r, 'd>(reserve: &Account<'r, Reserve>, delegate: &'d AccountInfo<'d>)`), not one shared lifetime across arguments that don't actually need to be tied together -- same invariance issue as #3, one level down in `instructions/common.rs`.
+5. **To get a genuine `&'info AccountInfo<'info>` from an `UncheckedAccount<'info>` field, pass `&ctx.accounts.some_field` directly (relying on `Deref`), never `ctx.accounts.some_field.to_account_info()`** -- the latter clones into a fresh, short-lived owned value that can never satisfy an `'info`-tied reference bound, no matter how it's subsequently borrowed. (`UncheckedAccount<'info>` is defined as `struct UncheckedAccount<'info>(&'info AccountInfo<'info>)` in anchor-lang 1.1.2, and derefs to it.)
+6. **Instruction modules split across files must `pub use module::*;` (glob), not `pub use module::SomeStruct;` (named), even when it makes an unrelated function name (`handler`, here) ambiguous if referenced unqualified.** `#[derive(Accounts)]` generates a companion `__client_accounts_<name>` module as a sibling of the struct; the `#[program]` macro's generated code assumes it's reachable at the crate root via glob re-export chains. A named re-export silently drops that sibling module, surfacing as a deeply confusing "unresolved import `crate`" pointing at the `#[program]` attribute line itself, nowhere near the real cause. The `handler`-name ambiguity this creates is harmless as long as nothing calls it unqualified (this codebase always calls it fully module-qualified).
+7. **`collect_fees`'s `protocol_fee_destination` needed real validation** against `ProtocolConfig.default_protocol_fee_destination` -- previously unvalidated (flagged, then fixed, in `docs/protocol/SECURITY_INVARIANTS.md`).
+
+None of the "highest-risk code" items originally flagged in this file's earlier draft (Token-2022 extension introspection API, `InitSpace`/manual space calculations, `InterfaceAccount::reload()`, the `#[instruction(...)]` attribute) turned out to be wrong -- they all compiled as originally written. The actual bugs were entirely about lifetime elision and macro re-export mechanics, none of which were on that predicted list.
 
 ## Wallet / fixture safety
 
 - Use `solana airdrop` for DevNet SOL only. Never request, generate from, or use a Mainnet seed phrase anywhere in this workflow.
-- Generated keypairs for the deploy/upgrade authority and any test wallets must never be committed -- `.gitignore` was updated (this session) to exclude `*-keypair.json`, `target/`, `.anchor/`, `test-ledger/`.
+- Generated keypairs (including `target/deploy/ssr_protocol-keypair.json`, generated this session) are gitignored (`*-keypair.json`, `target/`, `.anchor/`, `test-ledger/`) and were never committed -- confirmed via `git check-ignore`.
 - DevNet fixture wallets (root manager, ≥2 restricted delegates, ≥2 holders) should be generated fresh per the mission's fixture requirements once Gate 9 is reachable; document their DevNet-only pubkeys (not the keypair files themselves) in this runbook once they exist.
 
-## Deployment record (fill in once Gate 8 is reachable)
+## Deployment record (fill in once the SBF gap is closed)
 
 | Field | Value |
 |---|---|
 | Cluster | _(pending)_ |
-| Program ID | _(pending)_ |
+| Program ID | `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` (keypair generated, program not yet deployed) |
 | Deployment signature | _(pending)_ |
 | Deployed Git commit | _(pending)_ |
 | IDL version | _(pending)_ |
-| Upgrade authority pubkey | _(pending -- single dev keypair for v1, per DEC-0015; multisig migration is a pre-restricted-beta requirement, not a DevNet one)_ |
+| Upgrade authority pubkey | `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` (same as program keypair for v1 DevNet, single dev-controlled key per DEC-0015; migrate to a multisig before any restricted beta) |
 | Deployment timestamp | _(pending)_ |
 
 ## Upgrade policy (v1 DevNet)

@@ -60,8 +60,7 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 
 ⏳ **Planned, not yet written** (mapped to the mission's required scenario list):
 - Wrong Reserve account supplied to an instruction expecting a specific Reserve.
-- Wrong Reserve Vault supplied (**the single most important test in this entire plan** -- proves invariant 5 in SECURITY_INVARIANTS.md; currently only a stub `describe` block exists in `tests/ssr_protocol.ts` under "cross-Reserve isolation," explicitly not yet implemented).
-- Cross-Reserve vault substitution (same as above, phrased as the attack rather than the defense).
+- ✅ **Written**: wrong Reserve Vault supplied / cross-Reserve vault substitution (**the single most important test in this entire plan** -- proves invariant 5 in SECURITY_INVARIANTS.md). `tests/ssr_protocol.ts`'s "cross-Reserve isolation" test creates two real Reserves and asserts substituting Reserve Two's vault into a Reserve-One mint call is rejected. Typechecks; not yet executed.
 - Forged Reserve Token mint (supplying an attacker-controlled mint account in place of the real `reserve_token_mint`).
 - Malicious remaining-account substitution (e.g. swapping the order of two legitimate assets to try to trick `order_index` validation, or substituting a legitimate vault from the SAME Reserve for the wrong asset).
 - Invalid token program (a mint owned by neither classic SPL Token nor Token-2022).

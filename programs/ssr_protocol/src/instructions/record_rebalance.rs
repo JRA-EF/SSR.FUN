@@ -38,12 +38,12 @@ pub struct RecordRebalance<'info> {
     // in order_index order.
 }
 
-pub fn handler(ctx: Context<RecordRebalance>, balances_before: Vec<u64>, note: String) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, RecordRebalance<'info>>, balances_before: Vec<u64>, note: String) -> Result<()> {
     let reserve_key = ctx.accounts.reserve.key();
     require_reserve_permission(
         &ctx.accounts.reserve,
         &reserve_key,
-        &ctx.accounts.delegate.to_account_info(),
+        &ctx.accounts.delegate,
         &ctx.accounts.signer.key(),
         permission_flags::EXECUTE_REBALANCE,
         ctx.program_id,

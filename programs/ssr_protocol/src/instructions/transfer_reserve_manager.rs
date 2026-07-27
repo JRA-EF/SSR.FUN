@@ -20,7 +20,7 @@ pub struct TransferReserveManager<'info> {
     pub manager: Signer<'info>,
 }
 
-pub fn handler(ctx: Context<TransferReserveManager>, new_manager: Pubkey) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, TransferReserveManager<'info>>, new_manager: Pubkey) -> Result<()> {
     let reserve_key = ctx.accounts.reserve.key();
     let old_manager = ctx.accounts.reserve.manager;
 

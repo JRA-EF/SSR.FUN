@@ -5,17 +5,16 @@ anchor_version = "1.1.2"
 resolution = true
 skip-lint = false
 
-# PLACEHOLDER PROGRAM ID -- not a real generated keypair. `anchor build` (once
-# a working toolchain is available) generates a real keypair at
-# target/deploy/ssr_protocol-keypair.json; `anchor keys list` then gives the
-# real program ID, which MUST replace this placeholder here AND in
-# programs/ssr_protocol/src/lib.rs's declare_id!() before any build/deploy.
-# See docs/protocol/DEVNET_RUNBOOK.md.
+# Real generated dev keypair (target/deploy/ssr_protocol-keypair.json, NOT
+# committed -- gitignored). Generated via solana-keygen once a native Rust
+# toolchain became available this session (see docs/protocol/DEVNET_RUNBOOK.md
+# and DEC-0023). This is a DevNet-only development authority; it will need to
+# migrate to a multisig before any restricted beta (see DEC-0015).
 [programs.localnet]
-ssr_protocol = "SSRPro11111111111111111111111111111111111"
+ssr_protocol = "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW"
 
 [programs.devnet]
-ssr_protocol = "SSRPro11111111111111111111111111111111111"
+ssr_protocol = "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW"
 
 # Note: the [registry] section was removed in Anchor 1.0 (see
 # docs/protocol/DEVNET_RUNBOOK.md for the Anchor/Solana version this workspace

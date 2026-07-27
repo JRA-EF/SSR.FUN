@@ -30,7 +30,7 @@ pub struct UpdateDelegatePermissions<'info> {
     pub signer: Signer<'info>,
 }
 
-pub fn handler(ctx: Context<UpdateDelegatePermissions>, new_permissions: u16) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, UpdateDelegatePermissions<'info>>, new_permissions: u16) -> Result<()> {
     ctx.accounts.reserve.require_not_paused()?;
     require!(
         new_permissions & !permission_flags::ALL_V1_FLAGS == 0,
@@ -44,7 +44,7 @@ pub fn handler(ctx: Context<UpdateDelegatePermissions>, new_permissions: u16) ->
         require_reserve_permission(
             &ctx.accounts.reserve,
             &reserve_key,
-            &ctx.accounts.acting_delegate.to_account_info(),
+            &ctx.accounts.acting_delegate,
             &signer_key,
             permission_flags::ADD_RESTRICTED_DELEGATE,
             ctx.program_id,

@@ -26,7 +26,7 @@ pub struct UpdateTargets<'info> {
     // order_index order. See instructions/common.rs::load_reserve_asset_configs.
 }
 
-pub fn handler(ctx: Context<UpdateTargets>, new_target_weights_bps: Vec<u16>) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, UpdateTargets<'info>>, new_target_weights_bps: Vec<u16>) -> Result<()> {
     ctx.accounts.reserve.require_not_paused()?;
     require_eq!(
         new_target_weights_bps.len(),
@@ -38,7 +38,7 @@ pub fn handler(ctx: Context<UpdateTargets>, new_target_weights_bps: Vec<u16>) ->
     require_reserve_permission(
         &ctx.accounts.reserve,
         &reserve_key,
-        &ctx.accounts.delegate.to_account_info(),
+        &ctx.accounts.delegate,
         &ctx.accounts.signer.key(),
         permission_flags::UPDATE_TARGETS,
         ctx.program_id,

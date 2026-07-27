@@ -53,8 +53,8 @@ pub struct CreateReserve<'info> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn handler(
-    ctx: Context<CreateReserve>,
+pub fn handler<'info>(
+    ctx: Context<'info, CreateReserve<'info>>,
     metadata_uri: String,
     mint_fee_bps: u16,
     redemption_fee_bps: u16,

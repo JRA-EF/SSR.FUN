@@ -59,7 +59,7 @@ pub struct SeedReserve<'info> {
     // in ReserveAsset.order_index order. See instructions/common.rs::load_asset_legs.
 }
 
-pub fn handler(ctx: Context<SeedReserve>, seed_amounts: Vec<u64>, initial_reserve_tokens: u64) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, SeedReserve<'info>>, seed_amounts: Vec<u64>, initial_reserve_tokens: u64) -> Result<()> {
     require!(!ctx.accounts.protocol_config.paused, SsrError::ProtocolPaused);
     require!(
         ctx.accounts.reserve.status == ReserveStatus::AssetsInitializing,
@@ -122,7 +122,7 @@ pub fn handler(ctx: Context<SeedReserve>, seed_amounts: Vec<u64>, initial_reserv
         authority: ctx.accounts.mint_authority.to_account_info(),
     };
     let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.to_account_info(),
+        ctx.accounts.token_program.key(),
         cpi_accounts,
         signer_seeds,
     );

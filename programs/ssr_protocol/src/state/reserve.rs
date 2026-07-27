@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{MAX_METADATA_URI_LEN, SCHEMA_VERSION};
+use crate::constants::MAX_METADATA_URI_LEN;
 use crate::errors::SsrError;
 
 /// Tracks resumable multi-step creation (see DEC-0019) and pause state.

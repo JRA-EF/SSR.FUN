@@ -21,14 +21,14 @@ pub struct UpdateMetadata<'info> {
     pub signer: Signer<'info>,
 }
 
-pub fn handler(ctx: Context<UpdateMetadata>, new_metadata_uri: String) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, UpdateMetadata<'info>>, new_metadata_uri: String) -> Result<()> {
     require!(new_metadata_uri.len() <= MAX_METADATA_URI_LEN, SsrError::MetadataUriTooLong);
 
     let reserve_key = ctx.accounts.reserve.key();
     require_reserve_permission(
         &ctx.accounts.reserve,
         &reserve_key,
-        &ctx.accounts.delegate.to_account_info(),
+        &ctx.accounts.delegate,
         &ctx.accounts.signer.key(),
         permission_flags::UPDATE_METADATA,
         ctx.program_id,

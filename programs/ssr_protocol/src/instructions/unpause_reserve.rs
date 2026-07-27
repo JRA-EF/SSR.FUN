@@ -21,14 +21,14 @@ pub struct UnpauseReserve<'info> {
     pub signer: Signer<'info>,
 }
 
-pub fn handler(ctx: Context<UnpauseReserve>) -> Result<()> {
+pub fn handler<'info>(ctx: Context<'info, UnpauseReserve<'info>>) -> Result<()> {
     require!(ctx.accounts.reserve.status == ReserveStatus::Paused, SsrError::ReserveNotPaused);
 
     let reserve_key = ctx.accounts.reserve.key();
     require_reserve_permission(
         &ctx.accounts.reserve,
         &reserve_key,
-        &ctx.accounts.delegate.to_account_info(),
+        &ctx.accounts.delegate,
         &ctx.accounts.signer.key(),
         permission_flags::UNPAUSE_RESERVE,
         ctx.program_id,
