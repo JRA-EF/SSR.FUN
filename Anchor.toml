@@ -1,0 +1,36 @@
+[toolchain]
+anchor_version = "1.1.2"
+
+[features]
+resolution = true
+skip-lint = false
+
+# PLACEHOLDER PROGRAM ID -- not a real generated keypair. `anchor build` (once
+# a working toolchain is available) generates a real keypair at
+# target/deploy/ssr_protocol-keypair.json; `anchor keys list` then gives the
+# real program ID, which MUST replace this placeholder here AND in
+# programs/ssr_protocol/src/lib.rs's declare_id!() before any build/deploy.
+# See docs/protocol/DEVNET_RUNBOOK.md.
+[programs.localnet]
+ssr_protocol = "SSRPro11111111111111111111111111111111111"
+
+[programs.devnet]
+ssr_protocol = "SSRPro11111111111111111111111111111111111"
+
+# Note: the [registry] section was removed in Anchor 1.0 (see
+# docs/protocol/DEVNET_RUNBOOK.md for the Anchor/Solana version this workspace
+# targets and why -- crates.io shows anchor-lang 1.1.2 as current stable at
+# the time this workspace was scaffolded).
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+[test]
+startup_wait = 10000
+
+[test.validator]
+url = "https://api.devnet.solana.com"

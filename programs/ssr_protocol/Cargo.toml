@@ -1,0 +1,21 @@
+[package]
+name = "ssr_protocol"
+version = "0.1.0"
+description = "SSR Protocol: independent, Solana-native tokenized-reserve program (DevNet v1)."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ssr_protocol"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = "1.1.2"
+anchor-spl = { version = "1.1.2", features = ["token", "associated_token", "token_2022"] }
