@@ -1,0 +1,186 @@
+/* Internal project-status dashboard. Reuses tokens from ../index.css
+   (--bg, --surface, --accent, --up/--warn/--down, --r-*, --shadow-pop, ...).
+   This page never sets data-theme, so it always renders the default (dark)
+   token set regardless of the main site's theme toggle. */
+
+.dash-shell {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 28px 24px 60px;
+}
+
+.dash-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.dash-muted { color: var(--text-2); }
+.dash-small { font-size: 13px; }
+.dash-error { color: var(--down); font-size: 14px; }
+
+.dash-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 20px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dash-header-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.dash-header-meta { display: flex; align-items: center; gap: 12px; }
+.dash-completion { font-size: 32px; font-weight: 800; font-family: var(--font-mono); line-height: 1; }
+.dash-header-text { display: flex; flex-direction: column; gap: 3px; }
+.dash-phase { font-weight: 600; font-size: 14px; }
+
+.dash-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.dash-pill-sm { font-size: 11px; padding: 2px 8px; }
+.dash-pill-up { color: #0d0b12; background: var(--up); }
+.dash-pill-warn { color: #0d0b12; background: var(--warn); }
+.dash-pill-down { color: #fff; background: var(--down); }
+.dash-pill-neutral { color: var(--text-2); background: var(--surface-2); border-color: var(--line); }
+
+.dash-btn {
+  border-radius: var(--r-sm);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.dash-btn:hover { background: var(--surface-3); }
+.dash-btn-sm { padding: 5px 10px; font-size: 12px; }
+.dash-btn-ghost { background: transparent; }
+.dash-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.dash-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-pop);
+}
+.dash-card-wide { grid-column: span 3; }
+.dash-card h2 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  margin: 0 0 12px;
+}
+.dash-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.dash-card-head h2 { margin: 0; }
+
+.dash-objective { font-size: 15px; line-height: 1.5; margin: 0; }
+
+.dash-prose :first-child { margin-top: 0; }
+.dash-prose :last-child { margin-bottom: 0; }
+.dash-prose p { margin: 0 0 8px; line-height: 1.5; }
+.dash-prose ul { margin: 0; padding-left: 18px; }
+.dash-prose li { margin-bottom: 6px; line-height: 1.45; }
+.dash-prose strong { color: var(--text); }
+
+.dash-roadmap { display: flex; flex-direction: column; gap: 10px; }
+.dash-roadmap-row {
+  display: grid;
+  grid-template-columns: 220px 1fr 44px 56px;
+  align-items: center;
+  gap: 12px;
+}
+.dash-roadmap-label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.dash-roadmap-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.dash-roadmap-bar-track { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.dash-roadmap-bar-fill { height: 100%; border-radius: 999px; }
+.dash-tone-up { background: var(--up); }
+.dash-tone-accent { background: var(--accent); }
+.dash-tone-muted { background: var(--surface-3); }
+.dash-roadmap-pct { font-size: 12px; font-family: var(--font-mono); color: var(--text-2); text-align: right; }
+.dash-roadmap-weight { text-align: right; }
+
+.dash-decisions { display: flex; flex-direction: column; gap: 8px; }
+.dash-decision { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.dash-decision summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.dash-decision summary::-webkit-details-marker { display: none; }
+.dash-decision-id { font-family: var(--font-mono); color: var(--text-2); font-size: 12px; flex-shrink: 0; }
+.dash-decision-title { flex: 1; min-width: 0; }
+.dash-decision-date { flex-shrink: 0; }
+.dash-decision-body { padding: 0 14px 14px; font-size: 13px; }
+.dash-decision-body p { margin: 0 0 8px; line-height: 1.5; }
+.dash-decision-body strong { color: var(--text-2); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .dash-grid { grid-template-columns: repeat(2, 1fr); }
+  .dash-card-wide { grid-column: span 2; }
+  .dash-roadmap-row { grid-template-columns: 160px 1fr 40px 50px; }
+}
+
+@media (max-width: 640px) {
+  .dash-shell { padding: 20px 16px 48px; }
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-card-wide { grid-column: span 1; }
+  .dash-header { padding-bottom: 16px; margin-bottom: 16px; }
+  .dash-header-left { gap: 12px; }
+  .dash-completion { font-size: 26px; }
+  .dash-roadmap-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: 'label pct' 'bar bar';
+    row-gap: 6px;
+  }
+  .dash-roadmap-label { grid-area: label; }
+  .dash-roadmap-pct { grid-area: pct; }
+  .dash-roadmap-bar-track { grid-area: bar; }
+  .dash-roadmap-weight { display: none; }
+  .dash-decision-title { flex-basis: 100%; order: 4; }
+}

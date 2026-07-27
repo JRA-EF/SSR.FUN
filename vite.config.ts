@@ -17,4 +17,14 @@ export default defineConfig({
       wouter: path.resolve(import.meta.dirname, './src/merge/lib/wouter-shim.tsx'),
     },
   },
+  build: {
+    rollupOptions: {
+      // Second entry: the password-protected /internal/status dashboard.
+      // Built as its own page/bundle, entirely separate from the main app.
+      input: {
+        main: path.resolve(import.meta.dirname, './index.html'),
+        internalStatus: path.resolve(import.meta.dirname, './internal-status.html'),
+      },
+    },
+  },
 })

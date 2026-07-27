@@ -21,3 +21,14 @@ The homepage hero description is approved, exact copy — do not paraphrase it:
 > SSR.fun is where anyone can create, launch, and trade decentralized tokenized reserves. Build a basket of Solana assets, set your fees, and issue a Reserve Token backed by transparent, on-chain holdings.
 
 (Lives in `src/pages/Home.tsx`, the `.lede` paragraph in the hero section.)
+
+## Project Status and Decision Logging
+
+This repo has an internal, password-protected project dashboard at `/internal/status`, rendered server-side from two source-of-truth files:
+
+- `docs/project/PROJECT_STATUS.md` -- overall status, weighted roadmap, blockers, risks, environments, etc.
+- `docs/project/DECISION_LOG.md` -- append-only log of material decisions.
+
+**Update `PROJECT_STATUS.md` in the same session, without being asked, whenever you:** make meaningful progress, change roadmap/phase status or completion, add or resolve a blocker or risk, change a dependency, get new validation/test results, or change what's running in Local/Development/DevNet/Production. Recompute the overall completion percentage from the weighted roadmap block -- never hand-edit that number independently of the phase weights/completions.
+
+**Append to `DECISION_LOG.md` in the same session, without being asked, whenever a material product, technical, architecture, security, or operational decision is confirmed, rejected, changed, or superseded.** Each entry needs: decision ID, date, status, decision, context, rationale, alternatives considered, impact, affected areas, superseded/superseding links, and evidence. Never edit the substantive fields of an existing entry -- a changed decision gets a new entry, linked via `supersedes`/`supersededBy`.

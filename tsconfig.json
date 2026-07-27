@@ -1,5 +1,12 @@
 {
   "files": [],
+  "compilerOptions": {
+    // Vercel's own per-function type-check (for api/**/*.ts and
+    // middleware.ts) reads this root config directly rather than resolving
+    // the tsconfig.node.json project reference below -- without this,
+    // it can't resolve process/node:fs/etc.
+    "types": ["node"]
+  },
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }
