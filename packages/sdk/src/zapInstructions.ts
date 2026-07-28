@@ -9,13 +9,21 @@
 // Buy = SOL zap into proportional protocol mint:
 //   1) idempotent-create the depositor's Reserve Token + per-asset ATAs
 //   2) SystemProgram.transfer: user -> swapAuthority (the "SOL in" leg)
-//   3) SPL mintTo per asset leg, authority=swapAuthority, destination=user's ATA
+//   3) per asset leg: SPL mintTo (authority=swapAuthority, destination=user's
+//      ATA) for the fixture test mints; for wrapped SOL specifically, the
+//      swap authority instead wraps its OWN real SOL (transfer lamports into
+//      its own WSOL ATA + syncNative) and forwards it to the user's WSOL ATA
+//      -- nobody can "mint" SOL, wrapped or not.
 //   4) mint_reserve_tokens_in_kind, signer=user (depositor)
 //
 // Sell = proportional protocol redeem followed by a zap into SOL:
 //   1) redeem_reserve_tokens_in_kind, signer=user (redeemer) -- assets land in the user's own ATAs
 //   2) idempotent-create swapAuthority's per-asset ATAs
-//   3) SPL transfer per asset leg: user -> swapAuthority (the "assets out" leg)
+//   3) SPL transfer per asset leg: user -> swapAuthority (the "assets out" leg);
+//      for wrapped SOL specifically, immediately closeAccount the swap
+//      authority's WSOL ATA afterward, unwrapping it back into real lamports
+//      so the swap authority's real SOL balance is replenished rather than
+//      accumulating idle wrapped SOL.
 //   4) SystemProgram.transfer: swapAuthority -> user (the "SOL out" leg)
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import {
@@ -24,13 +32,19 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   createMintToInstruction,
   createTransferInstruction,
+  createSyncNativeInstruction,
+  createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil, type AssetBalance } from "./calculations";
-import { solLamportsToUsd, SOL_TEST_PRICE_USD } from "./zapPricing";
+import { solLamportsToUsd, SOL_TEST_PRICE_USD, WRAPPED_SOL_MINT } from "./zapPricing";
+
+function isWrappedSol(mint: PublicKey): boolean {
+  return mint.equals(WRAPPED_SOL_MINT);
+}
 
 export interface ZapAssetLeg {
   mint: string;
@@ -104,7 +118,19 @@ export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promis
     const mint = new PublicKey(leg.mint);
     const userAta = getAssociatedTokenAddressSync(mint, user);
     instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint));
-    instructions.push(createMintToInstruction(mint, userAta, swapAuthority, requirements[i].requiredAmount));
+
+    if (isWrappedSol(mint)) {
+      // Nobody can "mint" SOL -- the swap authority wraps its own real SOL
+      // and forwards it, rather than minting from nowhere.
+      const swapAuthorityWsolAta = getAssociatedTokenAddressSync(mint, swapAuthority);
+      instructions.push(createAssociatedTokenAccountIdempotentInstruction(swapAuthority, swapAuthorityWsolAta, swapAuthority, mint));
+      instructions.push(SystemProgram.transfer({ fromPubkey: swapAuthority, toPubkey: swapAuthorityWsolAta, lamports: requirements[i].requiredAmount }));
+      instructions.push(createSyncNativeInstruction(swapAuthorityWsolAta));
+      instructions.push(createTransferInstruction(swapAuthorityWsolAta, userAta, swapAuthority, requirements[i].requiredAmount));
+    } else {
+      instructions.push(createMintToInstruction(mint, userAta, swapAuthority, requirements[i].requiredAmount));
+    }
+
     remainingAccounts.push(
       { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
       { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
@@ -206,6 +232,12 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
     const swapAuthorityAta = getAssociatedTokenAddressSync(mint, swapAuthority);
     instructions.push(createAssociatedTokenAccountIdempotentInstruction(swapAuthority, swapAuthorityAta, swapAuthority, mint));
     instructions.push(createTransferInstruction(userAta, swapAuthorityAta, user, entitlements[i].entitlement));
+    if (isWrappedSol(mint)) {
+      // Immediately unwrap back into real lamports rather than letting the
+      // swap authority accumulate idle wrapped SOL -- replenishes its real
+      // SOL balance so it can keep funding future Buy legs.
+      instructions.push(createCloseAccountInstruction(swapAuthorityAta, swapAuthority, swapAuthority));
+    }
     const price = params.assetTestPricesUsd[leg.mint] ?? 0;
     totalUsdOut += (Number(entitlements[i].entitlement) / 10 ** leg.decimals) * price;
   }

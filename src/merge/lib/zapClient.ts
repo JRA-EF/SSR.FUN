@@ -47,12 +47,14 @@ export async function executeBuyZap(params: {
   connection: Connection;
   wallet: WalletContextState;
   reserveAddress: string;
+  assetMints: string[];
   userPubkey: PublicKey;
   solLamports: bigint;
 }): Promise<{ signature: string; quote: ZapQuote }> {
   const { transactionBase64, quote } = await requestSignedZapTransaction({
     action: "buy",
     reserve: params.reserveAddress,
+    assetMints: params.assetMints,
     userPubkey: params.userPubkey.toBase58(),
     solLamports: params.solLamports.toString(),
   });
@@ -64,12 +66,14 @@ export async function executeSellZap(params: {
   connection: Connection;
   wallet: WalletContextState;
   reserveAddress: string;
+  assetMints: string[];
   userPubkey: PublicKey;
   reserveTokensToRedeem: bigint;
 }): Promise<{ signature: string; quote: ZapQuote }> {
   const { transactionBase64, quote } = await requestSignedZapTransaction({
     action: "sell",
     reserve: params.reserveAddress,
+    assetMints: params.assetMints,
     userPubkey: params.userPubkey.toBase58(),
     reserveTokensToRedeem: params.reserveTokensToRedeem.toString(),
   });

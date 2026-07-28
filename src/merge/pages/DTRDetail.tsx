@@ -191,6 +191,7 @@ export function DTRDetail() {
         connection,
         wallet: walletCtx,
         reserveAddress: dtr.onChain.reserve,
+        assetMints: dtr.onChain.assets.map((a) => a.mint),
         userPubkey: walletCtx.publicKey,
         solLamports,
       });
@@ -198,7 +199,11 @@ export function DTRDetail() {
       setBuyAmount("");
       toast({
         title: "Buy confirmed on Solana DevNet",
-        description: `View transaction: ${explorerUrl("tx", signature)}`,
+        description: (
+          <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
+            View transaction on Solana Explorer (DevNet) &rarr;
+          </a>
+        ),
       });
     } catch (e) {
       toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
@@ -243,6 +248,7 @@ export function DTRDetail() {
         connection,
         wallet: walletCtx,
         reserveAddress: dtr.onChain.reserve,
+        assetMints: dtr.onChain.assets.map((a) => a.mint),
         userPubkey: walletCtx.publicKey,
         reserveTokensToRedeem,
       });
@@ -250,7 +256,11 @@ export function DTRDetail() {
       setSellAmount("");
       toast({
         title: "Sell confirmed on Solana DevNet",
-        description: `View transaction: ${explorerUrl("tx", signature)}`,
+        description: (
+          <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
+            View transaction on Solana Explorer (DevNet) &rarr;
+          </a>
+        ),
       });
     } catch (e) {
       toast({ variant: "destructive", title: "Sell Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
@@ -711,6 +721,11 @@ export function DTRDetail() {
                         `Buy ${dtr.ticker}`
                       )}
                     </Button>
+                    {isOnChain && (
+                      <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
+                        Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value.
+                      </p>
+                    )}
                   </TabsContent>
 
                   <TabsContent value="sell" className="mt-0 space-y-4">
@@ -824,6 +839,11 @@ export function DTRDetail() {
                         `Sell ${dtr.ticker}`
                       )}
                     </Button>
+                    {isOnChain && (
+                      <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
+                        Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value.
+                      </p>
+                    )}
                   </TabsContent>
                 </CardContent>
               </Tabs>

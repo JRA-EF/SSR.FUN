@@ -1,3 +1,5 @@
+import { PublicKey } from "@solana/web3.js";
+
 // Fixed, DevNet-only test pricing for the SOL<->fixture-asset zap adapter
 // (see docs/protocol/FRONTEND_INTEGRATION.md "DevNet swap adapter"). The
 // deployed protocol has no oracle and no price discovery of its own; these
@@ -6,6 +8,9 @@
 // mint_reserve_tokens_in_kind call needs, and back. They are not derived from
 // any market and must never be presented as real prices.
 export const SOL_TEST_PRICE_USD = 20;
+
+/** The canonical SPL wrapped-SOL mint -- same address on every Solana cluster (DevNet, Mainnet, etc). */
+export const WRAPPED_SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
 
 export function solLamportsToUsd(lamports: bigint): number {
   return (Number(lamports) / 1_000_000_000) * SOL_TEST_PRICE_USD;
