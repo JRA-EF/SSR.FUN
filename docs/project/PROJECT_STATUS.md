@@ -63,6 +63,40 @@ Deploy this corrective pass to production and complete the DevNet protocol-treas
 4. Enable Windows Developer Mode on this machine (or run elevated) so `solana-test-validator`/`anchor test` can actually run, per DEC-0034's localnet-by-default policy -- currently blocked by a Windows privilege requirement (`SeCreateSymbolicLinkPrivilege`).
 5. Consider adding a lightweight automated test harness for the new integration logic (`packages/sdk/src/zapInstructions.ts`, `createReserveFlow.ts`) beyond the live-DevNet verification scripts, since no frontend test framework exists in this repo yet (pre-existing gap).
 
+## Engineering Areas
+
+<!--
+  Whole-project completion view for the /internal/status dashboard's hero
+  metric -- deliberately a DIFFERENT weighting than "Roadmap" below.
+  "Roadmap" tracks the current Solana-protocol mission's 8 gates/phases
+  only, which under-weights the real, already-shipped SSR.fun simulation
+  platform (the entire homepage/Discover/Create/Portfolio/Manage/Reserve-
+  detail product, gated at just 10/100 of Roadmap's weight because Roadmap
+  is scoped to "the protocol mission", not "the whole project"). This block
+  re-weights across the project's actual 5 major engineering areas so the
+  headline number represents the entire project. Each area's completion is
+  computed from the Roadmap phases it maps to (see mapping below) --
+  recompute both blocks together; never hand-edit either completion number
+  independently of what it's derived from.
+
+  Mapping:
+    - Product / Simulation Platform  = Roadmap phase 1
+    - Reserve Protocol                = Roadmap phases 2+3+4 (weighted)
+    - Frontend Integration            = Roadmap phase 5
+    - Security & Testing              = Roadmap phase 6
+    - Production Readiness            = Roadmap phases 7+8 (weighted)
+-->
+
+```json
+[
+  { "area": "Product / Simulation Platform", "weight": 20, "completion": 1.00, "status": "done", "detail": "Homepage, Discover, Create Reserve, Portfolio, Manage, Reserve-detail -- full simulation-mode product." },
+  { "area": "Reserve Protocol", "weight": 25, "completion": 0.96, "status": "in_progress", "detail": "17-instruction Anchor program (now 18) live on Solana DevNet; architecture and research 100% done." },
+  { "area": "Frontend Integration", "weight": 20, "completion": 0.95, "status": "in_progress", "detail": "Real wallet connection, real on-chain reads, real Buy/Sell zap, real Create Reserve -- all live in production." },
+  { "area": "Security & Testing", "weight": 20, "completion": 0.85, "status": "in_progress", "detail": "14/14 tests passing live on DevNet; a full fresh-Reserve E2E lifecycle verified end-to-end; no external audit yet." },
+  { "area": "Production Readiness", "weight": 15, "completion": 0.00, "status": "not_started", "detail": "Frontend is genuinely live in production; the PROTOCOL itself is DevNet-only -- needs a security audit and upgrade-authority multisig migration (DEC-0015) before Mainnet." }
+]
+```
+
 ## Roadmap
 
 ```json
