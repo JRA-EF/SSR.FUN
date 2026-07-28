@@ -4,6 +4,9 @@ import { Shell } from './components/Shell'
 import { Home } from './pages/Home'
 import { MergeLayout } from './merge/MergeLayout'
 import { MergeParamsContext } from './merge/lib/wouter-shim'
+import { SolanaProviders } from './merge/lib/SolanaProviders'
+import { WalletSync } from './merge/lib/WalletSync'
+import { RealReserveSync } from './merge/lib/RealReserveSync'
 import { Discover } from './merge/pages/Discover'
 import { CreateDTR } from './merge/pages/CreateDTR'
 import { Portfolio } from './merge/pages/Portfolio'
@@ -70,12 +73,16 @@ function Routes() {
 
 export default function App() {
   return (
-    <StoreProvider>
-      <RouterProvider>
-        <Shell>
-          <Routes />
-        </Shell>
-      </RouterProvider>
-    </StoreProvider>
+    <SolanaProviders>
+      <WalletSync />
+      <RealReserveSync />
+      <StoreProvider>
+        <RouterProvider>
+          <Shell>
+            <Routes />
+          </Shell>
+        </RouterProvider>
+      </StoreProvider>
+    </SolanaProviders>
   )
 }

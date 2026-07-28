@@ -1,0 +1,81 @@
+{
+  "programId": "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW",
+  "manager": "Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj",
+  "delegates": {
+    "updateTargets": {
+      "wallet": "AKWHGN3EDPfkcpFhkG3EQcHBRY7eBFNCWNbV1osfDu7u",
+      "delegateAccount": "Hnr6CcBjy9HSXwJcdBXR9Tr67PHnQNraGw64qXAJwZPR"
+    },
+    "pauseUnpause": {
+      "wallet": "68gfCCwZRCXnyQN8MzEKykBhhenMKCqWxDC9oxS7TiBt",
+      "delegateAccount": "AzB12sUa9AGACNm4XWRGEF6dfEjXLDfPZpu3cDeg4VUV"
+    }
+  },
+  "holders": {
+    "holderA": "FhPUtAx2qHVDEMw6BevCFGN2cnBaETDFR8g8PUnMSdZK",
+    "holderB": "8ZwqJHKx5jPBweLJcMfe9NJHntvGn5GPpkWEpaQ9jehF"
+  },
+  "mints": {
+    "mintX": { "address": "2KBajm7Xufj8UaFQbKqLquhMRqeqjLZdDuXtoqYkSUgu", "decimals": 6, "symbol": "mockX" },
+    "mintY": { "address": "9ERxFYyuNTMjsduY24MCp1bvUDz7PkhoycjBx76Zh8Lv", "decimals": 6, "symbol": "mockY" },
+    "mintZ": { "address": "GqNfJAmAMBVrYbJ3az38kBBrz8vyYdoFpwYmRBJd6zoS", "decimals": 9, "symbol": "mockZ" }
+  },
+  "reserveOne": {
+    "reserveId": "9",
+    "reserve": "GFP9nJQyFWurTkJCEYYkBxjksUQUXLt9i3ZoUDncTy5C",
+    "reserveTokenMint": "EqbWxWncXzXqestskKSNMWPVL58YEr2Z6qRC6Q19imK2",
+    "mintAuthority": "6gXhrpdvHr94DVPiZ4fDg97G6wuVwNLxcDkJPsy3hmfm",
+    "vaultAuthority": "EUvLTuymcgWxp9gVmhPbZWWiuf5UgZB6RxvKu9d563Jy",
+    "assets": [
+      {
+        "mint": "2KBajm7Xufj8UaFQbKqLquhMRqeqjLZdDuXtoqYkSUgu",
+        "symbol": "mockX",
+        "decimals": 6,
+        "weightBps": 6000,
+        "reserveAsset": "4gdndjBhGSVrv78WmusC1HWNAXXiAPiTGB9QLSs4T3yE",
+        "vault": "7kQVGS6Ak2JZFipvjnZHAgMLYdw5Ug1tATF26cwaxSqe"
+      },
+      {
+        "mint": "9ERxFYyuNTMjsduY24MCp1bvUDz7PkhoycjBx76Zh8Lv",
+        "symbol": "mockY",
+        "decimals": 6,
+        "weightBps": 4000,
+        "reserveAsset": "E2wQfVqPWdsFAx9QafC2ZjRUrYEfviTW4vnmxwq8grMu",
+        "vault": "GKGxTFQm6ekpgSu2djgModJp6pobtRHfZEWUTiPjpFz2"
+      }
+    ]
+  },
+  "reserveTwo": {
+    "reserveId": "10",
+    "reserve": "H1U22fK3fMfsmz1WirJ4H63xBDcTEHgXjtSzw73tEfcJ",
+    "reserveTokenMint": "4DTYvVELqqtp2c4rf8WjF9WYotGw2hC32Pdmj9XN3xZh",
+    "mintAuthority": "CiNzhoxkixWLw4jFSeb1Zebwi35fRU3VJZqDBszFe1Ar",
+    "vaultAuthority": "6W2icjsG5ifSmDuPTGUWyGSyZ7N866ukSkzGu6bRgJed",
+    "assets": [
+      {
+        "mint": "2KBajm7Xufj8UaFQbKqLquhMRqeqjLZdDuXtoqYkSUgu",
+        "symbol": "mockX",
+        "decimals": 6,
+        "weightBps": 4000,
+        "reserveAsset": "C31r8W6CWc5vxmUDXdPkodoCZmY92LrvjyFoodLeurCs",
+        "vault": "E8eiEtKjvHMmP2fvun4wr7TDhtLcivEW9DnHkC8STTad"
+      },
+      {
+        "mint": "9ERxFYyuNTMjsduY24MCp1bvUDz7PkhoycjBx76Zh8Lv",
+        "symbol": "mockY",
+        "decimals": 6,
+        "weightBps": 3000,
+        "reserveAsset": "46mxpcibNMnX9fkhUsGAySS5mU834wT6QkkLz56R5AaY",
+        "vault": "3Sbi815ScRhzvi6rUz3tnotHGB8BgxfTZfRLNPgPX2TV"
+      },
+      {
+        "mint": "GqNfJAmAMBVrYbJ3az38kBBrz8vyYdoFpwYmRBJd6zoS",
+        "symbol": "mockZ",
+        "decimals": 9,
+        "weightBps": 3000,
+        "reserveAsset": "57GinQ8GAkDMDChUo83BFdGjk1PCJoxPuGKGtJpneWQK",
+        "vault": "5petKNC57WP9mZDXkgJij1xX4ZvXQA6CWdnQHLdMk44n"
+      }
+    ]
+  }
+}

@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { WalletReadyState, type WalletName } from '@solana/wallet-adapter-base'
 import { Modal } from './ui'
 import { useAppStore } from '@/store/useAppStore'
 import type { WalletProviderId } from '@/lib/types'
@@ -7,7 +9,11 @@ import { useStore } from '../state/store'
 /** The four wallets offered in the picker. MetaMask is listed but never actually
  *  connects — it doesn't support Solana — so selecting it always surfaces the
  *  "not installed" or "connection failed" state, which keeps both failure paths
- *  reachable deterministically instead of relying on randomness. */
+ *  reachable deterministically instead of relying on randomness. The other
+ *  three are matched against wallet-adapter-react's live Wallet Standard
+ *  detection by name (case-insensitive substring) rather than raw
+ *  `window.phantom`-style global checks, which is more reliable across wallet
+ *  versions. */
 type ModalWalletId = WalletProviderId | 'metamask'
 
 interface WalletOption {
@@ -16,47 +22,18 @@ interface WalletOption {
   color: string
   initial: string
   installUrl: string
-  isInstalled: () => boolean
 }
+
+const WALLET_OPTIONS: WalletOption[] = [
+  { id: 'phantom', name: 'Phantom', color: '#AB9FF2', initial: 'P', installUrl: 'https://phantom.app/' },
+  { id: 'solflare', name: 'Solflare', color: '#FC9231', initial: 'S', installUrl: 'https://solflare.com/' },
+  { id: 'backpack', name: 'Backpack', color: '#E33E3F', initial: 'B', installUrl: 'https://backpack.app/' },
+  { id: 'metamask', name: 'MetaMask', color: '#E2761B', initial: 'M', installUrl: 'https://metamask.io/' },
+]
 
 function hasGlobal(key: string): boolean {
   return typeof window !== 'undefined' && Boolean((window as unknown as Record<string, unknown>)[key])
 }
-
-const WALLET_OPTIONS: WalletOption[] = [
-  {
-    id: 'phantom',
-    name: 'Phantom',
-    color: '#AB9FF2',
-    initial: 'P',
-    installUrl: 'https://phantom.app/',
-    isInstalled: () => Boolean((window as unknown as { phantom?: { solana?: unknown } }).phantom?.solana),
-  },
-  {
-    id: 'solflare',
-    name: 'Solflare',
-    color: '#FC9231',
-    initial: 'S',
-    installUrl: 'https://solflare.com/',
-    isInstalled: () => hasGlobal('solflare'),
-  },
-  {
-    id: 'backpack',
-    name: 'Backpack',
-    color: '#E33E3F',
-    initial: 'B',
-    installUrl: 'https://backpack.app/',
-    isInstalled: () => hasGlobal('backpack'),
-  },
-  {
-    id: 'metamask',
-    name: 'MetaMask',
-    color: '#E2761B',
-    initial: 'M',
-    installUrl: 'https://metamask.io/',
-    isInstalled: () => hasGlobal('ethereum'),
-  },
-]
 
 type Step =
   | { kind: 'select' }
@@ -66,17 +43,53 @@ type Step =
   | { kind: 'failed'; wallet: WalletOption; reason: string }
 
 export function WalletModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const connectWallet = useAppStore(s => s.connectWallet)
+  const { wallets, select, connected, publicKey } = useWallet()
+  const walletError = useAppStore(s => s.walletError)
+  const setWalletError = useAppStore(s => s.setWalletError)
   const { toast } = useStore()
   const [step, setStep] = useState<Step>({ kind: 'select' })
+  const pendingRef = useRef<WalletOption | null>(null)
 
   useEffect(() => {
-    if (open) setStep({ kind: 'select' })
+    if (open) {
+      setStep({ kind: 'select' })
+      pendingRef.current = null
+    }
   }, [open])
+
+  // The real adapter resolved a pending selection -- either connected...
+  useEffect(() => {
+    const pending = pendingRef.current
+    if (!pending) return
+    if (connected && publicKey) {
+      setStep({ kind: 'connected', wallet: pending })
+      pendingRef.current = null
+      toast('Wallet connected', `Connected to ${pending.name} on Solana DevNet.`)
+    }
+  }, [connected, publicKey, toast])
+
+  // ...or failed (user rejected in the extension, etc.), surfaced via SolanaProviders' onError.
+  useEffect(() => {
+    const pending = pendingRef.current
+    if (!pending || !walletError) return
+    setStep({ kind: 'failed', wallet: pending, reason: walletError })
+    pendingRef.current = null
+    setWalletError(null)
+  }, [walletError, setWalletError])
+
+  function findAdapter(id: WalletProviderId) {
+    return wallets.find(w => w.adapter.name.toLowerCase().includes(id))
+  }
+
+  function isDetected(opt: WalletOption): boolean {
+    if (opt.id === 'metamask') return hasGlobal('ethereum')
+    const found = findAdapter(opt.id)
+    return found?.readyState === WalletReadyState.Installed || found?.readyState === WalletReadyState.Loadable
+  }
 
   async function selectWallet(opt: WalletOption) {
     if (opt.id === 'metamask') {
-      if (!opt.isInstalled()) {
+      if (!hasGlobal('ethereum')) {
         setStep({ kind: 'not-installed', wallet: opt })
         return
       }
@@ -87,18 +100,19 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
       })
       return
     }
-    if (!opt.isInstalled()) {
+
+    const found = findAdapter(opt.id)
+    if (!found || !isDetected(opt)) {
       setStep({ kind: 'not-installed', wallet: opt })
       return
     }
+
     setStep({ kind: 'connecting', wallet: opt })
-    try {
-      await connectWallet(opt.id as WalletProviderId)
-      setStep({ kind: 'connected', wallet: opt })
-      toast('Wallet connected (simulated)', 'No real wallet is involved — this is a prototype.')
-    } catch {
-      setStep({ kind: 'failed', wallet: opt, reason: 'Connection failed. Please try again.' })
-    }
+    pendingRef.current = opt
+    // select() triggers wallet-adapter-react's own auto-connect effect (the
+    // provider is mounted with autoConnect); resolution/failure is observed
+    // above via the connected/publicKey and walletError effects.
+    select(found.adapter.name as WalletName)
   }
 
   return (
@@ -121,8 +135,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
       {step.kind === 'select' && (
         <>
           <p className="wm-sub">
-            Choose a wallet to continue. Simulation Mode — no real wallet, network, or on-chain program is
-            connected.
+            Choose a wallet to continue. Testing Environment — connects on Solana DevNet, not Mainnet.
           </p>
           <div className="wm-list">
             {WALLET_OPTIONS.map(opt => (
@@ -131,7 +144,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
                   {opt.initial}
                 </span>
                 <span className="wm-option-name">{opt.name}</span>
-                <span className="wm-option-hint">{opt.isInstalled() ? 'Detected' : 'Not installed'}</span>
+                <span className="wm-option-hint">{isDetected(opt) ? 'Detected' : 'Not installed'}</span>
               </button>
             ))}
           </div>
@@ -157,9 +170,9 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
               <path d="M20 6 9 17l-5-5" />
             </svg>
           </span>
-          <p className="wm-status-text">{step.wallet.name} connected (simulated).</p>
+          <p className="wm-status-text">{step.wallet.name} connected.</p>
           <p className="wm-sub" style={{ textAlign: 'center' }}>
-            No real wallet is involved — balances and activity in this app are entirely mocked.
+            Connected on Solana DevNet — a test network with no real economic value.
           </p>
           <button type="button" className="btn btn-primary" onClick={onClose}>
             Done

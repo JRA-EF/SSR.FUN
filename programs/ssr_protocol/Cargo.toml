@@ -1,0 +1,32 @@
+[package]
+name = "ssr_protocol"
+version = "0.1.0"
+description = "SSR Protocol: independent, Solana-native tokenized-reserve program (DevNet v1)."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ssr_protocol"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "1.1.2", features = ["init-if-needed"] }
+anchor-spl = { version = "1.1.2", features = ["token", "associated_token", "token_2022"] }
+
+# Silences cosmetic "unexpected cfg condition value" warnings from
+# anchor-lang's own macro-generated code, which checks for optional
+# downstream features (custom heap/panic handlers, an internal "solana"
+# feature flag, and the `anchor-debug` dev flag) this crate doesn't declare
+# or need -- not a real problem, just Cargo's newer check-cfg lint being
+# stricter than Anchor 1.1.2's macros anticipate.
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = [
+    'cfg(feature, values("custom-heap", "custom-panic", "solana", "anchor-debug"))',
+] }

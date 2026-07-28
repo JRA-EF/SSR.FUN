@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useWallet } from '@solana/wallet-adapter-react'
 import { Link, navigate, usePath } from '../lib/router'
 import { useStore } from '../state/store'
 import { useAppStore } from '@/store/useAppStore'
@@ -77,7 +78,8 @@ function ThemeToggle() {
 export function Shell({ children }: { children: ReactNode }) {
   const path = usePath()
   const { toasts } = useStore()
-  const { wallet, disconnectWallet } = useAppStore()
+  const { wallet } = useAppStore()
+  const { disconnect } = useWallet()
   const [walletModalOpen, setWalletModalOpen] = useState(false)
 
   return (
@@ -103,8 +105,11 @@ export function Shell({ children }: { children: ReactNode }) {
               SSR<span className="fun">.FUN</span>
             </span>
           </Link>
-          <span className="sim-badge" title="Simulated environment — all data is mocked; nothing is on-chain.">
-            Simulation Mode
+          <span className="sim-badge" title="Connected to the SSR Protocol on Solana DevNet — a public test network, not Mainnet. No real economic value.">
+            Solana DevNet
+          </span>
+          <span className="testing-badge" title="Unlisted testing deployment — not indexed or linked publicly.">
+            Testing Environment
           </span>
           <nav className="nav-links" aria-label="Primary">
             {LINKS.map(l => (
@@ -119,8 +124,8 @@ export function Shell({ children }: { children: ReactNode }) {
             <button
               type="button"
               className="wallet-chip"
-              title="Simulated wallet — click to disconnect"
-              onClick={() => disconnectWallet()}
+              title="Connected on Solana DevNet — click to disconnect"
+              onClick={() => disconnect()}
             >
               <span className="dot" aria-hidden="true" />
               {wallet.address?.slice(0, 4)}…{wallet.address?.slice(-4)}
@@ -148,7 +153,8 @@ export function Shell({ children }: { children: ReactNode }) {
               A launchpad for tokenized reserves. Create, launch, and trade decentralized tokenized reserves on Solana.
             </p>
             <p style={{ marginTop: 12 }}>
-              Prototype interface with mock data — no wallet, network, or on-chain program is connected. Reserve Tokens do
+              Testing interface connected to the SSR Protocol on Solana DevNet — a public test network with no real
+              economic value. Some Reserves and balances shown are still illustrative/mocked. Reserve Tokens do
               not confer ownership of any company. Nothing here is a guarantee of value, liquidity, or performance.
             </p>
           </div>

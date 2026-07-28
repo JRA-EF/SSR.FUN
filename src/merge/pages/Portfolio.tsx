@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { DEVNET_FIXTURES } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import {
   calcHoldingValue,
@@ -18,6 +21,7 @@ import { Link } from "wouter";
 import { Wallet, PieChart, ArrowUpRight, ArrowDownRight, Search, Activity } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 
 /** Categorical swatch cycled across allocation rows -- same palette as the native charts. */
 const ALLOCATION_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
@@ -35,8 +39,34 @@ function PnlText({ value, pct, className = "" }: { value: number; pct?: number; 
 
 export function Portfolio() {
   const { wallet, holdings, dtrs } = useAppStore();
+  const { publicKey } = useWallet();
+  const { toast } = useToast();
+  const [isFaucetLoading, setIsFaucetLoading] = useState(false);
 
   const isConnected = wallet.connected;
+
+  async function handleGetTestAssets() {
+    if (!publicKey) return;
+    setIsFaucetLoading(true);
+    try {
+      const mints = Object.values(DEVNET_FIXTURES.mints);
+      const res = await fetch("/api/devnet/mint-test-assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userPubkey: publicKey.toBase58(),
+          mints: mints.map((m) => ({ mint: m.address, rawAmount: String(10 * 10 ** m.decimals) })),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to get DevNet test assets.");
+      toast({ title: "Received DevNet test assets", description: "10 of each SSR DevNet test asset (mockX/Y/Z) were minted to your wallet." });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Faucet Failed", description: e instanceof Error ? e.message : "Failed to get DevNet test assets." });
+    } finally {
+      setIsFaucetLoading(false);
+    }
+  }
 
   if (!isConnected) {
     return (
@@ -131,8 +161,11 @@ export function Portfolio() {
         </Card>
 
         <Card className="bg-card/40 border-border/50 col-span-1 md:col-span-3 lg:col-span-2">
-          <CardHeader className="pb-4">
+          <CardHeader className="pb-4 flex-row items-center justify-between space-y-0">
             <CardTitle className="text-lg">Wallet Balances</CardTitle>
+            <Button size="sm" variant="outline" onClick={handleGetTestAssets} disabled={isFaucetLoading}>
+              {isFaucetLoading ? "Requesting..." : "Get DevNet Test Assets"}
+            </Button>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

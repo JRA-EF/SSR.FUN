@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { useParams, Link } from "wouter";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { PublicKey } from "@solana/web3.js";
+import { SOL_TEST_PRICE_USD, fetchReserveOnChain, fetchTokenBalanceRaw } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
+import { executeBuyZap, executeSellZap } from "@/lib/zapClient";
+import { explorerUrl } from "@/lib/solana-config";
 import {
   buildLineSeries,
   buildSimulatedOrderBook,
@@ -54,9 +59,11 @@ function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, buyDTRToken, sellDTRToken } = useAppStore();
+  const { wallet, holdings, dtrs, buyDTRToken, sellDTRToken, mergeOnChainReserve, syncRealHolding, syncWalletFromChain } = useAppStore();
   const dtr = dtrs.find((d) => d.id === (dtrId || ""));
   const { toast } = useToast();
+  const { connection } = useConnection();
+  const walletCtx = useWallet();
 
   // Chart timeframe is local UI state -- it persists across live store updates
   // (trades, price ticks) since this component only re-renders, never remounts.
@@ -67,6 +74,45 @@ export function DTRDetail() {
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Real (chain-backed) Reserves trade via the DevNet SOL zap adapter instead
+  // of the simulated AMM curve -- see docs/protocol/FRONTEND_INTEGRATION.md
+  // "Buy/Sell zap architecture". Everything below this flag is the ONLY
+  // behavioral branch point; the surrounding JSX structure is unchanged.
+  const isOnChain = !!dtr?.onChain;
+
+  /** Re-fetches this Reserve's on-chain state + the connected wallet's real balance immediately after a confirmed tx, rather than waiting for RealReserveSync's next poll. */
+  async function refreshRealReserveNow() {
+    if (!dtr?.onChain) return;
+    try {
+      const programId = new PublicKey(dtr.onChain.programId);
+      const reserveAddress = new PublicKey(dtr.onChain.reserve);
+      const mints = dtr.onChain.assets.map((a) => new PublicKey(a.mint));
+      const onChain = await fetchReserveOnChain(connection, programId, reserveAddress, mints);
+      if (onChain) {
+        mergeOnChainReserve(
+          dtr.id,
+          {
+            reserveId: dtr.onChain.reserveId,
+            reserve: dtr.onChain.reserve,
+            reserveTokenMint: dtr.onChain.reserveTokenMint,
+            mintAuthority: dtr.onChain.mintAuthority,
+            vaultAuthority: dtr.onChain.vaultAuthority,
+            assets: dtr.onChain.assets.map((a) => ({ mint: a.mint, symbol: a.symbol, decimals: a.decimals, weightBps: a.weightBps, reserveAsset: a.reserveAsset, vault: a.vault })),
+          },
+          onChain,
+        );
+      }
+      if (walletCtx.publicKey) {
+        const balanceRaw = await fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain.reserveTokenMint), walletCtx.publicKey);
+        syncRealHolding(dtr.id, balanceRaw, dtr.nav);
+        const solLamports = await connection.getBalance(walletCtx.publicKey, "confirmed");
+        syncWalletFromChain({ connected: true, connecting: false, address: walletCtx.publicKey.toBase58(), provider: wallet.provider, solLamports });
+      }
+    } catch {
+      // Best-effort immediate refresh; RealReserveSync's regular poll will catch up regardless.
+    }
+  }
 
   // Derived chart/market data. Kept above the "not found" early return (and fed safe
   // fallbacks when dtr is undefined) so hook call order never changes between renders.
@@ -123,18 +169,52 @@ export function DTRDetail() {
   // Trading Calculations
   const numBuyAmount = parseFloat(buyAmount) || 0;
   const buyQuote = calcTokensReceived(numBuyAmount, dtr.tokenPrice, dtr.liquidityUsdc);
-  
+  // DevNet-only test-priced estimate (see zapPricing.ts) -- the server
+  // independently recomputes the exact amounts from live chain state at
+  // execution time; this is a preview only.
+  const estReserveTokensOut = isOnChain && dtr.nav > 0 ? (numBuyAmount * SOL_TEST_PRICE_USD) / dtr.nav : 0;
+
   const numSellAmount = parseFloat(sellAmount) || 0;
   const sellQuote = calcUsdcReceived(numSellAmount, dtr.tokenPrice, dtr.liquidityUsdc);
+  const estSolOut = isOnChain ? (numSellAmount * dtr.nav) / SOL_TEST_PRICE_USD : 0;
 
   const handleBuy = async () => {
+    if (!dtr.onChain) return;
+    if (!walletCtx.publicKey) {
+      toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const solLamports = BigInt(Math.floor(numBuyAmount * 1_000_000_000));
+      const { signature } = await executeBuyZap({
+        connection,
+        wallet: walletCtx,
+        reserveAddress: dtr.onChain.reserve,
+        userPubkey: walletCtx.publicKey,
+        solLamports,
+      });
+      await refreshRealReserveNow();
+      setBuyAmount("");
+      toast({
+        title: "Buy confirmed on Solana DevNet",
+        description: `View transaction: ${explorerUrl("tx", signature)}`,
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleBuyMock = async () => {
     setIsProcessing(true);
     // Fake processing delay
     await new Promise(r => setTimeout(r, 600));
-    
+
     const res = buyDTRToken(dtr.id, numBuyAmount);
     setIsProcessing(false);
-    
+
     if (res.success) {
       toast({
         title: "Order Executed",
@@ -151,12 +231,41 @@ export function DTRDetail() {
   };
 
   const handleSell = async () => {
+    if (!dtr.onChain) return;
+    if (!walletCtx.publicKey) {
+      toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
+      const { signature } = await executeSellZap({
+        connection,
+        wallet: walletCtx,
+        reserveAddress: dtr.onChain.reserve,
+        userPubkey: walletCtx.publicKey,
+        reserveTokensToRedeem,
+      });
+      await refreshRealReserveNow();
+      setSellAmount("");
+      toast({
+        title: "Sell confirmed on Solana DevNet",
+        description: `View transaction: ${explorerUrl("tx", signature)}`,
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Sell Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleSellMock = async () => {
     setIsProcessing(true);
     await new Promise(r => setTimeout(r, 600));
-    
+
     const res = sellDTRToken(dtr.id, numSellAmount);
     setIsProcessing(false);
-    
+
     if (res.success) {
       toast({
         title: "Order Executed",
@@ -172,9 +281,13 @@ export function DTRDetail() {
     }
   };
 
+  const onBuyClick = isOnChain ? handleBuy : handleBuyMock;
+  const onSellClick = isOnChain ? handleSell : handleSellMock;
+  const buyAvailable = isOnChain ? wallet.sol : wallet.usdc;
+
   const setBuyPct = (pct: number) => {
     if (wallet.connected) {
-      setBuyAmount((wallet.usdc * pct).toString());
+      setBuyAmount((buyAvailable * pct).toString());
     }
   };
 
@@ -237,6 +350,21 @@ export function DTRDetail() {
               )}
             </div>
           </div>
+
+          {isOnChain && dtr.onChain && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-semibold">View on Solana Explorer:</span>
+              <a href={explorerUrl("address", dtr.onChain.reserve)} target="_blank" rel="noreferrer" className="underline hover:text-primary">Reserve</a>
+              <span aria-hidden="true">·</span>
+              <a href={explorerUrl("address", dtr.onChain.reserveTokenMint)} target="_blank" rel="noreferrer" className="underline hover:text-primary">Reserve Token Mint</a>
+              {dtr.onChain.assets.map((a) => (
+                <span key={a.mint} className="flex items-center gap-2">
+                  <span aria-hidden="true">·</span>
+                  <a href={explorerUrl("address", a.vault)} target="_blank" rel="noreferrer" className="underline hover:text-primary">{a.symbol} Vault</a>
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Stats Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -468,16 +596,18 @@ export function DTRDetail() {
                   <TabsContent value="buy" className="mt-0 space-y-4">
                     <div className="flex justify-between items-center text-sm mb-2">
                       <span className="text-muted-foreground">Available</span>
-                      <span className="font-merge-mono font-medium">{wallet.connected ? formatUsdc(wallet.usdc) : "—"}</span>
+                      <span className="font-merge-mono font-medium">
+                        {wallet.connected ? (isOnChain ? `${buyAvailable.toFixed(4)} SOL` : formatUsdc(buyAvailable)) : "—"}
+                      </span>
                     </div>
 
                     <div className="relative">
                       <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-muted-foreground font-medium text-sm">
-                        USDC
+                        {isOnChain ? "SOL" : "USDC"}
                       </div>
-                      <Input 
-                        type="number" 
-                        placeholder="0.00" 
+                      <Input
+                        type="number"
+                        placeholder="0.00"
                         className="h-14 bg-background border-border/60 text-lg font-merge-mono pr-16"
                         value={buyAmount}
                         onChange={(e) => setBuyAmount(e.target.value)}
@@ -487,10 +617,10 @@ export function DTRDetail() {
 
                     <div className="grid grid-cols-4 gap-2">
                       {[0.25, 0.5, 0.75, 1].map((pct) => (
-                        <Button 
-                          key={pct} 
-                          variant="outline" 
-                          size="sm" 
+                        <Button
+                          key={pct}
+                          variant="outline"
+                          size="sm"
                           className="bg-muted/30 text-xs h-7 border-border/50"
                           onClick={() => setBuyPct(pct)}
                           disabled={!wallet.connected || isProcessing}
@@ -500,6 +630,32 @@ export function DTRDetail() {
                       ))}
                     </div>
 
+                    {isOnChain ? (
+                      <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            SOL Price (DevNet test)
+                            <Tooltip>
+                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                              <TooltipContent>Fixed DevNet testing price, not a live market feed -- there is no real SOL/asset market for this test Reserve.</TooltipContent>
+                            </Tooltip>
+                          </span>
+                          <span className="font-merge-mono">${SOL_TEST_PRICE_USD.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Mint Fee</span>
+                          <span className="font-merge-mono">{dtr.feeConfig.mintFeePct.toFixed(2)}%</span>
+                        </div>
+                        <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
+                          <span>Est. You Receive</span>
+                          <span className="font-merge-mono text-primary">~{formatTokenAmount(estReserveTokensOut)} {dtr.ticker}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Slippage tolerance</span>
+                          <span className="font-merge-mono">2%</span>
+                        </div>
+                      </div>
+                    ) : (
                     <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Price</span>
@@ -536,11 +692,12 @@ export function DTRDetail() {
                         </div>
                       )}
                     </div>
+                    )}
 
-                    <Button 
-                      className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20" 
-                      onClick={handleBuy}
-                      disabled={!wallet.connected || isProcessing || numBuyAmount <= 0 || numBuyAmount > wallet.usdc}
+                    <Button
+                      className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20"
+                      onClick={onBuyClick}
+                      disabled={!wallet.connected || isProcessing || numBuyAmount <= 0 || numBuyAmount > buyAvailable}
                     >
                       {isProcessing ? (
                         <div className="flex items-center gap-2">
@@ -548,7 +705,7 @@ export function DTRDetail() {
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
-                      ) : numBuyAmount > wallet.usdc ? (
+                      ) : numBuyAmount > buyAvailable ? (
                         "Insufficient Balance"
                       ) : (
                         `Buy ${dtr.ticker}`
@@ -593,6 +750,24 @@ export function DTRDetail() {
                       ))}
                     </div>
 
+                    {isOnChain ? (
+                      <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            SOL Price (DevNet test)
+                            <Tooltip>
+                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                              <TooltipContent>Fixed DevNet testing price, not a live market feed -- there is no real SOL/asset market for this test Reserve.</TooltipContent>
+                            </Tooltip>
+                          </span>
+                          <span className="font-merge-mono">${SOL_TEST_PRICE_USD.toFixed(2)}</span>
+                        </div>
+                        <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
+                          <span>Est. You Receive</span>
+                          <span className="font-merge-mono text-foreground">~{estSolOut.toFixed(5)} SOL</span>
+                        </div>
+                      </div>
+                    ) : (
                     <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Price</span>
@@ -629,11 +804,12 @@ export function DTRDetail() {
                         </div>
                       )}
                     </div>
+                    )}
 
-                    <Button 
+                    <Button
                       variant="destructive"
-                      className="w-full h-12 text-lg font-bold shadow-lg shadow-destructive/20" 
-                      onClick={handleSell}
+                      className="w-full h-12 text-lg font-bold shadow-lg shadow-destructive/20"
+                      onClick={onSellClick}
                       disabled={!wallet.connected || isProcessing || numSellAmount <= 0 || numSellAmount > (holding?.tokenBalance || 0)}
                     >
                       {isProcessing ? (

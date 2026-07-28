@@ -19,6 +19,8 @@ import type {
 } from "@/lib/types";
 import { emptyPermissions } from "@/lib/types";
 import { DTRS as SEED_DTRS, pickLogoForId } from "@/lib/seed-data";
+import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, REAL_RESERVE_DESCRIPTORS } from "@/lib/onChainReserve";
+import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
 import {
   applyRebalance,
   appendPricePoint,
@@ -80,14 +82,33 @@ export interface ActionResult extends TradeResult {
   dtrId?: string;
 }
 
+export interface WalletSyncPayload {
+  connected: boolean;
+  connecting: boolean;
+  address: string | null;
+  provider: WalletProviderId | null;
+  /** Real lamport balance from chain, or null to leave the previous value in place (e.g. between poll ticks). */
+  solLamports: number | null;
+}
+
 interface AppState {
   wallet: WalletState;
   holdings: Holding[];
   dtrs: DTR[];
   profiles: Record<string, UserProfile>;
 
-  connectWallet: (provider: WalletProviderId) => Promise<void>;
+  /** Mirrors real @solana/wallet-adapter-react state into `wallet` -- see src/merge/lib/WalletSync.tsx, the only caller. */
+  syncWalletFromChain: (payload: WalletSyncPayload) => void;
   disconnectWallet: () => void;
+  /** Latest real wallet-adapter error (connect rejection, disconnect, signing failure, etc.), surfaced by SolanaProviders' onError. */
+  walletError: string | null;
+  setWalletError: (message: string | null) => void;
+  /** Merges a fresh on-chain read (see src/merge/lib/RealReserveSync.tsx) into the matching real DTR entry. */
+  mergeOnChainReserve: (dtrId: string, fixture: FixtureReserve, onChain: ReserveOnChain) => void;
+  /** Registers a newly (really) created Reserve so it shows up in Discover/DTRDetail like any other real DTR. */
+  registerRealReserve: (dtr: DTR) => void;
+  /** Mirrors the connected wallet's REAL Reserve Token balance for an on-chain DTR into `holdings` -- see RealReserveSync.tsx. */
+  syncRealHolding: (dtrId: string, tokenBalanceRaw: string, nav: number) => void;
   addDemoUSDC: () => void;
   buyDTRToken: (dtrId: string, usdcAmount: number) => TradeResult;
   sellDTRToken: (dtrId: string, tokenAmount: number) => TradeResult;
@@ -101,6 +122,8 @@ interface AppState {
 
   updateProfile: (address: string, updates: { displayName: string; bio: string; avatarUrl?: string; socials: ProfileSocials }) => ActionResult;
 }
+
+const REAL_PLACEHOLDER_DTRS: DTR[] = REAL_RESERVE_DESCRIPTORS.map(buildPlaceholderRealDTR);
 
 const initialWallet: WalletState = {
   connected: false,
@@ -137,23 +160,55 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       wallet: initialWallet,
       holdings: [],
-      dtrs: SEED_DTRS,
+      dtrs: [...SEED_DTRS, ...REAL_PLACEHOLDER_DTRS],
       profiles: {},
+      walletError: null,
+      setWalletError: (message) => set({ walletError: message }),
 
-      connectWallet: async (provider) => {
-        set((state) => ({ wallet: { ...state.wallet, connecting: true } }));
-        await new Promise((resolve) => setTimeout(resolve, 1100));
-        set({
-          wallet: {
-            connected: true,
-            connecting: false,
-            provider,
-            address: generateFictionalAddress(),
-            usdc: STARTING_BALANCES.usdc,
-            ssr: STARTING_BALANCES.ssr,
-            sol: STARTING_BALANCES.sol,
-          },
+      mergeOnChainReserve: (dtrId, fixture, onChain) => {
+        set((state) => ({
+          dtrs: state.dtrs.map((d) => (d.id === dtrId ? mergeOnChainIntoDTR(d, fixture, onChain) : d)),
+        }));
+      },
+
+      registerRealReserve: (dtr) => {
+        set((state) => ({
+          dtrs: state.dtrs.some((d) => d.id === dtr.id) ? state.dtrs.map((d) => (d.id === dtr.id ? dtr : d)) : [...state.dtrs, dtr],
+        }));
+      },
+
+      syncRealHolding: (dtrId, tokenBalanceRaw, nav) => {
+        const RESERVE_TOKEN_DECIMALS = 6;
+        const tokenBalance = Number(tokenBalanceRaw) / 10 ** RESERVE_TOKEN_DECIMALS;
+        set((state) => {
+          const existing = state.holdings.find((h) => h.dtrId === dtrId);
+          if (tokenBalance <= 0) {
+            return { holdings: state.holdings.filter((h) => h.dtrId !== dtrId) };
+          }
+          return {
+            holdings: existing
+              ? state.holdings.map((h) => (h.dtrId === dtrId ? { ...h, tokenBalance, avgPurchasePrice: nav } : h))
+              : [...state.holdings, { dtrId, tokenBalance, avgPurchasePrice: nav }],
+          };
         });
+      },
+
+      syncWalletFromChain: (payload) => {
+        set((state) => ({
+          wallet: {
+            ...state.wallet,
+            connected: payload.connected,
+            connecting: payload.connecting,
+            provider: payload.provider,
+            address: payload.address,
+            // usdc/ssr stay simulation-only (the fully-mocked, non-chain-backed
+            // DTRs still run on the fictional AMM economy); a first-time real
+            // connection seeds them once so those DTRs remain testable too.
+            usdc: state.wallet.usdc === 0 && payload.connected ? STARTING_BALANCES.usdc : state.wallet.usdc,
+            ssr: state.wallet.ssr === 0 && payload.connected ? STARTING_BALANCES.ssr : state.wallet.ssr,
+            sol: payload.solLamports !== null ? payload.solLamports / 1_000_000_000 : state.wallet.sol,
+          },
+        }));
       },
 
       disconnectWallet: () => {
@@ -312,18 +367,19 @@ export const useAppStore = create<AppState>()(
       },
 
       resetSimulation: () => {
-        const { wallet } = get();
+        const { wallet, dtrs } = get();
         set({
+          // `sol` is a real, live-mirrored chain balance (see WalletSync) --
+          // resetting the simulation can't and shouldn't touch it.
           wallet: wallet.connected
-            ? {
-                ...wallet,
-                usdc: STARTING_BALANCES.usdc,
-                ssr: STARTING_BALANCES.ssr,
-                sol: STARTING_BALANCES.sol,
-              }
+            ? { ...wallet, usdc: STARTING_BALANCES.usdc, ssr: STARTING_BALANCES.ssr }
             : initialWallet,
           holdings: [],
-          dtrs: SEED_DTRS,
+          // Real, on-chain-backed DTRs (fixtures + any user-created real
+          // Reserves) reflect actual DevNet state -- "resetting the
+          // simulation" can't undo a real blockchain, so only the fully
+          // mocked seed DTRs go back to their defaults.
+          dtrs: [...SEED_DTRS, ...dtrs.filter((d) => d.onChain)],
         });
       },
 
@@ -508,7 +564,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "ssrfun-simulation",
-      version: 3,
+      version: 4,
       // Backfill fields added after a user's simulation state was already
       // persisted to localStorage -- e.g. DTRs created before the logo-art
       // pool, the AMM liquidity economy, the buy/sell tax split, the
@@ -546,6 +602,17 @@ export const useAppStore = create<AppState>()(
         }
         if (!state?.profiles) {
           state.profiles = {};
+        }
+        // v4: backfill the real DevNet fixture Reserves for stores persisted
+        // before real on-chain integration existed.
+        if (state.dtrs) {
+          for (const placeholder of REAL_PLACEHOLDER_DTRS) {
+            if (!state.dtrs.some((d) => d.id === placeholder.id)) {
+              state.dtrs.push(placeholder);
+            }
+          }
+        } else {
+          state.dtrs = [...SEED_DTRS, ...REAL_PLACEHOLDER_DTRS];
         }
         return state as AppState;
       },
