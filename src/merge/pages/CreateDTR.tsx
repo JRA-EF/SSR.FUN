@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { PublicKey } from "@solana/web3.js";
+import { DEVNET_FIXTURES } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
+import { createReserveOnChain, type CreateReserveStep } from "@/lib/createReserveClient";
+import { explorerUrl } from "@/lib/solana-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,10 +17,25 @@ import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Info, Rocket }
 import { useToast } from "@/hooks/use-toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
-import { type CreateDTRAssetInput, type FeeRecipient } from "@/lib/types";
+import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR } from "@/lib/types";
 import { CATEGORY_SUGGESTIONS } from "@/lib/seed-data";
 
+// The 3 Gate-9 fixture test mints -- the ONLY assets the DevNet swap adapter
+// (and this seeding flow) has mint authority over, so they're the only
+// selection that can produce a real, Buy/Sell-testable Reserve. Mixing these
+// with any fictional asset below falls back to the existing pure-simulation
+// deploy path unchanged.
+const DEVNET_REAL_ASSETS = Object.values(DEVNET_FIXTURES.mints).map((m) => ({
+  symbol: m.symbol.toUpperCase(),
+  name: `SSR DevNet Test Asset (${m.symbol})`,
+  real: true as const,
+  mint: m.address,
+  decimals: m.decimals,
+}));
+const REAL_ASSET_BY_SYMBOL = new Map(DEVNET_REAL_ASSETS.map((a) => [a.symbol, a]));
+
 const ALL_ASSETS = [
+  ...DEVNET_REAL_ASSETS,
   { symbol: "SOL", name: "Solana" },
   { symbol: "USDC", name: "USD Coin" },
   { symbol: "SSR", name: "SSR" },
@@ -32,13 +52,24 @@ const ALL_ASSETS = [
   { symbol: "FARTCOIN", name: "Fartcoin" },
 ];
 
+const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
+  create: "Creating Reserve...",
+  "register-assets": "Registering Reserve Assets...",
+  "mint-seed-assets": "Minting DevNet seed test assets...",
+  seed: "Seeding Reserve...",
+  done: "Done",
+};
+
 export function CreateDTR() {
   const [, setLocation] = useLocation();
-  const { wallet, createDTR } = useAppStore();
+  const { wallet, createDTR, registerRealReserve } = useAppStore();
   const { toast } = useToast();
+  const { connection } = useConnection();
+  const walletCtx = useWallet();
 
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createStep, setCreateStep] = useState<CreateReserveStep | null>(null);
 
   // Form State
   const [name, setName] = useState("");
@@ -97,6 +128,10 @@ export function CreateDTR() {
 
   const totalWeight = assets.reduce((sum, a) => sum + a.weight, 0);
   const unallocatedWeight = Math.max(0, 1 - totalWeight);
+  // A real on-chain deployment requires EVERY selected asset to be one of
+  // the DevNet swap adapter's supported test mints -- mixing in any
+  // fictional asset falls back to the existing pure-simulation deploy.
+  const isRealDeployment = assets.length > 0 && assets.every((a) => REAL_ASSET_BY_SYMBOL.has(a.symbol));
 
   const feeRecipientTotalPct = feeRecipients.reduce((sum, r) => sum + r.pct, 0);
 
@@ -124,7 +159,107 @@ export function CreateDTR() {
     setAdditionalManagers(additionalManagers.filter((a) => a !== address));
   };
 
-  const handleSubmit = async () => {
+  const handleSubmitReal = async () => {
+    if (!walletCtx.publicKey) {
+      toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
+      return;
+    }
+    setIsSubmitting(true);
+    setCreateStep("create");
+    try {
+      const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
+      const realAssets = assets.map((a) => {
+        const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
+        return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeight) * 10_000), seedWeightFraction: a.weight / totalWeight };
+      });
+
+      const result = await createReserveOnChain({
+        connection,
+        wallet: walletCtx,
+        metadataUri: `data:application/json,${encodeURIComponent(JSON.stringify({ name, ticker, description, category }))}`,
+        mintFeeBps: Math.round(mintFeePct * 100),
+        tvlFeeBps: Math.round(tvlFeePct * 100),
+        feeDestination: feeDestinationKey,
+        assets: realAssets,
+        seedTotalUsd: parseFloat(initialSeedUsdc) || 10,
+        onProgress: setCreateStep,
+      });
+
+      const dtrId = `devnet-${result.reserveId}`;
+      const onChain: OnChainReserveMeta = {
+        programId: DEVNET_FIXTURES.programId,
+        reserveId: result.reserveId,
+        reserve: result.reserve,
+        reserveTokenMint: result.reserveTokenMint,
+        mintAuthority: result.mintAuthority,
+        vaultAuthority: result.vaultAuthority,
+        manager: walletCtx.publicKey.toBase58(),
+        assets: result.assets.map((a) => ({
+          mint: a.mint,
+          symbol: DEVNET_REAL_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
+          decimals: a.decimals,
+          weightBps: a.weightBps,
+          reserveAsset: a.reserveAsset,
+          vault: a.vault,
+        })),
+        status: "active",
+        totalTargetWeightBps: 10_000,
+        reserveTokenSupplyRaw: String(Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10)) * 1_000_000),
+        vaultBalancesRaw: {},
+      };
+      const newDtr: DTR = {
+        id: dtrId,
+        name,
+        ticker: ticker.toUpperCase(),
+        description,
+        category,
+        tags: [category, "devnet", "real"],
+        logoSeed: dtrId,
+        dtrAddress: result.reserve,
+        managerAddress: walletCtx.publicKey.toBase58(),
+        delegates: [],
+        feeConfig: {
+          mintFeePct,
+          tvlFeePct,
+          managerBuyTaxPct: 0,
+          managerSellTaxPct: 0,
+          creatorFeeDestination: feeDestinationKey.toBase58(),
+          feeRecipients: [],
+        },
+        tokenPrice: 1,
+        nav: 1,
+        aum: parseFloat(initialSeedUsdc) || 10,
+        liquidityUsdc: parseFloat(initialSeedUsdc) || 10,
+        change24h: 0,
+        change7d: 0,
+        holders: 1,
+        composition: assets.map((a) => ({ symbol: a.symbol, name: a.name, weight: a.weight / totalWeight })),
+        unallocatedPct: 0,
+        isUserCreated: true,
+        priceHistory: [{ t: Date.now(), price: 1 }],
+        trades: [],
+        onChain,
+      };
+      registerRealReserve(newDtr);
+
+      toast({
+        title: "Reserve deployed on Solana DevNet",
+        description: `Reserve: ${explorerUrl("address", result.reserve)} · Create tx: ${explorerUrl("tx", result.transactions.create)}`,
+      });
+      setLocation(`/dtr/${dtrId}`);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: `Deployment Failed (${createStep ? CREATE_STEP_LABELS[createStep] : "setup"})`,
+        description: e instanceof Error ? e.message : "The DevNet Reserve creation failed.",
+      });
+    } finally {
+      setIsSubmitting(false);
+      setCreateStep(null);
+    }
+  };
+
+  const handleSubmitMock = async () => {
     setIsSubmitting(true);
     await new Promise(r => setTimeout(r, 1000));
 
@@ -161,6 +296,8 @@ export function CreateDTR() {
       });
     }
   };
+
+  const handleSubmit = isRealDeployment ? handleSubmitReal : handleSubmitMock;
 
   return (
     <div className="container max-w-4xl mx-auto px-4 py-12">
@@ -400,25 +537,31 @@ export function CreateDTR() {
                 <h3 className="font-semibold text-lg pb-2">Initial Liquidity</h3>
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="seed" className="flex items-center gap-2">
-                    Seed Amount (USDC)
+                    Seed Amount ({isRealDeployment ? "test USD" : "USDC"})
                     <Tooltip>
                       <TooltipTrigger><Info className="w-3 h-3 text-muted-foreground" /></TooltipTrigger>
-                      <TooltipContent>Initial capital to seed the reserve and set the starting AUM.</TooltipContent>
+                      <TooltipContent>
+                        {isRealDeployment
+                          ? "Initial DevNet test-asset amount to seed the reserve, minted for you automatically -- not deducted from any real balance."
+                          : "Initial capital to seed the reserve and set the starting AUM."}
+                      </TooltipContent>
                     </Tooltip>
                   </Label>
                   <div className="relative">
-                    <Input 
-                      id="seed" 
-                      type="number" 
-                      placeholder="e.g. 10000" 
+                    <Input
+                      id="seed"
+                      type="number"
+                      placeholder="e.g. 10000"
                       className="font-merge-mono"
                       value={initialSeedUsdc}
                       onChange={(e) => setInitialSeedUsdc(e.target.value)}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground flex justify-between">
-                    <span>Wallet Balance: <span className="font-merge-mono">{formatUsdc(wallet.usdc)}</span></span>
-                  </p>
+                  {!isRealDeployment && (
+                    <p className="text-xs text-muted-foreground flex justify-between">
+                      <span>Wallet Balance: <span className="font-merge-mono">{formatUsdc(wallet.usdc)}</span></span>
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -586,9 +729,9 @@ export function CreateDTR() {
               <Button variant="ghost" onClick={handleBack} className="gap-2">
                 <ChevronLeft className="w-4 h-4" /> Back
               </Button>
-              <Button 
-                onClick={handleNext} 
-                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || parseFloat(initialSeedUsdc) > wallet.usdc || feeRecipientTotalPct > 100} 
+              <Button
+                onClick={handleNext}
+                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || (!isRealDeployment && parseFloat(initialSeedUsdc) > wallet.usdc) || feeRecipientTotalPct > 100}
                 className="font-bold gap-2"
               >
                 Review <ChevronRight className="w-4 h-4" />
@@ -600,8 +743,15 @@ export function CreateDTR() {
         {step === 4 && (
           <>
             <CardHeader>
-              <CardTitle className="text-2xl font-merge-display">Review & Deploy</CardTitle>
-              <CardDescription>Confirm your reserve parameters before deploying to the protocol.</CardDescription>
+              <CardTitle className="text-2xl font-merge-display flex items-center gap-2">
+                Review & Deploy
+                {isRealDeployment && <Badge className="font-merge-mono">Solana DevNet</Badge>}
+              </CardTitle>
+              <CardDescription>
+                {isRealDeployment
+                  ? "This will submit real transactions to the deployed SSR Protocol program on Solana DevNet."
+                  : "Confirm your reserve parameters before deploying to the protocol."}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-8">
               
@@ -702,13 +852,13 @@ export function CreateDTR() {
               <Button variant="ghost" onClick={handleBack} disabled={isSubmitting} className="gap-2">
                 <ChevronLeft className="w-4 h-4" /> Back
               </Button>
-              <Button 
-                onClick={handleSubmit} 
-                disabled={isSubmitting} 
+              <Button
+                onClick={handleSubmit}
+                disabled={isSubmitting}
                 className="font-bold gap-2 min-w-[150px]"
               >
                 {isSubmitting ? (
-                  <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Deploying...</>
+                  <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Deploying..."}</>
                 ) : (
                   <><Rocket className="w-4 h-4" /> Launch Reserve</>
                 )}

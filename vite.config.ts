@@ -6,6 +6,11 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // @solana/web3.js and friends assume a Node-like `global` -- see
+  // src/polyfills.ts for the Buffer half of this fix.
+  define: {
+    global: 'globalThis',
+  },
   resolve: {
     alias: {
       // Ported SSR.FUN-MERGE pages import "@/..." (their own convention) and

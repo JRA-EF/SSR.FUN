@@ -26,7 +26,8 @@ import {
   findReserveVault,
   findVaultAuthority,
 } from "./pda";
-import { AssetBalance, computeMintRequirements, computeRedemptionEntitlements } from "./calculations";
+import type { AssetBalance } from "./calculations";
+import { computeMintRequirements, computeRedemptionEntitlements } from "./calculations";
 
 export interface ReserveAssetView {
   mint: PublicKey;
@@ -38,10 +39,13 @@ export interface ReserveAssetView {
 }
 
 export class SsrClient {
-  constructor(
-    public readonly program: Program<anchor.Idl>,
-    public readonly connection: Connection = program.provider.connection,
-  ) {}
+  readonly program: Program<anchor.Idl>;
+  readonly connection: Connection;
+
+  constructor(program: Program<anchor.Idl>, connection: Connection = program.provider.connection) {
+    this.program = program;
+    this.connection = connection;
+  }
 
   get programId(): PublicKey {
     return this.program.programId;
@@ -77,6 +81,9 @@ export class SsrClient {
     // within the `ReserveAsset` account layout) is the fully
     // indexer-independent alternative once the IDL/account layout is
     // generated -- left as a follow-up, not implemented blind here.
+    // Superseded in practice by packages/sdk/src/readOnly.ts's
+    // fetchReserveOnChain, which takes the known mint list directly.
+    void reserve;
     void assetCount;
     throw new Error(
       "fetchReserveAssets: requires either a known asset-mint list or a memcmp getProgramAccounts scan against the generated IDL's ReserveAsset layout -- not implemented in this v1 skeleton, see the NOTE in this method.",

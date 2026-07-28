@@ -127,6 +127,34 @@ export interface DTR {
   priceHistory: PricePoint[];
   /** Real executed trades this session -- starts empty for every Reserve; never backfilled with invented history. */
   trades: Trade[];
+  /** Present only for a Reserve backed by a real deployed SSR Protocol account on Solana DevNet -- see src/merge/lib/onChainReserve.ts. Absent for the fully-simulated seed DTRs. */
+  onChain?: OnChainReserveMeta;
+}
+
+export interface OnChainAssetMeta {
+  mint: string;
+  symbol: string;
+  decimals: number;
+  weightBps: number;
+  reserveAsset: string;
+  vault: string;
+}
+
+/** Real, live-fetched on-chain state for a Reserve backed by the deployed SSR Protocol program. */
+export interface OnChainReserveMeta {
+  programId: string;
+  reserveId: string;
+  reserve: string;
+  reserveTokenMint: string;
+  mintAuthority: string;
+  vaultAuthority: string;
+  manager: string;
+  assets: OnChainAssetMeta[];
+  /** "active" | "paused" | "created" | "assetsInitializing" -- mirrors programs/ssr_protocol's ReserveStatus. */
+  status: string;
+  totalTargetWeightBps: number;
+  reserveTokenSupplyRaw: string;
+  vaultBalancesRaw: Record<string, string>;
 }
 
 export type WalletProviderId = "phantom" | "solflare" | "backpack";
