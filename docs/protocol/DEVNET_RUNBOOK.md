@@ -153,15 +153,16 @@ DevNet SOL funding note: the public airdrop faucet was rate-limited/exhausted fr
 - **Before Mainnet:** full external audit; do not present the DevNet single-key trust model as production-ready (mission instruction, restated here for visibility).
 - **Going forward (DEC-0034, 2026-07-28):** localnet is the default environment for protocol development and validation; real DevNet upgrades are batched, checkpointed events (material Rust change + local tests pass + frontend validated locally), not a per-change habit. Before any upgrade: check the compiled `.so` size, list/reuse/close deployment buffers (`solana program show --buffers --buffer-authority <deployer-keypair>`), and calculate the exact additional SOL needed; after: verify via `solana program show` and record recovered lamports + final deployer balance.
 
-## Pending upgrade: `update_protocol_config` (DEC-0033, not yet deployed)
+## Program upgrade: `update_protocol_config` (DEC-0033/DEC-0035, deployed)
 
-A new instruction (`programs/ssr_protocol/src/instructions/update_protocol_config.rs`) lets the protocol authority repoint `ProtocolConfig.default_protocol_fee_destination` (and `default_protocol_fee_bps`) after the fact -- `initialize_protocol` only ever runs once. Written to set the DevNet treasury to `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`.
+A new instruction (`programs/ssr_protocol/src/instructions/update_protocol_config.rs`) lets the protocol authority repoint `ProtocolConfig.default_protocol_fee_destination` (and `default_protocol_fee_bps`) after the fact -- `initialize_protocol` only ever runs once. Deployed and used to set the DevNet treasury to `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`.
 
 | Field | Value |
 |---|---|
-| Status | Written, local-build-verified, **not deployed** |
-| `cargo check -p ssr_protocol` | Clean, zero errors |
-| `cargo-build-sbf` (run directly from `programs/ssr_protocol/`) | Succeeds -- 544,472-byte `.so` (up from the deployed 538,056 bytes) |
-| Blocker | Deployer wallet (`6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk`) holds 0.94 SOL; upgrade needs ~3.79 SOL. Public DevNet faucet returned "rate limit reached" on every retry this session. |
-| Current on-chain `default_protocol_fee_destination` | `6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk` (the deployer/authority itself -- confirmed via a live on-chain read, 2026-07-28) |
-| Next step once funded | `solana program deploy target/deploy/ssr_protocol.so --program-id <existing keypair> --upgrade-authority <deployer keypair> --url devnet`, regenerate/re-copy the IDL, call `update_protocol_config` once with the treasury address, then verify via a real Buy (accrues a mint fee) + `collect_fees` call, recording before/after treasury Reserve-Token balances. |
+| Status | **Deployed and verified live** |
+| Upgrade signature | `JuNiHri3m5wuCwv7aKaYHnMLvoMSEPUuJjCehainCrZRUg6RqfZMdUeVxosxjbAzn9hxSFc8nThXcoVGEx9BvVK` |
+| New Data Length | 548,296 bytes (up from 538,056 bytes) |
+| Funding | Deployer wallet (`6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk`) was funded with a direct 3 SOL transfer from the treasury wallet itself (tx `36xa2uVFMy1LXqnAdDeSDg3AbbPV78b8as65LCfHJWFixtULS4VywL5RrZWh5PJRe9RPFKhuwB4V9k2nZsSbwmKU`) after the public faucet stayed rate-limited across this session. |
+| `update_protocol_config` call | Signature `2cEtFTEPa5qiEWdPWZ16bTVdQaDZ7XyhUK6zjJpwUKkLvKYwwE8fD11gseoyZHgVRvRthD1d6spzy8VaYRZGcmTC` -- `default_protocol_fee_destination`: `6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk` -> `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq` |
+| Fee-routing verification | `collect_fees` call (signature `3k4KKk9EdiuNigWgSjqWK3kiigedAKAP2ifmkX1cMXAzxE4wTk5F8jj5bbGE6sPaqUA2TEKSX11RLjRAbPFxw9Ww`) against Reserve `BuHRWKzzXQXhjL3WCsmHTT7qDooh2437DvXuxyExpiWg`'s pending shares (800 manager / 200 protocol, raw units, accrued by DEC-0032's Buy): manager Reserve Token balance 1,099,500 -> 1,100,300; treasury Reserve Token balance 0 (no ATA) -> 200. |
+| IDL regeneration gotcha | `anchor idl build` works (unlike `anchor build`/`anchor test`, which panic -- DEC-0025/DEC-0034) but prints Cargo build noise before the JSON on stdout, and the committed `packages/sdk/idl/ssr_protocol.ts` is a hand-maintained **camelCase transform** of the raw JSON IDL, not a literal mirror -- regenerating it naively broke `program.account.*` typing across the SDK. Fixed by surgically merging just the 3 new entries (instruction + event + type) into both files in their respective conventions. See DEC-0035. |

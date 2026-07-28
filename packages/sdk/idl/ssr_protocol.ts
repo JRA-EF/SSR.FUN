@@ -2049,6 +2049,66 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "updateProtocolConfig",
+      "discriminator": [
+        197,
+        97,
+        123,
+        54,
+        221,
+        168,
+        11,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "protocolConfig"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "newDefaultProtocolFeeDestination",
+          "type": "pubkey"
+        },
+        {
+          "name": "newDefaultProtocolFeeBps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "updateTargets",
       "discriminator": [
         170,
@@ -2238,6 +2298,19 @@ export type SsrProtocol = {
         90,
         189,
         44
+      ]
+    },
+    {
+      "name": "protocolConfigUpdated",
+      "discriminator": [
+        20,
+        99,
+        32,
+        237,
+        111,
+        86,
+        195,
+        199
       ]
     },
     {
@@ -2892,6 +2965,38 @@ export type SsrProtocol = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "protocolConfigUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "oldDefaultProtocolFeeDestination",
+            "type": "pubkey"
+          },
+          {
+            "name": "newDefaultProtocolFeeDestination",
+            "type": "pubkey"
+          },
+          {
+            "name": "oldDefaultProtocolFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "newDefaultProtocolFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
           }
         ]
       }

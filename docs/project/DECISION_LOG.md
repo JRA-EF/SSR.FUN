@@ -827,3 +827,30 @@
   ]
 }
 ```
+
+## DEC-0035
+
+```json
+{
+  "id": "DEC-0035",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Deploy DEC-0033's `update_protocol_config` instruction to Solana DevNet (program upgrade, same program ID/upgrade authority), regenerate and re-commit the IDL, call `update_protocol_config` once to set `ProtocolConfig.default_protocol_fee_destination` to `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`, and verify real fee routing via a `collect_fees` call against the pending fee shares accrued during DEC-0032's Buy.",
+  "context": "DEC-0033/DEC-0034 left this blocked on DevNet SOL: the deployer wallet had 0.94 SOL against a ~3.79 SOL upgrade cost, and the public faucet was rate-limited. The user sent 3 SOL directly to the deployer wallet (`6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk`) from the treasury wallet itself (tx `36xa2uVFMy1LXqnAdDeSDg3AbbPV78b8as65LCfHJWFixtULS4VywL5RrZWh5PJRe9RPFKhuwB4V9k2nZsSbwmKU`), unblocking the upgrade. Per DEC-0034's hygiene steps: checked for reusable/stale deployment buffers first (none existed), deployed, then re-verified via `solana program show` and confirmed no buffers were left behind. Regenerating the IDL surfaced a real gotcha: `anchor idl build` prints Cargo build noise before the JSON on stdout (corrupting a naive stdout capture) and, more importantly, the committed `.ts` IDL companion is NOT a literal mirror of the `.json` -- it's a fully recursive camelCase transform (snake_case instruction/arg names, PascalCase account/type/event names all lowercased-first-letter), which an earlier session apparently produced by hand since `anchor build`'s own generator panics in this environment (DEC-0025/DEC-0034). Regenerating the whole `.ts` file naively (as a literal JSON mirror) broke `AccountNamespace<SsrProtocol>` account access (`program.account.reserve` etc.) at compile time. Fixed by surgically merging only the 3 new entries (the `update_protocol_config` instruction, `ProtocolConfigUpdated` event and type) into both the existing `.json` (raw Rust-style names) and `.ts` (hand-camelCased) files, leaving everything else byte-for-byte as it already was.",
+  "rationale": "A full mechanical IDL regeneration was rejected the moment it broke typechecking on unrelated, already-working code -- the smallest correct fix is additive-only, matching exactly what changed on-chain (one instruction, one event/type) rather than re-deriving the whole file and risking reintroducing whatever manual correction the `.ts` file needed the first time. Verifying fee routing with a real `collect_fees` call (not just confirming the ProtocolConfig field changed) proves the destination is actually reachable by the program's own minting logic, not just stored correctly.",
+  "alternativesConsidered": [
+    "Regenerate ssr_protocol.ts wholesale from the fresh anchor idl build output (rejected: broke account-namespace typing across the whole SDK; the file is a hand-maintained camelCase transform, not a mechanical mirror, and a full regen would need to correctly reproduce that transform for all 18 instructions/26 types, not just the 1 new one)",
+    "Skip verifying with collect_fees and only check the ProtocolConfig field changed (rejected: the mission explicitly asked for fee-routing verification via real transactions with before/after balances, not just a config-value check)"
+  ],
+  "impact": "The DevNet protocol treasury is now live: `ProtocolConfig.default_protocol_fee_destination` = `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`, confirmed by both a direct account read and a real fee payout. Every Reserve's protocol fee share (already computing correctly since Gate 8) now actually lands at the requested treasury with zero further code changes -- this was already true structurally per DEC-0033, now proven end-to-end.",
+  "affectedAreas": ["packages/sdk/idl/ssr_protocol.json", "packages/sdk/idl/ssr_protocol.ts", "docs/protocol/DEVNET_RUNBOOK.md", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": ["DEC-0033"],
+  "supersededBy": null,
+  "evidence": [
+    "solana program deploy: signature JuNiHri3m5wuCwv7aKaYHnMLvoMSEPUuJjCehainCrZRUg6RqfZMdUeVxosxjbAzn9hxSFc8nThXcoVGEx9BvVK; solana program show confirms Last Deployed In Slot 479523248, Data Length 548,296 bytes; no leftover deployment buffers (solana program show --buffers empty)",
+    "update_protocol_config call: signature 2cEtFTEPa5qiEWdPWZ16bTVdQaDZ7XyhUK6zjJpwUKkLvKYwwE8fD11gseoyZHgVRvRthD1d6spzy8VaYRZGcmTC; ProtocolConfig.default_protocol_fee_destination read before = 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk, after = EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq",
+    "collect_fees call against Reserve BuHRWKzzXQXhjL3WCsmHTT7qDooh2437DvXuxyExpiWg (pending_manager_fee_shares=800, pending_protocol_fee_shares=200 raw, accrued from DEC-0032's Buy): signature 3k4KKk9EdiuNigWgSjqWK3kiigedAKAP2ifmkX1cMXAzxE4wTk5F8jj5bbGE6sPaqUA2TEKSX11RLjRAbPFxw9Ww; manager (BYnpmzHjR2eMzYZVCRJ1HTHvGoUWpt5DLs8vzm52HAeh) Reserve Token balance 1,099,500 -> 1,100,300 (+800); treasury (EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq) Reserve Token balance 0 (no ATA) -> 200",
+    "npx tsc -b clean after the surgical IDL merge"
+  ]
+}
+```

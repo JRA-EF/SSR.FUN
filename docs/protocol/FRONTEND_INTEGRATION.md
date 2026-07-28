@@ -265,12 +265,15 @@ separate, already-independent field -- new Reserves already inherit the
 correct protocol-level treasury automatically the moment `ProtocolConfig`
 itself is updated, with no client-side change needed.
 
-As of this entry the instruction is written and build-verified
-(`cargo check`, `cargo-build-sbf`) but **not yet deployed to DevNet** --
-blocked on the deployer wallet's DevNet SOL balance (DEC-0034). The live
-on-chain `default_protocol_fee_destination` is still the deployer/upgrade
-authority itself (`6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk`), confirmed
-via a direct on-chain read, not yet `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`.
+**Deployed and verified (DEC-0035).** The instruction was shipped via a real
+DevNet program upgrade once the deployer wallet was funded, then called once
+to set `default_protocol_fee_destination` to
+`EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`. Fee routing was verified with
+a real `collect_fees` call against a Reserve with pending fee shares (accrued
+by DEC-0032's Buy): the treasury's Reserve Token balance went from 0 (no ATA)
+to 200 raw units, and the Reserve's manager received their 800-unit share --
+exact evidence, signatures, and before/after balances are in
+`docs/project/DECISION_LOG.md` (DEC-0035) and `DEVNET_RUNBOOK.md`.
 Notably, `ProtocolConfig.default_protocol_fee_bps` is stored but never read
 by any fee-computation code path (each Reserve's own `fee_config` governs its
 actual fees) -- it appears to be a vestigial/template field, not a gate.

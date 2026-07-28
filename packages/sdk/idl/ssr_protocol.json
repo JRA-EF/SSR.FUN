@@ -2043,6 +2043,66 @@
       ]
     },
     {
+      "name": "update_protocol_config",
+      "discriminator": [
+        197,
+        97,
+        123,
+        54,
+        221,
+        168,
+        11,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "protocol_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_default_protocol_fee_destination",
+          "type": "pubkey"
+        },
+        {
+          "name": "new_default_protocol_fee_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "update_targets",
       "discriminator": [
         170,
@@ -2232,6 +2292,19 @@
         90,
         189,
         44
+      ]
+    },
+    {
+      "name": "ProtocolConfigUpdated",
+      "discriminator": [
+        20,
+        99,
+        32,
+        237,
+        111,
+        86,
+        195,
+        199
       ]
     },
     {
@@ -2886,6 +2959,38 @@
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolConfigUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_default_protocol_fee_destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_default_protocol_fee_destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_default_protocol_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "new_default_protocol_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
           }
         ]
       }
