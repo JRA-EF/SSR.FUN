@@ -306,6 +306,29 @@ function DashboardBody(props: {
         </button>
       </header>
 
+      {/* Protocol Roadmap (detail) */}
+      <section className="dash-card dash-card-wide dash-fade-in">
+        <h2>Protocol Roadmap Detail</h2>
+        <div className="dash-roadmap">
+          {status.roadmap.map(phase => (
+            <div key={phase.phase} className="dash-roadmap-row">
+              <div className="dash-roadmap-label">
+                <span className="dash-roadmap-num">{phase.phase}</span>
+                <span>{phase.name}</span>
+              </div>
+              <div className="dash-roadmap-bar-track">
+                <div
+                  className={`dash-roadmap-bar-fill dash-tone-${phaseTone(phase.status)}`}
+                  style={{ width: `${Math.max(phase.completion * 100, phase.completion > 0 ? 4 : 0)}%` }}
+                />
+              </div>
+              <span className="dash-roadmap-pct">{Math.round(phase.completion * 100)}%</span>
+              <span className="dash-muted dash-small dash-roadmap-weight">wt {phase.weight}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Current Mission */}
       <section className="dash-mission dash-fade-in" style={{ animationDelay: '0.05s' }}>
         <div className="dash-mission-main">
@@ -398,29 +421,6 @@ function DashboardBody(props: {
       <section className="dash-section">
         <h2 className="dash-section-title">Engineering Timeline</h2>
         <EngineeringTimelineView entries={engineering.timeline} remotePrefix={remotePrefix} />
-      </section>
-
-      {/* Protocol Roadmap (detail) */}
-      <section className="dash-card dash-card-wide">
-        <h2>Protocol Roadmap Detail</h2>
-        <div className="dash-roadmap">
-          {status.roadmap.map(phase => (
-            <div key={phase.phase} className="dash-roadmap-row">
-              <div className="dash-roadmap-label">
-                <span className="dash-roadmap-num">{phase.phase}</span>
-                <span>{phase.name}</span>
-              </div>
-              <div className="dash-roadmap-bar-track">
-                <div
-                  className={`dash-roadmap-bar-fill dash-tone-${phaseTone(phase.status)}`}
-                  style={{ width: `${Math.max(phase.completion * 100, phase.completion > 0 ? 4 : 0)}%` }}
-                />
-              </div>
-              <span className="dash-roadmap-pct">{Math.round(phase.completion * 100)}%</span>
-              <span className="dash-muted dash-small dash-roadmap-weight">wt {phase.weight}</span>
-            </div>
-          ))}
-        </div>
       </section>
 
       {/* Decision Log */}
