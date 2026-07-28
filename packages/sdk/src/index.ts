@@ -1,3 +1,3 @@
-export * from "./pda.js";
-export * from "./calculations.js";
-export * from "./client.js";
+export * from "./pda";
+export * from "./calculations";
+export * from "./client";

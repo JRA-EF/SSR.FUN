@@ -1,15 +1,21 @@
 <!--
   Test plan for the SSR Protocol, structured per the mission's own Testing
   Requirements categories. Marks what's actually written (tests/ssr_protocol.ts)
-  vs. planned. Nothing has been RUN -- no toolchain available, see
-  DEVNET_RUNBOOK.md. "Written" means real TypeScript exists and typechecks;
-  it does not mean it has ever executed against the actual program.
+  vs. planned.
+
+  UPDATE 2026-07-28: the full suite has now been EXECUTED against the live
+  DevNet program (not just typechecked) via
+  `npx mocha --require ts-node/register tests/ssr_protocol.ts` with
+  ANCHOR_PROVIDER_URL pointed at https://api.devnet.solana.com and
+  ANCHOR_WALLET pointed at the funded deployer keypair. Result: 14 passing,
+  0 failing. See DEVNET_RUNBOOK.md for the full run record.
 -->
 
 # Test Plan
 
 ## Status legend
-- ✅ **Written** -- exists in `tests/ssr_protocol.ts`, typechecks, never executed.
+- ✅ **PASSED** -- exists in `tests/ssr_protocol.ts`, executed against the live DevNet program, and passed (2026-07-28 run, 14/14).
+- ✅ **Written** -- exists in `tests/ssr_protocol.ts`, typechecks, not yet executed.
 - ⏳ **Planned** -- not yet written.
 
 ## Unit tests (target: Rust, ideally via `litesvm` per Anchor 1.0's default template -- see DEVNET_RUNBOOK.md)
@@ -25,14 +31,14 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 
 ## Integration tests (Anchor `tests/ssr_protocol.ts`, TypeScript)
 
-✅ **Written** (all in `tests/ssr_protocol.ts`, none executed):
-- Protocol initialization.
+✅ **PASSED** (all in `tests/ssr_protocol.ts`, executed 2026-07-28 against live DevNet, 14/14 passing):
+- Protocol initialization. (Made idempotent-safe for a persistent network: `ProtocolConfig` is a true one-time singleton PDA, so on a re-run it detects the already-initialized account via `fetchNullable` and verifies its contents instead of re-sending `initializeProtocol`, which would fail with "already in use" on a network that doesn't reset state between runs the way a local validator does.)
 - Reserve creation.
 - Reserve Asset registration (two assets, weights summing to exactly 10,000).
 - Duplicate Reserve Asset rejection.
 - Vault creation (implicit in the above -- not separately asserted for balance-zero state; ⏳ add an explicit assertion).
 - Reserve Token mint creation (implicit; ⏳ add an explicit decimals/authority/freeze-authority assertion).
-- Initial seeding (asserts vault balances and nonzero recipient balance).
+- Initial seeding (asserts vault balances and nonzero recipient balance -- fixed a stale-snapshot test bug where the recipient's token-account object was checked before re-fetching post-transaction state, which made the assertion vacuously pass against pre-transaction data; now re-fetches via `getAccount` after the `seedReserve` call).
 - Rejecting re-seeding an already-`Active` Reserve.
 - A second holder minting proportionally.
 - A second holder redeeming proportionally (partial redemption).
@@ -55,22 +61,22 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 
 ## Adversarial tests
 
-✅ **Written:**
+✅ **PASSED** (executed 2026-07-28 against live DevNet):
 - Unauthorized (non-manager, non-delegate) pause attempt.
 - Delegate privilege escalation (delegate without `PAUSE_RESERVE` cannot pause).
 - Duplicate Reserve Asset registration.
 
 ⏳ **Planned, not yet written** (mapped to the mission's required scenario list):
 - Wrong Reserve account supplied to an instruction expecting a specific Reserve.
-- ✅ **Written**: wrong Reserve Vault supplied / cross-Reserve vault substitution (**the single most important test in this entire plan** -- proves invariant 5 in SECURITY_INVARIANTS.md). `tests/ssr_protocol.ts`'s "cross-Reserve isolation" test creates two real Reserves and asserts substituting Reserve Two's vault into a Reserve-One mint call is rejected. Typechecks; not yet executed.
+- ✅ **PASSED**: wrong Reserve Vault supplied / cross-Reserve vault substitution (**the single most important test in this entire plan** -- proves invariant 5 in SECURITY_INVARIANTS.md). `tests/ssr_protocol.ts`'s "cross-Reserve isolation" test creates two real Reserves on live DevNet and confirms substituting Reserve Two's vault into a Reserve-One mint call is rejected on-chain.
 - Forged Reserve Token mint (supplying an attacker-controlled mint account in place of the real `reserve_token_mint`).
 - Malicious remaining-account substitution (e.g. swapping the order of two legitimate assets to try to trick `order_index` validation, or substituting a legitimate vault from the SAME Reserve for the wrong asset).
 - Invalid token program (a mint owned by neither classic SPL Token nor Token-2022).
 - Direct vault-drain attempt (any instruction, any signer, trying to move vault tokens outside `mint`/`redeem`'s own transfer calls -- should be impossible by construction, but worth a negative test attempting to CPI `transfer_checked` directly against a vault from a non-program context).
-- ✅ **Written**: excess redemption (redeeming more than the caller's Reserve Token balance). Typechecks; not yet executed.
+- ✅ **PASSED**: excess redemption (redeeming more than the caller's Reserve Token balance).
 - Unbacked mint attempt (trying to mint before seeding, or with insufficient vault balance).
 - Rounding-direction attacks (repeated tiny mints/redeems probing whether a sequence can extract more value than deposited -- adapt the reference protocol's "Extreme" parametrized sweep concept, see RESERVE_REFERENCE_ANALYSIS.md section 17).
-- ✅ **Written** (protocol singleton only): repeated `initialize_protocol` re-init is rejected. ⏳ **Still planned**: the same test for `create_reserve`/`initialize_reserve_asset` against an already-used PDA.
+- ✅ **PASSED** (protocol singleton only): repeated `initialize_protocol` re-init is rejected. ⏳ **Still planned**: the same test for `create_reserve`/`initialize_reserve_asset` against an already-used PDA.
 - Replay-like repeated workflow execution (resubmitting an already-executed transaction -- largely a Solana-runtime-level guarantee via recent-blockhash/nonce mechanics, but worth an explicit test to confirm no custom code accidentally weakens it).
 - Partial multi-step execution (abandoning Reserve creation after `create_reserve` but before any `initialize_reserve_asset`, or after some-but-not-all assets registered, then attempting to mint/redeem -- should fail on `Reserve.status`).
 - Invalid fee recipient (`collect_fees` with a `manager_fee_destination` that doesn't match `Reserve.fee_config.fee_destination`).

@@ -21,6 +21,8 @@ import {
   PublicKey,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  Transaction,
+  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -57,12 +59,26 @@ describe("ssr_protocol", () => {
 
   const [protocolConfig] = findProtocolConfig(programId);
 
+  // The public DevNet airdrop faucet is rate-limited/exhausted for this
+  // environment (confirmed: 429 "reached your airdrop limit today" from
+  // both the CLI and web3.js). Fund fresh test keypairs by direct transfer
+  // from the already-funded ANCHOR_WALLET instead of requestAirdrop.
+  async function fundWallet(pubkey: PublicKey, lamports: number): Promise<void> {
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: protocolAuthority.publicKey,
+        toPubkey: pubkey,
+        lamports,
+      }),
+    );
+    await sendAndConfirmTransaction(connection, tx, [protocolAuthority.payer]);
+  }
+
   before(async () => {
     reserveManager = Keypair.generate();
     secondHolder = Keypair.generate();
     for (const kp of [reserveManager, secondHolder]) {
-      const sig = await connection.requestAirdrop(kp.publicKey, 5 * LAMPORTS_PER_SOL);
-      await connection.confirmTransaction(sig, "confirmed");
+      await fundWallet(kp.publicKey, 0.3 * LAMPORTS_PER_SOL);
     }
 
     assetMintA = await createMint(connection, reserveManager, reserveManager.publicKey, null, 6);
@@ -70,14 +86,22 @@ describe("ssr_protocol", () => {
   });
 
   it("initializes the protocol singleton", async () => {
-    await program.methods
-      .initializeProtocol(12, 0, protocolAuthority.publicKey)
-      .accounts({
-        protocolConfig,
-        authority: protocolAuthority.publicKey,
-        systemProgram: SystemProgram.programId,
-      })
-      .rpc();
+    // protocolConfig is a true global singleton PDA (one per deployed program),
+    // so against a persistent network like DevNet it can only ever be
+    // initialized once for the program's lifetime -- unlike a local validator,
+    // which resets state on every run. If a prior run already initialized it,
+    // treat that as the expected steady state and just verify its contents.
+    const existing = await (program.account as any).protocolConfig.fetchNullable(protocolConfig);
+    if (existing === null) {
+      await program.methods
+        .initializeProtocol(12, 0, protocolAuthority.publicKey)
+        .accounts({
+          protocolConfig,
+          authority: protocolAuthority.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
 
     const config = await (program.account as any).protocolConfig.fetch(protocolConfig);
     expect(config.maxReserveAssets).to.equal(12);
@@ -267,7 +291,8 @@ describe("ssr_protocol", () => {
       const vaultBAccount = await getAccount(connection, vaultB);
       expect(vaultAAccount.amount.toString()).to.equal("600000");
       expect(vaultBAccount.amount.toString()).to.equal("400000");
-      expect(managerReserveTokenAccount.amount.toString()).to.not.equal("0");
+      const managerReserveTokenAccountAfter = await getAccount(connection, managerReserveTokenAccount.address);
+      expect(managerReserveTokenAccountAfter.amount.toString()).to.not.equal("0");
     });
 
     it("rejects seeding a Reserve that's already Active", async () => {
@@ -452,8 +477,7 @@ describe("ssr_protocol", () => {
 
     it("rejects an unauthorized pause attempt (random wallet, not manager or delegate)", async () => {
       const stranger = Keypair.generate();
-      const sig = await connection.requestAirdrop(stranger.publicKey, LAMPORTS_PER_SOL);
-      await connection.confirmTransaction(sig, "confirmed");
+      await fundWallet(stranger.publicKey, 0.05 * LAMPORTS_PER_SOL);
       const [strangerDelegate] = findDelegate(reserve, stranger.publicKey, programId);
 
       let threw = false;
@@ -491,8 +515,7 @@ describe("ssr_protocol", () => {
 
     it("adds a restricted delegate with only UPDATE_TARGETS and confirms scope", async () => {
       const delegateWallet = Keypair.generate();
-      const sig = await connection.requestAirdrop(delegateWallet.publicKey, LAMPORTS_PER_SOL);
-      await connection.confirmTransaction(sig, "confirmed");
+      await fundWallet(delegateWallet.publicKey, 0.05 * LAMPORTS_PER_SOL);
 
       const [delegateAccount] = findDelegate(reserve, delegateWallet.publicKey, programId);
       const UPDATE_TARGETS_FLAG = 1 << 1;
@@ -631,8 +654,7 @@ describe("ssr_protocol", () => {
       // reserveOne.key(), so the PDA re-derivation inside load_asset_legs
       // (keyed on reserveOne) can never match it.
       const holder = Keypair.generate();
-      const sig = await connection.requestAirdrop(holder.publicKey, LAMPORTS_PER_SOL);
-      await connection.confirmTransaction(sig, "confirmed");
+      await fundWallet(holder.publicKey, 0.05 * LAMPORTS_PER_SOL);
       const holderAta = await getOrCreateAssociatedTokenAccount(connection, holder, assetMintA, holder.publicKey);
       await mintTo(connection, reserveManager, assetMintA, holderAta.address, reserveManager, 1_000_000);
       const holderReserveTokenAccount = await getOrCreateAssociatedTokenAccount(

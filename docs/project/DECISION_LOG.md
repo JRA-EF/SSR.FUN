@@ -562,3 +562,31 @@
   ]
 }
 ```
+
+## DEC-0025
+
+```json
+{
+  "id": "DEC-0025",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Run the full tests/ssr_protocol.ts suite directly via mocha/ts-node against the live DevNet deployment (not anchor test's local-validator default); fund ephemeral test keypairs via direct SOL transfer from the deployer wallet instead of the exhausted public airdrop faucet, at reduced amounts (0.3 SOL / 0.05 SOL rather than 2 SOL / 0.5 SOL) to conserve a finite DevNet SOL budget; and adapt two tests that assumed resettable local-validator state to instead be correct against persistent DevNet state.",
+  "context": "With the program deployed (DEC-0024) and a real IDL generated via `anchor idl build` (anchor build itself panics -- its vendored toolchain-detection assumes the standard agave-install directory layout, which doesn't exist since the Solana CLI was extracted from a tarball; fixing that needs `agave-install-init.exe`, which requires admin privileges, not done), the test suite could finally be exercised. Getting it running required resolving a chain of ESM/CJS module-resolution conflicts (root package.json is genuine ESM; tests/ needed its own CommonJS boundary via a dedicated tests/package.json and tests/tsconfig.json) and replacing requestAirdrop calls (all four sites) with a fundWallet() helper transferring from the already-funded ANCHOR_WALLET, since the public faucet was already confirmed exhausted (DEC-0024). Two real, previously-undetected bugs then surfaced purely from running against live state (neither is catchable by typechecking): a stale pre-transaction snapshot assertion in the seed-Reserve test, and a protocol-singleton-init test that unconditionally called initializeProtocol -- which fails by design the second time on a persistent network, since ProtocolConfig is a true one-time global singleton PDA and DevNet (unlike a local validator) never resets state between runs.",
+  "rationale": "Running against the real deployed program (rather than a fresh local validator anchor test would spin up) is what Gate 9 actually requires -- it is the only way to get genuine evidence that the deployed bytecode behaves correctly, not just that the source compiles. Fixing the module-resolution chain and the two test bugs was necessary to get any signal at all; both bug fixes preserve the original test's intent (verifying real post-transaction on-chain state, and verifying the singleton either gets initialized or already exists with correct contents) rather than weakening the assertions. Reducing per-keypair funding amounts is a straightforward conservation measure once it became clear ephemeral test keypairs' SOL is not reclaimed after each run and the public faucet cannot be used to top up.",
+  "alternativesConsidered": [
+    "Wait for `anchor build`/`anchor test` to work by pursuing `agave-install-init.exe` (rejected: requires admin privileges, crossing the same autonomy line as WSL2/DEC-0022 -- `anchor idl build` + hand-driven mocha achieves the same end result without it)",
+    "Leave the singleton-init test failing on repeat runs as a 'known flake' (rejected: the failure is not a flake, it's a permanent, deterministic consequence of testing a true one-time singleton against a persistent network -- worth fixing properly so the suite stays a reliable signal on every future run, not just the first)",
+    "Keep the original 2 SOL / 0.5 SOL funding amounts (rejected: at that rate the deployer wallet -- already faucet-exhausted and manually funded by the user -- would be depleted after only 1-2 more runs; real on-chain rent/fee costs per test keypair are well under 0.05 SOL, so the reduced amounts still carry a large safety margin)"
+  ],
+  "impact": "The full test suite has run against the live DevNet program for the first time: 14 passing, 0 failing. This is the first genuine runtime/CPI evidence for this program -- every security invariant previously marked 'verified by construction' or 'typechecks, not yet executed' that has a corresponding test is now confirmed working on real deployed bytecode, including the cross-Reserve vault-substitution isolation test (the single most security-critical test in the plan). The deployer wallet's remaining DevNet SOL budget (~1.73 SOL) is now a tracked, finite resource -- see DEVNET_RUNBOOK.md 'Wallet / fixture safety' and PROJECT_STATUS.md Risks.",
+  "affectedAreas": ["tests/ssr_protocol.ts", "tests/util/pda.ts", "tests/package.json (new)", "tests/tsconfig.json (new)", "packages/sdk/package.json", "packages/sdk/src/index.ts", "packages/sdk/src/client.ts", "docs/protocol/DEVNET_RUNBOOK.md", "docs/protocol/SECURITY_INVARIANTS.md", "docs/protocol/TEST_PLAN.md", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Final mocha run output: '14 passing (1m)', 0 failing, against ANCHOR_PROVIDER_URL=https://api.devnet.solana.com",
+    "First run (before the two bug fixes) output: '12 passing (1m)', 2 failing, with full stack traces showing (1) 'Allocate: account ... already in use' on the already-initialized protocolConfig PDA, and (2) 'AssertionError: expected '0' to not equal '0'' on the stale managerReserveTokenAccount snapshot",
+    "`solana balance` before this work: ~7.23 SOL (post-deployment); after two full suite runs: ~1.73 SOL",
+    "`anchor idl build --out target/idl/ssr_protocol.json --out-ts target/types/ssr_protocol.ts -p ssr_protocol` succeeded; embedded `address` field confirmed to match the deployed program ID"
+  ]
+}
+```

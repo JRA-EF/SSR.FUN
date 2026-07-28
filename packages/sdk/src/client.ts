@@ -25,8 +25,8 @@ import {
   findReserveTokenMint,
   findReserveVault,
   findVaultAuthority,
-} from "./pda.js";
-import { AssetBalance, computeMintRequirements, computeRedemptionEntitlements } from "./calculations.js";
+} from "./pda";
+import { AssetBalance, computeMintRequirements, computeRedemptionEntitlements } from "./calculations";
 
 export interface ReserveAssetView {
   mint: PublicKey;
