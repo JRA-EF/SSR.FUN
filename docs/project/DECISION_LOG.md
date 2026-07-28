@@ -590,3 +590,32 @@
   ]
 }
 ```
+
+## DEC-0026
+
+```json
+{
+  "id": "DEC-0026",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Build persistent, documented DevNet fixture state (root manager, 2 restricted delegates with distinct permission scopes, 2 holders, a 2-asset Reserve, a 3-asset multi-asset Reserve) via a new standalone, checkpoint-resumable script (scripts/devnet_fixtures.ts), separate from tests/ssr_protocol.ts's ephemeral test keypairs; leave an interrupted run's stuck partial Reserve (reserve_id 6) on-chain as documented evidence rather than attempting to clean it up.",
+  "context": "DEC-0025 got the test suite passing against live DevNet, but its keypairs are generated fresh and discarded every run -- there was no long-lived, named, documented on-chain state for Gate 10 frontend work to point at, which the mission's fixture requirements explicitly call for (root manager, >=2 restricted delegates, >=2 holders, 2-asset + multi-asset Reserves, active/paused states). Building this surfaced two real, previously-unknown limitations of the public DevNet RPC endpoint under this session's sustained same-day usage: `getProgramAccounts` returned a hard 403 ('Your IP or provider is blocked from this endpoint'), and ordinary sequential RPC calls (account fetches, transaction sends) were frequently 429-rate-limited badly enough to abort a naive linear script mid-run twice. The second abort left a real Reserve (reserve_id 6) with assets registered but never seeded -- permanently stuck in AssetsInitializing, which is exactly the documented 'abandoned Reserve creation' behavior in SECURITY_INVARIANTS.md, just encountered for real instead of only described.",
+  "rationale": "Given the RPC's demonstrated unreliability, a script that assumes every step succeeds linearly will keep failing partway through and either waste DevNet SOL re-creating already-successful state or require manual bookkeeping to resume correctly. Checkpointing every major step's result (mint addresses, reserve/asset/vault pubkeys, holder balances) to a local gitignored JSON file, and skipping already-checkpointed steps on re-run, makes the whole process safely re-runnable under exactly the failure mode actually observed. Leaving the interrupted run's stuck Reserve on-chain (rather than trying to somehow reclaim or hide it) is consistent with the mission's own instruction that an abandoned Reserve should have defined, visible, non-functional behavior -- this is a genuine instance of that, not a bug to fix, and is more informative left in place and documented than removed.",
+  "alternativesConsidered": [
+    "Keep retrying the original linear (non-checkpointed) script until it happens to complete in one pass (rejected: already failed twice under real rate-limiting/blocking conditions; no reason to expect a third attempt fares better without changing approach)",
+    "Try to recover/reuse the specific mint addresses created by the first interrupted run via getProgramAccounts (rejected: that exact call is the one confirmed 403-blocked on this RPC endpoint; not a viable recovery path)",
+    "Delete/ignore the stuck reserve_id 6 Reserve to keep on-chain state 'clean' (rejected: it is real, harmless (isolated PDA, no funds at risk), and is the first genuine on-chain instance of a documented invariant -- worth keeping and citing as evidence, not hiding)"
+  ],
+  "impact": "docs/protocol/DEVNET_FIXTURES.md now documents real, persistent DevNet state: a 2-asset Reserve (reserve_id 9) and a 3-asset Reserve (reserve_id 10), both seeded, each with a holder who minted proportionally (99,500 Reserve Tokens each), 2 restricted delegates with distinct scopes on the 2-asset Reserve, and a demonstrated pause->unpause cycle (left Active). Gate 9 is now complete in both senses required: the program's instructions are proven to work live (DEC-0025), and long-lived fixtures exist for Gate 10 to build against. The devnet-fixtures/ directory (keypairs + checkpoint) is gitignored and never committed.",
+  "affectedAreas": ["scripts/devnet_fixtures.ts (new)", "scripts/package.json (new)", "scripts/tsconfig.json (new)", ".gitignore", "docs/protocol/DEVNET_FIXTURES.md (new)", "docs/protocol/DEVNET_RUNBOOK.md", "docs/protocol/SECURITY_INVARIANTS.md", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "First run output: aborted with 'Error: 429 Too Many Requests: Too many requests for a specific RPC call' partway through Reserve Two creation, after Reserve One (reserve_id 6) was created with 2 assets registered but not seeded",
+    "getProgramAccounts probe: 'Error: 403 Forbidden: Your IP or provider is blocked from this endpoint'",
+    "Second (checkpointed, backoff-hardened) run: completed cleanly end to end -- 'Reserve One seeded: GFP9nJQyFWurTkJCEYYkBxjksUQUXLt9i3ZoUDncTy5C', 'Reserve Two seeded: H1U22fK3fMfsmz1WirJ4H63xBDcTEHgXjtSzw73tEfcJ', 'Holder A Reserve Token balance: 99500', 'Holder B Reserve Token balance: 99500', 'Reserve One status after pause: {\"paused\":{}}', 'Reserve One status after unpause: {\"active\":{}}'",
+    "`solana account 9y18purN7zmHRqBaByzc22BTGx48FkH65HHevq3AxmUc` / program.account.reserve.fetch confirms assetCount=2, status=AssetsInitializing for the stuck reserve_id 6",
+    "`git check-ignore -v devnet-fixtures/manager-keypair.json devnet-fixtures/checkpoint.json` confirms both are ignored"
+  ]
+}
+```

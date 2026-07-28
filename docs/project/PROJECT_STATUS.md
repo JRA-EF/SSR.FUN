@@ -18,7 +18,7 @@ On Track -- **SSR Protocol is live on Solana DevNet.**
 Phase 4: Core Solana Program (substantially complete) / Phase 6: DevNet Testing (core suite now passing live)
 
 ## Current Objective
-Stand up persistent, documented Gate 9 fixture wallets (root manager, ≥2 restricted delegates, ≥2 holders) as long-lived on-chain state, then begin wiring the frontend to the live program (Gate 10).
+Begin wiring the frontend to the live DevNet program (Gate 10), using the now-real persistent fixtures in `docs/protocol/DEVNET_FIXTURES.md`.
 
 ## Executive Summary
 **SSR Protocol went from "not started" to "compiled, deployed, live on Solana DevNet, and passing its full test suite against that live deployment" across this session.** Architecture was locked, the full 17-instruction Anchor program and a TypeScript SDK were hand-written, then a complete native toolchain (Rust, a GCC linker, the Solana CLI, and -- with explicit user approval -- Visual Studio Build Tools for the MSVC linker real BPF compilation needs) was installed piece by piece, closing every gap in turn. The program compiles clean (`cargo check`/`cargo build`, zero errors/warnings), passes `cargo clippy` clean, and **is deployed and verified live on DevNet** at program ID `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` (confirmed via `solana program show`). **The full integration/adversarial test suite (`tests/ssr_protocol.ts`) has now actually executed against that live deployment: 14 passing, 0 failing** -- covering Reserve creation, two-asset registration, seeding, proportional mint/redeem across two holders, pause/unpause, a scope-restricted delegate, repeated-init rejection, excess-redemption rejection, and the cross-Reserve vault-substitution isolation test (the single most security-critical test in the plan). Getting here surfaced and fixed ~15 real compiler-caught bugs, one real security gap (`collect_fees`'s unvalidated fee destination), and two real runtime test bugs (a stale-snapshot assertion, and a singleton-init test that assumed a resettable local validator rather than persistent DevNet state). DevNet SOL funding required manual user transfers after the public airdrop faucet's daily limit was confirmed exhausted for this environment; the deployer wallet has ~1.73 SOL remaining, enough for roughly 2 more full suite runs at current funding levels. Next: build persistent, documented Gate 9 fixture wallets, then wire the frontend to the live program (Gate 10).
@@ -36,6 +36,7 @@ Stand up persistent, documented Gate 9 fixture wallets (root manager, ≥2 restr
 - **Gates 3-7 (program): written, compiled, linted, and deployed.** `cargo check`/`cargo build`/`cargo clippy` all pass with zero errors/warnings (native host target). Real BPF/SBF compilation (`cargo build-sbf`) succeeded after installing Visual Studio Build Tools, producing a genuine 538,056-byte deployable `.so`.
 - **Gate 8: SSR Protocol is deployed and live on Solana DevNet.** Program ID `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW`, deployment signature `arj6tzkUCqgSeJBs9inJv3nLcyoK5smasygGEZmDZ5hk84QukwLsJKR9mbaZryJz56uFRTkeXoGtTFSBSMWuaju`, verified on-chain via `solana program show` (correct upgradeable-loader owner, correct authority, correct data length, rent-exempt balance matching the exact `solana rent` estimate). Full record in `docs/protocol/DEVNET_RUNBOOK.md`.
 - **Gate 9 (core): the full test suite has executed against the live DevNet program -- 14 passing, 0 failing.** Real Reserve creation, two-asset registration, seeding, proportional mint/redeem across two holders, pause/unpause, a scope-restricted delegate, and the cross-Reserve vault-substitution isolation test (the plan's most security-critical test) all confirmed working on-chain, not just typechecked. Full record in `DEVNET_RUNBOOK.md`'s "Test execution record."
+- **Gate 9 (fixtures): persistent, documented DevNet fixtures now exist**, built via `scripts/devnet_fixtures.ts` -- a root manager, 2 restricted delegates with distinct permission scopes, 2 holders, a 2-asset Reserve and a 3-asset "multi-asset" Reserve (both seeded, both with real proportional holder balances), and a pause/unpause cycle demonstrating both Active and Paused states. Full record in `docs/protocol/DEVNET_FIXTURES.md`. Building this also surfaced a real, confirmed limitation of the public DevNet RPC endpoint: it fully blocks `getProgramAccounts` (403) and rate-limits heavily under sustained same-day use (429) -- the fixture script is checkpoint-resumable as a result.
 - ~15 real compiler-caught bugs fixed (Anchor lifetime-elision across all handlers, an Anchor-1.0 `CpiContext` API change, a missing Cargo feature, a macro glob-re-export requirement) -- see `DEVNET_RUNBOOK.md`.
 - A real security gap fixed: `collect_fees`'s `protocol_fee_destination` now validated against `ProtocolConfig`.
 - Two more adversarial tests written (repeated-init, excess-redemption), plus the previously-stubbed cross-Reserve vault-substitution test (the most important one in the plan) fully implemented -- all now passing live, not just written.
@@ -46,15 +47,14 @@ Stand up persistent, documented Gate 9 fixture wallets (root manager, ≥2 restr
 - (Unrelated) Dashboard: password-gated `/internal/status` with configurable login rate limiting (DEC-0008).
 
 ## In Progress
-- Gate 9 (persistent fixtures): the test suite's own real instructions (create Reserve, seed, mint, redeem, delegate management) have now run successfully against the live program, but using ephemeral, discarded-after-the-run keypairs. Building *persistent, documented* fixture wallets (root manager, ≥2 restricted delegates, ≥2 holders) for Gate 10 to point at has not started.
-- Gate 10 (frontend integration): not started, now unblocked by both the live deployment and the passing test suite.
+- Gate 9: **complete.** The test suite's own real instructions (create Reserve, seed, mint, redeem, delegate management) have run successfully against the live program (14/14 passing), and persistent, documented fixture wallets/Reserves (root manager, 2 restricted delegates with distinct scopes, 2 holders, a 2-asset Reserve, a 3-asset Reserve) now exist as long-lived on-chain state -- see `docs/protocol/DEVNET_FIXTURES.md`.
+- Gate 10 (frontend integration): not started, now unblocked by the live deployment, the passing test suite, and real persistent fixtures to point at.
 
 ## Next Actions
-1. Stand up persistent DevNet fixtures per the mission's requirements (2-asset + multi-asset Reserve, multiple holders, ≥2 restricted delegates, active/paused states) as long-lived, documented wallets/accounts -- distinct from the test suite's own ephemeral keypairs.
-2. Begin Gate 10 frontend integration in the mission's specified order (wallet → discovery → state → creation → seeding → mint → redeem → ...).
-3. Resolve the two flagged product/design decisions under Decisions Required below.
-4. Before any restricted beta: migrate the upgrade authority off the current single dev-controlled key to a multisig (DEC-0015).
-5. Monitor DevNet SOL budget (~1.73 SOL remaining on the deployer wallet as of the last test run) -- may need another manual top-up before extensive further on-chain fixture-building.
+1. Begin Gate 10 frontend integration in the mission's specified order (wallet → discovery → state → creation → seeding → mint → redeem → ...), using `docs/protocol/DEVNET_FIXTURES.md`'s real Reserves/mints/wallets as the initial data to point the frontend at.
+2. Resolve the two flagged product/design decisions under Decisions Required below.
+3. Before any restricted beta: migrate the upgrade authority off the current single dev-controlled key to a multisig (DEC-0015).
+4. Monitor DevNet SOL budget (~1.29 SOL on the deployer, ~0.20 SOL on the fixture manager wallet as of the last run) -- may need another manual top-up before extensive further on-chain work. Note the public DevNet RPC also confirmed-blocks `getProgramAccounts` (403) and rate-limits heavily under sustained same-day use (429) -- a dedicated/paid RPC endpoint would materially help Gate 10 work.
 
 ## Roadmap
 
@@ -65,7 +65,7 @@ Stand up persistent, documented Gate 9 fixture wallets (root manager, ≥2 restr
   { "phase": 3, "name": "Solana Reserve Architecture", "weight": 15, "completion": 1.0, "status": "done" },
   { "phase": 4, "name": "Core Solana Program", "weight": 20, "completion": 0.9, "status": "in_progress" },
   { "phase": 5, "name": "Client and Frontend Integration", "weight": 15, "completion": 0.2, "status": "in_progress" },
-  { "phase": 6, "name": "DevNet Testing and Security Validation", "weight": 15, "completion": 0.45, "status": "in_progress" },
+  { "phase": 6, "name": "DevNet Testing and Security Validation", "weight": 15, "completion": 0.55, "status": "in_progress" },
   { "phase": 7, "name": "Restricted Beta", "weight": 10, "completion": 0.0, "status": "not_started" },
   { "phase": 8, "name": "Production Readiness", "weight": 5, "completion": 0.0, "status": "not_started" }
 ]
@@ -82,8 +82,8 @@ No blockers currently active. The previously-tracked BPF/SBF toolchain gap (Visu
 - The public Solana DevNet airdrop faucet is unreliable from this environment (confirmed daily-limited) -- further DevNet SOL needs either the user's own wallet/faucet access, or transfers from the now-funded deployer wallet (`6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk`, ~1.73 SOL remaining after deployment plus two full test-suite runs).
 
 ## Risks
-- **DevNet SOL budget is limited and the public faucet is exhausted for this environment.** ~1.73 SOL remains on the deployer wallet; each full test-suite run consumes ~0.75 SOL in ephemeral-keypair funding (not reclaimed). Further extensive on-chain fixture-building may need another manual top-up from the user.
-- **Persistent, documented Gate 9 fixture wallets don't exist yet** (root manager, ≥2 restricted delegates, ≥2 holders as long-lived, named DevNet accounts) -- only the test suite's own ephemeral, discarded-after-the-run keypairs have exercised the program so far. Gate 10 frontend integration will need real fixtures to point at.
+- **DevNet SOL budget is limited and the public faucet is exhausted for this environment.** ~1.29 SOL remains on the deployer wallet, ~0.20 SOL on the fixture manager wallet; each full test-suite run consumes ~0.75 SOL in ephemeral-keypair funding (not reclaimed). Further extensive on-chain work may need another manual top-up from the user.
+- **The public DevNet RPC endpoint (`api.devnet.solana.com`) is confirmed unreliable under sustained same-day use**: it fully blocks `getProgramAccounts` (403 "Your IP or provider is blocked from this endpoint") and rate-limits heavily (429) under repeated sequential calls. Gate 10 frontend work hitting this same endpoint should expect the same friction -- a dedicated/paid RPC provider is worth considering before then.
 - **The frontend contains two incompatible economic models** (a dead in-kind NAV mint/redeem model and a live AMM buy/sell model) -- resolved for the *protocol's* design per DEC-0009, but the frontend itself still needs new UI for proportional mint/redeem before Gate 10 can meaningfully complete. See Decisions Required.
 - **No automated test suite exists for the dashboard/frontend either** (pre-existing risk, unchanged).
 - **Main JS bundle exceeds 500 kB** (pre-existing, unchanged).
@@ -115,4 +115,4 @@ No blockers currently active. The previously-tracked BPF/SBF toolchain gap (Visu
 - **Production:** `https://strategic-super-reserve.fun` -- live, frontend-only simulation, kept unlisted, unaffected by protocol work.
 
 ## Last Updated
-2026-07-28 14:20 UTC
+2026-07-28 15:10 UTC

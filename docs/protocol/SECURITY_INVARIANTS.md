@@ -54,6 +54,7 @@ A Reserve stuck between `Created` and `Seeded` (creator registered some assets t
 - **Visible on-chain** via `Reserve.status` -- not ambiguous.
 - **Not mintable/redeemable** -- both instructions require `Active`.
 - **Not currently closeable/reclaimable.** There is no `close_abandoned_reserve` instruction in v1 -- the creator's rent for the `Reserve`/`ReserveAsset`/vault accounts stays locked indefinitely if they abandon creation. This is an accepted, documented v1 limitation (rent cost, not a security hole), **not** a mission requirement violation (the mission says an abandoned Reserve should have defined behavior, which "permanently visible as incomplete, non-functional" satisfies) -- but is worth revisiting: ⏳ candidate future instruction, not built in v1.
+- **A real, unplanned example of this now exists on live DevNet**, not just a theoretical scenario: an interrupted run of `scripts/devnet_fixtures.ts` (public RPC rate-limiting mid-flow, 2026-07-28) left a genuine Reserve at reserve_id 6 (`9y18purN7zmHRqBaByzc22BTGx48FkH65HHevq3AxmUc`) with 2 assets registered but never seeded, permanently stuck in `AssetsInitializing` exactly as designed -- see DEVNET_FIXTURES.md. Confirms this invariant holds under real (not simulated) partial-execution conditions.
 
 ## Upgrade / admin blast-radius summary
 
