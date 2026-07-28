@@ -1,12 +1,19 @@
 <!--
   Operational runbook for building, testing, and deploying the SSR Protocol
   program to Solana DevNet. Originally written when NO Rust/Solana/Anchor
-  toolchain was available; mid-session, a native (non-WSL) toolchain was
-  installed and the program now compiles and links cleanly. This document
-  tracks both states honestly -- see "Current environment status."
+  toolchain was available; over two sessions, a native (non-WSL) toolchain
+  was installed piece by piece (Rust/GCC/Solana CLI, then -- with explicit
+  user approval -- Visual Studio Build Tools for the MSVC linker real BPF
+  compilation needs) and the program now compiles, links, AND is deployed
+  live on Solana DevNet. This document tracks the full history honestly --
+  see "Current environment status."
 -->
 
 # DevNet Runbook
+
+## SSR Protocol is live on DevNet
+
+Program ID `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` -- see "Deployment record" below for the full, verified detail. Everything past this point in the "Current environment status" section is historical (what it took to get here); if you just need the deployment facts, jump to "Deployment record."
 
 ## Current environment status (updated: toolchain now installed)
 
@@ -21,11 +28,11 @@
 - `cargo build -p ssr_protocol` (native host target, full compile + link) -- **succeeds.**
 - `packages/sdk` and `tests/ssr_protocol.ts` -- typecheck cleanly (`npx tsc --noEmit`) against the real installed `@anchor-lang/core@1.1.2` etc.
 
-**Still blocked:**
-- `cargo build-sbf` (actual Solana BPF/SBF cross-compilation, the artifact that would actually be deployable) -- fails while compiling HOST-side build-scripts/proc-macros (`proc-macro2`, `serde`, `thiserror`, etc., which must run on the host during the build regardless of the final target). `cargo-build-sbf` hardcodes `x86_64-pc-windows-msvc` for this host-side compilation regardless of the default Rust toolchain, and this environment has no MSVC linker (`link.exe`) -- Visual Studio itself isn't installed, only the portable MinGW GCC (which the SBF host-tooling ignores). Fixing this requires installing **Visual Studio Build Tools** ("C++ build tools" workload, Microsoft, proprietary license, multi-GB) -- a install of comparable size/invasiveness to the WSL2 path, so it was **not done automatically**; see "Closing the remaining gap" below.
-- `anchor test` / any local-validator-based execution (needs the SBF `.so` above).
-- Actual DevNet deployment (needs the SBF `.so` above).
-- Gates 8-9 of the mission remain blocked on this one specific gap; Gate 7 (Rust build/lint) is otherwise satisfied for the native-target portion.
+**Now also resolved (session 2, with explicit user approval for the Build Tools install):**
+- Installed **Visual Studio Build Tools** ("C++ build tools" workload, via `winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart"`), closing the MSVC-linker gap `cargo-build-sbf` needed for its host-side build-script compilation (see "Why GNU, not MSVC" below for why the GNU toolchain alone couldn't close this).
+- `cargo-build-sbf --manifest-path programs/ssr_protocol/Cargo.toml` -- **succeeds**, producing `target/deploy/ssr_protocol.so` (538,056 bytes, release/optimized).
+- **Deployed to Solana DevNet** and verified on-chain -- see "Deployment record" below. DevNet SOL funding needed a manual user transfer after the public airdrop faucet's daily limit was confirmed exhausted for this environment (429 from both `solana airdrop` and `@solana/web3.js`'s `requestAirdrop`, with the RPC's own error text confirming a daily limit, not a transient one).
+- Gates 8 (deployment) is complete. `anchor test`/local-validator execution and Gate 9 (fixtures) are next -- see "Testing against the live DevNet program" below.
 
 ## Why GNU, not MSVC (the default Rust target on Windows)
 
@@ -35,13 +42,17 @@
 
 The Windows user profile on this machine is `C:\Users\JRA DEVNET\...` -- the space in "JRA DEVNET" breaks GCC's own internally-computed library search paths (GCC resolves its own install location via the OS's canonical/long-form path API, which cannot be worked around by invoking it through the legacy 8.3 short-path form like `JRADEV~1`, since that only affects argv[0], not what GCC computes internally). **Fix:** the MinGW distribution must be extracted to a path with no spaces anywhere in it (`C:\devtools\mingw64` here) -- installing it via a normal installer into the default (space-containing) user-scoped location reproduces the bug. If this machine's toolchain is ever reinstalled, keep it at a space-free path.
 
-## Closing the remaining gap (real BPF/SBF compilation)
+## Toolchain gap: CLOSED
 
-Three options, in order of typical suitability:
+Previously this section listed three options for closing the BPF/SBF compilation gap. Option 1 (install Visual Studio Build Tools) was taken, with explicit user approval, in session 2 -- see above. The WSL2 and devcontainer/teammate alternatives are no longer needed.
 
-1. **Install Visual Studio Build Tools** (`winget install --id Microsoft.VisualStudio.2022.BuildTools`, "C++ build tools" workload). Confirmed available via `winget show` (proprietary license, multi-GB). **Not done automatically this session** -- comparable in size/invasiveness to the WSL2 path below, so left for an explicit decision rather than silently committing several GB and minutes of install time to a licensed Microsoft product.
-2. **Install WSL2 + the Linux toolchain inside it** (`wsl --install`, then `rustup`/`solana-cli`/`avm install latest && avm use latest` inside Ubuntu). Solana/Anchor tooling is developed and tested primarily for Linux/macOS, so this is the most-likely-to-just-work path long-term. Requires a restart and admin rights.
-3. **Use a Linux devcontainer / remote dev environment**, or **have a teammate with an existing macOS/Linux Solana setup** build/test/deploy the source already committed here and report back the program ID/deployment signature.
+## Testing against the live DevNet program
+
+`anchor` CLI itself (not just `cargo-build-sbf`/`solana` CLI) is being installed via `cargo install anchor-cli --version 1.1.2 --locked` for two things `cargo-build-sbf` alone doesn't provide: proper IDL generation and `anchor test`'s orchestration. Plan, once it's available:
+
+1. `anchor build` -- generates `target/idl/ssr_protocol.json` and `target/types/ssr_protocol.ts` from the already-compiled program (re-running `cargo-build-sbf` under the hood, which we've already confirmed works).
+2. Run `tests/ssr_protocol.ts` **directly via `ts-mocha`** (not `anchor test`, which defaults to spinning up a local validator) with `ANCHOR_PROVIDER_URL=https://api.devnet.solana.com` and `ANCHOR_WALLET` pointed at the funded deployer keypair -- this exercises the real, already-deployed DevNet program instead of a fresh local one, which is what we actually want for Gate 9.
+3. If `anchor-cli` takes too long to build or hits its own issues, the fallback is to hand-author a minimal IDL JSON matching Anchor 1.1.2's IDL spec (the `anchor-lang-idl`/`anchor-lang-idl-spec` crates already compile cleanly as part of this workspace's dependency tree, confirming the spec itself isn't the blocker) and construct the `Program` client from it directly -- more manual, but doesn't depend on the CLI at all.
 
 ## Toolchain versions this workspace targets (still accurate)
 
