@@ -84,6 +84,26 @@ describe("ssr_protocol", () => {
     expect(config.paused).to.equal(false);
   });
 
+  it("rejects re-initializing the protocol singleton", async () => {
+    // The protocolConfig PDA already exists from the previous test -- Anchor's
+    // `init` constraint must fail with an account-already-in-use error rather
+    // than silently overwriting the existing config.
+    let threw = false;
+    try {
+      await program.methods
+        .initializeProtocol(12, 0, protocolAuthority.publicKey)
+        .accounts({
+          protocolConfig,
+          authority: protocolAuthority.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    } catch (e) {
+      threw = true; // expected: Anchor's init constraint rejects an already-initialized account
+    }
+    expect(threw).to.equal(true);
+  });
+
   describe("a two-asset Reserve: create -> init assets -> seed -> mint -> redeem", () => {
     let reserve: PublicKey;
     let reserveId: bigint;
@@ -384,6 +404,50 @@ describe("ssr_protocol", () => {
 
       const balanceAfter = (await getAccount(connection, holderReserveTokenAccount.address)).amount;
       expect(Number(balanceAfter)).to.be.lessThan(Number(balanceBefore));
+    });
+
+    it("rejects redeeming more Reserve Tokens than the caller's balance", async () => {
+      const holderAtaA = await getOrCreateAssociatedTokenAccount(connection, secondHolder, assetMintA, secondHolder.publicKey);
+      const holderAtaB = await getOrCreateAssociatedTokenAccount(connection, secondHolder, assetMintB, secondHolder.publicKey);
+      const holderReserveTokenAccount = await getOrCreateAssociatedTokenAccount(
+        connection,
+        secondHolder,
+        reserveTokenMint,
+        secondHolder.publicKey,
+      );
+      const balance = (await getAccount(connection, holderReserveTokenAccount.address)).amount;
+      const excessAmount = new BN(balance.toString()).add(new BN(1_000_000));
+
+      let threw = false;
+      try {
+        await program.methods
+          .redeemReserveTokensInKind(excessAmount, [new BN(0), new BN(0)])
+          .accounts({
+            reserve,
+            reserveTokenMint,
+            vaultAuthority,
+            redeemerReserveTokenAccount: holderReserveTokenAccount.address,
+            redeemer: secondHolder.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: reserveAssetA, isWritable: false, isSigner: false },
+            { pubkey: vaultA, isWritable: true, isSigner: false },
+            { pubkey: holderAtaA.address, isWritable: true, isSigner: false },
+            { pubkey: assetMintA, isWritable: false, isSigner: false },
+            { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+            { pubkey: reserveAssetB, isWritable: false, isSigner: false },
+            { pubkey: vaultB, isWritable: true, isSigner: false },
+            { pubkey: holderAtaB.address, isWritable: true, isSigner: false },
+            { pubkey: assetMintB, isWritable: false, isSigner: false },
+            { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+          ])
+          .signers([secondHolder])
+          .rpc();
+      } catch (e) {
+        threw = true; // expected: RedemptionExceedsEntitlement (or the SPL Token program's own insufficient-balance error on burn)
+      }
+      expect(threw).to.equal(true);
     });
 
     it("rejects an unauthorized pause attempt (random wallet, not manager or delegate)", async () => {

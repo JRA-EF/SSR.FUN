@@ -39,6 +39,8 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 - Unauthorized pause attempt (random wallet) rejected.
 - Manager pause → unpause round-trip.
 - Restricted delegate granted `UPDATE_TARGETS` only: succeeds at updating targets, fails at pausing (privilege-boundary check).
+- Rejecting re-initialization of the `ProtocolConfig` singleton (repeated `initialize_protocol`).
+- Rejecting redemption of more Reserve Tokens than the caller's actual balance.
 
 ⏳ **Planned, not yet written:**
 - Multiple mint operations from multiple holders in sequence (supply/ratio consistency across 3+ mints).
@@ -65,10 +67,10 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 - Malicious remaining-account substitution (e.g. swapping the order of two legitimate assets to try to trick `order_index` validation, or substituting a legitimate vault from the SAME Reserve for the wrong asset).
 - Invalid token program (a mint owned by neither classic SPL Token nor Token-2022).
 - Direct vault-drain attempt (any instruction, any signer, trying to move vault tokens outside `mint`/`redeem`'s own transfer calls -- should be impossible by construction, but worth a negative test attempting to CPI `transfer_checked` directly against a vault from a non-program context).
-- Excess redemption (redeeming more than the caller's Reserve Token balance).
+- ✅ **Written**: excess redemption (redeeming more than the caller's Reserve Token balance). Typechecks; not yet executed.
 - Unbacked mint attempt (trying to mint before seeding, or with insufficient vault balance).
 - Rounding-direction attacks (repeated tiny mints/redeems probing whether a sequence can extract more value than deposited -- adapt the reference protocol's "Extreme" parametrized sweep concept, see RESERVE_REFERENCE_ANALYSIS.md section 17).
-- Repeated initialization (calling `create_reserve`/`initialize_reserve_asset`/`initialize_protocol` twice against the same PDA).
+- ✅ **Written** (protocol singleton only): repeated `initialize_protocol` re-init is rejected. ⏳ **Still planned**: the same test for `create_reserve`/`initialize_reserve_asset` against an already-used PDA.
 - Replay-like repeated workflow execution (resubmitting an already-executed transaction -- largely a Solana-runtime-level guarantee via recent-blockhash/nonce mechanics, but worth an explicit test to confirm no custom code accidentally weakens it).
 - Partial multi-step execution (abandoning Reserve creation after `create_reserve` but before any `initialize_reserve_asset`, or after some-but-not-all assets registered, then attempting to mint/redeem -- should fail on `Reserve.status`).
 - Invalid fee recipient (`collect_fees` with a `manager_fee_destination` that doesn't match `Reserve.fee_config.fee_destination`).
