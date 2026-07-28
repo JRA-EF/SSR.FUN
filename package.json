@@ -6,6 +6,9 @@
   "workspaces": [
     "packages/*"
   ],
+  "overrides": {
+    "rpc-websockets": "9.3.10"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

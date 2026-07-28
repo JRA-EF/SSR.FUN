@@ -648,3 +648,29 @@
   ]
 }
 ```
+
+## DEC-0028
+
+```json
+{
+  "id": "DEC-0028",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Pin the transitive dependency rpc-websockets (pulled in by @solana/web3.js) to 9.3.10 via an npm 'overrides' entry in the root package.json, up from the range-resolved 9.3.9.",
+  "context": "The first production deploy of Gate 10-11 (this same session) crashed both new API routes (api/devnet/swap-sign.ts, api/devnet/mint-test-assets.ts) with a 500 on every request. Vercel's function logs showed 'Error [ERR_REQUIRE_ESM]: require() of ES Module .../rpc-websockets/node_modules/uuid/dist-node/index.js from .../rpc-websockets/dist/index.cjs not supported' -- rpc-websockets@9.3.9 (a @solana/web3.js dependency used for its WebSocket subscription features, which these two endpoints never actually use, but which @solana/web3.js's Connection class imports unconditionally at module load) ships a nested uuid dependency that Vercel's Node serverless bundler cannot require() synchronously. This did not reproduce locally (dev server, ts-node scripts) -- only Vercel's specific bundling of the deployed function surfaced it. Checking the rpc-websockets changelog/dependency list showed 9.3.10 and all later versions dropped the uuid dependency entirely (replaced internally), making a version bump the correct, minimal fix rather than avoiding the import or vendoring a workaround.",
+  "rationale": "This is a well-understood, narrowly-scoped upstream packaging bug (an ESM-only nested dependency breaking a CJS require chain), not a defect in this session's own code -- the correct fix is the smallest version bump that removes the broken dependency, verified to still resolve and work correctly both locally (scripts/verify_swap_sign_endpoint.ts re-run clean) and once redeployed. Pinning via 'overrides' (rather than trying to force @solana/web3.js itself to a different version, which is unrelated to the bug) keeps the fix minimal and scoped to exactly the broken package.",
+  "alternativesConsidered": [
+    "Avoid importing @solana/web3.js's Connection class in the API routes entirely, using a minimal hand-rolled JSON-RPC client instead (rejected: much larger rewrite for a problem that has a one-line upstream fix already published)",
+    "Jump to rpc-websockets 10.0.1 instead of 9.3.10 (rejected: no need to cross a major version boundary when the very next patch within the already-in-use 9.x line already removes the offending dependency)"
+  ],
+  "impact": "Both DevNet API routes work correctly in production after redeployment -- see the redeployment record in PROJECT_STATUS.md. This is the kind of gap that specifically could not have been caught by local dev-server testing or the live-DevNet verification scripts (both of which run in a plain Node process, not Vercel's serverless bundler), underscoring why an actual production smoke test after deploy (not just 'the build succeeded') was necessary before declaring Gate 10-11 done.",
+  "affectedAreas": ["package.json (overrides)", "package-lock.json", "api/devnet/swap-sign.ts (runtime only, no code change)", "api/devnet/mint-test-assets.ts (runtime only, no code change)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Vercel production log: \"Error [ERR_REQUIRE_ESM]: require() of ES Module /var/task/node_modules/rpc-websockets/node_modules/uuid/dist-node/index.js from /var/task/node_modules/rpc-websockets/dist/index.cjs not supported\", responseStatusCode 500, on both /api/devnet/swap-sign and /api/devnet/mint-test-assets",
+    "`npm view rpc-websockets@9.3.9 dependencies` includes uuid; `npm view rpc-websockets@9.3.10 dependencies` does not",
+    "Post-fix: `npm ls rpc-websockets` shows `rpc-websockets@9.3.10 overridden`; scripts/verify_swap_sign_endpoint.ts re-run succeeds locally"
+  ]
+}
+```
