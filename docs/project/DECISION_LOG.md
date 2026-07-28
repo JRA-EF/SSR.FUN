@@ -828,6 +828,33 @@
 }
 ```
 
+## DEC-0036
+
+```json
+{
+  "id": "DEC-0036",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Redesign the /internal/status dashboard into an executive engineering-status view: a whole-project completion metric derived from a new, explicitly-weighted \"Engineering Areas\" block (rather than the protocol-mission-only Roadmap weighting); real milestone/timeline/infrastructure panels sourced from a new curated file (docs/project/ENGINEERING_TIMELINE.md, same fenced-JSON convention as PROJECT_STATUS.md/DECISION_LOG.md); and a mechanically-generated, re-runnable repo-metrics file (docs/project/REPO_METRICS.json, via scripts/generate-repo-metrics.ts) for commit/contributor/branch/LOC facts no serverless function can compute at request time.",
+  "context": "The dashboard's single completion percentage (10%) was computed purely from the current Solana-protocol mission's 8-phase Roadmap, which allocates only 10/100 weight to the entire pre-existing SSR.fun simulation platform (homepage, Discover, Create, Portfolio, Manage, Reserve-detail) -- making the number look like almost nothing had been built, when in reality a large, real product already exists. The request was for the dashboard to communicate real project scale/momentum within 10 seconds, derived from the repository wherever possible rather than hand-typed, and explicit about which facts are git-derivable versus manually recorded.",
+  "rationale": "A second, differently-weighted block (Engineering Areas) that maps onto the SAME underlying Roadmap phase completions (just re-grouped and re-weighted across 5 areas reflecting true relative project scope) gives an honest whole-project number without inventing new completion figures out of thin air -- every area's % is traceable back to a Roadmap phase. Splitting data into three tiers by how derivable it is -- mechanically generated (REPO_METRICS.json, real git log/shortlog/branch data, re-run anytime), curated-but-cited (ENGINEERING_TIMELINE.md, real commit hashes a reader can `git show`), and explicitly-flagged manual (domain registration, auth model labels) -- satisfies 'derive from the repo, never fabricate' without pretending everything is mechanically provable.",
+  "alternativesConsidered": [
+    "Hand-edit a new higher overall percentage directly (rejected: violates CLAUDE.md's 'never hand-edit the completion number independently of weights/completions' rule, and would be an unverifiable, fabricated number)",
+    "Have the dashboard's API route shell out to `git` at request time for the timeline/metrics (rejected: Vercel serverless functions have no guaranteed `git` binary or `.git` directory at runtime -- confirmed by this project's existing api/dashboard/content.ts pattern of reading committed Markdown, not live-querying anything)",
+    "Auto-classify commits into milestones via keyword matching (rejected: produces a lower-quality, less legible narrative than reviewing the real `git log --all` output once and hand-curating it -- the milestones/timeline are still 100% grounded in real commits/dates, just organized by a person instead of a naive script)"
+  ],
+  "impact": "The dashboard now shows an 80% whole-project completion (vs. the old 10%), 5 area-level progress rings, 15 milestone cards, a 17-entry engineering timeline, an 8-item infrastructure panel, and a real repo-metrics panel (79 commits, 4 contributors, 6 branches, 35 decision records, 18 protocol instructions, ~3.1k Rust / ~12.4k TS lines) -- all traceable to real commits or explicitly marked manual. Found and fixed two real bugs in the process: vercel.json's function `includeFiles` glob only covered `docs/project/*.md`, which would have 500'd in production once content.ts started reading REPO_METRICS.json too; and ProgressRing's 'muted' tone referenced a nonexistent `--muted` CSS variable (fixed to `--text-3`).",
+  "affectedAreas": ["src/internal-status/Dashboard.tsx", "src/internal-status/dashboard.css", "lib/dashboard/parseMarkdown.ts", "api/dashboard/content.ts", "docs/project/ENGINEERING_TIMELINE.md (new)", "docs/project/REPO_METRICS.json (new, generated)", "scripts/generate-repo-metrics.ts (new)", "docs/project/PROJECT_STATUS.md (new Engineering Areas block)", "vercel.json"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b and npm run build both pass clean after the full change set",
+    "Live API response (via `vercel dev` with SSR_DASHBOARD_PASSWORD set) confirmed: overallCompletionPercent 80, 5 engineeringAreas parsed correctly, 15 milestones / 17 timeline entries / 8 infra items parsed from ENGINEERING_TIMELINE.md, repoMetrics matching scripts/generate-repo-metrics.ts's real git-derived output (79 commits across all branches, contributor commit counts summing exactly to 79)",
+    "A one-time headless-Chrome (puppeteer-core, not installed as a project dependency) screenshot pass caught the --muted CSS variable bug before it shipped"
+  ]
+}
+```
+
 ## DEC-0035
 
 ```json

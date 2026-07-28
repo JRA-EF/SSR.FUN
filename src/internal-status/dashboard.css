@@ -3,6 +3,22 @@
    This page never sets data-theme, so it always renders the default (dark)
    token set regardless of the main site's theme toggle. */
 
+@media (prefers-reduced-motion: no-preference) {
+  .dash-fade-in {
+    animation: dash-fade-in 0.5s ease both;
+  }
+  @keyframes dash-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
 .dash-shell {
   min-height: 100vh;
   background: var(--bg);
@@ -22,7 +38,12 @@
 
 .dash-muted { color: var(--text-2); }
 .dash-small { font-size: 13px; }
+.dash-mono { font-family: var(--font-mono); }
 .dash-error { color: var(--down); font-size: 14px; }
+.dash-link { color: var(--accent-ink); text-decoration: none; }
+.dash-link:hover { text-decoration: underline; }
+
+/* ---------- Header ---------- */
 
 .dash-header {
   display: flex;
@@ -31,21 +52,25 @@
   gap: 16px;
   flex-wrap: wrap;
   padding-bottom: 20px;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   border-bottom: 1px solid var(--line);
 }
 
-.dash-header-left {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-
+.dash-header-left { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .dash-header-meta { display: flex; align-items: center; gap: 12px; }
-.dash-completion { font-size: 32px; font-weight: 800; font-family: var(--font-mono); line-height: 1; }
-.dash-header-text { display: flex; flex-direction: column; gap: 3px; }
+.dash-header-text { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
 .dash-phase { font-weight: 600; font-size: 14px; }
+
+.dash-hero-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.dash-hero-ring-label {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 16px;
+}
+.dash-ring-fill {
+  transition: stroke-dashoffset 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
 .dash-pill {
   display: inline-flex;
@@ -61,7 +86,23 @@
 .dash-pill-up { color: #0d0b12; background: var(--up); }
 .dash-pill-warn { color: #0d0b12; background: var(--warn); }
 .dash-pill-down { color: #fff; background: var(--down); }
+.dash-pill-accent { color: #fff; background: var(--accent); }
 .dash-pill-neutral { color: var(--text-2); background: var(--surface-2); border-color: var(--line); }
+.dash-pill-muted { color: var(--text-2); background: var(--surface-2); border-color: var(--line); }
+
+.dash-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 7px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+.dash-tag-git { color: var(--verified); background: rgba(127, 215, 255, 0.1); border: 1px solid var(--verified-border); }
+.dash-tag-manual { color: var(--text-2); background: var(--surface-3); border: 1px solid var(--line); }
 
 .dash-btn {
   border-radius: var(--r-sm);
@@ -78,11 +119,220 @@
 .dash-btn-ghost { background: transparent; }
 .dash-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.dash-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+/* ---------- Section shell ---------- */
+
+.dash-section { margin-bottom: 28px; }
+.dash-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  margin: 0 0 14px;
 }
+
+.dash-two-col {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 28px;
+}
+.dash-two-col .dash-section { margin-bottom: 0; }
+
+/* ---------- Current Mission ---------- */
+
+.dash-mission {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 0;
+  background: linear-gradient(160deg, var(--surface) 0%, var(--surface-2) 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+.dash-mission-main { padding: 24px 26px; border-right: 1px solid var(--line); }
+.dash-mission-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+  margin-bottom: 12px;
+}
+.dash-mission-objective { font-size: 16px; line-height: 1.55; margin: 0 0 22px; max-width: 62ch; }
+.dash-mission-facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.dash-mission-fact { display: flex; flex-direction: column; gap: 4px; }
+.dash-mission-fact-val { font-size: 14px; font-weight: 700; }
+
+.dash-mission-side { padding: 24px 26px; display: flex; flex-direction: column; gap: 20px; background: rgba(0, 0, 0, 0.12); }
+.dash-mission-side-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+.dash-activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dash-activity-list li { display: flex; gap: 8px; font-size: 13px; align-items: baseline; }
+.dash-activity-date { flex-shrink: 0; min-width: 78px; }
+.dash-activity-title { line-height: 1.4; }
+
+/* ---------- Engineering Areas ---------- */
+
+.dash-areas-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+}
+.dash-area-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 18px;
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dash-area-card-top { position: relative; display: inline-flex; align-items: center; justify-content: center; align-self: flex-start; }
+.dash-area-card-pct { position: absolute; font-family: var(--font-mono); font-weight: 800; font-size: 13px; }
+.dash-area-card-name { font-size: 13px; font-weight: 700; line-height: 1.3; }
+.dash-area-card-detail { line-height: 1.45; margin: 0; }
+
+/* ---------- Milestones ---------- */
+
+.dash-milestones-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.dash-milestone-card {
+  display: flex;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px;
+  box-shadow: var(--shadow-pop);
+}
+.dash-milestone-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dash-milestone-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.dash-milestone-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.dash-milestone-title { font-size: 13px; font-weight: 700; line-height: 1.3; }
+.dash-milestone-desc { margin: 0; line-height: 1.45; }
+.dash-milestone-foot { display: flex; align-items: center; gap: 10px; }
+.dash-milestone-note { margin: 2px 0 0; font-style: italic; opacity: 0.85; }
+
+/* ---------- Metrics ---------- */
+
+.dash-metrics-card { display: flex; flex-direction: column; gap: 18px; }
+.dash-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.dash-metric-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.dash-metric-value { font-size: 17px; font-weight: 800; }
+.dash-metric-label { line-height: 1.3; }
+
+.dash-sparkline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.dash-sparkline { width: 140px; height: 32px; flex-shrink: 0; }
+
+.dash-contributors { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line); }
+.dash-contributor { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.dash-contributor > span:first-child { flex: 1; min-width: 0; }
+
+/* ---------- Infrastructure ---------- */
+
+.dash-infra-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.dash-infra-tile {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-pop);
+}
+.dash-infra-icon {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--surface-3);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dash-infra-text { min-width: 0; }
+.dash-infra-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-2); }
+.dash-infra-value { font-size: 13px; font-weight: 700; margin: 2px 0; }
+.dash-infra-detail { line-height: 1.4; }
+
+/* ---------- Engineering Timeline ---------- */
+
+.dash-timeline-card { padding: 22px 24px; }
+.dash-timeline { display: flex; flex-direction: column; }
+.dash-timeline-row { display: grid; grid-template-columns: 28px 1fr; gap: 14px; }
+.dash-timeline-rail { display: flex; flex-direction: column; align-items: center; }
+.dash-timeline-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--accent-ink);
+  border: 1px solid var(--line-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.dash-timeline-line { flex: 1; width: 1px; background: var(--line-strong); margin: 4px 0; min-height: 20px; }
+.dash-timeline-content { padding-bottom: 22px; }
+.dash-timeline-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.dash-timeline-title { font-size: 14px; font-weight: 700; }
+.dash-timeline-desc { margin: 4px 0 6px; line-height: 1.5; max-width: 72ch; }
+.dash-timeline-foot { display: flex; gap: 10px; align-items: center; }
+
+/* ---------- Generic cards (roadmap detail, decision log, operational detail) ---------- */
 
 .dash-card {
   background: var(--surface);
@@ -90,8 +340,9 @@
   border-radius: var(--r-lg);
   padding: 18px 20px;
   box-shadow: var(--shadow-pop);
+  margin-bottom: 20px;
 }
-.dash-card-wide { grid-column: span 3; }
+.dash-card-wide { }
 .dash-card h2 {
   font-size: 12px;
   font-weight: 700;
@@ -103,14 +354,18 @@
 .dash-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .dash-card-head h2 { margin: 0; }
 
-.dash-objective { font-size: 15px; line-height: 1.5; margin: 0; }
-
 .dash-prose :first-child { margin-top: 0; }
 .dash-prose :last-child { margin-bottom: 0; }
 .dash-prose p { margin: 0 0 8px; line-height: 1.5; }
 .dash-prose ul { margin: 0; padding-left: 18px; }
 .dash-prose li { margin-bottom: 6px; line-height: 1.45; }
 .dash-prose strong { color: var(--text); }
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
 
 .dash-roadmap { display: flex; flex-direction: column; gap: 10px; }
 .dash-roadmap-row {
@@ -160,19 +415,33 @@
 .dash-decision-body p { margin: 0 0 8px; line-height: 1.5; }
 .dash-decision-body strong { color: var(--text-2); font-weight: 600; }
 
+/* ---------- Responsive ---------- */
+
+@media (max-width: 1100px) {
+  .dash-areas-grid { grid-template-columns: repeat(3, 1fr); }
+  .dash-milestones-grid { grid-template-columns: repeat(2, 1fr); }
+  .dash-two-col { grid-template-columns: 1fr; }
+  .dash-metrics-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
 @media (max-width: 900px) {
   .dash-grid { grid-template-columns: repeat(2, 1fr); }
-  .dash-card-wide { grid-column: span 2; }
+  .dash-mission { grid-template-columns: 1fr; }
+  .dash-mission-main { border-right: none; border-bottom: 1px solid var(--line); }
+  .dash-mission-facts { grid-template-columns: repeat(2, 1fr); }
+  .dash-infra-grid { grid-template-columns: 1fr; }
   .dash-roadmap-row { grid-template-columns: 160px 1fr 40px 50px; }
 }
 
 @media (max-width: 640px) {
   .dash-shell { padding: 20px 16px 48px; }
   .dash-grid { grid-template-columns: 1fr; }
-  .dash-card-wide { grid-column: span 1; }
+  .dash-areas-grid { grid-template-columns: repeat(2, 1fr); }
+  .dash-milestones-grid { grid-template-columns: 1fr; }
+  .dash-metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .dash-header { padding-bottom: 16px; margin-bottom: 16px; }
   .dash-header-left { gap: 12px; }
-  .dash-completion { font-size: 26px; }
+  .dash-mission-facts { grid-template-columns: 1fr; }
   .dash-roadmap-row {
     grid-template-columns: 1fr auto;
     grid-template-areas: 'label pct' 'bar bar';
