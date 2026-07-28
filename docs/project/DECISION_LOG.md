@@ -619,3 +619,32 @@
   ]
 }
 ```
+
+## DEC-0027
+
+```json
+{
+  "id": "DEC-0027",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Implement Buy/Sell as a SOL zap reusing the EXISTING Buy/Sell tab UI (Buy = SOL in -> proportional protocol mint; Sell = proportional protocol redeem -> SOL out), superseding FRONTEND_INTEGRATION.md's original pre-Gate-10 plan (which called for an entirely new proportional mint/redeem UI, leaving the AMM Buy/Sell tab as a separate, lower-priority 'swap-router' concern). Implement the zap as a single atomic, two-signer transaction per direction, co-signed server-side by a DevNet-only 'swap authority' keypair (reused: the Gate-9 fixture manager, which already holds mint authority over the 3 fixture test asset mints) that independently recomputes every amount from live chain state before signing. Extend Create Reserve (CreateDTR.tsx) to deploy a real Reserve when the user selects only the 3 DevNet fixture test assets, via ordinary single-signer transactions plus a separate DevNet-only mint-test-assets faucet endpoint for the seeding step.",
+  "context": "This session's explicit Gate 10-11 instructions redefined the Buy/Sell semantics directly (Buy = SOL zap into proportional mint, Sell = proportional redeem followed by a zap into SOL) and required preserving the existing frontend design 'as closely as technically possible' -- reusing the Buy/Sell tab rather than building a parallel new UI, which is what the pre-existing FRONTEND_INTEGRATION.md plan (written before Gate 10 started) had assumed. Jupiter (the mission's preferred routing layer) has no meaningful DevNet liquidity for brand-new, zero-volume fixture test mints, so a real swap CPI was not viable for this testing phase; the mission explicitly anticipated this and allowed a documented, isolated DevNet-only fallback provided real transactions, real Reserve accounting, and real vault/supply changes are preserved. The two-signer atomic-transaction pattern (rather than, e.g., a fully server-custodied swap) keeps the user's own wallet as the sole authority over their own SOL/asset movements at every step, with the server only ever contributing its own signature for its own pre-approved test-asset mint authority and its own SOL balance.",
+  "rationale": "A single atomic transaction eliminates any intermediate state risk (the mission's explicit 'no unintended intermediate portfolio' requirement) -- if the protocol instruction fails, the SOL/asset legs never execute either, and vice versa. Having the server independently re-fetch live state and recompute amounts itself (rather than trusting client-supplied values) closes the obvious abuse vector a naive 'sign whatever the client asks' co-signer would have. Reusing the fixture manager as the swap authority avoids provisioning and funding a second keypair for no added isolation benefit, since it already exists specifically for DevNet testing and already controls the only assets relevant here. Fixed DevNet test pricing (not a real oracle or AMM curve) is the simplest honest way to give the existing dollar-denominated UI something coherent to display, clearly labeled as such rather than presented as a live market price.",
+  "alternativesConsidered": [
+    "Build an entirely new proportional mint/redeem UI per the original FRONTEND_INTEGRATION.md plan, leaving the AMM Buy/Sell tab untouched (rejected: directly contradicted this session's explicit instruction to preserve the existing UI and redefine Buy/Sell's semantics within it)",
+    "Attempt a real Jupiter-routed swap on DevNet (rejected: no viable DevNet liquidity exists for brand-new zero-volume test mints; the mission explicitly anticipated and pre-approved a documented DevNet-only fallback for exactly this case)",
+    "Have the server fully custody and execute the swap itself rather than co-signing an atomic transaction the user also signs (rejected: would require the user to trust the server with move authority over their own assets/SOL; the two-signer atomic pattern keeps the user as a required signer on every leg that touches their own funds)",
+    "Trust client-supplied quote amounts when co-signing (rejected: an obvious abuse vector; the server always recomputes independently from its own live chain read)"
+  ],
+  "impact": "The existing Buy/Sell UI (DTRDetail.tsx) and Create Reserve stepper (CreateDTR.tsx) are functionally real for any chain-backed Reserve (the 2 Gate-9 fixtures, or any Reserve created via the 3 supported DevNet test assets) while remaining pixel-for-pixel unchanged in structure for the fully-simulated Reserves. This resolves PROJECT_STATUS.md's previously-open 'Decisions Required' item about whether to build new proportional-mint/redeem UI -- reusing the existing UI via the zap redefinition made that question moot.",
+  "affectedAreas": ["src/merge/pages/DTRDetail.tsx", "src/merge/pages/CreateDTR.tsx", "src/merge/pages/Portfolio.tsx", "packages/sdk/src/zapInstructions.ts", "packages/sdk/src/zapPricing.ts", "packages/sdk/src/createReserveFlow.ts", "api/devnet/swap-sign.ts", "api/devnet/mint-test-assets.ts", "docs/protocol/FRONTEND_INTEGRATION.md", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "scripts/verify_zap.ts live run: Buy (0.005 SOL) then Sell (half the resulting balance) against Reserve One -- vault balances and Reserve Token supply moved exactly as computed, swap-authority SOL delta exactly matched the expected net spread (+2,511,500 lamports = 5,000,000 in - 2,488,500 out)",
+    "scripts/verify_create_reserve.ts live run: a brand-new Reserve (reserve_id 11) created, registered (2 real assets), seeded via the mint-test-assets faucet, and confirmed status=active on-chain from a fresh keypair with zero prior state",
+    "scripts/verify_swap_sign_endpoint.ts: confirms api/devnet/swap-sign.ts returns a transaction with the swap-authority's signature already present and the user's signature slot still empty",
+    "npm run build (tsc -b && vite build) passes cleanly with the full integration wired in"
+  ]
+}
+```

@@ -1,98 +1,202 @@
 <!--
-  Frontend integration plan for SSR Protocol. Includes the Phase-1
-  "implementation map" (frontend action -> on-chain instruction) required by
-  the mission, plus the Gate 10 replacement-order plan. Nothing in this
-  document has been built into the frontend yet -- Gate 10 has not started
-  (blocked behind Gates 7-9, which are blocked behind the toolchain gap, see
-  DEVNET_RUNBOOK.md).
+  Frontend integration record for SSR Protocol Gate 10-11. Supersedes this
+  file's original pre-Gate-10 plan (see git history for the prior version),
+  which assumed the existing AMM Buy/Sell UI would stay untouched and a
+  brand-new proportional mint/redeem UI would be built separately. The
+  mission's actual Gate 10 instructions redefined Buy/Sell as a SOL zap
+  reusing the EXISTING Buy/Sell tab, which is what was built. Everything
+  below reflects what is actually implemented and verified against live
+  DevNet, not a plan.
 -->
 
-# Frontend Integration
+# Frontend Integration (Gate 10-11)
 
-## Read this first: the economic-model reconciliation
+## Summary
 
-See `docs/protocol/SSR_ARCHITECTURE.md` section 0 and `DECISION_LOG.md`
-DEC-0009. The existing frontend's only reachable mint/redeem-shaped UI is
-the AMM Buy/Sell tab on `DTRDetail.tsx`, which does **not** match the
-on-chain program built here (oracle-free proportional in-kind mint/redeem).
-Two consequences for this integration plan:
+The existing SSR.fun frontend (native + merge design systems, unchanged
+visually) is now wired to the real, deployed SSR Protocol program on Solana
+DevNet (`2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW`). Wallet connection,
+Reserve data, Buy/Sell, and Reserve creation all execute real DevNet
+transactions when acting on a chain-backed Reserve; the pre-existing
+fully-simulated Reserves (`blue`, `meme`, `sdefi`, `infra`, `gaming`) and
+their AMM economy are untouched and keep working exactly as before -- the
+integration is additive, not a replacement.
 
-1. Items 7-8 below (proportional minting/redemption) require **new frontend
-   UI that does not exist yet** -- not a re-skin of the existing Buy/Sell
-   tabs, which model a fundamentally different mechanism (a bonding-curve
-   swap, not a basket deposit/withdrawal).
-2. The existing AMM Buy/Sell UI is **not being removed or replaced** by this
-   plan. It's reclassified as the "optional swap-router entry and exit"
-   concern, explicitly last (item 14) in the mission's own replacement
-   order, and can eventually be rebuilt against a real router (e.g. Jupiter)
-   without touching the core protocol this document integrates against.
+## Data-source boundary: `DTR.onChain`
 
-## Data-source boundary (mock vs. DevNet mode)
+Rather than a global mock/DevNet mode flag, each `DTR` in `useAppStore`
+either has an `onChain: OnChainReserveMeta` field (`src/merge/lib/types.ts`)
+or doesn't:
 
-Not yet implemented. Planned shape: a single context/store flag (e.g.
-`dataSource: 'mock' | 'devnet'`) read by both `src/data`/`src/state` (native,
-currently entirely mock) and `src/merge/store/useAppStore.ts` (currently the
-only reachable store). In DevNet mode, store actions that currently mutate
-local/localStorage state directly instead call the SDK
-(`packages/sdk`) to build and send a real transaction, then refetch on-chain
-state to update the store. Mock mode remains the default and the fallback
-during integration, per mission instruction ("do not remove mock mode until
-the corresponding live flow works").
+- **Present** -- this Reserve is a real, deployed SSR Protocol account. Buy,
+  Sell, and all displayed Reserve/vault/supply data are real and
+  chain-sourced (`src/merge/lib/onChainReserve.ts`, `RealReserveSync.tsx`).
+- **Absent** -- this Reserve is the pre-existing pure simulation; nothing
+  about it changed.
 
-## Implementation map (Phase 1 deliverable)
+The 2 Gate-9 fixture Reserves (`docs/protocol/DEVNET_FIXTURES.md`) are seeded
+into the store at load time with `onChain` populated
+(`REAL_PLACEHOLDER_DTRS` in `useAppStore.ts`); any Reserve created through
+`CreateDTR.tsx` using only the 3 DevNet test assets is registered the same
+way via `registerRealReserve`.
 
-Every simulated frontend action, and the real on-chain instruction it must
-eventually become. "Frontend today" reflects the Gate 1 inspection findings
-(see RESERVE_REFERENCE_ANALYSIS.md and the conversation's Gate 1 Explore
-report) -- most of these actions are currently either AMM-shaped (not
-matching the target instruction) or entirely absent from any reachable UI.
+## Real wallet connection
 
-| Frontend action | Frontend today | Required instruction | Signer | Token movement | Event | Pending/confirm UI | Failure/recovery |
-|---|---|---|---|---|---|---|---|
-| Connect wallet | 100% simulated (`WalletModal.tsx`, fake delay + random address, even with a real wallet extension detected) | none (client-side only; real wallet adapter connection is a wallet-standard concern, not a program instruction) | user wallet | none | none | connecting → connected/failed (already exists, just fake) | already has not-installed/failed paths, just needs real `window.solana.connect()` wiring |
-| Select network (mock/DevNet) | doesn't exist | none | n/a | none | none | new: a network/mode switcher | n/a |
-| Reserve discovery (`Discover.tsx`) | reads `useAppStore.dtrs` (seeded + user-created, local only) | `getProgramAccounts` scan of `Reserve` accounts (or an off-chain indexer once one exists) via SDK | none (read-only) | none | n/a | list/loading/empty states already exist | fall back to mock catalog if RPC fails |
-| Reserve detail (`DTRDetail.tsx`) | reads a `DTR` object from the store | fetch `Reserve` + all `ReserveAsset` + vault balances + `reserve_token_mint.supply` via SDK | none (read-only) | none | n/a | loading/error states needed (don't exist yet) | fall back to mock if account not found |
-| Reserve creation (`CreateDTR.tsx` "Launch Reserve") | `createDTR()`, instant local mutation | `create_reserve` (+ manager keeps signing) | manager (creator) | none | `ReserveCreated` | needs: per-step tx submission, not one instant local write | if a later step fails, `Reserve.status` visibly shows partial creation (see SECURITY_INVARIANTS.md) |
-| Composition step | client-side asset picker against a 14-asset hardcoded list | `initialize_reserve_asset` × N (one per asset) | manager | none | `ReserveAssetInitialized` | needs a per-asset tx progress indicator | a failed asset registration doesn't corrupt the Reserve -- can retry that one call |
-| Initial seed / "Initial Liquidity" step | deducts `initialSeedUsdc` from mock wallet, sets `nav=10` | `seed_reserve` | manager | manager → vaults (all assets), mint → manager | `ReserveSeeded` | needs a single combined-transaction (or sequenced) confirmation UI | if it fails, Reserve stays `AssetsInitializing` (not `Active`) -- redeemable/mintable actions correctly stay blocked |
-| Proportional mint | **does not exist in reachable UI** (only AMM "Buy" exists) | `mint_reserve_tokens_in_kind` | depositor | depositor → vaults, mint → depositor | `ReserveTokensMinted` | new UI entirely | slippage bounds computed via SDK `computeMintRequirements` |
-| Proportional redeem | **does not exist in reachable UI** (only AMM "Sell" exists) | `redeem_reserve_tokens_in_kind` | redeemer | vaults → redeemer, burn | `ReserveTokensRedeemed` | new UI entirely | works even if `Reserve.status == Paused` |
-| Portfolio (`Portfolio.tsx`) | reads store `holdings` + wallet balances | fetch redeemer's Reserve Token ATA balances across known Reserves (no cross-Reserve indexer query exists yet -- needs either a known-Reserve list or a getProgramAccounts scan) | none (read-only) | none | n/a | needs loading states | fall back to mock holdings |
-| Manager: update targets (`ManageDTR.tsx` Rebalance tab) | `rebalanceDTR()`, instant local mutation, "Adjust Remaining" toggle | `update_targets` | manager/delegate w/ `UPDATE_TARGETS` | none | `TargetsUpdated` | needs tx confirmation UI | n/a, no tokens moved |
-| Manager: record rebalance outcome | doesn't exist (no concept of "actually trading" in the UI at all) | `record_rebalance` | manager/delegate w/ `EXECUTE_REBALANCE` | none (attestation only -- actual trade execution is out of scope, DEC-0017) | `RebalanceRecorded` | new UI: "I traded manually, record the outcome" | n/a |
-| Delegate management (`ManageDTR.tsx` Delegates tab) | `addDelegate`/`updateDelegatePermissions`/`removeDelegate`, instant local mutation | `add_delegate` / `update_delegate_permissions` / `remove_delegate` | manager (or delegate for restricted-only actions) | none (rent reclaim on remove) | `DelegateAdded`/`DelegatePermissionsUpdated`/`DelegateRemoved` | needs tx confirmation per action | n/a |
-| Pause / unpause | **doesn't exist anywhere in the UI** despite permission fields existing on both domain models | `pause_reserve` / `unpause_reserve` | manager/delegate w/ the matching flag | none | `ReservePaused`/`ReserveUnpaused` | new UI entirely | redemption must visibly remain available while paused (mission requirement) |
-| Transaction history | `DTR.trades` (real, session-only, AMM trades) | on-chain event log via indexer, or direct `getSignaturesForAddress`/log parsing via SDK | none (read-only) | none | n/a | needs a real fetch-and-render path | fall back to session-only mock trades |
-| Pricing / performance data | fully synthetic random walks | Pyth (or another oracle) for display-only USD NAV; core mint/redeem never depends on this | none (read-only) | none | n/a | needs explicit "unpriced" state handling (mission requirement) | never block mint/redeem on missing price data |
-| Swap-router entry/exit (existing AMM Buy/Sell) | fully reachable today, fake constant-product curve | a real router (Jupiter) CPI'd from outside the core accounting, OR left as-is as a clearly-labeled separate secondary-market feature | user | via router, validated per mission's Single-Asset Entry section | n/a yet | already exists | explicitly last in the replacement order; not required for "functional DevNet" per the acceptance criteria |
+`src/merge/lib/SolanaProviders.tsx` wraps the app in
+`@solana/wallet-adapter-react`'s `ConnectionProvider`/`WalletProvider`
+(`wallets={[]}` -- Phantom/Solflare/Backpack all register via the Wallet
+Standard, so no per-wallet adapter package is needed). `WalletModal.tsx` now
+calls the real adapter's `select()`/`connect()` instead of a fake timeout;
+`WalletSync.tsx` (mounted once at app root) mirrors real
+connected/connecting/address state and polls the live SOL balance into the
+existing `WalletState` shape every 15s, so every existing consumer (Shell,
+DTRDetail, CreateDTR, Portfolio, Manage) needed zero shape changes.
 
-## Every wallet action must show (mission requirement, not yet built for any of the above)
+## Real on-chain reads
 
-Human-readable action summary; assets entering/leaving; expected Reserve
-Token change; fees; required signer; simulation result where available;
-wallet-approval/submitted/confirmed/failure state; explorer link; retry/
-recovery guidance. None of the existing AMM Buy/Sell UI's confirmation flow
-has been audited against this checklist yet -- do so before reusing any of
-its components for the new mint/redeem UI.
+`packages/sdk/src/readOnly.ts` builds a read-only Anchor `Program` (a
+stub, non-signing wallet is sufficient for `.fetch()`/`.fetchNullable()`
+calls) and exposes `fetchReserveOnChain(connection, programId, reserveAddress,
+candidateAssetMints)`, which derives every `ReserveAsset`/vault PDA directly
+from already-known mint addresses -- **never `getProgramAccounts`**, which is
+confirmed blocked (403) on the public DevNet RPC (see DEVNET_RUNBOOK.md).
+`RealReserveSync.tsx` polls this for every chain-backed DTR plus the
+connected wallet's real Reserve Token balance (`fetchTokenBalanceRaw`) every
+15s, and immediately after any confirmed Buy/Sell/Create.
 
-## Replacement order (mission's own list, restated as the tracked plan)
+## Buy/Sell zap architecture
 
-1. wallet connection
-2. network selection
-3. Reserve discovery
-4. Reserve state
-5. Reserve creation
-6. initial seeding
-7. proportional minting
-8. proportional redemption
-9. Reserve Manager target updates
-10. delegate management
-11. pause controls
-12. transaction history
-13. pricing and performance data
-14. optional swap-router entry and exit (existing AMM UI, last)
+**Buy = SOL zap into proportional protocol mint. Sell = proportional protocol
+redeem followed by a zap into SOL.** Both are single atomic, two-signer
+transactions (`packages/sdk/src/zapInstructions.ts`):
 
-**Status: not started.** Blocked behind Gates 7-9 (no compiled program, no
-deployed program, no generated IDL to build a typed frontend client against)
--- see DEVNET_RUNBOOK.md.
+- **Buy**: idempotent-create the depositor's ATAs → `SystemProgram.transfer`
+  user→swap-authority (SOL in) → SPL `mintTo` per asset leg
+  (authority=swap-authority, destination=user's own ATA) →
+  `mint_reserve_tokens_in_kind` (signer=user). If any instruction fails,
+  nothing executes -- the user is never left holding an unintended
+  intermediate basket.
+- **Sell**: `redeem_reserve_tokens_in_kind` (signer=user, assets land in the
+  user's own ATAs) → idempotent-create swap-authority's ATAs → SPL `transfer`
+  per asset leg user→swap-authority → `SystemProgram.transfer`
+  swap-authority→user (SOL out).
+
+The **swap authority** is a DevNet-only keypair (reused: the Gate-9 fixture
+"manager", which already holds mint authority over the 3 fixture test asset
+mints) held **server-side only**
+(`DEVNET_SWAP_AUTHORITY_SECRET_KEY`, a Vercel Sensitive env var, never
+bundled to the browser). `api/devnet/swap-sign.ts` independently re-fetches
+live Reserve state and recomputes every amount itself
+(`computeMintRequirements`/`computeRedemptionEntitlements`) before partially
+signing -- it never trusts client-supplied amounts, so a malicious client
+cannot extract more than they put in. The client (`src/merge/lib/zapClient.ts`)
+completes the returned partially-signed transaction with the user's own
+wallet signature and submits it.
+
+`DTRDetail.tsx`'s existing Buy/Sell tab is reused as-is: for a chain-backed
+Reserve, the "USDC" unit/label swaps to "SOL" and the quote box shows the
+fixed DevNet test price instead of the AMM curve's price-impact figures;
+every other element (tabs, quick-fill buttons, disabled/insufficient-balance
+states, spinner) is unchanged.
+
+### DevNet test pricing (see `zapPricing.ts`, `onChainReserve.ts`)
+
+The deployed protocol has no oracle or bonding curve -- it only tracks raw
+per-asset backing. `SOL_TEST_PRICE_USD = 20` and each fixture asset =
+`$1.00` are **fixed, DevNet-only constants**, not live market data, used
+solely so the existing dollar-denominated UI has something coherent to show.
+The Buy/Sell tab labels this explicitly ("SOL Price (DevNet test)" with a
+tooltip). Never presented as a real price anywhere.
+
+## Create Reserve flow
+
+`CreateDTR.tsx`'s existing 4-step stepper is unchanged. The asset picker
+(step 2) now also lists the 3 DevNet fixture test assets
+(`DEVNET_REAL_ASSETS`, sourced from `packages/sdk/src/fixtures.ts`) alongside
+the 14 pre-existing fictional symbols. Selecting **only** real assets routes
+the final submit to `createReserveOnChain`
+(`src/merge/lib/createReserveClient.ts`) instead of the mock `createDTR()`;
+mixing in any fictional asset falls back to the existing simulated deploy
+unchanged.
+
+Real deployment sequence (each a separate, real, confirmed transaction; the
+submit button's spinner label tracks the current step):
+
+1. `createReserve` (signer: connecting wallet, as the new Reserve's manager)
+2. `initializeReserveAsset` × N, combined in one transaction
+3. `api/devnet/mint-test-assets` -- a DevNet-only faucet endpoint, fully
+   server-signed, mints the computed seed amounts directly to the new
+   manager's own wallet (no user signature needed; it only ever adds tokens)
+4. `seedReserve` (signer: connecting wallet)
+
+On success the new Reserve is registered into the store
+(`registerRealReserve`) and the user is navigated to its real detail page,
+which immediately shows live on-chain state.
+
+**Resumability note**: each step is a separately-confirmed transaction with
+a distinct progress label, so a failure is never ambiguous about which step
+it happened at. If `createReserve` itself lands but client-side confirmation
+times out, a retry calls `createReserve` again and reserves a **new**
+`reserve_id` rather than resuming the same one -- the orphaned first attempt
+becomes a real instance of the already-documented "abandoned Reserve
+creation" invariant (see SECURITY_INVARIANTS.md), not silently hidden.
+Full step-level resumption (detecting and continuing an existing partial
+Reserve) is a natural follow-up, not built here.
+
+## Wallet testing support
+
+`Portfolio.tsx` has a "Get DevNet Test Assets" button (calls
+`api/devnet/mint-test-assets` directly, no transaction/signature needed from
+the user) so a connected wallet can acquire the 3 fixture test assets to
+experiment with Sell without having Bought first, or to self-seed a newly
+created Reserve.
+
+## Explorer integration
+
+`src/merge/lib/solana-config.ts`'s `explorerUrl(kind, value)` always tags
+the DevNet cluster. Used in: Buy/Sell/Create success toasts (transaction
+signatures) and a small "View on Solana Explorer" link row on `DTRDetail.tsx`
+(Reserve account, Reserve Token mint, each asset's vault) for chain-backed
+Reserves.
+
+## Verified against live DevNet (see scripts/verify_*.ts)
+
+Every piece of new on-chain logic was exercised against the live deployed
+program with real transactions **before** being wired into the UI, using a
+throwaway funded keypair standing in for a connected wallet (no browser
+automation tool was available in the environment this was built in -- see
+PROJECT_STATUS.md for what remains manually/browser-verified):
+
+- `verify_reads.ts` -- real reads for both fixture Reserves.
+- `verify_zap.ts` -- a full Buy then Sell round-trip: vault balances and
+  Reserve Token supply increase/decrease exactly as expected, SOL moves
+  both directions with the swap authority's balance delta matching the
+  exact expected spread.
+- `verify_swap_sign_endpoint.ts` -- calls the actual `api/devnet/swap-sign.ts`
+  handler in-process and confirms it returns a correctly-partially-signed,
+  correctly-instructed transaction.
+- `verify_create_reserve.ts` -- a brand-new Reserve created, registered (2
+  assets), seeded (via the mint-test-assets faucet), and confirmed `active`
+  on-chain, entirely from a fresh keypair with no prior state.
+- `verify_mint_test_assets.ts` -- the DevNet faucet endpoint mints the
+  correct raw amounts to a fresh wallet with no prior ATAs.
+
+Real transaction signatures, account addresses, and before/after balances
+from these runs are in the session's decision log (DECISION_LOG.md) and
+PROJECT_STATUS.md.
+
+## What's DevNet-only vs. production-shaped
+
+See PROJECT_STATUS.md "Mainnet-Readiness Gaps" for the full list. In brief:
+the swap-authority co-signing pattern, the fixed test pricing, and the
+mint-test-assets faucet are all explicitly DevNet-only infrastructure,
+isolated behind `api/devnet/**` and clearly documented as such; they are not
+reachable or meaningful outside a DevNet deployment (the swap authority only
+has mint control over 3 worthless test tokens and a small DevNet-only SOL
+balance -- compromising it cannot affect anything of real value). The
+underlying protocol calls themselves (`mint_reserve_tokens_in_kind`,
+`redeem_reserve_tokens_in_kind`, `create_reserve`, etc.) are the real,
+audited-eventually production instructions -- a production deployment
+replaces the swap adapter with a real routing provider (see "Swap and
+routing layer" gap) behind the same `zapInstructions.ts`-shaped interface,
+without touching the frontend.
