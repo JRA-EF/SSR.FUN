@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-07-28T15:33:53.014Z",
+  "generatedAt": "2026-07-28T15:54:37.772Z",
   "generatedBy": "scripts/generate-repo-metrics.ts",
   "repository": {
     "remoteUrl": "https://github.com/JRA-EF/SSR.FUN.git",
-    "totalCommitsAllBranches": 79,
+    "totalCommitsAllBranches": 83,
     "firstCommit": {
       "hash": "8e0fa4bcf5fd4978a92556ef6829bab5ec2aa2c0",
       "date": "2026-07-13T22:32:09Z",
@@ -11,10 +11,10 @@
       "subject": "Initial commit"
     },
     "latestCommit": {
-      "hash": "d7d7f4403d1173410ed373c16ee3d80d399bc747",
-      "date": "2026-07-28T15:57:32+01:00",
+      "hash": "b28cc231857a3585cc7543a051c3f17da3234ee4",
+      "date": "2026-07-28T16:46:57+01:00",
       "author": "Joao",
-      "subject": "Record final production deployment commit for the treasury upgrade"
+      "subject": "Redesign /internal/status into an executive engineering dashboard"
     },
     "currentBranch": "main",
     "branches": [
@@ -27,8 +27,8 @@
       {
         "name": "main",
         "remote": false,
-        "lastCommitDate": "2026-07-28T15:57:32+01:00",
-        "lastCommitSubject": "Record final production deployment commit for the treasury upgrade"
+        "lastCommitDate": "2026-07-28T16:46:57+01:00",
+        "lastCommitSubject": "Redesign /internal/status into an executive engineering dashboard"
       },
       {
         "name": "protocol/devnet-v1",
@@ -59,7 +59,7 @@
       {
         "name": "Joao",
         "email": "joao@enigma-fund.com",
-        "commits": 25,
+        "commits": 29,
         "aiAssisted": true
       },
       {
@@ -110,16 +110,16 @@
       },
       {
         "date": "2026-07-28",
-        "commits": 20
+        "commits": 24
       }
     ]
   },
   "codebase": {
     "rustLinesOfCode": 3125,
-    "typescriptLinesOfCode": 12462,
+    "typescriptLinesOfCode": 13050,
     "protocolInstructionCount": 18,
     "documentationPageCount": 13,
-    "decisionLogEntryCount": 35,
+    "decisionLogEntryCount": 36,
     "liveDevnetVerificationScriptCount": 7
   }
 }

@@ -600,7 +600,8 @@ function MetricsPanel({ repoMetrics, decisionCount }: { repoMetrics: RepoMetrics
     { icon: Layers, label: 'Documentation pages', value: String(codebase.documentationPageCount) },
     { icon: Blocks, label: 'Protocol instructions', value: String(codebase.protocolInstructionCount) },
     { icon: FlaskConical, label: 'Live DevNet verification scripts', value: String(codebase.liveDevnetVerificationScriptCount) },
-    { icon: Sparkles, label: 'Lines of code (Rust / TS)', value: `${codebase.rustLinesOfCode.toLocaleString()} / ${codebase.typescriptLinesOfCode.toLocaleString()}` },
+    { icon: Sparkles, label: 'Rust lines of code', value: codebase.rustLinesOfCode.toLocaleString('en-US') },
+    { icon: Sparkles, label: 'TypeScript lines of code', value: codebase.typescriptLinesOfCode.toLocaleString('en-US') },
   ]
   return (
     <div className="dash-card dash-metrics-card">

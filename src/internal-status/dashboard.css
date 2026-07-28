@@ -245,7 +245,7 @@
 .dash-metrics-card { display: flex; flex-direction: column; gap: 18px; }
 .dash-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
 }
 .dash-metric-tile {
