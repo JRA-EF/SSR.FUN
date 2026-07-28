@@ -93,6 +93,28 @@ cannot extract more than they put in. The client (`src/merge/lib/zapClient.ts`)
 completes the returned partially-signed transaction with the user's own
 wallet signature and submits it.
 
+**Dynamic Reserve/asset validation (DEC-0029, 2026-07-28 corrective pass):**
+`swap-sign.ts` used to hardcode a `KNOWN_RESERVES` map recognizing only the 2
+Gate-9 fixtures -- any other real, on-chain Reserve was rejected outright.
+It now trusts **no** hardcoded Reserve address. Given just a Reserve address
+and the client's claimed asset-mint list, it independently re-derives
+`protocolConfig`/`reserveTokenMint`/`mintAuthority`/`vaultAuthority` from the
+Reserve address itself, fetches the Reserve's real registered assets via
+`fetchReserveOnChain`, and rejects only if a registered asset's mint isn't in
+the small allowlist the swap authority actually controls (the DevNet fixture
+mints + wrapped SOL) -- never the Reserve address itself. Any Reserve created
+through the real Create Reserve flow (below) whose assets are all supported
+works immediately, with no code change, redeploy, or manual registration.
+
+**Wrapped SOL (DEC-0030):** since the swap authority can't "mint" SOL, Buy's
+per-asset loop special-cases the wrapped-SOL mint
+(`packages/sdk/src/zapPricing.ts`'s `WRAPPED_SOL_MINT`): the swap authority
+wraps its own real SOL (idempotent-create its WSOL ATA, `SystemProgram.transfer`
+into it, `syncNative`) and transfers the wrapped amount to the user like any
+other SPL leg. Sell's per-asset loop, symmetrically, `closeAccount`s the swap
+authority's WSOL ATA right after receiving the user's WSOL leg, unwrapping it
+back to real lamports before the final SOL-out transfer.
+
 `DTRDetail.tsx`'s existing Buy/Sell tab is reused as-is: for a chain-backed
 Reserve, the "USDC" unit/label swaps to "SOL" and the quote box shows the
 fixed DevNet test price instead of the AMM curve's price-impact figures;
@@ -111,23 +133,51 @@ tooltip). Never presented as a real price anywhere.
 ## Create Reserve flow
 
 `CreateDTR.tsx`'s existing 4-step stepper is unchanged. The asset picker
-(step 2) now also lists the 3 DevNet fixture test assets
-(`DEVNET_REAL_ASSETS`, sourced from `packages/sdk/src/fixtures.ts`) alongside
-the 14 pre-existing fictional symbols. Selecting **only** real assets routes
-the final submit to `createReserveOnChain`
+(step 2) lists native **SOL** (`DEVNET_REAL_ASSETS`'s first entry, handled
+internally as wrapped SOL -- DEC-0030) plus the 3 DevNet fixture test assets,
+alongside the pre-existing fictional symbols, each now labeled
+"(simulated)" so they can't be mistaken for real deployable assets. Selecting
+**only** real assets routes the final submit to `createReserveOnChain`
 (`src/merge/lib/createReserveClient.ts`) instead of the mock `createDTR()`;
 mixing in any fictional asset falls back to the existing simulated deploy
 unchanged.
 
-Real deployment sequence (each a separate, real, confirmed transaction; the
-submit button's spinner label tracks the current step):
+**Signature count (DEC-0031, 2026-07-28 corrective pass):** `createReserve`
+and every `initializeReserveAsset` are now combined into **one** transaction
+(they share most of their accounts, and Solana's deduplicated account-key
+table keeps this well under the legacy 1232-byte limit for the realistic
+1-3 asset case) -- down from 2 separate transactions. Real deployment
+sequence is now:
 
-1. `createReserve` (signer: connecting wallet, as the new Reserve's manager)
-2. `initializeReserveAsset` × N, combined in one transaction
-3. `api/devnet/mint-test-assets` -- a DevNet-only faucet endpoint, fully
-   server-signed, mints the computed seed amounts directly to the new
-   manager's own wallet (no user signature needed; it only ever adds tokens)
-4. `seedReserve` (signer: connecting wallet)
+1. `createReserve` + `initializeReserveAsset` × N, combined in one transaction
+   (signer: connecting wallet, as the new Reserve's manager)
+2. Funding the seed amounts: `api/devnet/mint-test-assets` (a DevNet-only
+   faucet endpoint, fully server-signed, no user signature) for any fixture
+   test-asset legs, **and/or** the creator wrapping their own real SOL
+   (idempotent-create their WSOL ATA, `SystemProgram.transfer`, `syncNative`
+   -- a real, user-signed transaction, not a faucet call) for a SOL leg
+3. `seedReserve` (signer: connecting wallet)
+
+Net: **2 wallet approvals** for fixture-only Reserves, **3** if SOL is one of
+the selected assets (the SOL-wrap step is its own transaction). Before any
+signature, Review & Deploy now shows a **Wallet Cost Summary** built from
+`estimateCreateReserveCost` (real `getMinimumBalanceForRentExemption` calls
+against the program's actual account sizes, not hand-rolled math): initial
+Reserve funding, account-creation rent, estimated network fees, protocol
+fees, and a grand total in SOL and USD, plus plain-language text stating
+exactly how many approvals will follow and what each does, and a note that
+new Reserve Tokens may briefly show as "Unknown" in wallets like Phantom
+until DevNet indexers pick up the mint.
+
+**USD-to-SOL seed funding (part of DEC-0030/DEC-0031, bug found and fixed via
+DEC-0032):** a creator specifies the initial Reserve value in USD; each
+asset's raw seed amount is computed via `seedRawAmountForAsset` --
+`usd * 10**decimals` for the DevNet fixture assets (pegged 1 unit = $1), but
+`usdToSolLamports(usd)` (from `zapPricing.ts`, using `SOL_TEST_PRICE_USD`) for
+a wrapped-SOL leg, since SOL is not 1:1 with USD. An earlier version of this
+code used the fixture-asset formula for wrapped SOL too, asking creators to
+wrap ~20x too much real SOL for their stated USD allocation -- caught by
+`scripts/verify_e2e_fresh_reserve.ts` (DEC-0032), not by typechecking.
 
 On success the new Reserve is registered into the store
 (`registerRealReserve`) and the user is navigated to its real detail page,
@@ -180,10 +230,50 @@ PROJECT_STATUS.md for what remains manually/browser-verified):
   on-chain, entirely from a fresh keypair with no prior state.
 - `verify_mint_test_assets.ts` -- the DevNet faucet endpoint mints the
   correct raw amounts to a fresh wallet with no prior ATAs.
+- `verify_dynamic_reserve.ts` (DEC-0029, 2026-07-28 corrective pass) -- calls
+  the rewritten `swap-sign.ts` handler in-process against the real
+  frontend-created Reserve `Hj8uifcUHAmTpwySQJgfo4F6B8Y68X2b48BmTKv89xSX`,
+  confirming it builds a valid Buy transaction and correctly rejects an
+  unrelated/unregistered mint with a specific error.
+- `verify_e2e_fresh_reserve.ts` (DEC-0032, 2026-07-28 corrective pass) -- the
+  most thorough of these: drives the **actual browser client code**
+  (`createReserveClient.ts`, `zapClient.ts`, not a reimplementation) from a
+  Node script, with a throwaway keypair as the connected wallet and the real
+  `api/devnet/*.ts` handlers invoked in-process. Creates a fresh 2-asset
+  (fixture mint + wrapped SOL) Reserve, seeds it, Buys, Sells half the
+  resulting balance, and re-fetches the Reserve (simulating a page refresh)
+  -- all with real signatures, confirming vault balances, Reserve Token
+  supply, and the creator's SOL/Reserve-Token balances move exactly as
+  computed at every step, with zero hardcoded registration anywhere.
 
 Real transaction signatures, account addresses, and before/after balances
 from these runs are in the session's decision log (DECISION_LOG.md) and
 PROJECT_STATUS.md.
+
+## DevNet protocol treasury (DEC-0033, 2026-07-28 corrective pass)
+
+`ProtocolConfig.default_protocol_fee_destination` is the single global
+destination `collect_fees` mints protocol fee shares to (validated there
+since DEC-0023). It is settable only at the one-time `initialize_protocol`
+call -- there was no way to change it afterward. A new, minimal, admin-gated
+`update_protocol_config` instruction
+(`programs/ssr_protocol/src/instructions/update_protocol_config.rs`) adds
+that update path, gated by the already-defined (previously unused)
+`NotProtocolAuthority` error via a `has_one = authority` constraint. Per-Reserve
+manager fee destinations (`create_reserve`'s `fee_destination` param) are a
+separate, already-independent field -- new Reserves already inherit the
+correct protocol-level treasury automatically the moment `ProtocolConfig`
+itself is updated, with no client-side change needed.
+
+As of this entry the instruction is written and build-verified
+(`cargo check`, `cargo-build-sbf`) but **not yet deployed to DevNet** --
+blocked on the deployer wallet's DevNet SOL balance (DEC-0034). The live
+on-chain `default_protocol_fee_destination` is still the deployer/upgrade
+authority itself (`6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk`), confirmed
+via a direct on-chain read, not yet `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`.
+Notably, `ProtocolConfig.default_protocol_fee_bps` is stored but never read
+by any fee-computation code path (each Reserve's own `fee_config` governs its
+actual fees) -- it appears to be a vestigial/template field, not a gate.
 
 ## What's DevNet-only vs. production-shaped
 

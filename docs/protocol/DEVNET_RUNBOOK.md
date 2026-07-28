@@ -151,3 +151,17 @@ DevNet SOL funding note: the public airdrop faucet was rate-limited/exhausted fr
 - IDL versioning: Anchor 1.0 replaced legacy on-chain IDL storage with Program Metadata integration (see CHANGELOG) -- `anchor deploy`'s default IDL-upload behavior should be used rather than any manual legacy `anchor idl init`/`idl upgrade` flow (removed in 1.0 per the CHANGELOG's breaking-changes list).
 - **Before any restricted beta:** migrate the upgrade authority to a multisig (e.g. Squads) and complete the security-review items listed in RESERVE_REFERENCE_ANALYSIS.md section 18 and SECURITY_INVARIANTS.md's "Outstanding gaps."
 - **Before Mainnet:** full external audit; do not present the DevNet single-key trust model as production-ready (mission instruction, restated here for visibility).
+- **Going forward (DEC-0034, 2026-07-28):** localnet is the default environment for protocol development and validation; real DevNet upgrades are batched, checkpointed events (material Rust change + local tests pass + frontend validated locally), not a per-change habit. Before any upgrade: check the compiled `.so` size, list/reuse/close deployment buffers (`solana program show --buffers --buffer-authority <deployer-keypair>`), and calculate the exact additional SOL needed; after: verify via `solana program show` and record recovered lamports + final deployer balance.
+
+## Pending upgrade: `update_protocol_config` (DEC-0033, not yet deployed)
+
+A new instruction (`programs/ssr_protocol/src/instructions/update_protocol_config.rs`) lets the protocol authority repoint `ProtocolConfig.default_protocol_fee_destination` (and `default_protocol_fee_bps`) after the fact -- `initialize_protocol` only ever runs once. Written to set the DevNet treasury to `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`.
+
+| Field | Value |
+|---|---|
+| Status | Written, local-build-verified, **not deployed** |
+| `cargo check -p ssr_protocol` | Clean, zero errors |
+| `cargo-build-sbf` (run directly from `programs/ssr_protocol/`) | Succeeds -- 544,472-byte `.so` (up from the deployed 538,056 bytes) |
+| Blocker | Deployer wallet (`6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk`) holds 0.94 SOL; upgrade needs ~3.79 SOL. Public DevNet faucet returned "rate limit reached" on every retry this session. |
+| Current on-chain `default_protocol_fee_destination` | `6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk` (the deployer/authority itself -- confirmed via a live on-chain read, 2026-07-28) |
+| Next step once funded | `solana program deploy target/deploy/ssr_protocol.so --program-id <existing keypair> --upgrade-authority <deployer keypair> --url devnet`, regenerate/re-copy the IDL, call `update_protocol_config` once with the treasury address, then verify via a real Buy (accrues a mint fee) + `collect_fees` call, recording before/after treasury Reserve-Token balances. |

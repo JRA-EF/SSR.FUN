@@ -674,3 +674,156 @@
   ]
 }
 ```
+
+## DEC-0029
+
+```json
+{
+  "id": "DEC-0029",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Remove api/devnet/swap-sign.ts's hardcoded `KNOWN_RESERVES` map (which only recognized the 2 Gate-9 fixture Reserves) and replace it with fully dynamic, on-chain-derived validation: independently re-derive `protocolConfig`/`reserveTokenMint`/`mintAuthority`/`vaultAuthority` from just the Reserve address, fetch the Reserve's real registered assets via `fetchReserveOnChain`, and reject only specific unsupported ASSET MINTS (checked against an allowlist of the DevNet fixture mints + wrapped SOL) rather than rejecting the Reserve address itself.",
+  "context": "Manual DevNet testing found that a Reserve created live through the frontend's real Create Reserve flow could not be Bought or Sold -- the endpoint returned 'Unknown or unsupported Reserve for the DevNet swap adapter.' Root cause: the endpoint's Reserve-address allowlist was populated only with the 2 persistent Gate-9 fixtures at the time it was written, so any genuinely new on-chain Reserve was rejected outright regardless of whether its underlying assets were actually supported. This defeated the entire point of a real Create Reserve flow -- a newly created Reserve was chain-valid but frontend-unusable.",
+  "rationale": "The correct trust boundary is the asset mint, not the Reserve address: the swap authority can safely co-sign a zap for ANY real, on-chain Reserve as long as every one of its registered assets is one the swap authority actually has minting/wrapping rights over (the DevNet fixture mints, plus wrapped SOL via the swap authority's own SOL balance). Deriving every account directly from the Reserve address (rather than trusting a client-supplied or hardcoded lookup) also closes the same class of address-substitution risk the original two-signer design was already built to avoid (DEC-0027) -- it just hadn't been extended to the Reserve address itself yet.",
+  "alternativesConsidered": [
+    "Add each new fixture/test Reserve to KNOWN_RESERVES by hand as they're created (rejected: exactly the 'no code change/redeploy/manual registration needed for a new Reserve' requirement this pass was scoped to fix; does not scale and reintroduces the same bug for the next Reserve)",
+    "Allowlist by manager/creator wallet instead of by asset mint (rejected: does not actually validate what the swap authority is being asked to sign for -- the risk is in which assets get minted/transferred, not who created the Reserve)"
+  ],
+  "impact": "Any Reserve created through the real on-chain Create Reserve flow immediately supports Buy/Sell the moment its assets are all DevNet-supported mints, with zero code change, redeploy, or manual registration. Verified directly against the real user-created Reserve `Hj8uifcUHAmTpwySQJgfo4F6B8Y68X2b48BmTKv89xSX` (built a valid Buy transaction, correctly rejected an unrelated/unregistered mint with a specific error) and end-to-end against a brand-new from-scratch Reserve (see DEC-0032).",
+  "affectedAreas": ["api/devnet/swap-sign.ts", "docs/protocol/FRONTEND_INTEGRATION.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Direct in-process test against Hj8uifcUHAmTpwySQJgfo4F6B8Y68X2b48BmTKv89xSX: Buy request returned status 200 with a valid 5-instruction, correctly 2-signed transaction",
+    "Same test with an unrelated mint (DevNet USDC) substituted returned a specific 400 error naming the unsupported mint, not a generic 'unknown reserve' rejection",
+    "scripts/verify_e2e_fresh_reserve.ts: a genuinely fresh Reserve (reserve_id 15, created moments earlier in the same run) Bought and Sold successfully with no code change in between (DEC-0032)"
+  ]
+}
+```
+
+## DEC-0030
+
+```json
+{
+  "id": "DEC-0030",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Add native SOL (presented as \"SOL\", handled internally as wrapped SOL where the SPL token interface requires it) as a real, deployable Create Reserve asset alongside the existing DevNet fixture test mints, and relabel every remaining fictional/simulated asset option in CreateDTR.tsx with a \"(simulated)\" suffix so users can no longer mistake them for real deployable assets.",
+  "context": "The Create Reserve flow's asset picker presented invented assets (fictional tickers with no on-chain existence) as if they were real choices, alongside the genuinely supported DevNet fixture mints. Separately, SOL itself -- the one asset every DevNet wallet actually holds -- was not selectable at all, forcing users into fixture test tokens they'd need a faucet for.",
+  "rationale": "SOL is the natural first asset for a testing audience to want to use, and wrapping is a mechanical, well-understood SPL pattern (the swap authority already wraps its own SOL for Buy and unwraps on Sell, per the zap architecture) rather than a new trust boundary. Clearly marking simulated-only assets (rather than removing them, which the mission allowed as long as they stay isolated) preserves the existing fully-simulated demo experience for assets that were never meant to be real, while making the real/simulated boundary legible at the point of choice instead of only discoverable by trying to deploy and failing.",
+  "alternativesConsidered": [
+    "Remove all fictional assets from the picker entirely (rejected: mission explicitly allowed keeping simulation-only paths isolated rather than requiring their removal; some already power the pre-existing fully-mocked demo Reserves)",
+    "Require users to manually wrap SOL themselves before reaching Create Reserve (rejected: adds a confusing manual prerequisite step for what should read as a single native-SOL choice)"
+  ],
+  "impact": "Users can create a real Reserve using SOL plus any combination of the DevNet fixture mints, with SOL wrapped/unwrapped transparently by the existing zap and seed-funding code paths (DEC-0027, DEC-0031). Fictional assets remain available for the simulated-only demo experience but are now visibly labeled as such everywhere they appear in CreateDTR.tsx.",
+  "affectedAreas": ["src/merge/pages/CreateDTR.tsx", "packages/sdk/src/zapPricing.ts", "packages/sdk/src/zapInstructions.ts", "api/devnet/swap-sign.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b passes clean with SOL added as a real asset entry",
+    "scripts/verify_e2e_fresh_reserve.ts: a real 2-asset Reserve (mockX 70% / wrapped SOL 30%) created, seeded (creator self-wraps real SOL for the SOL leg, faucet mints the fixture leg), Bought, and Sold successfully"
+  ]
+}
+```
+
+## DEC-0031
+
+```json
+{
+  "id": "DEC-0031",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Combine `createReserve` and every `initializeReserveAsset` call into ONE transaction (down from 2 separate transactions), reducing Create Reserve to 2 wallet approvals for fixture-only assets (create+register, then seed) or 3 if wrapped SOL is one of the selected assets (create+register, wrap-SOL, then seed). Add a real, on-chain-rent-calculator-backed cost estimate (`estimateCreateReserveCost`, using live `getMinimumBalanceForRentExemption` calls against the program's actual account sizes) surfaced as a \"Wallet Cost Summary\" in the Review & Deploy step, shown before any wallet signature, breaking out initial Reserve funding, account-creation rent, estimated network fees, and protocol fees separately, plus a plain-language list of exactly how many approvals will be requested and what each does.",
+  "context": "Manual testing found two related problems: Create Reserve requested more wallet signatures than necessary (a legacy transaction's ~1232-byte limit does not require creating and registering assets as separate transactions, since they share most of their accounts), and Phantom was the FIRST place a user discovered the actual SOL cost of deployment -- the existing \"Initial Seed\" value did not reconcile with the SOL amount actually requested, and there was no upfront breakdown of rent vs. fees vs. funding.",
+  "rationale": "Solana's deduplicated account-key table means a combined createReserve + N-asset-registration transaction stays well under the legacy size limit for the realistic 1-3 asset case, so there is no correctness reason to keep them separate -- only seedReserve (whose `remaining_accounts` grow per asset) risks the limit and stays its own transaction. Computing rent from the SAME real rent-exemption calculator Solana itself uses (rather than hand-rolled lamports/byte estimates) makes the cost summary numbers actually trustworthy rather than approximate. Showing this before the first signature directly satisfies the requirement that Phantom never be the first place cost is discovered.",
+  "alternativesConsidered": [
+    "Also fold seedReserve into the same combined transaction (rejected: its remaining_accounts size grows per asset and risks exceeding the legacy 1232-byte limit for a 3-asset Reserve; not worth the risk to save one more approval)",
+    "Hand-roll a lamports-per-byte rent estimate instead of calling getMinimumBalanceForRentExemption (rejected: Solana's actual rent-exemption formula is not simple lamports-per-byte; calling the real RPC method is both simpler and correct)"
+  ],
+  "impact": "Create Reserve now requests 2 approvals (3 with a wrapped-SOL leg), each described in the UI before signing, with a full SOL/USD cost breakdown shown ahead of the first signature. Reduces total approvals from what would otherwise be a 4th separate registration/seed step for multi-asset Reserves.",
+  "affectedAreas": ["src/merge/lib/createReserveClient.ts", "src/merge/pages/CreateDTR.tsx"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "scripts/verify_e2e_fresh_reserve.ts: createReserveOnChain's create-and-register step lands as a single confirmed transaction containing both the createReserve and initializeReserveAsset instructions",
+    "estimateCreateReserveCost output for a 2-asset (mockX + wrapped SOL) Reserve at $2 seed: totalRentLamports 16,474,320, networkFeeLamportsEstimate 15,000 (3 tx), totalLamports 46,489,320 -- matches the real rent paid during the same run's create+register+seed transactions"
+  ]
+}
+```
+
+## DEC-0032
+
+```json
+{
+  "id": "DEC-0032",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Validate this corrective pass end-to-end by driving the ACTUAL frontend client code (src/merge/lib/createReserveClient.ts, src/merge/lib/zapClient.ts) from a Node script (scripts/verify_e2e_fresh_reserve.ts) against real DevNet, with a throwaway keypair standing in for a connected wallet and the real api/devnet/*.ts handlers invoked in-process -- rather than validating only against the pre-existing Gate-9 fixture Reserves.",
+  "context": "The mission explicitly required proving the fix against a genuinely fresh Reserve created through the real flow, not just the 2 persistent fixtures the swap-sign endpoint used to hardcode. Reusing the literal browser-side modules (rather than reimplementing equivalent logic directly in the script, as the earlier verify_create_reserve.ts did) means a bug in the shared client code gets caught by this script even if it would never show up in a hand-rolled equivalent.",
+  "rationale": "Requiring the browser TS modules directly from a CommonJS Node script surfaced a real ESM/CommonJS module-boundary conflict (root package.json is genuine ESM; src/ had no override), fixed with a scoped src/merge/lib/package.json (\"type\": \"commonjs\"), mirroring the existing api/devnet/package.json precedent -- confirmed not to affect Vite's own build (`npm run build` still passes) since Vite's bundler determines module type from actual import/export syntax, not Node's package.json resolution. This exact approach immediately caught a real bug: the seed-funding math treated 1 raw wrapped-SOL unit as if it were pegged 1:1 to USD like the fixture test assets, instead of converting through SOL_TEST_PRICE_USD -- meaning a creator selecting SOL as an asset would have been asked to wrap ~20x too much real SOL for their stated USD allocation. Fixed by routing the wrapped-SOL leg through the SDK's existing `usdToSolLamports` helper (see createReserveClient.ts's `seedRawAmountForAsset`).",
+  "alternativesConsidered": [
+    "Reimplement equivalent create/buy/sell logic directly in the verification script, as the earlier verify_create_reserve.ts/verify_zap.ts did (rejected: would not have caught the USD/SOL pricing bug, since a hand-rolled reimplementation would not necessarily reproduce the same mistake the real client code contained)",
+    "Skip the wrapped-SOL leg in the E2E test and only use fixture test mints (rejected: would leave DEC-0030's SOL-asset support and the pricing math specifically it depends on unverified)"
+  ],
+  "impact": "A real, fresh, 2-asset (mockX 70% / wrapped SOL 30%) Reserve was created, seeded, Bought from, and Sold from -- all 16 of the mission's end-to-end checklist items confirmed in one run, and a real cost-calculation bug (DEC-0030's wrapped-SOL seed pricing) was found and fixed as a direct result.",
+  "affectedAreas": ["scripts/verify_e2e_fresh_reserve.ts", "src/merge/lib/package.json (new)", "src/merge/lib/createReserveClient.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Full run recorded in the corrective-pass final report: Reserve BuHRWKzzXQXhjL3WCsmHTT7qDooh2437DvXuxyExpiWg, Reserve Token mint AQ6i33grhTZk3vA9Ph4paGGnsdFR9nif7trEaK1aNJ2d, createAndRegister/fundSeedAssets/seed/Buy/Sell all confirmed with vault balances, Reserve Token supply, and creator SOL/Reserve-Token balances moving exactly as computed, and a final re-fetch (simulating a page refresh) matching the last on-chain state with zero hardcoded registration"
+  ]
+}
+```
+
+## DEC-0033
+
+```json
+{
+  "id": "DEC-0033",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Add a new, minimal, admin-gated `update_protocol_config` instruction to the SSR Protocol Anchor program (settable field: `default_protocol_fee_destination`, i.e. the protocol-wide treasury address `collect_fees` pays protocol fee shares to; gated via the existing, previously-unused `NotProtocolAuthority` error and a `has_one = authority` constraint on ProtocolConfig), so the DevNet protocol treasury can be repointed to `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq` post-launch. Per-Reserve manager fee destinations are unaffected and unchanged -- only the global, protocol-level destination read by `collect_fees` needed a way to be updated at all, since `initialize_protocol` only ever runs once.",
+  "context": "The mission required routing all protocol-level revenue (mint/redemption/TVL/buy/sell fees) to a specific DevNet treasury wallet. Inspection of protocol_config.rs, mint_reserve_tokens_in_kind.rs, redeem_reserve_tokens_in_kind.rs, and collect_fees.rs found: (a) `ProtocolConfig.default_protocol_fee_destination` is the single correct global treasury field (already validated by collect_fees per DEC-0023's earlier fix), (b) it was set at the original Gate 8 `initialize_protocol` call to an address that is not the requested treasury, and (c) no instruction existed to change it afterward -- `initialize_protocol` is a one-time `init`. Per-Reserve `fee_destination` (passed to `create_reserve`) is a SEPARATE field controlling only the MANAGER's own fee share, not the protocol's, so new Reserves already inherit the correct protocol-level treasury automatically the moment ProtocolConfig itself is updated -- no per-Reserve client change was needed.",
+  "rationale": "The smallest correct fix is a single-field, admin-gated setter reusing the already-defined (but previously dead) `NotProtocolAuthority` error variant -- no new error type, no broader ProtocolConfig redesign. Because it changes the deployed program's instruction set, this requires a real DevNet program upgrade (same program ID, same upgrade authority), which is deferred until the deployer wallet has sufficient DevNet SOL (see DEC-0034) -- the instruction itself is written, compiles clean (`cargo check`), and builds successfully to a real deployable `.so` via `cargo-build-sbf`, but has not yet been deployed or invoked on DevNet as of this entry.",
+  "alternativesConsidered": [
+    "Redeploy initialize_protocol's ProtocolConfig account from scratch with the correct destination (rejected: ProtocolConfig is a singleton PDA already referenced by every existing Reserve; recreating it would orphan all prior state)",
+    "Add a per-Reserve override for protocol fee destination instead of fixing the global field (rejected: collect_fees intentionally validates against the single global ProtocolConfig field, not a per-Reserve one; changing that would be a much larger, unrequested architecture change)"
+  ],
+  "impact": "Once deployed and invoked, every Reserve's protocol fee share (already flowing correctly to whatever `default_protocol_fee_destination` holds) will route to the requested treasury with zero further code or per-Reserve changes. Deployment and the before/after treasury balance verification (via a real Buy generating mint fees, then a real `collect_fees` call) are the remaining step, blocked on DevNet SOL funding.",
+  "affectedAreas": ["programs/ssr_protocol/src/instructions/update_protocol_config.rs (new)", "programs/ssr_protocol/src/instructions/mod.rs", "programs/ssr_protocol/src/lib.rs", "programs/ssr_protocol/src/events.rs"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "cargo check -p ssr_protocol: clean, zero errors",
+    "cargo-build-sbf (run directly from programs/ssr_protocol/): succeeds, produces a 544,472-byte .so",
+    "Not yet evidenced: on-chain deployment and a real collect_fees call moving fees to EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq -- blocked on DevNet SOL funding, see DEC-0034"
+  ]
+}
+```
+
+## DEC-0034
+
+```json
+{
+  "id": "DEC-0034",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Adopt localnet (a locally-run solana-test-validator) as the default environment for protocol development and validation going forward. Reserve real DevNet program upgrades for checkpointed releases only -- gated on: the on-chain Rust program having materially changed, all local tests passing, frontend integration validated locally, and the change set being grouped rather than deployed piecemeal. Frontend/SDK/API/documentation-only changes never require a DevNet program redeploy. Before any DevNet upgrade: inspect the compiled .so size, list and reuse/close deployment buffers, and calculate the exact additional SOL required; after: verify the deployed program and report recovered lamports and final deployer balance.",
+  "context": "This session's DevNet program upgrade (DEC-0033) stalled: the deployer wallet (6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk) held 1.24 SOL against a ~3.79 SOL upgrade cost, and the public DevNet airdrop faucet was rate-limited across repeated retries. Attempting to fall back to a local validator for the same validation purpose then surfaced a separate, real environment limitation: `solana-test-validator` panics on this machine (`ERROR_PRIVILEGE_NOT_HELD`) without Windows Developer Mode enabled, since it needs `SeCreateSymbolicLinkPrivilege` for its ledger; `anchor test`/`anchor build` fail even earlier with an unrelated cargo-build-sbf toolchain-detection panic specific to how the Anchor CLI wrapper invokes it (direct `cargo-build-sbf` calls work fine).",
+  "rationale": "DevNet SOL is a genuinely scarce, externally rate-limited resource for this project, not a free faucet tap -- upgrading for every small change risks leaving the deployer unable to fund a later, more important upgrade. Localnet has no such scarcity (unlimited local airdrops), making it the correct default once it is actually usable; until Developer Mode is enabled, the fallback is `cargo check` (fast correctness) plus a direct `cargo-build-sbf` run (validates the real deployable artifact) plus careful pattern-matching against already-DevNet-proven instructions.",
+  "alternativesConsidered": [
+    "Keep upgrading DevNet on every change as before (rejected: directly caused this session's funding stall; not sustainable given the faucet's confirmed unreliability, DEC-0024)",
+    "Force solana-test-validator to work via elevated/admin execution from within this session (rejected: requires a system privilege change outside what a sandboxed shell can or should grant itself; left as a one-time manual step for the user, e.g. enabling Windows Developer Mode)"
+  ],
+  "impact": "DEC-0033's on-chain deployment remains pending real DevNet SOL (either faucet recovery or a direct user transfer to the deployer wallet) rather than being forced through immediately. Future protocol changes in this project default to localnet validation; DevNet upgrades become deliberate, batched, checkpoint events.",
+  "affectedAreas": ["docs/protocol/DEVNET_RUNBOOK.md", "Anchor.toml (already defaulted to localnet provider, now actually the intended default)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "solana program deploy attempt: \"Error: Account 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk has insufficient funds for spend (3.7907292 SOL) + fee (0.00271 SOL)\"",
+    "Repeated solana airdrop attempts (2 SOL, 1 SOL) all returned \"Error: airdrop request failed. This can happen when the rate limit is reached.\"",
+    "solana-test-validator startup: \"Os { code: 1314, kind: Uncategorized, message: \\\"Um privilégio necessário não é mantido pelo cliente.\\\" }\" (ERROR_PRIVILEGE_NOT_HELD)",
+    "anchor test: cargo-build-sbf panic at toolchain.rs:357, Option::unwrap() on None"
+  ]
+}
+```
