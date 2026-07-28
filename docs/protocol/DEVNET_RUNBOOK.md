@@ -94,17 +94,27 @@ None of the "highest-risk code" items originally flagged in this file's earlier 
 - Generated keypairs (including `target/deploy/ssr_protocol-keypair.json`, generated this session) are gitignored (`*-keypair.json`, `target/`, `.anchor/`, `test-ledger/`) and were never committed -- confirmed via `git check-ignore`.
 - DevNet fixture wallets (root manager, ≥2 restricted delegates, ≥2 holders) should be generated fresh per the mission's fixture requirements once Gate 9 is reachable; document their DevNet-only pubkeys (not the keypair files themselves) in this runbook once they exist.
 
-## Deployment record (fill in once the SBF gap is closed)
+## Deployment record
+
+**SSR Protocol is live on Solana DevNet.**
 
 | Field | Value |
 |---|---|
-| Cluster | _(pending)_ |
-| Program ID | `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` (keypair generated, program not yet deployed) |
-| Deployment signature | _(pending)_ |
-| Deployed Git commit | _(pending)_ |
-| IDL version | _(pending)_ |
-| Upgrade authority pubkey | `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` (same as program keypair for v1 DevNet, single dev-controlled key per DEC-0015; migrate to a multisig before any restricted beta) |
-| Deployment timestamp | _(pending)_ |
+| Cluster | DevNet (`https://api.devnet.solana.com`) |
+| Program ID | `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` |
+| Deployment signature | `arj6tzkUCqgSeJBs9inJv3nLcyoK5smasygGEZmDZ5hk84QukwLsJKR9mbaZryJz56uFRTkeXoGtTFSBSMWuaju` |
+| Deployed Git commit | `2cb7084` ("Add repeated-init and excess-redemption adversarial tests") on `protocol/devnet-v1` |
+| Program owner | `BPFLoaderUpgradeab1e11111111111111111111111` (upgradeable, as designed) |
+| ProgramData address | `4YMiJc7UEH4QtRhaL5P6usgEf68sw1eZirKmoNvqqoXA` |
+| Data length | 538,056 bytes |
+| Program account balance | 3.746 SOL (rent-exempt minimum, matches `solana rent` estimate exactly) |
+| Upgrade authority pubkey | `6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk` (dev-controlled DevNet deployer wallet, single key per DEC-0015 -- migrate to a multisig before any restricted beta) |
+| Deployment timestamp | 2026-07-28 (verified via `solana program show`) |
+| Explorer | https://explorer.solana.com/address/2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW?cluster=devnet |
+
+Verified via `solana program show 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW --url devnet` -- all fields above are read directly from that command's output, not assumed.
+
+DevNet SOL funding note: the public airdrop faucet was rate-limited/exhausted from this environment's IP for the entire session (`solana airdrop` and `@solana/web3.js`'s `requestAirdrop` both returned 429 "reached your airdrop limit today"). The user funded the deployer wallet manually instead (two transfers, ~11 SOL total) -- this is the reason `docs/project/DECISION_LOG.md` records a funding-path decision alongside the deployment one.
 
 ## Upgrade policy (v1 DevNet)
 

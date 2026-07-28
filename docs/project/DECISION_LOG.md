@@ -535,3 +535,30 @@
   ]
 }
 ```
+
+## DEC-0024
+
+```json
+{
+  "id": "DEC-0024",
+  "date": "2026-07-28",
+  "status": "confirmed",
+  "decision": "Install Visual Studio Build Tools (C++ workload, via winget, with explicit user approval) to close the remaining BPF/SBF toolchain gap from DEC-0023; fund the DevNet deployer wallet via manual user transfers rather than the public airdrop faucet, which was rate-limited/exhausted for this environment's IP; deploy the compiled program to Solana DevNet.",
+  "context": "DEC-0023 closed every toolchain gap except real BPF/SBF cross-compilation, which needs the MSVC linker (Visual Studio Build Tools) -- left as an explicit user decision given its size (multi-GB) and proprietary license, comparable to the WSL2 alternative. The user explicitly approved this specific option. Separately, once a real compiled .so existed, funding a DevNet deployer wallet hit a second, independent blocker: `solana airdrop` (CLI) and `@solana/web3.js`'s `requestAirdrop` (RPC) both returned 429 'reached your airdrop limit today' consistently across ~15+ retries over several minutes and via two different client paths -- confirmed as a real, sustained per-IP daily limit (the error message itself named this explicitly), not a transient throttle worth continuing to retry against a public service.",
+  "rationale": "With explicit user approval, installing Build Tools was the correct next step -- it's exactly the class of action the mission wants closed when possible, now with authorization for the one piece that needed it. For funding, exhausting a public faucet's daily limit via repeated automated retries (including switching client libraries to probe around it) was reasonably tried and clearly ruled out within one session; asking the user to fund directly (their choice, offered alongside the web-faucet alternative) was faster and more reliable than continuing to poll a service that had already explicitly said 'no' for the day.",
+  "alternativesConsidered": [
+    "Keep retrying the airdrop indefinitely (rejected: the RPC's own error message confirms this is a daily limit, not a short-lived rate limit -- further automated retries were very unlikely to succeed and amount to hammering a public service after it explicitly declined)",
+    "Have the user use the web faucet (faucet.solana.com) instead of a direct transfer (offered as an alternative; user chose to send SOL directly from their own wallet instead)"
+  ],
+  "impact": "SSR Protocol is now live on Solana DevNet -- see the full deployment record in docs/protocol/DEVNET_RUNBOOK.md (program ID, deployment signature, verified via `solana program show`). Gate 8 is complete. The deployer/upgrade-authority wallet (6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk) holds real DevNet SOL sent by the user (not committed anywhere -- this is a keypair this session generated and controls, gitignored like the program keypair); it is a DevNet-only key per DEC-0015 and will need to migrate to a multisig before any restricted beta.",
+  "affectedAreas": ["docs/protocol/DEVNET_RUNBOOK.md (Deployment record)", "docs/project/PROJECT_STATUS.md", "environment (Visual Studio Build Tools now installed)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`solana program show 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW --url devnet` output: Owner=BPFLoaderUpgradeab1e11111111111111111111111, Authority=6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk, Data Length=538056 bytes, Balance=3.74607384 SOL",
+    "Deployment signature arj6tzkUCqgSeJBs9inJv3nLcyoK5smasygGEZmDZ5hk84QukwLsJKR9mbaZryJz56uFRTkeXoGtTFSBSMWuaju",
+    "web3.js requestAirdrop error: '429 Too Many Requests: You've either reached your airdrop limit today or the airdrop faucet has run dry.'",
+    "`cargo-build-sbf` succeeded after Build Tools install: 'Finished `release` profile [optimized] target(s) in 1m 07s', producing target/deploy/ssr_protocol.so (538056 bytes)"
+  ]
+}
+```
