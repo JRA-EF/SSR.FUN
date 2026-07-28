@@ -8,7 +8,7 @@
   },
   "functions": {
     "api/dashboard/content.ts": {
-      "includeFiles": "docs/project/*.md"
+      "includeFiles": "docs/project/*.{md,json}"
     }
   },
   "rewrites": [

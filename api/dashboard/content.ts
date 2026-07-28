@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { DashboardRequest, DashboardResponse } from '../../lib/dashboard/http.js'
 import { parseCookie, SESSION_COOKIE_NAME, verifySessionCookie } from '../../lib/dashboard/session.js'
-import { parseDecisionLog, parseProjectStatus } from '../../lib/dashboard/parseMarkdown.js'
+import { parseDecisionLog, parseEngineeringTimeline, parseProjectStatus } from '../../lib/dashboard/parseMarkdown.js'
 
 export default async function handler(req: DashboardRequest, res: DashboardResponse) {
   const configuredPassword = process.env.SSR_DASHBOARD_PASSWORD ?? ''
@@ -26,10 +26,14 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
 
   const statusMarkdown = fs.readFileSync(path.join(process.cwd(), 'docs/project/PROJECT_STATUS.md'), 'utf8')
   const decisionMarkdown = fs.readFileSync(path.join(process.cwd(), 'docs/project/DECISION_LOG.md'), 'utf8')
+  const timelineMarkdown = fs.readFileSync(path.join(process.cwd(), 'docs/project/ENGINEERING_TIMELINE.md'), 'utf8')
+  const repoMetricsRaw = fs.readFileSync(path.join(process.cwd(), 'docs/project/REPO_METRICS.json'), 'utf8')
 
   res.setHeader('Cache-Control', 'no-store')
   res.status(200).json({
     status: parseProjectStatus(statusMarkdown),
     decisions: parseDecisionLog(decisionMarkdown),
+    engineering: parseEngineeringTimeline(timelineMarkdown),
+    repoMetrics: JSON.parse(repoMetricsRaw),
   })
 }

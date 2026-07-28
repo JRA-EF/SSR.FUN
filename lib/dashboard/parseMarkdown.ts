@@ -16,6 +16,14 @@ export interface RoadmapPhase {
   status: string
 }
 
+export interface EngineeringArea {
+  area: string
+  weight: number
+  completion: number
+  status: string
+  detail: string
+}
+
 export interface ProjectStatus {
   overallStatus: string
   currentPhase: string
@@ -28,6 +36,7 @@ export interface ProjectStatus {
   inProgressHtml: string
   nextActionsHtml: string
   roadmap: RoadmapPhase[]
+  engineeringAreas: EngineeringArea[]
   blockersHtml: string
   dependenciesHtml: string
   risksHtml: string
@@ -78,13 +87,23 @@ function plain(body: string | undefined): string {
   return (body ?? '').trim()
 }
 
+function weightedCompletionPercent(items: { weight: number; completion: number }[]): number {
+  const totalWeight = items.reduce((sum, p) => sum + p.weight, 0)
+  const weightedCompletion = items.reduce((sum, p) => sum + p.weight * p.completion, 0)
+  return totalWeight > 0 ? Math.round((weightedCompletion / totalWeight) * 100) : 0
+}
+
 export function parseProjectStatus(markdown: string): ProjectStatus {
   const sections = splitSections(markdown)
 
   const roadmap = (extractFencedJson(sections.get('Roadmap') ?? '') as RoadmapPhase[] | null) ?? []
-  const totalWeight = roadmap.reduce((sum, p) => sum + p.weight, 0)
-  const weightedCompletion = roadmap.reduce((sum, p) => sum + p.weight * p.completion, 0)
-  const overallCompletionPercent = totalWeight > 0 ? Math.round((weightedCompletion / totalWeight) * 100) : 0
+  const engineeringAreas = (extractFencedJson(sections.get('Engineering Areas') ?? '') as EngineeringArea[] | null) ?? []
+  // The whole-project headline number comes from Engineering Areas (re-weighted
+  // across the entire project, not just the current protocol mission's phases)
+  // when present, falling back to Roadmap alone for resilience if that section
+  // is ever missing.
+  const overallCompletionPercent =
+    engineeringAreas.length > 0 ? weightedCompletionPercent(engineeringAreas) : weightedCompletionPercent(roadmap)
 
   return {
     overallStatus: plain(sections.get('Overall Status')),
@@ -98,12 +117,56 @@ export function parseProjectStatus(markdown: string): ProjectStatus {
     inProgressHtml: html(sections.get('In Progress')),
     nextActionsHtml: html(sections.get('Next Actions')),
     roadmap,
+    engineeringAreas,
     blockersHtml: html(sections.get('Blockers')),
     dependenciesHtml: html(sections.get('Dependencies')),
     risksHtml: html(sections.get('Risks')),
     decisionsRequiredHtml: html(sections.get('Decisions Required')),
     technicalHealthHtml: html(sections.get('Technical Health')),
     environmentStatusHtml: html(sections.get('Environment Status')),
+  }
+}
+
+export interface Milestone {
+  id: string
+  title: string
+  description: string
+  date: string
+  category: string
+  source: 'git' | 'manual'
+  commit?: string
+  note?: string
+}
+
+export interface TimelineEntry {
+  date: string
+  title: string
+  description: string
+  category: string
+  source: 'git' | 'manual'
+  commit?: string
+  author?: string
+}
+
+export interface InfraItem {
+  label: string
+  value: string
+  detail: string
+  source: 'git' | 'manual'
+}
+
+export interface EngineeringTimeline {
+  milestones: Milestone[]
+  timeline: TimelineEntry[]
+  infra: InfraItem[]
+}
+
+export function parseEngineeringTimeline(markdown: string): EngineeringTimeline {
+  const sections = splitSections(markdown)
+  return {
+    milestones: (extractFencedJson(sections.get('Milestones') ?? '') as Milestone[] | null) ?? [],
+    timeline: (extractFencedJson(sections.get('Timeline') ?? '') as TimelineEntry[] | null) ?? [],
+    infra: (extractFencedJson(sections.get('Infrastructure') ?? '') as InfraItem[] | null) ?? [],
   }
 }
 
