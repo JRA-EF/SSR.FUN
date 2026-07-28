@@ -1,0 +1,125 @@
+{
+  "generatedAt": "2026-07-28T15:33:53.014Z",
+  "generatedBy": "scripts/generate-repo-metrics.ts",
+  "repository": {
+    "remoteUrl": "https://github.com/JRA-EF/SSR.FUN.git",
+    "totalCommitsAllBranches": 79,
+    "firstCommit": {
+      "hash": "8e0fa4bcf5fd4978a92556ef6829bab5ec2aa2c0",
+      "date": "2026-07-13T22:32:09Z",
+      "author": "Replit Agent",
+      "subject": "Initial commit"
+    },
+    "latestCommit": {
+      "hash": "d7d7f4403d1173410ed373c16ee3d80d399bc747",
+      "date": "2026-07-28T15:57:32+01:00",
+      "author": "Joao",
+      "subject": "Record final production deployment commit for the treasury upgrade"
+    },
+    "currentBranch": "main",
+    "branches": [
+      {
+        "name": "fable-functional-port",
+        "remote": false,
+        "lastCommitDate": "2026-07-27T15:14:11+01:00",
+        "lastCommitSubject": "Add hourly hover tooltips and axis labels to sparklines"
+      },
+      {
+        "name": "main",
+        "remote": false,
+        "lastCommitDate": "2026-07-28T15:57:32+01:00",
+        "lastCommitSubject": "Record final production deployment commit for the treasury upgrade"
+      },
+      {
+        "name": "protocol/devnet-v1",
+        "remote": false,
+        "lastCommitDate": "2026-07-28T13:28:27+01:00",
+        "lastCommitSubject": "Document Gate 10-11 frontend integration (DEC-0027, status, records)"
+      },
+      {
+        "name": "main-backup",
+        "remote": true,
+        "lastCommitDate": "2026-07-27T16:04:47+01:00",
+        "lastCommitSubject": "Add Vercel deployment config"
+      },
+      {
+        "name": "main-old-backup",
+        "remote": true,
+        "lastCommitDate": "2026-07-23T10:39:30Z",
+        "lastCommitSubject": "Hero: fix geometry — shared corner arcs for top+sides, proper extruded rounded square"
+      }
+    ],
+    "contributors": [
+      {
+        "name": "JRA-EF",
+        "email": "joao@enigma-fund.com",
+        "commits": 29,
+        "aiAssisted": false
+      },
+      {
+        "name": "Joao",
+        "email": "joao@enigma-fund.com",
+        "commits": 25,
+        "aiAssisted": true
+      },
+      {
+        "name": "Replit Agent",
+        "email": "agent@replit.com",
+        "commits": 18,
+        "aiAssisted": false
+      },
+      {
+        "name": "jra_xyz",
+        "email": "joao@enigma-fund.com",
+        "commits": 7,
+        "aiAssisted": true
+      }
+    ],
+    "commitActivity": [
+      {
+        "date": "2026-07-13",
+        "commits": 1
+      },
+      {
+        "date": "2026-07-14",
+        "commits": 4
+      },
+      {
+        "date": "2026-07-15",
+        "commits": 16
+      },
+      {
+        "date": "2026-07-16",
+        "commits": 13
+      },
+      {
+        "date": "2026-07-22",
+        "commits": 5
+      },
+      {
+        "date": "2026-07-23",
+        "commits": 13
+      },
+      {
+        "date": "2026-07-24",
+        "commits": 1
+      },
+      {
+        "date": "2026-07-27",
+        "commits": 6
+      },
+      {
+        "date": "2026-07-28",
+        "commits": 20
+      }
+    ]
+  },
+  "codebase": {
+    "rustLinesOfCode": 3125,
+    "typescriptLinesOfCode": 12462,
+    "protocolInstructionCount": 18,
+    "documentationPageCount": 13,
+    "decisionLogEntryCount": 35,
+    "liveDevnetVerificationScriptCount": 7
+  }
+}
