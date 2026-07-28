@@ -62,16 +62,27 @@ pub fn require_reserve_permission<'r, 'd>(
     }
 
     let (expected_delegate_key, _bump) = Pubkey::find_program_address(
-        &[crate::constants::DELEGATE_SEED, reserve_key.as_ref(), signer.as_ref()],
+        &[
+            crate::constants::DELEGATE_SEED,
+            reserve_key.as_ref(),
+            signer.as_ref(),
+        ],
         program_id,
     );
-    require_keys_eq!(expected_delegate_key, delegate_info.key(), SsrError::DelegateNotFound);
+    require_keys_eq!(
+        expected_delegate_key,
+        delegate_info.key(),
+        SsrError::DelegateNotFound
+    );
 
     let delegate = Account::<Delegate>::try_from(delegate_info)
         .map_err(|_| error!(SsrError::DelegateNotFound))?;
     require_keys_eq!(delegate.reserve, *reserve_key, SsrError::DelegateNotFound);
     require_keys_eq!(delegate.wallet, *signer, SsrError::DelegateNotFound);
-    require!(delegate.has_permission(flag), SsrError::DelegatePermissionDenied);
+    require!(
+        delegate.has_permission(flag),
+        SsrError::DelegatePermissionDenied
+    );
 
     Ok(())
 }
@@ -144,31 +155,60 @@ pub fn load_asset_legs<'r, 'info>(
         let config: Account<'info, ReserveAsset> = Account::try_from(reserve_asset_info)
             .map_err(|_| error!(SsrError::ReserveAssetMismatch))?;
         require_keys_eq!(config.reserve, *reserve_key, SsrError::ReserveAssetMismatch);
-        require_eq!(config.order_index as usize, i, SsrError::RemainingAccountsMismatch);
+        require_eq!(
+            config.order_index as usize,
+            i,
+            SsrError::RemainingAccountsMismatch
+        );
 
         let (expected_reserve_asset_key, _) = Pubkey::find_program_address(
-            &[RESERVE_ASSET_SEED, reserve_key.as_ref(), config.asset_mint.as_ref()],
+            &[
+                RESERVE_ASSET_SEED,
+                reserve_key.as_ref(),
+                config.asset_mint.as_ref(),
+            ],
             program_id,
         );
-        require_keys_eq!(expected_reserve_asset_key, reserve_asset_info.key(), SsrError::ReserveAssetMismatch);
+        require_keys_eq!(
+            expected_reserve_asset_key,
+            reserve_asset_info.key(),
+            SsrError::ReserveAssetMismatch
+        );
 
         let (expected_vault_key, _) = Pubkey::find_program_address(
-            &[RESERVE_VAULT_SEED, reserve_key.as_ref(), config.asset_mint.as_ref()],
+            &[
+                RESERVE_VAULT_SEED,
+                reserve_key.as_ref(),
+                config.asset_mint.as_ref(),
+            ],
             program_id,
         );
-        require_keys_eq!(expected_vault_key, vault_info.key(), SsrError::InvalidReserveVault);
+        require_keys_eq!(
+            expected_vault_key,
+            vault_info.key(),
+            SsrError::InvalidReserveVault
+        );
         require_keys_eq!(*vault_info.key, config.vault, SsrError::InvalidReserveVault);
 
-        let vault: InterfaceAccount<'info, TokenAccount> = InterfaceAccount::try_from(vault_info)
-            .map_err(|_| error!(SsrError::InvalidReserveVault))?;
+        let vault: InterfaceAccount<'info, TokenAccount> =
+            InterfaceAccount::try_from(vault_info)
+                .map_err(|_| error!(SsrError::InvalidReserveVault))?;
         let mint: InterfaceAccount<'info, Mint> = InterfaceAccount::try_from(mint_info)
             .map_err(|_| error!(SsrError::UnsupportedTokenProgram))?;
-        require_keys_eq!(mint.key(), config.asset_mint, SsrError::ReserveAssetMismatch);
+        require_keys_eq!(
+            mint.key(),
+            config.asset_mint,
+            SsrError::ReserveAssetMismatch
+        );
 
         let owner_token_account: InterfaceAccount<'info, TokenAccount> =
             InterfaceAccount::try_from(owner_token_account_info)
                 .map_err(|_| error!(SsrError::ReserveAssetMismatch))?;
-        require_keys_eq!(owner_token_account.mint, config.asset_mint, SsrError::ReserveAssetMismatch);
+        require_keys_eq!(
+            owner_token_account.mint,
+            config.asset_mint,
+            SsrError::ReserveAssetMismatch
+        );
 
         legs.push(AssetLeg {
             config,
@@ -195,20 +235,36 @@ pub fn load_reserve_asset_configs<'r, 'info>(
     program_id: &Pubkey,
 ) -> Result<Vec<Account<'info, ReserveAsset>>> {
     let expected_count = reserve.asset_count as usize;
-    require_eq!(remaining_accounts.len(), expected_count, SsrError::RemainingAccountsMismatch);
+    require_eq!(
+        remaining_accounts.len(),
+        expected_count,
+        SsrError::RemainingAccountsMismatch
+    );
 
     let mut configs = Vec::with_capacity(expected_count);
     for (i, account_info) in remaining_accounts.iter().enumerate() {
         let config: Account<'info, ReserveAsset> =
             Account::try_from(account_info).map_err(|_| error!(SsrError::ReserveAssetMismatch))?;
         require_keys_eq!(config.reserve, *reserve_key, SsrError::ReserveAssetMismatch);
-        require_eq!(config.order_index as usize, i, SsrError::RemainingAccountsMismatch);
+        require_eq!(
+            config.order_index as usize,
+            i,
+            SsrError::RemainingAccountsMismatch
+        );
 
         let (expected_key, _) = Pubkey::find_program_address(
-            &[RESERVE_ASSET_SEED, reserve_key.as_ref(), config.asset_mint.as_ref()],
+            &[
+                RESERVE_ASSET_SEED,
+                reserve_key.as_ref(),
+                config.asset_mint.as_ref(),
+            ],
             program_id,
         );
-        require_keys_eq!(expected_key, account_info.key(), SsrError::ReserveAssetMismatch);
+        require_keys_eq!(
+            expected_key,
+            account_info.key(),
+            SsrError::ReserveAssetMismatch
+        );
 
         configs.push(config);
     }
@@ -311,7 +367,10 @@ pub fn mul_div_floor(a: u64, b: u64, c: u64) -> Result<u64> {
 ///   created vault token account frozen and unusable.
 /// - `ConfidentialTransferMint`: balances aren't plainly readable, breaking
 ///   the balance-delta accounting this program relies on throughout.
-pub fn validate_asset_mint_extensions(mint_info: &AccountInfo, token_program_id: &Pubkey) -> Result<()> {
+pub fn validate_asset_mint_extensions(
+    mint_info: &AccountInfo,
+    token_program_id: &Pubkey,
+) -> Result<()> {
     // Classic SPL Token mints are owned by the classic token program and
     // never carry extension TLV data -- nothing to check.
     if *token_program_id == anchor_spl::token::ID {

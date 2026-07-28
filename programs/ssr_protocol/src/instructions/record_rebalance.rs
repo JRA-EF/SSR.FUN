@@ -38,7 +38,11 @@ pub struct RecordRebalance<'info> {
     // in order_index order.
 }
 
-pub fn handler<'info>(ctx: Context<'info, RecordRebalance<'info>>, balances_before: Vec<u64>, note: String) -> Result<()> {
+pub fn handler<'info>(
+    ctx: Context<'info, RecordRebalance<'info>>,
+    balances_before: Vec<u64>,
+    note: String,
+) -> Result<()> {
     let reserve_key = ctx.accounts.reserve.key();
     require_reserve_permission(
         &ctx.accounts.reserve,
@@ -50,8 +54,16 @@ pub fn handler<'info>(ctx: Context<'info, RecordRebalance<'info>>, balances_befo
     )?;
 
     let expected_count = ctx.accounts.reserve.asset_count as usize;
-    require_eq!(balances_before.len(), expected_count, SsrError::RemainingAccountsMismatch);
-    require_eq!(ctx.remaining_accounts.len(), expected_count * 2, SsrError::RemainingAccountsMismatch);
+    require_eq!(
+        balances_before.len(),
+        expected_count,
+        SsrError::RemainingAccountsMismatch
+    );
+    require_eq!(
+        ctx.remaining_accounts.len(),
+        expected_count * 2,
+        SsrError::RemainingAccountsMismatch
+    );
 
     let mut asset_mints = Vec::with_capacity(expected_count);
     let mut balances_after = Vec::with_capacity(expected_count);
@@ -60,17 +72,31 @@ pub fn handler<'info>(ctx: Context<'info, RecordRebalance<'info>>, balances_befo
         let reserve_asset_info = &ctx.remaining_accounts[i * 2];
         let vault_info = &ctx.remaining_accounts[i * 2 + 1];
 
-        let config: Account<ReserveAsset> =
-            Account::try_from(reserve_asset_info).map_err(|_| error!(SsrError::ReserveAssetMismatch))?;
+        let config: Account<ReserveAsset> = Account::try_from(reserve_asset_info)
+            .map_err(|_| error!(SsrError::ReserveAssetMismatch))?;
         require_keys_eq!(config.reserve, reserve_key, SsrError::ReserveAssetMismatch);
-        require_eq!(config.order_index as usize, i, SsrError::RemainingAccountsMismatch);
+        require_eq!(
+            config.order_index as usize,
+            i,
+            SsrError::RemainingAccountsMismatch
+        );
 
-        let (expected_vault_key, _) =
-            Pubkey::find_program_address(&[RESERVE_VAULT_SEED, reserve_key.as_ref(), config.asset_mint.as_ref()], ctx.program_id);
-        require_keys_eq!(expected_vault_key, vault_info.key(), SsrError::InvalidReserveVault);
+        let (expected_vault_key, _) = Pubkey::find_program_address(
+            &[
+                RESERVE_VAULT_SEED,
+                reserve_key.as_ref(),
+                config.asset_mint.as_ref(),
+            ],
+            ctx.program_id,
+        );
+        require_keys_eq!(
+            expected_vault_key,
+            vault_info.key(),
+            SsrError::InvalidReserveVault
+        );
 
-        let vault: InterfaceAccount<TokenAccount> =
-            InterfaceAccount::try_from(vault_info).map_err(|_| error!(SsrError::InvalidReserveVault))?;
+        let vault: InterfaceAccount<TokenAccount> = InterfaceAccount::try_from(vault_info)
+            .map_err(|_| error!(SsrError::InvalidReserveVault))?;
 
         asset_mints.push(config.asset_mint);
         balances_after.push(vault.amount);

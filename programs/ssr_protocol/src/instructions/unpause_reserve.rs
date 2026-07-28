@@ -22,7 +22,10 @@ pub struct UnpauseReserve<'info> {
 }
 
 pub fn handler<'info>(ctx: Context<'info, UnpauseReserve<'info>>) -> Result<()> {
-    require!(ctx.accounts.reserve.status == ReserveStatus::Paused, SsrError::ReserveNotPaused);
+    require!(
+        ctx.accounts.reserve.status == ReserveStatus::Paused,
+        SsrError::ReserveNotPaused
+    );
 
     let reserve_key = ctx.accounts.reserve.key();
     require_reserve_permission(

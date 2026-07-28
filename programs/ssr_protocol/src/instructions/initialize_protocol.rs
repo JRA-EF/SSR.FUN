@@ -34,13 +34,15 @@ pub fn handler<'info>(
     );
 
     let bump = ctx.bumps.protocol_config;
-    ctx.accounts.protocol_config.set_inner(ProtocolConfig::initial(
-        ctx.accounts.authority.key(),
-        max_reserve_assets,
-        default_protocol_fee_bps,
-        default_protocol_fee_destination,
-        bump,
-    ));
+    ctx.accounts
+        .protocol_config
+        .set_inner(ProtocolConfig::initial(
+            ctx.accounts.authority.key(),
+            max_reserve_assets,
+            default_protocol_fee_bps,
+            default_protocol_fee_destination,
+            bump,
+        ));
 
     emit!(ProtocolInitialized {
         authority: ctx.accounts.authority.key(),

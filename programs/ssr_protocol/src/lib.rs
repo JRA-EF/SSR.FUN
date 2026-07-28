@@ -121,7 +121,11 @@ pub mod ssr_protocol {
         reserve_tokens_to_redeem: u64,
         min_asset_amounts_out: Vec<u64>,
     ) -> Result<()> {
-        instructions::redeem_reserve_tokens_in_kind::handler(ctx, reserve_tokens_to_redeem, min_asset_amounts_out)
+        instructions::redeem_reserve_tokens_in_kind::handler(
+            ctx,
+            reserve_tokens_to_redeem,
+            min_asset_amounts_out,
+        )
     }
 
     pub fn update_targets<'info>(
@@ -182,7 +186,10 @@ pub mod ssr_protocol {
         instructions::record_rebalance::handler(ctx, balances_before, note)
     }
 
-    pub fn update_metadata<'info>(ctx: Context<'info, UpdateMetadata<'info>>, new_metadata_uri: String) -> Result<()> {
+    pub fn update_metadata<'info>(
+        ctx: Context<'info, UpdateMetadata<'info>>,
+        new_metadata_uri: String,
+    ) -> Result<()> {
         instructions::update_metadata::handler(ctx, new_metadata_uri)
     }
 }

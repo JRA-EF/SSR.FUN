@@ -92,7 +92,10 @@ impl Reserve {
         + 1; // mint_authority_bump
 
     pub fn require_not_paused(&self) -> Result<()> {
-        require!(self.status != ReserveStatus::Paused, SsrError::ReservePaused);
+        require!(
+            self.status != ReserveStatus::Paused,
+            SsrError::ReservePaused
+        );
         Ok(())
     }
 

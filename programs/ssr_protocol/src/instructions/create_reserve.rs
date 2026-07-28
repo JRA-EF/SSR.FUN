@@ -63,11 +63,26 @@ pub fn handler<'info>(
     protocol_fee_share_bps: u16,
     fee_destination: Pubkey,
 ) -> Result<()> {
-    require!(!ctx.accounts.protocol_config.paused, SsrError::ProtocolPaused);
-    require!(metadata_uri.len() <= MAX_METADATA_URI_LEN, SsrError::MetadataUriTooLong);
-    require!(mint_fee_bps <= MAX_MINT_FEE_BPS, SsrError::FeeExceedsMaximum);
-    require!(redemption_fee_bps <= MAX_REDEMPTION_FEE_BPS, SsrError::FeeExceedsMaximum);
-    require!(annual_tvl_fee_bps <= MAX_ANNUAL_TVL_FEE_BPS, SsrError::FeeExceedsMaximum);
+    require!(
+        !ctx.accounts.protocol_config.paused,
+        SsrError::ProtocolPaused
+    );
+    require!(
+        metadata_uri.len() <= MAX_METADATA_URI_LEN,
+        SsrError::MetadataUriTooLong
+    );
+    require!(
+        mint_fee_bps <= MAX_MINT_FEE_BPS,
+        SsrError::FeeExceedsMaximum
+    );
+    require!(
+        redemption_fee_bps <= MAX_REDEMPTION_FEE_BPS,
+        SsrError::FeeExceedsMaximum
+    );
+    require!(
+        annual_tvl_fee_bps <= MAX_ANNUAL_TVL_FEE_BPS,
+        SsrError::FeeExceedsMaximum
+    );
     require!(
         manager_fee_share_bps <= BPS_DENOMINATOR && protocol_fee_share_bps <= BPS_DENOMINATOR,
         SsrError::InvalidFeeShareSplit

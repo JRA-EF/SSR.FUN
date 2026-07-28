@@ -3,7 +3,10 @@ use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
 use super::common::{load_asset_legs, mul_div_ceil, mul_div_floor, transfer_into_vault};
-use crate::constants::{BPS_DENOMINATOR, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED};
+use crate::constants::{
+    BPS_DENOMINATOR, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED, RESERVE_SEED,
+    RESERVE_TOKEN_MINT_SEED,
+};
 use crate::errors::SsrError;
 use crate::events::ReserveTokensMinted;
 use crate::state::{ProtocolConfig, Reserve, ReserveStatus};
@@ -60,8 +63,14 @@ pub fn handler<'info>(
     min_reserve_tokens_out: u64,
     max_asset_amounts: Vec<u64>,
 ) -> Result<()> {
-    require!(!ctx.accounts.protocol_config.paused, SsrError::ProtocolPaused);
-    require!(ctx.accounts.reserve.status == ReserveStatus::Active, SsrError::UnexpectedReserveStatus);
+    require!(
+        !ctx.accounts.protocol_config.paused,
+        SsrError::ProtocolPaused
+    );
+    require!(
+        ctx.accounts.reserve.status == ReserveStatus::Active,
+        SsrError::UnexpectedReserveStatus
+    );
     require!(reserve_tokens_requested > 0, SsrError::ZeroValue);
     require_eq!(
         max_asset_amounts.len(),
@@ -77,17 +86,33 @@ pub fn handler<'info>(
     require!(total_supply_before > 0, SsrError::ZeroSupply);
 
     let reserve_key = ctx.accounts.reserve.key();
-    let legs = load_asset_legs(&ctx.accounts.reserve, &reserve_key, ctx.remaining_accounts, ctx.program_id)?;
+    let legs = load_asset_legs(
+        &ctx.accounts.reserve,
+        &reserve_key,
+        ctx.remaining_accounts,
+        ctx.program_id,
+    )?;
 
     let mut asset_mints = Vec::with_capacity(legs.len());
     let mut asset_amounts_in = Vec::with_capacity(legs.len());
 
     for (i, leg) in legs.iter().enumerate() {
         let vault_balance_before = leg.vault.amount;
-        let required_amount = mul_div_ceil(reserve_tokens_requested, vault_balance_before, total_supply_before)?;
-        require!(required_amount <= max_asset_amounts[i], SsrError::SlippageMaxInputExceeded);
+        let required_amount = mul_div_ceil(
+            reserve_tokens_requested,
+            vault_balance_before,
+            total_supply_before,
+        )?;
+        require!(
+            required_amount <= max_asset_amounts[i],
+            SsrError::SlippageMaxInputExceeded
+        );
 
-        transfer_into_vault(leg, &ctx.accounts.depositor.to_account_info(), required_amount)?;
+        transfer_into_vault(
+            leg,
+            &ctx.accounts.depositor.to_account_info(),
+            required_amount,
+        )?;
 
         asset_mints.push(leg.mint.key());
         asset_amounts_in.push(required_amount);
@@ -103,10 +128,21 @@ pub fn handler<'info>(
         .checked_sub(mint_fee_shares)
         .ok_or(error!(SsrError::MathUnderflow))?;
     require!(net_shares_out > 0, SsrError::ZeroAmountAfterFeesOrRounding);
-    require!(net_shares_out >= min_reserve_tokens_out, SsrError::SlippageMinOutputNotMet);
+    require!(
+        net_shares_out >= min_reserve_tokens_out,
+        SsrError::SlippageMinOutputNotMet
+    );
 
-    let manager_fee_shares = mul_div_floor(mint_fee_shares, fee_config.manager_fee_share_bps as u64, BPS_DENOMINATOR as u64)?;
-    let protocol_fee_shares = mul_div_floor(mint_fee_shares, fee_config.protocol_fee_share_bps as u64, BPS_DENOMINATOR as u64)?;
+    let manager_fee_shares = mul_div_floor(
+        mint_fee_shares,
+        fee_config.manager_fee_share_bps as u64,
+        BPS_DENOMINATOR as u64,
+    )?;
+    let protocol_fee_shares = mul_div_floor(
+        mint_fee_shares,
+        fee_config.protocol_fee_share_bps as u64,
+        BPS_DENOMINATOR as u64,
+    )?;
 
     let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
     {
@@ -123,14 +159,22 @@ pub fn handler<'info>(
             .ok_or(error!(SsrError::MathOverflow))?;
     }
 
-    let mint_authority_seeds: &[&[u8]] = &[MINT_AUTHORITY_SEED, reserve_key.as_ref(), &[mint_authority_bump]];
+    let mint_authority_seeds: &[&[u8]] = &[
+        MINT_AUTHORITY_SEED,
+        reserve_key.as_ref(),
+        &[mint_authority_bump],
+    ];
     let signer_seeds: &[&[&[u8]]] = &[mint_authority_seeds];
     let cpi_accounts = MintTo {
         mint: ctx.accounts.reserve_token_mint.to_account_info(),
-        to: ctx.accounts.depositor_reserve_token_account.to_account_info(),
+        to: ctx
+            .accounts
+            .depositor_reserve_token_account
+            .to_account_info(),
         authority: ctx.accounts.mint_authority.to_account_info(),
     };
-    let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
+    let cpi_ctx =
+        CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
     token::mint_to(cpi_ctx, net_shares_out)?;
 
     emit!(ReserveTokensMinted {

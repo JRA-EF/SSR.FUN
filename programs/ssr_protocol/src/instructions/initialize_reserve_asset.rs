@@ -3,7 +3,8 @@ use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use super::common::validate_asset_mint_extensions;
 use crate::constants::{
-    PROTOCOL_CONFIG_SEED, RESERVE_ASSET_SEED, RESERVE_SEED, RESERVE_VAULT_SEED, VAULT_AUTHORITY_SEED,
+    PROTOCOL_CONFIG_SEED, RESERVE_ASSET_SEED, RESERVE_SEED, RESERVE_VAULT_SEED,
+    VAULT_AUTHORITY_SEED,
 };
 use crate::errors::SsrError;
 use crate::events::ReserveAssetInitialized;
@@ -60,10 +61,14 @@ pub struct InitializeReserveAsset<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler<'info>(ctx: Context<'info, InitializeReserveAsset<'info>>, target_weight_bps: u16) -> Result<()> {
+pub fn handler<'info>(
+    ctx: Context<'info, InitializeReserveAsset<'info>>,
+    target_weight_bps: u16,
+) -> Result<()> {
     let reserve = &ctx.accounts.reserve;
     require!(
-        reserve.status == ReserveStatus::Created || reserve.status == ReserveStatus::AssetsInitializing,
+        reserve.status == ReserveStatus::Created
+            || reserve.status == ReserveStatus::AssetsInitializing,
         SsrError::UnexpectedReserveStatus
     );
     require!(
@@ -80,7 +85,10 @@ pub fn handler<'info>(ctx: Context<'info, InitializeReserveAsset<'info>>, target
     );
 
     let token_program_id = ctx.accounts.token_program.key();
-    validate_asset_mint_extensions(&ctx.accounts.asset_mint.to_account_info(), &token_program_id)?;
+    validate_asset_mint_extensions(
+        &ctx.accounts.asset_mint.to_account_info(),
+        &token_program_id,
+    )?;
     let token_program_kind = if token_program_id == anchor_spl::token::ID {
         TokenProgramKind::SplToken
     } else {

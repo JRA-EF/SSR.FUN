@@ -59,13 +59,23 @@ pub struct SeedReserve<'info> {
     // in ReserveAsset.order_index order. See instructions/common.rs::load_asset_legs.
 }
 
-pub fn handler<'info>(ctx: Context<'info, SeedReserve<'info>>, seed_amounts: Vec<u64>, initial_reserve_tokens: u64) -> Result<()> {
-    require!(!ctx.accounts.protocol_config.paused, SsrError::ProtocolPaused);
+pub fn handler<'info>(
+    ctx: Context<'info, SeedReserve<'info>>,
+    seed_amounts: Vec<u64>,
+    initial_reserve_tokens: u64,
+) -> Result<()> {
+    require!(
+        !ctx.accounts.protocol_config.paused,
+        SsrError::ProtocolPaused
+    );
     require!(
         ctx.accounts.reserve.status == ReserveStatus::AssetsInitializing,
         SsrError::UnexpectedReserveStatus
     );
-    require!(ctx.accounts.reserve.asset_count > 0, SsrError::UnexpectedReserveStatus);
+    require!(
+        ctx.accounts.reserve.asset_count > 0,
+        SsrError::UnexpectedReserveStatus
+    );
     require!(initial_reserve_tokens > 0, SsrError::ZeroValue);
     require_eq!(
         seed_amounts.len(),
@@ -85,7 +95,10 @@ pub fn handler<'info>(ctx: Context<'info, SeedReserve<'info>>, seed_amounts: Vec
     let mut asset_amounts = Vec::with_capacity(legs.len());
 
     for (leg, &amount) in legs.iter_mut().zip(seed_amounts.iter()) {
-        require!(amount >= MIN_SEED_AMOUNT_PER_ASSET, SsrError::SeedAmountTooLow);
+        require!(
+            amount >= MIN_SEED_AMOUNT_PER_ASSET,
+            SsrError::SeedAmountTooLow
+        );
         transfer_into_vault(leg, &ctx.accounts.manager.to_account_info(), amount)?;
 
         // Mirrors the reference protocol's own `initialize()` assertion
@@ -121,11 +134,8 @@ pub fn handler<'info>(ctx: Context<'info, SeedReserve<'info>>, seed_amounts: Vec
         to: ctx.accounts.manager_reserve_token_account.to_account_info(),
         authority: ctx.accounts.mint_authority.to_account_info(),
     };
-    let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.key(),
-        cpi_accounts,
-        signer_seeds,
-    );
+    let cpi_ctx =
+        CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
     token::mint_to(cpi_ctx, initial_reserve_tokens)?;
 
     emit!(ReserveSeeded {

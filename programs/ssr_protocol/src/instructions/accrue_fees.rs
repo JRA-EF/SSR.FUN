@@ -40,7 +40,9 @@ pub struct AccrueFees<'info> {
 pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
     let reserve = &ctx.accounts.reserve;
     let now = Clock::get()?.unix_timestamp;
-    let elapsed_seconds = now.checked_sub(reserve.fee_config.last_fee_accrual_ts).ok_or(error!(SsrError::MathUnderflow))?;
+    let elapsed_seconds = now
+        .checked_sub(reserve.fee_config.last_fee_accrual_ts)
+        .ok_or(error!(SsrError::MathUnderflow))?;
     let elapsed_days = elapsed_seconds / SECONDS_PER_DAY;
 
     if elapsed_days <= 0 {
@@ -62,17 +64,24 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
         .checked_add(denominator - 1)
         .ok_or(error!(SsrError::MathOverflow))?
         / denominator;
-    let total_fee_shares = u64::try_from(total_fee_shares_u128).map_err(|_| error!(SsrError::MathOverflow))?;
+    let total_fee_shares =
+        u64::try_from(total_fee_shares_u128).map_err(|_| error!(SsrError::MathOverflow))?;
 
-    let manager_fee_shares = ((total_fee_shares as u128) * (reserve.fee_config.manager_fee_share_bps as u128)
+    let manager_fee_shares = ((total_fee_shares as u128)
+        * (reserve.fee_config.manager_fee_share_bps as u128)
         / (BPS_DENOMINATOR as u128)) as u64;
-    let protocol_fee_shares = ((total_fee_shares as u128) * (reserve.fee_config.protocol_fee_share_bps as u128)
+    let protocol_fee_shares = ((total_fee_shares as u128)
+        * (reserve.fee_config.protocol_fee_share_bps as u128)
         / (BPS_DENOMINATOR as u128)) as u64;
 
     let accrued_until_ts = reserve
         .fee_config
         .last_fee_accrual_ts
-        .checked_add(elapsed_days.checked_mul(SECONDS_PER_DAY).ok_or(error!(SsrError::MathOverflow))?)
+        .checked_add(
+            elapsed_days
+                .checked_mul(SECONDS_PER_DAY)
+                .ok_or(error!(SsrError::MathOverflow))?,
+        )
         .ok_or(error!(SsrError::MathOverflow))?;
 
     let reserve = &mut ctx.accounts.reserve;

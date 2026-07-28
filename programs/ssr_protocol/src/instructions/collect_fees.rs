@@ -2,7 +2,9 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
-use crate::constants::{MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED};
+use crate::constants::{
+    MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
+};
 use crate::errors::SsrError;
 use crate::events::FeesCollected;
 use crate::state::{ProtocolConfig, Reserve};
@@ -80,35 +82,58 @@ pub fn handler<'info>(ctx: Context<'info, CollectFees<'info>>) -> Result<()> {
     );
     require_keys_eq!(
         ctx.accounts.protocol_fee_destination.key(),
-        ctx.accounts.protocol_config.default_protocol_fee_destination,
+        ctx.accounts
+            .protocol_config
+            .default_protocol_fee_destination,
         SsrError::InvalidFeeShareSplit
     );
 
     let manager_shares = ctx.accounts.reserve.fee_config.pending_manager_fee_shares;
     let protocol_shares = ctx.accounts.reserve.fee_config.pending_protocol_fee_shares;
-    require!(manager_shares > 0 || protocol_shares > 0, SsrError::NoPendingFees);
+    require!(
+        manager_shares > 0 || protocol_shares > 0,
+        SsrError::NoPendingFees
+    );
 
     let reserve_key = ctx.accounts.reserve.key();
     let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
-    let mint_authority_seeds: &[&[u8]] = &[MINT_AUTHORITY_SEED, reserve_key.as_ref(), &[mint_authority_bump]];
+    let mint_authority_seeds: &[&[u8]] = &[
+        MINT_AUTHORITY_SEED,
+        reserve_key.as_ref(),
+        &[mint_authority_bump],
+    ];
     let signer_seeds: &[&[&[u8]]] = &[mint_authority_seeds];
 
     if manager_shares > 0 {
         let cpi_accounts = MintTo {
             mint: ctx.accounts.reserve_token_mint.to_account_info(),
-            to: ctx.accounts.manager_fee_destination_token_account.to_account_info(),
+            to: ctx
+                .accounts
+                .manager_fee_destination_token_account
+                .to_account_info(),
             authority: ctx.accounts.mint_authority.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.key(),
+            cpi_accounts,
+            signer_seeds,
+        );
         token::mint_to(cpi_ctx, manager_shares)?;
     }
     if protocol_shares > 0 {
         let cpi_accounts = MintTo {
             mint: ctx.accounts.reserve_token_mint.to_account_info(),
-            to: ctx.accounts.protocol_fee_destination_token_account.to_account_info(),
+            to: ctx
+                .accounts
+                .protocol_fee_destination_token_account
+                .to_account_info(),
             authority: ctx.accounts.mint_authority.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.key(),
+            cpi_accounts,
+            signer_seeds,
+        );
         token::mint_to(cpi_ctx, protocol_shares)?;
     }
 

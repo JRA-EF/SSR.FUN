@@ -26,7 +26,10 @@ pub struct UpdateTargets<'info> {
     // order_index order. See instructions/common.rs::load_reserve_asset_configs.
 }
 
-pub fn handler<'info>(ctx: Context<'info, UpdateTargets<'info>>, new_target_weights_bps: Vec<u16>) -> Result<()> {
+pub fn handler<'info>(
+    ctx: Context<'info, UpdateTargets<'info>>,
+    new_target_weights_bps: Vec<u16>,
+) -> Result<()> {
     ctx.accounts.reserve.require_not_paused()?;
     require_eq!(
         new_target_weights_bps.len(),
@@ -44,18 +47,31 @@ pub fn handler<'info>(ctx: Context<'info, UpdateTargets<'info>>, new_target_weig
         ctx.program_id,
     )?;
 
-    let mut configs = load_reserve_asset_configs(&ctx.accounts.reserve, &reserve_key, ctx.remaining_accounts, ctx.program_id)?;
+    let mut configs = load_reserve_asset_configs(
+        &ctx.accounts.reserve,
+        &reserve_key,
+        ctx.remaining_accounts,
+        ctx.program_id,
+    )?;
 
     let mut new_total: u16 = 0;
     let mut asset_mints = Vec::with_capacity(configs.len());
     for (config, &new_weight) in configs.iter_mut().zip(new_target_weights_bps.iter()) {
-        require!(config.enabled || new_weight == 0, SsrError::ReserveAssetDisabled);
-        new_total = new_total.checked_add(new_weight).ok_or(error!(SsrError::MathOverflow))?;
+        require!(
+            config.enabled || new_weight == 0,
+            SsrError::ReserveAssetDisabled
+        );
+        new_total = new_total
+            .checked_add(new_weight)
+            .ok_or(error!(SsrError::MathOverflow))?;
         config.target_weight_bps = new_weight;
         asset_mints.push(config.asset_mint);
         config.exit(ctx.program_id)?;
     }
-    require!(new_total <= BPS_DENOMINATOR, SsrError::TargetWeightExceedsTotal);
+    require!(
+        new_total <= BPS_DENOMINATOR,
+        SsrError::TargetWeightExceedsTotal
+    );
 
     let now = Clock::get()?.unix_timestamp;
     let reserve = &mut ctx.accounts.reserve;

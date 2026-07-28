@@ -21,8 +21,14 @@ pub struct UpdateMetadata<'info> {
     pub signer: Signer<'info>,
 }
 
-pub fn handler<'info>(ctx: Context<'info, UpdateMetadata<'info>>, new_metadata_uri: String) -> Result<()> {
-    require!(new_metadata_uri.len() <= MAX_METADATA_URI_LEN, SsrError::MetadataUriTooLong);
+pub fn handler<'info>(
+    ctx: Context<'info, UpdateMetadata<'info>>,
+    new_metadata_uri: String,
+) -> Result<()> {
+    require!(
+        new_metadata_uri.len() <= MAX_METADATA_URI_LEN,
+        SsrError::MetadataUriTooLong
+    );
 
     let reserve_key = ctx.accounts.reserve.key();
     require_reserve_permission(

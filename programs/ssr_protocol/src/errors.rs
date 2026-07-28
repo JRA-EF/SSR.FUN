@@ -33,7 +33,9 @@ pub enum SsrError {
     ReservePaused,
     #[msg("Reserve is not paused.")]
     ReserveNotPaused,
-    #[msg("The supplied Reserve Vault does not match the expected PDA for this Reserve and asset.")]
+    #[msg(
+        "The supplied Reserve Vault does not match the expected PDA for this Reserve and asset."
+    )]
     InvalidReserveVault,
     #[msg("The supplied ReserveAsset account does not belong to this Reserve.")]
     ReserveAssetMismatch,
@@ -55,7 +57,9 @@ pub enum SsrError {
     ZeroAmountAfterFeesOrRounding,
     #[msg("Redemption amount exceeds the caller's proportional entitlement.")]
     RedemptionExceedsEntitlement,
-    #[msg("Reserve Token supply is zero; proportional math is undefined until the Reserve is seeded.")]
+    #[msg(
+        "Reserve Token supply is zero; proportional math is undefined until the Reserve is seeded."
+    )]
     ZeroSupply,
 
     // --- Authority / permissions ---

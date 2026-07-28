@@ -2,7 +2,9 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint as SplMint, Token, TokenAccount as SplTokenAccount};
 
 use super::common::{load_asset_legs, mul_div_ceil, mul_div_floor, transfer_out_of_vault};
-use crate::constants::{BPS_DENOMINATOR, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, VAULT_AUTHORITY_SEED};
+use crate::constants::{
+    BPS_DENOMINATOR, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, VAULT_AUTHORITY_SEED,
+};
 use crate::errors::SsrError;
 use crate::events::ReserveTokensRedeemed;
 use crate::state::Reserve;
@@ -81,10 +83,18 @@ pub fn handler<'info>(
     let net_shares_for_entitlement = reserve_tokens_to_redeem
         .checked_sub(redemption_fee_shares)
         .ok_or(error!(SsrError::MathUnderflow))?;
-    require!(net_shares_for_entitlement > 0, SsrError::ZeroAmountAfterFeesOrRounding);
+    require!(
+        net_shares_for_entitlement > 0,
+        SsrError::ZeroAmountAfterFeesOrRounding
+    );
 
     let reserve_key = ctx.accounts.reserve.key();
-    let legs = load_asset_legs(&ctx.accounts.reserve, &reserve_key, ctx.remaining_accounts, ctx.program_id)?;
+    let legs = load_asset_legs(
+        &ctx.accounts.reserve,
+        &reserve_key,
+        ctx.remaining_accounts,
+        ctx.program_id,
+    )?;
 
     // Entitlement computed on PRE-burn supply/balances, matching the
     // reference protocol's ordering (RESERVE_REFERENCE_ANALYSIS.md section
@@ -92,8 +102,15 @@ pub fn handler<'info>(
     let mut entitlements = Vec::with_capacity(legs.len());
     for (i, leg) in legs.iter().enumerate() {
         let vault_balance_before = leg.vault.amount;
-        let entitlement = mul_div_floor(net_shares_for_entitlement, vault_balance_before, total_supply_before)?;
-        require!(entitlement >= min_asset_amounts_out[i], SsrError::SlippageMinOutputNotMet);
+        let entitlement = mul_div_floor(
+            net_shares_for_entitlement,
+            vault_balance_before,
+            total_supply_before,
+        )?;
+        require!(
+            entitlement >= min_asset_amounts_out[i],
+            SsrError::SlippageMinOutputNotMet
+        );
         entitlements.push(entitlement);
     }
 
@@ -107,14 +124,21 @@ pub fn handler<'info>(
     // needing a separate fee-recipient mint on every redemption.
     let cpi_accounts = Burn {
         mint: ctx.accounts.reserve_token_mint.to_account_info(),
-        from: ctx.accounts.redeemer_reserve_token_account.to_account_info(),
+        from: ctx
+            .accounts
+            .redeemer_reserve_token_account
+            .to_account_info(),
         authority: ctx.accounts.redeemer.to_account_info(),
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     token::burn(cpi_ctx, reserve_tokens_to_redeem)?;
 
     let vault_authority_bump = ctx.accounts.reserve.vault_authority_bump;
-    let vault_authority_seeds: &[&[u8]] = &[VAULT_AUTHORITY_SEED, reserve_key.as_ref(), &[vault_authority_bump]];
+    let vault_authority_seeds: &[&[u8]] = &[
+        VAULT_AUTHORITY_SEED,
+        reserve_key.as_ref(),
+        &[vault_authority_bump],
+    ];
     let vault_authority_ai = ctx.accounts.vault_authority.to_account_info();
 
     let mut asset_mints = Vec::with_capacity(legs.len());
