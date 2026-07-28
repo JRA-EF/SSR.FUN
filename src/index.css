@@ -329,6 +329,19 @@ input, select, textarea {
   white-space: nowrap;
 }
 
+.testing-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
 .nav-search {
   position: relative;
   display: flex;
@@ -1899,6 +1912,7 @@ input, select, textarea {
   .fcards { grid-template-columns: 1fr; }
   .nav-links { display: none; }
   .sim-badge { display: none; }
+  .testing-badge { display: none; }
   .kpi-grid { grid-template-columns: 1fr; }
   .kpi-cell { border-right: none; border-bottom: 1px solid var(--line); }
   .kpi-cell:last-child { border-bottom: none; }
