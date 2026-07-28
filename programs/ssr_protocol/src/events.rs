@@ -156,3 +156,13 @@ pub struct MetadataUpdated {
     pub updated_by: Pubkey,
     pub ts: i64,
 }
+
+#[event]
+pub struct ProtocolConfigUpdated {
+    pub authority: Pubkey,
+    pub old_default_protocol_fee_destination: Pubkey,
+    pub new_default_protocol_fee_destination: Pubkey,
+    pub old_default_protocol_fee_bps: u16,
+    pub new_default_protocol_fee_bps: u16,
+    pub ts: i64,
+}

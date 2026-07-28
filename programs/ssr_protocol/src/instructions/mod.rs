@@ -40,6 +40,7 @@ pub mod transfer_reserve_manager;
 pub mod unpause_reserve;
 pub mod update_delegate_permissions;
 pub mod update_metadata;
+pub mod update_protocol_config;
 pub mod update_targets;
 
 pub use accrue_fees::*;
@@ -58,4 +59,5 @@ pub use transfer_reserve_manager::*;
 pub use unpause_reserve::*;
 pub use update_delegate_permissions::*;
 pub use update_metadata::*;
+pub use update_protocol_config::*;
 pub use update_targets::*;

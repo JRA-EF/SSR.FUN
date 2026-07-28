@@ -192,4 +192,16 @@ pub mod ssr_protocol {
     ) -> Result<()> {
         instructions::update_metadata::handler(ctx, new_metadata_uri)
     }
+
+    pub fn update_protocol_config<'info>(
+        ctx: Context<'info, UpdateProtocolConfig<'info>>,
+        new_default_protocol_fee_destination: Pubkey,
+        new_default_protocol_fee_bps: u16,
+    ) -> Result<()> {
+        instructions::update_protocol_config::handler(
+            ctx,
+            new_default_protocol_fee_destination,
+            new_default_protocol_fee_bps,
+        )
+    }
 }
