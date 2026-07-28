@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES } from "@ssr/sdk";
+import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
-import { createReserveOnChain, type CreateReserveStep } from "@/lib/createReserveClient";
+import { createReserveOnChain, estimateCreateReserveCost, type CreateReserveStep, type CreateReserveCostEstimate } from "@/lib/createReserveClient";
 import { explorerUrl } from "@/lib/solana-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,45 +20,57 @@ import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
 import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR } from "@/lib/types";
 import { CATEGORY_SUGGESTIONS } from "@/lib/seed-data";
 
-// The 3 Gate-9 fixture test mints -- the ONLY assets the DevNet swap adapter
-// (and this seeding flow) has mint authority over, so they're the only
-// selection that can produce a real, Buy/Sell-testable Reserve. Mixing these
-// with any fictional asset below falls back to the existing pure-simulation
-// deploy path unchanged.
-const DEVNET_REAL_ASSETS = Object.values(DEVNET_FIXTURES.mints).map((m) => ({
-  symbol: m.symbol.toUpperCase(),
-  name: `SSR DevNet Test Asset (${m.symbol})`,
-  real: true as const,
-  mint: m.address,
-  decimals: m.decimals,
-}));
+// Real, genuinely supported DevNet assets -- native SOL (wrapped internally
+// where the SPL-token protocol requires it -- see createReserveClient.ts)
+// plus the 3 Gate-9 fixture test mints, the only ones the DevNet swap
+// adapter has mint authority over. These are the ONLY assets that can
+// produce a real, Buy/Sell-testable Reserve; mixing any fictional asset
+// below in falls back to the existing pure-simulation deploy path unchanged.
+// Never present a fictional asset as one of these -- see DEC-0030.
+const DEVNET_REAL_ASSETS = [
+  { symbol: "SOL", name: "Solana (native, wrapped automatically as needed)", real: true as const, mint: WRAPPED_SOL_MINT.toBase58(), decimals: 9 },
+  ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({
+    symbol: m.symbol.toUpperCase(),
+    name: `SSR DevNet Test Asset (${m.symbol})`,
+    real: true as const,
+    mint: m.address,
+    decimals: m.decimals,
+  })),
+];
 const REAL_ASSET_BY_SYMBOL = new Map(DEVNET_REAL_ASSETS.map((a) => [a.symbol, a]));
 
+// Fictional/simulated assets -- clearly isolated from the real list above,
+// only ever usable via the pure-simulation deploy path (createDTR), never
+// presented or treated as real deployable assets.
 const ALL_ASSETS = [
   ...DEVNET_REAL_ASSETS,
-  { symbol: "SOL", name: "Solana" },
-  { symbol: "USDC", name: "USD Coin" },
-  { symbol: "SSR", name: "SSR" },
-  { symbol: "JUP", name: "Jupiter" },
-  { symbol: "RAY", name: "Raydium" },
-  { symbol: "JTO", name: "Jito" },
-  { symbol: "DRIFT", name: "Drift Protocol" },
-  { symbol: "RENDER", name: "Render" },
-  { symbol: "HNT", name: "Helium" },
-  { symbol: "PYTH", name: "Pyth Network" },
-  { symbol: "BONK", name: "Bonk" },
-  { symbol: "WIF", name: "dogwifhat" },
-  { symbol: "POPCAT", name: "Popcat" },
-  { symbol: "FARTCOIN", name: "Fartcoin" },
+  { symbol: "USDC", name: "USD Coin (simulated)" },
+  { symbol: "SSR", name: "SSR (simulated)" },
+  { symbol: "JUP", name: "Jupiter (simulated)" },
+  { symbol: "RAY", name: "Raydium (simulated)" },
+  { symbol: "JTO", name: "Jito (simulated)" },
+  { symbol: "DRIFT", name: "Drift Protocol (simulated)" },
+  { symbol: "RENDER", name: "Render (simulated)" },
+  { symbol: "HNT", name: "Helium (simulated)" },
+  { symbol: "PYTH", name: "Pyth Network (simulated)" },
+  { symbol: "BONK", name: "Bonk (simulated)" },
+  { symbol: "WIF", name: "dogwifhat (simulated)" },
+  { symbol: "POPCAT", name: "Popcat (simulated)" },
+  { symbol: "FARTCOIN", name: "Fartcoin (simulated)" },
 ];
 
 const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
-  create: "Creating Reserve...",
-  "register-assets": "Registering Reserve Assets...",
-  "mint-seed-assets": "Minting DevNet seed test assets...",
-  seed: "Seeding Reserve...",
+  "create-and-register": "Step 1/2: Creating Reserve + registering assets...",
+  "fund-seed-assets": "Funding seed assets (DevNet)...",
+  seed: "Step 2/2: Seeding Reserve...",
   done: "Done",
 };
+
+/** How many wallet approvals createReserveOnChain will request for this asset selection -- see createReserveClient.ts's signature-count note. */
+function expectedApprovalCount(assets: { symbol: string }[]): number {
+  const needsSolWrap = assets.some((a) => a.symbol === "SOL");
+  return needsSolWrap ? 3 : 2;
+}
 
 export function CreateDTR() {
   const [, setLocation] = useLocation();
@@ -91,6 +103,45 @@ export function CreateDTR() {
   const [newRecipientPct, setNewRecipientPct] = useState("");
   const [additionalManagers, setAdditionalManagers] = useState<string[]>([]);
   const [newManagerAddress, setNewManagerAddress] = useState("");
+  const [costEstimate, setCostEstimate] = useState<CreateReserveCostEstimate | null>(null);
+  const [costEstimateError, setCostEstimateError] = useState<string | null>(null);
+
+  // Computed here (not after the early wallet-connected return below) so
+  // this effect's dependency array stays valid across every render --
+  // React's hooks must run in the same order every time, and the early
+  // return further down means nothing after it can safely hold a hook.
+  const realDeploymentCandidate = assets.length > 0 && assets.every((a) => REAL_ASSET_BY_SYMBOL.has(a.symbol));
+  const totalWeightForCost = assets.reduce((sum, a) => sum + a.weight, 0);
+
+  useEffect(() => {
+    if (!realDeploymentCandidate || totalWeightForCost <= 0) {
+      setCostEstimate(null);
+      setCostEstimateError(null);
+      return;
+    }
+    let cancelled = false;
+    const seedUsd = parseFloat(initialSeedUsdc) || 10;
+    const realAssets = assets.map((a) => {
+      const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
+      return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeightForCost) * 10_000), seedWeightFraction: a.weight / totalWeightForCost };
+    });
+    estimateCreateReserveCost(connection, realAssets, seedUsd)
+      .then((est) => {
+        if (!cancelled) {
+          setCostEstimate(est);
+          setCostEstimateError(null);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setCostEstimate(null);
+          setCostEstimateError(e instanceof Error ? e.message : "Failed to estimate DevNet transaction costs.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection]);
 
   if (!wallet.connected) {
     return (
@@ -165,7 +216,7 @@ export function CreateDTR() {
       return;
     }
     setIsSubmitting(true);
-    setCreateStep("create");
+    setCreateStep("create-and-register");
     try {
       const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
       const realAssets = assets.map((a) => {
@@ -244,7 +295,7 @@ export function CreateDTR() {
 
       toast({
         title: "Reserve deployed on Solana DevNet",
-        description: `Reserve: ${explorerUrl("address", result.reserve)} · Create tx: ${explorerUrl("tx", result.transactions.create)}`,
+        description: `Reserve: ${explorerUrl("address", result.reserve)} · Create tx: ${explorerUrl("tx", result.transactions.createAndRegister)}`,
       });
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {
@@ -537,27 +588,34 @@ export function CreateDTR() {
                 <h3 className="font-semibold text-lg pb-2">Initial Liquidity</h3>
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="seed" className="flex items-center gap-2">
-                    Seed Amount ({isRealDeployment ? "test USD" : "USDC"})
+                    {isRealDeployment ? "Initial Reserve Value (USD)" : "Seed Amount (USDC)"}
                     <Tooltip>
                       <TooltipTrigger><Info className="w-3 h-3 text-muted-foreground" /></TooltipTrigger>
                       <TooltipContent>
                         {isRealDeployment
-                          ? "Initial DevNet test-asset amount to seed the reserve, minted for you automatically -- not deducted from any real balance."
+                          ? "The USD value to seed the reserve with. You'll provide the equivalent DevNet SOL shown below -- it's converted into the selected Reserve assets and deposited for you."
                           : "Initial capital to seed the reserve and set the starting AUM."}
                       </TooltipContent>
                     </Tooltip>
                   </Label>
                   <div className="relative">
+                    <span className="absolute inset-y-0 left-3 flex items-center text-muted-foreground text-sm">$</span>
                     <Input
                       id="seed"
                       type="number"
-                      placeholder="e.g. 10000"
-                      className="font-merge-mono"
+                      placeholder="e.g. 10.00"
+                      className="font-merge-mono pl-6"
                       value={initialSeedUsdc}
                       onChange={(e) => setInitialSeedUsdc(e.target.value)}
                     />
                   </div>
-                  {!isRealDeployment && (
+                  {isRealDeployment ? (
+                    <p className="text-xs text-muted-foreground flex justify-between">
+                      <span>
+                        &asymp; <span className="font-merge-mono">{((parseFloat(initialSeedUsdc) || 0) / SOL_TEST_PRICE_USD).toFixed(5)} SOL</span> at the DevNet test price of ${SOL_TEST_PRICE_USD.toFixed(2)}/SOL
+                      </span>
+                    </p>
+                  ) : (
                     <p className="text-xs text-muted-foreground flex justify-between">
                       <span>Wallet Balance: <span className="font-merge-mono">{formatUsdc(wallet.usdc)}</span></span>
                     </p>
@@ -773,8 +831,13 @@ export function CreateDTR() {
                   <div className="space-y-2">
                     <p className="text-sm font-semibold text-muted-foreground mb-2">Economics</p>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Initial Seed</span>
-                      <span className="font-merge-mono font-medium">{formatUsdc(parseFloat(initialSeedUsdc))}</span>
+                      <span className="text-muted-foreground">Initial Reserve Value</span>
+                      <span className="font-merge-mono font-medium">
+                        {formatUsdc(parseFloat(initialSeedUsdc) || 0)}
+                        {isRealDeployment && (
+                          <span className="text-muted-foreground"> (see Wallet Cost Summary below for the exact SOL requested)</span>
+                        )}
+                      </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Mint Fee</span>
@@ -795,6 +858,78 @@ export function CreateDTR() {
                   </div>
                 </div>
               </div>
+
+              {isRealDeployment && (
+                <div className="bg-card border border-primary/30 rounded-xl overflow-hidden">
+                  <div className="bg-primary/5 p-4 border-b border-border">
+                    <h3 className="font-semibold flex items-center gap-2">
+                      Wallet Cost Summary
+                      <Tooltip>
+                        <TooltipTrigger><Info className="w-3.5 h-3.5 text-muted-foreground" /></TooltipTrigger>
+                        <TooltipContent>Every DevNet SOL this wallet will actually be asked to spend, shown before Phantom does.</TooltipContent>
+                      </Tooltip>
+                    </h3>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {costEstimateError && (
+                      <p className="text-sm text-destructive">{costEstimateError}</p>
+                    )}
+                    {!costEstimateError && !costEstimate && (
+                      <p className="text-sm text-muted-foreground">Estimating costs from live DevNet rent rates...</p>
+                    )}
+                    {costEstimate && (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Initial Reserve funding</span>
+                          <span className="font-merge-mono">
+                            {(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL
+                            {costEstimate.solSeedFundingLamports === 0n && <span className="text-muted-foreground"> (test assets minted for you, no SOL cost)</span>}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            Account creation &amp; rent
+                            <Tooltip>
+                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                              <TooltipContent>Solana requires new accounts (the Reserve, its assets, vaults, and Reserve Token mint) to be rent-exempt -- this SOL isn't a fee, it stays locked in those accounts.</TooltipContent>
+                            </Tooltip>
+                          </span>
+                          <span className="font-merge-mono">{(Number(costEstimate.totalRentLamports) / 1e9).toFixed(5)} SOL</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Estimated network fees ({costEstimate.numTransactions} transactions)</span>
+                          <span className="font-merge-mono">{(Number(costEstimate.networkFeeLamportsEstimate) / 1e9).toFixed(5)} SOL</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            Protocol fees
+                            <Tooltip>
+                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                              <TooltipContent>No fee is charged at creation itself -- Mint Fee ({mintFeePct.toFixed(2)}%) and TVL Fee ({tvlFeePct.toFixed(2)}%) apply to future Buy/holding activity, configured above.</TooltipContent>
+                            </Tooltip>
+                          </span>
+                          <span className="font-merge-mono text-muted-foreground">$0.00 now</span>
+                        </div>
+                        <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
+                          <span>Estimated total SOL required</span>
+                          <span className="font-merge-mono text-primary">
+                            {(Number(costEstimate.totalLamports) / 1e9).toFixed(5)} SOL
+                            <span className="text-muted-foreground font-normal"> (&asymp; ${((Number(costEstimate.totalLamports) / 1e9) * SOL_TEST_PRICE_USD).toFixed(2)})</span>
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
+                      <p className="font-semibold text-foreground">This will request {expectedApprovalCount(assets)} wallet approvals:</p>
+                      <p>1. Create Reserve + register {assets.length} asset{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
+                      {assets.some((a) => a.symbol === "SOL") && <p>2. Wrap your SOL for the seed deposit</p>}
+                      <p>{assets.some((a) => a.symbol === "SOL") ? "3" : "2"}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>
+                      <p className="pt-1">Expected result: you'll spend the SOL above and receive <span className="font-merge-mono text-foreground">{Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10)).toLocaleString()} {ticker || "Reserve"}</span> tokens. Any test-asset amounts appearing and disappearing from your wallet mid-flow (e.g. minted then immediately deposited) are expected intermediate steps, not final balances -- deployment isn't complete until the last step confirms.</p>
+                      <p>Newly created tokens can take a few minutes to show a name/symbol in Phantom instead of "Unknown" -- this is a DevNet metadata-indexing delay, not an error.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <p className="text-sm font-semibold text-muted-foreground mb-3">Target Composition</p>
