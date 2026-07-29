@@ -161,6 +161,63 @@ display/discovery only -- but it is now shown as an explicitly-disclosed,
 clearly-secondary "current settlement (secondary, fixed-rate)" line, never
 implied to be a real market quote or an actual asset-to-SOL swap.
 
+## Live verification of canonical discovery (2026-07-29, bounded pass)
+
+The discovery architecture above has been proven against the live deployed
+program, not just typechecked/unit-tested. `scripts/verify_discovery.ts`
+is a reusable, **read-only** script (zero transactions -- every call is a
+`getAccountInfo`/`getTokenSupply`/`getAccount`/`getMint` read via a
+non-signing provider) that imports and calls the exact same functions the
+frontend uses (`discoverAllReserves`, `discoverDelegatesForReserve`,
+`fetchProtocolConfig`, `parseReserveMetadataUri` from
+`packages/sdk/src/discovery.ts`; `buildDtrFromDiscoveredReserve` from
+`src/merge/lib/onChainReserve.ts`) -- a pass here is evidence the
+frontend's own code path works live, not that some separate script can
+read these accounts.
+
+**Run:** `npx ts-node -P scripts/tsconfig.json scripts/verify_discovery.ts`
+
+**Result summary** (full detail in
+`docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md`'s "Live DevNet
+verification of Phase A discovery" section): confirmed live against RPC
+`https://api.devnet.solana.com`, cluster confirmed via genesis hash,
+program ID `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` confirmed.
+`ProtocolConfig.reserveCount = 16`; all 16 reserveIds enumerated and
+decoded (14 of 16 are not one of the 2 committed fixtures -- provably
+found only via `reserveId` enumeration). Zero account-integrity issues
+(owner/discriminator/PDA-derivation/cross-contamination/duplicate-identity
+checks all passed for every discovered account). TestLo/MOCX: **found**,
+at reserveId 13 -- Reserve Token mint, decimals (6, verified live), supply
+(~1,004.975), underlying asset (mint `2KBajm7Xufj8UaFQbKqLquhMRqeqjLZdDuXtoqYkSUgu`,
+i.e. `mintX`/"mockX" -- confirmed to be what "MOCX" refers to), vault, and
+verified vault balance (~1,005) all resolved by the general discovery
+process, with **no TestLo-specific code anywhere**. Name/ticker
+("StrategicSolReserve"/"TESTLO") resolved directly from that Reserve's own
+on-chain `metadataUri` field, not hardcoded. A second, earlier, abandoned
+attempt at the same Reserve (reserveId 12, zero supply/assets, status
+`created`) was also found and is reported for completeness.
+
+**A real bug was found and fixed during this pass:** the public DevNet
+RPC's documented heavy rate-limiting (429s) crashed the verification
+script's own extra integrity-check calls on the first run (an unguarded
+`connection.getAccountInfo` inside the script, not in the shared discovery
+module). Fixed by wrapping every per-reserve verification step in
+try/catch; `packages/sdk/src/discovery.ts` was also hardened at the same
+time (per-reserve/per-asset/per-vault/per-delegate try/catch, a new
+`issues: DiscoveryIssue[]` return field) so a single malformed/unreachable
+account can never abort discovery of any other -- this is additive and
+non-breaking for `RealReserveSync.tsx`, which now also logs (non-fatally)
+when issues are found.
+
+**Frontend-surface consistency confirmed by construction**: Discover,
+DTRDetail, Portfolio, and ManageDTR all read `dtrs` from `useAppStore`,
+populated exclusively by `RealReserveSync.tsx` calling the identical
+functions this script calls directly -- there is exactly one discovery
+code path, not a parallel one for verification. Not verified in this pass:
+an actual rendered browser DOM (no browser-automation tool available in
+this environment, same pre-existing limitation as the rest of this
+document's "no real Phantom click-through yet" note).
+
 ## Buy/Sell zap architecture
 
 **Buy = SOL zap into proportional protocol mint. Sell = proportional protocol

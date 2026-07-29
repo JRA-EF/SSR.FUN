@@ -112,20 +112,41 @@ export interface DiscoveredReserve {
  * pass; that's reflected honestly via `resolvedAssetCount < assetCount`,
  * never silently hidden or fabricated.
  */
+export interface DiscoveryIssue {
+  reserveId: string;
+  scope: "reserve" | "asset" | "vault" | "supply";
+  detail: string;
+  message: string;
+}
+
 export async function discoverAllReserves(
   connection: Connection,
   programId: PublicKey,
   candidateAssetMints: PublicKey[],
-): Promise<{ reserves: DiscoveredReserve[]; protocolConfig: ProtocolConfigView | null }> {
+): Promise<{ reserves: DiscoveredReserve[]; protocolConfig: ProtocolConfigView | null; issues: DiscoveryIssue[] }> {
   const protocolConfig = await fetchProtocolConfig(connection, programId);
-  if (!protocolConfig) return { reserves: [], protocolConfig: null };
+  if (!protocolConfig) return { reserves: [], protocolConfig: null, issues: [] };
 
   const program = buildReadOnlyProgram(connection);
   const reserves: DiscoveredReserve[] = [];
+  const issues: DiscoveryIssue[] = [];
 
   for (let id = 0n; id < protocolConfig.reserveCount; id++) {
     const [reserveAddress] = findReserve(id, programId);
-    const reserveAccount = await program.account.reserve.fetchNullable(reserveAddress);
+    let reserveAccount: Awaited<ReturnType<typeof program.account.reserve.fetchNullable>>;
+    try {
+      reserveAccount = await program.account.reserve.fetchNullable(reserveAddress);
+    } catch (e) {
+      // A malformed/undecodable account at this id must not abort discovery
+      // of every OTHER Reserve -- record it honestly and move on.
+      issues.push({
+        reserveId: id.toString(),
+        scope: "reserve",
+        detail: reserveAddress.toBase58(),
+        message: e instanceof Error ? e.message : String(e),
+      });
+      continue;
+    }
     // A gap here would mean create_reserve succeeded without incrementing
     // reserve_count, which the program's own invariants don't allow -- but
     // never assume; skip honestly rather than throw the whole enumeration away.
@@ -135,9 +156,28 @@ export async function discoverAllReserves(
     for (const mint of candidateAssetMints) {
       const [reserveAssetPda] = findReserveAsset(reserveAddress, mint, programId);
       const [vaultPda] = findReserveVault(reserveAddress, mint, programId);
-      const reserveAsset = await program.account.reserveAsset.fetchNullable(reserveAssetPda);
+      let reserveAsset: Awaited<ReturnType<typeof program.account.reserveAsset.fetchNullable>>;
+      try {
+        reserveAsset = await program.account.reserveAsset.fetchNullable(reserveAssetPda);
+      } catch (e) {
+        issues.push({
+          reserveId: id.toString(),
+          scope: "asset",
+          detail: `${mint.toBase58()} (${reserveAssetPda.toBase58()})`,
+          message: e instanceof Error ? e.message : String(e),
+        });
+        continue;
+      }
       if (!reserveAsset) continue;
-      const vaultInfo = await getAccount(connection, vaultPda).catch(() => null);
+      const vaultInfo = await getAccount(connection, vaultPda).catch((e) => {
+        issues.push({
+          reserveId: id.toString(),
+          scope: "vault",
+          detail: vaultPda.toBase58(),
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return null;
+      });
       assets.push({
         assetMint: mint.toBase58(),
         reserveAsset: reserveAssetPda.toBase58(),
@@ -151,7 +191,15 @@ export async function discoverAllReserves(
     }
     assets.sort((a, b) => a.orderIndex - b.orderIndex);
 
-    const supply = await connection.getTokenSupply(reserveAccount.reserveTokenMint).catch(() => null);
+    const supply = await connection.getTokenSupply(reserveAccount.reserveTokenMint).catch((e) => {
+      issues.push({
+        reserveId: id.toString(),
+        scope: "supply",
+        detail: reserveAccount!.reserveTokenMint.toBase58(),
+        message: e instanceof Error ? e.message : String(e),
+      });
+      return null;
+    });
 
     reserves.push({
       reserveId: reserveAccount.reserveId.toString(),
@@ -177,7 +225,7 @@ export async function discoverAllReserves(
     });
   }
 
-  return { reserves, protocolConfig };
+  return { reserves, protocolConfig, issues };
 }
 
 export interface DiscoveredDelegate {
@@ -208,11 +256,25 @@ export async function discoverDelegatesForReserve(
   const results: DiscoveredDelegate[] = [];
   for (const wallet of candidateWallets) {
     const key = wallet.toBase58();
+    // A duplicate candidate wallet (e.g. the manager also appearing in a
+    // caller-supplied hint list) must resolve once, not be reported twice.
     if (seen.has(key)) continue;
     seen.add(key);
     const [delegatePda] = findDelegate(reserve, wallet, programId);
-    const account = await program.account.delegate.fetchNullable(delegatePda);
+    let account: Awaited<ReturnType<typeof program.account.delegate.fetchNullable>>;
+    try {
+      account = await program.account.delegate.fetchNullable(delegatePda);
+    } catch {
+      // A malformed/undecodable candidate delegate account must not abort
+      // resolution of every OTHER candidate -- skip it honestly.
+      continue;
+    }
     if (!account) continue;
+    // Defense in depth: the PDA derivation already ties this account to
+    // (reserve, wallet), but explicitly confirm the decoded fields agree
+    // with what was requested rather than trusting the address alone --
+    // guards against a future PDA-seed change silently mismatching data.
+    if (account.reserve.toBase58() !== reserve.toBase58() || account.wallet.toBase58() !== key) continue;
     results.push({
       wallet: key,
       delegateAccount: delegatePda.toBase58(),

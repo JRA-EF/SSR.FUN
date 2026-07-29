@@ -45,11 +45,18 @@ export function RealReserveSync() {
     async function runDiscovery() {
       setChainDiscoveryStatus("loading");
       try {
-        const { reserves, protocolConfig } = await discoverAllReserves(connection, programId, CANDIDATE_ASSET_MINTS);
+        const { reserves, protocolConfig, issues } = await discoverAllReserves(connection, programId, CANDIDATE_ASSET_MINTS);
         if (cancelled) return;
         if (!protocolConfig) {
           setChainDiscoveryStatus("error", "SSR Protocol is not initialized on this DevNet endpoint.");
           return;
+        }
+        if (issues.length > 0) {
+          // Partial-success state: real Reserves were still found and are
+          // still applied below -- a malformed/unreadable account elsewhere
+          // must never invalidate otherwise-valid discovered state. Still
+          // surfaced honestly rather than silently swallowed.
+          console.warn(`Discovery found ${issues.length} account issue(s) this pass (non-fatal):`, issues);
         }
 
         const dtrs = await Promise.all(

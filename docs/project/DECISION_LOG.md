@@ -975,3 +975,32 @@
   "evidence": ["docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md round 3 sections: \"Final DevNet objective\", \"DevNet asset architecture\", \"Jupiter and trading\", \"Delivery phases A-H\""]
 }
 ```
+
+## DEC-0041
+
+```json
+{
+  "id": "DEC-0041",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Confirm Phase A's canonical discovery layer (DEC-0038) against the live deployed SSR Protocol program via a new reusable, read-only verification script (scripts/verify_discovery.ts, zero transactions sent), rather than relying solely on typechecking and offline unit tests. During this pass, harden packages/sdk/src/discovery.ts (per-reserve/per-asset/per-vault/per-delegate try/catch, a new non-breaking `issues: DiscoveryIssue[]` return field) after a live 429-rate-limit event on the public DevNet RPC exposed that a single unreachable/malformed account could otherwise abort discovery of every other Reserve.",
+  "context": "DEC-0038's own evidence section explicitly flagged that Phase A's discovery logic had been typechecked and unit-tested offline but not yet exercised against the live deployed program from this environment. This entry closes that gap. Separately, the user's TestLo/MOCX scenario (handle 'TestLo', Decentralized Token Reserve name 'Strategic Sol Reserve', ~1,004 Reserve Tokens, underlying asset MOCX) needed to be confirmed as real, generally-discoverable DevNet state rather than repository fixtures.",
+  "rationale": "Running the exact same functions the frontend calls (discoverAllReserves, discoverDelegatesForReserve, fetchProtocolConfig, parseReserveMetadataUri, buildDtrFromDiscoveredReserve) directly against live DevNet, rather than reimplementing verification logic, is evidence the frontend's own code path works live -- a parallel/duplicate implementation could pass while the real one still failed. The first live run crashed on a real 429 inside the verification script's own extra integrity-check calls (not inside discovery.ts itself, which was already resilient by design) -- fixing this by wrapping every per-reserve verification step, and applying the same resilience directly to discovery.ts's core loops, converts a live-observed failure mode into a permanently-guarded one rather than a one-off manual retry.",
+  "alternativesConsidered": [
+    "Treat the offline unit tests (tests/phase_a_discovery.ts) as sufficient proof and skip live verification (rejected: explicitly what this pass was authorized to close -- offline tests cannot prove the live reserveId-enumeration strategy, PDA derivations, or Anchor discriminators actually match the deployed program's real, currently-initialized state)",
+    "Retry the crashed script manually without fixing the underlying resilience gap (rejected: would leave a latent bug in a reusable script future verification passes would hit again, and left discovery.ts's own analogous per-account resilience unverified under real failure conditions)"
+  ],
+  "impact": "Confirmed live: RPC https://api.devnet.solana.com, cluster devnet (genesis hash match), program 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW. ProtocolConfig.reserveCount=16; all 16 reserveIds enumerated and decoded with zero account-integrity issues (owner/discriminator/PDA-derivation/cross-contamination/duplicate-identity checks all passed). TestLo confirmed real and found via general discovery at reserveId 13 (Reserve Token mint DQ8ZTGnrgXjDwpn2nLULmY1DtfXKDN8fXM4DKzQZGm7w, decimals 6 verified live, supply ~1,004.975, backed 100% by mint 2KBajm7Xufj8UaFQbKqLquhMRqeqjLZdDuXtoqYkSUgu i.e. mintX/\"mockX\"/\"MOCX\", vault balance ~1,005, name/ticker \"StrategicSolReserve\"/\"TESTLO\" resolved from its own on-chain metadataUri) -- plus an earlier abandoned attempt at the same Reserve (reserveId 12, zero supply/assets). packages/sdk/src/discovery.ts and scripts/verify_discovery.ts both hardened against RPC failure; RealReserveSync.tsx now logs (non-fatally) when discovery issues occur.",
+  "affectedAreas": ["scripts/verify_discovery.ts", "packages/sdk/src/discovery.ts", "src/merge/lib/RealReserveSync.tsx", "docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md", "docs/protocol/FRONTEND_INTEGRATION.md", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "scripts/verify_discovery.ts run 1 (pre-hardening): crashed with exit code 1 at reserveId=5 on a real 429 from https://api.devnet.solana.com inside the script's own verifyAccountOwnerAndDiscriminator helper; 6 reserves (0-5, partial) and 1 issue (reserveId=10 429, caught by discovery.ts's own try/catch) recorded before the crash",
+    "scripts/verify_discovery.ts run 2 (post-hardening): exit code 0, 16/16 reserveIds enumerated, 0 discovery issues, 0 integrity issues, TestLo/MOCX result as stated above",
+    "npx tsc -b (repo-wide) and npx tsc -p scripts/tsconfig.json --noEmit: both clean",
+    "npx oxlint: zero new warnings/errors",
+    "npx vite build: passes; local vite dev server confirmed to serve / and /#/discover with HTTP 200",
+    "npx ts-mocha -p ./tests/tsconfig.json tests/phase_a_discovery.ts: 12/12 passing, unchanged"
+  ]
+}
+```

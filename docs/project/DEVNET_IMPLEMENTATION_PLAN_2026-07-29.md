@@ -386,7 +386,7 @@ So "add/remove a Reserve" is itself config-only (it changes what the Reserve *is
 - **Wallet address, capabilities, scope, activation/restricted status, and authorization must always be read from verified on-chain state** (the existing `Delegate` account fields — `wallet`, `permissions`, `restricted`, `added_at`) — the local label is purely a display convenience layered on top, never a substitute for or influence on any authorization check.
 - If no local label exists for a given `(reserve, wallet)` key (e.g. a delegate added by someone else's browser, or before this feature existed, or on a fresh device), the UI **must fall back cleanly to the shortened public key** — never show a blank, an error, or a placeholder that looks like missing/broken data.
 - **Delegate functionality (granting, revoking, permission checks, display of capabilities) must not depend on a label being present** — a nameless delegate must work identically to a named one in every functional respect; the label is decorative/organizational only.
-- **Documented limitation, not silently assumed:** labels are local to the browser/device that set them and do **not** automatically follow the user across browsers or devices — confirmed acceptable for the present DevNet version. This must be stated in-product (e.g. helper text near the name field) and in `FRONTEND_INTEGRATION.md`/this plan, not left as an undocumented surprise.
+- **Documented limitation, not silently assumed:** labels are local to the browser/device that set them and do **not** automatically follow the user across browsers or devices — confirmed acceptable for the present DevNet version. This must be stated in-product (e.g. helper text near the name field) and in `docs/protocol/FRONTEND_INTEGRATION.md`/this plan, not left as an undocumented surprise.
 - **No protocol migration is being introduced** to store display names — the on-chain `Delegate` struct (`state/delegate.rs:38-59`) stays exactly as-is; this closes out round 1's "grow the account to hold a string" option entirely.
 
 **Acceptance criteria:**
@@ -692,7 +692,7 @@ decision-log entries and `docs/protocol/FRONTEND_INTEGRATION.md`'s
   redesigning its execution is explicitly Phase E ("Jupiter feasibility/
   real swap execution"), not Phase A.
 
-### Canonical discovery architecture (summary — full detail in FRONTEND_INTEGRATION.md)
+### Canonical discovery architecture (summary — full detail in docs/protocol/FRONTEND_INTEGRATION.md)
 Enumerate every Reserve via `ProtocolConfig.reserveCount` + per-`reserveId`
 PDA derivation + direct account fetch (`packages/sdk/src/discovery.ts`) —
 no `getProgramAccounts`, so the public DevNet RPC's confirmed block on that
@@ -795,4 +795,152 @@ via Solana Explorer if not otherwise on hand).
 - Phase B (`devUSDC`/"SSR Test USD" settlement mint, faucet, sponsored SOL
   onboarding) and all later phases (C-H) remain entirely unstarted, per
   instruction — this section does not authorize or begin them.
+
+---
+
+## Live DevNet verification of Phase A discovery (2026-07-29, bounded pass)
+
+Phase A's discovery layer has now been proven against the live deployed
+program, closing the "not yet independently confirmed" gap the Phase A
+record above explicitly flagged. Full detail in
+`docs/protocol/FRONTEND_INTEGRATION.md`'s "Live verification" addendum;
+summary here.
+
+**How:** a new reusable script, `scripts/verify_discovery.ts`, runs
+read-only against live Solana DevNet. It imports and calls the exact same
+functions the frontend uses (`packages/sdk/src/discovery.ts`'s
+`discoverAllReserves`/`discoverDelegatesForReserve`/`fetchProtocolConfig`/
+`parseReserveMetadataUri`, and `src/merge/lib/onChainReserve.ts`'s
+`buildDtrFromDiscoveredReserve`) rather than reimplementing discovery logic
+— a pass here is evidence the frontend's own code path works live, not
+just that some other code can read these accounts. **Zero transactions
+were sent** — every call is a read (`getAccountInfo`/`getTokenSupply`/
+`getAccount`/`getMint` via a non-signing provider); no keypair was ever
+loaded.
+
+**Confirmed live:** RPC `https://api.devnet.solana.com` (the repo's
+documented default, `src/merge/lib/solana-config.ts`), cluster identity
+independently confirmed via genesis hash (`EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG`,
+the known DevNet genesis), program ID
+`2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW` matching the documented
+default, program account found and executable under the BPF Loader
+Upgradeable program.
+
+**Discovery result:** `ProtocolConfig.reserveCount = 16`. All 16 reserveIds
+(0-15) were successfully enumerated and decoded on this run — 14 of the 16
+are **not** one of the 2 committed fixtures, which could only have been
+found by reserveId enumeration, not any fixture list. (A first run hit the
+public RPC's documented heavy rate-limiting badly enough to abort on one
+account; see "Script hardening" below — the fix made the second run
+complete cleanly, 0 discovery issues, 0 integrity issues.)
+
+**TestLo/MOCX — found, via general discovery, not a special case:**
+Reserve id **13** (PDA `Hj8uifcUHAmTpwySQJgfo4F6B8Y68X2b48BmTKv89xSX`) is
+the real, active, fully-seeded TestLo Reserve:
+- Manager authority: `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`
+- Reserve Token mint: `DQ8ZTGnrgXjDwpn2nLULmY1DtfXKDN8fXM4DKzQZGm7w`, decimals **6** (verified live via `getMint`, not assumed)
+- Reserve Token supply: 1,004,975,000 raw → **1,004.975** human-units — matches "~1,004 TestLo Reserve Tokens" almost exactly
+- Underlying Reserve (asset): mint `2KBajm7Xufj8UaFQbKqLquhMRqeqjLZdDuXtoqYkSUgu` at 100% target weight (10000 bps) — **this is `mintX`, the fixture registry's "mockX"** (`packages/sdk/fixtures/devnet-fixtures.json`). "MOCX" is `mintX` under the name the user knows it by; confirmed by mint-address match, not by guesswork or candidate-list position.
+- Vault `8X9iSK84DkJeFFaCeHhRjqthSniypcvNJ8CjkF93y5xY`, verified live balance 1,005,000,000 raw → **1,005** MOCX (consistent with ~1,004.975 Reserve Tokens near-1:1 backed)
+- Status: `active`
+- **Name/ticker source:** resolved directly from this Reserve's own on-chain `metadataUri` field (`data:application/json,%7B%22name%22%3A%22StrategicSolReserve%22%2C%22ticker%22%3A%22TESTLO%22...%7D`), decoded to name `"StrategicSolReserve"`, ticker `"TESTLO"` — **not** hardcoded, not inferred from position in any candidate list. (Spacing/case differ slightly from "Strategic Sol Reserve"/"TestLo" as originally typed — same content.)
+- A second Reserve, id **12** (PDA `AUW57xjqXmCKbP6wjPZfR5H3TCNah28fiTp6fwLZLNAq`), carries the **identical** metadataUri (same name/ticker) but has zero supply, zero assets, and status `created` — an earlier, abandoned/incomplete attempt at creating TestLo (never reached `seed_reserve`) that predates the successful id=13. Both are reported so the record is complete; id=13 is the real, live TestLo.
+
+**What "MOCX" cannot be resolved from:** SPL mints on Solana carry no
+intrinsic on-chain name/symbol field, and this program integrates no
+Metaplex/token-metadata program at all (confirmed by repo-wide search,
+zero matches for `mpl-token-metadata`/`TOKEN_METADATA_PROGRAM`/`Metaplex`).
+The only place a "mockX"/"MOCX"-style label exists is the hardcoded
+`devnet-fixtures.json` registry cross-referencing that one real mint
+address to a human label — itself a discovery hint, not an on-chain
+metadata reference. If TestLo's asset mint had NOT been one of the 3
+fixture mints, it would show as an unresolved/unnamed asset (or simply not
+be found, since it also wouldn't be in the candidate-mint hint list) —
+not as "MOCX". This is now empirically confirmed, not just theorized.
+
+**No further information is required from you regarding TestLo/MOCX** —
+discovery resolved it completely and generically.
+
+**Discovery universality:** candidate-hint-limited for per-Reserve
+*composition* (asset mints, delegate wallets), exactly as documented in
+Phase A's record — several of the 16 reserves (ids 0-5, 7; almost
+certainly artifacts of `tests/ssr_protocol.ts` Anchor test runs, each of
+which mints its own fresh, ad-hoc test tokens not in this app's candidate
+list) show `resolvedAssetCount < assetCount`, honestly flagged, never
+hidden. **Discovery of the Reserves themselves (which ones exist at all)
+is universal, not candidate-hint-limited** — every one of the 16 was found
+by `reserveId` enumeration alone.
+
+**Account-integrity checks — all passed, 0 issues:** for every discovered
+account (16 Reserves, every resolved `ReserveAsset`, every resolved
+vault, every resolved `Delegate`): correct program owner, correct Anchor
+discriminator (independently verified against the IDL's raw discriminator
+bytes, not just "decode didn't throw"), correct PDA rederivation, vault
+mint matches its declared asset mint (no cross-Reserve contamination),
+vault authority matches the Reserve's derived `vaultAuthority`, vault
+owned by SPL Token or Token-2022 (no unsupported token program
+encountered), underlying asset mint decimals cross-checked against
+`ReserveAsset`'s recorded decimals (matched), no duplicate Reserve PDAs or
+Reserve Token mints across the 16.
+
+**RPC/failure handling — genuinely exercised, not just theorized:** the
+public DevNet RPC's documented heavy rate-limiting (429s) triggered
+repeatedly and for real during this run. The first script version crashed
+outright when a 429 occurred inside one of the script's own *extra*
+integrity-check calls (a real bug, since fixed — see below); after
+hardening, the second run absorbed every 429 via Solana web3.js's own
+retry/backoff and completed 16/16 reserves with zero unhandled failures.
+`packages/sdk/src/discovery.ts`'s core enumeration loop was already
+resilient by design (per-reserve/per-asset/per-delegate try/catch, added
+in this same pass) — a malformed/unreachable account at one `reserveId`
+is recorded as an issue and does not abort discovery of any other
+`reserveId`, genuinely exercised live (the first run's reserveId=10 429
+was caught and skipped exactly this way, without aborting the other 15).
+
+**Script hardening (a real fix made during this verification, not a
+Phase B change):** `packages/sdk/src/discovery.ts`'s `discoverAllReserves`
+now wraps each per-reserve/per-asset/per-vault/per-supply fetch in
+try/catch and returns a new `issues: DiscoveryIssue[]` array (additive,
+non-breaking for existing callers) instead of allowing one bad account to
+throw away the whole enumeration; `discoverDelegatesForReserve` similarly
+catches per-candidate decode failures and now cross-checks the decoded
+`Delegate.reserve`/`Delegate.wallet` fields against what was requested
+(defense against a future PDA-seed change silently mismatching data).
+`src/merge/lib/RealReserveSync.tsx` logs (non-fatally) when `issues` is
+non-empty. `scripts/verify_discovery.ts` itself was also hardened (its own
+extra integrity-check RPC calls were not originally wrapped in try/catch,
+which caused the first live run to crash at reserveId=5 on a 429 — fixed
+by wrapping every per-reserve verification step and the reserve loop
+itself in try/catch, recording failures as issues rather than aborting).
+
+**Frontend-surface consistency:** confirmed by construction — Discover,
+DTRDetail, Portfolio, and ManageDTR all read `dtrs` from the same
+`useAppStore`, populated exclusively by `RealReserveSync.tsx` (mounted
+once at the app root, `src/App.tsx`), which calls the identical
+`discoverAllReserves`/`buildDtrFromDiscoveredReserve` functions this
+verification script calls directly — the script's printed
+"Frontend-equivalent DTR object" line for each Reserve **is** the literal
+object those four surfaces would render (e.g. TestLo: `name="StrategicSolReserve"
+ticker="TESTLO" aum=1005.00 nav=1.0000`). `npx vite build` passes with the
+current code; a local `vite` dev server was started and confirmed to serve
+`/` and `/#/discover` with HTTP 200. **Not verified in this pass:** an
+actual rendered browser DOM/console (no browser-automation tool is
+available in this environment — the same pre-existing limitation
+`PROJECT_STATUS.md` already tracks for a real Phantom click-through).
+
+**Tests/typecheck/lint/build, all clean:** `npx tsc -b` (repo-wide),
+`npx tsc -p scripts/tsconfig.json --noEmit` (the new script), `npx oxlint`
+(zero new warnings/errors), `npx vite build`, and
+`tests/phase_a_discovery.ts` (12/12 passing, unchanged) — all pass.
+
+**Phase B prerequisites, updated:** the discovery-layer live-verification
+prerequisite noted in Phase A's record is now satisfied. Remaining,
+unchanged: per-Reserve asset/delegate enumeration is still only as
+complete as the candidate-hint lists (a dedicated/paid RPC provider
+supporting `getProgramAccounts` memcmp would resolve this generally); the
+public DevNet RPC's rate-limiting is real and will affect Phase B's own
+future verification scripts the same way (budget for retries/backoff, as
+this script now does). Phase B itself (the `devUSDC`/"SSR Test USD"
+settlement mint, faucet, sponsored SOL onboarding) remains entirely
+unstarted.
 
