@@ -1225,3 +1225,25 @@
   ]
 }
 ```
+
+## DEC-0050
+
+```json
+{
+  "id": "DEC-0050",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Deploy DEC-0049's SDK + ManageDTR frontend changes to the existing live production website via `vercel deploy --prod`, matching the delivery requirement established for every prior phase of this plan (pushed to GitHub, deployed through the existing live site, no separate website, no domain change).",
+  "context": "DEC-0049's frontend changes (Reserve Composition and Wind Down cards in ManageDTR.tsx, the new managementInstructions.ts/managementClient.ts modules) were committed and pushed to main (commit 2e0cd64) but not yet live. `npx vercel env ls production` confirmed the one required production secret (DEVNET_SWAP_AUTHORITY_SECRET_KEY) was already present -- no new environment variable was needed for this deploy.",
+  "rationale": "This is a frontend-only change to already-verified, already-deployed on-chain functionality (Phase F/G, DEC-0046/DEC-0048) -- the deployment gate is the same one every prior phase followed: build passes, no new required secret is missing, deploy to the existing production site.",
+  "alternativesConsidered": [],
+  "impact": "Production is live at https://strategic-super-reserve.fun (aliased from deployment dpl_pf7NyUoizbQ2EK7kBW64mqFdLXi9, target production) with Phase F/G's composition-management and wind-down controls now reachable from the real website, not just a Node verification script. Verified post-deploy: `/` returns 200 on the custom domain.",
+  "affectedAreas": ["docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "vercel deploy --prod -> {\"status\":\"ok\",\"deployment\":{\"id\":\"dpl_pf7NyUoizbQ2EK7kBW64mqFdLXi9\",\"readyState\":\"READY\",\"target\":\"production\"}}, aliased to https://ssr-fun.vercel.app",
+    "curl -o /dev/null -w '%{http_code}' https://strategic-super-reserve.fun/ -> 200"
+  ]
+}
+```
