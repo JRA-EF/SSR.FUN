@@ -53,6 +53,7 @@ import {
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
 } from "../../packages/sdk/src";
+import { loadDevnetAuthority } from "./_lib/authority";
 
 interface ApiRequest {
   method?: string;
@@ -79,13 +80,6 @@ const ASSET_TEST_PRICES_USD: Record<string, number> = {
   [WRAPPED_SOL_MINT.toBase58()]: 20, // matches SOL_TEST_PRICE_USD -- wrapped SOL IS SOL
 };
 
-function loadSwapAuthority(): Keypair {
-  const raw = process.env.DEVNET_SWAP_AUTHORITY_SECRET_KEY;
-  if (!raw) throw new Error("DEVNET_SWAP_AUTHORITY_SECRET_KEY is not configured");
-  const secret = JSON.parse(raw) as number[];
-  return Keypair.fromSecretKey(Uint8Array.from(secret));
-}
-
 function parseBody(req: ApiRequest): Record<string, unknown> {
   if (req.body && typeof req.body === "object") return req.body as Record<string, unknown>;
   if (typeof req.body === "string") {
@@ -106,7 +100,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   let swapAuthority: Keypair;
   try {
-    swapAuthority = loadSwapAuthority();
+    swapAuthority = loadDevnetAuthority();
   } catch {
     res.status(500).json({ error: "DevNet swap adapter is not configured on this deployment." });
     return;

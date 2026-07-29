@@ -944,3 +944,181 @@ this script now does). Phase B itself (the `devUSDC`/"SSR Test USD"
 settlement mint, faucet, sponsored SOL onboarding) remains entirely
 unstarted.
 
+---
+
+## Phase B — security model (written before implementation, 2026-07-29)
+
+Per instruction, this section is written and reviewed *before* creating
+the mint or any faucet endpoint. Implementation follows this design
+exactly; any deviation found necessary during implementation is corrected
+here first, not silently improvised in code.
+
+### Pre-implementation inspection findings
+- **No existing devUSDC/"SSR Test USD"/"Mule" mint, faucet, or treasury
+  exists anywhere in the repo** (confirmed by repo-wide search — the only
+  hits were this plan document's own prior round-3 design notes).
+- **A real, funded, already-deployed signer already exists** and is the
+  natural authority to reuse: the Gate-9 fixture "manager" keypair
+  (`devnet-fixtures/manager-keypair.json`, gitignored, present in this
+  environment), pubkey `Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj`. It
+  is already: the mint authority for `mintX`/`mintY`/`mintZ`, the DevNet
+  swap-authority co-signer for Buy/Sell (`api/devnet/swap-sign.ts`), and
+  the signer behind the existing `mint-test-assets` faucet
+  (`api/devnet/mint-test-assets.ts`). Its secret key is already configured
+  in Vercel production as `DEVNET_SWAP_AUTHORITY_SECRET_KEY` (per
+  `PROJECT_STATUS.md`'s Environment Status). **Confirmed live balance at
+  design time: ~0.404 SOL** — real, but limited runway; see "Operational
+  constraints" below.
+- **No persistent store (KV/Redis/DB) exists in this project.** The one
+  existing precedent for rate-limiting without one is the `/internal/status`
+  dashboard's login lockout (`api/dashboard/login.ts`): a module-scope
+  in-memory `Map`, explicitly documented there as resetting on cold start
+  and not shared across warm instances — an accepted, real, already-shipped
+  pattern in this codebase, not something Phase B is introducing for the
+  first time.
+- **No Metaplex/token-metadata program integration exists anywhere in this
+  repo** (confirmed again during Phase A's live verification). `mintX`/
+  `mintY`/`mintZ`'s "mockX"/"MOCX"-style names are an off-chain convenience
+  registry (`packages/sdk/fixtures/devnet-fixtures.json`), never on-chain
+  metadata. **Decision: devUSDC follows the identical pattern** — no new
+  Metaplex dependency is introduced; name/symbol are recorded in the same
+  kind of off-chain fixture registry, always shown alongside (never instead
+  of) the mint address, exactly matching this repo's one existing
+  convention rather than creating a one-off exception.
+
+### Decisions
+
+| Question | Decision | Why |
+|---|---|---|
+| Mint authority | The existing manager/swap-authority keypair (`Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj`) | Real, funded, already the mint authority for the other 3 DevNet test mints; reusing it means zero new secrets to provision, so deployment isn't blocked on the user adding a new Vercel env var today. Tradeoff, accepted and documented: concentrates more capability on one already-privileged DevNet-only key (see "Operational constraints"). |
+| Freeze authority | Same keypair (kept, not set to `null`) | Defense-in-depth for an internal alpha faucet — lets a future admin action freeze a specific abusive wallet's devUSDC account without needing a new authority or a program change. Not exercised by Phase B itself (no freeze instruction is built yet); a deliberate, documented option to keep open. |
+| Token program | Classic SPL Token (`TOKEN_PROGRAM_ID`), not Token-2022 | Matches `mintX`/`mintY`/`mintZ`'s existing convention; no Token-2022 extension is needed for a plain fungible test token. |
+| Decimals | 6 | Matches the user's stated preference and this repo's existing convention (Reserve Token decimals, `mintX`/`mintY` decimals). |
+| Initial supply | 0 (mint-on-demand only) | No pre-minted treasury balance to custody/secure; every devUSDC token in existence is traceable to a specific faucet claim transaction. |
+| On-chain metadata | None (see inspection findings above) | Consistency with the one existing pattern in this repo; avoids a new dependency for Phase B's actual objective (a working faucet). Name/symbol shown in the UI always alongside the real mint address, never replacing it. |
+| Faucet claim amount | 500 devUSDC per claim | Generous enough to be useful for repeated Phase C testing (mint/buy flows), small enough that "devUSDC has no value" is obviously true regardless. |
+| Faucet eligibility (durable) | Reject if the requesting wallet's **current on-chain devUSDC balance** is already ≥ 2,000 (a hard ceiling, always re-checked live against the chain) | Unspoofable by a client (matches this repo's "never trust client-supplied balances" convention, e.g. `swap-sign.ts`'s dynamic Reserve validation) and needs no persistent store — the chain itself is the source of truth for "have they already got plenty." |
+| Faucet eligibility (best-effort) | An in-memory, per-pubkey 60-second cooldown, module-scope `Map`, same pattern as `api/dashboard/login.ts` | Blocks rapid double-submission/accidental double-claims within a warm instance; explicitly documented as **not** a durable global rate limit (resets on cold start, not shared across instances) — the balance ceiling above is the real, durable defense. |
+| SOL sponsorship amount | 0.01 SOL per grant | Enough for a handful of transaction fees / a small ATA rent, not enough to fund a full Reserve creation (intentionally — this is onboarding fuel, not a Reserve-funding mechanism). |
+| SOL sponsorship eligibility | Reject if current on-chain SOL balance ≥ 0.03 SOL (durable, live-checked) + the same in-memory cooldown pattern | Same reasoning as devUSDC. |
+| Mainnet guard | Every faucet/sponsorship endpoint independently queries the connection's **genesis hash** at request time and refuses to proceed unless it exactly matches Solana DevNet's known genesis hash, regardless of what `SOLANA_RPC_URL`/`VITE_SOLANA_CLUSTER` claim | A string-based cluster-name check could be silently misconfigured; the genesis hash is a property of the actual chain being talked to and can't be spoofed by an environment-variable typo. Fails closed (server returns an error, mints/transfers nothing) if the genesis hash can't be confirmed at all (e.g. RPC unreachable). |
+| New required env vars | **None.** Reuses `DEVNET_SWAP_AUTHORITY_SECRET_KEY` and `SOLANA_RPC_URL`, both already configured in Vercel production | Avoids blocking today's deployment on a new secret the user would otherwise need to add manually before anything could go live. |
+
+### Server-side vs. client-side responsibilities
+- **Server (both new endpoints) owns, and the client can never override:** which mint is used (hardcoded, not client-suppliable), the claim/grant amount, the eligibility check (balance ceiling, re-fetched live from chain on every request), the cooldown check, cluster/genesis verification, and all signing.
+- **Client owns:** collecting the connected wallet's own pubkey, displaying the server's response (pending/submitted/confirmed/failed), triggering a post-confirmation balance refresh, and offering the guided-fallback public-faucet link. The client is never trusted for eligibility or amounts — every value the server needs is re-derived server-side from live chain state or its own hardcoded config, matching this repo's existing `swap-sign.ts` convention.
+- **No user wallet signature is required for either endpoint's actual mint/transfer transaction**, following the exact precedent already shipped in this repo for `mint-test-assets.ts`: both operations only ever **add** funds to the caller's own wallet and can never move anything out of it, so a signature would add UI friction without a security benefit. The user does still take an explicit UI action (clicking "Claim") while connected, and the transaction is genuinely signed (by the server-side authority) and genuinely submitted/confirmed on-chain with a real signature and Explorer link — satisfying the substance of "no synthetic success," if not a literal wallet-popup signature. **Flagged explicitly, not silently decided**: if a mandatory wallet-approval click is wanted specifically as a UX consent gate even for a pure gift, that's a one-line addition (`wallet.signMessage` as a non-transactional "I consent" step) that can be layered on without changing the transaction/signing architecture above.
+
+### Operational constraints (documented, not hidden)
+- The manager/swap-authority wallet now serves **four** roles: Buy/Sell zap co-signer, `mint-test-assets` faucet signer, devUSDC mint authority, and (new) devUSDC faucet signer + SOL sponsor. All draw from the same ~0.404 SOL balance. At 0.01 SOL/SOL-grant plus tx fees, this funds roughly **35-40 SOL grants** before needing a top-up, on top of its existing Buy/Sell-zap SOL-payout duties. This is the same single-dev-controlled-key risk already tracked in `PROJECT_STATUS.md`/DEC-0015 — Phase B does not introduce a new category of risk, but does increase how much rides on this one key running out. Recommend monitoring and topping up proactively, and revisiting authority separation before wider (non-internal) testing.
+- **Authority rotation/revocation path:** rotating the mint/freeze authority requires (a) generating a new keypair, (b) a `SetAuthority` instruction signed by the *current* authority naming the new one, (c) updating `DEVNET_SWAP_AUTHORITY_SECRET_KEY` in Vercel. Because this pass reuses the existing swap-authority key, rotating it also affects Buy/Sell and the existing test-asset faucet — a real coupling cost of the reuse decision above, explicitly noted.
+- **If the authority is exhausted (SOL runs out):** mint/faucet/sponsorship transactions fail cleanly with an honest RPC/insufficient-funds error surfaced to the UI — no silent fallback, no fake success.
+- **If the authority is compromised:** the attacker could mint arbitrary (valueless) devUSDC, freeze/unfreeze devUSDC accounts, and drain the wallet's real DevNet SOL (which would also disable Buy/Sell and both faucets). Devalued-token minting is low-impact by design; SOL drain is the real risk. Response: rotate `DEVNET_SWAP_AUTHORITY_SECRET_KEY` immediately and, if reachable before drain, move remaining SOL to a fresh wallet first.
+- **Production/Mainnet accidental-enablement prevention:** the live genesis-hash check (above) is the primary guard and runs on every request, not just at startup — a deployment accidentally pointed at Mainnet would have every faucet/sponsorship call fail closed rather than silently mint/transfer real-value assets on Mainnet (which is architecturally impossible anyway, since `DEVNET_SWAP_AUTHORITY_SECRET_KEY`'s keypair holds no Mainnet SOL and devUSDC is never deployed there — but the explicit runtime check exists so this isn't merely an assumption).
+
+---
+
+## Phase B — implementation and live verification record (2026-07-29)
+
+Phase B is implemented, tested, and live-verified against real Solana
+DevNet. This section is the factual record — see
+`docs/protocol/FRONTEND_INTEGRATION.md`'s "Phase B" section for the
+architecture summary.
+
+### devUSDC mint — created and verified live
+- **Mint address:** `Djn4aGJ3JTgqGpGdQFkmq73gG8KvkwRswP7pNaouuw4k`
+- **Token program:** classic SPL Token (`TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`) — verified live via `getAccountInfo().owner`
+- **Decimals:** 6 — verified live via `getMint`
+- **Mint authority / freeze authority:** both `Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj` — verified live
+- **Initial supply:** 0 — verified live
+- **Creation transaction:** `2fcshGpJMTytqZdCpysdbuvUMQwyGgtSMMTyeeAt2dyFCpEiN5qNmunaeXNo9dk4WHzFfg9xmtT5dLWC5uLhJDFd` ([Explorer](https://explorer.solana.com/tx/2fcshGpJMTytqZdCpysdbuvUMQwyGgtSMMTyeeAt2dyFCpEiN5qNmunaeXNo9dk4WHzFfg9xmtT5dLWC5uLhJDFd?cluster=devnet))
+- **No on-chain metadata** — confirmed deliberate, matching the `mintX`/`mintY`/`mintZ` precedent; name ("SSR Test USD") and symbol ("devUSDC") live only in `packages/sdk/fixtures/devusdc.json`, never presented as a substitute for the mint address.
+- Created via `scripts/create_devusdc_mint.ts`, which is idempotent-guarded (refuses to create a second mint once `devnet-fixtures/devusdc-mint.json`, gitignored, records one).
+
+### Faucet + SOL onboarding — implemented, matching the security model exactly
+- `api/devnet/faucet-devusdc.ts`: 500 devUSDC/claim, 2,000 devUSDC durable ceiling, 60s best-effort cooldown.
+- `api/devnet/sponsor-sol.ts`: 0.01 SOL/grant, 0.03 SOL durable ceiling, 60s cooldown, 0.05 SOL authority floor (refuses to drain the shared authority below it).
+- Both reuse `DEVNET_SWAP_AUTHORITY_SECRET_KEY` — **zero new required environment variables**.
+- Both call a live genesis-hash check (`assertDevnetCluster`) before anything else — fails closed on any cluster mismatch.
+- Shared helpers (`api/devnet/_lib/{authority,network,rateLimit,apiTypes}.ts`) also now back the pre-existing `swap-sign.ts`/`mint-test-assets.ts` (deduplicated, behavior unchanged — confirmed via `npx tsc -p api/devnet/tsconfig.json --noEmit` passing clean and the existing endpoints' logic untouched beyond the loader call site).
+- Frontend: `src/merge/components/DevnetOnboarding.tsx`, mounted on Portfolio (an existing primary nav item) — no new page, no redesign.
+
+### Live DevNet verification — full pass, all 15 required proofs confirmed
+Via `scripts/verify_devusdc_faucet.ts`, which calls the **actual deployed
+handler functions** (not a reimplementation) against a freshly-generated,
+disposable test wallet (`827QX6fPtLvHRc1KRsqVa8utHcan6MLy3H7VShhU2GJh` —
+no prior history, no further use planned):
+
+1. Mint exists on DevNet: confirmed.
+2. Mint owner/token program: confirmed (classic SPL Token).
+3. Decimals (6) and authorities (both = manager pubkey): confirmed live.
+4. Metadata resolves as "SSR Test USD"/"devUSDC": confirmed (off-chain registry, explicitly not on-chain).
+5. Test wallet starting balances: 0 devUSDC, 0 lamports SOL — confirmed.
+6-9. Real faucet claim requested, handler executed, real transaction built/signed/submitted, confirmed on-chain: signature `5ySJEctYwRUv8tQxkugcDtQ9FYa5msrUN55hR3VcADnKwGboszDBQUBnbuRBxEwdVnjSn3pCYQHUgeHKa6qpMQJi`.
+10. Explorer link generated and matches the real signature: `https://explorer.solana.com/tx/5ySJEctYwRUv8tQxkugcDtQ9FYa5msrUN55hR3VcADnKwGboszDBQUBnbuRBxEwdVnjSn3pCYQHUgeHKa6qpMQJi?cluster=devnet`.
+11. Test wallet received real devUSDC: post-claim balance 500,000,000 raw (500 devUSDC), re-fetched from chain, not trusted from the response.
+12. Frontend refresh path: `DevnetOnboarding.tsx` re-fetches both balances from chain via the same `fetchTokenBalanceRaw`/`connection.getBalance` calls after every claim — same mechanism this script used to verify the balance change independently.
+13. Immediate repeated claim limited: second call to the same handler for the same wallet returned HTTP 429, `"Please wait 60s before requesting devUSDC again."` — confirmed.
+14. DevNet SOL onboarding exercised: `sponsor-sol` handler granted 0.01 SOL, signature `3Dec58wN3Xi2HCKpHmp3URh7ygXGJxqimT9rm9m2Ztadrev5E566pu4h2PWRY6dBbLnhipjpAKtXufDTQJ2z9sSY` ([Explorer](https://explorer.solana.com/tx/3Dec58wN3Xi2HCKpHmp3URh7ygXGJxqimT9rm9m2Ztadrev5E566pu4h2PWRY6dBbLnhipjpAKtXufDTQJ2z9sSY?cluster=devnet)), post-grant balance confirmed live at 10,000,000 lamports (0.01 SOL, up from 0), and an immediate repeat grant request was also correctly rejected with 429.
+15. No Mainnet-compatible path: both handlers' unconditional `assertDevnetCluster()` call was exercised live this run (genesis hash matched DevNet) and its reject path is covered offline (`tests/phase_b_devusdc.ts`, simulated Mainnet genesis hash) — no code path in either handler builds a mint/transfer instruction before this check passes.
+
+**Manager/swap-authority wallet balance after this pass:** ~0.391 SOL (down
+from ~0.404 SOL before Phase B — spent on mint-account rent, two faucet ATA
+creations, and one 0.01 SOL sponsorship grant; consistent with expected
+costs, confirming no unexpected drain).
+
+### Tests, typecheck, lint, build
+- `tests/phase_b_devusdc.ts` (new, offline): 20/20 passing — devUSDC config, DevNet-only enforcement (including a simulated-Mainnet-genesis reject path), best-effort cooldown logic, authority-loading (missing-env-var honest failure; valid-env-var parses correctly using a disposable test keypair, never the real one), shared request-body parsing, invalid-pubkey rejection.
+- `tests/phase_a_discovery.ts` (pre-existing): 12/12 passing, unaffected.
+- `npx tsc -b` (repo-wide): clean.
+- `npx tsc -p api/devnet/tsconfig.json --noEmit`: clean.
+- `npx tsc -p scripts/tsconfig.json --noEmit`: clean.
+- `npx tsc -p tsconfig.tests.json`: clean.
+- `npx tsc -p tsconfig.node.json --noEmit`: clean (confirms the `api/devnet/_lib/` relocation, chosen specifically to avoid this project's stricter `nodenext`/`verbatimModuleSyntax` settings, didn't regress the dashboard's pre-existing `lib/dashboard/*` files).
+- `npx oxlint`: zero new warnings/errors.
+- `npx vite build`: passes.
+
+### What offline tests do NOT cover (by design, matching this repo's existing split)
+RPC failure mid-transaction, confirmation timeout, wallet disconnection
+mid-flow, and faucet exhaustion are not independently unit-tested with
+mocks — this repo has never mocked `@solana/web3.js`'s `Connection`/
+`sendAndConfirmTransaction` for its DevNet endpoints (`swap-sign.ts`,
+`mint-test-assets.ts` have no offline tests either); live verification
+scripts are the established verification layer for real on-chain behavior.
+The "sponsor exhausted" path and RPC-failure error paths are implemented
+(honest error responses, no fabricated success) and code-reviewed but were
+not artificially triggered this pass (the authority had sufficient balance
+throughout); this is noted as a residual, low-risk gap rather than
+silently claimed as fully proven.
+
+### Known limitations
+- Per-wallet cooldown is in-memory/best-effort (resets on cold start) —
+  documented, matches the pre-existing dashboard-login precedent; the
+  durable defense is always the live balance ceiling.
+- The shared manager/swap-authority wallet now backs four DevNet duties on
+  one ~0.39 SOL balance — will need periodic top-ups under sustained
+  internal testing (see "Operational constraints" above).
+- No dedicated "sponsor exhausted" or "RPC failure" live-fire test was
+  performed (see above) — implemented and reviewed, not artificially
+  forced.
+
+### Phase C prerequisites (unchanged scope, now with real settlement-token infrastructure available)
+Phase C (real creation, funding, Reserve Token minting/burning, proportional
+redemption) can now build on: a real settlement token (devUSDC) testers can
+actually acquire, a real (if tightly bounded) DevNet-SOL onboarding path,
+and the shared `_lib/authority.ts`/`_lib/network.ts`/`_lib/rateLimit.ts`/
+`_lib/apiTypes.ts` infrastructure this pass explicitly built for reuse.
+Phase C itself — wiring devUSDC as an actual Buy-side settlement asset,
+real minting against it, direct redemption — has **not** been started in
+this pass, per instruction.
+
+### Explicit confirmations (per instruction)
+- **devUSDC has no monetary value.** Stated in the mint's own registry
+  record, in the UI (`DevnetOnboarding.tsx`'s card description and
+  per-asset disclosure text), and in this document.
+- **DevNet SOL is used for network fees and account rent, not as the
+  settlement asset for buying Reserve Tokens.** Buy still uses the existing
+  SOL zap mechanism (unchanged, Phase A/pre-existing scope); devUSDC's role
+  as an actual settlement asset for Buy is explicitly Phase C work, not
+  built in this pass. The UI states this distinction directly.
+

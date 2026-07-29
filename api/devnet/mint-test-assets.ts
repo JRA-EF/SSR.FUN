@@ -10,6 +10,7 @@
 import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { DEVNET_FIXTURES } from "../../packages/sdk/src";
+import { loadDevnetAuthority } from "./_lib/authority";
 
 interface ApiRequest {
   method?: string;
@@ -31,12 +32,6 @@ const ALLOWED_MINTS: Record<string, MintMeta> = Object.fromEntries(
 // small enough that this can never function as a real-value faucet.
 const MAX_AMOUNT_PER_MINT = 1000;
 
-function loadSwapAuthority(): Keypair {
-  const raw = process.env.DEVNET_SWAP_AUTHORITY_SECRET_KEY;
-  if (!raw) throw new Error("DEVNET_SWAP_AUTHORITY_SECRET_KEY is not configured");
-  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw) as number[]));
-}
-
 function parseBody(req: ApiRequest): Record<string, unknown> {
   if (req.body && typeof req.body === "object") return req.body as Record<string, unknown>;
   if (typeof req.body === "string") {
@@ -57,7 +52,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   let swapAuthority: Keypair;
   try {
-    swapAuthority = loadSwapAuthority();
+    swapAuthority = loadDevnetAuthority();
   } catch {
     res.status(500).json({ error: "DevNet swap adapter is not configured on this deployment." });
     return;

@@ -432,6 +432,78 @@ Notably, `ProtocolConfig.default_protocol_fee_bps` is stored but never read
 by any fee-computation code path (each Reserve's own `fee_config` governs its
 actual fees) -- it appears to be a vestigial/template field, not a gate.
 
+## Phase B: devUSDC settlement token + DevNet onboarding (2026-07-29)
+
+Full design record in `docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md`
+"Phase B -- security model"; this section is the architecture summary.
+
+**devUSDC ("SSR Test USD")** is a real Solana DevNet SPL-token mint,
+`Djn4aGJ3JTgqGpGdQFkmq73gG8KvkwRswP7pNaouuw4k`, created via
+`scripts/create_devusdc_mint.ts` and registered publicly in
+`packages/sdk/fixtures/devusdc.json` / `packages/sdk/src/devUsdc.ts`
+(`DEVUSDC`, `DEVUSDC_MINT`, `DEVUSDC_DECIMALS`). 6 decimals, classic SPL
+Token program, zero initial supply (mint-on-demand only). Mint authority
+**and** freeze authority are both the existing Gate-9 manager/swap-authority
+keypair (`Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj`) -- a deliberate reuse
+decision (not a new secret to provision) with a documented tradeoff. No
+on-chain Metaplex metadata exists for it, matching the pre-existing
+`mintX`/`mintY`/`mintZ` convention -- name/symbol are an off-chain
+convenience record only; the mint address is canonical identity.
+
+**Two new DevNet-only server endpoints**, both reusing
+`DEVNET_SWAP_AUTHORITY_SECRET_KEY` (no new required secret):
+- `api/devnet/faucet-devusdc.ts` -- mints 500 devUSDC to the caller's own
+  wallet (idempotent ATA creation + `mintTo`), gated by a durable, live
+  on-chain balance ceiling (2,000 devUSDC) plus a best-effort in-memory
+  cooldown (60s).
+- `api/devnet/sponsor-sol.ts` -- transfers 0.01 real DevNet SOL to the
+  caller's wallet, gated the same way (0.03 SOL ceiling + cooldown), and
+  refuses to drop the authority's own balance below a 0.05 SOL floor
+  (fails with an honest, non-fabricated "sponsor exhausted" response
+  pointing at the public DevNet faucet instead).
+
+Both endpoints call `assertDevnetCluster()`
+(`api/devnet/_lib/network.ts`) unconditionally, first -- a live genesis-hash
+check that fails closed on any cluster mismatch, independent of
+`SOLANA_RPC_URL`/`VITE_SOLANA_CLUSTER` string configuration. Neither requires
+a user wallet signature (both only ever add funds to the caller, matching
+the pre-existing `mint-test-assets.ts` precedent) -- see the plan doc's
+security model for the explicit reasoning and the one-line addition that
+would layer on a consent-only signature if wanted.
+
+**Shared server-only helpers, factored out of this pass for reuse in later
+phases:** `api/devnet/_lib/authority.ts` (`loadDevnetAuthority`, now also
+used by the pre-existing `swap-sign.ts`/`mint-test-assets.ts`, deduplicating
+what were previously three copies of the same loader), `_lib/network.ts`
+(`assertDevnetCluster`), `_lib/rateLimit.ts` (the in-memory cooldown
+tracker, the same accepted pattern already shipped for the `/internal/status`
+login lockout), `_lib/apiTypes.ts` (shared request/response shapes). These
+live under `api/devnet/_lib/` (Vercel does not route underscore-prefixed
+paths) specifically so they compile under `api/devnet/tsconfig.json`'s
+plain CommonJS settings rather than the root `tsconfig.node.json`'s
+`nodenext`/`verbatimModuleSyntax` combination, which does not tolerate a
+directory-local `package.json` type override the way this repo's other
+CJS-scoped boundaries (`packages/sdk`, `src/merge/lib`, `tests/`) do.
+
+**Frontend:** `src/merge/components/DevnetOnboarding.tsx`, mounted on the
+existing Portfolio page (already a primary nav item) directly below the
+Wallet Balances card. Shows live-read devUSDC and DevNet SOL balances
+(never simulated), a claim button per asset, pending/confirmed/failed
+states with a real Explorer link, and a permanent guided fallback to the
+public DevNet faucet (`https://faucet.solana.com`) for when the SSR-
+sponsored SOL grant is unavailable or insufficient.
+
+**Live-verified** via `scripts/verify_devusdc_faucet.ts` (calls the actual
+deployed handler functions, not a reimplementation, against a disposable
+freshly-generated test wallet) -- see `DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md`
+"Phase B -- live verification" for the full transcript and signatures.
+
+**Known limitation, documented not hidden:** the per-wallet cooldown is
+in-memory and resets on cold start / isn't shared across warm serverless
+instances (same limitation as the pre-existing dashboard login lockout);
+the durable, unspoofable defense is always the live on-chain balance
+ceiling, re-checked on every request regardless of cooldown state.
+
 ## What's DevNet-only vs. production-shaped
 
 See PROJECT_STATUS.md "Mainnet-Readiness Gaps" for the full list. In brief:

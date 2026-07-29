@@ -1,0 +1,9 @@
+{
+  "mint": "Djn4aGJ3JTgqGpGdQFkmq73gG8KvkwRswP7pNaouuw4k",
+  "decimals": 6,
+  "symbol": "devUSDC",
+  "name": "SSR Test USD",
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "network": "devnet",
+  "note": "A real Solana DevNet SPL-token mint with zero real value, created for Phase B settlement-token testing (see docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md 'Phase B -- security model'). No on-chain Metaplex metadata exists for this mint -- name/symbol here are an off-chain convenience record, matching this repo's existing mintX/Y/Z convention. The mint address is canonical identity; this file is a public reference, not a secret."
+}

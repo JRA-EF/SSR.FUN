@@ -22,6 +22,7 @@ import { Wallet, PieChart, ArrowUpRight, ArrowDownRight, Search, Activity } from
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { DevnetOnboarding } from "../components/DevnetOnboarding";
 
 /** Categorical swatch cycled across allocation rows -- same palette as the native charts. */
 const ALLOCATION_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
@@ -203,6 +204,8 @@ export function Portfolio() {
           </CardContent>
         </Card>
       </div>
+
+      <DevnetOnboarding />
 
       {allocation.length > 0 && (
         <Card className="bg-card/40 border-border/50 mb-8">
