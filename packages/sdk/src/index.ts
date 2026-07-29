@@ -8,3 +8,4 @@ export * from "./devUsdc";
 export * from "./zapPricing";
 export * from "./zapInstructions";
 export * from "./createReserveFlow";
+export * from "./managementInstructions";

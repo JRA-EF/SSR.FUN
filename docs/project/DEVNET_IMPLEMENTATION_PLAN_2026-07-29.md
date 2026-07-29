@@ -1425,3 +1425,57 @@ every signature. `reserveOne` now permanently carries a 3rd asset (mockZ,
 this live test -- the same "genuine on-chain side effect from real
 verification" pattern already established by earlier phases.
 
+## Phase F/G: SDK + ManageDTR frontend wiring
+
+Added `packages/sdk/src/managementInstructions.ts` (6 builder functions:
+`updateTargets`, `addReserveAssetActive`, `fundNewReserveAsset`,
+`removeReserveAsset`, `initiateWindDown`, `closeReserve`) and
+`src/merge/lib/managementClient.ts` (browser sign-and-send wrapper, same
+`signAndSend` pattern as `createReserveClient.ts`).
+
+Investigated the existing delegate-permission model
+(`canManageDelegates`/`canRebalance` in `useAppStore.ts`) before wiring the
+UI and found it only ever checks the fully-local, simulated `dtr.delegates`
+array -- always empty for real on-chain Reserves. **No manager action in
+this app currently supports a real on-chain delegate's signature, not even
+pre-existing ones** (`update_targets`, `pause_reserve`, etc.) -- this is a
+pre-existing gap, not something this pass introduced. Extending it properly
+touches those shared helpers and every gated action, not just the new
+Phase F/G ones, so it's correctly deferred as a separate follow-up (see
+Next Actions in PROJECT_STATUS.md) rather than built inconsistently for
+only the newest instructions. Every new UI control below is therefore
+**root-manager-only**.
+
+Wired into `ManageDTR.tsx`:
+
+- **Rebalance tab**: the target-weight editor now submits a real, signed
+  `update_targets` transaction for on-chain Reserves (previously a
+  local-only preview with submission hard-disabled, "coming soon").
+  Rebalance **trade execution** (actually moving holdings) remains
+  separately blocked pending DEC-0045.
+- **New "Reserve Composition" card**: lists every registered asset with
+  its live vault balance; offers **Fund** for any zero-balance asset,
+  **Remove** only on the last-registered zero-balance asset (mirroring the
+  program's own eligibility rule client-side, so the UI never offers an
+  action the program would reject and waste a network fee on), and an
+  **Add Asset** selector restricted to the same real-asset allowlist
+  `CreateDTR.tsx` already offers at creation time.
+- **New "Wind Down" card** (Overview tab): shows live status; offers
+  **Initiate Wind Down** when `Active`, or **Close Reserve** when
+  `WindDown` AND supply/every vault balance are already zero (again
+  mirroring the program's own precondition).
+
+Added `orderIndex` to `OnChainAssetMeta` (previously dropped during the
+on-chain-to-DTR mapping in `onChainReserve.ts` -- needed to compute
+remove-eligibility) and an immediate on-chain-state refresh after any
+confirmed action, rather than waiting for `RealReserveSync`'s next poll.
+
+**Verified**: `npx tsc -b` clean; `npx vite build` clean (only the
+pre-existing >500kB main-chunk warning); `npx oxlint` zero new warnings;
+`npx ts-mocha -p ./tests/tsconfig.json tests/phase_a_discovery.ts
+tests/phase_b_devusdc.ts` still 32/32 passing; dev server boots with no
+console/log errors on `/` and `/#/manage/devnet-reserve-one`. **Not
+verified**: an actual browser + Phantom click-through (no
+browser-automation tool available in this environment -- a pre-existing,
+already-documented limitation). See DEC-0049.
+

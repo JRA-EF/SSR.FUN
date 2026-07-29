@@ -68,7 +68,7 @@ export const REAL_RESERVE_DESCRIPTORS: RealReserveDescriptor[] = [
 ];
 
 function toOnChainAssetMeta(fixtureAssets: FixtureReserve["assets"], onChain: ReserveOnChain | null): OnChainAssetMeta[] {
-  return fixtureAssets.map((fa) => {
+  const known = fixtureAssets.map((fa) => {
     const live = onChain?.assets.find((a) => a.assetMint === fa.mint);
     return {
       mint: fa.mint,
@@ -77,8 +77,25 @@ function toOnChainAssetMeta(fixtureAssets: FixtureReserve["assets"], onChain: Re
       weightBps: live?.targetWeightBps ?? fa.weightBps,
       reserveAsset: fa.reserveAsset,
       vault: fa.vault,
+      orderIndex: live?.orderIndex ?? -1,
     };
   });
+  // Assets discovered live on-chain but not in the fixture/candidate-mint
+  // hint list (e.g. one just added via add_reserve_asset_active) -- surface
+  // them too rather than silently dropping them, matching this file's
+  // "assetsResolvedFully" honesty policy elsewhere.
+  const extra = (onChain?.assets ?? [])
+    .filter((a) => !known.some((k) => k.mint === a.assetMint))
+    .map((a) => ({
+      mint: a.assetMint,
+      symbol: a.assetMint.slice(0, 4),
+      decimals: a.decimals,
+      weightBps: a.targetWeightBps,
+      reserveAsset: a.reserveAsset,
+      vault: a.vault,
+      orderIndex: a.orderIndex,
+    }));
+  return [...known, ...extra];
 }
 
 /** Builds a placeholder DTR (zeroed dynamic fields) before the first live fetch resolves. */
@@ -260,6 +277,7 @@ export function buildDtrFromDiscoveredReserve(
       weightBps: a.targetWeightBps,
       reserveAsset: a.reserveAsset,
       vault: a.vault,
+      orderIndex: a.orderIndex,
     };
   });
   const supply = Number(discovered.reserveTokenSupplyRaw) / 10 ** RESERVE_TOKEN_DECIMALS;

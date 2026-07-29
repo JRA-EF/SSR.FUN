@@ -248,13 +248,14 @@ export function CreateDTR() {
         mintAuthority: result.mintAuthority,
         vaultAuthority: result.vaultAuthority,
         manager: walletCtx.publicKey.toBase58(),
-        assets: result.assets.map((a) => ({
+        assets: result.assets.map((a, i) => ({
           mint: a.mint,
           symbol: DEVNET_REAL_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
           decimals: a.decimals,
           weightBps: a.weightBps,
           reserveAsset: a.reserveAsset,
           vault: a.vault,
+          orderIndex: i,
         })),
         status: "active",
         totalTargetWeightBps: 10_000,

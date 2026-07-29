@@ -1192,3 +1192,36 @@
   ]
 }
 ```
+
+## DEC-0049
+
+```json
+{
+  "id": "DEC-0049",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Wire packages/sdk instruction builders and the ManageDTR UI to the now-deployed, now-verified Phase F/G instructions (task #40), gated to the Reserve's root manager only (no on-chain delegate signing wired in this pass) and behind real signed DevNet transactions -- consistent with every other on-chain action already in this app.",
+  "context": "Phase F/G's 5 instructions were deployed and live-verified via a Node script (DEC-0048), but nothing in the actual website could call them yet -- ManageDTR.tsx still showed 'Execute Rebalance (coming soon)' and no composition/wind-down controls at all for on-chain Reserves. Investigated the existing delegate-permission model (canManageDelegates/canRebalance in useAppStore.ts) and found it only ever checks the fully-local, simulated dtr.delegates array (always empty for real on-chain Reserves) -- meaning no on-chain delegate signing path exists yet for ANY manager action in this app, not just the new ones. Extending that is out of scope for this pass; root-manager-only matches the existing precedent exactly.",
+  "rationale": "Added packages/sdk/src/managementInstructions.ts (6 builder functions: updateTargets, addReserveAssetActive, fundNewReserveAsset, removeReserveAsset, initiateWindDown, closeReserve -- the first of these being update_targets, a pre-existing instruction that had never been wired to a real signed transaction from the browser before this pass either) and src/merge/lib/managementClient.ts (browser-side sign-and-send wrapper, same pattern as createReserveClient.ts's signAndSend). Wired ManageDTR.tsx: the Rebalance tab's target-weight editor now submits a real update_targets transaction for on-chain Reserves instead of a no-op preview; a new 'Reserve Composition' card lists every registered asset with its live vault balance, offers 'Fund' for any zero-balance asset, 'Remove' only on the last-registered zero-balance asset (mirroring the program's own eligibility rule so the UI never offers an action the program would reject), and an 'Add Asset' selector restricted to the same real-asset allowlist CreateDTR.tsx already uses; a new 'Wind Down' card in Overview shows live status and offers Initiate Wind Down (when Active) or Close Reserve (when WindDown AND supply/all vault balances are already zero -- again mirroring the program's own precondition). Added orderIndex to OnChainAssetMeta (previously dropped during the on-chain-to-DTR mapping, needed to compute remove-eligibility) and a small on-chain-state-refresh helper that immediately re-fetches after any confirmed action rather than waiting for the next poll.",
+  "alternativesConsidered": [
+    "Wire on-chain delegate signing for MANAGE_LIQUIDITY_CONFIG/UPDATE_TARGETS-permitted delegates too (deferred: no existing manager action in this app has ever supported on-chain delegate signing, not even the pre-existing update_targets/pause/unpause instructions -- doing it only for the new Phase F/G actions would be an inconsistent, confusing half-step; a proper fix touches the shared canManageDelegates/canRebalance helpers and is a separate, better-scoped follow-up)",
+    "Let the UI offer Remove/Close regardless of eligibility and surface the program's rejection as an error toast (rejected: mirroring the program's own precondition client-side, as every other action in this app already does for its own preconditions, gives an honest disabled state with an explanatory title instead of an avoidable failed transaction and wasted network fee)"
+  ],
+  "impact": "npx tsc -b: clean. npx vite build: clean (pre-existing >500kB main-chunk warning only, unrelated). npx oxlint: zero new warnings. npx ts-mocha -p ./tests/tsconfig.json tests/phase_a_discovery.ts tests/phase_b_devusdc.ts: 32/32 passing, unchanged. Dev server boots with no console/log errors on both / and /#/manage/devnet-reserve-one. No real browser + Phantom click-through was performed (no browser-automation tool available in this environment -- a pre-existing, already-documented limitation, unchanged by this pass).",
+  "affectedAreas": [
+    "packages/sdk/src/managementInstructions.ts",
+    "src/merge/lib/managementClient.ts",
+    "src/merge/pages/ManageDTR.tsx",
+    "src/merge/lib/types.ts",
+    "src/merge/lib/onChainReserve.ts",
+    "src/merge/pages/CreateDTR.tsx"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b -> no output (clean)",
+    "npx vite build -> built in 994ms, only the pre-existing chunk-size warning",
+    "npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_a_discovery.ts tests/phase_b_devusdc.ts -> 32 passing"
+  ]
+}
+```

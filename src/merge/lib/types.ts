@@ -149,6 +149,8 @@ export interface OnChainAssetMeta {
   weightBps: number;
   reserveAsset: string;
   vault: string;
+  /** Reserve.asset_count-relative registration order (ReserveAsset.order_index) -- used to determine remove_reserve_asset eligibility (only the last-registered asset can be removed). -1 if not yet resolved from a live fetch. */
+  orderIndex: number;
 }
 
 /** A delegate verified live on-chain (see packages/sdk/src/discovery.ts's discoverDelegatesForReserve) -- distinct from the fully-local `Delegate` type above, which backs the simulated/non-onchain sandbox only. `permissions` is the raw on-chain bitmask (see permission_flags in programs/ssr_protocol/src/state/delegate.rs), not the local ManagerPermissions shape. */
@@ -170,7 +172,7 @@ export interface OnChainReserveMeta {
   vaultAuthority: string;
   manager: string;
   assets: OnChainAssetMeta[];
-  /** "active" | "paused" | "created" | "assetsInitializing" -- mirrors programs/ssr_protocol's ReserveStatus. */
+  /** "active" | "paused" | "created" | "assetsInitializing" | "windDown" | "closed" -- mirrors programs/ssr_protocol's ReserveStatus. */
   status: string;
   totalTargetWeightBps: number;
   reserveTokenSupplyRaw: string;
