@@ -169,6 +169,147 @@ export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promis
   return { instructions, reserveTokensRequested, assetAmountsRaw: requirements.map((r) => r.requiredAmount) };
 }
 
+/** Converts a target devUSDC settlement amount into a requested (gross) Reserve Token amount. devUSDC is pegged $1 by design (Phase C) -- no SOL-style price conversion needed, unlike solToReserveTokensRequested. */
+export function devUsdcToReserveTokensRequested(
+  devUsdcAmountRaw: bigint,
+  devUsdcDecimals: number,
+  reserveTokenSupplyRaw: string,
+  assets: ZapAssetLeg[],
+  assetTestPricesUsd: Record<string, number>,
+): bigint {
+  const usdIn = Number(devUsdcAmountRaw) / 10 ** devUsdcDecimals;
+  let aumUsd = 0;
+  for (const a of assets) {
+    const price = assetTestPricesUsd[a.mint] ?? 0;
+    aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * price;
+  }
+  const supply = Number(reserveTokenSupplyRaw) / 10 ** 6;
+  const nav = supply > 0 ? aumUsd / supply : 1;
+  const reserveTokensRequestedFloat = (usdIn / nav) * 10 ** 6;
+  return BigInt(Math.max(1, Math.floor(reserveTokensRequestedFloat)));
+}
+
+export interface BuildBuyZapDevUsdcParams {
+  program: Program<anchor.Idl>;
+  protocolConfig: PublicKey;
+  reserve: PublicKey;
+  reserveTokenMint: PublicKey;
+  mintAuthority: PublicKey;
+  user: PublicKey;
+  swapAuthority: PublicKey;
+  assets: ZapAssetLeg[];
+  reserveTokenSupplyRaw: string;
+  devUsdcMint: PublicKey;
+  devUsdcDecimals: number;
+  devUsdcAmountRaw: bigint;
+  assetTestPricesUsd: Record<string, number>;
+  slippageBps?: number;
+}
+
+export interface BuildBuyZapDevUsdcResult extends BuildZapResult {
+  /** Per-leg breakdown of what genuinely funds this mint: the devUSDC leg (if the Reserve has one) comes from the user's OWN real wallet balance -- nothing is minted/fabricated for it. Every other leg is still funded via the DevNet swap-authority's test-asset mint/wrap mechanism, unchanged from the SOL zap. Never a simulated conversion between devUSDC and the other assets -- each leg's real source is exactly what's reported here. */
+  legSources: { mint: string; source: "user-devusdc-balance" | "devnet-test-asset-faucet" }[];
+}
+
+/**
+ * devUSDC-settlement Buy: the default DevNet mint flow (see DEC "devUSDC
+ * default settlement asset" pass). Unlike the SOL zap, this does NOT collect
+ * a separate payment from the user into the swap authority -- if the
+ * Reserve has a devUSDC leg, that leg's required amount is transferred
+ * directly out of the user's OWN devUSDC token account by
+ * mint_reserve_tokens_in_kind itself (the same real, ordinary transfer_checked
+ * every asset leg always goes through), genuinely spending the user's real
+ * devUSDC balance. Every OTHER leg (mockX/Y/Z, or wrapped SOL if present)
+ * is still funded via the swap authority's existing test-asset mint/wrap
+ * mechanism, exactly as in the SOL zap -- this is not new fabrication, just
+ * the same pre-existing DevNet convenience, now clearly reported per-leg via
+ * `legSources` rather than left ambiguous. If the Reserve has NO devUSDC
+ * leg at all, 100% of the mint is still swap-authority-funded (like today),
+ * and the caller should disclose that honestly rather than imply the user
+ * paid anything real -- see DTRDetail.tsx's composition preview.
+ */
+export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcParams): Promise<BuildBuyZapDevUsdcResult> {
+  const { program, protocolConfig, reserve, reserveTokenMint, mintAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw, devUsdcMint } = params;
+
+  const reserveTokensRequested = devUsdcToReserveTokensRequested(
+    params.devUsdcAmountRaw,
+    params.devUsdcDecimals,
+    reserveTokenSupplyRaw,
+    assets,
+    params.assetTestPricesUsd,
+  );
+
+  const balances: AssetBalance[] = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
+  const requirements = computeMintRequirements(reserveTokensRequested, BigInt(reserveTokenSupplyRaw), balances);
+  const slippageBps = BigInt(Math.round((params.slippageBps ?? 0.02) * 10_000));
+  const maxAssetAmounts = requirements.map((r) => mulDivCeil(r.requiredAmount, 10_000n + slippageBps, 10_000n));
+
+  const instructions: TransactionInstruction[] = [];
+  const legSources: { mint: string; source: "user-devusdc-balance" | "devnet-test-asset-faucet" }[] = [];
+
+  const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+
+  const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
+  for (let i = 0; i < assets.length; i++) {
+    const leg = assets[i];
+    const mint = new PublicKey(leg.mint);
+    const userAta = getAssociatedTokenAddressSync(mint, user);
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint));
+
+    if (mint.equals(devUsdcMint)) {
+      // The user's own real devUSDC balance funds this leg directly --
+      // mint_reserve_tokens_in_kind's own transfer_checked (below, via
+      // remainingAccounts) moves it from userAta into the vault. No mint/wrap
+      // instruction here at all; if the user doesn't hold enough, the
+      // transaction fails on-chain with a real, honest SPL insufficient-funds
+      // error -- never a fabricated success.
+      legSources.push({ mint: leg.mint, source: "user-devusdc-balance" });
+    } else if (isWrappedSol(mint)) {
+      const swapAuthorityWsolAta = getAssociatedTokenAddressSync(mint, swapAuthority);
+      instructions.push(createAssociatedTokenAccountIdempotentInstruction(swapAuthority, swapAuthorityWsolAta, swapAuthority, mint));
+      instructions.push(SystemProgram.transfer({ fromPubkey: swapAuthority, toPubkey: swapAuthorityWsolAta, lamports: requirements[i].requiredAmount }));
+      instructions.push(createSyncNativeInstruction(swapAuthorityWsolAta));
+      instructions.push(createTransferInstruction(swapAuthorityWsolAta, userAta, swapAuthority, requirements[i].requiredAmount));
+      legSources.push({ mint: leg.mint, source: "devnet-test-asset-faucet" });
+    } else {
+      instructions.push(createMintToInstruction(mint, userAta, swapAuthority, requirements[i].requiredAmount));
+      legSources.push({ mint: leg.mint, source: "devnet-test-asset-faucet" });
+    }
+
+    remainingAccounts.push(
+      { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
+      { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
+      { pubkey: userAta, isWritable: true, isSigner: false },
+      { pubkey: mint, isWritable: false, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+    );
+  }
+
+  const mintIx = await program.methods
+    .mintReserveTokensInKind(
+      new BN(reserveTokensRequested.toString()),
+      new BN(1),
+      maxAssetAmounts.map((a) => new BN(a.toString())),
+    )
+    .accounts({
+      protocolConfig,
+      reserve,
+      reserveTokenMint,
+      mintAuthority,
+      depositorReserveTokenAccount: depositorReserveTokenAta,
+      depositor: user,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+  instructions.push(mintIx);
+
+  return { instructions, reserveTokensRequested, assetAmountsRaw: requirements.map((r) => r.requiredAmount), legSources };
+}
+
 export interface BuildSellZapParams {
   program: Program<anchor.Idl>;
   reserve: PublicKey;

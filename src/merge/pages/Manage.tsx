@@ -44,7 +44,7 @@ export function Manage() {
               layered text-primary-foreground utility, which made the shadcn
               button render low-contrast purple-on-purple text here. .btn-primary
               sets a literal `color: #fff` that wins on unlayered specificity. */}
-          <Link href="/create" className="btn btn-primary btn-lg">Launch Reserve</Link>
+          <Link href="/create" className="btn btn-primary btn-lg">Launch a Decentralized Token Reserve</Link>
         </div>
       </div>
     );

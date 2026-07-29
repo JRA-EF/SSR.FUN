@@ -907,7 +907,7 @@ export function ManageDTR() {
                   <CardHeader>
                     <CardTitle className="text-xl font-merge-display">Reserve Composition</CardTitle>
                     <CardDescription>
-                      Add, fund, or remove a registered Reserve Asset -- each is a separate real, signed DevNet transaction
+                      Add, fund, or remove a registered Reserve -- each is a separate real, signed DevNet transaction
                       (<code className="font-merge-mono text-xs">add_reserve_asset_active</code>, <code className="font-merge-mono text-xs">fund_new_reserve_asset</code>,
                       <code className="font-merge-mono text-xs"> remove_reserve_asset</code>). Root Manager only, from this dashboard.
                     </CardDescription>
@@ -966,7 +966,7 @@ export function ManageDTR() {
                     })}
 
                     <div className="pt-4 border-t border-border/50 space-y-3">
-                      <Label>Add a new Reserve Asset (registers at 0% target weight, zero balance -- fund it separately above once added)</Label>
+                      <Label>Add a new Reserve (registers at 0% target weight, zero balance -- fund it separately above once added)</Label>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <select
                           className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm sm:w-56"

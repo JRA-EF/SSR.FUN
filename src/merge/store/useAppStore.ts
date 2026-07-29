@@ -5,7 +5,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
-  CreateDTRInput,
   DTR,
   Delegate,
   Holding,
@@ -19,43 +18,10 @@ import type {
   WalletState,
 } from "@/lib/types";
 import { emptyPermissions } from "@/lib/types";
-import { DTRS as SEED_DTRS, pickLogoForId } from "@/lib/seed-data";
-import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, REAL_RESERVE_DESCRIPTORS } from "@/lib/onChainReserve";
+import { pickLogoForId } from "@/lib/seed-data";
+import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS } from "@/lib/onChainReserve";
 import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
-import {
-  applyRebalance,
-  appendPricePoint,
-  calcAvgPurchasePrice,
-  calcRecentChanges,
-  calcTokensReceived,
-  calcUsdcReceived,
-  DEFAULT_NEW_DTR_LIQUIDITY_USDC,
-  initialLiquidityForAum,
-  MIN_LIQUIDITY_USDC as MIN_LIQUIDITY_FLOOR,
-  TICKER_MAX_LENGTH,
-} from "@/lib/calculations";
-
-const STARTING_BALANCES = {
-  usdc: 25_000,
-  ssr: 50_000,
-  sol: 20,
-};
-
-/** Most recent real trades kept per Reserve for the Recent Trades panel. */
-const MAX_TRADES = 200;
-
-function generateFictionalAddress(): string {
-  const chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  let out = "";
-  for (let i = 0; i < 44; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
-}
-
-function slugify(ticker: string): string {
-  return ticker.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
+import { applyRebalance, initialLiquidityForAum } from "@/lib/calculations";
 
 /**
  * Migrates a persisted DTR's price history from the old shape (an object keyed by
@@ -127,19 +93,15 @@ interface AppState {
    * history/trade log for a Reserve already known, rather than resetting it
    * on every poll tick.
    */
-  applyDiscoveredReserves: (discovered: DTR[]) => void;
+  /** `fullyVerified` (default true): pass false only when this discovery pass itself had unresolved per-account issues, so a previously-known on-chain DTR missing from `discovered` isn't assumed closed -- see the implementation for the fail-closed reasoning. */
+  applyDiscoveredReserves: (discovered: DTR[], fullyVerified?: boolean) => void;
   /** Registers a newly (really) created Reserve so it shows up in Discover/DTRDetail like any other real DTR. */
   registerRealReserve: (dtr: DTR) => void;
   /** Writes a freshly-resolved on-chain delegate list (see packages/sdk/src/discovery.ts's discoverDelegatesForReserve) onto a real DTR's onChain.delegatesOnChain -- read-only, verified data; never touches the fully-local, simulated `delegates` array. */
   setOnChainDelegates: (dtrId: string, delegates: OnChainDelegateMeta[], delegateCountOnChain: number) => void;
   /** Mirrors the connected wallet's REAL Reserve Token balance for an on-chain DTR into `holdings` -- see RealReserveSync.tsx. */
   syncRealHolding: (dtrId: string, tokenBalanceRaw: string, nav: number) => void;
-  addDemoUSDC: () => void;
-  buyDTRToken: (dtrId: string, usdcAmount: number) => TradeResult;
-  sellDTRToken: (dtrId: string, tokenAmount: number) => TradeResult;
-  resetSimulation: () => void;
 
-  createDTR: (input: CreateDTRInput) => ActionResult;
   addDelegate: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   updateDelegatePermissions: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   removeDelegate: (dtrId: string, address: string) => ActionResult;
@@ -185,7 +147,7 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       wallet: initialWallet,
       holdings: [],
-      dtrs: [...SEED_DTRS, ...REAL_PLACEHOLDER_DTRS],
+      dtrs: [...REAL_PLACEHOLDER_DTRS],
       profiles: {},
       chainDiscoveryStatus: "loading",
       chainDiscoveryError: null,
@@ -199,25 +161,11 @@ export const useAppStore = create<AppState>()(
         }));
       },
 
-      applyDiscoveredReserves: (discovered) => {
-        set((state) => {
-          const byAddress = new Map(state.dtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
-          const merged = discovered.map((fresh) => {
-            const existing = fresh.onChain ? byAddress.get(fresh.onChain.reserve) : undefined;
-            if (!existing) return fresh;
-            return {
-              ...fresh,
-              // Preserve session-accumulated history rather than resetting it
-              // to a single fresh point on every discovery poll.
-              priceHistory: existing.priceHistory.length > 1 ? existing.priceHistory : fresh.priceHistory,
-              trades: existing.trades,
-              logoUrl: existing.logoUrl ?? fresh.logoUrl,
-            };
-          });
-          const discoveredAddresses = new Set(discovered.map((d) => d.onChain?.reserve).filter(Boolean));
-          const untouched = state.dtrs.filter((d) => !d.onChain || !discoveredAddresses.has(d.onChain.reserve));
-          return { dtrs: [...untouched, ...merged] };
-        });
+      // Fail-closed merge logic (drop an on-chain DTR that's genuinely gone
+      // from a fully-verified discovery pass) lives in the pure, testable
+      // mergeDiscoveredReserves -- see src/merge/lib/onChainReserve.ts.
+      applyDiscoveredReserves: (discovered, fullyVerified = true) => {
+        set((state) => ({ dtrs: mergeDiscoveredReserves(state.dtrs, discovered, fullyVerified) }));
       },
 
       registerRealReserve: (dtr) => {
@@ -258,11 +206,13 @@ export const useAppStore = create<AppState>()(
             connecting: payload.connecting,
             provider: payload.provider,
             address: payload.address,
-            // usdc/ssr stay simulation-only (the fully-mocked, non-chain-backed
-            // DTRs still run on the fictional AMM economy); a first-time real
-            // connection seeds them once so those DTRs remain testable too.
-            usdc: state.wallet.usdc === 0 && payload.connected ? STARTING_BALANCES.usdc : state.wallet.usdc,
-            ssr: state.wallet.ssr === 0 && payload.connected ? STARTING_BALANCES.ssr : state.wallet.ssr,
+            // usdc/ssr no longer auto-seed a fictional balance on connect --
+            // this used to grant every newly-connected wallet a fake 25,000
+            // USDC / 50,000 SSR balance for the (now-removed) simulated
+            // Buy/Sell economy, which is exactly the legacy/mock behavior
+            // this corrective pass removes (see
+            // docs/project/PROJECT_STATUS.md). Left at 0/whatever they
+            // already were; nothing reads them as real balances anymore.
             sol: payload.solLamports !== null ? payload.solLamports / 1_000_000_000 : state.wallet.sol,
           },
         }));
@@ -272,269 +222,6 @@ export const useAppStore = create<AppState>()(
         set({ wallet: initialWallet, holdings: [] });
       },
 
-      addDemoUSDC: () => {
-        set((state) => ({
-          wallet: { ...state.wallet, usdc: state.wallet.usdc + 10_000 },
-        }));
-      },
-
-      buyDTRToken: (dtrId, usdcAmount) => {
-        const { wallet, holdings, dtrs } = get();
-        const dtr = dtrs.find((d) => d.id === dtrId);
-        if (!dtr) return { success: false, message: "Reserve not found." };
-        if (!wallet.connected)
-          return { success: false, message: "Connect a wallet first." };
-        if (usdcAmount <= 0)
-          return { success: false, message: "Enter an amount greater than 0." };
-        if (usdcAmount > wallet.usdc)
-          return { success: false, message: "Insufficient USDC balance." };
-
-        const { netAmount, newPrice } = calcTokensReceived(
-          usdcAmount,
-          dtr.tokenPrice,
-          dtr.liquidityUsdc,
-          dtr.feeConfig.managerBuyTaxPct,
-        );
-        const existing = holdings.find((h) => h.dtrId === dtrId);
-        const newAvgPrice = calcAvgPurchasePrice(
-          existing?.tokenBalance ?? 0,
-          existing?.avgPurchasePrice ?? 0,
-          netAmount,
-          dtr.tokenPrice,
-        );
-
-        const nextHoldings: Holding[] = existing
-          ? holdings.map((h) =>
-              h.dtrId === dtrId
-                ? {
-                    dtrId,
-                    tokenBalance: h.tokenBalance + netAmount,
-                    avgPurchasePrice: newAvgPrice,
-                  }
-                : h,
-            )
-          : [...holdings, { dtrId, tokenBalance: netAmount, avgPurchasePrice: newAvgPrice }];
-
-        const now = Date.now();
-        const nextPriceHistory = appendPricePoint(dtr.priceHistory, newPrice, now);
-        const { change24h, change7d } = calcRecentChanges(nextPriceHistory, newPrice);
-        const trade: Trade = {
-          id: `${dtrId}-${now}-${Math.random().toString(36).slice(2, 9)}`,
-          t: nextPriceHistory[nextPriceHistory.length - 1].t,
-          side: "buy",
-          price: newPrice,
-          tokenAmount: netAmount,
-          usdcAmount,
-        };
-        const nextTrades = [...dtr.trades, trade].slice(-MAX_TRADES);
-
-        set({
-          wallet: { ...wallet, usdc: wallet.usdc - usdcAmount },
-          holdings: nextHoldings,
-          dtrs: dtrs.map((d) =>
-            d.id === dtrId
-              ? {
-                  ...d,
-                  holders: d.holders + (existing ? 0 : 1),
-                  tokenPrice: newPrice,
-                  // Buys deepen the pool with the USDC that came in, so the curve gets
-                  // sturdier (less slippage-prone) as a DTR attracts more buy volume.
-                  liquidityUsdc: d.liquidityUsdc + usdcAmount,
-                  priceHistory: nextPriceHistory,
-                  trades: nextTrades,
-                  change24h,
-                  change7d,
-                }
-              : d,
-          ),
-        });
-
-        return {
-          success: true,
-          message: `Bought ${netAmount.toFixed(4)} ${dtr.ticker} for ${usdcAmount.toFixed(2)} USDC. New price: ${newPrice.toFixed(4)}.`,
-        };
-      },
-
-      sellDTRToken: (dtrId, tokenAmount) => {
-        const { wallet, holdings, dtrs } = get();
-        const dtr = dtrs.find((d) => d.id === dtrId);
-        const existing = holdings.find((h) => h.dtrId === dtrId);
-        if (!dtr) return { success: false, message: "Reserve not found." };
-        if (!wallet.connected)
-          return { success: false, message: "Connect a wallet first." };
-        if (tokenAmount <= 0)
-          return { success: false, message: "Enter an amount greater than 0." };
-        if (!existing || tokenAmount > existing.tokenBalance)
-          return { success: false, message: "Insufficient Reserve Token balance." };
-
-        const { netAmount, newPrice } = calcUsdcReceived(
-          tokenAmount,
-          dtr.tokenPrice,
-          dtr.liquidityUsdc,
-          dtr.feeConfig.managerSellTaxPct,
-        );
-        const remainingBalance = existing.tokenBalance - tokenAmount;
-        const closedOut = remainingBalance <= 1e-9;
-
-        const nextHoldings: Holding[] = closedOut
-          ? holdings.filter((h) => h.dtrId !== dtrId)
-          : holdings.map((h) =>
-              h.dtrId === dtrId ? { ...h, tokenBalance: remainingBalance } : h,
-            );
-
-        const now = Date.now();
-        const nextPriceHistory = appendPricePoint(dtr.priceHistory, newPrice, now);
-        const { change24h, change7d } = calcRecentChanges(nextPriceHistory, newPrice);
-        // Sells drain USDC out of the pool, so the curve gets thinner (more
-        // slippage-prone) -- floored so it never fully dries out.
-        const nextLiquidity = Math.max(MIN_LIQUIDITY_FLOOR, dtr.liquidityUsdc - netAmount);
-        const trade: Trade = {
-          id: `${dtrId}-${now}-${Math.random().toString(36).slice(2, 9)}`,
-          t: nextPriceHistory[nextPriceHistory.length - 1].t,
-          side: "sell",
-          price: newPrice,
-          tokenAmount,
-          usdcAmount: netAmount,
-        };
-        const nextTrades = [...dtr.trades, trade].slice(-MAX_TRADES);
-
-        set({
-          wallet: { ...wallet, usdc: wallet.usdc + netAmount },
-          holdings: nextHoldings,
-          dtrs: dtrs.map((d) =>
-            d.id === dtrId
-              ? {
-                  ...d,
-                  holders: Math.max(0, d.holders - (closedOut ? 1 : 0)),
-                  tokenPrice: newPrice,
-                  liquidityUsdc: nextLiquidity,
-                  priceHistory: nextPriceHistory,
-                  trades: nextTrades,
-                  change24h,
-                  change7d,
-                }
-              : d,
-          ),
-        });
-
-        return {
-          success: true,
-          message: `Sold ${tokenAmount.toFixed(4)} ${dtr.ticker} for ${netAmount.toFixed(2)} USDC. New price: ${newPrice.toFixed(4)}.`,
-        };
-      },
-
-      resetSimulation: () => {
-        const { wallet, dtrs } = get();
-        set({
-          // `sol` is a real, live-mirrored chain balance (see WalletSync) --
-          // resetting the simulation can't and shouldn't touch it.
-          wallet: wallet.connected
-            ? { ...wallet, usdc: STARTING_BALANCES.usdc, ssr: STARTING_BALANCES.ssr }
-            : initialWallet,
-          holdings: [],
-          // Real, on-chain-backed DTRs (fixtures + any user-created real
-          // Reserves) reflect actual DevNet state -- "resetting the
-          // simulation" can't undo a real blockchain, so only the fully
-          // mocked seed DTRs go back to their defaults.
-          dtrs: [...SEED_DTRS, ...dtrs.filter((d) => d.onChain)],
-        });
-      },
-
-      createDTR: (input) => {
-        const { wallet, dtrs } = get();
-        if (!wallet.connected || !wallet.address)
-          return { success: false, message: "Connect a wallet to deploy a Reserve." };
-        if (!input.name.trim() || !input.ticker.trim())
-          return { success: false, message: "Name and ticker are required." };
-        if (input.ticker.trim().length > TICKER_MAX_LENGTH)
-          return { success: false, message: `Ticker must be ${TICKER_MAX_LENGTH} characters or fewer.` };
-
-        const id = slugify(input.ticker) || slugify(input.name);
-        if (!id) return { success: false, message: "Enter a valid ticker." };
-        if (dtrs.some((d) => d.id === id))
-          return { success: false, message: `A Reserve with ticker ${input.ticker.toUpperCase()} already exists.` };
-        if (input.composition.length === 0)
-          return { success: false, message: "Select at least one asset for the basket." };
-
-        const assignedTotal = input.composition.reduce((s, a) => s + a.weight, 0);
-        if (assignedTotal > 1 + 1e-6)
-          return { success: false, message: "Assigned weights cannot exceed 100%." };
-        if (input.initialSeedUsdc <= 0)
-          return { success: false, message: "Enter an initial seed amount." };
-        if (input.initialSeedUsdc > wallet.usdc)
-          return { success: false, message: "Insufficient USDC to seed this Reserve." };
-
-        const feeRecipients = (input.feeRecipients || []).filter((r) => r.address.trim() && r.pct > 0);
-        const feeRecipientTotal = feeRecipients.reduce((sum, r) => sum + r.pct, 0);
-        if (feeRecipientTotal > 100 + 1e-6)
-          return { success: false, message: "Fee recipient percentages cannot exceed 100% of total fees." };
-
-        const nav = 10; // deterministic initial NAV per share
-        const now = Date.now();
-        // A freshly deployed Reserve has no trading history yet -- a single flat
-        // point at NAV, not an invented multi-point series.
-        const initialPriceHistory: PricePoint[] = [{ t: now, price: nav }];
-
-        const newDtr: DTR = {
-          id,
-          name: input.name.trim(),
-          ticker: input.ticker.trim().toUpperCase(),
-          description: input.description.trim(),
-          category: input.category.trim() || "Custom",
-          tags: input.tags,
-          logoSeed: id,
-          logoUrl: pickLogoForId(id),
-          dtrAddress: generateFictionalAddress(),
-          managerAddress: wallet.address,
-          delegates: Array.from(
-            new Set(
-              (input.additionalManagers || [])
-                .map((a) => a.trim())
-                .filter((a) => a && a !== wallet.address),
-            ),
-          ).map((address) => ({
-            address,
-            // Additional managers added at deploy time get full operational control,
-            // short of managing other delegates -- only the root Manager can do that.
-            permissions: { manageDelegates: false, rebalance: true, feeAdmin: true, pause: true, metadata: true },
-            addedAt: now,
-          })),
-          feeConfig: {
-            mintFeePct: input.mintFeePct,
-            tvlFeePct: input.tvlFeePct,
-            managerBuyTaxPct: input.managerBuyTaxPct,
-            managerSellTaxPct: input.managerSellTaxPct,
-            creatorFeeDestination: input.creatorFeeDestination || wallet.address,
-            feeRecipients,
-          },
-          tokenPrice: nav,
-          nav,
-          aum: input.initialSeedUsdc,
-          liquidityUsdc: Math.max(
-            DEFAULT_NEW_DTR_LIQUIDITY_USDC,
-            initialLiquidityForAum(input.initialSeedUsdc),
-          ),
-          change24h: 0,
-          change7d: 0,
-          holders: 1,
-          composition: input.composition.map((a) => ({ symbol: a.symbol, name: a.name, weight: a.weight })),
-          unallocatedPct: Math.max(0, 1 - assignedTotal),
-          isUserCreated: true,
-          priceHistory: initialPriceHistory,
-          trades: [],
-        };
-
-        set({
-          dtrs: [...dtrs, newDtr],
-          wallet: { ...wallet, usdc: wallet.usdc - input.initialSeedUsdc },
-          holdings: [
-            ...get().holdings,
-            { dtrId: id, tokenBalance: input.initialSeedUsdc / nav, avgPurchasePrice: nav },
-          ],
-        });
-
-        return { success: true, message: `${newDtr.ticker} deployed. You are the root Reserve Manager.`, dtrId: id };
-      },
 
       addDelegate: (dtrId, address, permissions) => {
         const { dtrs, wallet } = get();
@@ -621,7 +308,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "ssrfun-simulation",
-      version: 4,
+      version: 5,
       // Backfill fields added after a user's simulation state was already
       // persisted to localStorage -- e.g. DTRs created before the logo-art
       // pool, the AMM liquidity economy, the buy/sell tax split, the
@@ -630,7 +317,7 @@ export const useAppStore = create<AppState>()(
       // showing letter-initial avatars, NaN pricing, stale bps-shaped fee
       // configs, or a chart that can't be re-timeframed, forever.
       migrate: (persisted) => {
-        const state = persisted as { dtrs?: DTR[]; profiles?: Record<string, UserProfile> };
+        const state = persisted as { dtrs?: DTR[]; profiles?: Record<string, UserProfile>; holdings?: Holding[]; wallet?: WalletState };
         if (state?.dtrs) {
           state.dtrs = state.dtrs.map((d) => {
             const legacyFee = d.feeConfig as unknown as {
@@ -669,8 +356,33 @@ export const useAppStore = create<AppState>()(
             }
           }
         } else {
-          state.dtrs = [...SEED_DTRS, ...REAL_PLACEHOLDER_DTRS];
+          state.dtrs = [...REAL_PLACEHOLDER_DTRS];
         }
+
+        // v5 (corrective DevNet data-integrity pass, see
+        // docs/project/PROJECT_STATUS.md): this app now only ever discovers
+        // and displays genuine on-chain DevNet Reserves. Strip any
+        // fictional/seed/locally-created-simulated DTR still sitting in an
+        // existing tester's localStorage from before this pass (e.g.
+        // "Solana Blue Chips"/BLUE) -- these never had a real on-chain
+        // account and their Buy/Sell was pure client-side arithmetic. Any
+        // `holdings` entry pointing at a now-removed DTR is dropped too
+        // (it was never anything but a local number). The simulated
+        // usdc/ssr wallet balance (previously auto-granted on first
+        // connect) is cleared -- it was never real and nothing legitimate
+        // reads it anymore.
+        if (state.dtrs) {
+          const keptDtrs = state.dtrs.filter((d) => Boolean(d.onChain));
+          const removedIds = new Set(state.dtrs.filter((d) => !d.onChain).map((d) => d.id));
+          state.dtrs = keptDtrs;
+          if (state.holdings) {
+            state.holdings = state.holdings.filter((h) => !removedIds.has(h.dtrId));
+          }
+        }
+        if (state.wallet) {
+          state.wallet = { ...state.wallet, usdc: 0, ssr: 0 };
+        }
+
         return state as AppState;
       },
     },

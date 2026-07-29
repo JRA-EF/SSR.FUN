@@ -45,6 +45,7 @@ import {
   buildReadOnlyProgram,
   fetchReserveOnChain,
   buildBuyZapInstructions,
+  buildBuyZapInstructionsDevUsdc,
   buildSellZapInstructions,
   findProtocolConfig,
   findReserveTokenMint,
@@ -53,6 +54,7 @@ import {
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   DEVUSDC,
+  DEVUSDC_MINT,
 } from "../../packages/sdk/src";
 import { loadDevnetAuthority } from "./_lib/authority";
 
@@ -118,8 +120,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const userPubkeyStr = typeof body.userPubkey === "string" ? body.userPubkey : "";
   const candidateMintStrs = Array.isArray(body.assetMints) ? (body.assetMints as unknown[]).filter((m): m is string => typeof m === "string") : [];
 
-  if (action !== "buy" && action !== "sell") {
-    res.status(400).json({ error: "action must be 'buy' or 'sell'" });
+  if (action !== "buy" && action !== "buy-devusdc" && action !== "sell") {
+    res.status(400).json({ error: "action must be 'buy', 'buy-devusdc', or 'sell'" });
     return;
   }
   let reserve: PublicKey;
@@ -228,6 +230,49 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         quote: {
           reserveTokensRequested: result.reserveTokensRequested?.toString(),
           assetAmountsRaw: result.assetAmountsRaw.map((a) => a.toString()),
+        },
+      });
+      return;
+    }
+
+    if (action === "buy-devusdc") {
+      const devUsdcAmountRawStr = typeof body.devUsdcAmountRaw === "string" ? body.devUsdcAmountRaw : "";
+      const devUsdcAmountRaw = BigInt(devUsdcAmountRawStr);
+      if (devUsdcAmountRaw <= 0n) {
+        res.status(400).json({ error: "devUsdcAmountRaw must be a positive integer string." });
+        return;
+      }
+
+      const result = await buildBuyZapInstructionsDevUsdc({
+        program,
+        protocolConfig,
+        reserve,
+        reserveTokenMint,
+        mintAuthority,
+        user: userPubkey,
+        swapAuthority: swapAuthority.publicKey,
+        assets: zapAssets,
+        reserveTokenSupplyRaw: onChain.reserveTokenSupplyRaw,
+        devUsdcMint: DEVUSDC_MINT,
+        devUsdcDecimals: DEVUSDC.decimals,
+        devUsdcAmountRaw,
+        assetTestPricesUsd: ASSET_TEST_PRICES_USD,
+      });
+
+      const tx = new Transaction();
+      tx.add(...result.instructions);
+      tx.feePayer = userPubkey;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = blockhash;
+      tx.partialSign(swapAuthority);
+
+      res.status(200).json({
+        transactionBase64: tx.serialize({ requireAllSignatures: false }).toString("base64"),
+        lastValidBlockHeight,
+        quote: {
+          reserveTokensRequested: result.reserveTokensRequested?.toString(),
+          assetAmountsRaw: result.assetAmountsRaw.map((a) => a.toString()),
+          legSources: result.legSources,
         },
       });
       return;

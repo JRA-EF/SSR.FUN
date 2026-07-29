@@ -71,7 +71,7 @@ export function RealReserveSync() {
           }),
         );
         if (cancelled) return;
-        applyDiscoveredReserves(dtrs);
+        applyDiscoveredReserves(dtrs, issues.length === 0);
         setChainDiscoveryStatus("ready");
 
         if (walletKey && publicKey) {

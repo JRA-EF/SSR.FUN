@@ -9,6 +9,8 @@ export interface ZapQuote {
   reserveTokensRequested?: string;
   assetAmountsRaw?: string[];
   solLamportsOut?: string;
+  /** devUSDC-settlement Buy only: which leg(s) were genuinely funded from the user's own real devUSDC balance vs. the DevNet test-asset faucet mechanism -- see packages/sdk/src/zapInstructions.ts's buildBuyZapInstructionsDevUsdc. */
+  legSources?: { mint: string; source: "user-devusdc-balance" | "devnet-test-asset-faucet" }[];
 }
 
 interface SwapSignResponse {
@@ -57,6 +59,26 @@ export async function executeBuyZap(params: {
     assetMints: params.assetMints,
     userPubkey: params.userPubkey.toBase58(),
     solLamports: params.solLamports.toString(),
+  });
+  const signature = await completeAndSubmit(params.connection, params.wallet, transactionBase64);
+  return { signature, quote };
+}
+
+/** devUSDC-settlement Buy -- the default DevNet mint flow. See buildBuyZapInstructionsDevUsdc for exactly what's real vs. DevNet-test-faucet-funded per leg. */
+export async function executeBuyZapDevUsdc(params: {
+  connection: Connection;
+  wallet: WalletContextState;
+  reserveAddress: string;
+  assetMints: string[];
+  userPubkey: PublicKey;
+  devUsdcAmountRaw: bigint;
+}): Promise<{ signature: string; quote: ZapQuote }> {
+  const { transactionBase64, quote } = await requestSignedZapTransaction({
+    action: "buy-devusdc",
+    reserve: params.reserveAddress,
+    assetMints: params.assetMints,
+    userPubkey: params.userPubkey.toBase58(),
+    devUsdcAmountRaw: params.devUsdcAmountRaw.toString(),
   });
   const signature = await completeAndSubmit(params.connection, params.wallet, transactionBase64);
   return { signature, quote };

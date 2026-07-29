@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD, DEVUSDC } from "@ssr/sdk";
+import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD, DEVUSDC, fetchProtocolConfig } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { createReserveOnChain, estimateCreateReserveCost, type CreateReserveStep, type CreateReserveCostEstimate } from "@/lib/createReserveClient";
 import { explorerUrl } from "@/lib/solana-config";
@@ -24,11 +24,11 @@ import { CATEGORY_SUGGESTIONS } from "@/lib/seed-data";
 // where the SPL-token protocol requires it -- see createReserveClient.ts),
 // the real devUSDC settlement mint (Phase B), plus the 3 Gate-9 fixture test
 // mints -- every one of these is a mint the DevNet swap/faucet authority
-// actually holds mint authority over, so seed-funding and the Buy/Sell zap
-// both work for any of them. These are the ONLY assets that can produce a
-// real, Buy/Sell-testable Reserve; mixing any fictional asset below in
-// falls back to the existing pure-simulation deploy path unchanged. Never
-// present a fictional asset as one of these -- see DEC-0030.
+// actually holds mint authority over, so seed-funding and mint/redeem both
+// work for any of them. This is now the ONLY selectable asset list -- the
+// previous fictional/simulated asset list and its pure-simulation fallback
+// deploy path have been removed entirely (see DEC-0030 and this pass's
+// corrective DevNet data-integrity work in docs/project/PROJECT_STATUS.md).
 const DEVNET_REAL_ASSETS = [
   { symbol: "SOL", name: "Solana (native, wrapped automatically as needed)", real: true as const, mint: WRAPPED_SOL_MINT.toBase58(), decimals: 9 },
   { symbol: DEVUSDC.symbol, name: `${DEVUSDC.name} (DevNet settlement token, no real value)`, real: true as const, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
@@ -41,26 +41,6 @@ const DEVNET_REAL_ASSETS = [
   })),
 ];
 const REAL_ASSET_BY_SYMBOL = new Map(DEVNET_REAL_ASSETS.map((a) => [a.symbol, a]));
-
-// Fictional/simulated assets -- clearly isolated from the real list above,
-// only ever usable via the pure-simulation deploy path (createDTR), never
-// presented or treated as real deployable assets.
-const ALL_ASSETS = [
-  ...DEVNET_REAL_ASSETS,
-  { symbol: "USDC", name: "USD Coin (simulated)" },
-  { symbol: "SSR", name: "SSR (simulated)" },
-  { symbol: "JUP", name: "Jupiter (simulated)" },
-  { symbol: "RAY", name: "Raydium (simulated)" },
-  { symbol: "JTO", name: "Jito (simulated)" },
-  { symbol: "DRIFT", name: "Drift Protocol (simulated)" },
-  { symbol: "RENDER", name: "Render (simulated)" },
-  { symbol: "HNT", name: "Helium (simulated)" },
-  { symbol: "PYTH", name: "Pyth Network (simulated)" },
-  { symbol: "BONK", name: "Bonk (simulated)" },
-  { symbol: "WIF", name: "dogwifhat (simulated)" },
-  { symbol: "POPCAT", name: "Popcat (simulated)" },
-  { symbol: "FARTCOIN", name: "Fartcoin (simulated)" },
-];
 
 const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
   "create-and-register": "Step 1/2: Creating Reserve + registering assets...",
@@ -77,7 +57,7 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 
 export function CreateDTR() {
   const [, setLocation] = useLocation();
-  const { wallet, createDTR, registerRealReserve } = useAppStore();
+  const { wallet, registerRealReserve } = useAppStore();
   const { toast } = useToast();
   const { connection } = useConnection();
   const walletCtx = useWallet();
@@ -123,26 +103,44 @@ export function CreateDTR() {
       return;
     }
     let cancelled = false;
-    const seedUsd = parseFloat(initialSeedUsdc) || 10;
-    const realAssets = assets.map((a) => {
-      const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
-      return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeightForCost) * 10_000), seedWeightFraction: a.weight / totalWeightForCost };
-    });
-    estimateCreateReserveCost(connection, realAssets, seedUsd)
-      .then((est) => {
-        if (!cancelled) {
-          setCostEstimate(est);
-          setCostEstimateError(null);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setCostEstimate(null);
-          setCostEstimateError(e instanceof Error ? e.message : "Failed to estimate DevNet transaction costs.");
-        }
+    // Debounced: a weight-slider drag or typing in the seed-amount field
+    // changes `assets`'/`initialSeedUsdc`'s identity on every tick/keystroke.
+    // Without this, each tick re-fired estimateCreateReserveCost immediately,
+    // which used to send 4 concurrent rent-exemption RPC calls per tick --
+    // the actual root cause of the reported 429 launch failure. Waiting for
+    // a short quiet period collapses a rapid burst of edits into one request
+    // (also cached/deduped/retried at the source -- see createReserveClient.ts).
+    const debounceHandle = setTimeout(() => {
+      const seedUsd = parseFloat(initialSeedUsdc) || 10;
+      const realAssets = assets.map((a) => {
+        const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
+        return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeightForCost) * 10_000), seedWeightFraction: a.weight / totalWeightForCost };
       });
+      estimateCreateReserveCost(connection, realAssets, seedUsd)
+        .then((est) => {
+          if (!cancelled) {
+            setCostEstimate(est);
+            setCostEstimateError(null);
+          }
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setCostEstimate(null);
+          const msg = e instanceof Error ? e.message : String(e);
+          // estimateCreateReserveCost never submits a transaction -- a
+          // failure here (rate-limited or otherwise) can never mean a
+          // launch partially happened, so this message is always accurate.
+          const isRateLimited = msg.includes("429") || msg.toLowerCase().includes("too many requests");
+          setCostEstimateError(
+            isRateLimited
+              ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted. Please wait a moment and adjust an input to retry."
+              : msg || "Failed to estimate DevNet transaction costs.",
+          );
+        });
+    }, 400);
     return () => {
       cancelled = true;
+      clearTimeout(debounceHandle);
     };
   }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection]);
 
@@ -220,6 +218,16 @@ export function CreateDTR() {
     }
     setIsSubmitting(true);
     setCreateStep("create-and-register");
+    // Read the Reserve count BEFORE submitting -- if the create step below
+    // throws with an ambiguous (confirmation-timeout-shaped) error, we
+    // re-read it afterward: an increase means the transaction actually
+    // landed on-chain despite the client not seeing confirmation, so the
+    // user must be told to verify/refresh rather than invited to retry and
+    // risk creating a second, duplicate Reserve.
+    const programIdForCheck = new PublicKey(DEVNET_FIXTURES.programId);
+    const reserveCountBefore = await fetchProtocolConfig(connection, programIdForCheck)
+      .then((pc) => pc?.reserveCount ?? null)
+      .catch(() => null);
     try {
       const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
       const realAssets = assets.map((a) => {
@@ -303,62 +311,69 @@ export function CreateDTR() {
       });
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {
-      toast({
-        variant: "destructive",
-        title: `Deployment Failed (${createStep ? CREATE_STEP_LABELS[createStep] : "setup"})`,
-        description: e instanceof Error ? e.message : "The DevNet Reserve creation failed.",
-      });
+      const msg = e instanceof Error ? e.message : String(e);
+      const looksAmbiguous = msg.toLowerCase().includes("was not confirmed") || msg.toLowerCase().includes("timeout") || msg.toLowerCase().includes("block height exceeded");
+
+      if (createStep && createStep !== "create-and-register") {
+        // A failure in fund-seed-assets/seed means create-and-register
+        // already succeeded -- the Reserve definitely exists on-chain, just
+        // not fully seeded. Retrying handleSubmitReal from scratch would
+        // create a SEPARATE new Reserve, not resume this one (full
+        // step-level resumption is a documented, separate follow-up -- see
+        // createReserveClient.ts). Say so plainly instead of inviting a
+        // blind retry.
+        toast({
+          variant: "destructive",
+          title: `Deployment incomplete (${CREATE_STEP_LABELS[createStep]})`,
+          description: `${msg} -- the Reserve account was already created on-chain before this step. Check Discover for it before launching again; retrying this form creates a SEPARATE new Reserve, not a resume.`,
+        });
+      } else {
+        let confirmedOnChainDespiteError = false;
+        if (looksAmbiguous && reserveCountBefore !== null) {
+          const reserveCountAfter = await fetchProtocolConfig(connection, programIdForCheck)
+            .then((pc) => pc?.reserveCount ?? null)
+            .catch(() => null);
+          confirmedOnChainDespiteError = reserveCountAfter !== null && reserveCountAfter > reserveCountBefore;
+        }
+
+        if (confirmedOnChainDespiteError) {
+          toast({
+            title: "Submission status unclear -- do not retry yet",
+            description:
+              "The wallet confirmation timed out, but the Reserve count on-chain increased -- this may have actually succeeded. Check Discover for a new Reserve before launching again to avoid creating a duplicate.",
+          });
+        } else {
+          const isRateLimited = msg.includes("429") || msg.toLowerCase().includes("too many requests");
+          toast({
+            variant: "destructive",
+            title: `Deployment Failed (${createStep ? CREATE_STEP_LABELS[createStep] : "setup"})`,
+            description: isRateLimited
+              ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted. Please retry shortly."
+              : msg || "The DevNet Reserve creation failed.",
+          });
+        }
+      }
     } finally {
       setIsSubmitting(false);
       setCreateStep(null);
     }
   };
 
-  const handleSubmitMock = async () => {
-    setIsSubmitting(true);
-    await new Promise(r => setTimeout(r, 1000));
-
-    const res = createDTR({
-      name,
-      ticker,
-      description,
-      category,
-      tags: [category],
-      composition: assets,
-      initialSeedUsdc: parseFloat(initialSeedUsdc) || 0,
-      mintFeePct,
-      tvlFeePct,
-      managerBuyTaxPct,
-      managerSellTaxPct,
-      creatorFeeDestination: feeDestination || wallet.address || "",
-      feeRecipients,
-      additionalManagers,
-    });
-
-    setIsSubmitting(false);
-
-    if (res.success && res.dtrId) {
-      toast({
-        title: "Reserve Deployed",
-        description: res.message,
-      });
-      setLocation(`/dtr/${res.dtrId}`);
-    } else {
-      toast({
-        variant: "destructive",
-        title: "Deployment Failed",
-        description: res.message,
-      });
-    }
-  };
-
-  const handleSubmit = isRealDeployment ? handleSubmitReal : handleSubmitMock;
+  // Real, on-chain DevNet deployment is the ONLY launch path this app
+  // offers now -- the previous pure-simulation fallback (a fictional-asset
+  // "Reserve" created purely in localStorage, no wallet signature, no chain
+  // interaction) was exactly the legacy/mock behavior removed in this
+  // corrective pass (see docs/project/PROJECT_STATUS.md). `isRealDeployment`
+  // is still checked below as a fail-closed guard, not a branch to a mock
+  // path: every selectable asset now comes from DEVNET_REAL_ASSETS, so it
+  // should always be true once at least one asset is selected.
+  const handleSubmit = handleSubmitReal;
 
   return (
     <div className="container max-w-4xl mx-auto px-4 py-12">
       <div className="mb-8">
-        <h1 className="text-4xl font-merge-display font-bold mb-2">Launch Reserve</h1>
-        <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN.</p>
+        <h1 className="text-4xl font-merge-display font-bold mb-2">Launch a Decentralized Token Reserve</h1>
+        <p className="text-muted-foreground">Launch a new Decentralized Token Reserve on SSR.FUN, live on Solana DevNet.</p>
       </div>
 
       <div className="flex justify-between mb-8 relative">
@@ -479,7 +494,7 @@ export function CreateDTR() {
                   </div>
                   
                   <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
-                    {ALL_ASSETS
+                    {DEVNET_REAL_ASSETS
                       .filter(a => !assets.some(selected => selected.symbol === a.symbol))
                       .filter(a => a.name.toLowerCase().includes(assetSearch.toLowerCase()) || a.symbol.toLowerCase().includes(assetSearch.toLowerCase()))
                       .map(asset => (
@@ -493,7 +508,7 @@ export function CreateDTR() {
                           </Button>
                         </div>
                       ))}
-                      {ALL_ASSETS.filter(a => !assets.some(selected => selected.symbol === a.symbol)).length === 0 && (
+                      {DEVNET_REAL_ASSETS.filter(a => !assets.some(selected => selected.symbol === a.symbol)).length === 0 && (
                         <div className="p-4 text-center text-sm text-muted-foreground">All available assets added.</div>
                       )}
                   </div>
@@ -793,7 +808,7 @@ export function CreateDTR() {
               </Button>
               <Button
                 onClick={handleNext}
-                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || (!isRealDeployment && parseFloat(initialSeedUsdc) > wallet.usdc) || feeRecipientTotalPct > 100}
+                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || feeRecipientTotalPct > 100}
                 className="font-bold gap-2"
               >
                 Review <ChevronRight className="w-4 h-4" />
@@ -925,7 +940,7 @@ export function CreateDTR() {
                     )}
                     <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
                       <p className="font-semibold text-foreground">This will request {expectedApprovalCount(assets)} wallet approvals:</p>
-                      <p>1. Create Reserve + register {assets.length} asset{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
+                      <p>1. Create the Decentralized Token Reserve + register {assets.length} Reserve{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
                       {assets.some((a) => a.symbol === "SOL") && <p>2. Wrap your SOL for the seed deposit</p>}
                       <p>{assets.some((a) => a.symbol === "SOL") ? "3" : "2"}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>
                       <p className="pt-1">Expected result: you'll spend the SOL above and receive <span className="font-merge-mono text-foreground">{Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10)).toLocaleString()} {ticker || "Reserve"}</span> tokens. Any test-asset amounts appearing and disappearing from your wallet mid-flow (e.g. minted then immediately deposited) are expected intermediate steps, not final balances -- deployment isn't complete until the last step confirms.</p>
@@ -993,13 +1008,16 @@ export function CreateDTR() {
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !isRealDeployment || (!costEstimate && !costEstimateError)}
+                title={!isRealDeployment ? "Every selected asset must be a supported real DevNet asset." : (!costEstimate && !costEstimateError) ? "Calculating launch cost..." : undefined}
                 className="font-bold gap-2 min-w-[150px]"
               >
                 {isSubmitting ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Deploying..."}</>
+                ) : !costEstimate && !costEstimateError ? (
+                  <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Calculating cost...</>
                 ) : (
-                  <><Rocket className="w-4 h-4" /> Launch Reserve</>
+                  <><Rocket className="w-4 h-4" /> Launch Decentralized Token Reserve</>
                 )}
               </Button>
             </CardFooter>

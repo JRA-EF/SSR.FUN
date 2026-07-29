@@ -346,3 +346,45 @@ export function buildDtrFromDiscoveredReserve(
     chainStatus: "ready",
   };
 }
+
+/**
+ * Pure merge logic behind useAppStore's applyDiscoveredReserves -- extracted
+ * so it's testable without instantiating the whole zustand+persist store
+ * (which needs a real/shimmed localStorage). See docs/project/PROJECT_STATUS.md's
+ * corrective DevNet data-integrity pass.
+ *
+ * Fail-closed: a completed, `fullyVerified` discovery pass enumerates the
+ * program's ENTIRE current Reserve set from ProtocolConfig.reserveCount, so
+ * an on-chain DTR the caller previously knew about but that's missing from
+ * `discovered` has genuinely been closed (or never really existed) -- it is
+ * dropped, never shown forever. Only kept when `fullyVerified` is false
+ * (this pass itself had unresolved per-account issues, e.g. a transient
+ * 429 on one account), since in that case the "missing" Reserve might just
+ * be a transient read failure, not a real closure.
+ */
+export function mergeDiscoveredReserves(existingDtrs: DTR[], discovered: DTR[], fullyVerified: boolean): DTR[] {
+  const byAddress = new Map(existingDtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
+  const merged = discovered.map((fresh) => {
+    const existing = fresh.onChain ? byAddress.get(fresh.onChain.reserve) : undefined;
+    if (!existing) return fresh;
+    return {
+      ...fresh,
+      priceHistory: existing.priceHistory.length > 1 ? existing.priceHistory : fresh.priceHistory,
+      trades: existing.trades,
+      logoUrl: existing.logoUrl ?? fresh.logoUrl,
+    };
+  });
+  const discoveredAddresses = new Set(discovered.map((d) => d.onChain?.reserve).filter(Boolean));
+  // A non-onChain DTR is never kept, at this layer or any other -- this app
+  // only ever discovers and displays genuine on-chain DevNet Reserves (see
+  // docs/project/PROJECT_STATUS.md's corrective data-integrity pass). Defense
+  // in depth: the store's persist migration already strips these once on
+  // load, but this function enforces it on every merge too, so it can never
+  // regress even if a future change reintroduces a non-onChain DTR upstream.
+  const untouched = existingDtrs.filter((d) => {
+    if (!d.onChain) return false;
+    if (discoveredAddresses.has(d.onChain.reserve)) return false;
+    return !fullyVerified;
+  });
+  return [...untouched, ...merged];
+}

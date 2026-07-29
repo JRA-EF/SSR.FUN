@@ -113,18 +113,90 @@ export interface CreateReserveCostEstimate {
   numTransactions: number;
 }
 
-/** Computes a real, on-chain-rent-calculator-backed cost estimate BEFORE any signature is requested -- see CreateDTR.tsx's Review & Deploy step. */
+// --- Rent-constant fetch: cached + deduplicated + retried -----------------
+// The 4 `getMinimumBalanceForRentExemption` calls below are for FIXED byte
+// sizes -- Solana's rent schedule practically never changes, so these
+// numbers are the same every time for a given RPC endpoint. Fetching them
+// fresh on every keystroke/slider-drag (this used to run inside a
+// same-array-identity-changes-every-tick useEffect in CreateDTR.tsx) was
+// the actual root cause of the reported "429: Too many requests" launch
+// failure -- 4 concurrent identical requests, repeated many times per
+// second while a user adjusted weights, against the public DevNet RPC's
+// documented rate limit (see docs/protocol/DEVNET_RUNBOOK.md). Fixed here
+// by caching the result (bounded TTL, not forever, in case a rent schedule
+// change is ever deployed), deduplicating any concurrent callers onto the
+// same in-flight request, and retrying a genuine 429 with bounded
+// exponential backoff + jitter rather than the caller's effect just
+// refiring the whole burst again.
+const RENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes -- bounded, not indefinite.
+interface RentConstants {
+  reserveRent: number;
+  mintRent: number;
+  assetRent: number;
+  vaultRent: number;
+}
+let rentCache: { endpoint: string; value: RentConstants; expiresAt: number } | null = null;
+let rentInFlight: { endpoint: string; promise: Promise<RentConstants> } | null = null;
+
+export function isRateLimitError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.includes("429") || msg.toLowerCase().includes("too many requests");
+}
+
+/** Bounded exponential backoff with jitter, retrying ONLY genuine rate-limit errors -- any other error is rethrown immediately, never masked by a pointless retry loop. */
+export async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 500): Promise<T> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!isRateLimitError(e) || attempt >= maxRetries) throw e;
+      const backoff = baseDelayMs * 2 ** attempt;
+      const jitter = Math.random() * baseDelayMs;
+      await new Promise((resolve) => setTimeout(resolve, backoff + jitter));
+      attempt += 1;
+    }
+  }
+}
+
+export async function getRentConstants(connection: Connection): Promise<RentConstants> {
+  const endpoint = connection.rpcEndpoint;
+  const now = Date.now();
+  if (rentCache && rentCache.endpoint === endpoint && rentCache.expiresAt > now) {
+    return rentCache.value;
+  }
+  if (rentInFlight && rentInFlight.endpoint === endpoint) {
+    return rentInFlight.promise;
+  }
+
+  const promise = withRateLimitRetry(async () => {
+    const [reserveRent, mintRent, assetRent, vaultRent] = await Promise.all([
+      connection.getMinimumBalanceForRentExemption(RESERVE_ACCOUNT_BYTES),
+      connection.getMinimumBalanceForRentExemption(SPL_MINT_ACCOUNT_BYTES),
+      connection.getMinimumBalanceForRentExemption(RESERVE_ASSET_ACCOUNT_BYTES),
+      connection.getMinimumBalanceForRentExemption(SPL_TOKEN_ACCOUNT_BYTES),
+    ]);
+    return { reserveRent, mintRent, assetRent, vaultRent };
+  })
+    .then((value) => {
+      rentCache = { endpoint, value, expiresAt: Date.now() + RENT_CACHE_TTL_MS };
+      return value;
+    })
+    .finally(() => {
+      if (rentInFlight && rentInFlight.endpoint === endpoint) rentInFlight = null;
+    });
+
+  rentInFlight = { endpoint, promise };
+  return promise;
+}
+
+/** Computes a real, on-chain-rent-calculator-backed cost estimate BEFORE any signature is requested -- see CreateDTR.tsx's Review & Deploy step. Never submits a transaction -- a failure here (e.g. rate-limiting) can never mean a launch partially happened. */
 export async function estimateCreateReserveCost(
   connection: Connection,
   assets: CreateReserveAssetInput[],
   seedTotalUsd: number,
 ): Promise<CreateReserveCostEstimate> {
-  const [reserveRent, mintRent, assetRent, vaultRent] = await Promise.all([
-    connection.getMinimumBalanceForRentExemption(RESERVE_ACCOUNT_BYTES),
-    connection.getMinimumBalanceForRentExemption(SPL_MINT_ACCOUNT_BYTES),
-    connection.getMinimumBalanceForRentExemption(RESERVE_ASSET_ACCOUNT_BYTES),
-    connection.getMinimumBalanceForRentExemption(SPL_TOKEN_ACCOUNT_BYTES),
-  ]);
+  const { reserveRent, mintRent, assetRent, vaultRent } = await getRentConstants(connection);
 
   const reserveAssetRentLamports = BigInt(assetRent) * BigInt(assets.length);
   const vaultRentLamports = BigInt(vaultRent) * BigInt(assets.length);

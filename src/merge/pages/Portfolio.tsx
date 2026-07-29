@@ -11,8 +11,6 @@ import {
   calc24hPnl,
   formatUsdc,
   formatPercent,
-  SSR_PRICE_USDC,
-  SOL_PRICE_USDC,
 } from "@/lib/calculations";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -169,16 +167,7 @@ export function Portfolio() {
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-4 bg-muted/30 rounded-lg border border-border/50 flex flex-col justify-center">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-500 flex items-center justify-center text-xs font-bold">U</div>
-                  <span className="font-semibold">USDC</span>
-                </div>
-                <div className="font-merge-mono text-xl">{formatUsdc(wallet.usdc)}</div>
-                <p className="text-xs text-muted-foreground mt-1">Available for trading</p>
-              </div>
-
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="p-4 bg-muted/30 rounded-lg border border-border/50 flex flex-col justify-center">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-6 h-6 rounded-full bg-purple-500/20 text-purple-500 flex items-center justify-center text-xs font-bold">
@@ -189,16 +178,15 @@ export function Portfolio() {
                   <span className="font-semibold">SOL</span>
                 </div>
                 <div className="font-merge-mono text-xl">{wallet.sol.toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>
-                <p className="text-xs text-muted-foreground mt-1">{formatUsdc(wallet.sol * SOL_PRICE_USDC)}</p>
+                <p className="text-xs text-muted-foreground mt-1">Real balance, read from Solana DevNet</p>
               </div>
 
               <div className="p-4 bg-muted/30 rounded-lg border border-border/50 flex flex-col justify-center">
                 <div className="flex items-center gap-2 mb-2">
-                  <div className="w-6 h-6 rounded-full bg-primary/20 text-primary border border-primary flex items-center justify-center text-[10px] font-bold">S</div>
-                  <span className="font-semibold">SSR</span>
+                  <div className="w-6 h-6 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-xs font-bold">X</div>
+                  <span className="font-semibold">mockX / mockY / mockZ</span>
                 </div>
-                <div className="font-merge-mono text-xl">{wallet.ssr.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground mt-1">{formatUsdc(wallet.ssr * SSR_PRICE_USDC)}</p>
+                <p className="text-xs text-muted-foreground mt-1">SSR DevNet test assets -- claimed via "Get DevNet Test Assets" above. See devUSDC below for the default settlement asset.</p>
               </div>
             </div>
           </CardContent>
