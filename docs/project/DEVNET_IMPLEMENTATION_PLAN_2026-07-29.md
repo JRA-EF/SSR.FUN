@@ -1226,3 +1226,139 @@ Reserve, change target weights — no trade execution involved) and Phase G
 **No code was written for this phase** — it is a research/decision
 checkpoint only.
 
+## Phase F: composition management (config-only) — security analysis + implementation
+
+Scope confirmed above: config-only changes to an **Active** Reserve's asset
+list (add a Reserve Asset, remove one, change target weights) — no trade
+execution. `update_targets` already existed. This phase adds the missing
+add/remove pair.
+
+**Design constraint discovered before writing any Rust:** `common::
+load_asset_legs` (used by mint/redeem) and `load_reserve_asset_configs`
+(used by `update_targets`) both require **exactly** `reserve.asset_count`
+accounts in `remaining_accounts`, unfiltered by `enabled`, in strict
+`order_index` order. Two consequences that reshaped the original plan:
+
+1. A simple `enabled` flag flip (the original "disable_reserve_asset" plan)
+   would NOT stop new deposits into a "disabled" asset — nothing in
+   `mint_reserve_tokens_in_kind`'s deposit math (`mul_div_ceil(requested,
+   vault_balance_before, total_supply_before)` per asset) reads `enabled` or
+   `target_weight_bps` at all; it's purely balance-ratio-based. A disabled
+   asset would still receive deposits proportional to its existing vault
+   balance on every Buy. So "disable" was replaced with actual **removal**.
+2. Removal is only structurally safe, without renumbering every other
+   asset's `order_index` or building a balance-draining mechanism, for the
+   **last-registered** asset (`order_index == asset_count - 1`) with a
+   **zero** vault balance. Both are enforced as hard requires. Removing a
+   non-last or non-empty asset is explicitly out of scope for this pass.
+3. A brand-new asset added to an *Active* Reserve starts at zero vault
+   balance — and stays there forever under the same ratio-based math
+   (`mul_div_ceil(x, 0, supply) = 0`). A dedicated bootstrap instruction was
+   added to solve this rather than leaving newly-added assets permanently
+   unfundable.
+
+**Instructions added** (`programs/ssr_protocol/src/instructions/`):
+
+- **`add_reserve_asset_active`** — registers a new zero-balance
+  `ReserveAsset` + vault on a Reserve already in `Active` status. Does
+  **not** modify `initialize_reserve_asset` at all (zero regression risk to
+  the pre-Active creation flow already live-verified in Phases A–D) —
+  mirrors its account/validation shape (max-asset-count ceiling, total
+  target weight ≤ 10,000 bps, Token-2022 extension validation) but is a
+  fully separate instruction and PDA-derivation-compatible module. Callable
+  by the root manager or a delegate holding the `MANAGE_LIQUIDITY_CONFIG`
+  permission bit — an existing flag defined in `state/delegate.rs` as
+  "future-facing, not exercised by any v1 instruction," now given its first
+  real use rather than inventing a new bit.
+- **`fund_new_reserve_asset`** — manager-only (kept simple; no delegate
+  path), additive-only transfer of the manager's own tokens directly into a
+  target vault. Restricted to only work while that vault's balance is
+  exactly zero (one-time bootstrap, not a general top-up). No Reserve Token
+  is minted — this is a pure backing increase that benefits every existing
+  holder equally and dilutes nobody.
+- **`remove_reserve_asset`** — closes a `ReserveAsset` and its vault
+  (rent reclaimed to the root manager, never to a calling delegate — the
+  `manager` account is validated by address against `reserve.manager`
+  regardless of who signs), decrements `asset_count`/
+  `total_target_weight_bps`. Requires last-registered + zero balance (see
+  above). Same manager-or-`MANAGE_LIQUIDITY_CONFIG`-delegate authorization
+  as add.
+
+New errors: `AssetNotLastRegistered`, `VaultNotEmpty`. New events:
+`ReserveAssetAdded`, `ReserveAssetFunded`, `ReserveAssetRemoved`.
+
+**Verified**: `cargo check` and `cargo clippy` against
+`programs/ssr_protocol` — zero errors, zero new warnings (two pre-existing
+`clippy::redundant_field_names` warnings in `update_protocol_config.rs`,
+untouched by this pass). Runtime behavior not yet exercised against a
+running validator — see the Phase F/G live-DevNet-verification section
+below, done after the batched upgrade.
+
+## Phase G: wind-down lifecycle — security analysis + implementation
+
+Scope: one-way `Active -> WindDown -> Closed` lifecycle, root-manager-only
+throughout (no delegate path — matches the existing "root-exclusive unless
+explicitly defined otherwise" boundary already used for authority transfer
+and unrestricted-delegate grant/revoke).
+
+**`ReserveStatus` extended** (`state/reserve.rs`) with two new unit variants,
+`WindDown` and `Closed`, appended **after** `Paused`. Confirmed safe:
+Borsh encodes this enum by variant index, so `Created`=0/
+`AssetsInitializing`=1/`Active`=2/`Paused`=3 keep their existing encoded
+values for every already-initialized `Reserve` account on live DevNet;
+appending new variants at the end never breaks existing deserialization.
+
+**Design tension found and resolved during this pass:** the original sketch
+planned to revoke the Reserve Token mint authority at `initiate_wind_down`
+time as defense-in-depth against new issuance. This was dropped —
+`collect_fees` needs the mint-authority PDA to remain usable during
+`WindDown` (fees stay collectible while winding down, by design), and
+revoking it would have permanently broken fee collection for every Reserve
+that ever winds down. New issuance is already fully blocked with **zero**
+code changes to `mint_reserve_tokens_in_kind`, since it requires
+`status == Active` exactly — `WindDown` isn't `Active`, so it's already
+excluded.
+
+**Second, more consequential tension found and resolved:** `close_reserve`
+requires the Reserve Token supply to reach exactly zero — reachable only if
+holders can still redeem out during `WindDown`. But `redeem_reserve_tokens_
+in_kind` called `Reserve::require_active_or_paused()`, which only allowed
+`Active` or `Paused` — **not** `WindDown`. Left as-is, this would have made
+`close_reserve` permanently unreachable for any Reserve that actually winds
+down (supply could never hit zero). Fixed by extending that check to also
+allow `WindDown`, and renaming it to `require_redemption_allowed` (one call
+site, in `redeem_reserve_tokens_in_kind.rs`, updated to match) since
+"active-or-paused" no longer accurately describes what it gates. Redemption
+remains exempt from all pause-style blocking during `WindDown`, exactly as
+it already was for `Paused` under DEC-0016.
+
+**Instructions added:**
+
+- **`initiate_wind_down`** — root-manager-only (`has_one = manager`, no
+  delegate account at all), requires `status == Active`, sets `status =
+  WindDown`. One-way; no reverse instruction exists or is planned.
+- **`close_reserve`** — root-manager-only, requires `status == WindDown`,
+  requires `reserve_token_mint.supply == 0`, and requires every registered
+  asset's vault balance to be zero (verified via `remaining_accounts`: pairs
+  of `[reserve_asset, vault]` per asset, in `order_index` order — lighter
+  than `common::load_asset_legs` since no owner-token-account/mint/
+  token-program per leg is needed here). Closes the `Reserve` account (via
+  Anchor's `close = manager` constraint), every `ReserveAsset` account (via
+  `Account::close`), and every vault token account (via a real SPL
+  `CloseAccount` CPI signed by the vault-authority PDA) — all rent reclaimed
+  to the manager. Deliberately does **not** attempt to close the
+  `reserve_token_mint` account itself: SPL Token mint-account closing
+  semantics are an unnecessary risk to take on a live program for a small,
+  permanently-locked amount of rent (accepted, documented inefficiency).
+  Once closed, the Reserve PDA no longer exists at all — `Closed` as a
+  persisted status is therefore never actually read back; the existing
+  discovery layer's `fetchNullable`-returns-null-for-this-PDA behavior
+  already communicates "this Reserve is gone" without needing one.
+
+New errors: `ReserveTokenSupplyNotZero`. New events: `WindDownInitiated`,
+`ReserveClosed`.
+
+**Verified**: `cargo check` and `cargo clippy` — zero errors, zero new
+warnings (same two pre-existing warnings noted above, unrelated to this
+pass).
+

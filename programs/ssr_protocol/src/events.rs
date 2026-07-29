@@ -34,6 +34,50 @@ pub struct ReserveAssetInitialized {
 }
 
 #[event]
+pub struct ReserveAssetAdded {
+    pub reserve: Pubkey,
+    pub asset_mint: Pubkey,
+    pub vault: Pubkey,
+    pub target_weight_bps: u16,
+    pub order_index: u8,
+    pub added_by: Pubkey,
+    pub ts: i64,
+}
+
+#[event]
+pub struct ReserveAssetFunded {
+    pub reserve: Pubkey,
+    pub asset_mint: Pubkey,
+    pub vault: Pubkey,
+    pub amount: u64,
+    pub funded_by: Pubkey,
+    pub ts: i64,
+}
+
+#[event]
+pub struct ReserveAssetRemoved {
+    pub reserve: Pubkey,
+    pub asset_mint: Pubkey,
+    pub vault: Pubkey,
+    pub removed_by: Pubkey,
+    pub ts: i64,
+}
+
+#[event]
+pub struct WindDownInitiated {
+    pub reserve: Pubkey,
+    pub initiated_by: Pubkey,
+    pub ts: i64,
+}
+
+#[event]
+pub struct ReserveClosed {
+    pub reserve: Pubkey,
+    pub closed_by: Pubkey,
+    pub ts: i64,
+}
+
+#[event]
 pub struct ReserveSeeded {
     pub reserve: Pubkey,
     pub initial_reserve_tokens: u64,

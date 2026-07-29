@@ -1098,3 +1098,67 @@
   ]
 }
 ```
+
+## DEC-0046
+
+```json
+{
+  "id": "DEC-0046",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Implement Phase F composition management (add_reserve_asset_active, fund_new_reserve_asset, remove_reserve_asset) and Phase G wind-down (ReserveStatus::WindDown/Closed, initiate_wind_down, close_reserve) as five new instructions plus one renamed/extended existing method (Reserve::require_active_or_paused -> require_redemption_allowed, now also permitting WindDown), per the security analysis in docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md.",
+  "context": "Original sketch assumed a simple enabled=false flag would suffice for 'disable an asset,' and that revoking the Reserve Token mint authority at wind-down time would add useful defense-in-depth. Reading common::load_asset_legs/load_reserve_asset_configs and mint_reserve_tokens_in_kind.rs before writing any Rust disproved both: (1) load_asset_legs/load_reserve_asset_configs require ALL asset_count legs unfiltered by enabled, and mint's deposit math (mul_div_ceil(requested, vault_balance_before, total_supply_before) per asset) never reads enabled or target_weight_bps at all -- a disabled asset would still receive proportional deposits forever; (2) revoking the mint authority at initiate_wind_down would break collect_fees, which mints pending shares via CPI through that same authority, and the plan requires fees to remain collectible during WindDown.",
+  "rationale": "Real removal (last-registered + zero-balance only, to stay structurally safe without order_index renumbering or a balance-draining mechanism) replaces the flag-flip design. Not revoking the mint authority, relying solely on mint_reserve_tokens_in_kind's pre-existing status==Active check, avoids the collect_fees regression with zero code changes to mint. A second, more consequential gap was found in the same pass: redeem_reserve_tokens_in_kind's require_active_or_paused() did not permit WindDown, which would have made close_reserve's supply==0 requirement permanently unreachable for any Reserve that actually winds down (holders could never redeem out). Fixed by extending that check to include WindDown and renaming it to require_redemption_allowed (its one call site updated to match).",
+  "alternativesConsidered": [
+    "Flip ReserveAsset.enabled=false for 'disable' (rejected: proven not to actually stop new deposits, per the load_asset_legs/mint-math finding above)",
+    "Revoke Reserve Token mint authority at initiate_wind_down for defense-in-depth (rejected: breaks collect_fees's ability to mint pending fee shares during WindDown, which the plan requires to keep working)",
+    "Leave redemption blocked during WindDown, matching the original require_active_or_paused scope unchanged (rejected: makes close_reserve's zero-supply requirement unreachable -- a correctness bug, not a stylistic choice)"
+  ],
+  "impact": "5 new instructions (add_reserve_asset_active, fund_new_reserve_asset, remove_reserve_asset, initiate_wind_down, close_reserve), 2 new ReserveStatus variants (WindDown, Closed, appended after Paused -- Borsh-compatible with all 16 existing live Reserve accounts), 3 new errors, 5 new events, and one renamed/behavior-extended existing method (require_redemption_allowed). cargo check + cargo clippy against programs/ssr_protocol: zero errors, zero new warnings.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/add_reserve_asset_active.rs",
+    "programs/ssr_protocol/src/instructions/fund_new_reserve_asset.rs",
+    "programs/ssr_protocol/src/instructions/remove_reserve_asset.rs",
+    "programs/ssr_protocol/src/instructions/initiate_wind_down.rs",
+    "programs/ssr_protocol/src/instructions/close_reserve.rs",
+    "programs/ssr_protocol/src/instructions/redeem_reserve_tokens_in_kind.rs",
+    "programs/ssr_protocol/src/state/reserve.rs",
+    "programs/ssr_protocol/src/errors.rs",
+    "programs/ssr_protocol/src/events.rs",
+    "programs/ssr_protocol/src/lib.rs",
+    "programs/ssr_protocol/src/instructions/mod.rs"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "cargo check --manifest-path programs/ssr_protocol/Cargo.toml: Finished, zero errors",
+    "cargo clippy --manifest-path programs/ssr_protocol/Cargo.toml: zero new warnings (2 pre-existing clippy::redundant_field_names in update_protocol_config.rs, untouched by this pass)"
+  ]
+}
+```
+
+## DEC-0047
+
+```json
+{
+  "id": "DEC-0047",
+  "date": "2026-07-29",
+  "status": "blocked",
+  "decision": "Do not force the Phase F/G program upgrade through with a partial or improvised funding workaround. Stop at this specific step and report the exact shortfall.",
+  "context": "The new binary (5 additional instructions) is larger than the currently-deployed one (programs/ssr_protocol/src/lib.rs, +647,608 bytes built vs. 548,296 bytes currently deployed), so its upgrade buffer costs more rent-exempt SOL to create. `solana program deploy` against the confirmed correct upgrade authority (6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk, matches `solana program show`'s reported Authority) failed: needed ~4.51 SOL (buffer rent + fee), deployer held 3.65985132 SOL -- a ~0.85 SOL shortfall. The public DevNet airdrop faucet, already flagged as unreliable in PROJECT_STATUS.md's Dependencies section, refused every retry this pass (2 SOL, 1 SOL, 0.5 SOL, 0.1 SOL -- all 'rate limit reached'), confirming a full lockout rather than a per-request cap. No other signer under this environment's control (manager-keypair.json ~0.26 SOL, holderA/B ~0.04 SOL each, delegate keypairs ~0.02 SOL each) holds enough spare balance to close the gap even combined, and consolidating them would only reach ~4.05 SOL, still short.",
+  "rationale": "SOL cannot be minted by any signer this environment controls -- only the public faucet or an external transfer can add DevNet SOL. Deploying anyway would require draining other test wallets for an amount that still wouldn't cover the cost, or leaving a partially-written buffer as improvised technical debt. Per this session's own explicit deployment-blocker instruction, the correct action is to stop and report exactly what's needed, not to route around it.",
+  "alternativesConsidered": [
+    "Drain the small test-fixture wallets (manager/holderA/holderB/delegate keypairs) into the deployer (rejected: combined balance still falls short of the shortfall, and it would strip funds those wallets may still need for other verification scripts)",
+    "Deploy a smaller/split binary to reduce buffer cost (rejected: contradicts DEC-0034's explicit batching policy for this exact scenario, and the shortfall is a resource problem, not a design one)"
+  ],
+  "impact": "Phase F/G Rust code (DEC-0046) is complete, compiled, and clippy-clean, but not yet live on DevNet. Tasks #40 (SDK/frontend wiring), #41 (live verification), and #42 (Phase H) all depend on the deployed program and are blocked until this is resolved. No on-chain state or existing deployment was touched or put at risk -- the failed `solana program deploy` attempt created no buffer account and spent no funds (confirmed: deployer balance unchanged at 3.65985132 SOL both before and after).",
+  "affectedAreas": ["docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "solana program deploy ... -> Error: Account 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk has insufficient funds for spend (4.50855576 SOL) + fee (0.003215 SOL)",
+    "solana airdrop 2/1/0.5/0.1 (all attempts) -> Error: airdrop request failed. This can happen when the rate limit is reached.",
+    "solana balance 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk -> 3.65985132 SOL (unchanged before/after the failed deploy attempt)"
+  ]
+}
+```

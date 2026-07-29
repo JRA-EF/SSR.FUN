@@ -3,11 +3,17 @@ use anchor_lang::prelude::*;
 use crate::constants::MAX_METADATA_URI_LEN;
 use crate::errors::SsrError;
 
-/// Tracks resumable multi-step creation (see DEC-0019) and pause state.
-/// `Created -> AssetsInitializing -> Seeded -> Active`, with `Paused` layered
-/// on top of `Active` (a Reserve pauses/unpauses from and back to `Active`
-/// only -- pausing mid-creation is not a reachable state, since creation
-/// itself isn't gated by pause checks).
+/// Tracks resumable multi-step creation (see DEC-0019), pause state, and
+/// wind-down. `Created -> AssetsInitializing -> Seeded -> Active`, with
+/// `Paused` layered on top of `Active` (a Reserve pauses/unpauses from and
+/// back to `Active` only -- pausing mid-creation is not a reachable state,
+/// since creation itself isn't gated by pause checks). `WindDown` and
+/// `Closed` are appended AFTER `Paused` deliberately: Borsh encodes this enum
+/// by variant index (see `Reserve::SPACE`'s comment), so appending new unit
+/// variants at the end is backward-compatible with every already-initialized
+/// `Reserve` account on live DevNet -- `Created`=0/`AssetsInitializing`=1/
+/// `Active`=2/`Paused`=3 keep their existing encoded values. See Phase G
+/// security analysis in docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ReserveStatus {
     /// `create_reserve` has run; no assets registered yet.
@@ -19,6 +25,18 @@ pub enum ReserveStatus {
     /// Manager/delegate-initiated pause. Mint, target updates, and rebalance
     /// actions are blocked; redemption remains available (DEC-0016).
     Paused,
+    /// One-way transition from `Active` via `initiate_wind_down` (root
+    /// manager only). Blocks new issuance (the existing `status == Active`
+    /// check in `mint_reserve_tokens_in_kind` already covers this with zero
+    /// code changes there) while deliberately still allowing redemption --
+    /// see `Reserve::require_redemption_allowed` -- and fee collection, since
+    /// `close_reserve` requires the Reserve Token supply to reach zero, which
+    /// is only reachable if holders can still redeem out during `WindDown`.
+    WindDown,
+    /// Terminal. Set by `close_reserve` once supply and every registered
+    /// asset's vault balance are both zero. No instruction transitions out of
+    /// `Closed`.
+    Closed,
 }
 
 /// All fee values here are explicit DevNet placeholders, not final economics.
@@ -99,9 +117,18 @@ impl Reserve {
         Ok(())
     }
 
-    pub fn require_active_or_paused(&self) -> Result<()> {
+    /// Redemption is allowed in `Active`, `Paused` (DEC-0016 -- redemption is
+    /// exempt from pause), and `WindDown` (deliberately -- see the
+    /// `ReserveStatus::WindDown` doc comment: `close_reserve` requires supply
+    /// to reach zero, which requires holders to still be able to redeem out
+    /// while winding down). Named for what it now actually gates, not the
+    /// narrower `Active`-or-`Paused` set it was originally written for --
+    /// this method has exactly one call site (`redeem_reserve_tokens_in_kind`).
+    pub fn require_redemption_allowed(&self) -> Result<()> {
         require!(
-            self.status == ReserveStatus::Active || self.status == ReserveStatus::Paused,
+            self.status == ReserveStatus::Active
+                || self.status == ReserveStatus::Paused
+                || self.status == ReserveStatus::WindDown,
             SsrError::UnexpectedReserveStatus
         );
         Ok(())

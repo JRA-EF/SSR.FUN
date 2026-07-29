@@ -204,4 +204,38 @@ pub mod ssr_protocol {
             new_default_protocol_fee_bps,
         )
     }
+
+    // --- Phase F: composition management (config-only) ---
+
+    pub fn add_reserve_asset_active<'info>(
+        ctx: Context<'info, AddReserveAssetActive<'info>>,
+        target_weight_bps: u16,
+    ) -> Result<()> {
+        instructions::add_reserve_asset_active::handler(ctx, target_weight_bps)
+    }
+
+    pub fn fund_new_reserve_asset<'info>(
+        ctx: Context<'info, FundNewReserveAsset<'info>>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::fund_new_reserve_asset::handler(ctx, amount)
+    }
+
+    pub fn remove_reserve_asset<'info>(
+        ctx: Context<'info, RemoveReserveAsset<'info>>,
+    ) -> Result<()> {
+        instructions::remove_reserve_asset::handler(ctx)
+    }
+
+    // --- Phase G: wind-down lifecycle ---
+
+    pub fn initiate_wind_down<'info>(
+        ctx: Context<'info, InitiateWindDown<'info>>,
+    ) -> Result<()> {
+        instructions::initiate_wind_down::handler(ctx)
+    }
+
+    pub fn close_reserve<'info>(ctx: Context<'info, CloseReserve<'info>>) -> Result<()> {
+        instructions::close_reserve::handler(ctx)
+    }
 }

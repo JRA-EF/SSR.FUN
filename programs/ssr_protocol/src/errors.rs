@@ -41,6 +41,12 @@ pub enum SsrError {
     ReserveAssetMismatch,
     #[msg("Remaining accounts do not match the Reserve's registered asset list (count or order).")]
     RemainingAccountsMismatch,
+    #[msg("This action is only permitted on the most-recently-registered Reserve Asset (highest order_index).")]
+    AssetNotLastRegistered,
+    #[msg("This action requires the Reserve Asset's vault balance to be exactly zero.")]
+    VaultNotEmpty,
+    #[msg("close_reserve requires the Reserve Token supply to be exactly zero.")]
+    ReserveTokenSupplyNotZero,
 
     // --- Validation: seeding / minting / redemption ---
     #[msg("Seed amount for this asset is below the minimum required seed amount.")]

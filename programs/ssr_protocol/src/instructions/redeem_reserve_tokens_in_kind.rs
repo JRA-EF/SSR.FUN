@@ -59,7 +59,7 @@ pub fn handler<'info>(
     reserve_tokens_to_redeem: u64,
     min_asset_amounts_out: Vec<u64>,
 ) -> Result<()> {
-    ctx.accounts.reserve.require_active_or_paused()?;
+    ctx.accounts.reserve.require_redemption_allowed()?;
     require!(reserve_tokens_to_redeem > 0, SsrError::ZeroValue);
     require_eq!(
         min_asset_amounts_out.len(),
