@@ -1180,3 +1180,49 @@ phase is pure verification of already-tested, unmodified protocol logic,
 matching this repo's precedent for DEC-0035's original collect_fees
 verification, which also had no accompanying offline test).
 
+## Phase E — Jupiter feasibility: proven infeasible, flagged as a blocker (2026-07-29)
+
+**Real, live API evidence, not an assumption:**
+- `GET api.jup.ag/swap/v1/quote` for `SOL -> devUSDC`: HTTP 400,
+  `{"error":"The token Djn4aGJ3JTgqGpGdQFkmq73gG8KvkwRswP7pNaouuw4k is not tradable","errorCode":"TOKEN_NOT_TRADABLE"}`.
+- The same endpoint for `SOL -> Mainnet USDC` (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`):
+  HTTP 200, a real quote routed through real **Mainnet** AMM pools (Raydium
+  CLMM, Manifest — real Mainnet program/pool addresses in the route plan).
+
+**Conclusion: Jupiter's aggregator API has no DevNet awareness at all** —
+it is not that our specific test mints aren't listed; it's that the API
+only ever quotes against Mainnet liquidity, full stop. Even if a mint were
+"tradable," the resulting quote/transaction would reference Mainnet pool
+accounts, unusable on DevNet by construction. **No amount of additional
+configuration or a different mint pair changes this — Jupiter cannot serve
+DevNet, period.** This confirms DEC-0040's prediction exactly.
+
+**Per the approved instructions, the fallback is "the smallest legitimate
+controlled on-chain DevNet liquidity or swap mechanism for representative
+test assets."** This is where this pass stops and flags a genuine,
+unresolved product-decision blocker rather than proceeding unilaterally:
+
+- Building any real on-chain swap/AMM mechanism is a **significant,
+  scope-expanding architecture decision** that directly reopens
+  DEC-0017/DEC-0021's deliberate v1 scope boundary ("SSR v1 does NOT
+  implement on-chain trade execution"). It is not a small filled-in blank.
+- Design space is genuinely open and consequential: a new dedicated
+  program vs. an extension of `ssr_protocol`; a real constant-product AMM
+  vs. a generalized version of the existing fixed-rate swap-authority
+  mechanism; scope (just enough for Sell's optional "redeem and swap" leg,
+  or also enough for Phase F's rebalance trade execution).
+- Building this without checking would risk committing to an architecture
+  the user did not actually want, on a live program other work already
+  depends on.
+
+**What this blocks, precisely:** item 8/9's optional "redeem and swap to
+SOL" secondary Sell path (still correctly absent per Phase A's decision —
+nothing regressed), and Phase F's actual rebalance **trade execution**
+(moving real holdings toward target weights). **What this does NOT
+block:** Phase F's composition-**management** (config-only: add/disable a
+Reserve, change target weights — no trade execution involved) and Phase G
+(wind-down) are both independent of this decision and proceed below.
+
+**No code was written for this phase** — it is a research/decision
+checkpoint only.
+

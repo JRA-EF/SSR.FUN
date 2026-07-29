@@ -40,6 +40,7 @@ Two tracks in progress: (1) get a real browser + Phantom to click through the fu
 - **2026-07-22 (Wed):** No recorded repository activity.
 
 ## Recently Completed
+- **Phase E: Jupiter DevNet feasibility -- proven infeasible (2026-07-29).** Real API evidence: Jupiter's aggregator has zero DevNet awareness (returns real Mainnet-only quotes regardless of mint). Flagged as a genuine, unresolved product-decision blocker (whether/how to build a real on-chain swap mechanism) rather than building an AMM unilaterally -- see DEC-0045 for the decision needed. Does not block Phase F's composition-management or Phase G.
 - **Phase D: fee/treasury verification for the devUSDC path (2026-07-29).** Confirmed fee accrual/collection is composition-agnostic by design (no protocol change needed). Live `collect_fees` call against the Phase C Reserve routed 800 pending manager + 200 pending protocol Reserve Token shares correctly. See DEC-0044.
 - **Phase C: devUSDC as a real Reserve asset, live-verified (2026-07-29).** Zero protocol changes needed -- devUSDC added to the existing real-asset allowlists (CreateDTR, mint-test-assets faucet, swap-sign zap, discovery candidate mints). Live-verified via `scripts/verify_devusdc_reserve.ts`: a fresh 70% devUSDC / 30% mockX Reserve created, seeded, Bought, and Sold, all real signatures/confirmations. See DEC-0043.
 - **Phase B: real devUSDC settlement token + faucet + DevNet SOL onboarding, live-verified (2026-07-29).** Real DevNet mint created and verified (`Djn4aGJ3JTgqGpGdQFkmq73gG8KvkwRswP7pNaouuw4k`); real faucet + sponsorship endpoints built, tested, and live-verified against a disposable test wallet (real signatures, real confirmed balance changes, real cooldown rejection). Zero new required secrets. See DEC-0042.
@@ -154,6 +155,7 @@ Two tracks in progress: (1) get a real browser + Phantom to click through the fu
 
 ## Decisions Required
 - Should the general testing site move from "unlisted" to real authentication before it's shared with anyone outside the immediate team? (pre-existing, unchanged)
+- **(New, DEC-0045) Jupiter is proven infeasible on DevNet (real API evidence, not assumption). If a real swap-execution capability is still wanted for Sell's optional "redeem and swap" leg or Phase F's rebalance trade execution, what should the "smallest legitimate controlled on-chain DevNet liquidity/swap mechanism" actually be** -- a new dedicated program, an extension of `ssr_protocol`, a generalized version of the existing fixed-rate swap-authority, or a real minimal constant-product AMM? Not decided; not built.
 
 ## Technical Health
 - **Frontend typecheck:** passing (`tsc -b`), now covering real Solana/wallet-adapter/Anchor integration code across `src/`, `packages/sdk/`, and `api/devnet/` (the latter isolated into its own tsconfig to avoid a monorepo module-system conflict between the frontend's bundler resolution and Node's stricter ESM/CJS rules -- see FRONTEND_INTEGRATION.md). `src/merge/lib/` gained the same CommonJS-scoping `package.json` this pass so its client code (`createReserveClient.ts`, `zapClient.ts`) could be exercised directly from a Node verification script (DEC-0032).

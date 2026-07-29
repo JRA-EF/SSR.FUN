@@ -1073,3 +1073,28 @@
   "evidence": ["collect_fees tx 2nAyMS45kLQRSKQheryzFcfknw55gTFjMQq8ovErNHvSiyfPBoBdPNzAcdqwz72PE3YZhjzkpiez7QHmPonqDQ6e; npx tsc -b clean"]
 }
 ```
+
+## DEC-0045
+
+```json
+{
+  "id": "DEC-0045",
+  "date": "2026-07-29",
+  "status": "blocked",
+  "decision": "Jupiter cannot serve Solana DevNet at all -- confirmed by real API evidence, not assumption. Do not build a real on-chain swap/AMM fallback mechanism unilaterally; flag the specific design decision needed and stop this sub-item, while continuing with the unblocked parts of Phases F/G.",
+  "context": "Phase E required proving Jupiter DevNet feasibility before claiming support, with a documented fallback ('smallest legitimate controlled on-chain DevNet liquidity or swap mechanism') if infeasible. Live API checks against api.jup.ag/swap/v1/quote confirmed: (a) our real devUSDC mint returns TOKEN_NOT_TRADABLE, and (b) the identical endpoint returns a real 200 quote for SOL->Mainnet-USDC, routed through real Mainnet AMM pools (Raydium CLMM, Manifest). Jupiter's aggregator has no DevNet awareness at all -- it only ever quotes Mainnet liquidity.",
+  "rationale": "Building a real swap/AMM mechanism directly reopens DEC-0017/DEC-0021's deliberate v1 scope boundary (no on-chain trade execution) and involves genuinely open, consequential architecture choices (new program vs. ssr_protocol extension; real AMM vs. generalized fixed-rate swap; scope limited to Sell's optional zap vs. also covering Phase F's rebalance execution). Committing to one unilaterally, on a live program other work depends on, risks building something the user did not actually want.",
+  "alternativesConsidered": [
+    "Build a minimal on-chain AMM/swap mechanism now without checking (rejected: exactly the kind of large, hard-to-reverse architecture commitment this session's own instructions call out as a stop-and-flag condition)",
+    "Fake/approximate a swap using the existing fixed-rate swap-authority mechanism, presented as 'genuine swap execution' (explicitly forbidden by instruction -- never substitute fake quotes or locally-manipulated balances)"
+  ],
+  "impact": "Item 8/9's 'redeem and swap to SOL' secondary Sell path remains correctly absent (no regression -- this was already Phase A's decision). Phase F's rebalance TRADE EXECUTION (moving real holdings) is blocked pending this decision; Phase F's composition MANAGEMENT (config-only) and Phase G (wind-down) are independent and proceed unblocked in this same pass.",
+  "affectedAreas": ["docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "curl https://api.jup.ag/swap/v1/quote?inputMint=So11...112&outputMint=Djn4aGJ3JTgqGpGdQFkmq73gG8KvkwRswP7pNaouuw4k&amount=1000000 -> HTTP 400 TOKEN_NOT_TRADABLE",
+    "curl https://api.jup.ag/swap/v1/quote?inputMint=So11...112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000 -> HTTP 200, real Mainnet route plan (Raydium CLMM ammKey G8LqPHYAMcwP14CDgk9XsV9VdwpsW3aJ59VubwnyrJVr, Manifest ammKey 4ba9bguTo7HbXFopJHaNMh8iAyApFpyQPgoufj3cSnyt)"
+  ]
+}
+```
