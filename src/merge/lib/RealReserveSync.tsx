@@ -1,82 +1,96 @@
-// Mounted once near the app root (see App.tsx). Polls real on-chain state for
-// every real (chain-backed) DTR in the store -- the 2 Gate-9 fixtures plus
-// any Reserve the user creates through this app -- and merges fresh reads
-// into useAppStore via mergeOnChainReserve. Uses only direct, known-account
-// reads (see packages/sdk/src/readOnly.ts) -- never getProgramAccounts, which
-// is confirmed blocked on the public DevNet RPC.
+// Mounted once near the app root (see App.tsx). Runs the canonical on-chain
+// discovery pass (see packages/sdk/src/discovery.ts) on mount and on a poll
+// interval -- this is what makes ANY genuinely deployed Reserve show up in
+// Discover/DTRDetail/Portfolio/ManageDTR, not just the 2 committed fixtures
+// or whatever this browser's own localStorage happens to remember. See
+// docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md "Phase A" for the
+// full requirement and docs/protocol/FRONTEND_INTEGRATION.md "Canonical
+// discovery" for the architecture writeup.
+//
+// Uses only direct, known-account reads (see packages/sdk/src/discovery.ts)
+// -- never getProgramAccounts, which is confirmed blocked on the public
+// DevNet RPC. Failures are surfaced honestly via chainDiscoveryStatus rather
+// than silently retried forever with no user-visible signal.
 import { useEffect } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { fetchReserveOnChain, fetchTokenBalanceRaw, DEVNET_FIXTURES } from "@ssr/sdk";
+import { discoverAllReserves, discoverDelegatesForReserve, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
+import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
 
 const POLL_MS = 15_000;
+
+const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
+
+/** Wallets worth checking for a delegate grant on any given Reserve -- see discoverDelegatesForReserve's documented limitation (full enumeration needs a scan, not available on the public DevNet RPC). Always followed by a real on-chain verification; never trusted on its own. */
+function candidateDelegateWallets(managerBase58: string, connectedWallet: string | null): PublicKey[] {
+  const candidates = new Set([managerBase58, DEVNET_FIXTURES.delegates.updateTargets.wallet, DEVNET_FIXTURES.delegates.pauseUnpause.wallet]);
+  if (connectedWallet) candidates.add(connectedWallet);
+  return Array.from(candidates).map((c) => new PublicKey(c));
+}
 
 export function RealReserveSync() {
   const { connection } = useConnection();
   const { publicKey, connected } = useWallet();
-  const dtrs = useAppStore((s) => s.dtrs);
-  const mergeOnChainReserve = useAppStore((s) => s.mergeOnChainReserve);
+  const applyDiscoveredReserves = useAppStore((s) => s.applyDiscoveredReserves);
   const syncRealHolding = useAppStore((s) => s.syncRealHolding);
+  const setChainDiscoveryStatus = useAppStore((s) => s.setChainDiscoveryStatus);
 
-  const chainBackedIds = dtrs.filter((d) => d.onChain).map((d) => d.id);
-  const key = chainBackedIds.join(",") + "|" + (connected && publicKey ? publicKey.toBase58() : "");
+  const walletKey = connected && publicKey ? publicKey.toBase58() : null;
 
   useEffect(() => {
-    if (!key) return;
     let cancelled = false;
     const programId = new PublicKey(DEVNET_FIXTURES.programId);
 
-    async function refreshOne(dtrId: string) {
-      const dtr = useAppStore.getState().dtrs.find((d) => d.id === dtrId);
-      if (!dtr?.onChain) return;
+    async function runDiscovery() {
+      setChainDiscoveryStatus("loading");
       try {
-        const reserveAddress = new PublicKey(dtr.onChain.reserve);
-        const mints = dtr.onChain.assets.map((a) => new PublicKey(a.mint));
-        const onChain = await fetchReserveOnChain(connection, programId, reserveAddress, mints);
-        if (!onChain || cancelled) return;
-        mergeOnChainReserve(dtrId, {
-          reserveId: dtr.onChain.reserveId,
-          reserve: dtr.onChain.reserve,
-          reserveTokenMint: dtr.onChain.reserveTokenMint,
-          mintAuthority: dtr.onChain.mintAuthority,
-          vaultAuthority: dtr.onChain.vaultAuthority,
-          assets: dtr.onChain.assets.map((a) => ({
-            mint: a.mint,
-            symbol: a.symbol,
-            decimals: a.decimals,
-            weightBps: a.weightBps,
-            reserveAsset: a.reserveAsset,
-            vault: a.vault,
-          })),
-        }, onChain);
+        const { reserves, protocolConfig } = await discoverAllReserves(connection, programId, CANDIDATE_ASSET_MINTS);
+        if (cancelled) return;
+        if (!protocolConfig) {
+          setChainDiscoveryStatus("error", "SSR Protocol is not initialized on this DevNet endpoint.");
+          return;
+        }
 
-        if (connected && publicKey) {
-          const balanceRaw = await fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain.reserveTokenMint), publicKey);
-          if (!cancelled) {
-            const refreshedDtr = useAppStore.getState().dtrs.find((d) => d.id === dtrId);
-            syncRealHolding(dtrId, balanceRaw, refreshedDtr?.nav ?? 1);
+        const dtrs = await Promise.all(
+          reserves.map(async (reserve) => {
+            const delegates = await discoverDelegatesForReserve(
+              connection,
+              programId,
+              new PublicKey(reserve.reserve),
+              candidateDelegateWallets(reserve.manager, walletKey),
+            ).catch(() => []); // Delegate resolution is best-effort/supplementary -- a failure here shouldn't fail the whole Reserve's discovery.
+            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey);
+          }),
+        );
+        if (cancelled) return;
+        applyDiscoveredReserves(dtrs);
+        setChainDiscoveryStatus("ready");
+
+        if (walletKey && publicKey) {
+          for (const dtr of dtrs) {
+            if (!dtr.onChain) continue;
+            try {
+              const balanceRaw = await fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain.reserveTokenMint), publicKey);
+              syncRealHolding(dtr.id, balanceRaw, dtr.nav);
+            } catch {
+              // Transient RPC failure on one balance read -- next poll tick retries; don't fail the whole pass.
+            }
           }
         }
-      } catch {
-        // Transient RPC failure -- next poll tick retries; keep prior state.
+      } catch (e) {
+        if (!cancelled) setChainDiscoveryStatus("error", e instanceof Error ? e.message : "DevNet discovery failed.");
       }
     }
 
-    async function refreshAll() {
-      for (const id of chainBackedIds) {
-        await refreshOne(id);
-      }
-    }
-
-    refreshAll();
-    const id = setInterval(refreshAll, POLL_MS);
+    runDiscovery();
+    const id = setInterval(runDiscovery, POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, connection, mergeOnChainReserve, syncRealHolding, connected, publicKey]);
+  }, [connection, walletKey, applyDiscoveredReserves, syncRealHolding, setChainDiscoveryStatus, publicKey]);
 
   return null;
 }

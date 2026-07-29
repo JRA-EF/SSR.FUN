@@ -16,6 +16,8 @@ export interface ReserveCardProps {
   avatarStyle?: CSSProperties
   avatarImageUrl?: string
   categoryLabel?: string
+  /** Clearly distinguishes a real, chain-verified Reserve from a simulated/illustrative one -- see docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md item 10. Reuses the existing `.badge-verified`/`.badge-mock` styles. */
+  sourceBadge?: { label: string; tone: 'onchain' | 'simulated' }
   priceFormatted: string
   changePct: number
   changeFormatted: string
@@ -44,6 +46,7 @@ export function ReserveCard({
   avatarStyle,
   avatarImageUrl,
   categoryLabel,
+  sourceBadge,
   priceFormatted,
   changePct,
   changeFormatted,
@@ -68,6 +71,11 @@ export function ReserveCard({
               <span className="nm">{name}</span>
               <span className="badge">{ticker}</span>
               {categoryLabel && <span className="badge badge-mock">{categoryLabel}</span>}
+              {sourceBadge && (
+                <span className={`badge ${sourceBadge.tone === 'onchain' ? 'badge-verified' : 'badge-mock'}`}>
+                  {sourceBadge.label}
+                </span>
+              )}
             </div>
           </div>
         </div>

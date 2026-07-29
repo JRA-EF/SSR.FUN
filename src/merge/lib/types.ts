@@ -129,6 +129,17 @@ export interface DTR {
   trades: Trade[];
   /** Present only for a Reserve backed by a real deployed SSR Protocol account on Solana DevNet -- see src/merge/lib/onChainReserve.ts. Absent for the fully-simulated seed DTRs. */
   onChain?: OnChainReserveMeta;
+  /**
+   * Live-fetch status for `onChain` Reserves only (undefined for
+   * fully-simulated DTRs, which have no chain fetch to track). "loading"
+   * covers both "never fetched yet" and "a fetch is in flight" so the UI
+   * can show an honest loading state instead of stale placeholder numbers.
+   * "error" means the most recent fetch failed -- the UI must disclose
+   * this, never silently keep showing old data as if it were current.
+   */
+  chainStatus?: "loading" | "ready" | "error";
+  /** Only set when chainStatus is "error" -- a short, user-showable reason (e.g. "DevNet RPC request failed"). */
+  chainError?: string;
 }
 
 export interface OnChainAssetMeta {
@@ -138,6 +149,15 @@ export interface OnChainAssetMeta {
   weightBps: number;
   reserveAsset: string;
   vault: string;
+}
+
+/** A delegate verified live on-chain (see packages/sdk/src/discovery.ts's discoverDelegatesForReserve) -- distinct from the fully-local `Delegate` type above, which backs the simulated/non-onchain sandbox only. `permissions` is the raw on-chain bitmask (see permission_flags in programs/ssr_protocol/src/state/delegate.rs), not the local ManagerPermissions shape. */
+export interface OnChainDelegateMeta {
+  wallet: string;
+  delegateAccount: string;
+  permissions: number;
+  restricted: boolean;
+  addedAt: number;
 }
 
 /** Real, live-fetched on-chain state for a Reserve backed by the deployed SSR Protocol program. */
@@ -155,6 +175,16 @@ export interface OnChainReserveMeta {
   totalTargetWeightBps: number;
   reserveTokenSupplyRaw: string;
   vaultBalancesRaw: Record<string, string>;
+  /** Verified on-chain count of registered assets (Reserve.assetCount) -- may exceed assets.length if the discovery pass's candidate-mint hints couldn't resolve every one; see assetsResolvedFully. */
+  assetCount?: number;
+  /** False when assets.length < assetCount -- i.e. this Reserve holds at least one asset this discovery pass could not resolve. Never hide this; surface it honestly in the UI. */
+  assetsResolvedFully?: boolean;
+  /** Verified on-chain count of granted delegates (Reserve.delegateCount). */
+  delegateCountOnChain?: number;
+  /** Delegates actually resolved on-chain via candidate-wallet discovery -- may be a subset of delegateCountOnChain; see docs/protocol/FRONTEND_INTEGRATION.md "Canonical discovery" for the limitation. */
+  delegatesOnChain?: OnChainDelegateMeta[];
+  /** Redemption fee in bps, read live from Reserve.feeConfig.redemptionFeeBps -- used for honest in-kind Sell estimates (see computeRedemptionEntitlements). */
+  redemptionFeeBps?: number;
 }
 
 export type WalletProviderId = "phantom" | "solflare" | "backpack";

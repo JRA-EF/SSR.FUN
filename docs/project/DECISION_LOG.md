@@ -881,3 +881,97 @@
   ]
 }
 ```
+
+## DEC-0037
+
+```json
+{
+  "id": "DEC-0037",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Final product terminology: \"Decentralized Token Reserve\" is the complete basket/product; \"Reserve\" is each underlying asset held inside one; \"Reserve Token\" is the fungible token representing ownership of the whole. User-facing copy uses \"Launch a Decentralized Token Reserve,\" not \"Launch a Reserve.\" This inverts the prior mandatory-terminology mandate in CLAUDE.md, which used \"Reserve\" for the whole basket. The deployed Anchor account structs `Reserve`, `ReserveAsset`, `Delegate`, and `ProtocolConfig` (programs/ssr_protocol/src/state/*.rs) are explicitly NOT renamed to match -- they remain legacy technical identifiers, not approved product terminology.",
+  "context": "Two prior rounds of this same day's DevNet implementation planning (docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md) used \"Reserve asset\" for an underlying holding and \"Reserve\" for the whole basket, matching CLAUDE.md's then-current mandate. The user's final round of feedback redefined both terms with the opposite mapping and explicitly banned \"DTR Asset,\" \"Reserve asset,\" \"BYOR,\" and \"BOR\" from new copy/docs/identifiers where a safe rename is possible.",
+  "rationale": "Anchor derives each account's on-chain discriminator from its struct name at compile time; renaming `Reserve`/`ReserveAsset`/`Delegate`/`ProtocolConfig` would change the discriminator new builds expect and break deserialization of every already-initialized account on live DevNet, including the two committed fixtures and any user-created Reserve (e.g. the real one referred to by handle \"TestLo\"). Scoping the terminology change to product copy/docs/safely-renameable TS identifiers (not deployed Rust/Anchor account names) preserves DevNet compatibility while still honoring the new terminology everywhere it's safe to apply it.",
+  "alternativesConsidered": [
+    "Also rename the on-chain Reserve/ReserveAsset Anchor structs to match (rejected: breaks the discriminator for every already-initialized account on live DevNet -- a real, unrecoverable-without-migration compatibility break, not worth it purely for naming consistency)",
+    "Keep the old CLAUDE.md mapping and treat the new decision as documentation-only, not applied to CLAUDE.md itself (rejected: would leave CLAUDE.md actively contradicting the current, final terminology decision, which is exactly the kind of drift CLAUDE.md exists to prevent)"
+  ],
+  "impact": "CLAUDE.md's \"Mandatory terminology\" section rewritten to the final mapping, with an explicit unsafe-rename warning for the on-chain structs. A one-line doc comment recording the same exception was added to programs/ssr_protocol/src/state/reserve_asset.rs. No user-facing copy was changed in this pass beyond CLAUDE.md/docs (Phase A's scope was discovery/mock-purge, not a copy pass) -- actual CTA/copy changes implementing this terminology (e.g. \"Launch a Decentralized Token Reserve\") remain pending future work.",
+  "affectedAreas": ["CLAUDE.md", "programs/ssr_protocol/src/state/reserve_asset.rs", "docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Manual review of CLAUDE.md's updated terminology section against the user's exact final wording; npx tsc -b passes clean after the reserve_asset.rs comment-only change (no functional Rust change, not rebuilt/redeployed)"]
+}
+```
+
+## DEC-0038
+
+```json
+{
+  "id": "DEC-0038",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Phase A implemented: a canonical, on-chain-only Reserve discovery layer (packages/sdk/src/discovery.ts) replaces the hardcoded 2-fixture list as the source of truth for \"which Reserves exist,\" and every active frontend surface (Discover, DTRDetail, Portfolio, ManageDTR) is unified on it, with real (on-chain) vs. simulated Reserves now visually distinguished everywhere rather than rendered identically.",
+  "context": "Prior to this pass, Discover/Portfolio/ManageDTR sourced 'real' Reserves from a hardcoded 2-entry descriptor list (REAL_RESERVE_DESCRIPTORS, src/merge/lib/onChainReserve.ts) plus whatever a user's own browser had separately remembered in localStorage after creating a Reserve through CreateDTR.tsx. A genuinely user-created Reserve not in that hardcoded list (e.g. handle \"TestLo\", Decentralized Token Reserve name \"Strategic Sol Reserve\", underlying asset MOCX) was real, confirmed DevNet state, but invisible to Discover/Portfolio from any browser other than the one that created it -- there was no mechanism to enumerate 'every Reserve the deployed program actually knows about.' Separately, several UI surfaces could show a false-success state for a real on-chain Reserve: ManageDTR's delegate add/edit/remove and rebalance-execute actions mutated only local simulation state with a success toast, with zero on-chain effect, for ANY Reserve including chain-backed ones.",
+  "rationale": "A Reserve PDA is seeded only by a monotonic reserveId (programs/ssr_protocol/src/constants.rs), and ProtocolConfig.reserveCount is a real, live upper bound on how many exist -- so every Reserve can be enumerated via direct account reads (fetchNullable per candidate reserveId), with no getProgramAccounts call needed (confirmed blocked/403 on the public DevNet RPC). Per-Reserve asset mints and delegate wallets remain individually un-enumerable without either a getProgramAccounts memcmp scan or a candidate list, so a documented, honestly-flagged candidate-hint approach (never trusted without independent on-chain verification) was used instead of either fabricating completeness or blocking Phase A on an RPC-provider change. Reserve.metadataUri, already written as a data:application/json URI by CreateDTR.tsx's real-deployment path, is decoded (parseReserveMetadataUri) to recover name/ticker/description/category for any discovered Reserve without needing that information supplied manually. Any UI action that cannot yet be backed by a real signed instruction (delegate CRUD, rebalance execution, both deferred to Phase D/F) was disabled with an explanatory notice for on-chain Reserves specifically, rather than left as a working-looking but fake mutation.",
+  "alternativesConsidered": [
+    "Add TestLo as a 3rd hardcoded fixture descriptor (rejected: explicitly instructed against -- would not validate general dynamic discovery, and would leave the next dynamically-created Reserve just as invisible as TestLo was)",
+    "Implement a getProgramAccounts-based scan now (rejected: confirmed blocked/403 on the public DevNet RPC in this environment; documented as the eventual fix once a dedicated/paid RPC provider is available)",
+    "Leave ManageDTR's delegate/rebalance actions working (with a caveat comment) for on-chain Reserves rather than disabling them (rejected: produces exactly the false-success state Phase A's mandate explicitly rules out -- 'no state-changing action is successful until signed, confirmed, and refreshed from chain')"
+  ],
+  "impact": "packages/sdk/src/discovery.ts (new), src/merge/lib/onChainReserve.ts's buildDtrFromDiscoveredReserve (new), src/merge/lib/RealReserveSync.tsx (rewritten to run full discovery, not just refresh known ids), useAppStore's applyDiscoveredReserves/setOnChainDelegates/chainDiscoveryStatus (new), and badge/labeling updates across Discover/DTRDetail/Portfolio/ManageDTR. A real, user-created Reserve like TestLo is now discoverable and displayable by this architecture from any browser, without being hardcoded. ManageDTR's Delegates tab is read-only (with local-label editing only) and its Rebalance tab's submit button is disabled, for on-chain Reserves, until Phase D/F ship real signed instructions.",
+  "affectedAreas": ["packages/sdk/src/discovery.ts", "packages/sdk/src/readOnly.ts", "packages/sdk/src/index.ts", "src/merge/lib/onChainReserve.ts", "src/merge/lib/RealReserveSync.tsx", "src/merge/lib/delegateLabels.ts", "src/merge/lib/onChainPermissions.ts", "src/merge/lib/types.ts", "src/merge/store/useAppStore.ts", "src/merge/pages/Discover.tsx", "src/merge/pages/Portfolio.tsx", "src/merge/pages/ManageDTR.tsx", "src/components/ReserveCard.tsx", "docs/protocol/FRONTEND_INTEGRATION.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b: clean, zero errors",
+    "npx oxlint: zero new errors/warnings (only pre-existing warnings)",
+    "npx vite build: passes, all existing chunks build",
+    "npx ts-mocha -p ./tests/tsconfig.json tests/phase_a_discovery.ts: 12/12 passing (parseReserveMetadataUri, decodeOnChainPermissions, delegate local-label fallback behavior)",
+    "Not run in this pass: the live-DevNet Anchor test suite (tests/ssr_protocol.ts / npm run test:program) -- unrelated to this pass's frontend/SDK-discovery-layer changes and not re-triggered to avoid unnecessary live DevNet transactions/cost"
+  ]
+}
+```
+
+## DEC-0039
+
+```json
+{
+  "id": "DEC-0039",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "The Sell tab's headline estimate for a real (on-chain) Reserve is now the proportional in-kind redemption amount (e.g. ~X MOCX), computed live from on-chain vault balances/supply via the same integer math the deployed program uses (computeRedemptionEntitlements), never a blended synthetic SOL figure. The existing fixed-rate SOL settlement mechanism (packages/sdk/src/zapInstructions.ts) is unchanged in its actual execution -- Phase A is display/discovery only -- but is now shown as an explicitly-disclosed, clearly-secondary line, never implied to be a real market quote or an actual asset-to-SOL swap.",
+  "context": "The previously reported 'TestLo sell-estimate bug' (~1,004 Reserve Tokens, ~$1 NAV, ~$1,000 AUM, MOCX composition, but a ~50 SOL sell estimate at a fixed $20/SOL DevNet test price) was traced to a real mechanism, not an accounting bug: Sell always redeemed in-kind on-chain first (correct), then unconditionally converted that value to SOL at a fixed synthetic rate, and the frontend only ever displayed that final SOL number -- with no disclosure that the underlying asset was never SOL to begin with.",
+  "rationale": "The deployed protocol has no oracle/pricing concept at all (confirmed structurally -- no price field anywhere in programs/ssr_protocol/src/); every dollar/SOL figure the frontend shows is a layered, off-chain construct. Making the real, already-correct in-kind redemption math (already used on-chain and already available client-side via computeRedemptionEntitlements) the headline, and demoting the fixed-rate SOL conversion to a clearly labeled secondary line, satisfies 'direct proportional redemption into the underlying Reserve(s) remains canonical' without touching the actual signing/execution path, which is out of Phase A's scope (real routed conversion / Jupiter feasibility is Phase E).",
+  "alternativesConsidered": [
+    "Remove the SOL settlement leg's execution entirely in this pass (rejected: out of Phase A's scope -- that's a real, working, previously-validated DevNet code path; removing it is a Phase C/E-scoped change requiring its own instruction/SDK/frontend work, not a display fix)",
+    "Keep the blended SOL headline but add a disclaimer tooltip (rejected: explicitly ruled out -- 'do not preserve or display the current fixed synthetic SOL Sell estimate' as the primary figure)"
+  ],
+  "impact": "src/merge/pages/DTRDetail.tsx's Sell tab now shows a per-asset in-kind entitlement breakdown as the headline, with the existing SOL conversion shown underneath as 'Current settlement (secondary, fixed-rate)' with an explanatory tooltip. No change to Buy, to the actual transaction the Sell button submits, or to any on-chain instruction.",
+  "affectedAreas": ["src/merge/pages/DTRDetail.tsx"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["npx tsc -b clean; manual trace of computeRedemptionEntitlements' inputs (dtr.onChain.assets/vaultBalancesRaw/reserveTokenSupplyRaw/redemptionFeeBps) against the same fields programs/ssr_protocol/src/instructions/redeem_reserve_tokens_in_kind.rs reads on-chain"]
+}
+```
+
+## DEC-0040
+
+```json
+{
+  "id": "DEC-0040",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Locked in for future phases (not built in Phase A): a real, controlled DevNet settlement token (working name \"SSR Test USD\" / devUSDC, Phase B) replaces the retired \"Mule\" concept; Jupiter is Mainnet-only until a later phase proves real DevNet quote+execution+confirmation+balance-verification (an API key alone is never sufficient evidence); and an 8-phase delivery order (A: mock-purge/discovery -- B: settlement token/faucet -- C: real creation/funding/mint/direct-redemption -- D: fee/treasury verification -- E: Jupiter feasibility/real swap -- F: composition management/real rebalance -- G: staged wind-down -- H: full e2e verification) governs all subsequent DevNet work.",
+  "context": "Round 3 of docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md's same-day planning confirmed SSR DevNet's target end-state (a fully on-chain testing environment, with an explicit list of things that must never be simulated) and asked for these specific architecture/sequencing decisions to be locked in and preserved across phases, not just noted informally.",
+  "rationale": "Recording these as an explicit decision-log entry (not just plan-document prose) ensures Phase B onward can't silently drop or renegotiate them without a new, explicitly-linked decision -- matching this repo's existing pattern of using DECISION_LOG.md as the durable record for exactly this kind of cross-session architectural commitment.",
+  "alternativesConsidered": [
+    "Leave this only in the plan document (rejected: the plan document is explicitly a working/append-only planning artifact, not the durable decision record CLAUDE.md designates DECISION_LOG.md for)"
+  ],
+  "impact": "No code changed by this entry itself -- it's the durable record for decisions whose implementation is explicitly deferred to Phases B-H. Phase A's own changes are recorded separately in DEC-0038/DEC-0039.",
+  "affectedAreas": ["docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md round 3 sections: \"Final DevNet objective\", \"DevNet asset architecture\", \"Jupiter and trading\", \"Delivery phases A-H\""]
+}
+```

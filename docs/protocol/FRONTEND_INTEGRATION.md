@@ -64,6 +64,103 @@ confirmed blocked (403) on the public DevNet RPC (see DEVNET_RUNBOOK.md).
 connected wallet's real Reserve Token balance (`fetchTokenBalanceRaw`) every
 15s, and immediately after any confirmed Buy/Sell/Create.
 
+## Canonical discovery (Phase A, 2026-07-29)
+
+Before this pass, "which Reserves exist" was a hardcoded 2-entry list
+(`REAL_RESERVE_DESCRIPTORS` in `src/merge/lib/onChainReserve.ts`, sourced
+from the committed `devnet-fixtures.json`) plus whatever a user's own
+browser had separately remembered in `localStorage` after creating a
+Reserve through this app. A real, user-created Reserve (e.g. handle
+"TestLo") was invisible to Discover/Portfolio/ManageDTR from any other
+browser or device -- there was no way to enumerate "every Reserve the
+deployed program actually knows about."
+
+**`packages/sdk/src/discovery.ts` is now the canonical, on-chain-only
+source of truth for that question.** It exploits one structural fact:
+a Reserve PDA is seeded *only* by a monotonic `reserveId`
+(`programs/ssr_protocol/src/constants.rs`), and `ProtocolConfig.reserveCount`
+is a real, live, verifiable upper bound on how many exist. That means every
+Reserve can be enumerated with direct account reads (`fetchNullable` per
+candidate `reserveId`, 0..reserveCount-1) -- **no `getProgramAccounts`
+call is required**, so the public DevNet RPC's confirmed 403 on that method
+(see `DEVNET_RUNBOOK.md`) never blocks discovery.
+
+**Documented limitation, not silently worked around:** a Reserve's actual
+registered asset mints and delegate wallets are each PDA'd from
+`(reserve, mint)` / `(reserve, wallet)` -- neither is derivable without
+already knowing the mint/wallet. `discoverAllReserves` and
+`discoverDelegatesForReserve` take a candidate-mint / candidate-wallet list
+used *only* as a discovery hint (today: the 3 fixture test mints + wrapped
+SOL, since `CreateDTR.tsx`'s real-deployment path can only ever use those 4
+mints; and the Reserve's manager + the 2 documented fixture delegate
+wallets + the connected wallet, respectively) -- every hint is still
+independently verified on-chain before being trusted, and the on-chain
+`Reserve.assetCount`/`delegateCount` fields let the frontend honestly
+detect and disclose under-resolution (`OnChainReserveMeta.assetsResolvedFully`)
+rather than silently showing an incomplete picture as if it were complete.
+**Smallest future fix for full generality:** a dedicated/paid DevNet RPC
+provider that allows a `getProgramAccounts` memcmp scan (an infrastructure
+change, not a protocol change) would resolve both limitations at once;
+alternatively, a protocol-level change to store the asset-mint/delegate
+list directly on the `Reserve` account would remove the need for hints
+entirely, at the cost of a schema migration for already-deployed Reserves.
+
+**`Reserve.metadataUri` doubles as a name/ticker recovery mechanism.**
+`CreateDTR.tsx`'s real-deployment path already writes a literal
+`data:application/json,...` URI into this on-chain field --
+`parseReserveMetadataUri` (`packages/sdk/src/discovery.ts`) decodes it back
+into name/ticker/description/category for *any* discovered Reserve,
+falling back to an honest "unresolved metadata" placeholder (never a
+fabricated name) for the 2 committed fixtures (seeded before this
+convention existed) or any Reserve whose `metadataUri` isn't in this shape.
+
+**`src/merge/lib/RealReserveSync.tsx`** runs `discoverAllReserves` (+ a
+best-effort `discoverDelegatesForReserve` per Reserve) on mount and every
+15s, feeding results into `useAppStore`'s `applyDiscoveredReserves` action,
+which merges by the Reserve's real on-chain address (never by a
+localStorage-assigned id) and preserves session-local price/trade history
+rather than resetting it every poll. A coarse `chainDiscoveryStatus`
+("loading"/"ready"/"error") is tracked so Discover can show an honest
+banner instead of silently keeping stale data forever if the DevNet RPC
+becomes unreachable; each DTR also carries its own `chainStatus` for
+per-Reserve honesty.
+
+**Consumers unified on this layer:** Discover, DTRDetail, Portfolio, and
+ManageDTR all read from the same `dtrs` array populated this way -- no page
+maintains its own separate notion of "which Reserves are real." Real
+(`dtr.onChain` present) and simulated (`dtr.onChain` absent) Reserves are
+now visually distinguished everywhere they render (a "Live on Solana
+DevNet" vs. "Simulated Demo" badge, reusing the existing
+`.badge-verified`/`.badge-mock` styles) rather than rendered identically.
+
+**Delegate names remain off-chain-only, confirmed unchanged in
+substance:** `src/merge/lib/delegateLabels.ts` stores a purely local label
+keyed by `(reserve, wallet)`, explicitly marked "Local label" in the UI,
+falling back cleanly to a shortened address, with delegate
+functionality/display never depending on a label being present. The
+verified on-chain delegate list itself (wallet, capabilities, restricted
+flag) comes from `discoverDelegatesForReserve`, decoded via
+`src/merge/lib/onChainPermissions.ts` (a read-only mirror of
+`programs/ssr_protocol/src/state/delegate.rs`'s `permission_flags`).
+**Delegate management (add/remove/edit) for a real on-chain Reserve is
+intentionally not wired to any instruction in this pass** -- doing so
+today would only mutate local simulation state with a fake success toast,
+which Phase A's mandate explicitly rules out; `ManageDTR.tsx`'s Delegates
+tab is read-only for `dtr.onChain` Reserves with an explanatory notice
+pointing at the deferred Phase F work, rather than silently no-oping.
+
+**The Sell tab's estimate for a real Reserve no longer shows a blended
+synthetic SOL headline.** The canonical, primary figure is now the real
+proportional in-kind redemption amount, computed from live vault
+balances/supply via `packages/sdk/src/calculations.ts`'s
+`computeRedemptionEntitlements` (the same integer math
+`redeem_reserve_tokens_in_kind` uses on-chain) -- not `dtr.nav / SOL_TEST_PRICE_USD`.
+The *execution* mechanism itself (`packages/sdk/src/zapInstructions.ts`'s
+fixed-rate SOL settlement leg) is unchanged in this pass -- Phase A is
+display/discovery only -- but it is now shown as an explicitly-disclosed,
+clearly-secondary "current settlement (secondary, fixed-rate)" line, never
+implied to be a real market quote or an actual asset-to-SOL swap.
+
 ## Buy/Sell zap architecture
 
 **Buy = SOL zap into proportional protocol mint. Sell = proportional protocol

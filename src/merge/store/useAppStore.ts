@@ -10,6 +10,7 @@ import type {
   Delegate,
   Holding,
   ManagerPermissions,
+  OnChainDelegateMeta,
   PricePoint,
   ProfileSocials,
   Trade,
@@ -96,6 +97,16 @@ interface AppState {
   holdings: Holding[];
   dtrs: DTR[];
   profiles: Record<string, UserProfile>;
+  /**
+   * Coarse status of the canonical on-chain discovery pass (see
+   * src/merge/lib/RealReserveSync.tsx and packages/sdk/src/discovery.ts) --
+   * distinct from any single DTR's own `chainStatus`. Drives an honest
+   * loading/error banner on Discover rather than silently showing stale or
+   * placeholder data forever if the DevNet RPC is unreachable.
+   */
+  chainDiscoveryStatus: "loading" | "ready" | "error";
+  chainDiscoveryError: string | null;
+  setChainDiscoveryStatus: (status: "loading" | "ready" | "error", error?: string | null) => void;
 
   /** Mirrors real @solana/wallet-adapter-react state into `wallet` -- see src/merge/lib/WalletSync.tsx, the only caller. */
   syncWalletFromChain: (payload: WalletSyncPayload) => void;
@@ -105,8 +116,22 @@ interface AppState {
   setWalletError: (message: string | null) => void;
   /** Merges a fresh on-chain read (see src/merge/lib/RealReserveSync.tsx) into the matching real DTR entry. */
   mergeOnChainReserve: (dtrId: string, fixture: FixtureReserve, onChain: ReserveOnChain) => void;
+  /**
+   * Canonical discovery entry point (see packages/sdk/src/discovery.ts's
+   * discoverAllReserves + src/merge/lib/onChainReserve.ts's
+   * buildDtrFromDiscoveredReserve). Merges every genuinely-discovered
+   * on-chain Reserve into `dtrs`, matched by its real on-chain address (not
+   * by localStorage id) -- this is what makes a dynamically created Reserve
+   * (e.g. one not in the committed fixtures) show up for any browser/device,
+   * not just the one that created it. Preserves session-local price
+   * history/trade log for a Reserve already known, rather than resetting it
+   * on every poll tick.
+   */
+  applyDiscoveredReserves: (discovered: DTR[]) => void;
   /** Registers a newly (really) created Reserve so it shows up in Discover/DTRDetail like any other real DTR. */
   registerRealReserve: (dtr: DTR) => void;
+  /** Writes a freshly-resolved on-chain delegate list (see packages/sdk/src/discovery.ts's discoverDelegatesForReserve) onto a real DTR's onChain.delegatesOnChain -- read-only, verified data; never touches the fully-local, simulated `delegates` array. */
+  setOnChainDelegates: (dtrId: string, delegates: OnChainDelegateMeta[], delegateCountOnChain: number) => void;
   /** Mirrors the connected wallet's REAL Reserve Token balance for an on-chain DTR into `holdings` -- see RealReserveSync.tsx. */
   syncRealHolding: (dtrId: string, tokenBalanceRaw: string, nav: number) => void;
   addDemoUSDC: () => void;
@@ -162,6 +187,9 @@ export const useAppStore = create<AppState>()(
       holdings: [],
       dtrs: [...SEED_DTRS, ...REAL_PLACEHOLDER_DTRS],
       profiles: {},
+      chainDiscoveryStatus: "loading",
+      chainDiscoveryError: null,
+      setChainDiscoveryStatus: (status, error) => set({ chainDiscoveryStatus: status, chainDiscoveryError: error ?? null }),
       walletError: null,
       setWalletError: (message) => set({ walletError: message }),
 
@@ -171,9 +199,38 @@ export const useAppStore = create<AppState>()(
         }));
       },
 
+      applyDiscoveredReserves: (discovered) => {
+        set((state) => {
+          const byAddress = new Map(state.dtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
+          const merged = discovered.map((fresh) => {
+            const existing = fresh.onChain ? byAddress.get(fresh.onChain.reserve) : undefined;
+            if (!existing) return fresh;
+            return {
+              ...fresh,
+              // Preserve session-accumulated history rather than resetting it
+              // to a single fresh point on every discovery poll.
+              priceHistory: existing.priceHistory.length > 1 ? existing.priceHistory : fresh.priceHistory,
+              trades: existing.trades,
+              logoUrl: existing.logoUrl ?? fresh.logoUrl,
+            };
+          });
+          const discoveredAddresses = new Set(discovered.map((d) => d.onChain?.reserve).filter(Boolean));
+          const untouched = state.dtrs.filter((d) => !d.onChain || !discoveredAddresses.has(d.onChain.reserve));
+          return { dtrs: [...untouched, ...merged] };
+        });
+      },
+
       registerRealReserve: (dtr) => {
         set((state) => ({
           dtrs: state.dtrs.some((d) => d.id === dtr.id) ? state.dtrs.map((d) => (d.id === dtr.id ? dtr : d)) : [...state.dtrs, dtr],
+        }));
+      },
+
+      setOnChainDelegates: (dtrId, delegates, delegateCountOnChain) => {
+        set((state) => ({
+          dtrs: state.dtrs.map((d) =>
+            d.id === dtrId && d.onChain ? { ...d, onChain: { ...d.onChain, delegatesOnChain: delegates, delegateCountOnChain } } : d,
+          ),
         }));
       },
 

@@ -51,6 +51,8 @@ const selectClass =
 
 export function Discover() {
   const dtrs = useAppStore((s) => s.dtrs);
+  const chainDiscoveryStatus = useAppStore((s) => s.chainDiscoveryStatus);
+  const chainDiscoveryError = useAppStore((s) => s.chainDiscoveryError);
   const [searchFilter, setSearchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [sortBy, setSortBy] = useState<SortKey>("default");
@@ -112,6 +114,18 @@ export function Discover() {
         </div>
       </div>
 
+      {chainDiscoveryStatus === "error" && (
+        <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn)", color: "var(--warn)" }}>
+          Could not refresh live Solana DevNet Reserves ({chainDiscoveryError ?? "unknown error"}). Showing the last known state --
+          on-chain figures below may be stale until the connection recovers.
+        </div>
+      )}
+      {chainDiscoveryStatus === "loading" && !dtrs.some((d) => d.onChain) && (
+        <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+          Checking Solana DevNet for live Reserves…
+        </div>
+      )}
+
       <div className="fcards">
         {visibleDtrs.map((dtr) => {
           const premiumDiscount = ((dtr.tokenPrice - dtr.nav) / dtr.nav) * 100;
@@ -131,6 +145,11 @@ export function Discover() {
               avatarStyle={avatarStyle(dtr.ticker)}
               avatarImageUrl={dtr.logoUrl}
               categoryLabel={dtr.category}
+              sourceBadge={
+                dtr.onChain
+                  ? { label: "Live on Solana DevNet", tone: "onchain" }
+                  : { label: "Simulated Demo", tone: "simulated" }
+              }
               priceFormatted={formatUsdc(dtr.tokenPrice)}
               changePct={dtr.change24h}
               changeFormatted={`${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`}

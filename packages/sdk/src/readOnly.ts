@@ -44,8 +44,11 @@ export interface ReserveOnChain {
   manager: string;
   reserveTokenMint: string;
   status: string;
+  /** Verified on-chain count of registered assets -- may exceed assets.length if candidateAssetMints didn't cover every one. */
   assetCount: number;
   totalTargetWeightBps: number;
+  /** Redemption fee in bps, read live from Reserve.feeConfig -- used for honest in-kind Sell estimates (see computeRedemptionEntitlements). */
+  redemptionFeeBps: number;
   metadataUri: string;
   reserveTokenSupplyRaw: string;
   assets: ReserveAssetOnChain[];
@@ -97,6 +100,7 @@ export async function fetchReserveOnChain(
     status: Object.keys(reserveAccount.status as object)[0],
     assetCount: reserveAccount.assetCount,
     totalTargetWeightBps: reserveAccount.totalTargetWeightBps,
+    redemptionFeeBps: reserveAccount.feeConfig.redemptionFeeBps,
     metadataUri: reserveAccount.metadataUri,
     reserveTokenSupplyRaw: supply ? supply.value.amount : "0",
     assets,

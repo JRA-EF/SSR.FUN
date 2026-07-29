@@ -290,7 +290,15 @@ export function Portfolio() {
                             </Avatar>
                             <div>
                               <p className="font-semibold text-foreground group-hover:text-primary transition-colors">{dtr.name}</p>
-                              <Badge variant="secondary" className="font-merge-mono text-[10px] px-1 py-0 h-4 mt-0.5">{dtr.ticker}</Badge>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <Badge variant="secondary" className="font-merge-mono text-[10px] px-1 py-0 h-4">{dtr.ticker}</Badge>
+                                <Badge
+                                  variant={dtr.onChain ? "default" : "outline"}
+                                  className="text-[9px] px-1 py-0 h-4 uppercase tracking-wide"
+                                >
+                                  {dtr.onChain ? "DevNet" : "Simulated"}
+                                </Badge>
+                              </div>
                             </div>
                           </Link>
                         </TableCell>

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { SOL_TEST_PRICE_USD, fetchReserveOnChain, fetchTokenBalanceRaw } from "@ssr/sdk";
+import { SOL_TEST_PRICE_USD, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { executeBuyZap, executeSellZap } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
@@ -176,6 +176,40 @@ export function DTRDetail() {
 
   const numSellAmount = parseFloat(sellAmount) || 0;
   const sellQuote = calcUsdcReceived(numSellAmount, dtr.tokenPrice, dtr.liquidityUsdc);
+  // Canonical Sell estimate for a real (on-chain) Reserve: proportional
+  // in-kind redemption into the Reserve's actual underlying asset(s),
+  // computed from live on-chain vault balances/supply via the same
+  // integer math the deployed program itself uses (see
+  // packages/sdk/src/calculations.ts's computeRedemptionEntitlements) --
+  // NOT a fixed synthetic SOL price. See
+  // docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md item 8/9 for why
+  // this replaced the old blended "~X SOL" headline.
+  const sellEntitlements = (() => {
+    if (!isOnChain || !dtr.onChain || numSellAmount <= 0) return [];
+    const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
+    const supply = BigInt(dtr.onChain.reserveTokenSupplyRaw || "0");
+    if (reserveTokensToRedeem <= 0n || supply <= 0n) return [];
+    const redemptionFeeBps = BigInt(dtr.onChain.redemptionFeeBps ?? 0);
+    const vaultBalances = dtr.onChain.assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(dtr.onChain!.vaultBalancesRaw[a.mint] ?? "0") }));
+    try {
+      const entitlements = computeRedemptionEntitlements(reserveTokensToRedeem, redemptionFeeBps, supply, vaultBalances);
+      return entitlements.map((e) => {
+        const asset = dtr.onChain!.assets.find((a) => a.mint === e.mint);
+        return {
+          mint: e.mint,
+          symbol: asset?.symbol ?? "Asset",
+          amount: asset ? Number(e.entitlement) / 10 ** asset.decimals : 0,
+        };
+      });
+    } catch {
+      return [];
+    }
+  })();
+  // The Reserve's real Sell execution today still settles as a fixed-rate
+  // DevNet conversion into SOL (see packages/sdk/src/zapInstructions.ts) --
+  // that mechanism is unchanged in this pass (Phase A is display/discovery
+  // only). Shown as an explicitly-disclosed SECONDARY figure, never the
+  // headline, and never implied to be a real market quote.
   const estSolOut = isOnChain ? (numSellAmount * dtr.nav) / SOL_TEST_PRICE_USD : 0;
 
   const handleBuy = async () => {
@@ -333,7 +367,10 @@ export function DTRDetail() {
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mb-4">
                   <Badge variant="outline" className="bg-background/50 border-border">{dtr.category}</Badge>
-                  <span>{dtr.holders.toLocaleString()} Holders</span>
+                  <Badge variant={isOnChain ? "default" : "secondary"} className="uppercase text-[10px] tracking-wide">
+                    {isOnChain ? "Live on Solana DevNet" : "Simulated Demo"}
+                  </Badge>
+                  <span>{isOnChain ? "Holder count not indexed" : `${dtr.holders.toLocaleString()} Holders`}</span>
                 </div>
                 <p className="text-muted-foreground max-w-xl leading-relaxed">
                   {dtr.description}
@@ -373,6 +410,20 @@ export function DTRDetail() {
                   <a href={explorerUrl("address", a.vault)} target="_blank" rel="noreferrer" className="underline hover:text-primary">{a.symbol} Vault</a>
                 </span>
               ))}
+            </div>
+          )}
+
+          {isOnChain && dtr.onChain?.assetsResolvedFully === false && (
+            <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn, #d9a13c)" }}>
+              This Reserve reports {dtr.onChain.assetCount} registered asset(s) on-chain, but only {dtr.onChain.assets.length} could
+              be resolved by this discovery pass -- composition/AUM below may be incomplete, not wrong. See
+              docs/protocol/FRONTEND_INTEGRATION.md "Canonical discovery" for why.
+            </div>
+          )}
+          {isOnChain && dtr.chainStatus === "error" && (
+            <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--destructive, #e5484d)", color: "var(--destructive, #e5484d)" }}>
+              Live DevNet data could not be refreshed{dtr.chainError ? `: ${dtr.chainError}` : "."} Figures below are the last known
+              on-chain state, not necessarily current.
             </div>
           )}
 
@@ -769,17 +820,41 @@ export function DTRDetail() {
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
-                            SOL Price (DevNet test)
+                            Canonical redemption
                             <Tooltip>
                               <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>Fixed DevNet testing price, not a live market feed -- there is no real SOL/asset market for this test Reserve.</TooltipContent>
+                              <TooltipContent>Proportional, on-chain redemption into this Reserve's actual underlying asset(s) -- computed live from real vault balances and supply, not a synthetic price.</TooltipContent>
                             </Tooltip>
                           </span>
-                          <span className="font-merge-mono">${SOL_TEST_PRICE_USD.toFixed(2)}</span>
                         </div>
-                        <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
-                          <span>Est. You Receive</span>
-                          <span className="font-merge-mono text-foreground">~{estSolOut.toFixed(5)} SOL</span>
+                        {sellEntitlements.length > 0 ? (
+                          <div className="pt-1 space-y-1.5">
+                            {sellEntitlements.map((e) => (
+                              <div key={e.mint} className="flex justify-between font-semibold">
+                                <span>Est. You Receive</span>
+                                <span className="font-merge-mono text-foreground">~{e.amount.toFixed(6)} {e.symbol}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">Enter an amount to preview your in-kind redemption.</p>
+                        )}
+                        <div className="pt-3 border-t border-border/50 space-y-1.5">
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              Current settlement (secondary, fixed-rate)
+                              <Tooltip>
+                                <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                                <TooltipContent>
+                                  This DevNet test environment currently settles Sell by redeeming in-kind (above) and then converting
+                                  that value to SOL at a FIXED DevNet test rate (${SOL_TEST_PRICE_USD.toFixed(2)}/SOL) -- not a real market
+                                  quote or an actual MOCX/asset-to-SOL swap. Canonical in-kind redemption without this conversion step is
+                                  planned for a future update (see the DevNet implementation plan).
+                                </TooltipContent>
+                              </Tooltip>
+                            </span>
+                            <span className="font-merge-mono">~{estSolOut.toFixed(5)} SOL @ fixed ${SOL_TEST_PRICE_USD.toFixed(2)}/SOL</span>
+                          </div>
                         </div>
                       </div>
                     ) : (

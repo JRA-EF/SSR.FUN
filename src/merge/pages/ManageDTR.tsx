@@ -11,8 +11,72 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { formatPct, formatUsdc } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
-import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle } from "lucide-react";
+import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle, Tag } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
+import { decodeOnChainPermissions } from "@/lib/onChainPermissions";
+
+/** Read-only, verified-on-chain delegate row -- reused by both the Overview summary and the Delegates tab for a real (onChain) Reserve. Local labels are display-only and never imply on-chain storage; see delegateLabels.ts. */
+function OnChainDelegateRow({ reserveAddress, wallet, delegateAccount, permissions, restricted, canEditLabel }: {
+  reserveAddress: string;
+  wallet: string;
+  delegateAccount: string;
+  permissions: number;
+  restricted: boolean;
+  canEditLabel: boolean;
+}) {
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(getDelegateLabel(reserveAddress, wallet) ?? "");
+  const label = getDelegateLabel(reserveAddress, wallet);
+  const caps = decodeOnChainPermissions(permissions);
+
+  return (
+    <div className="border border-border rounded-lg p-4 bg-card/50 space-y-2">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div className="space-y-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium">{label ?? shortenAddress(wallet)}</span>
+            {label && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 uppercase">Local label</Badge>}
+            <Badge variant={restricted ? "secondary" : "outline"} className="text-[9px] px-1 py-0 h-4 uppercase">
+              {restricted ? "Restricted" : "Unrestricted"}
+            </Badge>
+            <Badge className="text-[9px] px-1 py-0 h-4 uppercase" style={{ background: "var(--verified, #2f9e6f)", color: "white" }}>
+              Verified on-chain
+            </Badge>
+          </div>
+          <p className="font-merge-mono text-xs text-muted-foreground break-all">{wallet}</p>
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {caps.length > 0 ? (
+              caps.map((c) => <Badge key={c} variant="secondary" className="text-[10px] py-0">{c}</Badge>)
+            ) : (
+              <span className="text-xs text-muted-foreground italic">No capabilities granted</span>
+            )}
+          </div>
+        </div>
+        {canEditLabel && (
+          <Button variant="outline" size="sm" onClick={() => { setLabelDraft(label ?? ""); setEditingLabel((v) => !v); }} className="shrink-0 gap-1.5">
+            <Tag className="w-3.5 h-3.5" /> {label ? "Edit label" : "Set local label"}
+          </Button>
+        )}
+      </div>
+      {editingLabel && (
+        <div className="flex gap-2 pt-2 border-t border-border/50">
+          <Input
+            placeholder="e.g. Ops wallet (local label only)"
+            value={labelDraft}
+            onChange={(e) => setLabelDraft(e.target.value)}
+            className="text-sm"
+          />
+          <Button size="sm" onClick={() => { setDelegateLabel(reserveAddress, wallet, labelDraft); setEditingLabel(false); }}>Save</Button>
+        </div>
+      )}
+      <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/30">
+        Delegate account: <span className="font-merge-mono break-all">{delegateAccount}</span>. Wallet address, capabilities, scope, and
+        status above are read live from Solana DevNet; the name is a local label stored only in this browser, never on-chain.
+      </p>
+    </div>
+  );
+}
 
 export function ManageDTR() {
   const { dtrId } = useParams();
@@ -263,9 +327,70 @@ export function ManageDTR() {
                     </div>
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
                       <p className="text-xs text-muted-foreground mb-1">Total Delegates</p>
-                      <p className="font-merge-mono font-bold text-lg">{dtr.delegates.length}</p>
+                      <p className="font-merge-mono font-bold text-lg">
+                        {dtr.onChain ? (dtr.onChain.delegateCountOnChain ?? "—") : dtr.delegates.length}
+                      </p>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl font-merge-display">Delegates</CardTitle>
+                    <CardDescription>
+                      {dtr.onChain ? "Verified on-chain delegates for this Reserve." : "Simulated delegates for this demo Reserve."}
+                    </CardDescription>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setActiveTab("delegates")}>Manage &rarr;</Button>
+                </CardHeader>
+                <CardContent>
+                  {dtr.onChain ? (
+                    (dtr.onChain.delegatesOnChain ?? []).length === 0 ? (
+                      <div className="text-center p-6 border border-dashed border-border rounded-lg text-muted-foreground text-sm">
+                        {dtr.onChain.delegateCountOnChain
+                          ? `${dtr.onChain.delegateCountOnChain} delegate(s) reported on-chain, but none matched this pass's candidate wallets -- see the Delegates tab.`
+                          : "No delegates found on-chain for this Reserve."}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {(dtr.onChain.delegatesOnChain ?? []).map((del) => (
+                          <div key={del.wallet} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border/50 bg-muted/20">
+                            <div className="min-w-0">
+                              <p className="font-medium truncate">{displayDelegateName(dtr.onChain!.reserve, del.wallet)}</p>
+                              <p className="text-xs text-muted-foreground font-merge-mono">{shortenAddress(del.wallet)}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-1 justify-end shrink-0 max-w-[50%]">
+                              {decodeOnChainPermissions(del.permissions).slice(0, 2).map((c) => (
+                                <Badge key={c} variant="secondary" className="text-[9px] py-0">{c}</Badge>
+                              ))}
+                              {decodeOnChainPermissions(del.permissions).length > 2 && (
+                                <Badge variant="secondary" className="text-[9px] py-0">+{decodeOnChainPermissions(del.permissions).length - 2}</Badge>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : dtr.delegates.length === 0 ? (
+                    <div className="text-center p-6 border border-dashed border-border rounded-lg text-muted-foreground text-sm">
+                      No delegates configured. The Root Manager holds all permissions.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {dtr.delegates.map((del) => (
+                        <div key={del.address} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border/50 bg-muted/20">
+                          <p className="font-merge-mono text-xs truncate">{del.address}</p>
+                          <div className="flex flex-wrap gap-1 justify-end shrink-0">
+                            {Object.entries(del.permissions).filter(([, v]) => v).slice(0, 2).map(([k]) => (
+                              <Badge key={k} variant="secondary" className="text-[9px] py-0">{k}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -314,7 +439,53 @@ export function ManageDTR() {
             </div>
           )}
 
-          {activeTab === "delegates" && (
+          {activeTab === "delegates" && dtr.onChain && (
+            <div className="space-y-6">
+              <div className="bg-muted/30 border border-border/50 p-4 rounded-lg flex items-center gap-3">
+                <Shield className="w-5 h-5 shrink-0 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Delegate management for live Solana DevNet Reserves (add, remove, or change capabilities) requires a signed on-chain
+                  transaction, which is not yet implemented -- see the DevNet implementation plan's Phase F. The list below is read-only
+                  and verified live on-chain; you can still set a local display label for each delegate.
+                </p>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-xl font-merge-display">Active Delegates</CardTitle>
+                  <CardDescription>
+                    Verified on Solana DevNet
+                    {dtr.onChain.delegateCountOnChain !== undefined && ` -- ${dtr.onChain.delegateCountOnChain} reported on-chain`}.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {(dtr.onChain.delegatesOnChain ?? []).length === 0 ? (
+                    <div className="text-center p-8 border border-dashed border-border rounded-lg text-muted-foreground">
+                      {dtr.onChain.delegateCountOnChain
+                        ? `${dtr.onChain.delegateCountOnChain} delegate(s) reported on-chain, but none matched this discovery pass's candidate wallets.`
+                        : "No delegates found on-chain for this Reserve. The Root Manager holds all permissions."}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {(dtr.onChain.delegatesOnChain ?? []).map((del) => (
+                        <OnChainDelegateRow
+                          key={del.wallet}
+                          reserveAddress={dtr.onChain!.reserve}
+                          wallet={del.wallet}
+                          delegateAccount={del.delegateAccount}
+                          permissions={del.permissions}
+                          restricted={del.restricted}
+                          canEditLabel={hasManageDelegates}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === "delegates" && !dtr.onChain && (
             <div className="space-y-6">
               {!hasManageDelegates && (
                 <div className="bg-destructive/10 text-destructive p-4 rounded-lg flex items-center gap-3 border border-destructive/20">
@@ -326,7 +497,9 @@ export function ManageDTR() {
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
                   <div>
-                    <CardTitle className="text-xl font-merge-display">Active Delegates</CardTitle>
+                    <CardTitle className="text-xl font-merge-display flex items-center gap-2">
+                      Active Delegates <Badge variant="secondary" className="text-[9px] uppercase">Simulated Demo</Badge>
+                    </CardTitle>
                     <CardDescription>Wallets granted specific management permissions.</CardDescription>
                   </div>
                 </CardHeader>
@@ -450,6 +623,18 @@ export function ManageDTR() {
                 </div>
               )}
 
+              {dtr.onChain && (
+                <div className="bg-muted/30 border border-border/50 p-4 rounded-lg flex items-center gap-3">
+                  <Sliders className="w-5 h-5 shrink-0 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    Composition management and rebalance execution for live Solana DevNet Reserves require new signed on-chain
+                    instructions that don't exist yet -- see the DevNet implementation plan's items 4/5 and Phase F. You can still
+                    preview target-weight changes below, but <strong>submitting is disabled</strong> until that on-chain support ships;
+                    this preview never changes on-chain state.
+                  </p>
+                </div>
+              )}
+
               <Card>
                 <CardHeader>
                   <CardTitle className="text-xl font-merge-display">Portfolio Rebalance</CardTitle>
@@ -547,12 +732,13 @@ export function ManageDTR() {
                     </div>
                     
                     {hasRebalance && (
-                      <Button 
-                        onClick={executeRebalance} 
-                        disabled={!isPreviewValid}
+                      <Button
+                        onClick={executeRebalance}
+                        disabled={!isPreviewValid || !!dtr.onChain}
+                        title={dtr.onChain ? "Not yet available for live Solana DevNet Reserves -- see the DevNet implementation plan's Phase F." : undefined}
                         className="w-full sm:w-auto font-bold gap-2"
                       >
-                        <Save className="w-4 h-4" /> Execute Rebalance
+                        <Save className="w-4 h-4" /> {dtr.onChain ? "Execute Rebalance (coming soon)" : "Execute Rebalance"}
                       </Button>
                     )}
                   </div>

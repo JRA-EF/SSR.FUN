@@ -1,5 +1,15 @@
 use anchor_lang::prelude::*;
 
+// NOTE (2026-07-29 terminology decision, see CLAUDE.md "Mandatory
+// terminology" and docs/project/DECISION_LOG.md): product copy now uses
+// "Reserve" for an underlying holding and "Decentralized Token Reserve" for
+// the whole basket -- the inverse of this struct's name. `ReserveAsset` is
+// intentionally NOT renamed: Anchor derives each account's on-chain
+// discriminator from its struct name at compile time, so renaming it would
+// break deserialization of every already-initialized `ReserveAsset` account
+// on live DevNet. Treat this as a legacy technical identifier, not current
+// product terminology.
+
 /// Which token program owns this asset's mint/vault. SSR supports both,
 /// validating Token-2022 extensions at registration time -- see
 /// docs/protocol/SECURITY_INVARIANTS.md for the supported/rejected extension

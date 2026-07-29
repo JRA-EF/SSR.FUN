@@ -11,15 +11,25 @@
 // be presented as such -- it exists purely so the existing dollar-denominated
 // UI (built for the old AMM simulation) has something coherent to render for
 // a real, oracle-free Reserve.
-import type { DTR, OnChainAssetMeta, OnChainReserveMeta } from "./types";
-import type { ReserveOnChain } from "@ssr/sdk";
-import { DEVNET_FIXTURES, type FixtureReserve } from "@ssr/sdk";
+import { PublicKey } from "@solana/web3.js";
+import type { DTR, OnChainAssetMeta, OnChainDelegateMeta, OnChainReserveMeta } from "./types";
+import type { DiscoveredDelegate, DiscoveredReserve, ReserveOnChain } from "@ssr/sdk";
+import {
+  DEVNET_FIXTURES,
+  SOL_TEST_PRICE_USD,
+  WRAPPED_SOL_MINT,
+  parseReserveMetadataUri,
+  findMintAuthority,
+  findVaultAuthority,
+  type FixtureReserve,
+} from "@ssr/sdk";
 
-/** DevNet-only, fixed test prices for the Gate-9 fixture mints. Arbitrary and documented -- never real market data. */
+/** DevNet-only, fixed test prices for every mint the app's real-deployment path can actually use (see CreateDTR.tsx's DEVNET_REAL_ASSETS). Arbitrary and documented -- never real market data. An asset mint NOT in this map prices as $0 here (honest -- never a fabricated guess), which only affects the simulated USD/NAV display, never any on-chain amount. */
 export const TEST_ASSET_PRICES_USD: Record<string, number> = {
   [DEVNET_FIXTURES.mints.mintX.address]: 1,
   [DEVNET_FIXTURES.mints.mintY.address]: 1,
   [DEVNET_FIXTURES.mints.mintZ.address]: 1,
+  [WRAPPED_SOL_MINT.toBase58()]: SOL_TEST_PRICE_USD,
 };
 
 const RESERVE_TOKEN_DECIMALS = 6;
@@ -153,6 +163,14 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
     totalTargetWeightBps: onChain.totalTargetWeightBps,
     reserveTokenSupplyRaw: onChain.reserveTokenSupplyRaw,
     vaultBalancesRaw,
+    assetCount: onChain.assetCount,
+    assetsResolvedFully: assets.length >= onChain.assetCount,
+    redemptionFeeBps: onChain.redemptionFeeBps,
+    // Delegate discovery runs on a separate cadence (see ManageDTR.tsx) --
+    // preserve whatever was last resolved rather than clobbering it with
+    // "unknown" on every routine balance/composition poll.
+    delegatesOnChain: prev.onChain?.delegatesOnChain,
+    delegateCountOnChain: prev.onChain?.delegateCountOnChain,
   };
 
   return {
@@ -165,5 +183,146 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
     composition: assets.map((a) => ({ symbol: a.symbol, name: a.symbol, weight: a.weightBps / 10_000 })),
     unallocatedPct: Math.max(0, 1 - onChain.totalTargetWeightBps / 10_000),
     onChain: onChainMeta,
+  };
+}
+
+function onChainDelegateFromDiscovered(d: DiscoveredDelegate): OnChainDelegateMeta {
+  return { wallet: d.wallet, delegateAccount: d.delegateAccount, permissions: d.permissions, restricted: d.restricted, addedAt: d.addedAt };
+}
+
+const KNOWN_FIXTURE_META: Record<string, { name: string; ticker: string; description: string; category: string }> = {
+  [DEVNET_FIXTURES.reserveOne.reserve]: {
+    name: "DevNet Reserve One",
+    ticker: "DNR1",
+    description:
+      "A real, live 2-asset Reserve deployed on Solana DevNet (Gate 9 fixture). Backed by two test SPL token mints created for this testing phase -- not real assets, not real value.",
+    category: "DevNet Fixture",
+  },
+  [DEVNET_FIXTURES.reserveTwo.reserve]: {
+    name: "DevNet Reserve Two",
+    ticker: "DNR2",
+    description:
+      "A real, live 3-asset Reserve deployed on Solana DevNet (Gate 9 fixture). Backed by three test SPL token mints created for this testing phase -- not real assets, not real value.",
+    category: "DevNet Fixture",
+  },
+};
+
+/**
+ * Builds a full DTR entry directly from a canonically-discovered on-chain
+ * Reserve (see packages/sdk/src/discovery.ts's discoverAllReserves) -- the
+ * general-purpose path that replaces the old "only the 2 hardcoded
+ * fixtures" assumption. Works identically for a committed fixture, a
+ * dynamically-created Reserve like "TestLo", or any other Reserve; nothing
+ * here special-cases any specific Reserve id, address, or name.
+ *
+ * Name/ticker/description/category are recovered from the Reserve's own
+ * on-chain `metadataUri` when possible (see parseReserveMetadataUri) --
+ * falls back to the known committed-fixture description for the 2 fixtures
+ * (seeded before this metadata convention existed), or an honest
+ * "unresolved metadata" placeholder for anything else. Never fabricates a
+ * plausible-looking name.
+ */
+export function buildDtrFromDiscoveredReserve(
+  discovered: DiscoveredReserve,
+  delegates: DiscoveredDelegate[],
+  connectedWallet: string | null,
+): DTR {
+  const parsed = parseReserveMetadataUri(discovered.metadataUri);
+  const meta =
+    parsed ??
+    KNOWN_FIXTURE_META[discovered.reserve] ?? {
+      name: `Unnamed Decentralized Token Reserve (#${discovered.reserveId})`,
+      ticker: `RSV${discovered.reserveId}`,
+      description: "This Reserve's on-chain metadata could not be parsed -- name/ticker are placeholders, not fabricated data.",
+      category: "DevNet",
+    };
+
+  const id = `devnet-${discovered.reserveId}`;
+  const programId = new PublicKey(DEVNET_FIXTURES.programId);
+  const reserveAddress = new PublicKey(discovered.reserve);
+  const [mintAuthority] = findMintAuthority(reserveAddress, programId);
+  const [vaultAuthority] = findVaultAuthority(reserveAddress, programId);
+
+  let aumUsd = 0;
+  const vaultBalancesRaw: Record<string, string> = {};
+  const assets: OnChainAssetMeta[] = discovered.assets.map((a, i) => {
+    vaultBalancesRaw[a.assetMint] = a.vaultBalanceRaw;
+    const price = TEST_ASSET_PRICES_USD[a.assetMint] ?? 0;
+    aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * price;
+    const fixtureSymbol = Object.values(DEVNET_FIXTURES.mints).find((m) => m.address === a.assetMint)?.symbol;
+    const symbol = fixtureSymbol ?? (a.assetMint === WRAPPED_SOL_MINT.toBase58() ? "SOL" : `Asset${i + 1}`);
+    return {
+      mint: a.assetMint,
+      symbol,
+      decimals: a.decimals,
+      weightBps: a.targetWeightBps,
+      reserveAsset: a.reserveAsset,
+      vault: a.vault,
+    };
+  });
+  const supply = Number(discovered.reserveTokenSupplyRaw) / 10 ** RESERVE_TOKEN_DECIMALS;
+  const nav = supply > 0 ? aumUsd / supply : 1;
+
+  const onChain: OnChainReserveMeta = {
+    programId: DEVNET_FIXTURES.programId,
+    reserveId: discovered.reserveId,
+    reserve: discovered.reserve,
+    reserveTokenMint: discovered.reserveTokenMint,
+    mintAuthority: mintAuthority.toBase58(),
+    vaultAuthority: vaultAuthority.toBase58(),
+    manager: discovered.manager,
+    assets,
+    status: discovered.status,
+    totalTargetWeightBps: discovered.totalTargetWeightBps,
+    reserveTokenSupplyRaw: discovered.reserveTokenSupplyRaw,
+    vaultBalancesRaw,
+    assetCount: discovered.assetCount,
+    assetsResolvedFully: discovered.resolvedAssetCount >= discovered.assetCount,
+    redemptionFeeBps: discovered.redemptionFeeBps,
+    delegateCountOnChain: discovered.delegateCount,
+    delegatesOnChain: delegates.map(onChainDelegateFromDiscovered),
+  };
+
+  return {
+    id,
+    name: meta.name,
+    ticker: meta.ticker,
+    description: meta.description,
+    category: meta.category,
+    tags: [meta.category, "devnet", "real"],
+    logoSeed: id,
+    dtrAddress: discovered.reserve,
+    managerAddress: discovered.manager,
+    // Locally-simulated delegate CRUD (see useAppStore's addDelegate/etc) is
+    // NOT used for real on-chain Reserves -- see delegatesOnChain above for
+    // the verified list. Left empty rather than repurposed so the two
+    // concepts (simulated delegates vs. verified on-chain delegates) never
+    // conflate.
+    delegates: [],
+    feeConfig: {
+      mintFeePct: discovered.mintFeeBps / 100,
+      tvlFeePct: discovered.annualTvlFeeBps / 100,
+      managerBuyTaxPct: 0,
+      managerSellTaxPct: 0,
+      creatorFeeDestination: discovered.feeDestination,
+      feeRecipients: [],
+    },
+    tokenPrice: nav,
+    nav,
+    aum: aumUsd,
+    liquidityUsdc: aumUsd,
+    change24h: 0,
+    change7d: 0,
+    // Real holder count isn't derivable without a token-account scan (same
+    // getProgramAccounts limitation as delegates/assets) -- 0 is an honest
+    // "unknown", never a fabricated figure.
+    holders: 0,
+    composition: assets.map((a) => ({ symbol: a.symbol, name: a.symbol, weight: a.weightBps / 10_000 })),
+    unallocatedPct: Math.max(0, 1 - discovered.totalTargetWeightBps / 10_000),
+    isUserCreated: connectedWallet !== null && discovered.manager === connectedWallet,
+    priceHistory: [{ t: Date.now(), price: nav }],
+    trades: [],
+    onChain,
+    chainStatus: "ready",
   };
 }
