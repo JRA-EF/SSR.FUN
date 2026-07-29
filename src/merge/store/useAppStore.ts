@@ -74,6 +74,18 @@ interface AppState {
   chainDiscoveryError: string | null;
   setChainDiscoveryStatus: (status: "loading" | "ready" | "error", error?: string | null) => void;
 
+  /**
+   * True while ANY wallet transaction (Buy, Sell, or a Reserve launch) is
+   * being prepared, signed, submitted, confirmed, or reconciled. See
+   * src/merge/lib/RealReserveSync.tsx, which checks this before each poll
+   * tick and defers rather than racing its own discovery/balance reads
+   * against the RPC calls a real trade is making at the same moment (this
+   * contention was a real, confirmed cause of Buy transactions hitting 429s
+   * -- see docs/project/PROJECT_STATUS.md's RPC-resilience corrective pass).
+   */
+  txInFlight: boolean;
+  setTxInFlight: (inFlight: boolean) => void;
+
   /** Mirrors real @solana/wallet-adapter-react state into `wallet` -- see src/merge/lib/WalletSync.tsx, the only caller. */
   syncWalletFromChain: (payload: WalletSyncPayload) => void;
   disconnectWallet: () => void;
@@ -152,6 +164,8 @@ export const useAppStore = create<AppState>()(
       chainDiscoveryStatus: "loading",
       chainDiscoveryError: null,
       setChainDiscoveryStatus: (status, error) => set({ chainDiscoveryStatus: status, chainDiscoveryError: error ?? null }),
+      txInFlight: false,
+      setTxInFlight: (inFlight) => set({ txInFlight: inFlight }),
       walletError: null,
       setWalletError: (message) => set({ walletError: message }),
 
@@ -309,6 +323,14 @@ export const useAppStore = create<AppState>()(
     {
       name: "ssrfun-simulation",
       version: 5,
+      // txInFlight is purely an in-session UI-coordination flag (RealReserveSync
+      // pauses its poll while it's true) -- it must never survive a reload as
+      // `true`, or a tab closed mid-transaction would permanently wedge
+      // background polling on next load with nothing left to ever clear it.
+      partialize: (state) => {
+        const { txInFlight: _txInFlight, ...rest } = state;
+        return rest;
+      },
       // Backfill fields added after a user's simulation state was already
       // persisted to localStorage -- e.g. DTRs created before the logo-art
       // pool, the AMM liquidity economy, the buy/sell tax split, the

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -6,6 +6,18 @@ import { SOL_TEST_PRICE_USD, DEVUSDC, DEVUSDC_MINT, fetchReserveOnChain, fetchTo
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { executeBuyZapDevUsdc, executeSellZap } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
+import {
+  AmbiguousConfirmationError,
+  BALANCE_CACHE_TTL_MS,
+  canSubmitNewTransaction,
+  getCached,
+  invalidateCached,
+  reconcileByBalanceChange,
+  tokenBalanceCacheKey,
+  txPhaseLabel,
+  withReadConcurrencyLimit,
+  type TxPhase,
+} from "@/lib/rpcResilience";
 import {
   buildLineSeries,
   buildSimulatedOrderBook,
@@ -73,11 +85,30 @@ export function DTRDetail() {
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
   // devUSDC is the default DevNet settlement asset for mint (Buy) -- a real
   // balance read from chain, never simulated. See
   // buildBuyZapInstructionsDevUsdc / DEC "devUSDC default settlement asset".
   const [devUsdcBalanceRaw, setDevUsdcBalanceRaw] = useState<bigint>(0n);
+
+  // RPC-resilience pass (see docs/project/PROJECT_STATUS.md): Buy/Sell each
+  // track their own submission phase instead of one shared boolean, so the
+  // UI can show "Preparing transaction" / "Waiting for wallet approval" /
+  // "Submitted -- confirming on DevNet" / "DevNet RPC is temporarily busy --
+  // your transaction is still being verified" rather than a single generic
+  // spinner -- and so canSubmitNewTransaction has one real state machine to
+  // gate against instead of a boolean that can't distinguish "confirming" from
+  // "genuinely stuck." A signature is recorded (and shown) the instant
+  // submission succeeds, before confirmation even starts.
+  const [buyPhase, setBuyPhase] = useState<TxPhase>("idle");
+  const [buyPendingSignature, setBuyPendingSignature] = useState<string | null>(null);
+  const buyPreDevUsdcRawRef = useRef<bigint>(0n);
+
+  const [sellPhase, setSellPhase] = useState<TxPhase>("idle");
+  const [sellPendingSignature, setSellPendingSignature] = useState<string | null>(null);
+  const sellPreRtRawRef = useRef<bigint>(0n);
+
+  const buyProcessing = !canSubmitNewTransaction(buyPhase);
+  const sellProcessing = !canSubmitNewTransaction(sellPhase);
 
   // Real (chain-backed) Reserves trade via the DevNet SOL zap adapter instead
   // of the simulated AMM curve -- see docs/protocol/FRONTEND_INTEGRATION.md
@@ -85,14 +116,25 @@ export function DTRDetail() {
   // behavioral branch point; the surrounding JSX structure is unchanged.
   const isOnChain = !!dtr?.onChain;
 
-  /** Re-fetches this Reserve's on-chain state + the connected wallet's real balance immediately after a confirmed tx, rather than waiting for RealReserveSync's next poll. */
+  /**
+   * Re-fetches THIS Reserve's on-chain state + the connected wallet's real
+   * balances immediately after a confirmed tx, rather than waiting for
+   * RealReserveSync's next poll -- deliberately scoped to the one Reserve
+   * that just changed, never every Reserve (see the "targeted refresh"
+   * requirement in docs/project/PROJECT_STATUS.md's RPC-resilience pass).
+   * Cache keys for this Reserve's mint/the wallet's devUSDC balance are
+   * invalidated first so this always reads genuinely fresh values, not a
+   * few-seconds-stale cached one -- then re-populates the same cache via
+   * getCached so RealReserveSync's next tick reuses this result instead of
+   * re-asking the RPC for something we just confirmed.
+   */
   async function refreshRealReserveNow() {
     if (!dtr?.onChain) return;
     try {
       const programId = new PublicKey(dtr.onChain.programId);
       const reserveAddress = new PublicKey(dtr.onChain.reserve);
       const mints = dtr.onChain.assets.map((a) => new PublicKey(a.mint));
-      const onChain = await fetchReserveOnChain(connection, programId, reserveAddress, mints);
+      const onChain = await withReadConcurrencyLimit(() => fetchReserveOnChain(connection, programId, reserveAddress, mints));
       if (onChain) {
         mergeOnChainReserve(
           dtr.id,
@@ -108,11 +150,19 @@ export function DTRDetail() {
         );
       }
       if (walletCtx.publicKey) {
-        const balanceRaw = await fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain.reserveTokenMint), walletCtx.publicKey);
+        const owner = walletCtx.publicKey;
+        const rtMint = dtr.onChain.reserveTokenMint;
+        const rtKey = tokenBalanceCacheKey(connection.rpcEndpoint, rtMint, owner.toBase58());
+        const devKey = tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58());
+        invalidateCached(rtKey);
+        invalidateCached(devKey);
+        const balanceRaw = await getCached(rtKey, BALANCE_CACHE_TTL_MS, () =>
+          withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner)),
+        );
         syncRealHolding(dtr.id, balanceRaw, dtr.nav);
-        const solLamports = await connection.getBalance(walletCtx.publicKey, "confirmed");
-        syncWalletFromChain({ connected: true, connecting: false, address: walletCtx.publicKey.toBase58(), provider: wallet.provider, solLamports });
-        const devUsdcRaw = await fetchTokenBalanceRaw(connection, DEVUSDC_MINT, walletCtx.publicKey);
+        const solLamports = await connection.getBalance(owner, "confirmed");
+        syncWalletFromChain({ connected: true, connecting: false, address: owner.toBase58(), provider: wallet.provider, solLamports });
+        const devUsdcRaw = await getCached(devKey, BALANCE_CACHE_TTL_MS, () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner)));
         setDevUsdcBalanceRaw(BigInt(devUsdcRaw));
       }
     } catch {
@@ -121,14 +171,20 @@ export function DTRDetail() {
   }
 
   // Initial devUSDC balance read (refreshRealReserveNow only runs after a
-  // confirmed tx) -- real, read live from chain, never simulated.
+  // confirmed tx) -- real, read live from chain, never simulated. Routed
+  // through the shared cache/dedupe helper so this mount effect and
+  // RealReserveSync's own per-Reserve balance loop collapse into one
+  // request instead of each firing its own for the same (mint, owner).
   useEffect(() => {
     if (!walletCtx.publicKey) {
       setDevUsdcBalanceRaw(0n);
       return;
     }
+    const owner = walletCtx.publicKey;
     let cancelled = false;
-    fetchTokenBalanceRaw(connection, DEVUSDC_MINT, walletCtx.publicKey)
+    getCached(tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58()), BALANCE_CACHE_TTL_MS, () =>
+      withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner)),
+    )
       .then((raw) => {
         if (!cancelled) setDevUsdcBalanceRaw(BigInt(raw));
       })
@@ -239,13 +295,50 @@ export function DTRDetail() {
   // headline, and never implied to be a real market quote.
   const estSolOut = isOnChain ? (numSellAmount * dtr.nav) / SOL_TEST_PRICE_USD : 0;
 
+  /** One-shot reconciliation for an ambiguous ("unresolved") outcome: does the trader's REAL, freshly-read devUSDC balance actually show the spend this Buy would have made? If so, report success based on that observed on-chain state -- never based on an assumption. Used both automatically right after an AmbiguousConfirmationError and from the pending-verification banner's manual "Check status" button. */
+  async function reconcileBuy(signature: string) {
+    if (!walletCtx.publicKey) return;
+    const owner = walletCtx.publicKey;
+    try {
+      const key = tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58());
+      invalidateCached(key);
+      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner));
+      if (reconcileByBalanceChange(buyPreDevUsdcRawRef.current, BigInt(freshRaw), "decrease")) {
+        setDevUsdcBalanceRaw(BigInt(freshRaw));
+        setBuyPhase("confirmed");
+        setBuyPendingSignature(null);
+        await refreshRealReserveNow();
+        setBuyAmount("");
+        toast({
+          title: "Buy confirmed on Solana DevNet",
+          description: (
+            <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
+              View transaction on Solana Explorer (DevNet) &rarr;
+            </a>
+          ),
+        });
+      } else {
+        toast({
+          title: "Still verifying",
+          description: "Your devUSDC balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Buy.",
+        });
+      }
+    } catch {
+      // The reconciliation read itself failed (still congested) -- leave the pending-verification banner up; nothing to report either way yet.
+    }
+  }
+
   const handleBuy = async () => {
     if (!dtr.onChain) return;
     if (!walletCtx.publicKey) {
       toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
       return;
     }
-    setIsProcessing(true);
+    if (!canSubmitNewTransaction(buyPhase)) return; // Defensive -- the button is already disabled in this state.
+    setBuyPhase("preparing");
+    setBuyPendingSignature(null);
+    buyPreDevUsdcRawRef.current = devUsdcBalanceRaw;
+    useAppStore.getState().setTxInFlight(true);
     try {
       // devUSDC is the default DevNet settlement asset (see
       // buildBuyZapInstructionsDevUsdc): real devUSDC funds any devUSDC leg
@@ -261,7 +354,9 @@ export function DTRDetail() {
         assetMints: dtr.onChain.assets.map((a) => a.mint),
         userPubkey: walletCtx.publicKey,
         devUsdcAmountRaw,
+        onProgress: (e) => setBuyPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
       });
+      setBuyPhase("confirmed");
       await refreshRealReserveNow();
       setBuyAmount("");
       const realLegs = (quote.legSources ?? []).filter((l) => l.source === "user-devusdc-balance").length;
@@ -279,9 +374,20 @@ export function DTRDetail() {
         ),
       });
     } catch (e) {
-      toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+      if (e instanceof AmbiguousConfirmationError) {
+        setBuyPhase("unresolved");
+        setBuyPendingSignature(e.signature);
+        toast({
+          title: "DevNet RPC is temporarily busy",
+          description: "No confirmation could be verified yet -- your transaction may still be confirming. Checking your real balance now.",
+        });
+        await reconcileBuy(e.signature);
+      } else {
+        setBuyPhase("failed");
+        toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+      }
     } finally {
-      setIsProcessing(false);
+      useAppStore.getState().setTxInFlight(false);
     }
   };
 
@@ -303,14 +409,53 @@ export function DTRDetail() {
     });
   };
 
+  /** Same reasoning as reconcileBuy, but for the redeemed Reserve Token balance decreasing (Sell burns/redeems it) instead of devUSDC. */
+  async function reconcileSell(signature: string) {
+    if (!walletCtx.publicKey || !dtr?.onChain) return;
+    const owner = walletCtx.publicKey;
+    const rtMint = dtr.onChain.reserveTokenMint;
+    try {
+      const key = tokenBalanceCacheKey(connection.rpcEndpoint, rtMint, owner.toBase58());
+      invalidateCached(key);
+      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner));
+      if (reconcileByBalanceChange(sellPreRtRawRef.current, BigInt(freshRaw), "decrease")) {
+        setSellPhase("confirmed");
+        setSellPendingSignature(null);
+        await refreshRealReserveNow();
+        setSellAmount("");
+        toast({
+          title: "Sell confirmed on Solana DevNet",
+          description: (
+            <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
+              View transaction on Solana Explorer (DevNet) &rarr;
+            </a>
+          ),
+        });
+      } else {
+        toast({
+          title: "Still verifying",
+          description: "Your Reserve Token balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Sell.",
+        });
+      }
+    } catch {
+      // Reconciliation read itself failed (still congested) -- leave the pending-verification banner up.
+    }
+  }
+
   const handleSell = async () => {
     if (!dtr.onChain) return;
     if (!walletCtx.publicKey) {
       toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
       return;
     }
-    setIsProcessing(true);
+    if (!canSubmitNewTransaction(sellPhase)) return; // Defensive -- the button is already disabled in this state.
+    setSellPhase("preparing");
+    setSellPendingSignature(null);
+    useAppStore.getState().setTxInFlight(true);
     try {
+      sellPreRtRawRef.current = BigInt(
+        await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), walletCtx.publicKey!)),
+      );
       const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
       const { signature } = await executeSellZap({
         connection,
@@ -319,7 +464,9 @@ export function DTRDetail() {
         assetMints: dtr.onChain.assets.map((a) => a.mint),
         userPubkey: walletCtx.publicKey,
         reserveTokensToRedeem,
+        onProgress: (e) => setSellPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
       });
+      setSellPhase("confirmed");
       await refreshRealReserveNow();
       setSellAmount("");
       toast({
@@ -331,9 +478,20 @@ export function DTRDetail() {
         ),
       });
     } catch (e) {
-      toast({ variant: "destructive", title: "Sell Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+      if (e instanceof AmbiguousConfirmationError) {
+        setSellPhase("unresolved");
+        setSellPendingSignature(e.signature);
+        toast({
+          title: "DevNet RPC is temporarily busy",
+          description: "No confirmation could be verified yet -- your transaction may still be confirming. Checking your real balance now.",
+        });
+        await reconcileSell(e.signature);
+      } else {
+        setSellPhase("failed");
+        toast({ variant: "destructive", title: "Sell Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+      }
     } finally {
-      setIsProcessing(false);
+      useAppStore.getState().setTxInFlight(false);
     }
   };
 
@@ -712,8 +870,14 @@ export function DTRDetail() {
                         placeholder="0.00"
                         className="h-14 bg-background border-border/60 text-lg font-merge-mono pr-16"
                         value={buyAmount}
-                        onChange={(e) => setBuyAmount(e.target.value)}
-                        disabled={!wallet.connected || isProcessing}
+                        onChange={(e) => {
+                          setBuyAmount(e.target.value);
+                          if (canSubmitNewTransaction(buyPhase) && buyPhase !== "idle") {
+                            setBuyPhase("idle");
+                            setBuyPendingSignature(null);
+                          }
+                        }}
+                        disabled={!wallet.connected || buyProcessing}
                       />
                     </div>
 
@@ -725,7 +889,7 @@ export function DTRDetail() {
                           size="sm"
                           className="bg-muted/30 text-xs h-7 border-border/50"
                           onClick={() => setBuyPct(pct)}
-                          disabled={!wallet.connected || isProcessing}
+                          disabled={!wallet.connected || buyProcessing}
                         >
                           {pct === 1 ? "Max" : `${pct * 100}%`}
                         </Button>
@@ -816,14 +980,31 @@ export function DTRDetail() {
                     </div>
                     )}
 
+                    {buyPendingSignature && (
+                      <div className="rounded-lg border border-dashed p-3 text-sm space-y-2" style={{ borderColor: "var(--warn, #d9a13c)" }}>
+                        <p>DevNet RPC is temporarily busy -- your Buy transaction is still being verified. No new transaction has been submitted for it.</p>
+                        <a href={explorerUrl("tx", buyPendingSignature)} target="_blank" rel="noreferrer" className="underline">
+                          View signature on Solana Explorer (DevNet) &rarr;
+                        </a>
+                        <div>
+                          <Button size="sm" variant="outline" onClick={() => void reconcileBuy(buyPendingSignature)}>
+                            Check status
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     <Button
                       className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20"
                       onClick={onBuyClick}
-                      disabled={!wallet.connected || isProcessing || numBuyAmount <= 0 || buyInsufficientBalance}
+                      disabled={!wallet.connected || buyProcessing || numBuyAmount <= 0 || buyInsufficientBalance}
                     >
-                      {isProcessing ? (
+                      {txPhaseLabel(buyPhase) ? (
                         <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" /> Processing...
+                          {(buyPhase === "preparing" || buyPhase === "awaiting-wallet" || buyPhase === "confirming" || buyPhase === "submitted") && (
+                            <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {txPhaseLabel(buyPhase)}
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
@@ -852,25 +1033,31 @@ export function DTRDetail() {
                       <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-muted-foreground font-medium text-sm">
                         {dtr.ticker}
                       </div>
-                      <Input 
-                        type="number" 
-                        placeholder="0.00" 
+                      <Input
+                        type="number"
+                        placeholder="0.00"
                         className="h-14 bg-background border-border/60 text-lg font-merge-mono pr-20"
                         value={sellAmount}
-                        onChange={(e) => setSellAmount(e.target.value)}
-                        disabled={!wallet.connected || isProcessing || !holding}
+                        onChange={(e) => {
+                          setSellAmount(e.target.value);
+                          if (canSubmitNewTransaction(sellPhase) && sellPhase !== "idle") {
+                            setSellPhase("idle");
+                            setSellPendingSignature(null);
+                          }
+                        }}
+                        disabled={!wallet.connected || sellProcessing || !holding}
                       />
                     </div>
 
                     <div className="grid grid-cols-4 gap-2">
                       {[0.25, 0.5, 0.75, 1].map((pct) => (
-                        <Button 
-                          key={pct} 
-                          variant="outline" 
-                          size="sm" 
+                        <Button
+                          key={pct}
+                          variant="outline"
+                          size="sm"
                           className="bg-muted/30 text-xs h-7 border-border/50"
                           onClick={() => setSellPct(pct)}
-                          disabled={!wallet.connected || isProcessing || !holding}
+                          disabled={!wallet.connected || sellProcessing || !holding}
                         >
                           {pct === 1 ? "Max" : `${pct * 100}%`}
                         </Button>
@@ -957,15 +1144,32 @@ export function DTRDetail() {
                     </div>
                     )}
 
+                    {sellPendingSignature && (
+                      <div className="rounded-lg border border-dashed p-3 text-sm space-y-2" style={{ borderColor: "var(--warn, #d9a13c)" }}>
+                        <p>DevNet RPC is temporarily busy -- your Sell transaction is still being verified. No new transaction has been submitted for it.</p>
+                        <a href={explorerUrl("tx", sellPendingSignature)} target="_blank" rel="noreferrer" className="underline">
+                          View signature on Solana Explorer (DevNet) &rarr;
+                        </a>
+                        <div>
+                          <Button size="sm" variant="outline" onClick={() => void reconcileSell(sellPendingSignature)}>
+                            Check status
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     <Button
                       variant="destructive"
                       className="w-full h-12 text-lg font-bold shadow-lg shadow-destructive/20"
                       onClick={onSellClick}
-                      disabled={!wallet.connected || isProcessing || numSellAmount <= 0 || numSellAmount > (holding?.tokenBalance || 0)}
+                      disabled={!wallet.connected || sellProcessing || numSellAmount <= 0 || numSellAmount > (holding?.tokenBalance || 0)}
                     >
-                      {isProcessing ? (
+                      {txPhaseLabel(sellPhase) ? (
                         <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" /> Processing...
+                          {(sellPhase === "preparing" || sellPhase === "awaiting-wallet" || sellPhase === "confirming" || sellPhase === "submitted") && (
+                            <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {txPhaseLabel(sellPhase)}
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"

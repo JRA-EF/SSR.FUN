@@ -42,6 +42,7 @@ import {
   type NewReserveAddresses,
   type ReserveAssetAddresses,
 } from "@ssr/sdk";
+import { isRateLimitError, withRateLimitRetry } from "./rpcResilience";
 
 export type CreateReserveStep = "create-and-register" | "fund-seed-assets" | "seed" | "done";
 
@@ -128,6 +129,13 @@ export interface CreateReserveCostEstimate {
 // same in-flight request, and retrying a genuine 429 with bounded
 // exponential backoff + jitter rather than the caller's effect just
 // refiring the whole burst again.
+//
+// isRateLimitError/withRateLimitRetry themselves now live in the shared
+// rpcResilience.ts (reused by RealReserveSync/DTRDetail/zapClient's own
+// resilience pass -- see PROJECT_STATUS.md) -- re-exported here so existing
+// importers of this module don't need to change.
+export { isRateLimitError, withRateLimitRetry };
+
 const RENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes -- bounded, not indefinite.
 interface RentConstants {
   reserveRent: number;
@@ -137,27 +145,6 @@ interface RentConstants {
 }
 let rentCache: { endpoint: string; value: RentConstants; expiresAt: number } | null = null;
 let rentInFlight: { endpoint: string; promise: Promise<RentConstants> } | null = null;
-
-export function isRateLimitError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e);
-  return msg.includes("429") || msg.toLowerCase().includes("too many requests");
-}
-
-/** Bounded exponential backoff with jitter, retrying ONLY genuine rate-limit errors -- any other error is rethrown immediately, never masked by a pointless retry loop. */
-export async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 500): Promise<T> {
-  let attempt = 0;
-  for (;;) {
-    try {
-      return await fn();
-    } catch (e) {
-      if (!isRateLimitError(e) || attempt >= maxRetries) throw e;
-      const backoff = baseDelayMs * 2 ** attempt;
-      const jitter = Math.random() * baseDelayMs;
-      await new Promise((resolve) => setTimeout(resolve, backoff + jitter));
-      attempt += 1;
-    }
-  }
-}
 
 export async function getRentConstants(connection: Connection): Promise<RentConstants> {
   const endpoint = connection.rpcEndpoint;
