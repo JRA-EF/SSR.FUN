@@ -1,0 +1,26 @@
+[package]
+name = "ssr_devnet_amm"
+version = "0.1.0"
+description = "SSR DevNet Test AMM: a dedicated, DevNet-only, single-authority constant-product swap program. NOT ssr_protocol, NOT Jupiter, NOT production-ready -- see DEC-0051 (docs/project/DECISION_LOG.md) for the full security model, limitations, and Mainnet migration path (there isn't one for this program; it is retired before any Mainnet migration)."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ssr_devnet_amm"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "1.1.2", features = ["init-if-needed"] }
+anchor-spl = { version = "1.1.2", features = ["token", "associated_token"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = [
+    'cfg(feature, values("custom-heap", "custom-panic", "solana", "anchor-debug"))',
+] }
