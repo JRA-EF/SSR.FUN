@@ -1054,3 +1054,22 @@
   "evidence": ["scripts/verify_devusdc_reserve.ts live run: createAndRegister tx 3kLjRovqhY3xNWsczDEuc44AtYyEKAc1nVYe5Hh844tyHmb6Z8gGLvifE3wG4pN6UMwSt9Zcp2sMZLN3x2qAbUML, seed tx KFacX7Vo7fiX9iZDKGydCKmaHvoPZXtxGygfawYtTbmJ2Y4vDiG8fN8L3B6KLjA7SrrvE4A5sEp7pYHVoPpKiw2, Buy tx 4Lih9wtiqin8ymsCWRCcKWqkdnwvpFm3YM8j5t7Tgf3zfxCWpAXK6j3YmNanK36S4SRETxDERByuxxpLvogvQKn3, Sell tx 2QpgDFwJcLb1XZqvXVNUe5woStX3bdRasYhqQYGKG5TVfve9a7ioUKkiiJvkc1JfgUV69seeZucgBk1agz3a3KvS; npx tsc -b/vite build/oxlint clean; 32/32 offline tests passing"]
 }
 ```
+
+## DEC-0044
+
+```json
+{
+  "id": "DEC-0044",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Verify (no protocol change) that fee accrual and collect_fees routing work correctly for a devUSDC-composed Reserve, satisfying Phase D.",
+  "context": "Phase D's approved scope was fee/treasury verification. mint_reserve_tokens_in_kind and collect_fees are Reserve-Token-denominated and never inspect Reserve composition, so this was a verification task, not a development task.",
+  "rationale": "Reusing the real Phase C Reserve (already carrying real pending fee shares from its Buy) for this verification, rather than creating another throwaway Reserve, minimizes DevNet SOL/rent spend and directly proves the exact scenario (a devUSDC-backed Reserve) the phase asked about.",
+  "alternativesConsidered": [],
+  "impact": "collect_fees signature 2nAyMS45kLQRSKQheryzFcfknw55gTFjMQq8ovErNHvSiyfPBoBdPNzAcdqwz72PE3YZhjzkpiez7QHmPonqDQ6e: manager Reserve Token balance 2,599,500 -> 2,600,300 (+800), protocol treasury 0 -> 200, pending shares reset to 0 -- confirms DEC-0035's treasury routing generalizes correctly to any Reserve composition, not just the original mintX/Y/Z fixtures.",
+  "affectedAreas": ["scripts/verify_devusdc_fees.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["collect_fees tx 2nAyMS45kLQRSKQheryzFcfknw55gTFjMQq8ovErNHvSiyfPBoBdPNzAcdqwz72PE3YZhjzkpiez7QHmPonqDQ6e; npx tsc -b clean"]
+}
+```

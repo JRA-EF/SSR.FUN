@@ -1153,3 +1153,30 @@ the script's own output; not duplicated here to keep this section short.
 
 **What Phase C did NOT change:** the Sell zap still terminates in a fixed-rate SOL cash-out (Phase A's item 8/9 disclosure design, unchanged) — devUSDC being a Reserve *asset* is independent of devUSDC ever becoming the Sell *payout* asset, which remains future work if wanted. No new Rust code, no program upgrade.
 
+## Phase D — implemented and live-verified (2026-07-29, continuous C-H pass)
+
+**Finding: fee accrual and collection are Reserve-Token-denominated and
+composition-agnostic by design — no protocol change needed.**
+`mint_reserve_tokens_in_kind` accrues `mint_fee_bps` directly into
+`pending_manager_fee_shares`/`pending_protocol_fee_shares` at mint time
+(no separate step); `collect_fees` (permissionless) mints those pending
+shares to the Reserve's configured `fee_destination` and
+`ProtocolConfig.default_protocol_fee_destination`, verified against each
+via `require_keys_eq!`. None of this reads or depends on which assets back
+the Reserve.
+
+**Live-verified** via `scripts/verify_devusdc_fees.ts` against the Phase C
+Reserve (`HAaoBxSVAnaxEusxxYUnPpAJAyjRzti4zuqxrLWYS4VE`, 70% devUSDC / 30%
+mockX): the Phase C Buy had already accrued 800 pending manager / 200
+pending protocol Reserve Token shares (mint fee 50bps, 80/20 split, matching
+configuration exactly). A real `collect_fees` call (signature
+`2nAyMS45kLQRSKQheryzFcfknw55gTFjMQq8ovErNHvSiyfPBoBdPNzAcdqwz72PE3YZhjzkpiez7QHmPonqDQ6e`)
+routed them correctly: manager balance 2,599,500 → 2,600,300 (+800),
+protocol treasury (`EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`) 0 → 200,
+pending shares reset to 0.
+
+**Tests/typecheck/build:** `npx tsc -b` clean; no new tests added (this
+phase is pure verification of already-tested, unmodified protocol logic,
+matching this repo's precedent for DEC-0035's original collect_fees
+verification, which also had no accompanying offline test).
+
