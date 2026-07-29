@@ -52,6 +52,7 @@ import {
   findVaultAuthority,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
+  DEVUSDC,
 } from "../../packages/sdk/src";
 import { loadDevnetAuthority } from "./_lib/authority";
 
@@ -74,10 +75,15 @@ type MintMeta = { address: string; decimals: number; symbol: string };
 // authority has no mint authority over it (nobody does; it's the canonical
 // SPL wrapped-SOL mint) so a Buy/Sell leg involving it is handled specially
 // (wrap/unwrap real SOL instead of mintTo) inside zapInstructions.ts.
-const ALLOWED_ASSET_MINTS = new Set([...Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => m.address), WRAPPED_SOL_MINT.toBase58()]);
+const ALLOWED_ASSET_MINTS = new Set([
+  ...Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => m.address),
+  WRAPPED_SOL_MINT.toBase58(),
+  DEVUSDC.mint, // Phase C: the swap authority is also devUSDC's mint authority, same as mintX/Y/Z.
+]);
 const ASSET_TEST_PRICES_USD: Record<string, number> = {
   ...Object.fromEntries(Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => [m.address, 1])),
   [WRAPPED_SOL_MINT.toBase58()]: 20, // matches SOL_TEST_PRICE_USD -- wrapped SOL IS SOL
+  [DEVUSDC.mint]: 1, // devUSDC is pegged to $1 by design (it's a test USD stand-in)
 };
 
 function parseBody(req: ApiRequest): Record<string, unknown> {

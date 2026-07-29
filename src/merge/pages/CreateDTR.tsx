@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD } from "@ssr/sdk";
+import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD, DEVUSDC } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { createReserveOnChain, estimateCreateReserveCost, type CreateReserveStep, type CreateReserveCostEstimate } from "@/lib/createReserveClient";
 import { explorerUrl } from "@/lib/solana-config";
@@ -21,14 +21,17 @@ import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, t
 import { CATEGORY_SUGGESTIONS } from "@/lib/seed-data";
 
 // Real, genuinely supported DevNet assets -- native SOL (wrapped internally
-// where the SPL-token protocol requires it -- see createReserveClient.ts)
-// plus the 3 Gate-9 fixture test mints, the only ones the DevNet swap
-// adapter has mint authority over. These are the ONLY assets that can
-// produce a real, Buy/Sell-testable Reserve; mixing any fictional asset
-// below in falls back to the existing pure-simulation deploy path unchanged.
-// Never present a fictional asset as one of these -- see DEC-0030.
+// where the SPL-token protocol requires it -- see createReserveClient.ts),
+// the real devUSDC settlement mint (Phase B), plus the 3 Gate-9 fixture test
+// mints -- every one of these is a mint the DevNet swap/faucet authority
+// actually holds mint authority over, so seed-funding and the Buy/Sell zap
+// both work for any of them. These are the ONLY assets that can produce a
+// real, Buy/Sell-testable Reserve; mixing any fictional asset below in
+// falls back to the existing pure-simulation deploy path unchanged. Never
+// present a fictional asset as one of these -- see DEC-0030.
 const DEVNET_REAL_ASSETS = [
   { symbol: "SOL", name: "Solana (native, wrapped automatically as needed)", real: true as const, mint: WRAPPED_SOL_MINT.toBase58(), decimals: 9 },
+  { symbol: DEVUSDC.symbol, name: `${DEVUSDC.name} (DevNet settlement token, no real value)`, real: true as const, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
   ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({
     symbol: m.symbol.toUpperCase(),
     name: `SSR DevNet Test Asset (${m.symbol})`,

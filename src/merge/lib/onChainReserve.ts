@@ -18,6 +18,7 @@ import {
   DEVNET_FIXTURES,
   SOL_TEST_PRICE_USD,
   WRAPPED_SOL_MINT,
+  DEVUSDC,
   parseReserveMetadataUri,
   findMintAuthority,
   findVaultAuthority,
@@ -30,6 +31,7 @@ export const TEST_ASSET_PRICES_USD: Record<string, number> = {
   [DEVNET_FIXTURES.mints.mintY.address]: 1,
   [DEVNET_FIXTURES.mints.mintZ.address]: 1,
   [WRAPPED_SOL_MINT.toBase58()]: SOL_TEST_PRICE_USD,
+  [DEVUSDC.mint]: 1, // devUSDC is pegged to $1 by design (Phase C)
 };
 
 const RESERVE_TOKEN_DECIMALS = 6;
@@ -250,7 +252,7 @@ export function buildDtrFromDiscoveredReserve(
     const price = TEST_ASSET_PRICES_USD[a.assetMint] ?? 0;
     aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * price;
     const fixtureSymbol = Object.values(DEVNET_FIXTURES.mints).find((m) => m.address === a.assetMint)?.symbol;
-    const symbol = fixtureSymbol ?? (a.assetMint === WRAPPED_SOL_MINT.toBase58() ? "SOL" : `Asset${i + 1}`);
+    const symbol = fixtureSymbol ?? (a.assetMint === WRAPPED_SOL_MINT.toBase58() ? "SOL" : a.assetMint === DEVUSDC.mint ? DEVUSDC.symbol : `Asset${i + 1}`);
     return {
       mint: a.assetMint,
       symbol,

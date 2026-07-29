@@ -1122,3 +1122,34 @@ this pass, per instruction.
   as an actual settlement asset for Buy is explicitly Phase C work, not
   built in this pass. The UI states this distinction directly.
 
+---
+
+## Phase C — implemented and live-verified (2026-07-29, continuous C-H pass)
+
+**Finding: Phase C required zero protocol/program changes.** The deployed
+program's `create_reserve`/`initialize_reserve_asset`/`seed_reserve`/
+`mint_reserve_tokens_in_kind`/`redeem_reserve_tokens_in_kind` instructions
+already work with any correctly-registered SPL mint — devUSDC only needed
+to be added to the frontend/API's asset allowlists, exactly like a 4th
+fixture mint:
+- `CreateDTR.tsx`'s `DEVNET_REAL_ASSETS` (selectable when creating a real Reserve)
+- `api/devnet/mint-test-assets.ts`'s `ALLOWED_MINTS` (seed-funding faucet — the swap authority is devUSDC's mint authority, same as mintX/Y/Z)
+- `api/devnet/swap-sign.ts`'s `ALLOWED_ASSET_MINTS`/`ASSET_TEST_PRICES_USD` (Buy/Sell zap, priced at $1)
+- `src/merge/lib/onChainReserve.ts`'s `TEST_ASSET_PRICES_USD` + symbol fallback (AUM/NAV display, discovery)
+- `src/merge/lib/RealReserveSync.tsx` + `scripts/verify_discovery.ts`'s candidate-mint hint lists (so devUSDC-composed Reserves are discoverable)
+
+**Live-verified** via `scripts/verify_devusdc_reserve.ts` (real client code,
+not a reimplementation — mirrors `verify_e2e_fresh_reserve.ts`'s pattern): a
+genuinely fresh Reserve (`HAaoBxSVAnaxEusxxYUnPpAJAyjRzti4zuqxrLWYS4VE`,
+Reserve Token mint `48JyhsTD5bSM18NZMapMHK44Vhk2kreuP7utY5U9uNRW`) created
+70% devUSDC / 30% mockX, seeded (devUSDC vault 3,500,000 raw, mockX vault
+1,500,000 raw), Bought (vaults grew to 3,640,000 / 1,560,000), and Sold
+(half the resulting Reserve Tokens redeemed proportionally: 1,820,000
+devUSDC + 780,000 mockX out, then zapped to 0.13 SOL) — all real signatures,
+real confirmations. Transaction signatures and Explorer links recorded in
+the script's own output; not duplicated here to keep this section short.
+
+**Tests/typecheck/lint/build:** `npx tsc -b`, `npx tsc -p api/devnet/tsconfig.json`, `npx tsc -p scripts/tsconfig.json`, `npx vite build`, `oxlint`: all clean. `tests/phase_a_discovery.ts` + `tests/phase_b_devusdc.ts`: 32/32 passing (unchanged, confirming no regression).
+
+**What Phase C did NOT change:** the Sell zap still terminates in a fixed-rate SOL cash-out (Phase A's item 8/9 disclosure design, unchanged) — devUSDC being a Reserve *asset* is independent of devUSDC ever becoming the Sell *payout* asset, which remains future work if wanted. No new Rust code, no program upgrade.
+

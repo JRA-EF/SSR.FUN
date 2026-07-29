@@ -14,13 +14,13 @@
 import { useEffect } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { discoverAllReserves, discoverDelegatesForReserve, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT } from "@ssr/sdk";
+import { discoverAllReserves, discoverDelegatesForReserve, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
 
 const POLL_MS = 15_000;
 
-const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
+const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
 
 /** Wallets worth checking for a delegate grant on any given Reserve -- see discoverDelegatesForReserve's documented limitation (full enumeration needs a scan, not available on the public DevNet RPC). Always followed by a real on-chain verification; never trusted on its own. */
 function candidateDelegateWallets(managerBase58: string, connectedWallet: string | null): PublicKey[] {

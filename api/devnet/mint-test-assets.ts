@@ -1,15 +1,16 @@
 // POST /api/devnet/mint-test-assets -- a DevNet-only faucet for the Gate-9
-// fixture test asset mints (mockX/Y/Z). Fully server-signed (the swap
-// authority is also these mints' SPL mint authority); no user signature is
-// needed since this only ever ADDS tokens to the requesting wallet, never
-// moves anything out of it. Used for: (a) seeding a newly created Reserve
-// (the new manager needs to hold the seed amounts before calling
-// seed_reserve themselves), and (b) letting a connected wallet get test
-// assets to experiment with Sell without having Bought first. Capped per
-// request to keep this a testing convenience, not an open mint.
+// fixture test asset mints (mockX/Y/Z) plus (Phase C) devUSDC. Fully
+// server-signed (the swap authority is also all of these mints' SPL mint
+// authority); no user signature is needed since this only ever ADDS tokens
+// to the requesting wallet, never moves anything out of it. Used for: (a)
+// seeding a newly created Reserve (the new manager needs to hold the seed
+// amounts before calling seed_reserve themselves), and (b) letting a
+// connected wallet get test assets to experiment with Sell without having
+// Bought first. Capped per request to keep this a testing convenience, not
+// an open mint.
 import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { DEVNET_FIXTURES } from "../../packages/sdk/src";
+import { DEVNET_FIXTURES, DEVUSDC } from "../../packages/sdk/src";
 import { loadDevnetAuthority } from "./_lib/authority";
 
 interface ApiRequest {
@@ -25,7 +26,10 @@ interface ApiResponse {
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
 type MintMeta = { address: string; decimals: number; symbol: string };
 const ALLOWED_MINTS: Record<string, MintMeta> = Object.fromEntries(
-  Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => [m.address, m]),
+  [...Object.values(DEVNET_FIXTURES.mints), { address: DEVUSDC.mint, decimals: DEVUSDC.decimals, symbol: DEVUSDC.symbol }].map((m: MintMeta) => [
+    m.address,
+    m,
+  ]),
 );
 
 // Per-request cap, in whole tokens (pre-decimals) -- generous for testing,

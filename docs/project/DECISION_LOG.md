@@ -1035,3 +1035,22 @@
   ]
 }
 ```
+
+## DEC-0043
+
+```json
+{
+  "id": "DEC-0043",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Wire devUSDC into every existing 'real DevNet asset' allowlist (CreateDTR.tsx, api/devnet/mint-test-assets.ts, api/devnet/swap-sign.ts, onChainReserve.ts, discovery candidate-mint lists) as Phase C, rather than building any new protocol instruction -- the deployed program's existing create_reserve/initialize_reserve_asset/seed_reserve/mint_reserve_tokens_in_kind/redeem_reserve_tokens_in_kind instructions already work generically with any correctly-registered SPL mint.",
+  "context": "Phase C's approved scope was 'real creation, funding, Reserve Token minting/burning, and direct redemption' using the new devUSDC settlement token. Inspection confirmed the protocol has no asset-specific logic that would need extending -- the only gap was the frontend/API layer's hardcoded allowlists of which mints are 'real'.",
+  "rationale": "Treating devUSDC as a 4th entry in the same allowlists mintX/Y/Z and wrapped SOL already occupy is the minimal, consistent, lowest-risk way to satisfy Phase C -- it reuses 100% existing, already-audited instruction logic rather than adding new attack surface.",
+  "alternativesConsidered": ["Building a dedicated devUSDC-specific mint/redeem code path (rejected: unnecessary -- the existing generic instructions already handle any registered asset correctly, confirmed by live test)"],
+  "impact": "A real Reserve (HAaoBxSVAnaxEusxxYUnPpAJAyjRzti4zuqxrLWYS4VE) composed 70% devUSDC / 30% mockX was created, seeded, Bought, and Sold live on DevNet using entirely pre-existing instructions.",
+  "affectedAreas": ["src/merge/pages/CreateDTR.tsx", "api/devnet/mint-test-assets.ts", "api/devnet/swap-sign.ts", "src/merge/lib/onChainReserve.ts", "src/merge/lib/RealReserveSync.tsx", "scripts/verify_discovery.ts", "scripts/verify_devusdc_reserve.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["scripts/verify_devusdc_reserve.ts live run: createAndRegister tx 3kLjRovqhY3xNWsczDEuc44AtYyEKAc1nVYe5Hh844tyHmb6Z8gGLvifE3wG4pN6UMwSt9Zcp2sMZLN3x2qAbUML, seed tx KFacX7Vo7fiX9iZDKGydCKmaHvoPZXtxGygfawYtTbmJ2Y4vDiG8fN8L3B6KLjA7SrrvE4A5sEp7pYHVoPpKiw2, Buy tx 4Lih9wtiqin8ymsCWRCcKWqkdnwvpFm3YM8j5t7Tgf3zfxCWpAXK6j3YmNanK36S4SRETxDERByuxxpLvogvQKn3, Sell tx 2QpgDFwJcLb1XZqvXVNUe5woStX3bdRasYhqQYGKG5TVfve9a7ioUKkiiJvkc1JfgUV69seeZucgBk1agz3a3KvS; npx tsc -b/vite build/oxlint clean; 32/32 offline tests passing"]
+}
+```

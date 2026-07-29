@@ -25,6 +25,7 @@ import {
   parseReserveMetadataUri,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
+  DEVUSDC_MINT,
   findReserve,
   findReserveAsset,
   findReserveVault,
@@ -138,7 +139,7 @@ async function main() {
   console.log(`Program account found, executable=${programAccountInfo.executable}, owner=${programAccountInfo.owner.toBase58()} (expected the BPFLoaderUpgradeable program).`);
 
   // --- 3: canonical discovery, via the EXACT SAME function the frontend uses ---
-  const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
+  const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
   console.log(`\nCandidate asset-mint hints used (see discovery.ts's documented limitation): ${CANDIDATE_ASSET_MINTS.map((m) => m.toBase58()).join(", ")}`);
   console.log("These are ONLY discovery hints -- every one is independently fetched, owned-checked, and decoded below; none is trusted as canonical without that verification.");
 
