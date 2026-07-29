@@ -1358,7 +1358,70 @@ it already was for `Paused` under DEC-0016.
 New errors: `ReserveTokenSupplyNotZero`. New events: `WindDownInitiated`,
 `ReserveClosed`.
 
-**Verified**: `cargo check` and `cargo clippy` — zero errors, zero new
+**Verified**: `cargo check` and `cargo clippy` -- zero errors, zero new
 warnings (same two pre-existing warnings noted above, unrelated to this
 pass).
+
+## Phase F/G: deployment + live-DevNet verification
+
+Blocked briefly on a DevNet SOL shortfall (the larger binary's upgrade
+buffer cost ~4.51 SOL; the deployer wallet held 3.65985132 SOL, and the
+public faucet was fully rate-limited across every retry -- see DEC-0047).
+The user resolved this with a real, finalized 5 SOL transfer to the
+deployer wallet (confirmed via `solana confirm` against signature
+`4oBt6rh3x8uLUDp9Zqm7De2wvvM97ysADZXgr2JXz1B7jjTUrKrUeEjJ69pqSgJakg58VD3fQjhophzUBexw8C2k`:
+3.65985132 -> 8.65985132 SOL).
+
+**Deployed**: `solana program deploy` succeeded (signature
+`W9w5pn9wTwHayWPbVXL89WKYTYDQZ39ZpY5jZefi9ZTVVTNZzjMiE1SYqC8cVZvNyKhStuiRQuZnS4d5wD8sDK8`).
+`solana program show` confirmed Data Length 647,608 bytes, matching the
+built `.so` exactly, with the same upgrade authority as before.
+
+**IDL regenerated**: plain `anchor build` still panics in
+`cargo-build-sbf`'s toolchain-detection code in this environment (a
+separate, pre-existing issue, unrelated to this pass's Rust changes --
+direct `cargo build-sbf` works fine and is what produced the deployed
+binary). `anchor idl build` uses a different code path and succeeded,
+producing a fresh `target/idl/ssr_protocol.json` with all 23 instructions;
+copied into `packages/sdk/idl/ssr_protocol.json` (the runtime IDL the
+frontend/SDK/scripts actually load). The camelCase `.ts` type helper
+(`packages/sdk/idl/ssr_protocol.ts`) was left stale rather than
+hand-rolled -- it's compile-time-only convenience typing, not used by
+Anchor's runtime instruction building, and this codebase already has an
+established `(program.methods as any)` pattern for exactly this situation
+(see `scripts/verify_devusdc_fees.ts`'s `collectFees()` call).
+
+**Live-verified** via a new script, `scripts/verify_phase_f_g.ts`, real
+transactions only:
+
+- **Part 1** (persistent Gate-9 fixture `reserveOne`, NOT the Phase C
+  script's own Reserve -- that one's manager was an ephemeral
+  `Keypair.generate()` never persisted anywhere, discovered live when the
+  script's own manager-mismatch guard correctly refused to proceed under
+  the wrong signer): `add_reserve_asset_active` registers mockZ (not
+  already on reserveOne) at 0 bps, asset_count 2->3, `order_index` 2 as
+  expected; `remove_reserve_asset` removes it again, asset_count back to
+  2, both the `ReserveAsset` and vault accounts confirmed actually gone via
+  `getAccountInfo` returning null; `add_reserve_asset_active` re-registers
+  it; `fund_new_reserve_asset` transfers 5,000,000 raw mockZ from the
+  manager's own wallet directly into the vault, confirmed by balance.
+- **Part 2** (a brand-new, disposable single-asset devUSDC Reserve created
+  fresh in the script): `initiate_wind_down` flips status to `windDown`;
+  an attempted `mint_reserve_tokens_in_kind` is rejected with custom
+  program error `0x177a` (6010 = `UnexpectedReserveStatus`'s exact
+  position in the error enum -- confirmed the *specific* intended check
+  fired, not an incidental failure); `redeem_reserve_tokens_in_kind` for
+  the full balance **succeeds** during `WindDown` (the exact invariant
+  this pass's `require_redemption_allowed` fix exists for -- without it,
+  this step would fail and `close_reserve` would be unreachable);
+  Reserve Token supply confirmed 0 afterward; `close_reserve` succeeds,
+  and the Reserve, `ReserveAsset`, and vault accounts are all confirmed
+  actually gone on-chain (`fetchNullable`/`getAccountInfo` all return
+  null), not merely reported as closed.
+
+All 8 real transactions succeeded exactly as designed; see DEC-0048 for
+every signature. `reserveOne` now permanently carries a 3rd asset (mockZ,
+0 bps target weight, ~5.0 backing) as a harmless, documented side effect of
+this live test -- the same "genuine on-chain side effect from real
+verification" pattern already established by earlier phases.
 

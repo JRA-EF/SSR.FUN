@@ -1162,3 +1162,33 @@
   ]
 }
 ```
+
+## DEC-0048
+
+```json
+{
+  "id": "DEC-0048",
+  "date": "2026-07-29",
+  "status": "confirmed",
+  "decision": "Deploy the Phase F/G program upgrade and live-verify all 5 new instructions with real signed transactions against the live DevNet program, closing out DEC-0047's blocker.",
+  "context": "The user sent a real, finalized 5 SOL transfer to the deployer wallet (confirmed via `solana confirm` against signature 4oBt6rh3x8uLUDp9Zqm7De2wvvM97ysADZXgr2JXz1B7jjTUrKrUeEjJ69pqSgJakg58VD3fQjhophzUBexw8C2k: 3.65985132 -> 8.65985132 SOL), resolving DEC-0047's shortfall. `solana program deploy` then succeeded (signature W9w5pn9wTwHayWPbVXL89WKYTYDQZ39ZpY5jZefi9ZTVVTNZzjMiE1SYqC8cVZvNyKhStuiRQuZnS4d5wD8sDK8; `solana program show` confirmed Data Length 647608 bytes matching the built .so exactly). The IDL was regenerated via `anchor idl build` (plain `anchor build` still panics in cargo-build-sbf's toolchain-detection code in this environment, an unrelated pre-existing issue -- `anchor idl build` uses a different, unaffected code path) and synced into `packages/sdk/idl/ssr_protocol.json`.",
+  "rationale": "A new script, scripts/verify_phase_f_g.ts, exercises every new instruction with real transactions rather than simulation: Part 1 runs add_reserve_asset_active / remove_reserve_asset / add_reserve_asset_active again / fund_new_reserve_asset against the persistent Gate-9 fixture reserveOne (chosen because the Phase C script's own Reserve was created by an ephemeral throwaway keypair never persisted anywhere, so it can no longer be re-signed for). Part 2 creates a brand-new disposable single-asset Reserve and runs initiate_wind_down -> confirms mint_reserve_tokens_in_kind is rejected with custom program error 0x177a (6010 = UnexpectedReserveStatus's exact error-table index, not an incidental failure) -> confirms redeem_reserve_tokens_in_kind still succeeds during WindDown (the exact invariant this pass's require_redemption_allowed fix depends on) -> close_reserve, then confirms via fetchNullable/getAccountInfo that the Reserve, ReserveAsset, and vault accounts are all actually gone on-chain, not just reported as closed.",
+  "alternativesConsidered": [
+    "Reuse the Phase C script's own Reserve for Part 1 (rejected: its manager keypair was generated with Keypair.generate() and never persisted -- discovered live when the script's own manager-mismatch guard correctly refused to proceed under the wrong signer)",
+    "Skip the mint-rejection assertion and only check the happy path (rejected: the specific error code is the only way to distinguish 'blocked because WindDown, as designed' from 'blocked for some unrelated reason', which would be a false-positive pass)"
+  ],
+  "impact": "Phase F/G is now live and verified on DevNet, not just compiled. Every new instruction has a real signature: add_reserve_asset_active x2 (64EtFh1Ph3wbaPYYbcku39Sjbmn8xcCpzVwc3p9wSnKmUQmcuyCMQi6dcbmKiJhGpScxgMs6KpVuis8Zy8WRPw3j, 5crWgFPsBU48crnTT8ywHi5eaMoYoCQGKv8d6w4hE2ivEQ6cEc3xKpuLfFPYgzh4FuxbP3DzLxDdMi8TGrpnLyUh), remove_reserve_asset (EcpMHXZQAKESYKgYvUeKXMEdyGVTLaRriuKaCwpQBcVSVZ7DaPqkdGnYgh1yg7mrK3ZBhsuqJAf6FGvZcXGT6yX), fund_new_reserve_asset (3cgG1odjMCWd4XncZzr4Jno1YTosXRDV53qsDzexrjTMSkEQ24oUHueugfKGZr1tbztJpKBAeJBSWXAfJKUjF68F), initiate_wind_down (2dMtaU2Fp1MqjuCdTmSuP7va8GxT9Xi2gmkM6pPCLgftELRuYKCnGBrxdrmzsQk3g8dN2MmVTnQPkfULjuY5Bjz9), redeem_reserve_tokens_in_kind during WindDown (3dxi7j7pDBXf5esQgPtNvMWSeGupqZ4bHeJKQEg7N3TxgavQMbSY1u5B7U8F3ipD8XrPV6TTNi7Gcfd1jPf3wANq), close_reserve (4wpRnu4ZE2ihvBycgZ7kwAKJThuunA6Jg3FkS3mpD2zqkT3pyZ1Dg3XjfsiPMsGtcRJE9z6cWVcSz7hoEd4WDGSr). reserveOne now permanently carries a 3rd asset (mockZ, 0 bps target weight, ~5.0 mockZ backing) as a side effect of this test -- harmless and documented, matching the same 'genuine on-chain side effect from real verification' pattern as prior phases.",
+  "affectedAreas": [
+    "packages/sdk/idl/ssr_protocol.json",
+    "scripts/verify_phase_f_g.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "solana confirm 4oBt6rh3x8uLUDp9Zqm7De2wvvM97ysADZXgr2JXz1B7jjTUrKrUeEjJ69pqSgJakg58VD3fQjhophzUBexw8C2k -> Status Ok, Account 1 balance 3.65985132 -> 8.65985132",
+    "solana program deploy -> Signature W9w5pn9wTwHayWPbVXL89WKYTYDQZ39ZpY5jZefi9ZTVVTNZzjMiE1SYqC8cVZvNyKhStuiRQuZnS4d5wD8sDK8; solana program show -> Data Length 647608 bytes, Authority 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk",
+    "scripts/verify_phase_f_g.ts full run: all assertions passed, 8 real signatures produced (listed above), final on-chain state confirmed via fetchNullable/getAccountInfo returning null for every closed account"
+  ]
+}
+```

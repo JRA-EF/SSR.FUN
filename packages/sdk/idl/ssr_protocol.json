@@ -184,6 +184,319 @@
       ]
     },
     {
+      "name": "add_reserve_asset_active",
+      "discriminator": [
+        223,
+        71,
+        227,
+        48,
+        28,
+        170,
+        187,
+        123
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_asset",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_authority",
+          "docs": [
+            "bump -- same pattern as `initialize_reserve_asset`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delegate",
+          "docs": [
+            "see `common::require_reserve_permission`."
+          ]
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "target_weight_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "close_reserve",
+      "discriminator": [
+        61,
+        16,
+        49,
+        19,
+        21,
+        9,
+        188,
+        70
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_token_mint",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "reserve"
+          ]
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "collect_fees",
       "discriminator": [
         164,
@@ -706,6 +1019,135 @@
       ]
     },
     {
+      "name": "fund_new_reserve_asset",
+      "discriminator": [
+        251,
+        196,
+        70,
+        67,
+        59,
+        208,
+        67,
+        159
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_asset",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_token_account",
+          "writable": true
+        },
+        {
+          "name": "manager",
+          "signer": true,
+          "relations": [
+            "reserve"
+          ]
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initialize_protocol",
       "discriminator": [
         188,
@@ -964,6 +1406,54 @@
           "type": "u16"
         }
       ]
+    },
+    {
+      "name": "initiate_wind_down",
+      "discriminator": [
+        141,
+        130,
+        131,
+        56,
+        164,
+        215,
+        132,
+        57
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager",
+          "signer": true,
+          "relations": [
+            "reserve"
+          ]
+        }
+      ],
+      "args": []
     },
     {
       "name": "mint_reserve_tokens_in_kind",
@@ -1538,6 +2028,171 @@
           "name": "signer",
           "writable": true,
           "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "remove_reserve_asset",
+      "discriminator": [
+        109,
+        182,
+        76,
+        246,
+        188,
+        123,
+        11,
+        17
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_asset",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager",
+          "docs": [
+            "accounts is always the Reserve's root manager, never the calling",
+            "delegate -- checked against `reserve.manager` via the address",
+            "constraint below."
+          ],
+          "writable": true
+        },
+        {
+          "name": "delegate",
+          "docs": [
+            "see `common::require_reserve_permission`."
+          ]
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "token_program"
         }
       ],
       "args": []
@@ -2334,6 +2989,32 @@
       ]
     },
     {
+      "name": "ReserveAssetAdded",
+      "discriminator": [
+        127,
+        206,
+        200,
+        119,
+        166,
+        194,
+        168,
+        93
+      ]
+    },
+    {
+      "name": "ReserveAssetFunded",
+      "discriminator": [
+        237,
+        194,
+        48,
+        21,
+        137,
+        111,
+        130,
+        24
+      ]
+    },
+    {
       "name": "ReserveAssetInitialized",
       "discriminator": [
         175,
@@ -2344,6 +3025,32 @@
         144,
         78,
         134
+      ]
+    },
+    {
+      "name": "ReserveAssetRemoved",
+      "discriminator": [
+        3,
+        160,
+        107,
+        137,
+        176,
+        105,
+        73,
+        12
+      ]
+    },
+    {
+      "name": "ReserveClosed",
+      "discriminator": [
+        163,
+        73,
+        88,
+        57,
+        0,
+        150,
+        89,
+        217
       ]
     },
     {
@@ -2449,6 +3156,19 @@
         241,
         70
       ]
+    },
+    {
+      "name": "WindDownInitiated",
+      "discriminator": [
+        23,
+        249,
+        79,
+        226,
+        22,
+        92,
+        166,
+        52
+      ]
     }
   ],
   "errors": [
@@ -2534,111 +3254,126 @@
     },
     {
       "code": 6016,
+      "name": "AssetNotLastRegistered",
+      "msg": "This action is only permitted on the most-recently-registered Reserve Asset (highest order_index)."
+    },
+    {
+      "code": 6017,
+      "name": "VaultNotEmpty",
+      "msg": "This action requires the Reserve Asset's vault balance to be exactly zero."
+    },
+    {
+      "code": 6018,
+      "name": "ReserveTokenSupplyNotZero",
+      "msg": "close_reserve requires the Reserve Token supply to be exactly zero."
+    },
+    {
+      "code": 6019,
       "name": "SeedAmountTooLow",
       "msg": "Seed amount for this asset is below the minimum required seed amount."
     },
     {
-      "code": 6017,
+      "code": 6020,
       "name": "ReserveAlreadySeeded",
       "msg": "Reserve has already been seeded."
     },
     {
-      "code": 6018,
+      "code": 6021,
       "name": "ReserveNotSeeded",
       "msg": "Reserve has not been seeded yet."
     },
     {
-      "code": 6019,
+      "code": 6022,
       "name": "SlippageMinOutputNotMet",
       "msg": "Requested Reserve Token output is below the caller's specified minimum."
     },
     {
-      "code": 6020,
+      "code": 6023,
       "name": "SlippageMaxInputExceeded",
       "msg": "Required input for at least one Reserve Asset exceeds the caller's specified maximum."
     },
     {
-      "code": 6021,
+      "code": 6024,
       "name": "ZeroAmountAfterFeesOrRounding",
       "msg": "Requested mint or redemption amount is zero after fees/rounding."
     },
     {
-      "code": 6022,
+      "code": 6025,
       "name": "RedemptionExceedsEntitlement",
       "msg": "Redemption amount exceeds the caller's proportional entitlement."
     },
     {
-      "code": 6023,
+      "code": 6026,
       "name": "ZeroSupply",
       "msg": "Reserve Token supply is zero; proportional math is undefined until the Reserve is seeded."
     },
     {
-      "code": 6024,
+      "code": 6027,
       "name": "NotReserveManager",
       "msg": "Signer is not the root Reserve Manager for this Reserve."
     },
     {
-      "code": 6025,
+      "code": 6028,
       "name": "DelegatePermissionDenied",
       "msg": "Signer is not an authorized delegate for this action."
     },
     {
-      "code": 6026,
+      "code": 6029,
       "name": "UnrestrictedDelegateRequiresManager",
       "msg": "Only the root Reserve Manager may grant or revoke an unrestricted delegate."
     },
     {
-      "code": 6027,
+      "code": 6030,
       "name": "ReservedPermissionBitSet",
       "msg": "Delegate permission bitmask sets a reserved bit that must be zero in v1."
     },
     {
-      "code": 6028,
+      "code": 6031,
       "name": "NotProtocolAuthority",
       "msg": "Signer is not the ProtocolConfig authority."
     },
     {
-      "code": 6029,
+      "code": 6032,
       "name": "DelegateNotFound",
       "msg": "Cannot remove or modify a delegate that does not exist for this Reserve."
     },
     {
-      "code": 6030,
+      "code": 6033,
       "name": "MathOverflow",
       "msg": "Arithmetic overflow."
     },
     {
-      "code": 6031,
+      "code": 6034,
       "name": "MathUnderflow",
       "msg": "Arithmetic underflow."
     },
     {
-      "code": 6032,
+      "code": 6035,
       "name": "DivisionByZero",
       "msg": "Division by zero."
     },
     {
-      "code": 6033,
+      "code": 6036,
       "name": "FeeExceedsMaximum",
       "msg": "Requested fee exceeds the absolute maximum allowed for this fee type."
     },
     {
-      "code": 6034,
+      "code": 6037,
       "name": "InvalidFeeShareSplit",
       "msg": "Manager and protocol fee shares must each be within [0, 10000] basis points."
     },
     {
-      "code": 6035,
+      "code": 6038,
       "name": "NoPendingFees",
       "msg": "There are no pending fee shares to collect."
     },
     {
-      "code": 6036,
+      "code": 6039,
       "name": "RebalanceMismatch",
       "msg": "Rebalance record does not match the currently pending rebalance intent."
     },
     {
-      "code": 6037,
+      "code": 6040,
       "name": "NoPendingRebalance",
       "msg": "No rebalance intent is currently pending for this Reserve."
     }
@@ -3193,6 +3928,74 @@
       }
     },
     {
+      "name": "ReserveAssetAdded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "target_weight_bps",
+            "type": "u16"
+          },
+          {
+            "name": "order_index",
+            "type": "u8"
+          },
+          {
+            "name": "added_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReserveAssetFunded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "funded_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "ReserveAssetInitialized",
       "type": {
         "kind": "struct",
@@ -3216,6 +4019,54 @@
           {
             "name": "order_index",
             "type": "u8"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReserveAssetRemoved",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "removed_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReserveClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "closed_by",
+            "type": "pubkey"
           },
           {
             "name": "ts",
@@ -3331,11 +4182,17 @@
     {
       "name": "ReserveStatus",
       "docs": [
-        "Tracks resumable multi-step creation (see DEC-0019) and pause state.",
-        "`Created -> AssetsInitializing -> Seeded -> Active`, with `Paused` layered",
-        "on top of `Active` (a Reserve pauses/unpauses from and back to `Active`",
-        "only -- pausing mid-creation is not a reachable state, since creation",
-        "itself isn't gated by pause checks)."
+        "Tracks resumable multi-step creation (see DEC-0019), pause state, and",
+        "wind-down. `Created -> AssetsInitializing -> Seeded -> Active`, with",
+        "`Paused` layered on top of `Active` (a Reserve pauses/unpauses from and",
+        "back to `Active` only -- pausing mid-creation is not a reachable state,",
+        "since creation itself isn't gated by pause checks). `WindDown` and",
+        "`Closed` are appended AFTER `Paused` deliberately: Borsh encodes this enum",
+        "by variant index (see `Reserve::SPACE`'s comment), so appending new unit",
+        "variants at the end is backward-compatible with every already-initialized",
+        "`Reserve` account on live DevNet -- `Created`=0/`AssetsInitializing`=1/",
+        "`Active`=2/`Paused`=3 keep their existing encoded values. See Phase G",
+        "security analysis in docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md."
       ],
       "type": {
         "kind": "enum",
@@ -3351,6 +4208,12 @@
           },
           {
             "name": "Paused"
+          },
+          {
+            "name": "WindDown"
+          },
+          {
+            "name": "Closed"
           }
         ]
       }
@@ -3503,6 +4366,26 @@
           },
           {
             "name": "Token2022"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WindDownInitiated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "initiated_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
           }
         ]
       }
