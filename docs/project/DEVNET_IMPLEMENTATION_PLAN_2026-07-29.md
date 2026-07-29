@@ -1479,3 +1479,31 @@ verified**: an actual browser + Phantom click-through (no
 browser-automation tool available in this environment -- a pre-existing,
 already-documented limitation). See DEC-0049.
 
+## DEC-0045 resolved: `ssr_devnet_amm` -- a dedicated DevNet-only swap program
+
+The user made the decision DEC-0045 stopped to ask for: build the smallest
+legitimate controlled on-chain swap mechanism, as a new, separate,
+dedicated Anchor program (`ssr_devnet_amm`) -- never as new instructions
+inside `ssr_protocol`. Full architecture, security invariants,
+alternatives considered, limitations, and Mainnet migration path are all
+recorded in **DEC-0051** (supersedes DEC-0045) -- this section is a short
+pointer, not a duplicate.
+
+Summary: single-authority-funded constant-product (`x*y=k`) pools,
+hub-and-spoke on wrapped SOL, covering the 4 representative test-asset
+pairs already in use (SOL/mockX, SOL/mockY, SOL/mockZ, SOL/devUSDC).
+Structurally isolated from `ssr_protocol` (own program ID, disjoint PDA
+seed namespace, no shared accounts, no CPI either direction) -- this is
+what makes cross-Reserve contamination and manager extraction of
+holder-owned Reserve assets impossible by construction, not merely
+disallowed by convention. Redeem-and-swap always begins with a real,
+unmodified `redeem_reserve_tokens_in_kind` call; the AMM only ever touches
+its own pool vaults and the calling user's own wallet, never a Reserve
+vault directly.
+
+The remaining steps (implementation, `cargo check`/clippy, DevNet
+deployment + liquidity seeding, live signed verification, SDK integration,
+frontend wiring for Sell's redeem-and-swap and Phase F's rebalance
+execution, e2e verification, production deployment) are recorded below as
+each lands.
+
