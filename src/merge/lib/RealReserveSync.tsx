@@ -33,7 +33,7 @@ import { PublicKey } from "@solana/web3.js";
 import { discoverAllReserves, discoverDelegatesForReserve, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
-import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withReadConcurrencyLimit } from "./rpcResilience";
+import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
 
 const BASE_POLL_MS = 15_000;
 const MAX_POLL_MS = 120_000;
@@ -89,10 +89,19 @@ export function RealReserveSync() {
       let hitRateLimit = false;
       setChainDiscoveryStatus("loading");
       try {
+        // withRateLimitRetry here specifically: discoverAllReserves's very
+        // first call (fetchProtocolConfig) has no per-account try/catch of
+        // its own (unlike every per-Reserve read inside it) -- a single
+        // isolated 429 there, most likely right when this component first
+        // mounts and the page has other requests in flight too, used to
+        // fail the ENTIRE pass immediately and surface the error banner
+        // for what's usually just one unlucky request, not a real outage.
+        // Safe to retry the whole call: the failure happens at the very
+        // first line, before any expensive per-Reserve work has run.
         const { reserves, protocolConfig, issues } = await getCached(
           `discovery:${connection.rpcEndpoint}:${programId.toBase58()}`,
           DISCOVERY_CACHE_TTL_MS,
-          () => withReadConcurrencyLimit(() => discoverAllReserves(connection, programId, CANDIDATE_ASSET_MINTS)),
+          () => withRateLimitRetry(() => withReadConcurrencyLimit(() => discoverAllReserves(connection, programId, CANDIDATE_ASSET_MINTS)), 3, 500),
         );
         if (cancelled) return;
         if (!protocolConfig) {
