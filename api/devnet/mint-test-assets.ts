@@ -12,6 +12,7 @@ import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction 
 import { createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { DEVNET_FIXTURES, DEVUSDC } from "../../packages/sdk/src";
 import { loadDevnetAuthority } from "./_lib/authority";
+import { resolveRpcUrl } from "./_lib/rpc";
 
 interface ApiRequest {
   method?: string;
@@ -23,7 +24,7 @@ interface ApiResponse {
   json(body: unknown): void;
 }
 
-const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+const RPC_URL = resolveRpcUrl();
 type MintMeta = { address: string; decimals: number; symbol: string };
 const ALLOWED_MINTS: Record<string, MintMeta> = Object.fromEntries(
   [...Object.values(DEVNET_FIXTURES.mints), { address: DEVUSDC.mint, decimals: DEVUSDC.decimals, symbol: DEVUSDC.symbol }].map((m: MintMeta) => [

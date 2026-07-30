@@ -20,3 +20,23 @@ export function cooldownRemainingMs(key: string, cooldownMs: number): number {
 export function recordAction(key: string): void {
   lastActionAt.set(key, Date.now());
 }
+
+// --- Sliding-window request counter (rpc-proxy's secondary throttle) -------
+// Same accepted best-effort/in-memory tradeoffs as the cooldown map above --
+// this exists to blunt a single client hammering the proxy in a tight loop,
+// not to be the durable defense (that's the method allowlist plus Helius's
+// own API-key-scoped rate limits).
+const windowCounters = new Map<string, { count: number; windowStart: number }>();
+
+/** Returns true if `key` is still under `maxCount` requests within the trailing `windowMs`, and records this call as one of them. Returns false (and does NOT record) once the window's count is exhausted. */
+export function checkRateWindow(key: string, windowMs: number, maxCount: number): boolean {
+  const now = Date.now();
+  const entry = windowCounters.get(key);
+  if (!entry || now - entry.windowStart >= windowMs) {
+    windowCounters.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= maxCount) return false;
+  entry.count += 1;
+  return true;
+}

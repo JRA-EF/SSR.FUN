@@ -57,6 +57,8 @@ import {
   DEVUSDC_MINT,
 } from "../../packages/sdk/src";
 import { loadDevnetAuthority } from "./_lib/authority";
+import { resolveRpcUrl } from "./_lib/rpc";
+import { isRateLimitError, withRateLimitRetry } from "../../src/merge/lib/rpcResilience";
 
 interface ApiRequest {
   method?: string;
@@ -69,8 +71,46 @@ interface ApiResponse {
   json(body: unknown): void;
 }
 
-const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey(DEVNET_FIXTURES.programId);
+
+// Conservative buffer (in lamports) added on top of a computed swap-authority
+// SOL requirement: covers the wrapped-SOL ATA's rent-exempt minimum if it
+// doesn't already exist (~2,039,280 lamports for a standard 165-byte SPL
+// token account) plus a small safety margin -- never exact-to-the-lamport,
+// deliberately generous so a near-miss still fails closed with an honest
+// error here rather than a confusing Phantom simulation failure later.
+const SWAP_AUTHORITY_SOL_BUFFER_LAMPORTS = 5_000_000n;
+
+/** A distinguishable, non-500 failure so the client can tell "the DevNet swap adapter itself is out of SOL" apart from "your wallet lacks SOL" or "RPC congestion" -- never conflated into one generic message. */
+export class SwapAuthorityLowSolError extends Error {
+  code = "swap_authority_low_sol" as const;
+  constructor(requiredLamports: bigint, availableLamports: bigint) {
+    super(
+      `The DevNet swap adapter's own SOL balance (${(Number(availableLamports) / 1e9).toFixed(4)} SOL) is too low to fund this transaction's wrapped-SOL/settlement leg (needs at least ${(Number(requiredLamports) / 1e9).toFixed(4)} SOL). This is not a problem with your wallet -- please try again shortly or use a smaller amount.`,
+    );
+    this.name = "SwapAuthorityLowSolError";
+  }
+}
+
+/** Sums the required lamport amount for any leg that is wrapped SOL -- that's the only part of a Buy the swap authority itself funds in real SOL (every other leg is a token mint/transfer). `assetAmountsRaw` is index-aligned with `assets`, both ordered identically to onChain.assets. */
+export function sumWrappedSolLegLamports(assets: { mint: string }[], assetAmountsRaw: bigint[]): bigint {
+  let total = 0n;
+  for (let i = 0; i < assets.length; i++) {
+    if (assets[i].mint === WRAPPED_SOL_MINT.toBase58()) total += assetAmountsRaw[i];
+  }
+  return total;
+}
+
+/** Live SOL-sufficiency check for the swap authority BEFORE handing a transaction back to the client -- avoids ever returning a transaction Phantom's own preflight simulation would reject for a signer other than the connected wallet (which Phantom's generic UI can misreport as "insufficient SOL" against the wrong account). */
+async function assertSwapAuthorityHasSol(connection: Connection, swapAuthority: PublicKey, requiredLamports: bigint): Promise<void> {
+  if (requiredLamports <= 0n) return;
+  const balance = BigInt(await withRateLimitRetry(() => connection.getBalance(swapAuthority, "confirmed"), 3, 500));
+  const required = requiredLamports + SWAP_AUTHORITY_SOL_BUFFER_LAMPORTS;
+  if (balance < required) {
+    throw new SwapAuthorityLowSolError(required, balance);
+  }
+}
 
 type MintMeta = { address: string; decimals: number; symbol: string };
 // Wrapped SOL is allowed here for READS/entitlement math only -- the swap
@@ -161,40 +201,47 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const [mintAuthority] = findMintAuthority(reserve, PROGRAM_ID);
   const [vaultAuthority] = findVaultAuthority(reserve, PROGRAM_ID);
 
-  const onChain = await fetchReserveOnChain(connection, PROGRAM_ID, reserve, candidateMints);
-  if (!onChain) {
-    res.status(404).json({ error: "Reserve not found on-chain (not a real SSR Protocol Reserve account)." });
-    return;
-  }
-  if (onChain.assets.length !== candidateMints.length || onChain.assets.length !== onChain.assetCount) {
-    res.status(400).json({
-      error: `Reserve has ${onChain.assetCount} registered asset(s), but ${onChain.assets.length} of the ${candidateMints.length} supplied mint(s) matched a real, registered Reserve Asset. Supply the exact registered asset mint list.`,
-    });
-    return;
-  }
-  const unsupportedMints = onChain.assets.filter((a) => !ALLOWED_ASSET_MINTS.has(a.assetMint)).map((a) => a.assetMint);
-  if (unsupportedMints.length > 0) {
-    res.status(400).json({
-      error: `The DevNet swap adapter is not authorized to zap the following Reserve asset mint(s): ${unsupportedMints.join(", ")}. Only the DevNet fixture test assets and wrapped SOL are supported.`,
-    });
-    return;
-  }
-  if (onChain.status !== "active") {
-    res.status(409).json({ error: `Reserve is not Active (status: ${onChain.status}) -- Buy/Sell unavailable.` });
-    return;
-  }
-
-  const zapAssets = onChain.assets.map((a) => ({
-    mint: a.assetMint,
-    decimals: a.decimals,
-    reserveAsset: a.reserveAsset,
-    vault: a.vault,
-    vaultBalanceRaw: a.vaultBalanceRaw,
-  }));
-
-  const program = buildReadOnlyProgram(connection) as unknown as import("@anchor-lang/core").Program<import("@anchor-lang/core").Idl>;
-
   try {
+    // Every genuine RPC read in this handler (this one included) is wrapped
+    // in the same bounded rate-limit retry the frontend already uses --
+    // AND, critically, now lives inside this try block, so a 429 that
+    // survives the retry is caught and formatted as a normal JSON error
+    // below instead of escaping as an unhandled platform-level exception
+    // (which is how a raw "429 Connection rate limits exceeded" string was
+    // reaching the client verbatim before this fix).
+    const onChain = await withRateLimitRetry(() => fetchReserveOnChain(connection, PROGRAM_ID, reserve, candidateMints), 3, 500);
+    if (!onChain) {
+      res.status(404).json({ error: "Reserve not found on-chain (not a real SSR Protocol Reserve account)." });
+      return;
+    }
+    if (onChain.assets.length !== candidateMints.length || onChain.assets.length !== onChain.assetCount) {
+      res.status(400).json({
+        error: `Reserve has ${onChain.assetCount} registered asset(s), but ${onChain.assets.length} of the ${candidateMints.length} supplied mint(s) matched a real, registered Reserve Asset. Supply the exact registered asset mint list.`,
+      });
+      return;
+    }
+    const unsupportedMints = onChain.assets.filter((a) => !ALLOWED_ASSET_MINTS.has(a.assetMint)).map((a) => a.assetMint);
+    if (unsupportedMints.length > 0) {
+      res.status(400).json({
+        error: `The DevNet swap adapter is not authorized to zap the following Reserve asset mint(s): ${unsupportedMints.join(", ")}. Only the DevNet fixture test assets and wrapped SOL are supported.`,
+      });
+      return;
+    }
+    if (onChain.status !== "active") {
+      res.status(409).json({ error: `Reserve is not Active (status: ${onChain.status}) -- Buy/Sell unavailable.` });
+      return;
+    }
+
+    const zapAssets = onChain.assets.map((a) => ({
+      mint: a.assetMint,
+      decimals: a.decimals,
+      reserveAsset: a.reserveAsset,
+      vault: a.vault,
+      vaultBalanceRaw: a.vaultBalanceRaw,
+    }));
+
+    const program = buildReadOnlyProgram(connection) as unknown as import("@anchor-lang/core").Program<import("@anchor-lang/core").Idl>;
+
     if (action === "buy") {
       const solLamportsRaw = typeof body.solLamports === "string" ? body.solLamports : "";
       const solLamports = BigInt(solLamportsRaw);
@@ -217,10 +264,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         assetTestPricesUsd: ASSET_TEST_PRICES_USD,
       });
 
+      await assertSwapAuthorityHasSol(connection, swapAuthority.publicKey, sumWrappedSolLegLamports(zapAssets, result.assetAmountsRaw));
+
       const tx = new Transaction();
       tx.add(...result.instructions);
       tx.feePayer = userPubkey;
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+      const { blockhash, lastValidBlockHeight } = await withRateLimitRetry(() => connection.getLatestBlockhash("confirmed"), 3, 500);
       tx.recentBlockhash = blockhash;
       tx.partialSign(swapAuthority);
 
@@ -259,10 +308,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         assetTestPricesUsd: ASSET_TEST_PRICES_USD,
       });
 
+      await assertSwapAuthorityHasSol(connection, swapAuthority.publicKey, sumWrappedSolLegLamports(zapAssets, result.assetAmountsRaw));
+
       const tx = new Transaction();
       tx.add(...result.instructions);
       tx.feePayer = userPubkey;
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+      const { blockhash, lastValidBlockHeight } = await withRateLimitRetry(() => connection.getLatestBlockhash("confirmed"), 3, 500);
       tx.recentBlockhash = blockhash;
       tx.partialSign(swapAuthority);
 
@@ -286,7 +337,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
 
-    const reserveAccount = await (program.account as any).reserve.fetch(reserve);
+    const reserveAccount: any = await withRateLimitRetry(() => (program.account as any).reserve.fetch(reserve), 3, 500);
     const redemptionFeeBps = BigInt(reserveAccount.feeConfig.redemptionFeeBps);
 
     const result = await buildSellZapInstructions({
@@ -303,10 +354,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       assetTestPricesUsd: ASSET_TEST_PRICES_USD,
     });
 
+    // Sell always pays the user out of the swap authority's own SOL balance
+    // (see zapInstructions.ts's buildSellZapInstructions) -- unlike the Buy
+    // legs, this is the FULL sale proceeds, not just a wrapped-SOL leg.
+    await assertSwapAuthorityHasSol(connection, swapAuthority.publicKey, result.solLamportsOut);
+
     const tx = new Transaction();
     tx.add(...result.instructions);
     tx.feePayer = userPubkey;
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    const { blockhash, lastValidBlockHeight } = await withRateLimitRetry(() => connection.getLatestBlockhash("confirmed"), 3, 500);
     tx.recentBlockhash = blockhash;
     tx.partialSign(swapAuthority);
 
@@ -319,6 +375,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       },
     });
   } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : "Failed to build the DevNet swap transaction." });
+    if (e instanceof SwapAuthorityLowSolError) {
+      res.status(503).json({ error: e.message, code: e.code });
+      return;
+    }
+    if (isRateLimitError(e)) {
+      res.status(503).json({
+        error: "Solana DevNet RPC is temporarily congested. Please try again in a few seconds.",
+        code: "rpc_congested",
+      });
+      return;
+    }
+    res.status(500).json({ error: e instanceof Error ? e.message : "Failed to build the DevNet swap transaction.", code: "build_failed" });
   }
 }

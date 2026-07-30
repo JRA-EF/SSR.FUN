@@ -42,7 +42,7 @@ import {
   type NewReserveAddresses,
   type ReserveAssetAddresses,
 } from "@ssr/sdk";
-import { isRateLimitError, withRateLimitRetry } from "./rpcResilience";
+import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 
 export type CreateReserveStep = "create-and-register" | "fund-seed-assets" | "seed" | "done";
 
@@ -214,16 +214,20 @@ export async function estimateCreateReserveCost(
   };
 }
 
+/** Signs, submits (once -- never auto-retried), and confirms via bounded signature-status polling instead of `connection.confirmTransaction`'s websocket subscription -- see zapClient.ts's signSubmitAndConfirm, which this mirrors. Never resubmits on an ambiguous result; throws AmbiguousConfirmationError (carrying the real signature) instead. */
 async function signAndSend(connection: Connection, wallet: WalletContextState, ixs: TransactionInstruction[]): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
   const tx = new Transaction().add(...ixs);
   tx.feePayer = wallet.publicKey;
-  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   const signed = await wallet.signTransaction(tx);
   const signature = await connection.sendRawTransaction(signed.serialize());
-  await connection.confirmTransaction(signature, "confirmed");
-  return signature;
+  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+  if (outcome.status === "confirmed") return signature;
+  if (outcome.status === "failed") throw new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`);
+  if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+  throw new AmbiguousConfirmationError(signature);
 }
 
 export async function createReserveOnChain(params: {

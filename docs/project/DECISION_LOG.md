@@ -1370,3 +1370,71 @@
   "evidence": ["packages/sdk/src/zapInstructions.ts:222-226 code comment acknowledging the mockX/Y/Z minting convenience", "packages/sdk/src/zapInstructions.ts:375-387 Sell always paying out SOL via SystemProgram.transfer"]
 }
 ```
+
+## DEC-0055
+
+```json
+{
+  "id": "DEC-0055",
+  "date": "2026-07-30",
+  "status": "confirmed",
+  "decision": "Adopt Helius as the primary Solana DevNet RPC provider for every server-side action (faucet, sponsorship, test-asset minting, the Buy/Sell swap-sign co-signer), and for the browser's Connection via a new narrow server-side proxy (api/devnet/rpc-proxy.ts) rather than ever bundling the Helius URL/API key into client-visible code. The public api.devnet.solana.com endpoint remains as a bounded, read-only fallback inside the proxy only.",
+  "context": "An RPC audit found every server-side handler (api/devnet/*.ts) independently duplicated its own `process.env.SOLANA_RPC_URL || \"https://api.devnet.solana.com\"` default, every scripts/verify_*.ts hardcoded the public endpoint directly, and the browser's wallet-adapter Connection read a plain, Vite-bundled VITE_SOLANA_RPC_URL with the same public default -- no dedicated provider was in use anywhere, and the user's own account/API key for Helius was available to use.",
+  "rationale": "The public endpoint is confirmed, repeatedly, to rate-limit heavily and even block getProgramAccounts entirely under sustained same-day use (see prior corrective passes in this log) -- a dedicated provider directly addresses the reported 429s. Protecting the API key required a genuine architectural choice, not just an env var swap: a VITE_-prefixed variable is bundled into browser-visible JS by Vite's own design, so the key could never live there. A narrow server-side proxy (method-allowlisted, payload-validated, best-effort per-IP throttled) lets the browser keep using a plain Connection object without ever holding the credential, matching the task's explicit requirement to avoid a public VITE_* variable containing the raw key.",
+  "alternativesConsidered": [
+    "Put the Helius URL directly in VITE_SOLANA_RPC_URL (rejected: explicitly forbidden -- Vite bundles VITE_* vars into browser-visible JS, exposing the API key to anyone who opens devtools)",
+    "A wide-open proxy that forwards any JSON-RPC method (rejected: unbounded attack surface: an allowlist of only the 9 methods this app's own Connection genuinely calls, confirmed by grepping every connection.* call site plus Anchor/spl-token's internal getAccountInfo dependency, is a small and precisely justifiable set)",
+    "Route local `vite dev` through the proxy too (rejected: a plain `vite dev` session serves no api/* functions at all, so this would break local development without `vercel dev`; the proxy is only the production/preview default, gated on import.meta.env.PROD)"
+  ],
+  "impact": "New api/devnet/_lib/rpc.ts (resolveRpcUrl, shared by every api/devnet/*.ts handler), new api/devnet/rpc-proxy.ts (the browser's sole RPC route in production/preview builds), updated src/merge/lib/solana-config.ts (production default now the proxy path, VITE_SOLANA_RPC_URL still an explicit override for either environment), new checkRateWindow helper in api/devnet/_lib/rateLimit.ts. HELIUS_RPC_URL added to the linked Vercel project (Production, Preview as Sensitive; Development as Non-sensitive -- Vercel's Sensitive tier is Production/Preview-only) via `vercel env add`, never committed to any tracked file.",
+  "affectedAreas": ["api/devnet/_lib/rpc.ts", "api/devnet/rpc-proxy.ts", "api/devnet/_lib/rateLimit.ts", "api/devnet/faucet-devusdc.ts", "api/devnet/sponsor-sol.ts", "api/devnet/mint-test-assets.ts", "api/devnet/swap-sign.ts", "src/merge/lib/solana-config.ts", "Vercel project env vars"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_helius_rpc_and_buy_fix.ts -- resolveRpcUrl precedence, rpc-proxy method allowlist/throttle coverage", "scripts/verify_helius_buy_fix.ts -- live DevNet Buy run genuinely through the Helius endpoint (see DEC-0057)", "`vercel env ls` confirms HELIUS_RPC_URL set across Production/Preview/Development, all Encrypted"]
+}
+```
+
+## DEC-0056
+
+```json
+{
+  "id": "DEC-0056",
+  "date": "2026-07-30",
+  "status": "confirmed",
+  "decision": "Fix three real bugs found while tracing the reported 50-devUSDC Buy failure: (1) api/devnet/swap-sign.ts's fetchReserveOnChain call sat outside its own try/catch, so a 429 there escaped as an unhandled platform exception instead of a formatted JSON error -- moved inside the try block and wrapped in the existing withRateLimitRetry helper, matching every other RPC read in this endpoint; (2) no RPC call in swap-sign.ts was ever retried, unlike the frontend's own reads -- getLatestBlockhash and the Reserve-account fetch now share the same bounded retry; (3) Buy/Sell's swap-authority-funded legs (any wrapped-SOL leg on Buy, the full SOL payout on Sell) had no sufficiency check, so a low swap-authority SOL balance produced a transaction Phantom's own preflight simulation would reject for a DIFFERENT signer than the connected wallet -- Phantom's generic UI reports this as 'insufficient SOL' with no way to tell it apart from the user's own balance. A new assertSwapAuthorityHasSol check now fails closed with a distinct, honestly-worded error before ever handing back such a transaction.",
+  "context": "Production reports: Buys frequently returning a raw '429 Connection rate limits exceeded' string, and Phantom reporting insufficient SOL for a 50 devUSDC Buy despite the wallet holding ~27 SOL. A full trace of the unsigned transaction (devUSDC mint/decimals, every instruction, fee payer, every lamport transfer) found devUSDC's decimals handling, scaling, and fee-payer assignment were all already correct -- the actual root causes were both RPC-error-handling gaps and a genuine, previously-unflagged-as-critical operational risk (the swap authority's own SOL balance, already noted as a monitoring item in PROJECT_STATUS.md's Risks, but with no code-level consequence handling before this pass).",
+  "rationale": "A raw platform exception message is exactly the kind of unclassified RPC error the task requires be replaced with an accurate, user-facing message; distinguishing 'the swap adapter itself is low on SOL' from 'your wallet lacks SOL' from 'RPC congestion' requires a structured error code the client can branch on, not a single generic string. Checking the swap authority's SOL balance BEFORE returning a transaction (rather than letting it fail downstream in Phantom's simulation) turns an opaque, misattributed failure into an honest, correctly-attributed one, without changing who funds what -- no trade-mechanics change, matching the constraint against altering the devUSDC/mockX/Y/Z token model.",
+  "alternativesConsidered": [
+    "Have the FRONTEND estimate and warn about swap-authority SOL sufficiency (rejected: the frontend has no legitimate way to read the swap authority's identity/balance without the server anyway, and the server already has to build the transaction to know the exact required amount)",
+    "Silently top up the swap authority automatically (rejected: no such automated funding mechanism exists or was requested; this is an operational/monitoring concern, not something to paper over in code)",
+    "Treat every swap-sign.ts error identically as before (rejected: exactly the conflation the task asks to eliminate)"
+  ],
+  "impact": "api/devnet/swap-sign.ts now returns { error, code } with code in {\"rpc_congested\", \"swap_authority_low_sol\", \"build_failed\"} instead of always a bare 500. src/merge/lib/zapClient.ts's requestSignedZapTransaction now throws a typed ZapBuildError carrying that code; DTRDetail.tsx's handleBuy/handleSell branch on it for distinct, accurate toast messages, and both now also pre-check the trader's own real devUSDC/Reserve-Token balance before ever calling the server (an immediate, honest 'Insufficient devUSDC'/'Insufficient Reserve Tokens' message, cheaper than an avoidable round trip). A live run (see DEC-0057) found the swap authority's REAL current balance is 0.2345 SOL -- low enough that this check is not a hypothetical; a Reserve with a wrapped-SOL leg could hit it today. Flagged as a follow-up funding/monitoring action, not fixed by this decision (no protocol/trade-mechanics change).",
+  "affectedAreas": ["api/devnet/swap-sign.ts", "src/merge/lib/zapClient.ts", "src/merge/pages/DTRDetail.tsx", "src/merge/lib/managementClient.ts", "src/merge/lib/createReserveClient.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_helius_rpc_and_buy_fix.ts -- sumWrappedSolLegLamports, SwapAuthorityLowSolError, ZapBuildError, devUSDC decimals-scaling coverage", "scripts/verify_helius_buy_fix.ts live run: signature hGDWXhLtLFHrsJssUd7YzQxXcyY4oQJdqVjTxLVMoNsrYCqHMdxJK1zcDNHvJTvunYkJr13j5Acr1fQacTLj1Sa, trader SOL spent 0.004089 (fee+rent only, never the devUSDC amount), swap authority live balance 0.2345 SOL"]
+}
+```
+
+## DEC-0057
+
+```json
+{
+  "id": "DEC-0057",
+  "date": "2026-07-30",
+  "status": "confirmed",
+  "decision": "Also migrate the two remaining connection.confirmTransaction call sites (src/merge/lib/managementClient.ts's and createReserveClient.ts's shared signAndSend helpers) from the websocket-subscription confirmation strategy to the same bounded, signature-status-polling confirmSignatureBounded already used by Buy/Sell -- required because these two call sites would otherwise silently break once the browser's Connection is routed through the new HTTP-only rpc-proxy (a serverless function has no persistent websocket to subscribe through).",
+  "context": "The RPC audit found `connection.confirmTransaction`'s default websocket-subscription strategy still in use by ManageDTR's composition-management/wind-down actions and Create-Reserve's launch flow, even though Buy/Sell had already moved off it in an earlier pass specifically because that strategy was observed live throwing under DevNet congestion. Once the frontend's Connection points at rpc-proxy.ts (an HTTP-only Vercel function, not a persistent socket), any code path still relying on the websocket subscription would fail outright, not just under congestion.",
+  "rationale": "confirmSignatureBounded already implements exactly the 'never blindly resubmit, reconcile by signature first' requirement this task restates explicitly -- reusing it for these two remaining call sites is both the fix required to keep them working under the new proxy and a direct, low-risk application of an already-tested primitive, not new logic.",
+  "alternativesConsidered": [
+    "Have rpc-proxy.ts also proxy websocket subscriptions (rejected: substantially more complex for a Vercel serverless function, and unnecessary now that every confirmation path in this app can use bounded HTTP polling instead)",
+    "Leave these two call sites on the websocket strategy and route only Buy/Sell's Connection through the proxy (rejected: the whole app shares one ConnectionProvider/Connection instance; splitting it per-feature would be a larger, riskier architecture change for no real benefit)"
+  ],
+  "impact": "src/merge/lib/managementClient.ts, src/merge/lib/createReserveClient.ts. Every remaining `connection.confirmTransaction` reference in src/ is now only a code comment, not a live call -- confirmed by grep.",
+  "affectedAreas": ["src/merge/lib/managementClient.ts", "src/merge/lib/createReserveClient.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["grep for confirmTransaction across src/ after this change shows only comments in rpcResilience.ts/zapClient.ts/managementClient.ts/createReserveClient.ts, no live call sites"]
+}
+```

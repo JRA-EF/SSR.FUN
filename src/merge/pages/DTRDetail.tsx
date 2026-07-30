@@ -4,7 +4,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { SOL_TEST_PRICE_USD, DEVUSDC, DEVUSDC_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
-import { executeBuyZapDevUsdc, executeSellZap } from "@/lib/zapClient";
+import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
 import {
   AmbiguousConfirmationError,
@@ -335,18 +335,30 @@ export function DTRDetail() {
       return;
     }
     if (!canSubmitNewTransaction(buyPhase)) return; // Defensive -- the button is already disabled in this state.
+    // devUSDC is the default DevNet settlement asset (see
+    // buildBuyZapInstructionsDevUsdc): real devUSDC funds any devUSDC leg
+    // this Reserve has directly from the user's own wallet; any other
+    // asset the Reserve needs is still provided via the existing DevNet
+    // test-asset faucet mechanism, exactly as before -- never a simulated
+    // conversion between devUSDC and the other assets.
+    const devUsdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** DEVUSDC.decimals));
+    // Checked against the trader's own real, already-fetched balance BEFORE
+    // any network call -- an honest, immediate "insufficient devUSDC"
+    // message, distinct from an RPC-congestion or swap-authority-SOL
+    // failure, and cheaper than letting an on-chain transfer_checked fail.
+    if (devUsdcAmountRaw > devUsdcBalanceRaw) {
+      toast({
+        variant: "destructive",
+        title: "Insufficient devUSDC",
+        description: `This wallet holds ${(Number(devUsdcBalanceRaw) / 10 ** DEVUSDC.decimals).toLocaleString()} devUSDC, less than the ${numBuyAmount.toLocaleString()} devUSDC requested. Claim more from the faucet or reduce the amount.`,
+      });
+      return;
+    }
     setBuyPhase("preparing");
     setBuyPendingSignature(null);
     buyPreDevUsdcRawRef.current = devUsdcBalanceRaw;
     useAppStore.getState().setTxInFlight(true);
     try {
-      // devUSDC is the default DevNet settlement asset (see
-      // buildBuyZapInstructionsDevUsdc): real devUSDC funds any devUSDC leg
-      // this Reserve has directly from the user's own wallet; any other
-      // asset the Reserve needs is still provided via the existing DevNet
-      // test-asset faucet mechanism, exactly as before -- never a simulated
-      // conversion between devUSDC and the other assets.
-      const devUsdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** DEVUSDC.decimals));
       const { signature, quote } = await executeBuyZapDevUsdc({
         connection,
         wallet: walletCtx,
@@ -384,7 +396,17 @@ export function DTRDetail() {
         await reconcileBuy(e.signature);
       } else {
         setBuyPhase("failed");
-        toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+        // Classify by the server's own distinguishing error code first --
+        // never surface a raw RPC error string (e.g. "429 Connection rate
+        // limits exceeded") as-is, and never let a swap-authority-side SOL
+        // shortfall read as if the CONNECTED WALLET lacked SOL.
+        if (e instanceof ZapBuildError && e.code === "rpc_congested") {
+          toast({ variant: "destructive", title: "DevNet RPC congested", description: "Solana DevNet's RPC endpoint is temporarily rate-limited. Please wait a few seconds and try again." });
+        } else if (e instanceof ZapBuildError && e.code === "swap_authority_low_sol") {
+          toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
+        } else {
+          toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+        }
       }
     } finally {
       useAppStore.getState().setTxInFlight(false);
@@ -449,6 +471,14 @@ export function DTRDetail() {
       return;
     }
     if (!canSubmitNewTransaction(sellPhase)) return; // Defensive -- the button is already disabled in this state.
+    if (numSellAmount > (holding?.tokenBalance ?? 0)) {
+      toast({
+        variant: "destructive",
+        title: "Insufficient Reserve Tokens",
+        description: `This wallet holds ${(holding?.tokenBalance ?? 0).toLocaleString()} ${dtr.ticker}, less than the ${numSellAmount.toLocaleString()} requested.`,
+      });
+      return;
+    }
     setSellPhase("preparing");
     setSellPendingSignature(null);
     useAppStore.getState().setTxInFlight(true);
@@ -488,7 +518,13 @@ export function DTRDetail() {
         await reconcileSell(e.signature);
       } else {
         setSellPhase("failed");
-        toast({ variant: "destructive", title: "Sell Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+        if (e instanceof ZapBuildError && e.code === "rpc_congested") {
+          toast({ variant: "destructive", title: "DevNet RPC congested", description: "Solana DevNet's RPC endpoint is temporarily rate-limited. Please wait a few seconds and try again." });
+        } else if (e instanceof ZapBuildError && e.code === "swap_authority_low_sol") {
+          toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
+        } else {
+          toast({ variant: "destructive", title: "Sell Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+        }
       }
     } finally {
       useAppStore.getState().setTxInFlight(false);

@@ -34,6 +34,17 @@ interface SwapSignResponse {
   lastValidBlockHeight: number;
   quote: ZapQuote;
   error?: string;
+  code?: string;
+}
+
+/** Carries swap-sign.ts's distinguishing error `code` (e.g. "rpc_congested", "swap_authority_low_sol") so the UI can show an accurate, specific message instead of a generic one -- see DTRDetail.tsx's handleBuy/handleSell. */
+export class ZapBuildError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "ZapBuildError";
+    this.code = code;
+  }
 }
 
 export interface ZapExecutionResult {
@@ -63,7 +74,18 @@ async function requestSignedZapTransaction(body: Record<string, unknown>): Promi
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const json = (await res.json()) as SwapSignResponse;
+    // A malformed (non-JSON) response body -- e.g. a platform-level gateway
+    // timeout/error page rather than anything swap-sign.ts itself returned --
+    // is treated as congestion and retried the same bounded way, instead of
+    // letting a raw JSON.parse SyntaxError reach the caller.
+    const json = (await res.json().catch(() => null)) as SwapSignResponse | null;
+    if (json === null) {
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+        continue;
+      }
+      throw new ZapBuildError("The DevNet swap adapter returned an unexpected response. Please try again.", "rpc_congested");
+    }
     if (!res.ok) {
       // swap-sign.ts's catch-all normalizes every internal error to HTTP 500
       // (see its own final catch block) -- including one caused by a
@@ -76,13 +98,13 @@ async function requestSignedZapTransaction(body: Record<string, unknown>): Promi
       // requests" wording, whichever the server actually sent -- still a
       // read-only preflight at this point (no transaction signed or
       // submitted yet), so retrying is safe either way.
-      const rateLimited = res.status === 429 || isRateLimitError(new Error(json.error ?? ""));
+      const rateLimited = json.code === "rpc_congested" || res.status === 429 || isRateLimitError(new Error(json.error ?? ""));
       if (rateLimited && attempt < 3) {
         const waitMs = parseRetryAfterMs(res.headers.get("retry-after")) ?? 1000 * 2 ** attempt;
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
       }
-      throw new Error(json.error || "The DevNet swap adapter rejected this request.");
+      throw new ZapBuildError(json.error || "The DevNet swap adapter rejected this request.", json.code);
     }
     return json;
   }

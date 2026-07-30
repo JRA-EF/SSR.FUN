@@ -6,7 +6,18 @@ import { PublicKey } from "@solana/web3.js";
 
 export const SOLANA_CLUSTER = (import.meta.env.VITE_SOLANA_CLUSTER as string) || "devnet";
 
-export const SOLANA_RPC_URL = (import.meta.env.VITE_SOLANA_RPC_URL as string) || "https://api.devnet.solana.com";
+// The dedicated DevNet RPC provider (Helius) is only ever reached through
+// the server-side proxy (api/devnet/rpc-proxy.ts) -- its URL/API key is a
+// server-only secret and must never be bundled here. A production build
+// (Preview or Production on Vercel, where api/* functions are actually
+// served) defaults to this same-origin proxy path; a plain local `vite dev`
+// session (which serves no api/* functions at all) keeps defaulting to the
+// public DevNet endpoint, unchanged from before. VITE_SOLANA_RPC_URL is
+// still an explicit override for either case -- it must never be set to a
+// URL containing a raw provider API key.
+const DEFAULT_RPC_URL = import.meta.env.PROD && typeof window !== "undefined" ? `${window.location.origin}/api/devnet/rpc-proxy` : "https://api.devnet.solana.com";
+
+export const SOLANA_RPC_URL = (import.meta.env.VITE_SOLANA_RPC_URL as string) || DEFAULT_RPC_URL;
 
 export const SSR_PROGRAM_ID = new PublicKey(
   (import.meta.env.VITE_SSR_PROGRAM_ID as string) || "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW",

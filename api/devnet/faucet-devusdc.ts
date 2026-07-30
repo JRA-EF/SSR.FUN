@@ -24,8 +24,9 @@ import { loadDevnetAuthority } from "./_lib/authority";
 import { assertDevnetCluster, NotDevnetError } from "./_lib/network";
 import { cooldownRemainingMs, recordAction } from "./_lib/rateLimit";
 import { type ApiRequest, type ApiResponse, parseJsonBody } from "./_lib/apiTypes";
+import { resolveRpcUrl } from "./_lib/rpc";
 
-const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+const RPC_URL = resolveRpcUrl();
 
 // Per-claim amount and durable per-wallet ceiling -- see the plan doc's
 // "Phase B -- security model" decision table for the reasoning.

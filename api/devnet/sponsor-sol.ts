@@ -21,8 +21,9 @@ import { loadDevnetAuthority } from "./_lib/authority";
 import { assertDevnetCluster, NotDevnetError } from "./_lib/network";
 import { cooldownRemainingMs, recordAction } from "./_lib/rateLimit";
 import { type ApiRequest, type ApiResponse, parseJsonBody } from "./_lib/apiTypes";
+import { resolveRpcUrl } from "./_lib/rpc";
 
-const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+const RPC_URL = resolveRpcUrl();
 
 const GRANT_LAMPORTS = 10_000_000; // 0.01 SOL -- see the plan doc's decision table
 const BALANCE_CEILING_LAMPORTS = 30_000_000; // 0.03 SOL
