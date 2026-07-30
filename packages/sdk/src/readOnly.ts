@@ -11,6 +11,39 @@ import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
 import { findReserveAsset, findReserveVault } from "./pda";
 
+/**
+ * A transient RPC failure (429/timeout) while reading token supply must
+ * never be silently reported as "supply is actually zero" -- that's
+ * indistinguishable downstream from a genuinely brand-new, not-yet-seeded
+ * Reserve, and was observed live to make a real Buy against a real, fully
+ * seeded Reserve fail with a misleading "Reserve must be seeded first"
+ * error purely because one RPC call hit a 429 under congestion (see
+ * docs/project/PROJECT_STATUS.md's Buy/confirmation RPC-resilience pass).
+ * Bounded retry here (mirroring src/merge/lib/rpcResilience.ts's
+ * withRateLimitRetry, duplicated rather than imported since packages/sdk
+ * has no dependency on the frontend app) makes that misread far less
+ * likely under ordinary congestion without changing the function's
+ * null-safety contract for a genuinely unreadable/nonexistent mint.
+ */
+export function isRateLimitLikeError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.includes("429") || msg.toLowerCase().includes("too many requests");
+}
+
+export async function getTokenSupplyWithRetry(connection: Connection, mint: PublicKey, maxRetries = 3, baseDelayMs = 500) {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await connection.getTokenSupply(mint);
+    } catch (e) {
+      if (!isRateLimitLikeError(e) || attempt >= maxRetries) return null;
+      const backoff = baseDelayMs * 2 ** attempt;
+      await new Promise((resolve) => setTimeout(resolve, backoff + Math.random() * baseDelayMs));
+      attempt += 1;
+    }
+  }
+}
+
 const READ_ONLY_WALLET = {
   publicKey: PublicKey.default,
   signTransaction: async () => {
@@ -91,7 +124,7 @@ export async function fetchReserveOnChain(
   }
   assets.sort((a, b) => a.orderIndex - b.orderIndex);
 
-  const supply = await connection.getTokenSupply(reserveAccount.reserveTokenMint).catch(() => null);
+  const supply = await getTokenSupplyWithRetry(connection, reserveAccount.reserveTokenMint);
 
   return {
     reserveId: reserveAccount.reserveId.toString(),

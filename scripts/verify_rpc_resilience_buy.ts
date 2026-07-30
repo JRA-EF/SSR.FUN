@@ -22,7 +22,7 @@ process.env.DEVNET_SWAP_AUTHORITY_SECRET_KEY = fs.readFileSync(
 
 import mintTestAssetsHandler from "../api/devnet/mint-test-assets";
 import swapSignHandler from "../api/devnet/swap-sign";
-import { executeBuyZapDevUsdc } from "../src/merge/lib/zapClient";
+import { executeBuyZapDevUsdc, executeSellZap } from "../src/merge/lib/zapClient";
 import { AmbiguousConfirmationError, isRateLimitError, withRateLimitRetry } from "../src/merge/lib/rpcResilience";
 import { DEVNET_FIXTURES, DEVUSDC, DEVUSDC_MINT } from "../packages/sdk/src";
 
@@ -207,16 +207,71 @@ async function main() {
     console.log(`\nFinal status: ${finalStatus.toUpperCase()}`);
   }
 
+  // ============================================================
+  // Real direct proportional redemption (Sell) of half the just-minted
+  // balance -- exercises the exact same signSubmitAndConfirm/
+  // confirmSignatureBounded path as Buy, via executeSellZap (the exact
+  // function DTRDetail.tsx's Sell button calls), closing the one gap this
+  // pass's Buy-only live run left open.
+  // ============================================================
+  console.log("\n=== Real direct proportional redemption via executeSellZap (the exact function DTRDetail.tsx's Sell button calls) ===");
+  const sellAmount = rtAfter / 2n;
+  const sellPhases: string[] = [];
+  let sellResult: Awaited<ReturnType<typeof executeSellZap>> | null = null;
+  let sellAmbiguous: AmbiguousConfirmationError | null = null;
+  try {
+    sellResult = await executeSellZap({
+      connection,
+      wallet: fakeWallet(trader),
+      reserveAddress: PHASE_C_RESERVE,
+      assetMints: [DEVUSDC.mint, DEVNET_FIXTURES.mints.mintX.address],
+      userPubkey: trader.publicKey,
+      reserveTokensToRedeem: sellAmount,
+      onProgress: (e) => {
+        sellPhases.push(e.phase);
+        console.log(`  [onProgress] phase=${e.phase}${"signature" in e ? ` signature=${e.signature}` : ""}`);
+      },
+    });
+  } catch (e) {
+    if (e instanceof AmbiguousConfirmationError) {
+      sellAmbiguous = e;
+      console.log(`  Confirmation was AMBIGUOUS after bounded polling -- signature: ${e.signature}`);
+    } else {
+      throw e;
+    }
+  }
+  const sellSignature = sellResult?.signature ?? sellAmbiguous?.signature;
+  if (!sellSignature) throw new Error("FAIL: no Sell signature was ever produced -- submission itself must have failed before sendRawTransaction.");
+
+  const rtAfterSell = (await withPatience("getAccount RT after sell", () => getAccount(connection, traderRtAta))).amount;
+  const devUsdcAfterSell = (await withPatience("getAccount devUsdc after sell", () => getAccount(connection, traderDevUsdcAta))).amount;
+  console.log(`Real Reserve Token balance after Sell: ${rtAfterSell} (expected ~${rtAfter - sellAmount})`);
+  console.log(`Real devUSDC balance after Sell (received some back proportionally): ${devUsdcAfterSell}`);
+
+  const sellGenuinelyMoved = rtAfterSell < rtAfter;
+  const sellFinalStatus = sellResult ? "confirmed" : sellGenuinelyMoved ? "confirmed (reconciled by observed real balance change after an ambiguous RPC response)" : "unresolved";
+  if (!sellResult && !sellGenuinelyMoved) {
+    console.log("\nSell final status: UNRESOLVED -- Reserve Token balance did not move; this Sell did not land. No success is being claimed.");
+  } else if (!sellGenuinelyMoved) {
+    throw new Error("FAIL: executeSellZap resolved but the real Reserve Token balance did not decrease -- this would be a fabricated success and must not happen.");
+  } else {
+    console.log(`Sell final status: ${sellFinalStatus.toUpperCase()}`);
+  }
+
   console.log("\n=========================================================");
-  console.log("BUY/CONFIRMATION RPC-RESILIENCE LIVE VERIFICATION COMPLETE.");
+  console.log("BUY + SELL / CONFIRMATION RPC-RESILIENCE LIVE VERIFICATION COMPLETE.");
   console.log("=========================================================");
   console.log(`Trader wallet: ${trader.publicKey.toBase58()}`);
-  console.log(`Signature: ${signature}`);
-  console.log(`Explorer: https://explorer.solana.com/tx/${signature}?cluster=devnet`);
-  console.log(`devUSDC before -> after: ${devUsdcBefore} -> ${devUsdcAfter}`);
-  console.log(`Reserve Token before -> after: ${rtBefore} -> ${rtAfter}`);
-  console.log(`onProgress phases observed: ${JSON.stringify(phases)}`);
-  console.log(`Final status: ${finalStatus}`);
+  console.log(`Buy signature: ${signature}`);
+  console.log(`Buy Explorer: https://explorer.solana.com/tx/${signature}?cluster=devnet`);
+  console.log(`devUSDC before Buy -> after Buy -> after Sell: ${devUsdcBefore} -> ${devUsdcAfter} -> ${devUsdcAfterSell}`);
+  console.log(`Reserve Token before Buy -> after Buy -> after Sell: ${rtBefore} -> ${rtAfter} -> ${rtAfterSell}`);
+  console.log(`Buy onProgress phases observed: ${JSON.stringify(phases)}`);
+  console.log(`Buy final status: ${finalStatus}`);
+  console.log(`Sell signature: ${sellSignature}`);
+  console.log(`Sell Explorer: https://explorer.solana.com/tx/${sellSignature}?cluster=devnet`);
+  console.log(`Sell onProgress phases observed: ${JSON.stringify(sellPhases)}`);
+  console.log(`Sell final status: ${sellFinalStatus}`);
 }
 
 main().catch((e) => {

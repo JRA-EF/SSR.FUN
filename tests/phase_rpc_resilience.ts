@@ -22,6 +22,7 @@ import {
   withRateLimitRetry,
   type TxPhase,
 } from "../src/merge/lib/rpcResilience";
+import { getTokenSupplyWithRetry } from "../packages/sdk/src";
 
 const BASE_MS = 15_000;
 const MAX_MS = 120_000;
@@ -254,6 +255,55 @@ describe("RPC-resilience -- AmbiguousConfirmationError", () => {
     expect(err.signature).to.equal("sigABC123");
     expect(err.name).to.equal("AmbiguousConfirmationError");
     expect(err.message).to.include("sigABC123");
+  });
+});
+
+describe("RPC-resilience -- honest token-supply reads under transient RPC failure (getTokenSupplyWithRetry)", () => {
+  // Real bug found via live testing: fetchReserveOnChain's old
+  // `connection.getTokenSupply(...).catch(() => null)` silently reported a
+  // fully-seeded, real Reserve's supply as "0" purely because one RPC call
+  // hit a 429 -- indistinguishable downstream from a genuinely-unseeded
+  // Reserve, and it made a real Buy fail with a misleading "must be seeded
+  // first" error. getTokenSupplyWithRetry fixes this with the same bounded,
+  // rate-limit-only retry pattern as withRateLimitRetry.
+  it("retries a transient 429 and returns the real value once it succeeds", async () => {
+    let attempts = 0;
+    const fakeConnection = {
+      getTokenSupply: async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("429 Too Many Requests");
+        return { value: { amount: "123456", decimals: 6, uiAmount: 0.123456 } };
+      },
+    } as any;
+    const result = await getTokenSupplyWithRetry(fakeConnection, {} as any, 5, 1);
+    expect(result?.value.amount).to.equal("123456");
+    expect(attempts).to.equal(3);
+  });
+
+  it("does not retry a non-rate-limit error -- fails closed to null immediately rather than masking a real bug", async () => {
+    let attempts = 0;
+    const fakeConnection = {
+      getTokenSupply: async () => {
+        attempts += 1;
+        throw new Error("Invalid mint account");
+      },
+    } as any;
+    const result = await getTokenSupplyWithRetry(fakeConnection, {} as any, 5, 1);
+    expect(result).to.equal(null);
+    expect(attempts).to.equal(1);
+  });
+
+  it("gives up and returns null after exhausting bounded retries under sustained 429s", async () => {
+    let attempts = 0;
+    const fakeConnection = {
+      getTokenSupply: async () => {
+        attempts += 1;
+        throw new Error("429 Too Many Requests");
+      },
+    } as any;
+    const result = await getTokenSupplyWithRetry(fakeConnection, {} as any, 2, 1);
+    expect(result).to.equal(null);
+    expect(attempts).to.equal(3); // initial attempt + 2 retries
   });
 });
 
