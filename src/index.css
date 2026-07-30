@@ -413,6 +413,66 @@ input, select, textarea {
   background: var(--up);
 }
 
+.wallet-panel-wrap {
+  position: relative;
+}
+
+.wallet-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  padding: 16px;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wallet-panel-head {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.wallet-panel-balances {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.wallet-panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.wallet-panel-row .k {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.wallet-panel-row .v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.wallet-panel-disconnect {
+  width: 100%;
+  justify-content: center;
+}
+
 /* ---------------------------------- buttons ---------------------------------- */
 
 .btn {
@@ -1227,7 +1287,7 @@ input, select, textarea {
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
 }
 
 .kpi-cell {
@@ -1452,6 +1512,12 @@ input, select, textarea {
 .how-cell {
   background: var(--surface);
   padding: 28px 24px;
+  transition: transform 0.22s ease, background 0.22s ease;
+}
+
+.how-cell:hover {
+  transform: translateY(-3px);
+  background: var(--bg-raise);
 }
 
 .how-cell .n {
@@ -1470,6 +1536,11 @@ input, select, textarea {
 .how-cell p {
   font-size: 14px;
   color: var(--text-2);
+}
+
+.how-cell .emphasis {
+  color: var(--text);
+  font-weight: 700;
 }
 
 /* reserve cards */
@@ -1891,9 +1962,6 @@ input, select, textarea {
   .trade-panel { position: static; }
   .rcards { grid-template-columns: repeat(2, 1fr); }
   .fcards { grid-template-columns: repeat(2, 1fr); }
-  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
-  .kpi-cell:nth-child(2) { border-right: none; }
-  .kpi-cell:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
   .hero-grid { grid-template-columns: 1fr; }
   .hero-stage { max-width: 560px; margin: 0 auto; }
   .nav-search { display: none; }

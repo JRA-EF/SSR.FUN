@@ -14,7 +14,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test:program": "ts-mocha -p ./tsconfig.node.json -t 1000000 tests/**/*.ts"
+    "test:program": "ts-mocha -p ./tests/tsconfig.json -t 1000000 tests/**/*.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.1.2",

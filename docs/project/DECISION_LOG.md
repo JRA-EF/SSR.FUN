@@ -1303,3 +1303,70 @@
   "mainnetMigrationPath": "This program is never intended to be deployed to Mainnet and provides no basis for one. Before any real Mainnet migration, the existing isolation point (packages/sdk/src/zapInstructions.ts's interface, already documented as the swap-routing abstraction boundary in FRONTEND_INTEGRATION.md's Mainnet-readiness section) gets a real implementation backed by an actual liquidity venue (a real aggregator once one supports the relevant assets, or a real, professionally audited AMM with genuine third-party liquidity providers, real governance over fee parameters, and real economic security) -- none of which ssr_devnet_amm provides or claims to provide. This program's code, program ID, and deployment artifacts are explicitly out of scope for Mainnet and would be retired entirely at that point, not hardened into a production system."
 }
 ```
+
+## DEC-0052
+
+```json
+{
+  "id": "DEC-0052",
+  "date": "2026-07-30",
+  "status": "confirmed",
+  "decision": "Re-source the landing page's Featured Reserves and KPI strip from the same on-chain-verified discovery store Discover Reserves uses (useAppStore's dtrs, filtered to onChain), via a new shared src/merge/lib/reserveCardProps.ts helper; drop the KPI strip's 24h Volume and Reserve Token Holders tiles (no genuine data source exists for either); replace the landing page's 'Create. Launch. Trade.' / fee-table / 'Transparent by construction' sections with a single 'How It Works' section using mandated copy; and fix the remaining 'Browse Reserves' CTAs to read 'Discover Reserves'.",
+  "context": "Home.tsx's Featured Reserves sourced from the legacy src/state/store.tsx seed data (src/data/reserves.ts) -- a completely different store from the one Discover Reserves uses -- and its card link (/reserve/:address) pointed at a route App.tsx never registers, making it a silent dead link. The KPI strip read from the same stale store, and its own code comment admitted the 24h volume figure was 'Fictional... for the simulation.'",
+  "rationale": "A landing page showing fabricated/mismatched Reserve data directly contradicts the product's core promise of transparent on-chain state, and a dead Featured Reserve link actively misleads a first-time visitor. Deriving both sections from the exact same store and filter Discover already uses (dtr.onChain) removes the possibility of the two ever drifting apart again, rather than patching Home.tsx's old data in place.",
+  "alternativesConsidered": [
+    "Patch Home.tsx's existing native-Reserve seed data to be less obviously fake (rejected: still fabricated, still a second data path that can drift from Discover)",
+    "Keep the KPI strip's 24h Volume/Holders tiles but relabel them as illustrative (rejected: the task's mandate is to never present fabricated numbers as real, and a relabeled fake number is still a fake number)"
+  ],
+  "impact": "src/pages/Home.tsx, src/merge/pages/Discover.tsx, new src/merge/lib/reserveCardProps.ts, src/index.css (.kpi-grid now 2 columns, new .how-cell hover/emphasis styles, new .wallet-panel-wrap layout support), src/components/Shell.tsx (dead '#fees' footer link removed since that landing section no longer exists).",
+  "affectedAreas": ["src/pages/Home.tsx", "src/merge/pages/Discover.tsx", "src/merge/lib/reserveCardProps.ts", "src/index.css", "src/components/Shell.tsx"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_landing_wallet_corrections.ts -- selectFeaturedReserves/buildReserveCardProps pure-logic coverage", "npm run build and npm run test:program both pass after this change"]
+}
+```
+
+## DEC-0053
+
+```json
+{
+  "id": "DEC-0053",
+  "date": "2026-07-30",
+  "status": "confirmed",
+  "decision": "Remove Portfolio.tsx's standalone 'Get DevNet Test Assets' button (and its handleGetTestAssets handler), which minted mockX/mockY/mockZ directly to any connected wallet on demand. api/devnet/mint-test-assets.ts itself is unchanged and stays live -- it remains the legitimate seed-funding path createReserveClient.ts uses to fund a Reserve creator's seed amounts during genuine Reserve creation.",
+  "context": "The mandated DevNet token model requires the user-facing faucet to distribute only devUSDC and forbids presenting mockX/Y/Z as a general spendable currency. Auditing the token flow found the primary faucet UI (DevnetOnboarding.tsx / api/devnet/faucet-devusdc.ts) was already devUSDC-only, but Portfolio's separate button was a second, independent faucet-like path handing out mockX/Y/Z to any wallet, explicitly to let a user test Sell without Buying first.",
+  "rationale": "No legitimate flow requires a regular user to hold mockX/Y/Z before minting or redeeming Reserve Tokens: Buy already sources every non-devUSDC leg itself within the same transaction, and Create-Reserve seeding (the one genuine reason a wallet needs mockX/Y/Z) goes through createReserveClient.ts calling the same mint-test-assets endpoint directly, never through this button. Removing the button eliminates the only reachable path that handed out mockX/Y/Z as if they were ordinary currency, without touching any protocol/trade mechanics.",
+  "alternativesConsidered": [
+    "Keep the button but relabel it (rejected: still a general-purpose mockX/Y/Z faucet reachable outside any legitimate flow)",
+    "Remove the mint-test-assets.ts endpoint entirely (rejected: it is load-bearing for genuine Reserve-creation seeding; removing it would break Create)"
+  ],
+  "impact": "src/merge/pages/Portfolio.tsx only -- no API route or on-chain program change. Testing Sell without first Buying is no longer possible from the Portfolio UI; a tester needing that must use Create's own seeding path or a direct script call, consistent with mockX/Y/Z's Reserve-Asset-only role.",
+  "affectedAreas": ["src/merge/pages/Portfolio.tsx"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_landing_wallet_corrections.ts -- confirms DEVNET_FIXTURES.mints still registers mockX/Y/Z as genuine, selectable Reserve Assets after this removal"]
+}
+```
+
+## DEC-0054
+
+```json
+{
+  "id": "DEC-0054",
+  "date": "2026-07-30",
+  "status": "open",
+  "decision": "Deliberately leave unresolved in this pass: Buy (mintReserveTokensInKind) still sources every non-devUSDC basket leg by minting fresh mockX/Y/Z from the server-held swap authority within the same transaction rather than from the user's own holdings, and Sell (redeemReserveTokensInKind) still always converts the redeemed basket to SOL, never devUSDC. No frontend-simulated swap was added and the experimental ssr_devnet_amm program (DEC-0051) was not activated to patch this.",
+  "context": "The requested intended flow is Claim devUSDC -> mint Reserve Tokens with devUSDC -> genuine on-chain backing/supply/TVL updates -> redeem Reserve Tokens for devUSDC. Auditing packages/sdk/src/zapInstructions.ts confirmed Buy and Sell both execute genuine, correctly-confirmed on-chain Anchor instructions, but neither leg of that intended devUSDC round-trip is genuinely backed: Buy's non-devUSDC legs are conjured by the swap authority (a pre-existing, code-commented 'DevNet convenience'), and Sell pays out SOL, not devUSDC, because ssr_protocol has no devUSDC<->mockX/Y/Z conversion instruction and the only swap mechanism that could provide one (ssr_devnet_amm) is intentionally unmerged/dormant.",
+  "rationale": "The task explicitly instructs that when the deployed protocol does not genuinely support the full multi-asset devUSDC flow, the correct action is to report the gap plainly rather than redefine the product model or bolt on a workaround (a frontend-simulated swap would itself be a new synthetic-conversion fabrication; activating ssr_devnet_amm requires the user's explicit go-ahead per DEC-0051's own deferral). This decision records that the gap was found, understood, and consciously left open rather than silently patched or hidden.",
+  "alternativesConsidered": [
+    "Add a frontend-only simulated devUSDC<->mockX/Y/Z conversion to make Sell 'appear' to return devUSDC (rejected: exactly the synthetic-conversion fabrication the task forbids)",
+    "Activate ssr_devnet_amm now to close the gap (rejected: requires explicit user approval per DEC-0051, not assumed here)",
+    "Redefine the product's settlement asset for Sell as SOL instead of devUSDC (rejected: not this decision's call to make -- a product-level change requiring explicit sign-off)"
+  ],
+  "impact": "No code changed as a result of this entry. The gap remains: a user's Sell today receives SOL, not devUSDC, and Buy's non-devUSDC legs are not genuinely user-funded. Closing it requires one of: (a) explicit approval to activate/extend ssr_devnet_amm and wire it into the live Buy/Sell paths, or (b) a different, explicitly-approved architecture for a real devUSDC<->mockX/Y/Z conversion.",
+  "affectedAreas": ["packages/sdk/src/zapInstructions.ts", "api/devnet/swap-sign.ts", "programs/ssr_devnet_amm (dormant, unmerged)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["packages/sdk/src/zapInstructions.ts:222-226 code comment acknowledging the mockX/Y/Z minting convenience", "packages/sdk/src/zapInstructions.ts:375-387 Sell always paying out SOL via SystemProgram.transfer"]
+}
+```

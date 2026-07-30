@@ -7,8 +7,8 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Activity, SearchX } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
-import { formatUsdc, buildLineSeries } from "@/lib/calculations";
 import type { DTR } from "@/lib/types";
+import { buildReserveCardProps } from "@/lib/reserveCardProps";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { ReserveCard } from "../../components/ReserveCard";
@@ -128,41 +128,12 @@ export function Discover() {
 
       <div className="fcards">
         {visibleDtrs.map((dtr) => {
-          const premiumDiscount = ((dtr.tokenPrice - dtr.nav) / dtr.nav) * 100;
-          const topAssets = [...dtr.composition]
-            .sort((a, b) => b.weight - a.weight)
-            .slice(0, 3)
-            .map((a) => a.symbol);
-          const recentHistory = buildLineSeries(dtr.priceHistory, "7d");
-
+          const cardProps = buildReserveCardProps(dtr);
           return (
             <ReserveCard
               key={dtr.id}
-              name={dtr.name}
-              ticker={dtr.ticker}
-              description={dtr.description}
-              avatarLabel={dtr.ticker.slice(0, 2)}
+              {...cardProps}
               avatarStyle={avatarStyle(dtr.ticker)}
-              avatarImageUrl={dtr.logoUrl}
-              categoryLabel={dtr.category}
-              sourceBadge={
-                dtr.onChain
-                  ? { label: "Live on Solana DevNet", tone: "onchain" }
-                  : { label: "Simulated Demo", tone: "simulated" }
-              }
-              priceFormatted={formatUsdc(dtr.tokenPrice)}
-              changePct={dtr.change24h}
-              changeFormatted={`${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`}
-              sparkline={recentHistory.map((p) => p.price)}
-              sparklineTimestamps={recentHistory.map((p) => p.t)}
-              sparklineValueFmt={formatUsdc}
-              topAssets={topAssets}
-              metrics={[
-                { key: "price", label: "Price", value: formatUsdc(dtr.tokenPrice) },
-                { key: "24h", label: "24h", value: `${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`, tone: dtr.change24h >= 0 ? "up" : "down" },
-                { key: "nav", label: "NAV", value: formatUsdc(dtr.nav) },
-                { key: "prem", label: "Prem/Discount", value: `${premiumDiscount >= 0 ? "+" : ""}${premiumDiscount.toFixed(2)}%`, tone: premiumDiscount >= 0 ? "up" : "down" },
-              ]}
               renderCta={({ className, children }) => (
                 <Link href={`/dtr/${dtr.id}`} className={className}>{children}</Link>
               )}

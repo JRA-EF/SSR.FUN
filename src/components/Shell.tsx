@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from 'react'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, navigate, usePath } from '../lib/router'
 import { useStore } from '../state/store'
 import { useAppStore } from '@/store/useAppStore'
 import { WalletModal } from './WalletModal'
+import { WalletPanel } from './WalletPanel'
 
 const LINKS = [
   { to: '/discover', label: 'Discover Reserves' },
@@ -79,8 +79,12 @@ export function Shell({ children }: { children: ReactNode }) {
   const path = usePath()
   const { toasts } = useStore()
   const { wallet } = useAppStore()
-  const { disconnect } = useWallet()
   const [walletModalOpen, setWalletModalOpen] = useState(false)
+  const [walletPanelOpen, setWalletPanelOpen] = useState(false)
+
+  useEffect(() => {
+    setWalletPanelOpen(false)
+  }, [path])
 
   return (
     <>
@@ -121,15 +125,20 @@ export function Shell({ children }: { children: ReactNode }) {
           <NavSearch />
           <ThemeToggle />
           {wallet.connected ? (
-            <button
-              type="button"
-              className="wallet-chip"
-              title="Connected on Solana DevNet — click to disconnect"
-              onClick={() => disconnect()}
-            >
-              <span className="dot" aria-hidden="true" />
-              {wallet.address?.slice(0, 4)}…{wallet.address?.slice(-4)}
-            </button>
+            <div className="wallet-panel-wrap">
+              <button
+                type="button"
+                className="wallet-chip"
+                title="Connected on Solana DevNet — click for wallet details"
+                aria-haspopup="true"
+                aria-expanded={walletPanelOpen}
+                onClick={() => setWalletPanelOpen(v => !v)}
+              >
+                <span className="dot" aria-hidden="true" />
+                {wallet.address?.slice(0, 4)}…{wallet.address?.slice(-4)}
+              </button>
+              <WalletPanel open={walletPanelOpen} onClose={() => setWalletPanelOpen(false)} />
+            </div>
           ) : (
             <button
               type="button"
@@ -172,7 +181,6 @@ export function Shell({ children }: { children: ReactNode }) {
               <div style={{ color: 'var(--text-2)', marginBottom: 8, fontWeight: 600 }}>Understand</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Link to="/#how" className="faint">How it works</Link>
-                <Link to="/#fees" className="faint">Fee model</Link>
               </div>
             </div>
           </div>
