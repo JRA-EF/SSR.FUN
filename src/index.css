@@ -1287,7 +1287,7 @@ input, select, textarea {
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .kpi-cell {
@@ -1962,6 +1962,9 @@ input, select, textarea {
   .trade-panel { position: static; }
   .rcards { grid-template-columns: repeat(2, 1fr); }
   .fcards { grid-template-columns: repeat(2, 1fr); }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .kpi-cell:nth-child(2n) { border-right: none; }
+  .kpi-cell:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
   .hero-grid { grid-template-columns: 1fr; }
   .hero-stage { max-width: 560px; margin: 0 auto; }
   .nav-search { display: none; }

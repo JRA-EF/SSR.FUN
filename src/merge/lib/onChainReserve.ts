@@ -362,7 +362,20 @@ export function buildDtrFromDiscoveredReserve(
  * 429 on one account), since in that case the "missing" Reserve might just
  * be a transient read failure, not a real closure.
  */
-export function mergeDiscoveredReserves(existingDtrs: DTR[], discovered: DTR[], fullyVerified: boolean): DTR[] {
+export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[], fullyVerified: boolean): DTR[] {
+  // A Reserve with zero registered assets (Reserve.asset_count === 0, still
+  // stuck in the pre-Active "created" lifecycle state) is never a genuine,
+  // tradeable Decentralized Token Reserve -- it's an abandoned/incomplete
+  // creation (e.g. from before create+register was combined into one atomic
+  // transaction). Excluded here, before either `merged` or
+  // `discoveredAddresses` is computed below, so it never enters `dtrs` via a
+  // fresh discovery pass AND a previously-cached copy from an existing
+  // user's localStorage is correctly dropped on the next fully-verified
+  // poll too (it can't be "rescued" by the `untouched` branch below, since
+  // that only keeps entries when `fullyVerified` is false). `assetCount` is
+  // only ever `0` for a genuinely-empty on-chain Reserve -- `undefined`
+  // (the 2 hardcoded Gate-9-fixture path) never matches this filter.
+  const discovered = rawDiscovered.filter((d) => d.onChain?.assetCount !== 0);
   const byAddress = new Map(existingDtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
   const merged = discovered.map((fresh) => {
     const existing = fresh.onChain ? byAddress.get(fresh.onChain.reserve) : undefined;

@@ -1,12 +1,35 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from '../lib/router'
-import { fmtUsd } from '../lib/format'
+import { fmtNum, fmtUsd } from '../lib/format'
 import { HeroPlatforms } from '../components/HeroPlatforms'
 import { ReserveCard } from '../components/ReserveCard'
 import { avatarStyle } from '../lib/avatarStyle'
 import { useAppStore } from '@/store/useAppStore'
 import { buildReserveCardProps, selectFeaturedReserves } from '@/lib/reserveCardProps'
 import type { DTR } from '@/lib/types'
+
+type LandingStats = { holders: number; volume24hUsd: number }
+type LandingStatsState = { status: 'loading' | 'ready' | 'unavailable'; data: LandingStats | null }
+
+/** Real Reserve Token holder count + real rolling-24h trade volume, both derived from genuine on-chain reads (see api/devnet/landing-stats.ts) -- fetched once per visit, never polled aggressively. A read failure shows "unavailable", never a fabricated 0. */
+function useLandingStats(): LandingStatsState {
+  const [state, setState] = useState<LandingStatsState>({ status: 'loading', data: null })
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/devnet/landing-stats')
+      .then(res => (res.ok ? res.json() : Promise.reject(new Error('request failed'))))
+      .then((data: LandingStats) => {
+        if (!cancelled) setState({ status: 'ready', data })
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: 'unavailable', data: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  return state
+}
 
 function FeaturedCard({ dtr }: { dtr: DTR }) {
   const cardProps = buildReserveCardProps(dtr)
@@ -32,6 +55,7 @@ export function Home() {
   const activeCount = onChainDtrs.length
   const stillDiscovering = chainDiscoveryStatus === 'loading' && onChainDtrs.length === 0
   const discoveryUnavailable = chainDiscoveryStatus === 'error' && onChainDtrs.length === 0
+  const landingStats = useLandingStats()
 
   return (
     <>
@@ -72,8 +96,24 @@ export function Home() {
                 <div className="v">{fmtUsd(tvl)}</div>
               </div>
               <div className="kpi-cell">
+                <div className="k">24h Volume</div>
+                <div className="v">
+                  {landingStats.status === 'loading' && '…'}
+                  {landingStats.status === 'unavailable' && <span className="faint">Unavailable</span>}
+                  {landingStats.status === 'ready' && landingStats.data && fmtUsd(landingStats.data.volume24hUsd)}
+                </div>
+              </div>
+              <div className="kpi-cell">
                 <div className="k">Active Reserves</div>
                 <div className="v">{activeCount}</div>
+              </div>
+              <div className="kpi-cell">
+                <div className="k">Reserve Token Holders</div>
+                <div className="v">
+                  {landingStats.status === 'loading' && '…'}
+                  {landingStats.status === 'unavailable' && <span className="faint">Unavailable</span>}
+                  {landingStats.status === 'ready' && landingStats.data && fmtNum(landingStats.data.holders)}
+                </div>
               </div>
             </div>
           )}

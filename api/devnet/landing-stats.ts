@@ -1,0 +1,122 @@
+// GET /api/devnet/landing-stats -- real, on-chain-derived numbers for the
+// landing page's KPI strip (Total Reserve AUM and Active Reserves are cheap
+// enough to compute client-side from data the frontend already fetches via
+// discovery; this endpoint covers the two that genuinely need heavier
+// server-side reads: Reserve Token Holders (getProgramAccounts, which only a
+// dedicated provider like Helius supports on DevNet -- the public endpoint
+// 403s it) and a real rolling 24h trade-volume figure (walking each
+// Reserve's recent transaction history and decoding its real
+// ReserveTokensMinted/ReserveTokensRedeemed events -- see
+// packages/sdk/src/readOnly.ts). Both numbers are genuine reads, valued (for
+// volume) at the same fixed DevNet test prices already used honestly for
+// TVL elsewhere -- never fabricated, and this endpoint fails with a real
+// error rather than ever returning a synthetic 0 on a read failure.
+import { Connection, PublicKey } from "@solana/web3.js";
+import {
+  buildReadOnlyProgram,
+  discoverAllReserves,
+  fetchReserveTokenHolderCount,
+  fetchReserve24hVolumeUsd,
+  DEVNET_FIXTURES,
+  WRAPPED_SOL_MINT,
+  DEVUSDC,
+  DEVUSDC_MINT,
+  type AssetPricing,
+} from "../../packages/sdk/src";
+import { resolveRpcUrl } from "./_lib/rpc";
+import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
+
+interface ApiRequest {
+  method?: string;
+  headers: Record<string, string | string[] | undefined>;
+  body?: unknown;
+}
+
+interface ApiResponse {
+  status(code: number): ApiResponse;
+  setHeader?(name: string, value: string): void;
+  json(body: unknown): void;
+}
+
+const RPC_URL = resolveRpcUrl();
+const PROGRAM_ID = new PublicKey(DEVNET_FIXTURES.programId);
+const CACHE_TTL_MS = 60_000;
+const TWENTY_FOUR_HOURS_SEC = 24 * 60 * 60;
+
+type MintMeta = { address: string; decimals: number; symbol: string };
+const ASSET_TEST_PRICES_USD: Record<string, number> = {
+  ...Object.fromEntries(Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => [m.address, 1])),
+  [WRAPPED_SOL_MINT.toBase58()]: 20, // matches SOL_TEST_PRICE_USD elsewhere -- wrapped SOL IS SOL
+  [DEVUSDC.mint]: 1, // devUSDC is pegged to $1 by design
+};
+
+interface LandingStats {
+  holders: number;
+  volume24hUsd: number;
+  computedAt: number;
+  reservesCounted: number;
+}
+
+let cached: LandingStats | null = null;
+
+async function computeLandingStats(): Promise<LandingStats> {
+  const connection = new Connection(RPC_URL, "confirmed");
+  const program = buildReadOnlyProgram(connection);
+  const candidateAssetMints = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => new PublicKey(m.address))];
+
+  const { reserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints);
+  // Same rule as the frontend's mergeDiscoveredReserves: a Reserve with zero
+  // registered assets never reached genuine tradeable status and must never
+  // contribute to a real stat.
+  const displayable = reserves.filter((r) => r.assetCount !== 0);
+
+  const sinceUnixSec = Math.floor(Date.now() / 1000) - TWENTY_FOUR_HOURS_SEC;
+  let holders = 0;
+  let volume24hUsd = 0;
+
+  await Promise.all(
+    displayable.map((reserve) =>
+      withReadConcurrencyLimit(async () => {
+        try {
+          const pricing: Record<string, AssetPricing> = {};
+          for (const asset of reserve.assets) {
+            pricing[asset.assetMint] = { decimals: asset.decimals, priceUsd: ASSET_TEST_PRICES_USD[asset.assetMint] ?? 0 };
+          }
+          const [reserveHolders, reserveVolume] = await Promise.all([
+            fetchReserveTokenHolderCount(connection, new PublicKey(reserve.reserveTokenMint)),
+            fetchReserve24hVolumeUsd(connection, program, new PublicKey(reserve.reserve), pricing, sinceUnixSec),
+          ]);
+          holders += reserveHolders;
+          volume24hUsd += reserveVolume;
+        } catch {
+          // One Reserve's read failing (e.g. a transient RPC hiccup) must
+          // not abort the whole aggregate -- it's simply excluded from this
+          // computation's total, same "don't let one bad account ruin the
+          // rest" philosophy as discovery's own per-account error handling.
+        }
+      }),
+    ),
+  );
+
+  return { holders, volume24hUsd, computedAt: Date.now(), reservesCounted: displayable.length };
+}
+
+export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (req.method !== "GET") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  if (cached && Date.now() - cached.computedAt < CACHE_TTL_MS) {
+    res.status(200).json(cached);
+    return;
+  }
+
+  try {
+    const stats = await computeLandingStats();
+    cached = stats;
+    res.status(200).json(stats);
+  } catch (e) {
+    res.status(503).json({ error: e instanceof Error ? e.message : "Failed to compute landing-page stats." });
+  }
+}

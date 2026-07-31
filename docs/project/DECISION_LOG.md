@@ -1438,3 +1438,49 @@
   "evidence": ["grep for confirmTransaction across src/ after this change shows only comments in rpcResilience.ts/zapClient.ts/managementClient.ts/createReserveClient.ts, no live call sites"]
 }
 ```
+
+## DEC-0058
+
+```json
+{
+  "id": "DEC-0058",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Hide the one on-chain Reserve created without any underlying asset (reserveId 12, AUW57xjqXmCKbP6wjPZfR5H3TCNah28fiTp6fwLZLNAq, status 'created') from every frontend surface (Discover, Featured Reserves, KPI counts, Portfolio, ManageDTR) by excluding assetCount === 0 at the single central discovery-merge point (mergeDiscoveredReserves). No on-chain transaction was sent and no protocol/program change was made.",
+  "context": "Live discovery (via Helius) enumerated all 18 on-chain Reserves and found exactly one with zero registered assets, stuck in a pre-Active 'created' lifecycle status -- almost certainly an abandoned/incomplete Create-a-Reserve attempt from before create+asset-registration was combined into one atomic transaction (DEC-0031). Its manager (EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq) also created the legitimate 'TestLo' Reserve (reserveId 13) immediately after, consistent with a first attempt going wrong.",
+  "rationale": "Genuine on-chain deletion is not currently possible, confirmed by reading the deployed Anchor source directly: both initiate_wind_down and close_reserve require the Reserve's own manager signature (has_one = manager, no ProtocolConfig.authority override anywhere in either instruction), and initiate_wind_down additionally requires status == Active -- a Reserve stuck in 'created' has no on-chain instruction path to WindDown or Closed at all. None of the keypairs available in this environment match that manager. Rather than fabricate a workaround or attempt an unauthorized/impossible on-chain action, the correct fix is a frontend-side exclusion -- it directly addresses the actual complaint ('messing up the website') without touching chain state or requiring a protocol change.",
+  "alternativesConsidered": [
+    "Design a new 'abandon_reserve' program instruction to allow closing a pre-Active Reserve (rejected for this pass: a real protocol/security change requiring its own review, and the account's real owner would still need to sign or a new authority-override path would need separate security justification)",
+    "Attempt to close it anyway (impossible: no available signer, and no instruction path exists regardless of signer)",
+    "Leave it visible with a 'broken' badge (rejected: doesn't address the actual complaint that it's cluttering Discover/Featured/KPI counts)"
+  ],
+  "impact": "src/merge/lib/onChainReserve.ts's mergeDiscoveredReserves now filters rawDiscovered to exclude assetCount === 0 before either the merged or discoveredAddresses computations -- a previously-cached copy in an existing user's localStorage is also correctly dropped on the next fully-verified discovery poll (it cannot be rescued by the untouched/transient-failure branch, which only applies when fullyVerified is false). The on-chain account itself is untouched and still exists exactly as before.",
+  "affectedAreas": ["src/merge/lib/onChainReserve.ts", "api/devnet/landing-stats.ts (same exclusion rule reused for KPI aggregation)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_hide_zero_asset_and_kpis.ts -- mergeDiscoveredReserves exclusion coverage (fresh discovery, previously-cached entries, fullyVerified true/false, assetCount undefined never affected)", "programs/ssr_protocol/src/instructions/{initiate_wind_down,close_reserve}.rs read directly to confirm the has_one=manager / status==Active constraints", "live discovery via Helius: 18 reserves enumerated, exactly 1 with assetCount === 0"]
+}
+```
+
+## DEC-0059
+
+```json
+{
+  "id": "DEC-0059",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Restore all 4 original landing-page KPI tiles (Total Reserve AUM, 24h Volume, Active Reserves, Reserve Token Holders), with 24h Volume and Reserve Token Holders now computed from genuine on-chain data via a new api/devnet/landing-stats.ts endpoint, instead of leaving them removed (as in the prior pass, when no genuine source existed) or reintroducing the old fabricated formula (volume24h = tvl * 0.054).",
+  "context": "A prior pass dropped these 2 tiles because 24h Volume had no genuine source (no indexer) and Reserve Token Holders wasn't tracked (getProgramAccounts, needed to enumerate holders, is 403-blocked on the public DevNet RPC). Helius (DEC-0055) genuinely supports getProgramAccounts (confirmed live), and the deployed program emits real, IDL-declared ReserveTokensMinted/ReserveTokensRedeemed events carrying real per-asset-leg amounts -- both gaps are now closeable with real data.",
+  "rationale": "New packages/sdk/src/readOnly.ts functions: fetchReserveTokenHolderCount (getProgramAccounts filtered by mint, counts genuinely non-zero-balance accounts) and fetchReserve24hVolumeUsd (walks each Reserve's real transaction history via getSignaturesForAddress, decodes real trade events via Anchor's EventParser, values each leg at the same fixed DevNet test prices already used honestly for TVL elsewhere). A live pre-deploy sanity run caught and fixed two real bugs before shipping: (1) a single un-retried RPC call anywhere in the per-Reserve chain silently zeroed that Reserve's whole contribution under Helius rate-limiting -- fixed with the same bounded rate-limit-only retry pattern already used elsewhere in this SDK; (2) Anchor's EventParser reports event names camelCased with a lowercase first letter ('reserveTokensMinted'), not the IDL's declared PascalCase ('ReserveTokensMinted') -- the initial implementation matched the wrong casing and always computed 0 volume; confirmed by decoding a known real transaction directly. Both fixes were verified live afterward: a real run against production Reserves returned 22 genuine holders and $1,121.43 in genuine 24h volume across 17 displayable Reserves.",
+  "alternativesConsidered": [
+    "Show 24h Volume as 'coming soon' instead of building the real indexer (offered as an option; user chose to build the real thing now)",
+    "Reintroduce the old tvl * 0.054 fictional volume formula (rejected outright -- exactly the fabrication this pass exists to replace)",
+    "Compute holders/volume client-side per page load (rejected: would fire getProgramAccounts/getSignaturesForAddress/getTransaction calls from every visitor's browser on every load; a server-side endpoint with a 60s cache computes it once and serves everyone, far cheaper on the RPC budget)"
+  ],
+  "impact": "New packages/sdk/src/readOnly.ts exports (fetchReserveTokenHolderCount, fetchReserve24hVolumeUsd, valueAssetLegsUsd, countHoldersFromParsedAccounts, withRateLimitRetryGeneric). New api/devnet/landing-stats.ts (GET, 60s in-memory cache, same assetCount-exclusion rule as DEC-0058). src/pages/Home.tsx fetches it once per visit with explicit loading/unavailable states (never a fabricated 0 on failure); src/index.css's .kpi-grid reverts to 4 columns with the matching 2x2 tablet-breakpoint layout.",
+  "affectedAreas": ["packages/sdk/src/readOnly.ts", "api/devnet/landing-stats.ts", "src/pages/Home.tsx", "src/index.css"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_hide_zero_asset_and_kpis.ts -- valueAssetLegsUsd and countHoldersFromParsedAccounts pure-logic coverage", "scripts/verify_landing_stats.ts -- live read-only sanity check, permanently added to the repo", "live run (2026-07-31): 22 holders, $1,121.43 24h volume, 17 Reserves counted, confirmed against a known real Buy transaction's decoded on-chain event"]
+}
+```
