@@ -47,6 +47,7 @@ import {
   buildBuyZapInstructions,
   buildBuyZapInstructionsDevUsdc,
   buildSellZapInstructions,
+  buildRedeemToDevUsdcInstructions,
   findProtocolConfig,
   findReserveTokenMint,
   findMintAuthority,
@@ -59,6 +60,7 @@ import {
 import { loadDevnetAuthority } from "./_lib/authority";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { isRateLimitError, withRateLimitRetry } from "../../src/merge/lib/rpcResilience";
+import { isReservePureDevUsdc } from "../../src/merge/lib/calculations";
 
 interface ApiRequest {
   method?: string;
@@ -292,6 +294,25 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return;
       }
 
+      // devUSDC is SSR.fun's purchasing currency, never required to be one
+      // of a Reserve's own assets -- but this deployed program has no
+      // devUSDC -> other-asset conversion instruction. buildBuyZapInstructionsDevUsdc
+      // would otherwise fund any non-devUSDC leg (mockX/Y/Z mint, wrapped-SOL
+      // wrap) for free from the swap authority -- a real trader would then
+      // receive Reserve Tokens genuinely backed by assets nobody actually
+      // paid for. Reject here, server-side, rather than relying solely on
+      // the frontend disabling the button -- this is the actual "hidden
+      // funding" this endpoint must never perform for a real Buy (see
+      // docs/project/DECISION_LOG.md's Buy architecture correction).
+      const nonDevUsdcAssets = zapAssets.filter((a) => a.mint !== DEVUSDC_MINT.toBase58());
+      if (nonDevUsdcAssets.length > 0) {
+        res.status(400).json({
+          error: `This Reserve is not backed 100% by devUSDC (it also holds ${nonDevUsdcAssets.map((a) => a.mint).join(", ")}) -- a genuine devUSDC-to-Reserve-Asset conversion is not deployed on-chain yet, so Buy is unavailable for it.`,
+          code: "conversion_unsupported",
+        });
+        return;
+      }
+
       const result = await buildBuyZapInstructionsDevUsdc({
         program,
         protocolConfig,
@@ -339,6 +360,44 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
     const reserveAccount: any = await withRateLimitRetry(() => (program.account as any).reserve.fetch(reserve), 3, 500);
     const redemptionFeeBps = BigInt(reserveAccount.feeConfig.redemptionFeeBps);
+
+    // A Reserve backed 100% by devUSDC redeems into genuine devUSDC directly
+    // -- redeem_reserve_tokens_in_kind already deposits the redeemer's real
+    // proportional entitlement straight into their own token account, which
+    // for this composition IS real devUSDC. No swap-authority co-signature,
+    // zap, or SOL leg is needed or used (see
+    // packages/sdk/src/zapInstructions.ts's buildRedeemToDevUsdcInstructions
+    // and docs/project/DECISION_LOG.md's Buy/Sell architecture correction).
+    // A mixed-composition Reserve still uses the existing SOL-settling zap
+    // below -- unchanged in this pass; see DEC-0054/DEC-0065.
+    if (isReservePureDevUsdc(zapAssets.map((a) => a.mint), DEVUSDC_MINT.toBase58())) {
+      const redeemResult = await buildRedeemToDevUsdcInstructions({
+        program,
+        reserve,
+        reserveTokenMint,
+        vaultAuthority,
+        user: userPubkey,
+        assets: zapAssets,
+        reserveTokenSupplyRaw: onChain.reserveTokenSupplyRaw,
+        redemptionFeeBps,
+        reserveTokensToRedeem,
+      });
+
+      const tx = new Transaction();
+      tx.add(...redeemResult.instructions);
+      tx.feePayer = userPubkey;
+      const { blockhash, lastValidBlockHeight } = await withRateLimitRetry(() => connection.getLatestBlockhash("confirmed"), 3, 500);
+      tx.recentBlockhash = blockhash;
+      // No swap-authority signature needed -- it isn't a party to any
+      // instruction in this transaction at all.
+
+      res.status(200).json({
+        transactionBase64: tx.serialize({ requireAllSignatures: false }).toString("base64"),
+        lastValidBlockHeight,
+        quote: { assetAmountsRaw: [redeemResult.devUsdcOutRaw.toString()], devUsdcOutRaw: redeemResult.devUsdcOutRaw.toString() },
+      });
+      return;
+    }
 
     const result = await buildSellZapInstructions({
       program,

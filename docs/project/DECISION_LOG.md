@@ -1640,3 +1640,37 @@
   "evidence": ["tsc -b, tsc -p api/devnet/tsconfig.json both clean", "live read (2026-07-31): authority wallet Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj balance confirmed at 0.23244962 SOL via a direct getBalance RPC call -- below the 1.05 SOL (grant + floor) this endpoint now requires to grant, consistent with the user's plan to fund it directly"]
 }
 ```
+
+## DEC-0067
+
+```json
+{
+  "id": "DEC-0067",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Correct the Buy/Sell architecture so devUSDC is genuinely SSR.fun's universal purchasing/settlement currency, never coupled to a Reserve's own asset composition: (1) the 25/50/75/Max quick-select buttons now always derive from the wallet's real devUSDC balance for every Reserve, with the 'no devUSDC leg' gating message and logic removed entirely; (2) Buy execution is now gated to Reserves backed 100% by devUSDC (`isReservePureDevUsdc`), both client-side (DTRDetail.tsx) and server-side (api/devnet/swap-sign.ts's buy-devusdc action now rejects any Reserve with a non-devUSDC asset) -- this removes the previous hidden funding of mockX/Y/Z (minted for free) and wrapped SOL (wrapped from the swap authority's own real SOL) during Buy for any Reserve the user's devUSDC didn't actually cover; (3) Sell for that same 100%-devUSDC composition now redeems genuine devUSDC directly via a new zero-fabrication `buildRedeemToDevUsdcInstructions` (single-signer, no swap-authority co-signature, no SOL leg at all) instead of the previous redeem-then-convert-to-fixed-price-SOL zap.",
+  "context": "User-reported architecture review, with screenshots, of the Buy flow: the UI displayed 'This Reserve has no devUSDC leg, so quick-select isn't balance-gated -- enter an amount directly' and disclosed that SOL and mockX legs were funded by a 'DevNet test-asset faucet' during a Buy the UI otherwise labeled as devUSDC-settled. Tracing `packages/sdk/src/zapInstructions.ts`'s `buildBuyZapInstructionsDevUsdc` confirmed the underlying mechanics precisely: `reserveTokensRequested` is computed from the trader's FULL devUSDC input divided by NAV (i.e. the entire mint is sized as if fully paid in devUSDC), but only the fraction of that mint attributable to the Reserve's own devUSDC-weighted leg (if any) is actually debited from the user's real balance -- every other leg (mockX/Y/Z via a direct swap-authority-signed SPL mintTo, wrapped SOL via the swap authority wrapping its own real SOL) is fabricated for free in the same atomic transaction. For a Reserve with NO devUSDC leg, 100% of the resulting Reserve Tokens were backed by assets nobody paid for.",
+  "rationale": "The authoritative product model is: devUSDC in -> genuinely converted into the Reserve's proportional underlying assets -> those assets deposited into vaults -> Reserve Tokens minted -- and the inverse on redemption. The deployed `ssr_protocol` Anchor program has no devUSDC<->other-asset conversion instruction, oracle, or AMM of its own (confirmed: `mint_reserve_tokens_in_kind`/`redeem_reserve_tokens_in_kind` are strictly in-kind -- you must already hold, or already receive in-kind, each asset amount involved). The ONLY Reserve composition with a genuine, zero-fabrication path in both directions today is one backed 100% by devUSDC: `mint_reserve_tokens_in_kind`'s own `transfer_checked` moves the user's real devUSDC directly into the vault on Buy (already true before this fix -- no server involvement needed for that leg), and `redeem_reserve_tokens_in_kind` deposits the redeemer's real proportional entitlement directly into their own wallet on Sell, which for this composition IS real devUSDC (discovered while tracing Sell's existing code: the current SOL-zap Sell path takes that already-correctly-redeemed devUSDC BACK from the user's wallet and gives fixed-price synthetic SOL instead -- confirming this is the exact mechanism behind the previously-logged DEC-0054/'3.75 SOL settlement' report). Disabling Buy (and correcting Sell) for any other composition, rather than patching around the missing conversion layer, is the only choice consistent with 'never simulate this conversion, never show a successful Buy not funded by the user's devUSDC.'",
+  "alternativesConsidered": [
+    "Keep faucet-funding non-devUSDC legs but disclose it more clearly in the UI (rejected -- the user's explicit instruction is that a Reserve should never need hidden funding at all; disclosure doesn't fix a still-fabricated mint)",
+    "Activate the experimental, unmerged `ssr_devnet_amm` (DEC-0051) now to provide a real conversion layer for mixed Reserves (rejected for this pass -- explicitly out of scope without separate approval; see 'smallest decision required' in the session report)",
+    "Extend the Sell fix to mixed-composition Reserves by returning their in-kind assets without any zap at all (a real, likely-safe option identified while investigating -- deliberately NOT implemented in this pass since it wasn't part of this session's explicit, detailed spec; flagged as a natural low-risk follow-up)",
+    "Leave the plain SOL-denominated `action: 'buy'` / `buildBuyZapInstructions` path as-is (confirmed dead/unreachable from the live UI -- only referenced by historical scripts/verify_*.ts files; left untouched rather than risk breaking those, but flagged as a known remaining hidden-funding-capable code path reachable only via direct API call)"
+  ],
+  "impact": "src/merge/lib/calculations.ts (new `buyAvailableFromDevUsdcBalance`, replacing the removed `computeBuyAvailable`; new `isReservePureDevUsdc`). src/merge/pages/DTRDetail.tsx (quick-select buttons always balance-derived; Buy button/panel gated on `isGenuineDevUsdcBuySupported`/`isPureDevUsdcReserve`; composition breakdown no longer lists faucet-funded legs -- shows an accurate 'Buy not available' panel with the Reserve's real composition instead; Sell panel shows genuine-devUSDC messaging for a pure Reserve instead of the fixed-rate SOL note). packages/sdk/src/zapInstructions.ts (new `buildRedeemToDevUsdcInstructions`). api/devnet/swap-sign.ts (buy-devusdc rejects any non-devUSDC-asset Reserve server-side; sell branches to the new zero-fabrication redeem-only path for a pure-devUSDC Reserve). src/merge/lib/zapClient.ts (`ZapQuote.devUsdcOutRaw`). New scripts/check_reserve_compositions.ts (read-only live composition lookup).",
+  "affectedAreas": [
+    "src/merge/lib/calculations.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "packages/sdk/src/zapInstructions.ts",
+    "api/devnet/swap-sign.ts",
+    "src/merge/lib/zapClient.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_devusdc_buy_architecture_fix.ts and updated tests/phase_buy_chart_category_deploy_pass.ts -- isReservePureDevUsdc, buyAvailableFromDevUsdcBalance, devUsdcToReserveTokensRequested, computeRedemptionEntitlements coverage (145/145 offline tests total passing)",
+    "packages/sdk/src/zapInstructions.ts re-read in full to confirm redeem_reserve_tokens_in_kind already deposits real in-kind entitlements directly to the user before any zap instruction runs",
+    "tsc -b, tsc -p api/devnet/tsconfig.json, tsc -p packages/sdk, tsc -p scripts/tsconfig.json, vite build, oxlint all clean"
+  ]
+}
+```

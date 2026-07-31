@@ -88,17 +88,34 @@ export function calcUsdcReceived(
 }
 
 /**
- * The largest total devUSDC-denominated mint size the connected wallet can
- * genuinely afford for a Buy, given its real devUSDC balance and this
- * Reserve's devUSDC target-weight fraction (0 when the Reserve has no
- * devUSDC leg at all, in which case there is no real balance constraint to
- * derive a number from -- callers must not fall back to an arbitrary
- * hardcoded figure in that case; see DTRDetail.tsx's buyPctUnavailableReason,
- * which disables the quick-select buttons instead).
+ * The amount of devUSDC the connected wallet can genuinely spend on a Buy:
+ * simply its real devUSDC balance. devUSDC is SSR.fun's universal purchasing
+ * currency -- it is never required to be one of a Reserve's own underlying
+ * Reserve Assets, so this is deliberately independent of any Reserve's
+ * composition/target-weights (see docs/project/DECISION_LOG.md's Buy
+ * architecture correction). Whether a given Reserve's Buy can actually be
+ * EXECUTED right now (i.e. whether a genuine devUSDC -> Reserve-Asset
+ * conversion path exists on-chain for it) is a separate question -- see
+ * DTRDetail.tsx's isGenuineDevUsdcBuySupported.
  */
-export function computeBuyAvailable(devUsdcBalanceHuman: number, devUsdcWeightFraction: number): number {
-  if (devUsdcWeightFraction <= 0) return 0;
-  return devUsdcBalanceHuman / devUsdcWeightFraction;
+export function buyAvailableFromDevUsdcBalance(devUsdcBalanceHuman: number): number {
+  return Math.max(0, devUsdcBalanceHuman);
+}
+
+/**
+ * Whether a Reserve's Buy can genuinely execute today: true only when EVERY
+ * one of its registered assets is devUSDC itself. In that case
+ * mint_reserve_tokens_in_kind's own transfer_checked moves the user's real
+ * devUSDC directly into the vault -- no server-side minting/wrapping of any
+ * other asset is involved. Any other composition (mockX/Y/Z, wrapped SOL)
+ * has no genuine devUSDC -> Reserve-Asset conversion deployed on-chain right
+ * now; Buy must be disabled for those rather than silently fabricating those
+ * legs for free (see docs/project/DECISION_LOG.md's Buy architecture
+ * correction). An empty asset list is never "pure devUSDC" -- that's an
+ * unresolved/invalid Reserve shape, not a supported one.
+ */
+export function isReservePureDevUsdc(assetMints: string[], devUsdcMint: string): boolean {
+  return assetMints.length > 0 && assetMints.every((m) => m === devUsdcMint);
 }
 
 /** Hard cap on stored points per Reserve so a long session can't grow the price history unbounded. */

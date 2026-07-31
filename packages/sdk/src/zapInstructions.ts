@@ -393,3 +393,70 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
     solLamportsOut,
   };
 }
+
+export interface BuildRedeemToDevUsdcParams {
+  program: Program<anchor.Idl>;
+  reserve: PublicKey;
+  reserveTokenMint: PublicKey;
+  vaultAuthority: PublicKey;
+  user: PublicKey;
+  /** Must be exactly [{ mint: devUSDC, ... }] -- this builder does not gate that itself; callers (api/devnet/swap-sign.ts) must verify the Reserve is 100% devUSDC-backed before calling it. */
+  assets: ZapAssetLeg[];
+  reserveTokenSupplyRaw: string;
+  redemptionFeeBps: bigint;
+  reserveTokensToRedeem: bigint;
+}
+
+/**
+ * Genuine devUSDC redemption for a Reserve backed 100% by devUSDC: a single
+ * redeem_reserve_tokens_in_kind call, signer=user only. redeem_reserve_tokens_in_kind
+ * already deposits the redeemer's real proportional entitlement directly
+ * into their OWN token account (see buildSellZapInstructions's identical
+ * redeemIx) -- since the Reserve's sole asset is devUSDC, that entitlement
+ * IS real devUSDC, landing directly in the user's wallet. No swap-authority
+ * co-signature, no zap, no SOL leg, and no conversion of any kind is
+ * involved or needed -- this is the inverse of the pure-devUSDC Buy path
+ * (buildBuyZapInstructionsDevUsdc), returning devUSDC exactly as the
+ * authoritative product model requires. See docs/project/DECISION_LOG.md's
+ * Buy/Sell architecture correction.
+ */
+export async function buildRedeemToDevUsdcInstructions(
+  params: BuildRedeemToDevUsdcParams,
+): Promise<{ instructions: TransactionInstruction[]; devUsdcOutRaw: bigint }> {
+  const { program, reserve, reserveTokenMint, vaultAuthority, user, assets, reserveTokenSupplyRaw } = params;
+
+  const balances: AssetBalance[] = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
+  const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
+
+  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
+  for (const leg of assets) {
+    const mint = new PublicKey(leg.mint);
+    const userAta = getAssociatedTokenAddressSync(mint, user);
+    remainingAccounts.push(
+      { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
+      { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
+      { pubkey: userAta, isWritable: true, isSigner: false },
+      { pubkey: mint, isWritable: false, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+    );
+  }
+
+  const redeemIx = await program.methods
+    .redeemReserveTokensInKind(
+      new BN(params.reserveTokensToRedeem.toString()),
+      entitlements.map(() => new BN(0)),
+    )
+    .accounts({
+      reserve,
+      reserveTokenMint,
+      vaultAuthority,
+      redeemerReserveTokenAccount: redeemerReserveTokenAta,
+      redeemer: user,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+
+  return { instructions: [redeemIx], devUsdcOutRaw: entitlements[0]?.entitlement ?? 0n };
+}

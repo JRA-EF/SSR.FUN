@@ -25,6 +25,8 @@ export interface ZapQuote {
   reserveTokensRequested?: string;
   assetAmountsRaw?: string[];
   solLamportsOut?: string;
+  /** Set only for a Sell against a Reserve backed 100% by devUSDC -- the genuine devUSDC amount redeemed directly into the user's wallet, no zap/SOL leg involved. See packages/sdk/src/zapInstructions.ts's buildRedeemToDevUsdcInstructions. */
+  devUsdcOutRaw?: string;
   /** devUSDC-settlement Buy only: which leg(s) were genuinely funded from the user's own real devUSDC balance vs. the DevNet test-asset faucet mechanism -- see packages/sdk/src/zapInstructions.ts's buildBuyZapInstructionsDevUsdc. */
   legSources?: { mint: string; source: "user-devusdc-balance" | "devnet-test-asset-faucet" }[];
 }

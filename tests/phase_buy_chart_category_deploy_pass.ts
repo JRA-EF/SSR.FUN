@@ -10,7 +10,7 @@
 // scripts/find_reserve_by_ticker.ts. See docs/project/PROJECT_STATUS.md.
 import { expect } from "chai";
 import type { DTR, Trade } from "../src/merge/lib/types";
-import { computeBuyAvailable, appendPricePoint } from "../src/merge/lib/calculations";
+import { buyAvailableFromDevUsdcBalance, isReservePureDevUsdc, appendPricePoint } from "../src/merge/lib/calculations";
 import { RESERVE_CATEGORIES, normalizeReserveCategory } from "../src/merge/lib/types";
 import { mergeDiscoveredReserves } from "../src/merge/lib/onChainReserve";
 import { isHiddenReserveAddress, HIDDEN_RESERVE_ADDRESSES } from "../packages/sdk/src";
@@ -67,30 +67,65 @@ function makeDtr(id: string, opts: { assetCount?: number; status?: string; reser
   };
 }
 
-describe("Buy quick-select availability (computeBuyAvailable)", () => {
-  it("derives Max from the real devUSDC balance divided by the devUSDC weight fraction", () => {
-    // 750 devUSDC balance, Reserve is 100% devUSDC-weighted -> Max is genuinely 750.
-    expect(computeBuyAvailable(750, 1)).to.equal(750);
-    // 70%-devUSDC-weighted Reserve: the trader can afford a larger total mint
-    // since only 70% of it draws from their real devUSDC balance.
-    expect(computeBuyAvailable(700, 0.7)).to.be.closeTo(1000, 1e-9);
+describe("Buy quick-select availability (buyAvailableFromDevUsdcBalance)", () => {
+  it("derives Max directly from the real devUSDC balance -- never scaled by Reserve composition", () => {
+    // devUSDC is the universal purchasing currency: it is NEVER required to
+    // be one of a Reserve's own assets, so availability must never depend on
+    // that Reserve's target weights. Max for a 750-devUSDC wallet is exactly
+    // 750, for EVERY Reserve, regardless of what that Reserve holds.
+    expect(buyAvailableFromDevUsdcBalance(750)).to.equal(750);
+    expect(buyAvailableFromDevUsdcBalance(1000)).to.equal(1000);
   });
 
-  it("never falls back to a hardcoded 100 when the Reserve has no devUSDC leg -- returns 0 (not balance-derived) instead", () => {
-    // This is the exact live-reported bug: a wallet holding ~750 devUSDC saw
-    // Max fill exactly 100 -- traced to a literal `: 100` fallback for
-    // devUsdcWeightFraction === 0. The fixed behavior must never produce 100
-    // regardless of the real balance; callers gate the quick-select buttons
-    // off entirely in this case (see DTRDetail.tsx's buyPctUnavailableReason)
-    // rather than deriving any number from balance.
-    expect(computeBuyAvailable(750, 0)).to.equal(0);
-    expect(computeBuyAvailable(0, 0)).to.equal(0);
+  it("never falls back to a hardcoded 100 -- always reflects the real balance passed in", () => {
+    // The original live-reported bug: a wallet holding ~750 devUSDC saw Max
+    // fill exactly 100, traced to a `devUsdcWeightFraction === 0 ? 100 : ...`
+    // fallback that conflated "does this Reserve hold devUSDC" with "can I
+    // pay with devUSDC" -- a conflation the corrected architecture removes
+    // entirely. This function has no composition parameter at all anymore.
+    expect(buyAvailableFromDevUsdcBalance(750)).to.not.equal(100);
+    expect(buyAvailableFromDevUsdcBalance(750)).to.equal(750);
   });
 
-  it("is exactly proportional -- 25/50/75% of Max always equal 25/50/75% of the real balance-derived figure", () => {
-    const max = computeBuyAvailable(2000, 0.5);
-    expect(max * 0.25).to.be.closeTo(1000, 1e-9);
-    expect(max * 0.5).to.be.closeTo(2000, 1e-9);
+  it("is exactly proportional -- 25/50/75% of Max always equal 25/50/75% of the real balance", () => {
+    const max = buyAvailableFromDevUsdcBalance(2000);
+    expect(max * 0.25).to.equal(500);
+    expect(max * 0.5).to.equal(1000);
+    expect(max * 0.75).to.equal(1500);
+  });
+
+  it("never goes negative for a zero or malformed balance", () => {
+    expect(buyAvailableFromDevUsdcBalance(0)).to.equal(0);
+    expect(buyAvailableFromDevUsdcBalance(-5)).to.equal(0);
+  });
+});
+
+describe("Genuine Buy/Sell support gate (isReservePureDevUsdc)", () => {
+  const DEVUSDC = "Djn4aGJ3JTgqGpGdQFkmq73gG8KvkwRswP7pNaouuw4k";
+  const MOCKX = "2KBajm7Xufj8UaFQbKqLquhMRqeqjLZdDuXtoqYkSUgu";
+
+  it("is true for a Reserve backed 100% by devUSDC (the only genuine, fabrication-free composition today)", () => {
+    expect(isReservePureDevUsdc([DEVUSDC], DEVUSDC)).to.equal(true);
+  });
+
+  it("is false for any Reserve holding even one non-devUSDC asset -- no hidden funding is ever allowed through", () => {
+    expect(isReservePureDevUsdc([DEVUSDC, MOCKX], DEVUSDC)).to.equal(false);
+    expect(isReservePureDevUsdc([MOCKX], DEVUSDC)).to.equal(false);
+  });
+
+  it("is false for a Reserve with no resolved assets at all -- never treated as vacuously 'pure'", () => {
+    expect(isReservePureDevUsdc([], DEVUSDC)).to.equal(false);
+  });
+
+  it("devUSDC itself is never required to be a Reserve Asset for a wallet to spend it -- the gate is about the RESERVE's composition, not the wallet's holdings", () => {
+    // A wallet's ability to spend devUSDC (buyAvailableFromDevUsdcBalance)
+    // and a Reserve's ability to genuinely accept it (isReservePureDevUsdc)
+    // are deliberately independent checks -- confirmed here by exercising
+    // both with no shared state or coupling.
+    const walletMax = buyAvailableFromDevUsdcBalance(500);
+    const reserveSupported = isReservePureDevUsdc([MOCKX], DEVUSDC);
+    expect(walletMax).to.equal(500);
+    expect(reserveSupported).to.equal(false);
   });
 });
 

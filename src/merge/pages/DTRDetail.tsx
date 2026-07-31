@@ -23,7 +23,8 @@ import {
   buildSimulatedOrderBook,
   calcTokensReceived,
   calcUsdcReceived,
-  computeBuyAvailable,
+  buyAvailableFromDevUsdcBalance,
+  isReservePureDevUsdc,
   formatUsdc,
   formatTokenAmount,
   sampleLinePoints,
@@ -355,12 +356,23 @@ export function DTRDetail() {
       return;
     }
     if (!canSubmitNewTransaction(buyPhase)) return; // Defensive -- the button is already disabled in this state.
-    // devUSDC is the default DevNet settlement asset (see
-    // buildBuyZapInstructionsDevUsdc): real devUSDC funds any devUSDC leg
-    // this Reserve has directly from the user's own wallet; any other
-    // asset the Reserve needs is still provided via the existing DevNet
-    // test-asset faucet mechanism, exactly as before -- never a simulated
-    // conversion between devUSDC and the other assets.
+    // Defensive -- the button is already disabled for this case, but never
+    // rely on that alone: a genuine devUSDC -> other-Reserve-Asset
+    // conversion isn't deployed on-chain, so Buy only genuinely executes for
+    // a Reserve backed 100% by devUSDC. See isGenuineDevUsdcBuySupported.
+    if (!isGenuineDevUsdcBuySupported) {
+      toast({
+        variant: "destructive",
+        title: "Buy not available",
+        description: "This Reserve isn't backed 100% by devUSDC, and a genuine devUSDC-to-Reserve-Asset conversion isn't deployed yet -- Buy is unavailable for it right now.",
+      });
+      return;
+    }
+    // devUSDC is the purchasing currency: the user's real devUSDC balance
+    // funds the ENTIRE mint directly via mint_reserve_tokens_in_kind's own
+    // transfer_checked -- never a simulated conversion, never a
+    // faucet/authority-funded leg (guaranteed by the check above: every
+    // asset in this Reserve is devUSDC itself).
     const devUsdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** DEVUSDC.decimals));
     // Checked against the trader's own real, already-fetched balance BEFORE
     // any network call -- an honest, immediate "insufficient devUSDC"
@@ -379,7 +391,7 @@ export function DTRDetail() {
     buyPreDevUsdcRawRef.current = devUsdcBalanceRaw;
     useAppStore.getState().setTxInFlight(true);
     try {
-      const { signature, quote } = await executeBuyZapDevUsdc({
+      const { signature } = await executeBuyZapDevUsdc({
         connection,
         wallet: walletCtx,
         reserveAddress: dtr.onChain.reserve,
@@ -393,18 +405,12 @@ export function DTRDetail() {
       const spentUsdc = Number(devUsdcAmountRaw) / 10 ** DEVUSDC.decimals;
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
       setBuyAmount("");
-      const realLegs = (quote.legSources ?? []).filter((l) => l.source === "user-devusdc-balance").length;
       toast({
         title: "Buy confirmed on Solana DevNet",
         description: (
-          <>
-            <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
-              View transaction on Solana Explorer (DevNet) &rarr;
-            </a>
-            {realLegs === 0 && (
-              <p className="mt-1 text-xs">This Reserve has no devUSDC leg -- fully funded via the DevNet test-asset faucet mechanism, at no real cost to you.</p>
-            )}
-          </>
+          <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
+            View transaction on Solana Explorer (DevNet) &rarr;
+          </a>
         ),
       });
     } catch (e) {
@@ -426,6 +432,8 @@ export function DTRDetail() {
           toast({ variant: "destructive", title: "DevNet RPC congested", description: "Solana DevNet's RPC endpoint is temporarily rate-limited. Please wait a few seconds and try again." });
         } else if (e instanceof ZapBuildError && e.code === "swap_authority_low_sol") {
           toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
+        } else if (e instanceof ZapBuildError && e.code === "conversion_unsupported") {
+          toast({ variant: "destructive", title: "Buy not available", description: e.message });
         } else {
           toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
         }
@@ -572,45 +580,49 @@ export function DTRDetail() {
   const onBuyClick = isOnChain ? handleBuy : handleBuyUnavailable;
   const onSellClick = isOnChain ? handleSell : handleSellUnavailable;
 
-  // devUSDC is the default settlement asset: only the FRACTION of a mint
-  // attributable to this Reserve's own devUSDC leg (if it has one) is drawn
-  // from the user's real devUSDC balance -- every other leg is still
-  // DevNet-test-asset-faucet-funded, unchanged. Computed from the Reserve's
-  // own known target weights (already available client-side), not a live
-  // quote -- the server independently recomputes the exact amounts at
-  // execution time regardless.
-  const devUsdcAsset = isOnChain ? dtr.onChain!.assets.find((a) => a.mint === DEVUSDC.mint) : undefined;
-  const devUsdcWeightFraction =
-    devUsdcAsset && dtr.onChain!.totalTargetWeightBps > 0 ? devUsdcAsset.weightBps / dtr.onChain!.totalTargetWeightBps : 0;
+  // devUSDC is SSR.fun's universal purchasing/settlement currency -- it is
+  // NEVER required to be one of a Reserve's own underlying Reserve Assets.
+  // The wallet's full real devUSDC balance is what's available to spend on
+  // ANY purchasable Reserve, regardless of that Reserve's composition (see
+  // docs/project/DECISION_LOG.md's Buy architecture correction). What differs
+  // per-Reserve is whether Buy can genuinely EXECUTE right now -- see
+  // isGenuineDevUsdcBuySupported below.
   const devUsdcBalanceHuman = Number(devUsdcBalanceRaw) / 10 ** DEVUSDC.decimals;
-  const requiredDevUsdcForBuy = numBuyAmount * devUsdcWeightFraction;
-  // "Available" for the quick-select buttons: the largest total mint size
-  // affordable given the trader's real, chain-confirmed devUSDC balance --
-  // never a hardcoded fallback. When this Reserve has no devUSDC leg at all,
-  // the mint isn't gated by any devUSDC balance (see the composition
-  // breakdown below, which discloses this), so there is no genuine
-  // balance-derived quantity for the quick-select buttons to represent --
-  // buyPctUnavailableReason below disables them in that case instead of
-  // inventing a number.
-  const buyAvailable = isOnChain ? computeBuyAvailable(devUsdcBalanceHuman, devUsdcWeightFraction) : 0;
-  // Only the actual devUSDC-leg requirement is balance-gated -- a Reserve
-  // with no devUSDC leg at all has no real-balance constraint on this input.
-  const buyInsufficientBalance = isOnChain && devUsdcWeightFraction > 0 && requiredDevUsdcForBuy > devUsdcBalanceHuman;
+  // "Available" for the quick-select buttons: always the trader's real,
+  // chain-confirmed devUSDC balance -- never a hardcoded fallback, and never
+  // gated on this Reserve's asset composition.
+  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(devUsdcBalanceHuman) : 0;
+  const buyInsufficientBalance = isOnChain && numBuyAmount > devUsdcBalanceHuman;
+  // True when EVERY one of this Reserve's registered assets is devUSDC
+  // itself -- the only composition with a genuine, fabrication-free path in
+  // both directions today: mint_reserve_tokens_in_kind's own transfer_checked
+  // moves the user's real devUSDC straight into the vault on Buy, and
+  // redeem_reserve_tokens_in_kind deposits real devUSDC straight back into
+  // the user's wallet on Sell -- no server-side minting, wrapping, or
+  // fixed-price zap of any kind is involved for either direction. Any other
+  // composition (mockX/Y/Z, wrapped SOL) has no genuine devUSDC <-> Reserve-Asset
+  // conversion deployed on-chain: Buy is disabled for those rather than
+  // silently minting those legs for free, and Sell still uses the existing
+  // fixed-rate SOL settlement (unchanged in this pass -- see DEC-0054/0065).
+  const isPureDevUsdcReserve =
+    isOnChain && !!dtr.onChain && isReservePureDevUsdc(dtr.onChain.assets.map((a) => a.mint), DEVUSDC.mint);
+  const isGenuineDevUsdcBuySupported = isPureDevUsdcReserve;
   // Reason the 25/50/75/Max quick-select buttons can't be used right now, if
   // any -- distinct from buyProcessing (mid-transaction) so the UI can show
-  // an honest "why" instead of a plain disabled control.
+  // an honest "why" instead of a plain disabled control. Deliberately NOT
+  // gated on Reserve composition -- filling the input with a real
+  // balance-derived amount is always meaningful, even for a Reserve whose
+  // Buy execution is separately disabled below.
   const buyPctUnavailableReason: string | null = !wallet.connected
     ? null // handled by the existing !wallet.connected disabled check
-    : isOnChain && devUsdcWeightFraction === 0
-      ? "This Reserve has no devUSDC leg, so quick-select isn't balance-gated -- enter an amount directly."
-      : devUsdcBalanceStatus === "loading"
-        ? "Confirming your real devUSDC balance..."
-        : devUsdcBalanceStatus === "unavailable"
-          ? "Your devUSDC balance couldn't be read from DevNet right now."
-          : null;
+    : devUsdcBalanceStatus === "loading"
+      ? "Confirming your real devUSDC balance..."
+      : devUsdcBalanceStatus === "unavailable"
+        ? "Your devUSDC balance couldn't be read from DevNet right now."
+        : null;
 
   const setBuyPct = (pct: number) => {
-    if (wallet.connected && devUsdcBalanceStatus === "ready" && devUsdcWeightFraction > 0) {
+    if (wallet.connected && devUsdcBalanceStatus === "ready") {
       setBuyAmount((buyAvailable * pct).toString());
     }
   };
@@ -989,14 +1001,14 @@ export function DTRDetail() {
                       <p className="text-[11px] text-muted-foreground/80 -mt-2">{buyPctUnavailableReason}</p>
                     )}
 
-                    {isOnChain ? (
+                    {isOnChain && isGenuineDevUsdcBuySupported ? (
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Settlement asset
                             <Tooltip>
                               <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>devUSDC ("SSR Test USD") is the default DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.</TooltipContent>
+                              <TooltipContent>devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved. This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault.</TooltipContent>
                             </Tooltip>
                           </span>
                           <span className="font-merge-mono">devUSDC</span>
@@ -1013,25 +1025,25 @@ export function DTRDetail() {
                           <span className="text-muted-foreground">Slippage tolerance</span>
                           <span className="font-merge-mono">2%</span>
                         </div>
-                        <div className="pt-3 border-t border-border/50 space-y-1.5">
-                          <p className="text-xs font-semibold text-muted-foreground">Reserve composition for this mint</p>
+                      </div>
+                    ) : isOnChain ? (
+                      <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-destructive/30 mt-6">
+                        <p className="text-sm font-semibold text-destructive">Buy not available for this Reserve</p>
+                        <p className="text-xs text-muted-foreground">
+                          devUSDC is SSR.fun's purchasing currency, but converting it into this Reserve's other underlying assets isn't supported on-chain yet.
+                          Buy currently only works for a Reserve backed 100% by devUSDC.
+                        </p>
+                        <div className="pt-2 border-t border-border/50 space-y-1.5">
+                          <p className="text-xs font-semibold text-muted-foreground">This Reserve's actual composition</p>
                           {dtr.onChain!.assets.map((a) => {
-                            const isDevUsdc = a.mint === DEVUSDC.mint;
                             const fraction = dtr.onChain!.totalTargetWeightBps > 0 ? a.weightBps / dtr.onChain!.totalTargetWeightBps : 0;
                             return (
                               <div key={a.mint} className="flex justify-between text-xs">
-                                <span>{a.symbol} ({(fraction * 100).toFixed(0)}%)</span>
-                                <span className={isDevUsdc ? "text-primary" : "text-muted-foreground"}>
-                                  {isDevUsdc ? "from your wallet (real devUSDC)" : "DevNet test-asset faucet (no real cost)"}
-                                </span>
+                                <span>{a.symbol}</span>
+                                <span className="text-muted-foreground">{(fraction * 100).toFixed(0)}% target weight</span>
                               </div>
                             );
                           })}
-                          {devUsdcWeightFraction === 0 && (
-                            <p className="text-[11px] text-muted-foreground/80 pt-1">
-                              This Reserve has no devUSDC leg -- the current protocol has no single-currency "Buy with devUSDC" path without a swap, so this mint is fully funded via the DevNet test-asset faucet mechanism instead, at no real cost to you.
-                            </p>
-                          )}
                         </div>
                       </div>
                     ) : (
@@ -1090,7 +1102,13 @@ export function DTRDetail() {
                     <Button
                       className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20"
                       onClick={onBuyClick}
-                      disabled={!wallet.connected || buyProcessing || numBuyAmount <= 0 || buyInsufficientBalance}
+                      disabled={
+                        !wallet.connected ||
+                        buyProcessing ||
+                        numBuyAmount <= 0 ||
+                        buyInsufficientBalance ||
+                        (isOnChain && !isGenuineDevUsdcBuySupported)
+                      }
                     >
                       {txPhaseLabel(buyPhase) ? (
                         <div className="flex items-center gap-2">
@@ -1101,6 +1119,8 @@ export function DTRDetail() {
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
+                      ) : isOnChain && !isGenuineDevUsdcBuySupported ? (
+                        "Buy Not Yet Supported"
                       ) : buyInsufficientBalance ? (
                         "Insufficient devUSDC Balance"
                       ) : (
@@ -1180,23 +1200,30 @@ export function DTRDetail() {
                         ) : (
                           <p className="text-sm text-muted-foreground">Enter an amount to preview your in-kind redemption.</p>
                         )}
-                        <div className="pt-3 border-t border-border/50 space-y-1.5">
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              Current settlement (secondary, fixed-rate)
-                              <Tooltip>
-                                <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                                <TooltipContent>
-                                  This DevNet test environment currently settles Sell by redeeming in-kind (above) and then converting
-                                  that value to SOL at a FIXED DevNet test rate (${SOL_TEST_PRICE_USD.toFixed(2)}/SOL) -- not a real market
-                                  quote or an actual MOCX/asset-to-SOL swap. Canonical in-kind redemption without this conversion step is
-                                  planned for a future update (see the DevNet implementation plan).
-                                </TooltipContent>
-                              </Tooltip>
-                            </span>
-                            <span className="font-merge-mono">~{estSolOut.toFixed(5)} SOL @ fixed ${SOL_TEST_PRICE_USD.toFixed(2)}/SOL</span>
+                        {isPureDevUsdcReserve ? (
+                          <p className="text-[11px] text-muted-foreground/80 pt-1">
+                            This Reserve is backed 100% by devUSDC -- redemption deposits real devUSDC directly into your wallet. No SOL
+                            conversion, swap adapter, or fixed price is involved.
+                          </p>
+                        ) : (
+                          <div className="pt-3 border-t border-border/50 space-y-1.5">
+                            <div className="flex justify-between text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                Current settlement (secondary, fixed-rate)
+                                <Tooltip>
+                                  <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                                  <TooltipContent>
+                                    This DevNet test environment currently settles Sell by redeeming in-kind (above) and then converting
+                                    that value to SOL at a FIXED DevNet test rate (${SOL_TEST_PRICE_USD.toFixed(2)}/SOL) -- not a real market
+                                    quote or an actual MOCX/asset-to-SOL swap. A genuine devUSDC-denominated settlement for a mixed-asset
+                                    Reserve requires the same conversion layer Buy is currently missing (see DEC-0054/0065).
+                                  </TooltipContent>
+                                </Tooltip>
+                              </span>
+                              <span className="font-merge-mono">~{estSolOut.toFixed(5)} SOL @ fixed ${SOL_TEST_PRICE_USD.toFixed(2)}/SOL</span>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     ) : (
                     <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
