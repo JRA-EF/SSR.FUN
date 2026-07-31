@@ -1,11 +1,13 @@
-// Vercel Routing Middleware: the only gate in front of the internal project
-// dashboard. Scoped narrowly via config.matcher to /internal/status (the page)
-// and /api/dashboard/content (its data) -- every other route on the site is
-// completely untouched, unauthenticated, and unaffected by this file.
+// Vercel Routing Middleware: the only gate in front of internal-team-only
+// pages. Scoped narrowly via config.matcher to /internal/status + its data
+// endpoint, and /internal/feedback + its submit endpoint -- every other
+// route on the site is completely untouched, unauthenticated, and unaffected
+// by this file. Both pages share the exact same session cookie/password
+// (SSR_DASHBOARD_PASSWORD) -- one login covers both.
 //
-// Runs before the cache, so an unauthenticated request never reaches the
-// dashboard's static bundle or its data endpoint -- the login page below is
-// the only thing an unauthenticated visitor to /internal/status ever gets.
+// Runs before the cache, so an unauthenticated request never reaches either
+// page's static bundle or data endpoint -- the login page below is the only
+// thing an unauthenticated visitor to either path ever gets.
 
 import { next } from '@vercel/functions'
 import { verifySessionCookie, parseCookie, SESSION_COOKIE_NAME } from './lib/dashboard/session.js'
@@ -105,17 +107,25 @@ export default async function middleware(request: Request): Promise<Response> {
   const sessionValue = parseCookie(request.headers.get('cookie'), SESSION_COOKIE_NAME)
   const authenticated = await verifySessionCookie(sessionValue, password)
 
-  if (url.pathname === '/api/dashboard/content') {
+  if (url.pathname === '/api/dashboard/content' || url.pathname === '/api/internal/feedback-submit') {
     return authenticated ? next() : unauthorizedJson()
   }
 
-  // /internal/status (its public-facing path) and /internal-status.html (the
-  // literal built file the rewrite in vercel.json points at -- both must be
-  // gated, since the rewrite doesn't stop the underlying file from also
-  // being reachable directly at its own path).
+  // /internal/status + /internal/feedback (their public-facing paths) and
+  // /internal-status.html + /internal-feedback.html (the literal built files
+  // the rewrites in vercel.json point at -- both must be gated per page,
+  // since a rewrite doesn't stop the underlying file from also being
+  // reachable directly at its own path).
   return authenticated ? next() : loginPageResponse()
 }
 
 export const config = {
-  matcher: ['/internal/status', '/internal-status.html', '/api/dashboard/content'],
+  matcher: [
+    '/internal/status',
+    '/internal-status.html',
+    '/api/dashboard/content',
+    '/internal/feedback',
+    '/internal-feedback.html',
+    '/api/internal/feedback-submit',
+  ],
 }

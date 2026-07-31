@@ -13,6 +13,7 @@
   },
   "rewrites": [
     { "source": "/internal/status", "destination": "/internal-status.html" },
+    { "source": "/internal/feedback", "destination": "/internal-feedback.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

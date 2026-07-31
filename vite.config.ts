@@ -24,11 +24,12 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      // Second entry: the password-protected /internal/status dashboard.
-      // Built as its own page/bundle, entirely separate from the main app.
+      // Additional entries: password-protected internal-only pages, each
+      // built as its own page/bundle, entirely separate from the main app.
       input: {
         main: path.resolve(import.meta.dirname, './index.html'),
         internalStatus: path.resolve(import.meta.dirname, './internal-status.html'),
+        internalFeedback: path.resolve(import.meta.dirname, './internal-feedback.html'),
       },
     },
   },

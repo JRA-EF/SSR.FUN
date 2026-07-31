@@ -301,9 +301,12 @@ function DashboardBody(props: {
             </div>
           </div>
         </div>
-        <button type="button" className="dash-btn dash-btn-ghost" onClick={logout} disabled={loggingOut}>
-          {loggingOut ? 'Signing out…' : 'Log out'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <a className="dash-link dash-small" href="/internal/feedback">DevNet Feedback →</a>
+          <button type="button" className="dash-btn dash-btn-ghost" onClick={logout} disabled={loggingOut}>
+            {loggingOut ? 'Signing out…' : 'Log out'}
+          </button>
+        </div>
       </header>
 
       {/* Protocol Roadmap (detail) */}

@@ -1674,3 +1674,43 @@
   ]
 }
 ```
+
+## DEC-0068
+
+```json
+{
+  "id": "DEC-0068",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Add a new internal-team-only page, /internal/feedback, for quick DevNet bug/feedback intake (reporter, area, severity, description, repro steps, up to 3 screenshots). Submissions upload screenshots to a specific Google Drive folder and append one row per submission to a specific Google Sheet, via a Google Cloud service account. Gated by the exact same session cookie/password as /internal/status (SSR_DASHBOARD_PASSWORD) -- one login covers both pages, no new auth system.",
+  "context": "User request: an internal quick-feedback tool with screenshot upload that lands in Google Drive, built as a real section of the live site rather than a Google Form or a standalone Claude Artifact (both considered and set aside per the user's explicit choice). joao@enigma-fund.com's Google Drive was confirmed connected/accessible in this session (via the assistant's own Drive tools) and used to create the destination folder (`SSR.fun DevNet Feedback (Internal Team)`, id `1B1HMK1HHmnINSuQQ42iztgtTyU8-z5zv`) and Sheet (`SSR.fun DevNet Feedback Log`, id `1xacWW9Bu0CmcUEBhw1TQsibdLwn6gZrK2OAiebmWQag`) directly -- but that session-level Drive access cannot be used by the DEPLOYED app itself, which needs its own independent Google API credentials to write to Drive/Sheets from its own serverless functions at request time.",
+  "rationale": "Implemented as plain REST calls against the Drive v3 upload endpoint and Sheets v4 append endpoint, authenticated via a service-account JWT signed with Node's built-in `crypto` module (RS256) -- deliberately avoiding the full `googleapis` SDK (tens of MB) or even `google-auth-library`, matching this repo's existing minimal-dependency convention (see lib/dashboard/session.ts's own HMAC-only approach). The service account is scoped to `drive.file` (not full `drive`) -- it can only touch files explicitly shared with it (the one folder and one sheet created for this feature), never a user's whole Drive. Reusing SSR_DASHBOARD_PASSWORD/the existing session-cookie middleware for gating (rather than a new password or auth system) matches the 'don't over-engineer' principle -- this is exactly the same internal-team trust boundary /internal/status already established. The Sheet auto-writes its own header row on first use (checked via a read-before-write) so no manual spreadsheet setup is needed beyond sharing it with the service account.",
+  "alternativesConsidered": [
+    "A native Google Form + linked Sheet (rejected -- no Google Forms API is available to this assistant's tooling; would have required the user to build the form by hand)",
+    "A standalone Claude Artifact form (evaluated and initially proposed; rejected by the user in favor of a real section of the live site)",
+    "Full `googleapis` Node SDK (rejected -- large dependency for what plain fetch + Node's built-in crypto module already does)",
+    "A new, separate password/auth system for this page (rejected -- reusing the existing internal-dashboard session is simpler and matches the same trust boundary)"
+  ],
+  "impact": "New api/internal/_lib/googleAuth.ts (service-account JWT/token exchange), api/internal/_lib/googleDrive.ts (Drive upload + Sheets append with auto-header), api/internal/feedback-submit.ts (the gated endpoint). New internal-feedback.html + src/internal-feedback/{main.tsx,Feedback.tsx,feedback.css,constants.ts} (the gated page). vite.config.ts (new build entry), vercel.json (new rewrite), middleware.ts (matcher + gating extended to the new page/endpoint), .env.example (new required vars documented). Cross-links added between /internal/status and /internal/feedback. New required env vars: GOOGLE_SERVICE_ACCOUNT_KEY (secret, not yet set -- blocks this feature until the user completes GCP service-account setup and shares the folder/sheet with it), FEEDBACK_DRIVE_FOLDER_ID and FEEDBACK_SHEET_ID (both already set on Production+Preview by the assistant, pointing at the real folder/sheet created this pass).",
+  "affectedAreas": [
+    "api/internal/_lib/googleAuth.ts",
+    "api/internal/_lib/googleDrive.ts",
+    "api/internal/feedback-submit.ts",
+    "src/internal-feedback/",
+    "internal-feedback.html",
+    "vite.config.ts",
+    "vercel.json",
+    "middleware.ts",
+    ".env.example",
+    "src/internal-status/Dashboard.tsx"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b, vite build, oxlint all clean (new internalFeedback build entry confirmed in dist/ output)",
+    "Google Drive folder/sheet genuinely created this session via the assistant's connected Drive access: folder id 1B1HMK1HHmnINSuQQ42iztgtTyU8-z5zv, sheet id 1xacWW9Bu0CmcUEBhw1TQsibdLwn6gZrK2OAiebmWQag, both owned by joao@enigma-fund.com",
+    "FEEDBACK_DRIVE_FOLDER_ID/FEEDBACK_SHEET_ID confirmed added to Vercel (Production + Preview) via `vercel env add`",
+    "No live end-to-end submission test performed -- GOOGLE_SERVICE_ACCOUNT_KEY is not yet configured (pending the user's GCP setup) and the destination folder/sheet have not yet been shared with a service account, so a real Drive write cannot succeed yet; the endpoint fails closed with an honest 'not configured' error in the meantime, never a fabricated success"
+  ]
+}
+```
