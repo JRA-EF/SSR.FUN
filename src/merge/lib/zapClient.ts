@@ -138,7 +138,13 @@ async function signSubmitAndConfirm(
   onProgress?.({ phase: "awaiting-wallet" });
   const signed = await wallet.signTransaction(tx);
   // Exactly one submission attempt -- never retried, automatically or otherwise.
-  const signature = await connection.sendRawTransaction(signed.serialize());
+  // skipPreflight: true -- see createReserveClient.ts's signAndSend for why
+  // (a live-confirmed false-negative: preflight simulation can run against a
+  // different RPC node than the one that served getLatestBlockhash and
+  // reject a blockhash that node simply hasn't seen yet, even though the
+  // network itself would accept it). confirmSignatureBounded below is
+  // already this function's sole source of truth for the real outcome.
+  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
   onProgress?.({ phase: "submitted", signature });
   const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;

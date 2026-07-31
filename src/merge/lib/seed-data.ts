@@ -37,19 +37,3 @@ function hashSeed(str: string): number {
   return h >>> 0;
 }
 
-/** Predefined category suggestions for the Create form, plus any custom categories already in use across the catalog. */
-export const CATEGORY_SUGGESTIONS = [
-  "Blue Chip",
-  "DeFi",
-  "Meme",
-  "Infrastructure",
-  "Gaming",
-  "Strategic",
-  "Stablecoin",
-  "AI",
-  "DePIN",
-  "RWA",
-  "NFT",
-  "Layer 2",
-  "Custom",
-];

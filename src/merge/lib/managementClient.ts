@@ -27,7 +27,8 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, t
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   const signed = await wallet.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize());
+  // skipPreflight -- see createReserveClient.ts's signAndSend for why.
+  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
   const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`);

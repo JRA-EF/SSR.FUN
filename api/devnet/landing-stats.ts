@@ -17,6 +17,7 @@ import {
   discoverAllReserves,
   fetchReserveTokenHolderCount,
   fetchReserve24hVolumeUsd,
+  isHiddenReserveAddress,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   DEVUSDC,
@@ -65,10 +66,11 @@ async function computeLandingStats(): Promise<LandingStats> {
   const candidateAssetMints = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => new PublicKey(m.address))];
 
   const { reserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints);
-  // Same rule as the frontend's mergeDiscoveredReserves: a Reserve with zero
-  // registered assets never reached genuine tradeable status and must never
-  // contribute to a real stat.
-  const displayable = reserves.filter((r) => r.assetCount !== 0);
+  // Same rules as the frontend's mergeDiscoveredReserves: a Reserve with zero
+  // registered assets never reached genuine tradeable status, and a Reserve
+  // in HIDDEN_RESERVE_ADDRESSES is a confirmed-abandoned Reserve excluded by
+  // exact address -- neither should ever contribute to a real stat.
+  const displayable = reserves.filter((r) => r.assetCount !== 0 && !isHiddenReserveAddress(r.reserve));
 
   const sinceUnixSec = Math.floor(Date.now() / 1000) - TWENTY_FOUR_HOURS_SEC;
   let holders = 0;

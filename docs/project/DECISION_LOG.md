@@ -1484,3 +1484,138 @@
   "evidence": ["tests/phase_hide_zero_asset_and_kpis.ts -- valueAssetLegsUsd and countHoldersFromParsedAccounts pure-logic coverage", "scripts/verify_landing_stats.ts -- live read-only sanity check, permanently added to the repo", "live run (2026-07-31): 22 holders, $1,121.43 24h volume, 17 Reserves counted, confirmed against a known real Buy transaction's decoded on-chain event"]
 }
 ```
+
+## DEC-0060
+
+```json
+{
+  "id": "DEC-0060",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Remove the hardcoded `: 100` fallback from DTRDetail.tsx's Buy quick-select (25/50/75%/Max) availability calculation. When a Reserve has a devUSDC leg (devUsdcWeightFraction > 0), Max is the trader's real devUSDC balance divided by that fraction (unchanged, already correct). When a Reserve has NO devUSDC leg at all, there is no genuine balance-derived quantity for the buttons to represent, so they are disabled outright (with an honest reason shown) instead of falling back to any number. Extracted the calculation into a new pure `computeBuyAvailable` (src/merge/lib/calculations.ts) for direct test coverage. Also added an explicit devUsdcBalanceStatus ('loading'/'ready'/'unavailable') so the buttons are disabled until the real balance read has resolved, distinguishing that from mid-transaction disabling.",
+  "context": "Live testing reported: wallet held ~750 devUSDC, 25% quick-select filled ~25 devUSDC, Max filled exactly 100 devUSDC -- unrelated to the real balance. Traced to `buyAvailable = devUsdcWeightFraction > 0 ? devUsdcBalanceHuman / devUsdcWeightFraction : 100` in DTRDetail.tsx: the Reserve being tested had devUsdcWeightFraction === 0 (no devUSDC leg), hitting the literal `100` fallback, which was designed as a placeholder 'not balance-constrained' default but reads to a trader as if their wallet were being (incorrectly) read as holding only 100 devUSDC.",
+  "rationale": "The corrective-pass mandate is explicit: percentage controls must derive from the genuine devUSDC balance with no hardcoded cap, and must be disabled (not fake-populated) when the balance is unconfirmed or the calculation doesn't apply. Disabling is the only non-fabricating option for the zero-devUSDC-leg case, since that Buy genuinely draws $0 of the trader's real devUSDC (the non-devUSDC legs are DevNet-test-asset-faucet-funded, already disclosed in the composition breakdown directly below the buttons).",
+  "alternativesConsidered": [
+    "Pick a different but still-arbitrary default number instead of 100 (rejected -- exactly the same fabrication, just a different magnitude)",
+    "Derive a number from the faucet-funded legs' own notional value (rejected -- those aren't the trader's own balance, and presenting them as such would misrepresent whose funds are being spent)"
+  ],
+  "impact": "src/merge/pages/DTRDetail.tsx (buyAvailable, buyPctUnavailableReason, devUsdcBalanceStatus, the quick-select buttons' disabled/title props, the balance display row). src/merge/lib/calculations.ts (new computeBuyAvailable).",
+  "affectedAreas": ["src/merge/pages/DTRDetail.tsx", "src/merge/lib/calculations.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_buy_chart_category_deploy_pass.ts -- computeBuyAvailable coverage including the exact reported 750-devUSDC/no-devUSDC-leg scenario", "tsc -b, vite build, oxlint all clean"]
+}
+```
+
+## DEC-0061
+
+```json
+{
+  "id": "DEC-0061",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Wire the already-existing but never-called `appendPricePoint`/trade-log machinery (src/merge/lib/calculations.ts) into a new store action `recordConfirmedTrade`, called immediately after a Buy or Sell this wallet itself confirms (both the direct-success and ambiguous-then-reconciled paths, in DTRDetail.tsx). Do NOT hook it into the routine background discovery poll or into ManageDTR's composition-management refresh (both also call mergeOnChainReserve, which recomputes nav/aum but must never itself log a 'trade').",
+  "context": "Live testing reported that a successful Buy didn't visibly move the chart, and that AUM/NAV appeared unchanged. Tracing the code found AUM/NAV/vault-balance refresh was already fully genuine and correct (mergeOnChainIntoDTR recomputes them from live vault balances on every refresh) -- the actual gap was that `priceHistory` and `trades` were never appended to at all; `mergeDiscoveredReserves` only ever preserved-or-replaced a Reserve's single seed point, so every real Reserve's chart was permanently flatlined at its creation-time point.",
+  "rationale": "Scoping the append to the trading wallet's own confirmed transaction (rather than the shared background poll) avoids two failure modes: (1) polluting every Reserve's history with a new point every ~15s regardless of whether anything happened (which would still just be a flat line, since NAV genuinely doesn't move between trades, while blowing through MAX_PRICE_POINTS much faster), and (2) accidentally logging a 'trade' for non-trade actions like ManageDTR's fund/rebalance/wind-down flows, which also call mergeOnChainReserve to refresh vault-balance display. The appended price point uses the DTR's own already-refreshed `nav` (read from the freshest store state at the moment the action runs, after refreshRealReserveNow has already completed) -- so a Reserve whose NAV genuinely, correctly stays $1.00 under proportional backing logs an honest unchanged point, never a synthesized movement.",
+  "alternativesConsidered": [
+    "Append a price point on every RealReserveSync background poll tick (rejected -- would flatline-spam history and risks exceeding MAX_PRICE_POINTS from routine polling alone, unrelated to actual trades)",
+    "Backfill full historical price/trade data from on-chain event history for every viewer, not just the trader (a real, larger indexer-completeness improvement -- deliberately out of scope for this pass; flagged as a legitimate follow-up, not built as a partial/fragile version here)"
+  ],
+  "impact": "src/merge/store/useAppStore.ts (new recordConfirmedTrade action). src/merge/pages/DTRDetail.tsx (calls it from handleBuy/reconcileBuy/handleSell/reconcileSell, using the exact real spent/redeemed amount -- the balance delta itself when reconciling an ambiguous confirmation, the literal signed amount on the direct-success path).",
+  "affectedAreas": ["src/merge/store/useAppStore.ts", "src/merge/pages/DTRDetail.tsx"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_buy_chart_category_deploy_pass.ts -- appendPricePoint chronological/monotonic/truthful-flat-NAV coverage", "tsc -b, vite build, oxlint all clean"]
+}
+```
+
+## DEC-0062
+
+```json
+{
+  "id": "DEC-0062",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Add a canonical, shared Reserve category list (`RESERVE_CATEGORIES`, 15 categories per the corrective-pass spec: DeFi, Layer 1, Layer 2, AI, DePIN, Gaming, Meme, RWA, Stablecoins, Infrastructure, Privacy, Social, Ecosystem, Index, Custom) to src/merge/lib/types.ts, and a `normalizeReserveCategory` helper that displays a missing/empty category as an honest 'Uncategorized' label while passing any other value (canonical or legacy) through completely unchanged. Replace CreateDTR.tsx's free-text category input + datalist with a structured `<select>` over this list. Discover.tsx's category filter now unions the canonical list with whatever legacy category strings are actually present in the data, so nothing already on-chain becomes unfilterable.",
+  "context": "Category support existed only as a free-form string with a loose datalist of suggestions and a naive exact-match Discover filter -- no canonical definition anywhere, and no dropdown as required by the corrective-pass spec.",
+  "rationale": "A Reserve's persisted `category` stays `string`, not the new literal union type, deliberately: existing on-chain Reserves may carry a legacy category (e.g. 'DevNet Fixture', predating this convention) that must display exactly as before, per the explicit 'do not infer or overwrite categories for existing Reserves without evidence' requirement -- coercing it into the canonical list would be exactly that kind of unevidenced overwrite.",
+  "alternativesConsidered": [
+    "Make DTR.category a strict literal union of the 15 canonical values (rejected -- would either break/coerce every legacy Reserve's real on-chain-derived category or require an unsafe cast at every read site)",
+    "Add a real shadcn Select component (no @radix-ui/react-select dependency currently exists in this repo; a plain native <select>, styled to match the existing Input aesthetic, avoids adding a new dependency for a single form field)"
+  ],
+  "impact": "src/merge/lib/types.ts (RESERVE_CATEGORIES, ReserveCategory, DEFAULT_RESERVE_CATEGORY, normalizeReserveCategory). src/merge/pages/CreateDTR.tsx (dropdown). src/merge/pages/Discover.tsx (filter). src/merge/pages/DTRDetail.tsx and src/merge/lib/reserveCardProps.ts (display via normalizeReserveCategory, the latter shared by Discover's grid and the landing page's Featured Reserves). Removed the now-unused CATEGORY_SUGGESTIONS from seed-data.ts.",
+  "affectedAreas": ["src/merge/lib/types.ts", "src/merge/pages/CreateDTR.tsx", "src/merge/pages/Discover.tsx", "src/merge/pages/DTRDetail.tsx", "src/merge/lib/reserveCardProps.ts", "src/merge/lib/seed-data.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_buy_chart_category_deploy_pass.ts -- RESERVE_CATEGORIES exact-list and normalizeReserveCategory coverage", "tsc -b, vite build, oxlint all clean"]
+}
+```
+
+## DEC-0063
+
+```json
+{
+  "id": "DEC-0063",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Fix a confirmed React stale-closure bug in CreateDTR.tsx that made every Create-Reserve failure misreport as a pre-submission '(setup)' failure regardless of which step actually ran, by having createReserveOnChain throw a new typed `CreateReserveStepError` (carrying the real step and the exact derived Reserve addresses for that attempt) instead of the caller inferring the step from React state inside an async catch block. Reconcile create-and-register failures against the EXACT derived Reserve PDA (a direct getAccountInfo/owner check, `reserveAccountExistsOnChain`) instead of a fuzzy ProtocolConfig.reserveCount before/after comparison. Submit every signed transaction with `skipPreflight: true` (createReserveClient.ts, zapClient.ts, managementClient.ts) since `confirmSignatureBounded`'s real signature-status polling is already each of these functions' sole source of truth for the actual outcome. Add a synchronous re-entrancy guard (submittingRef) against double-invocation, set `txInFlight` during Create-Reserve submission (previously never set, contradicting RealReserveSync's own documented deferral comment), and persist a deployment-in-progress marker (wallet + derived Reserve address) in localStorage so a reload mid-flight reconciles against real on-chain state on the next mount instead of presenting a blank form that invites a duplicate launch.",
+  "context": "Live testing reported: 'Deployment Failed (setup) -- Transaction simulation failed: Blockhash not found', yet the Reserve was created on-chain anyway, and retrying created a second Reserve with the same name/ticker. Tracing the code found two real, compounding bugs: (1) CreateDTR.tsx's catch block read the `createStep` React state variable to decide whether create-and-register had already succeeded -- but `setCreateStep(...)` never mutates the local binding inside the ALREADY-RUNNING async closure that called it (only a future render/invocation sees the new value), so `createStep` was always its value from before submission started, meaning every failure always displayed as '(setup)' and the 'already created on-chain, don't retry' branch could never actually fire; (2) `signAndSend`'s `sendRawTransaction` used default preflight, which can run its simulation against a DIFFERENT RPC node than the one that served `getLatestBlockhash` (an expected occurrence with any multi-node provider/proxy) -- that node not yet having seen the blockhash produces exactly a 'Blockhash not found' rejection even though the network itself, and possibly a concurrent/retried submission, would accept and had accepted it. A live discovery scan while investigating this pass also found the actual duplicate-Reserve pair this exact bug already produced: reserveId 19 ('ABC'/'123', status assetsInitializing, never seeded -- the abandoned attempt) and reserveId 20 ('ABC'/'123', status active -- the one that actually landed).",
+  "rationale": "Carrying `step` and the derived `addresses` directly on the thrown error sidesteps the stale-closure bug structurally rather than patching around it (e.g. with a ref mirroring the state) -- the error is the one artifact that's guaranteed to reflect the exact attempt that failed. Checking the SPECIFIC derived Reserve PDA (rather than the aggregate reserveCount) is strictly more precise: reserveCount can also move because of a concurrent Reserve creation by a completely different wallet, which would have produced a false 'may have succeeded' warning against a reserveCount-only heuristic. skipPreflight is justified because this codebase already treats confirmSignatureBounded's bounded signature-status polling, never preflight simulation, as authoritative for every outcome (confirmed/failed/expired/ambiguous) -- preflight was only ever an extra, sometimes-wrong gate in front of that.",
+  "alternativesConsidered": [
+    "Fix the stale closure with a ref mirroring createStep instead of an error-carried value (rejected -- more moving parts for the same guarantee; the error object is already the single, unambiguous source of truth for 'what step failed and against which addresses')",
+    "Implement full step-level resumption of a partially-completed Reserve (rejected for this pass -- a real v1.1-scope feature requiring re-deriving/replaying the exact prior instructions; the reconciliation-and-warn approach fully closes the 'silently duplicates' failure mode without that larger scope)",
+    "Leave preflight enabled and instead retry sendRawTransaction on a 'Blockhash not found' error specifically (rejected -- this app's stated policy is never to auto-resubmit a transaction, precisely because a resubmission of something that may have already landed is how a duplicate Reserve gets created in the first place)"
+  ],
+  "impact": "src/merge/lib/createReserveClient.ts (CreateReserveStepError, reserveAccountExistsOnChain, savePendingReserveDeploy/readPendingReserveDeploy/clearPendingReserveDeploy, skipPreflight in signAndSend, onAddressesResolved callback removing a redundant duplicate ProtocolConfig fetch). src/merge/pages/CreateDTR.tsx (submittingRef, recovering/mount-time reconciliation effect, rewritten catch-block reconciliation, txInFlight). src/merge/lib/zapClient.ts and src/merge/lib/managementClient.ts (skipPreflight, for the same reasoning).",
+  "affectedAreas": ["src/merge/lib/createReserveClient.ts", "src/merge/pages/CreateDTR.tsx", "src/merge/lib/zapClient.ts", "src/merge/lib/managementClient.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_buy_chart_category_deploy_pass.ts -- CreateReserveStepError step/address-carrying coverage, PendingReserveDeploy save/read/clear/staleness/wallet-mismatch coverage", "scripts/find_reserve_by_ticker.ts live run (2026-07-31) -- confirmed the exact duplicate 'ABC' Reserve pair (reserveId 19 abandoned, reserveId 20 active) this bug had already produced", "tsc -b, vite build, oxlint all clean"]
+}
+```
+
+## DEC-0064
+
+```json
+{
+  "id": "DEC-0064",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Hide the exact on-chain Reserve with ticker EGAYQQ (reserveId 18, address `GNAvLuTNmccXx5bSAVQeqPSncay7kBNjjHZFKFvKUbo2`, name 'ozeegay') from every user-facing surface via a new, small, explicit address-keyed registry (`HIDDEN_RESERVE_ADDRESSES` in packages/sdk/src/hiddenReserves.ts), applied at the same central points as DEC-0058's assetCount===0 filter (src/merge/lib/onChainReserve.ts's mergeDiscoveredReserves and api/devnet/landing-stats.ts's KPI aggregation).",
+  "context": "Live discovery (scripts/find_reserve_by_ticker.ts, adapted from scripts/verify_discovery.ts's ticker-matching pattern) confirmed the exact Reserve: status 'assetsInitializing', 1 registered asset (wrapped SOL) with a zero vault balance, reserveTokenSupplyRaw '0' -- an abandoned Create-a-Reserve attempt whose asset was registered but never seeded, so it never reached Active and holds zero real value. This Reserve does NOT match DEC-0058's assetCount===0 structural filter (it has 1 registered asset, not 0), so a new, separate exclusion was required.",
+  "rationale": "A structural filter generalizing to 'any non-Active, low-assetCount Reserve' was deliberately rejected: several OTHER Reserves discovered in the same live scan (reserveIds 6, 8, 14) are also genuinely mid-initialization ('assetsInitializing') and may be real, legitimately in-progress creations by other testers -- a broad structural filter risks hiding those too, which the corrective-pass spec explicitly forbids ('do not delete or hide any similarly named Reserve', generalized here to 'any similarly-shaped Reserve'). An explicit, address-verified registry entry, added only after confirming the exact address live, cannot make that mistake. Genuine on-chain closure was confirmed impossible for the same reason as DEC-0058: initiate_wind_down/close_reserve both require the Reserve's own manager signature with no admin override, initiate_wind_down additionally requires status == Active (never reached here), and no keypair available in this environment matches this Reserve's manager (6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen).",
+  "alternativesConsidered": [
+    "Generalize the exclusion to any Reserve with status !== 'active' (rejected -- would also hide reserveIds 6/8/14, which have no evidence of being abandoned rather than genuinely in-progress)",
+    "Attempt on-chain closure anyway (impossible -- no available signer, and no instruction path exists for a non-Active Reserve regardless of signer, same as DEC-0058)"
+  ],
+  "impact": "New packages/sdk/src/hiddenReserves.ts (HIDDEN_RESERVE_ADDRESSES, isHiddenReserveAddress), exported from packages/sdk/src/index.ts. src/merge/lib/onChainReserve.ts's mergeDiscoveredReserves and api/devnet/landing-stats.ts's displayable filter both now also exclude any hidden address. Zero on-chain transactions; the account itself is untouched and still exists exactly as before.",
+  "affectedAreas": ["packages/sdk/src/hiddenReserves.ts", "packages/sdk/src/index.ts", "src/merge/lib/onChainReserve.ts", "api/devnet/landing-stats.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["scripts/find_reserve_by_ticker.ts live run (2026-07-31): confirmed reserveId 18, address GNAvLuTNmccXx5bSAVQeqPSncay7kBNjjHZFKFvKUbo2, ticker EGAYQQ, name ozeegay, status assetsInitializing, assetCount 1, reserveTokenSupplyRaw 0", "tests/phase_buy_chart_category_deploy_pass.ts -- isHiddenReserveAddress and mergeDiscoveredReserves exclusion coverage, including a similarly-shaped-but-different-address Reserve NOT being excluded"]
+}
+```
+
+## DEC-0065
+
+```json
+{
+  "id": "DEC-0065",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Re-confirm DEC-0054 as still fully applicable and take no implementation action on it in this pass: Buy's non-devUSDC legs are still minted fresh by the DevNet swap authority rather than sourced from a real conversion, and Sell still always pays out SOL (from the swap authority's own balance) rather than devUSDC, for every Reserve regardless of composition -- including a 100%-devUSDC-backed Reserve, which under the current architecture still settles its Sell leg in SOL rather than returning the trader's devUSDC.",
+  "context": "This pass's corrective spec asked to investigate exactly this ('why does a 100%-devUSDC-backed Reserve redemption require a SOL settlement leg') and explicitly instructed: do not solve this solely by topping up the adapter, do not activate the unmerged/unapproved experimental/devnet-amm-swap branch, and stop and report if a genuine multi-asset conversion component remains incomplete. Re-reading packages/sdk/src/zapInstructions.ts confirmed the architecture is byte-for-byte unchanged since DEC-0054/DEC-0056: Sell is `redeem` (proportional, in-kind, correct) followed by an ALWAYS-applied fixed-price zap of the entitled amount into SOL, funded from the swap authority's own real SOL balance, with no code path that instead returns devUSDC directly even when devUSDC is the (or one of the) entitled asset(s).",
+  "rationale": "The two architecturally sound options remain exactly as DEC-0054 already framed them: (a) finish and wire in the deliberately-deferred, unmerged `ssr_devnet_amm` (DEC-0051) to provide a real devUSDC<->other-asset conversion, which is out of scope without separate explicit approval per this pass's own instructions, or (b) change the Sell instruction path itself so that any ALREADY-devUSDC-denominated entitlement (i.e., a Reserve's devUSDC-weighted leg) is returned to the trader as real devUSDC directly (a genuine `transfer_checked` from the vault, mirroring how Buy's devUSDC leg already works in reverse) instead of being converted to SOL at all -- leaving only genuinely non-devUSDC entitlements (mockX/Y/Z legs) needing any conversion mechanism, which for those specific test assets could plausibly stay faucet/swap-authority-funded exactly as Buy already does today. Option (b) is a real, scoped protocol/instruction change (new or modified Anchor instruction logic, security review of the vault-authority signing path, and a matching SDK/frontend update) -- implementing it without explicit sign-off would be exactly the kind of unauthorized architecture change this pass's instructions warn against.",
+  "alternativesConsidered": [
+    "Silently top up the swap authority's SOL balance and call the immediate symptom fixed (explicitly rejected by this pass's own instructions -- treats a monitoring/funding gap as if it were the architecture fix)",
+    "Activate ssr_devnet_amm now (explicitly rejected -- unapproved, unmerged, and a materially larger scope than this corrective pass)",
+    "Implement option (b) unilaterally in this pass (rejected -- a genuine on-chain instruction/security change belongs behind its own explicit decision, not folded into a UI/reconciliation corrective pass)"
+  ],
+  "impact": "No code changed as a result of this entry. Recorded so this pass's investigation (and its conclusion that nothing has changed since DEC-0054) is itself part of the durable record, per this repo's decision-logging convention.",
+  "affectedAreas": ["packages/sdk/src/zapInstructions.ts (read, not modified)", "docs/project/DECISION_LOG.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["packages/sdk/src/zapInstructions.ts re-read in full (2026-07-31): Sell's SOL-out leg is unconditional, sourced from the swap authority's real SOL balance, with no devUSDC-direct-return path", "git branch -a confirms experimental/devnet-amm-swap still exists, unmerged, untouched"]
+}
+```
+```

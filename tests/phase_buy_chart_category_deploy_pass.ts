@@ -1,0 +1,232 @@
+// Offline, pure-logic regression coverage for the 2026-07-31 corrective pass
+// covering: Buy percentage buttons using the genuine devUSDC balance (no
+// hardcoded 100-token cap), AUM/chart reconciliation (price-history
+// accumulation), Reserve categories, deployment idempotency (the
+// CreateReserveStepError-carried step/addresses design that replaced a real
+// React stale-closure bug), the deployment-in-progress persistence marker,
+// and the explicit hidden-Reserve registry (EGAYQQ). Matches this repo's
+// existing testing split -- pure logic covered here offline; live-DevNet
+// behavior covered separately by scripts/verify_*.ts and
+// scripts/find_reserve_by_ticker.ts. See docs/project/PROJECT_STATUS.md.
+import { expect } from "chai";
+import type { DTR, Trade } from "../src/merge/lib/types";
+import { computeBuyAvailable, appendPricePoint } from "../src/merge/lib/calculations";
+import { RESERVE_CATEGORIES, normalizeReserveCategory } from "../src/merge/lib/types";
+import { mergeDiscoveredReserves } from "../src/merge/lib/onChainReserve";
+import { isHiddenReserveAddress, HIDDEN_RESERVE_ADDRESSES } from "../packages/sdk/src";
+import { CreateReserveStepError, savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy } from "../src/merge/lib/createReserveClient";
+
+function makeDtr(id: string, opts: { assetCount?: number; status?: string; reserve?: string; priceHistory?: DTR["priceHistory"]; trades?: Trade[] } = {}): DTR {
+  const reserve = opts.reserve ?? id;
+  return {
+    id,
+    name: id,
+    ticker: id.toUpperCase(),
+    description: "",
+    category: "DevNet Test",
+    tags: [],
+    logoSeed: id,
+    dtrAddress: reserve,
+    managerAddress: "11111111111111111111111111111111",
+    delegates: [],
+    feeConfig: {
+      mintFeePct: 0.5,
+      tvlFeePct: 1,
+      managerBuyTaxPct: 0,
+      managerSellTaxPct: 0,
+      creatorFeeDestination: "11111111111111111111111111111111",
+      feeRecipients: [],
+    },
+    tokenPrice: 1,
+    nav: 1,
+    aum: 0,
+    liquidityUsdc: 0,
+    change24h: 0,
+    change7d: 0,
+    holders: 0,
+    composition: [],
+    unallocatedPct: 0,
+    isUserCreated: false,
+    priceHistory: opts.priceHistory ?? [{ t: Date.now(), price: 1 }],
+    trades: opts.trades ?? [],
+    onChain: {
+      programId: "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW",
+      reserveId: id,
+      reserve,
+      reserveTokenMint: "11111111111111111111111111111111",
+      mintAuthority: "11111111111111111111111111111111",
+      vaultAuthority: "11111111111111111111111111111111",
+      manager: "11111111111111111111111111111111",
+      assets: [],
+      status: opts.status ?? "active",
+      totalTargetWeightBps: 0,
+      reserveTokenSupplyRaw: "0",
+      vaultBalancesRaw: {},
+      assetCount: opts.assetCount,
+    },
+  };
+}
+
+describe("Buy quick-select availability (computeBuyAvailable)", () => {
+  it("derives Max from the real devUSDC balance divided by the devUSDC weight fraction", () => {
+    // 750 devUSDC balance, Reserve is 100% devUSDC-weighted -> Max is genuinely 750.
+    expect(computeBuyAvailable(750, 1)).to.equal(750);
+    // 70%-devUSDC-weighted Reserve: the trader can afford a larger total mint
+    // since only 70% of it draws from their real devUSDC balance.
+    expect(computeBuyAvailable(700, 0.7)).to.be.closeTo(1000, 1e-9);
+  });
+
+  it("never falls back to a hardcoded 100 when the Reserve has no devUSDC leg -- returns 0 (not balance-derived) instead", () => {
+    // This is the exact live-reported bug: a wallet holding ~750 devUSDC saw
+    // Max fill exactly 100 -- traced to a literal `: 100` fallback for
+    // devUsdcWeightFraction === 0. The fixed behavior must never produce 100
+    // regardless of the real balance; callers gate the quick-select buttons
+    // off entirely in this case (see DTRDetail.tsx's buyPctUnavailableReason)
+    // rather than deriving any number from balance.
+    expect(computeBuyAvailable(750, 0)).to.equal(0);
+    expect(computeBuyAvailable(0, 0)).to.equal(0);
+  });
+
+  it("is exactly proportional -- 25/50/75% of Max always equal 25/50/75% of the real balance-derived figure", () => {
+    const max = computeBuyAvailable(2000, 0.5);
+    expect(max * 0.25).to.be.closeTo(1000, 1e-9);
+    expect(max * 0.5).to.be.closeTo(2000, 1e-9);
+  });
+});
+
+describe("Chart/price-history accumulation (appendPricePoint)", () => {
+  it("appends a new chronological point rather than replacing the series", () => {
+    const start = [{ t: 1000, price: 1 }];
+    const next = appendPricePoint(start, 1, 2000);
+    expect(next).to.have.length(2);
+    expect(next[0]).to.deep.equal({ t: 1000, price: 1 });
+    expect(next[1]).to.deep.equal({ t: 2000, price: 1 });
+  });
+
+  it("logs a genuinely unchanged price truthfully (proportional-backing NAV staying $1.00 is not a bug)", () => {
+    // A Reserve backed 1:1 by devUSDC genuinely keeps NAV at $1.00 after a
+    // Buy -- appendPricePoint must record that real, unchanged value, not
+    // synthesize movement to make the chart animate.
+    const series = appendPricePoint(appendPricePoint([{ t: 1, price: 1 }], 1, 2), 1, 3);
+    expect(series.map((p) => p.price)).to.deep.equal([1, 1, 1]);
+  });
+
+  it("guarantees strictly increasing timestamps even for same-millisecond trades", () => {
+    const series = appendPricePoint([{ t: 5000, price: 1 }], 1.01, 5000);
+    expect(series[series.length - 1].t).to.be.greaterThan(5000);
+  });
+
+  it("never produces a non-chronological (reversed) series", () => {
+    let series = [{ t: 0, price: 1 }];
+    for (let i = 0; i < 20; i++) series = appendPricePoint(series, 1 + i * 0.001, Date.now());
+    for (let i = 1; i < series.length; i++) expect(series[i].t).to.be.greaterThan(series[i - 1].t);
+  });
+});
+
+describe("Reserve categories", () => {
+  it("exposes the exact 15 canonical categories from the corrective pass spec", () => {
+    expect([...RESERVE_CATEGORIES]).to.deep.equal([
+      "DeFi", "Layer 1", "Layer 2", "AI", "DePIN", "Gaming", "Meme", "RWA",
+      "Stablecoins", "Infrastructure", "Privacy", "Social", "Ecosystem", "Index", "Custom",
+    ]);
+  });
+
+  it("normalizes a missing/empty category to an honest 'Uncategorized' label", () => {
+    expect(normalizeReserveCategory(undefined)).to.equal("Uncategorized");
+    expect(normalizeReserveCategory(null)).to.equal("Uncategorized");
+    expect(normalizeReserveCategory("")).to.equal("Uncategorized");
+    expect(normalizeReserveCategory("   ")).to.equal("Uncategorized");
+  });
+
+  it("never overwrites an existing legacy/non-canonical category -- passes it through verbatim", () => {
+    expect(normalizeReserveCategory("DevNet Fixture")).to.equal("DevNet Fixture");
+    expect(normalizeReserveCategory("DeFi")).to.equal("DeFi");
+  });
+});
+
+describe("Hidden Reserve registry (EGAYQQ)", () => {
+  const EGAYQQ_ADDRESS = "GNAvLuTNmccXx5bSAVQeqPSncay7kBNjjHZFKFvKUbo2";
+
+  it("contains exactly the confirmed EGAYQQ Reserve address, verified live via scripts/find_reserve_by_ticker.ts", () => {
+    expect(isHiddenReserveAddress(EGAYQQ_ADDRESS)).to.equal(true);
+    expect(HIDDEN_RESERVE_ADDRESSES.size).to.equal(1);
+  });
+
+  it("does not hide a different Reserve merely for sharing a similar structural state (assetsInitializing, low assetCount)", () => {
+    expect(isHiddenReserveAddress("SomeOtherAssetsInitializingReserveAddress11111111")).to.equal(false);
+  });
+
+  it("mergeDiscoveredReserves excludes the hidden address even though its assetCount is nonzero (unlike the assetCount===0 filter)", () => {
+    const hidden = makeDtr("ozeegay", { assetCount: 1, status: "assetsInitializing", reserve: EGAYQQ_ADDRESS });
+    const good = makeDtr("good", { assetCount: 2 });
+    const merged = mergeDiscoveredReserves([], [hidden, good], true);
+    expect(merged.map((d) => d.id)).to.deep.equal(["good"]);
+  });
+
+  it("does not exclude a similarly-shaped Reserve at a DIFFERENT address", () => {
+    const notHidden = makeDtr("ozeegay-lookalike", { assetCount: 1, status: "assetsInitializing", reserve: "SomeOtherAssetsInitializingReserveAddress11111111" });
+    const merged = mergeDiscoveredReserves([], [notHidden], true);
+    expect(merged.map((d) => d.id)).to.deep.equal(["ozeegay-lookalike"]);
+  });
+});
+
+describe("Deployment reconciliation (CreateReserveStepError)", () => {
+  it("carries the exact failing step and derived addresses -- fixes a real React stale-closure bug", () => {
+    // The prior implementation read React's `createStep` state from inside
+    // an async function's catch block, which always saw the value from
+    // BEFORE the submission started (state updates never mutate a running
+    // closure's local binding) -- so every failure reported as "(setup)"
+    // regardless of which step actually failed, and the "already created
+    // on-chain, don't retry" branch could never trigger. Carrying `step` on
+    // the thrown error itself sidesteps the closure entirely.
+    const addr = { reserveId: 42n, reserve: "R" as never, reserveTokenMint: "M" as never, mintAuthority: "A" as never, vaultAuthority: "V" as never, protocolConfig: "P" as never };
+    const err = new CreateReserveStepError("Blockhash not found", "create-and-register", addr);
+    expect(err.step).to.equal("create-and-register");
+    expect(err.addresses).to.equal(addr);
+    expect(err.message).to.equal("Blockhash not found");
+  });
+});
+
+describe("Deployment-in-progress persistence (survives a reload mid-flight)", () => {
+  // ts-mocha runs under plain Node, which has no `localStorage` global --
+  // shim a minimal in-memory version for this test file only so the real
+  // save/read/clear round-trip logic (not just its try/catch fallback) gets
+  // genuine coverage.
+  before(() => {
+    const store = new Map<string, string>();
+    (global as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: () => null,
+      get length() {
+        return store.size;
+      },
+    } as Storage;
+  });
+
+  afterEach(() => clearPendingReserveDeploy());
+
+  it("round-trips a saved marker for the matching wallet", () => {
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() });
+    const read = readPendingReserveDeploy("WalletA");
+    expect(read?.reserve).to.equal("ReserveA");
+  });
+
+  it("never returns a marker for a different wallet", () => {
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() });
+    expect(readPendingReserveDeploy("WalletB")).to.equal(null);
+  });
+
+  it("treats a marker older than 10 minutes as abandoned, not a live in-flight deployment", () => {
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() - 11 * 60 * 1000 });
+    expect(readPendingReserveDeploy("WalletA")).to.equal(null);
+  });
+
+  it("clearPendingReserveDeploy removes it", () => {
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() });
+    clearPendingReserveDeploy();
+    expect(readPendingReserveDeploy("WalletA")).to.equal(null);
+  });
+});

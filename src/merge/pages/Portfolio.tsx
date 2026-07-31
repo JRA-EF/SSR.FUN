@@ -33,7 +33,13 @@ function PnlText({ value, pct, className = "" }: { value: number; pct?: number; 
 }
 
 export function Portfolio() {
-  const { wallet, holdings, dtrs } = useAppStore();
+  const { wallet, holdings, dtrs, chainDiscoveryStatus, txInFlight } = useAppStore();
+  // Distinct from "genuinely empty": a fresh mount whose first discovery
+  // pass hasn't resolved yet, an in-flight Buy/Sell/deployment, or a
+  // discovery pass that failed and is showing last-known state (see
+  // Discover.tsx's identical reasoning) all mean holdings.length === 0 is
+  // NOT yet a trustworthy "this wallet owns nothing" signal.
+  const holdingsMayBeStale = chainDiscoveryStatus === "loading" || chainDiscoveryStatus === "error" || txInFlight;
 
   const isConnected = wallet.connected;
 
@@ -187,7 +193,21 @@ export function Portfolio() {
       <div className="space-y-6 mb-8">
         <h2 className="text-2xl font-merge-display font-bold">Reserve Holdings</h2>
 
-        {holdings.length === 0 ? (
+        {holdings.length === 0 && holdingsMayBeStale ? (
+          <Card className="border-dashed border-border/60 bg-transparent">
+            <CardContent className="py-16 flex flex-col items-center justify-center text-center">
+              <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mb-4">
+                <Activity className="w-8 h-8 text-muted-foreground animate-pulse" />
+              </div>
+              <h3 className="text-xl font-semibold mb-2">Syncing holdings...</h3>
+              <p className="text-muted-foreground max-w-md mb-6">
+                {chainDiscoveryStatus === "error"
+                  ? "Solana DevNet couldn't be reached just now -- retrying. Your real holdings will appear as soon as the connection recovers."
+                  : "Reading your real Reserve Token balances from Solana DevNet -- this only takes a moment."}
+              </p>
+            </CardContent>
+          </Card>
+        ) : holdings.length === 0 ? (
           <Card className="border-dashed border-border/60 bg-transparent">
             <CardContent className="py-16 flex flex-col items-center justify-center text-center">
               <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mb-4">

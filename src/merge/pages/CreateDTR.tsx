@@ -1,10 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD, DEVUSDC, fetchProtocolConfig } from "@ssr/sdk";
+import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD, DEVUSDC } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
-import { createReserveOnChain, estimateCreateReserveCost, type CreateReserveStep, type CreateReserveCostEstimate } from "@/lib/createReserveClient";
+import {
+  createReserveOnChain,
+  estimateCreateReserveCost,
+  reserveAccountExistsOnChain,
+  savePendingReserveDeploy,
+  readPendingReserveDeploy,
+  clearPendingReserveDeploy,
+  CreateReserveStepError,
+  type CreateReserveStep,
+  type CreateReserveCostEstimate,
+} from "@/lib/createReserveClient";
 import { explorerUrl } from "@/lib/solana-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,8 +27,7 @@ import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Info, Rocket }
 import { useToast } from "@/hooks/use-toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
-import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR } from "@/lib/types";
-import { CATEGORY_SUGGESTIONS } from "@/lib/seed-data";
+import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR, RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY } from "@/lib/types";
 
 // Real, genuinely supported DevNet assets -- native SOL (wrapped internally
 // where the SPL-token protocol requires it -- see createReserveClient.ts),
@@ -57,7 +66,7 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 
 export function CreateDTR() {
   const [, setLocation] = useLocation();
-  const { wallet, registerRealReserve } = useAppStore();
+  const { wallet, registerRealReserve, syncRealHolding } = useAppStore();
   const { toast } = useToast();
   const { connection } = useConnection();
   const walletCtx = useWallet();
@@ -65,12 +74,21 @@ export function CreateDTR() {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createStep, setCreateStep] = useState<CreateReserveStep | null>(null);
+  // Synchronous, same-tick guard against a double-invocation of
+  // handleSubmitReal (e.g. a fast double-click before React has re-rendered
+  // the disabled Submit button) -- isSubmitting (React state) can't be
+  // trusted for this since it only takes effect after the next render.
+  const submittingRef = useRef(false);
+  // True while checking on-chain state for a deployment that was left
+  // in-flight by a page reload (see readPendingReserveDeploy) -- shown
+  // instead of a blank fresh form, which would invite a duplicate launch.
+  const [recovering, setRecovering] = useState(false);
 
   // Form State
   const [name, setName] = useState("");
   const [ticker, setTicker] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Custom");
+  const [category, setCategory] = useState<string>(DEFAULT_RESERVE_CATEGORY);
   
   const [assets, setAssets] = useState<CreateDTRAssetInput[]>([]);
   const [assetSearch, setAssetSearch] = useState("");
@@ -144,6 +162,54 @@ export function CreateDTR() {
     };
   }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection]);
 
+  // Recovers from a page reload that happened mid-deployment (see
+  // savePendingReserveDeploy/handleSubmitReal): reconciles the exact Reserve
+  // PDA this wallet's last attempt was building against real on-chain state
+  // BEFORE allowing a fresh submission -- "recovering, checking on-chain
+  // state" instead of a blank form that invites a duplicate launch.
+  useEffect(() => {
+    if (!wallet.connected || !wallet.address) return;
+    const pending = readPendingReserveDeploy(wallet.address);
+    if (!pending) return;
+    setRecovering(true);
+    const programId = new PublicKey(DEVNET_FIXTURES.programId);
+    reserveAccountExistsOnChain(connection, new PublicKey(pending.reserve), programId)
+      .then((exists) => {
+        clearPendingReserveDeploy();
+        if (exists) {
+          toast({
+            title: "Previous deployment recovered",
+            description: `Your last Reserve creation attempt ("${pending.name}") actually landed on-chain despite an earlier error. Check Discover for it before launching a new one -- launching again now would create a separate, duplicate Reserve.`,
+          });
+          setLocation("/discover");
+        } else {
+          toast({
+            title: "Previous deployment did not land",
+            description: `Your last attempt ("${pending.name}") left no on-chain Reserve -- safe to try again.`,
+          });
+        }
+      })
+      .catch(() => {
+        // Reconciliation read itself failed (RPC congestion) -- leave the
+        // marker in place; the next mount (or its own 10-minute staleness
+        // window) will retry rather than assuming either outcome.
+      })
+      .finally(() => setRecovering(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.connected, wallet.address, connection]);
+
+  if (recovering) {
+    return (
+      <div className="container mx-auto px-4 py-24 text-center">
+        <div className="max-w-md mx-auto space-y-4">
+          <Rocket className="w-16 h-16 text-primary mx-auto mb-4 animate-pulse" />
+          <h1 className="text-2xl font-merge-display font-bold">Recovering...</h1>
+          <p className="text-muted-foreground">Checking Solana DevNet for a Reserve creation left in progress before this page reloaded.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!wallet.connected) {
     return (
       <div className="container mx-auto px-4 py-24 text-center">
@@ -216,18 +282,13 @@ export function CreateDTR() {
       toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
       return;
     }
+    // Synchronous re-entrancy guard -- see submittingRef's declaration.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setIsSubmitting(true);
     setCreateStep("create-and-register");
-    // Read the Reserve count BEFORE submitting -- if the create step below
-    // throws with an ambiguous (confirmation-timeout-shaped) error, we
-    // re-read it afterward: an increase means the transaction actually
-    // landed on-chain despite the client not seeing confirmation, so the
-    // user must be told to verify/refresh rather than invited to retry and
-    // risk creating a second, duplicate Reserve.
-    const programIdForCheck = new PublicKey(DEVNET_FIXTURES.programId);
-    const reserveCountBefore = await fetchProtocolConfig(connection, programIdForCheck)
-      .then((pc) => pc?.reserveCount ?? null)
-      .catch(() => null);
+    const programId = new PublicKey(DEVNET_FIXTURES.programId);
+    useAppStore.getState().setTxInFlight(true);
     try {
       const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
       const realAssets = assets.map((a) => {
@@ -245,7 +306,22 @@ export function CreateDTR() {
         assets: realAssets,
         seedTotalUsd: parseFloat(initialSeedUsdc) || 10,
         onProgress: setCreateStep,
+        // Persisted immediately -- if the page reloads anywhere after this
+        // fires, the mount-time recovery effect above can reconcile THIS
+        // exact Reserve PDA against real on-chain state instead of the user
+        // seeing a blank form that invites a duplicate launch.
+        onAddressesResolved: (addresses) => {
+          savePendingReserveDeploy({
+            wallet: walletCtx.publicKey!.toBase58(),
+            reserve: addresses.reserve.toBase58(),
+            reserveId: addresses.reserveId.toString(),
+            name,
+            ticker: ticker.toUpperCase(),
+            startedAt: Date.now(),
+          });
+        },
       });
+      clearPendingReserveDeploy();
 
       const dtrId = `devnet-${result.reserveId}`;
       const onChain: OnChainReserveMeta = {
@@ -304,6 +380,14 @@ export function CreateDTR() {
         onChain,
       };
       registerRealReserve(newDtr);
+      // The creator receives the ENTIRE initial Reserve Token supply at seed
+      // time (mint_reserve_tokens_in_kind's seed path has no other
+      // recipient) -- register that real holding immediately instead of
+      // waiting for RealReserveSync's next background poll to discover it.
+      // This was the confirmed root cause of a freshly-deployed Reserve's
+      // balance being briefly (and misleadingly) absent from Portfolio right
+      // after a successful deployment.
+      syncRealHolding(dtrId, onChain.reserveTokenSupplyRaw, 1);
 
       toast({
         title: "Reserve deployed on Solana DevNet",
@@ -312,50 +396,76 @@ export function CreateDTR() {
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      const looksAmbiguous = msg.toLowerCase().includes("was not confirmed") || msg.toLowerCase().includes("timeout") || msg.toLowerCase().includes("block height exceeded");
 
-      if (createStep && createStep !== "create-and-register") {
+      if (e instanceof CreateReserveStepError && e.step !== "create-and-register") {
         // A failure in fund-seed-assets/seed means create-and-register
         // already succeeded -- the Reserve definitely exists on-chain, just
         // not fully seeded. Retrying handleSubmitReal from scratch would
         // create a SEPARATE new Reserve, not resume this one (full
         // step-level resumption is a documented, separate follow-up -- see
         // createReserveClient.ts). Say so plainly instead of inviting a
-        // blind retry.
+        // blind retry. The pending marker is cleared -- this outcome is
+        // already fully reconciled here, nothing left for a reload to check.
+        clearPendingReserveDeploy();
         toast({
           variant: "destructive",
-          title: `Deployment incomplete (${CREATE_STEP_LABELS[createStep]})`,
+          title: `Deployment incomplete (${CREATE_STEP_LABELS[e.step]})`,
           description: `${msg} -- the Reserve account was already created on-chain before this step. Check Discover for it before launching again; retrying this form creates a SEPARATE new Reserve, not a resume.`,
         });
-      } else {
-        let confirmedOnChainDespiteError = false;
-        if (looksAmbiguous && reserveCountBefore !== null) {
-          const reserveCountAfter = await fetchProtocolConfig(connection, programIdForCheck)
-            .then((pc) => pc?.reserveCount ?? null)
-            .catch(() => null);
-          confirmedOnChainDespiteError = reserveCountAfter !== null && reserveCountAfter > reserveCountBefore;
-        }
-
-        if (confirmedOnChainDespiteError) {
+      } else if (e instanceof CreateReserveStepError && e.addresses) {
+        // create-and-register itself threw. Reconcile against the EXACT
+        // Reserve PDA this attempt targeted (not a fuzzy reserveCount
+        // comparison, which a concurrent Reserve creation by a different
+        // wallet could also move) -- this is precisely the live-observed
+        // "Blockhash not found" case where the Reserve was actually created
+        // on-chain despite the displayed failure.
+        const exists = await reserveAccountExistsOnChain(connection, e.addresses.reserve, programId).catch(() => null);
+        if (exists) {
+          clearPendingReserveDeploy();
           toast({
             title: "Submission status unclear -- do not retry yet",
             description:
-              "The wallet confirmation timed out, but the Reserve count on-chain increased -- this may have actually succeeded. Check Discover for a new Reserve before launching again to avoid creating a duplicate.",
+              "The wallet reported a failure, but this Reserve now exists on-chain -- it may have actually succeeded. Check Discover for it before launching again to avoid creating a duplicate.",
+          });
+        } else if (exists === null) {
+          // Reconciliation read itself failed (still congested) -- leave the
+          // pending marker in place; a reload or the next attempt's own
+          // mount-time recovery check will retry the reconciliation.
+          toast({
+            variant: "destructive",
+            title: "Deployment status unclear",
+            description: `${msg} -- could not verify on-chain state right now (DevNet RPC congestion). Do not retry until you've confirmed via Discover or Explorer whether this Reserve was created.`,
           });
         } else {
+          clearPendingReserveDeploy();
           const isRateLimited = msg.includes("429") || msg.toLowerCase().includes("too many requests");
           toast({
             variant: "destructive",
-            title: `Deployment Failed (${createStep ? CREATE_STEP_LABELS[createStep] : "setup"})`,
+            title: `Deployment Failed (${CREATE_STEP_LABELS["create-and-register"]})`,
             description: isRateLimited
-              ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted. Please retry shortly."
-              : msg || "The DevNet Reserve creation failed.",
+              ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted -- safe to retry shortly."
+              : `${msg} -- confirmed nothing was created on-chain. Safe to retry.`,
           });
         }
+      } else {
+        // Threw before any Reserve addresses were even derived (e.g. a
+        // wallet/connection error) -- nothing could possibly have been
+        // submitted.
+        clearPendingReserveDeploy();
+        const isRateLimited = msg.includes("429") || msg.toLowerCase().includes("too many requests");
+        toast({
+          variant: "destructive",
+          title: "Deployment Failed (setup)",
+          description: isRateLimited
+            ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted. Please retry shortly."
+            : msg || "The DevNet Reserve creation failed.",
+        });
       }
     } finally {
       setIsSubmitting(false);
       setCreateStep(null);
+      submittingRef.current = false;
+      useAppStore.getState().setTxInFlight(false);
     }
   };
 
@@ -438,19 +548,17 @@ export function CreateDTR() {
               
               <div className="space-y-2">
                 <Label htmlFor="category">Category</Label>
-                <Input
+                <select
                   id="category"
-                  list="category-suggestions"
-                  placeholder="e.g. DeFi, or name your own"
+                  className="flex h-10 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                />
-                <datalist id="category-suggestions">
-                  {CATEGORY_SUGGESTIONS.map((c) => (
-                    <option key={c} value={c} />
+                >
+                  {RESERVE_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
                   ))}
-                </datalist>
-                <p className="text-xs text-muted-foreground">Pick a suggestion or type your own category name.</p>
+                </select>
+                <p className="text-xs text-muted-foreground">Choose the category that best fits this Reserve's strategy or focus.</p>
               </div>
 
               <div className="space-y-2">

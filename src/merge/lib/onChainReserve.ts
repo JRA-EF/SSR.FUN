@@ -22,6 +22,7 @@ import {
   parseReserveMetadataUri,
   findMintAuthority,
   findVaultAuthority,
+  isHiddenReserveAddress,
   type FixtureReserve,
 } from "@ssr/sdk";
 
@@ -375,7 +376,16 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
   // that only keeps entries when `fullyVerified` is false). `assetCount` is
   // only ever `0` for a genuinely-empty on-chain Reserve -- `undefined`
   // (the 2 hardcoded Gate-9-fixture path) never matches this filter.
-  const discovered = rawDiscovered.filter((d) => d.onChain?.assetCount !== 0);
+  //
+  // Also excludes any address in HIDDEN_RESERVE_ADDRESSES (packages/sdk) --
+  // a small, explicit, address-verified registry for a specific abandoned
+  // Reserve that doesn't share the assetCount===0 structural signature above
+  // (e.g. it registered an asset but was never seeded) but is equally never
+  // genuinely tradeable and equally impossible to close on-chain right now.
+  // See that file for the exact reasoning per entry.
+  const discovered = rawDiscovered.filter(
+    (d) => d.onChain?.assetCount !== 0 && !(d.onChain && isHiddenReserveAddress(d.onChain.reserve)),
+  );
   const byAddress = new Map(existingDtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
   const merged = discovered.map((fresh) => {
     const existing = fresh.onChain ? byAddress.get(fresh.onChain.reserve) : undefined;

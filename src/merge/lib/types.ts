@@ -88,6 +88,49 @@ export interface SimulatedOrderBook {
   midPrice: number;
 }
 
+/**
+ * Canonical, structured Reserve category list (see CreateDTR.tsx's category
+ * dropdown, Discover.tsx's filter, and DTRDetail.tsx's category badge -- all
+ * three read from this single shared definition rather than each keeping
+ * their own). A Reserve's persisted `category` stays a plain `string`, not
+ * this literal union, because existing on-chain Reserves may carry a legacy
+ * or missing category value (e.g. "DevNet Fixture", pre-dating this list) --
+ * those are displayed exactly as-is, never coerced or overwritten into one
+ * of these values without evidence. See normalizeReserveCategory below for
+ * the one place "missing" is turned into an honest, disclosed fallback.
+ */
+export const RESERVE_CATEGORIES = [
+  "DeFi",
+  "Layer 1",
+  "Layer 2",
+  "AI",
+  "DePIN",
+  "Gaming",
+  "Meme",
+  "RWA",
+  "Stablecoins",
+  "Infrastructure",
+  "Privacy",
+  "Social",
+  "Ecosystem",
+  "Index",
+  "Custom",
+] as const;
+export type ReserveCategory = (typeof RESERVE_CATEGORIES)[number];
+export const DEFAULT_RESERVE_CATEGORY: ReserveCategory = "Custom";
+
+/**
+ * Normalizes a Reserve's category for display: an empty/missing value (a
+ * legacy Reserve created before category tracking existed) shows an honest
+ * "Uncategorized" label rather than a fabricated guess; any other value --
+ * canonical or not -- is returned completely unchanged, since a legacy
+ * non-canonical category (e.g. "DevNet Fixture") is real, evidenced data,
+ * not something this function is entitled to overwrite.
+ */
+export function normalizeReserveCategory(category: string | null | undefined): string {
+  return category && category.trim().length > 0 ? category : "Uncategorized";
+}
+
 export interface DTR {
   id: string;
   name: string;

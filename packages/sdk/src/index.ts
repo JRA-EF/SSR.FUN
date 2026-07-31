@@ -9,3 +9,4 @@ export * from "./zapPricing";
 export * from "./zapInstructions";
 export * from "./createReserveFlow";
 export * from "./managementInstructions";
+export * from "./hiddenReserves";

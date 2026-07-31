@@ -21,7 +21,7 @@ import { emptyPermissions } from "@/lib/types";
 import { pickLogoForId } from "@/lib/seed-data";
 import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS } from "@/lib/onChainReserve";
 import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
-import { applyRebalance, initialLiquidityForAum } from "@/lib/calculations";
+import { applyRebalance, appendPricePoint, initialLiquidityForAum } from "@/lib/calculations";
 
 /**
  * Migrates a persisted DTR's price history from the old shape (an object keyed by
@@ -113,6 +113,19 @@ interface AppState {
   setOnChainDelegates: (dtrId: string, delegates: OnChainDelegateMeta[], delegateCountOnChain: number) => void;
   /** Mirrors the connected wallet's REAL Reserve Token balance for an on-chain DTR into `holdings` -- see RealReserveSync.tsx. */
   syncRealHolding: (dtrId: string, tokenBalanceRaw: string, nav: number) => void;
+  /**
+   * Appends one genuine post-transaction data point after a Buy/Sell this
+   * wallet itself just confirmed -- called once, right after
+   * mergeOnChainReserve has already refreshed this DTR's nav/aum from a
+   * fresh on-chain read (see DTRDetail.tsx's refreshRealReserveNow). Uses
+   * the DTR's own already-updated `nav` as the point's price -- never a
+   * synthetic/animated value -- so a Reserve that's genuinely still $1.00
+   * NAV (fully proportional backing) correctly logs a new $1.00 point
+   * rather than an invented movement. Distinct from mergeOnChainReserve
+   * itself (also used by ManageDTR's non-trade composition actions, which
+   * must never log a trade).
+   */
+  recordConfirmedTrade: (dtrId: string, side: "buy" | "sell", tokenAmount: number, usdcAmount: number) => void;
 
   addDelegate: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   updateDelegatePermissions: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
@@ -210,6 +223,21 @@ export const useAppStore = create<AppState>()(
               : [...state.holdings, { dtrId, tokenBalance, avgPurchasePrice: nav }],
           };
         });
+      },
+
+      recordConfirmedTrade: (dtrId, side, tokenAmount, usdcAmount) => {
+        set((state) => ({
+          dtrs: state.dtrs.map((d) => {
+            if (d.id !== dtrId) return d;
+            const now = Date.now();
+            const trade: Trade = { id: `${dtrId}-${now}`, t: now, side, price: d.nav, tokenAmount, usdcAmount };
+            return {
+              ...d,
+              priceHistory: appendPricePoint(d.priceHistory, d.nav, now),
+              trades: [...d.trades, trade].slice(-500),
+            };
+          }),
+        }));
       },
 
       syncWalletFromChain: (payload) => {

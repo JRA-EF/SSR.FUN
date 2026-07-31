@@ -23,11 +23,12 @@ import {
   buildSimulatedOrderBook,
   calcTokensReceived,
   calcUsdcReceived,
+  computeBuyAvailable,
   formatUsdc,
   formatTokenAmount,
   sampleLinePoints,
 } from "@/lib/calculations";
-import type { ChartTimeframe } from "@/lib/types";
+import { normalizeReserveCategory, type ChartTimeframe } from "@/lib/types";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -71,7 +72,7 @@ function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, mergeOnChainReserve, syncRealHolding, syncWalletFromChain } = useAppStore();
+  const { wallet, holdings, dtrs, mergeOnChainReserve, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
   const dtr = dtrs.find((d) => d.id === (dtrId || ""));
   const { toast } = useToast();
   const { connection } = useConnection();
@@ -89,6 +90,11 @@ export function DTRDetail() {
   // balance read from chain, never simulated. See
   // buildBuyZapInstructionsDevUsdc / DEC "devUSDC default settlement asset".
   const [devUsdcBalanceRaw, setDevUsdcBalanceRaw] = useState<bigint>(0n);
+  // Tracks whether the real devUSDC balance read has actually resolved yet,
+  // so the percentage quick-select buttons can be disabled (and show a
+  // "Loading balance..."/"Balance unavailable" state) instead of computing
+  // off a default 0n that hasn't been confirmed against chain yet.
+  const [devUsdcBalanceStatus, setDevUsdcBalanceStatus] = useState<"loading" | "ready" | "unavailable">("loading");
 
   // RPC-resilience pass (see docs/project/PROJECT_STATUS.md): Buy/Sell each
   // track their own submission phase instead of one shared boolean, so the
@@ -164,6 +170,7 @@ export function DTRDetail() {
         syncWalletFromChain({ connected: true, connecting: false, address: owner.toBase58(), provider: wallet.provider, solLamports });
         const devUsdcRaw = await getCached(devKey, BALANCE_CACHE_TTL_MS, () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner)));
         setDevUsdcBalanceRaw(BigInt(devUsdcRaw));
+        setDevUsdcBalanceStatus("ready");
       }
     } catch {
       // Best-effort immediate refresh; RealReserveSync's regular poll will catch up regardless.
@@ -178,17 +185,24 @@ export function DTRDetail() {
   useEffect(() => {
     if (!walletCtx.publicKey) {
       setDevUsdcBalanceRaw(0n);
+      setDevUsdcBalanceStatus("loading");
       return;
     }
     const owner = walletCtx.publicKey;
     let cancelled = false;
+    setDevUsdcBalanceStatus("loading");
     getCached(tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58()), BALANCE_CACHE_TTL_MS, () =>
       withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner)),
     )
       .then((raw) => {
-        if (!cancelled) setDevUsdcBalanceRaw(BigInt(raw));
+        if (!cancelled) {
+          setDevUsdcBalanceRaw(BigInt(raw));
+          setDevUsdcBalanceStatus("ready");
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setDevUsdcBalanceStatus("unavailable");
+      });
     return () => {
       cancelled = true;
     };
@@ -297,17 +311,23 @@ export function DTRDetail() {
 
   /** One-shot reconciliation for an ambiguous ("unresolved") outcome: does the trader's REAL, freshly-read devUSDC balance actually show the spend this Buy would have made? If so, report success based on that observed on-chain state -- never based on an assumption. Used both automatically right after an AmbiguousConfirmationError and from the pending-verification banner's manual "Check status" button. */
   async function reconcileBuy(signature: string) {
-    if (!walletCtx.publicKey) return;
+    if (!walletCtx.publicKey || !dtr) return;
     const owner = walletCtx.publicKey;
     try {
       const key = tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58());
       invalidateCached(key);
       const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner));
       if (reconcileByBalanceChange(buyPreDevUsdcRawRef.current, BigInt(freshRaw), "decrease")) {
+        // The real spent amount is the observed balance delta itself -- the
+        // most authoritative figure available here (this whole function
+        // only runs because normal confirmation was inconclusive).
+        const spentRaw = buyPreDevUsdcRawRef.current - BigInt(freshRaw);
+        const spentUsdc = Number(spentRaw > 0n ? spentRaw : 0n) / 10 ** DEVUSDC.decimals;
         setDevUsdcBalanceRaw(BigInt(freshRaw));
         setBuyPhase("confirmed");
         setBuyPendingSignature(null);
         await refreshRealReserveNow();
+        recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
         setBuyAmount("");
         toast({
           title: "Buy confirmed on Solana DevNet",
@@ -370,6 +390,8 @@ export function DTRDetail() {
       });
       setBuyPhase("confirmed");
       await refreshRealReserveNow();
+      const spentUsdc = Number(devUsdcAmountRaw) / 10 ** DEVUSDC.decimals;
+      recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
       setBuyAmount("");
       const realLegs = (quote.legSources ?? []).filter((l) => l.source === "user-devusdc-balance").length;
       toast({
@@ -441,9 +463,15 @@ export function DTRDetail() {
       invalidateCached(key);
       const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner));
       if (reconcileByBalanceChange(sellPreRtRawRef.current, BigInt(freshRaw), "decrease")) {
+        // Real redeemed amount is the observed Reserve Token balance delta --
+        // the most authoritative figure available (normal confirmation was
+        // inconclusive, which is why this reconciliation path ran at all).
+        const redeemedRaw = sellPreRtRawRef.current - BigInt(freshRaw);
+        const redeemedTokens = Number(redeemedRaw > 0n ? redeemedRaw : 0n) / 1_000_000;
         setSellPhase("confirmed");
         setSellPendingSignature(null);
         await refreshRealReserveNow();
+        recordConfirmedTrade(dtr.id, "sell", redeemedTokens, redeemedTokens * (dtr.nav || 1));
         setSellAmount("");
         toast({
           title: "Sell confirmed on Solana DevNet",
@@ -498,6 +526,7 @@ export function DTRDetail() {
       });
       setSellPhase("confirmed");
       await refreshRealReserveNow();
+      recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
       setSellAmount("");
       toast({
         title: "Sell confirmed on Solana DevNet",
@@ -556,16 +585,32 @@ export function DTRDetail() {
   const devUsdcBalanceHuman = Number(devUsdcBalanceRaw) / 10 ** DEVUSDC.decimals;
   const requiredDevUsdcForBuy = numBuyAmount * devUsdcWeightFraction;
   // "Available" for the quick-select buttons: the largest total mint size
-  // affordable given the real devUSDC balance, or a sensible default when
-  // this Reserve has no devUSDC leg at all (not balance-constrained in that
-  // case -- see the composition breakdown below, which discloses this).
-  const buyAvailable = isOnChain ? (devUsdcWeightFraction > 0 ? devUsdcBalanceHuman / devUsdcWeightFraction : 100) : 0;
+  // affordable given the trader's real, chain-confirmed devUSDC balance --
+  // never a hardcoded fallback. When this Reserve has no devUSDC leg at all,
+  // the mint isn't gated by any devUSDC balance (see the composition
+  // breakdown below, which discloses this), so there is no genuine
+  // balance-derived quantity for the quick-select buttons to represent --
+  // buyPctUnavailableReason below disables them in that case instead of
+  // inventing a number.
+  const buyAvailable = isOnChain ? computeBuyAvailable(devUsdcBalanceHuman, devUsdcWeightFraction) : 0;
   // Only the actual devUSDC-leg requirement is balance-gated -- a Reserve
   // with no devUSDC leg at all has no real-balance constraint on this input.
-  const buyInsufficientBalance = isOnChain ? requiredDevUsdcForBuy > devUsdcBalanceHuman : numBuyAmount > buyAvailable;
+  const buyInsufficientBalance = isOnChain && devUsdcWeightFraction > 0 && requiredDevUsdcForBuy > devUsdcBalanceHuman;
+  // Reason the 25/50/75/Max quick-select buttons can't be used right now, if
+  // any -- distinct from buyProcessing (mid-transaction) so the UI can show
+  // an honest "why" instead of a plain disabled control.
+  const buyPctUnavailableReason: string | null = !wallet.connected
+    ? null // handled by the existing !wallet.connected disabled check
+    : isOnChain && devUsdcWeightFraction === 0
+      ? "This Reserve has no devUSDC leg, so quick-select isn't balance-gated -- enter an amount directly."
+      : devUsdcBalanceStatus === "loading"
+        ? "Confirming your real devUSDC balance..."
+        : devUsdcBalanceStatus === "unavailable"
+          ? "Your devUSDC balance couldn't be read from DevNet right now."
+          : null;
 
   const setBuyPct = (pct: number) => {
-    if (wallet.connected) {
+    if (wallet.connected && devUsdcBalanceStatus === "ready" && devUsdcWeightFraction > 0) {
       setBuyAmount((buyAvailable * pct).toString());
     }
   };
@@ -601,7 +646,7 @@ export function DTRDetail() {
                   <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mb-4">
-                  <Badge variant="outline" className="bg-background/50 border-border">{dtr.category}</Badge>
+                  <Badge variant="outline" className="bg-background/50 border-border">{normalizeReserveCategory(dtr.category)}</Badge>
                   <Badge variant={isOnChain ? "default" : "secondary"} className="uppercase text-[10px] tracking-wide">
                     {isOnChain ? "Live on Solana DevNet" : "Simulated Demo"}
                   </Badge>
@@ -893,7 +938,15 @@ export function DTRDetail() {
                     <div className="flex justify-between items-center text-sm mb-2">
                       <span className="text-muted-foreground">Your devUSDC balance</span>
                       <span className="font-merge-mono font-medium">
-                        {wallet.connected ? (isOnChain ? `${devUsdcBalanceHuman.toFixed(2)} devUSDC` : formatUsdc(buyAvailable)) : "—"}
+                        {!wallet.connected
+                          ? "—"
+                          : !isOnChain
+                            ? formatUsdc(buyAvailable)
+                            : devUsdcBalanceStatus === "loading"
+                              ? "Loading..."
+                              : devUsdcBalanceStatus === "unavailable"
+                                ? "Unavailable"
+                                : `${devUsdcBalanceHuman.toFixed(2)} devUSDC`}
                       </span>
                     </div>
 
@@ -925,12 +978,16 @@ export function DTRDetail() {
                           size="sm"
                           className="bg-muted/30 text-xs h-7 border-border/50"
                           onClick={() => setBuyPct(pct)}
-                          disabled={!wallet.connected || buyProcessing}
+                          disabled={!wallet.connected || buyProcessing || !!buyPctUnavailableReason}
+                          title={buyPctUnavailableReason ?? undefined}
                         >
                           {pct === 1 ? "Max" : `${pct * 100}%`}
                         </Button>
                       ))}
                     </div>
+                    {wallet.connected && buyPctUnavailableReason && (
+                      <p className="text-[11px] text-muted-foreground/80 -mt-2">{buyPctUnavailableReason}</p>
+                    )}
 
                     {isOnChain ? (
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">

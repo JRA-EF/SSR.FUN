@@ -214,7 +214,29 @@ export async function estimateCreateReserveCost(
   };
 }
 
-/** Signs, submits (once -- never auto-retried), and confirms via bounded signature-status polling instead of `connection.confirmTransaction`'s websocket subscription -- see zapClient.ts's signSubmitAndConfirm, which this mirrors. Never resubmits on an ambiguous result; throws AmbiguousConfirmationError (carrying the real signature) instead. */
+/**
+ * Signs, submits (once -- never auto-retried), and confirms via bounded
+ * signature-status polling instead of `connection.confirmTransaction`'s
+ * websocket subscription -- see zapClient.ts's signSubmitAndConfirm, which
+ * this mirrors. Never resubmits on an ambiguous result; throws
+ * AmbiguousConfirmationError (carrying the real signature) instead.
+ *
+ * Submits with `skipPreflight: true`. A live-observed failure ("Deployment
+ * Failed (setup) -- Transaction simulation failed: Blockhash not found",
+ * yet the Reserve was created on-chain anyway) traced to preflight
+ * simulation running against a DIFFERENT RPC node than the one that served
+ * `getLatestBlockhash` (expected with any multi-node provider/proxy, e.g.
+ * Helius) -- that node hadn't yet seen the blockhash, so preflight rejected
+ * a transaction that the cluster itself would have accepted, and the
+ * eventual retry (or the original request landing anyway via a different
+ * node) is exactly what produced a duplicate Reserve. `confirmSignatureBounded`
+ * below is already this function's sole source of truth for the real
+ * outcome (never preflight's simulated one), so preflight was only ever a
+ * client-side gate that could reject a transaction the network would have
+ * accepted -- removing it trades a same-node-consistency preflight check
+ * (redundant with the real confirmation this function already performs) for
+ * eliminating that specific, confirmed false-negative failure mode.
+ */
 async function signAndSend(connection: Connection, wallet: WalletContextState, ixs: TransactionInstruction[]): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
   const tx = new Transaction().add(...ixs);
@@ -222,12 +244,52 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, i
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   const signed = await wallet.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize());
+  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
   const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`);
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
   throw new AmbiguousConfirmationError(signature);
+}
+
+/**
+ * Reads the derived Reserve PDA directly to check whether it now exists
+ * on-chain, regardless of what the client believes happened -- the
+ * authoritative reconciliation check for the create-and-register step (see
+ * CreateReserveStepError below). A basic getAccountInfo/owner check, not a
+ * full Anchor deserialization -- existence + correct program ownership is
+ * all that's needed to distinguish "genuinely never submitted" from
+ * "landed on-chain despite a client-side error."
+ */
+export async function reserveAccountExistsOnChain(connection: Connection, reserveAddress: PublicKey, programId: PublicKey): Promise<boolean> {
+  const info = await connection.getAccountInfo(reserveAddress, "confirmed");
+  return info !== null && info.owner.equals(programId);
+}
+
+/**
+ * Thrown by createReserveOnChain on any failure from create-and-register
+ * onward, carrying the exact step that failed and (once known) the derived
+ * addresses for THIS specific attempt -- so the caller can reconcile
+ * against the real, specific Reserve PDA this attempt was building, rather
+ * than inferring from a fuzzier signal like ProtocolConfig.reserveCount
+ * (which a concurrent Reserve creation by a different wallet could also
+ * move). Carrying `step` directly on the error also sidesteps a real stale-
+ * closure bug this replaces: CreateDTR.tsx previously read the `createStep`
+ * React state var from inside an async function's catch block, which
+ * always saw the value from BEFORE the submission started (React state
+ * updates never mutate a running closure's local binding) -- so a failure
+ * at any step always reported as "(setup)" and never triggered the
+ * "already created on-chain, don't retry" warning.
+ */
+export class CreateReserveStepError extends Error {
+  readonly step: CreateReserveStep;
+  readonly addresses: NewReserveAddresses | null;
+  constructor(message: string, step: CreateReserveStep, addresses: NewReserveAddresses | null) {
+    super(message);
+    this.name = "CreateReserveStepError";
+    this.step = step;
+    this.addresses = addresses;
+  }
 }
 
 export async function createReserveOnChain(params: {
@@ -240,6 +302,8 @@ export async function createReserveOnChain(params: {
   assets: CreateReserveAssetInput[];
   seedTotalUsd: number;
   onProgress: (step: CreateReserveStep) => void;
+  /** Fired the instant the target Reserve's addresses are derived (one ProtocolConfig read) -- lets the caller track exactly which Reserve this attempt targets (for reconciliation) without a second, redundant ProtocolConfig fetch of its own. */
+  onAddressesResolved?: (addresses: NewReserveAddresses) => void;
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -248,20 +312,27 @@ export async function createReserveOnChain(params: {
 
   params.onProgress("create-and-register");
   const addresses: NewReserveAddresses = await deriveNewReserveAddresses(program, programId);
-  const createIx = await buildCreateReserveInstruction(program, addresses, wallet.publicKey, {
-    metadataUri: params.metadataUri,
-    mintFeeBps: params.mintFeeBps,
-    redemptionFeeBps: 0,
-    tvlFeeBps: params.tvlFeeBps,
-    managerFeeShareBps: 8000,
-    protocolFeeShareBps: 2000,
-    feeDestination: params.feeDestination,
-  });
+  params.onAddressesResolved?.(addresses);
   const assetAddresses: ReserveAssetAddresses[] = params.assets.map((a) => deriveReserveAssetAddresses(addresses.reserve, new PublicKey(a.mint), programId));
-  const registerIxs = await Promise.all(
-    params.assets.map((a, i) => buildInitializeReserveAssetInstruction(program, addresses, assetAddresses[i], wallet.publicKey!, a.weightBps)),
-  );
-  const createAndRegisterSig = await signAndSend(connection, wallet, [createIx, ...registerIxs]);
+
+  let createAndRegisterSig: string;
+  try {
+    const createIx = await buildCreateReserveInstruction(program, addresses, wallet.publicKey, {
+      metadataUri: params.metadataUri,
+      mintFeeBps: params.mintFeeBps,
+      redemptionFeeBps: 0,
+      tvlFeeBps: params.tvlFeeBps,
+      managerFeeShareBps: 8000,
+      protocolFeeShareBps: 2000,
+      feeDestination: params.feeDestination,
+    });
+    const registerIxs = await Promise.all(
+      params.assets.map((a, i) => buildInitializeReserveAssetInstruction(program, addresses, assetAddresses[i], wallet.publicKey!, a.weightBps)),
+    );
+    createAndRegisterSig = await signAndSend(connection, wallet, [createIx, ...registerIxs]);
+  } catch (e) {
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses);
+  }
 
   params.onProgress("fund-seed-assets");
   const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction));
@@ -270,43 +341,52 @@ export async function createReserveOnChain(params: {
   const wrapAssets = params.assets.map((a, i) => ({ asset: a, amount: seedAmounts[i] })).filter(({ asset }) => isWrappedSol(asset.mint));
 
   let fundSeedAssetsSig: string | null = null;
-  if (faucetAssets.length > 0) {
-    const mintRes = await fetch("/api/devnet/mint-test-assets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userPubkey: wallet.publicKey.toBase58(),
-        mints: faucetAssets.map(({ asset, amount }) => ({ mint: asset.mint, rawAmount: amount.toString() })),
-      }),
-    });
-    const mintJson = await mintRes.json();
-    if (!mintRes.ok) throw new Error(mintJson.error || "Failed to mint DevNet seed test assets.");
-    fundSeedAssetsSig = mintJson.signature;
-  }
-  if (wrapAssets.length > 0) {
-    // Real SOL, genuinely the creator's own -- no faucet involved. Wrap it
-    // themselves: idempotent-create their WSOL ATA, transfer lamports in,
-    // syncNative so the SPL balance reflects it.
-    const wsolMint = new PublicKey(WRAPPED_SOL_MINT);
-    const wsolAta = getAssociatedTokenAddressSync(wsolMint, wallet.publicKey);
-    const totalLamports = wrapAssets.reduce((sum, { amount }) => sum + amount, 0n);
-    const wrapIxs = [
-      createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, wsolAta, wallet.publicKey, wsolMint),
-      SystemProgram.transfer({ fromPubkey: wallet.publicKey, toPubkey: wsolAta, lamports: totalLamports }),
-      createSyncNativeInstruction(wsolAta),
-    ];
-    const wrapSig = await signAndSend(connection, wallet, wrapIxs);
-    // If both faucet assets AND a SOL leg were seeded, report the SOL-wrap
-    // signature only when there was no faucet call to report instead --
-    // both are recorded in the Explorer-links toast either way via onProgress
-    // callers, this return value just needs *a* representative signature.
-    fundSeedAssetsSig = fundSeedAssetsSig ?? wrapSig;
+  try {
+    if (faucetAssets.length > 0) {
+      const mintRes = await fetch("/api/devnet/mint-test-assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userPubkey: wallet.publicKey.toBase58(),
+          mints: faucetAssets.map(({ asset, amount }) => ({ mint: asset.mint, rawAmount: amount.toString() })),
+        }),
+      });
+      const mintJson = await mintRes.json();
+      if (!mintRes.ok) throw new Error(mintJson.error || "Failed to mint DevNet seed test assets.");
+      fundSeedAssetsSig = mintJson.signature;
+    }
+    if (wrapAssets.length > 0) {
+      // Real SOL, genuinely the creator's own -- no faucet involved. Wrap it
+      // themselves: idempotent-create their WSOL ATA, transfer lamports in,
+      // syncNative so the SPL balance reflects it.
+      const wsolMint = new PublicKey(WRAPPED_SOL_MINT);
+      const wsolAta = getAssociatedTokenAddressSync(wsolMint, wallet.publicKey);
+      const totalLamports = wrapAssets.reduce((sum, { amount }) => sum + amount, 0n);
+      const wrapIxs = [
+        createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, wsolAta, wallet.publicKey, wsolMint),
+        SystemProgram.transfer({ fromPubkey: wallet.publicKey, toPubkey: wsolAta, lamports: totalLamports }),
+        createSyncNativeInstruction(wsolAta),
+      ];
+      const wrapSig = await signAndSend(connection, wallet, wrapIxs);
+      // If both faucet assets AND a SOL leg were seeded, report the SOL-wrap
+      // signature only when there was no faucet call to report instead --
+      // both are recorded in the Explorer-links toast either way via onProgress
+      // callers, this return value just needs *a* representative signature.
+      fundSeedAssetsSig = fundSeedAssetsSig ?? wrapSig;
+    }
+  } catch (e) {
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses);
   }
 
   params.onProgress("seed");
-  const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
-  const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, seedAmounts, initialReserveTokens);
-  const seedSig = await signAndSend(connection, wallet, [seedIx]);
+  let seedSig: string;
+  try {
+    const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
+    const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, seedAmounts, initialReserveTokens);
+    seedSig = await signAndSend(connection, wallet, [seedIx]);
+  } catch (e) {
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
+  }
 
   params.onProgress("done");
 
@@ -325,4 +405,56 @@ export async function createReserveOnChain(params: {
     })),
     transactions: { createAndRegister: createAndRegisterSig, fundSeedAssets: fundSeedAssetsSig, seed: seedSig },
   };
+}
+
+// --- Deployment-in-progress persistence (survives a reload mid-flight) -----
+// Written the instant this attempt's Reserve addresses are known (right
+// after the one ProtocolConfig read), cleared on any terminal outcome
+// (success, or a definitive "nothing landed" failure) -- see CreateDTR.tsx's
+// mount-time recovery check. Deliberately just enough to run the same
+// reserveAccountExistsOnChain reconciliation check on reload; never used to
+// resume mid-flight signing (that would need re-deriving the exact same
+// instructions, which is out of scope here -- see the file header).
+const PENDING_DEPLOY_KEY = "ssr_pending_reserve_deploy_v1";
+
+export interface PendingReserveDeploy {
+  wallet: string;
+  reserve: string;
+  reserveId: string;
+  name: string;
+  ticker: string;
+  startedAt: number;
+}
+
+export function savePendingReserveDeploy(deploy: PendingReserveDeploy): void {
+  try {
+    localStorage.setItem(PENDING_DEPLOY_KEY, JSON.stringify(deploy));
+  } catch {
+    // Best-effort only -- localStorage being unavailable never blocks deployment itself.
+  }
+}
+
+export function readPendingReserveDeploy(walletAddress: string): PendingReserveDeploy | null {
+  try {
+    const raw = localStorage.getItem(PENDING_DEPLOY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingReserveDeploy;
+    if (parsed.wallet !== walletAddress) return null;
+    // Stale beyond any plausible confirmation window (10 min) -- rather than
+    // hold a false "recovering" state forever, treat it as abandoned; the
+    // reconciliation check itself (not this staleness window) is still what
+    // decides whether a Reserve actually exists.
+    if (Date.now() - parsed.startedAt > 10 * 60 * 1000) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingReserveDeploy(): void {
+  try {
+    localStorage.removeItem(PENDING_DEPLOY_KEY);
+  } catch {
+    // Best-effort.
+  }
 }

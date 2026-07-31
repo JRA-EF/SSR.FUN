@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Activity, SearchX } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
-import type { DTR } from "@/lib/types";
+import { RESERVE_CATEGORIES, normalizeReserveCategory, type DTR } from "@/lib/types";
 import { buildReserveCardProps } from "@/lib/reserveCardProps";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
@@ -57,18 +57,24 @@ export function Discover() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [sortBy, setSortBy] = useState<SortKey>("default");
 
-  const categories = useMemo(
-    () => Array.from(new Set(dtrs.map((d) => d.category))).sort((a, b) => a.localeCompare(b)),
-    [dtrs],
-  );
+  // Filter options: the full canonical list (so every structured category is
+  // always choosable, even with zero matching Reserves yet) plus any
+  // legacy/non-canonical category actually present in the data (e.g. "DevNet
+  // Fixture") so nothing already on-chain becomes unfilterable.
+  const categories = useMemo(() => {
+    const present = dtrs.map((d) => normalizeReserveCategory(d.category));
+    return Array.from(new Set([...RESERVE_CATEGORIES, ...present])).sort((a, b) => a.localeCompare(b));
+  }, [dtrs]);
 
-  const filteredDtrs = dtrs.filter(
-    (dtr) =>
-      (categoryFilter === "all" || dtr.category === categoryFilter) &&
+  const filteredDtrs = dtrs.filter((dtr) => {
+    const cat = normalizeReserveCategory(dtr.category);
+    return (
+      (categoryFilter === "all" || cat === categoryFilter) &&
       (dtr.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
         dtr.ticker.toLowerCase().includes(searchFilter.toLowerCase()) ||
-        dtr.category.toLowerCase().includes(searchFilter.toLowerCase())),
-  );
+        cat.toLowerCase().includes(searchFilter.toLowerCase()))
+    );
+  });
 
   const visibleDtrs = sortDtrs(filteredDtrs, sortBy);
 

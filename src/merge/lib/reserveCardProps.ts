@@ -3,7 +3,7 @@
 // code path instead of two independently-computed views of the same DTR, so
 // they can never drift back out of sync with each other.
 import { formatUsdc, buildLineSeries } from "./calculations";
-import type { DTR } from "./types";
+import { normalizeReserveCategory, type DTR } from "./types";
 
 export interface ReserveCardData {
   name: string;
@@ -38,7 +38,7 @@ export function buildReserveCardProps(dtr: DTR): ReserveCardData {
     description: dtr.description,
     avatarLabel: dtr.ticker.slice(0, 2),
     avatarImageUrl: dtr.logoUrl,
-    categoryLabel: dtr.category,
+    categoryLabel: normalizeReserveCategory(dtr.category),
     sourceBadge: dtr.onChain
       ? { label: "Live on Solana DevNet", tone: "onchain" }
       : { label: "Simulated Demo", tone: "simulated" },

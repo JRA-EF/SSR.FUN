@@ -87,6 +87,20 @@ export function calcUsdcReceived(
   return { grossAmount, fee, netAmount, newPrice, priceImpactPct };
 }
 
+/**
+ * The largest total devUSDC-denominated mint size the connected wallet can
+ * genuinely afford for a Buy, given its real devUSDC balance and this
+ * Reserve's devUSDC target-weight fraction (0 when the Reserve has no
+ * devUSDC leg at all, in which case there is no real balance constraint to
+ * derive a number from -- callers must not fall back to an arbitrary
+ * hardcoded figure in that case; see DTRDetail.tsx's buyPctUnavailableReason,
+ * which disables the quick-select buttons instead).
+ */
+export function computeBuyAvailable(devUsdcBalanceHuman: number, devUsdcWeightFraction: number): number {
+  if (devUsdcWeightFraction <= 0) return 0;
+  return devUsdcBalanceHuman / devUsdcWeightFraction;
+}
+
 /** Hard cap on stored points per Reserve so a long session can't grow the price history unbounded. */
 const MAX_PRICE_POINTS = 6000;
 
