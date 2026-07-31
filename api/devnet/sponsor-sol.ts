@@ -1,16 +1,22 @@
-// POST /api/devnet/sponsor-sol -- Phase B's tightly-limited DevNet SOL
-// onboarding grant, so an internal tester isn't solely dependent on the
-// public DevNet airdrop faucet (documented elsewhere as unreliable/rate-
-// limited) to pay network fees and account rent. See
+// POST /api/devnet/sponsor-sol -- Phase B's DevNet SOL onboarding grant, so
+// an internal tester isn't solely dependent on the public DevNet airdrop
+// faucet (documented elsewhere as unreliable/rate-limited) to pay network
+// fees and account rent. See
 // docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md "Phase B -- security
 // model" for the full design.
 //
-// This is intentionally a SMALL onboarding grant, not a Reserve-funding
-// mechanism -- enough for a handful of transaction fees / a small ATA rent,
-// not enough to seed a Reserve. Same eligibility shape as the devUSDC
-// faucet: a durable, live-checked on-chain SOL-balance ceiling, plus a
-// best-effort in-memory cooldown. No user wallet signature is required
-// (this only ever adds SOL to the requesting wallet).
+// Grants up to 1 SOL per wallet, at most once every 24 hours (2026-07-31
+// tuning -- previously a smaller 0.01 SOL / 60s-cooldown onboarding trickle).
+// Still not a Reserve-funding mechanism. Same eligibility shape as the
+// devUSDC faucet: a durable, live-checked on-chain SOL-balance ceiling
+// (the PRIMARY defense), plus a best-effort in-memory cooldown (SECONDARY --
+// see api/devnet/_lib/rateLimit.ts's own header: this resets on a cold
+// start/new serverless instance, so it alone cannot guarantee a true
+// exactly-once-per-24h limit if a wallet spends its grant and returns
+// within the same 24-hour window after a cold start -- the balance ceiling
+// is what actually bounds how much a single wallet can accumulate this way).
+// No user wallet signature is required (this only ever adds SOL to the
+// requesting wallet).
 //
 // The authority's own SOL balance is real and finite (shared with its
 // Buy/Sell-zap and other faucet duties -- see the plan doc's "Operational
@@ -25,9 +31,9 @@ import { resolveRpcUrl } from "./_lib/rpc";
 
 const RPC_URL = resolveRpcUrl();
 
-const GRANT_LAMPORTS = 10_000_000; // 0.01 SOL -- see the plan doc's decision table
-const BALANCE_CEILING_LAMPORTS = 30_000_000; // 0.03 SOL
-const COOLDOWN_MS = 60_000;
+const GRANT_LAMPORTS = 1_000_000_000; // 1 SOL max per grant
+const BALANCE_CEILING_LAMPORTS = 2_000_000_000; // 2 SOL -- a wallet already this well-funded doesn't need an onboarding grant
+const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours per wallet
 // The authority must keep enough of its own balance for its OTHER DevNet
 // duties (Buy/Sell zap co-signing, the devUSDC/test-asset faucets) -- this
 // endpoint refuses to drain it below a floor rather than spending the last
@@ -61,7 +67,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const cooldownKey = `sol:${userPubkey.toBase58()}`;
   const remainingMs = cooldownRemainingMs(cooldownKey, COOLDOWN_MS);
   if (remainingMs > 0) {
-    res.status(429).json({ error: `Please wait ${Math.ceil(remainingMs / 1000)}s before requesting a DevNet SOL grant again.`, retryAfterSeconds: Math.ceil(remainingMs / 1000) });
+    const retryAfterSeconds = Math.ceil(remainingMs / 1000);
+    const remainingHours = (remainingMs / (60 * 60 * 1000)).toFixed(1);
+    res.status(429).json({ error: `You've already claimed a DevNet SOL grant recently. Please wait ~${remainingHours}h before requesting another.`, retryAfterSeconds });
     return;
   }
 

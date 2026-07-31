@@ -182,8 +182,8 @@ export function DevnetOnboarding() {
             )}
             {solClaim.status === "failed" && <p className="text-xs text-destructive">{solClaim.error}</p>}
             <p className="text-[11px] text-muted-foreground">
-              DevNet SOL pays real network fees and account rent -- it is not the settlement asset for buying Reserve Tokens. Grants are
-              small and limited;{" "}
+              DevNet SOL pays real network fees and account rent -- it is not the settlement asset for buying Reserve Tokens. Grants up to 1
+              SOL, once per wallet every 24 hours;{" "}
               <a href={PUBLIC_FAUCET_URL} target="_blank" rel="noreferrer" className="underline">
                 use the public DevNet faucet
               </a>{" "}

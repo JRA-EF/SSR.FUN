@@ -1618,4 +1618,25 @@
   "evidence": ["packages/sdk/src/zapInstructions.ts re-read in full (2026-07-31): Sell's SOL-out leg is unconditional, sourced from the swap authority's real SOL balance, with no devUSDC-direct-return path", "git branch -a confirms experimental/devnet-amm-swap still exists, unmerged, untouched"]
 }
 ```
+
+## DEC-0066
+
+```json
+{
+  "id": "DEC-0066",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Increase api/devnet/sponsor-sol.ts's DevNet SOL onboarding grant from 0.01 SOL per claim (60-second cooldown, 0.03 SOL recipient ceiling) to 1 SOL per claim, at most once per wallet every 24 hours (2 SOL recipient ceiling). At the user's explicit request, funding the underlying authority wallet's real balance is being done manually by the user (a direct DevNet SOL transfer), not automated by this change.",
+  "context": "User asked to 'top up the SOL faucet and make sure it's working... it should airdrop 1 SOL max every 24hrs', clarified to mean this specific endpoint (not the separate, already-tracked concern of the swap-authority wallet's own low operational balance, which remains open -- see Risks).",
+  "rationale": "The endpoint's balance-ceiling check is the durable, on-chain-verified primary defense against abuse (per its existing design, unchanged in shape); the in-memory per-wallet cooldown is already documented elsewhere in this codebase (api/devnet/_lib/rateLimit.ts) as a best-effort SECONDARY control that resets on a serverless cold start -- raised to 24 hours here for the new grant size, with that caveat re-documented in this file's own header so it's not mistaken for a durable guarantee. The recipient ceiling was raised from 0.03 to 2 SOL (200x the old ceiling vs. 100x the old grant) so the larger grant isn't neutered by an unchanged tiny eligibility ceiling, while still refusing wallets that are already reasonably well-funded.",
+  "alternativesConsidered": [
+    "Add a durable, cross-invocation persistent store (e.g. a KV/Redis integration) for a cryptographically-exact 24h limit (rejected as over-engineering for a DevNet-only, zero-real-value test faucet already using the same best-effort pattern everywhere else in this codebase; flagged transparently instead of silently accepted)",
+    "Automate the authority wallet's own top-up via the public DevNet airdrop faucet (rejected per the user's explicit choice to fund it manually themselves)"
+  ],
+  "impact": "api/devnet/sponsor-sol.ts (GRANT_LAMPORTS, BALANCE_CEILING_LAMPORTS, COOLDOWN_MS, and the cooldown error message's time formatting). src/merge/components/DevnetOnboarding.tsx (copy updated from 'small and limited' to the actual '1 SOL, once per wallet every 24 hours' figures). AUTHORITY_MIN_RESERVE_LAMPORTS (0.05 SOL, the floor this endpoint won't drain the authority below) was left unchanged -- not part of what was asked -- though it is worth noting separately that it's low relative to previously-observed real Sell settlement costs (~3.75 SOL for one transaction, see the 2026-07-30 Helius pass); a broader review of the authority wallet's reserve strategy across all its duties is a distinct follow-up, not folded into this change.",
+  "affectedAreas": ["api/devnet/sponsor-sol.ts", "src/merge/components/DevnetOnboarding.tsx"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tsc -b, tsc -p api/devnet/tsconfig.json both clean", "live read (2026-07-31): authority wallet Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj balance confirmed at 0.23244962 SOL via a direct getBalance RPC call -- below the 1.05 SOL (grant + floor) this endpoint now requires to grant, consistent with the user's plan to fund it directly"]
+}
 ```
