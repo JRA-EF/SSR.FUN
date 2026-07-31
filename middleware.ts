@@ -1,9 +1,10 @@
 // Vercel Routing Middleware: the only gate in front of internal-team-only
 // pages. Scoped narrowly via config.matcher to /internal/status + its data
-// endpoint, and /internal/feedback + its submit endpoint -- every other
-// route on the site is completely untouched, unauthenticated, and unaffected
-// by this file. Both pages share the exact same session cookie/password
-// (SSR_DASHBOARD_PASSWORD) -- one login covers both.
+// endpoint, and /internal/feedback (a simple gated link-through to a
+// manually-maintained feedback Sheet -- no backend of its own) -- every
+// other route on the site is completely untouched, unauthenticated, and
+// unaffected by this file. Both pages share the exact same session
+// cookie/password (SSR_DASHBOARD_PASSWORD) -- one login covers both.
 //
 // Runs before the cache, so an unauthenticated request never reaches either
 // page's static bundle or data endpoint -- the login page below is the only
@@ -107,7 +108,7 @@ export default async function middleware(request: Request): Promise<Response> {
   const sessionValue = parseCookie(request.headers.get('cookie'), SESSION_COOKIE_NAME)
   const authenticated = await verifySessionCookie(sessionValue, password)
 
-  if (url.pathname === '/api/dashboard/content' || url.pathname === '/api/internal/feedback-submit') {
+  if (url.pathname === '/api/dashboard/content') {
     return authenticated ? next() : unauthorizedJson()
   }
 
@@ -120,12 +121,5 @@ export default async function middleware(request: Request): Promise<Response> {
 }
 
 export const config = {
-  matcher: [
-    '/internal/status',
-    '/internal-status.html',
-    '/api/dashboard/content',
-    '/internal/feedback',
-    '/internal-feedback.html',
-    '/api/internal/feedback-submit',
-  ],
+  matcher: ['/internal/status', '/internal-status.html', '/api/dashboard/content', '/internal/feedback', '/internal-feedback.html'],
 }

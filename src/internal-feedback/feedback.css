@@ -1,4 +1,4 @@
-/* DevNet feedback intake page. Reuses tokens from ../index.css, same
+/* DevNet feedback link-through page. Reuses tokens from ../index.css, same
    convention as src/internal-status/dashboard.css -- this page never sets
    data-theme, so it always renders the default (dark) token set. */
 
@@ -17,131 +17,30 @@
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 32px 20px 60px;
 }
 
 .fb-center {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 20px;
 }
 
 .fb-muted { color: var(--text-2); }
 .fb-small { font-size: 13px; }
-.fb-error { color: var(--down); font-size: 13px; margin: 6px 0 0; }
-
-.fb-header {
-  margin-bottom: 24px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.fb-header h1 {
-  font-family: var(--font-display);
-  font-size: 24px;
-  margin: 0 0 4px;
-}
 
 .fb-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-pop);
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+  padding: 32px;
 }
-
-.fb-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 1;
+.fb-card h1 {
+  font-family: var(--font-display);
+  font-size: 22px;
+  margin: 0 0 8px;
 }
-
-.fb-field-row {
-  display: flex;
-  gap: 16px;
-}
-@media (max-width: 480px) {
-  .fb-field-row { flex-direction: column; }
-}
-
-.fb-field label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.fb-field input[type="text"],
-.fb-field input[type="file"],
-.fb-field select,
-.fb-field textarea {
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font-family: var(--font-body);
-  font-size: 14px;
-  padding: 10px 12px;
-}
-
-.fb-field textarea {
-  resize: vertical;
-  font-family: var(--font-body);
-}
-
-.fb-field input:focus,
-.fb-field select:focus,
-.fb-field textarea:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.fb-thumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 4px;
-}
-
-.fb-thumb {
-  position: relative;
-  width: 72px;
-  height: 72px;
-  border-radius: var(--r-sm);
-  overflow: hidden;
-  border: 1px solid var(--line-strong);
-}
-.fb-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.fb-thumb-remove {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(0, 0, 0, 0.65);
-  color: #fff;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.fb-thumb-remove:hover { background: var(--down); }
 
 .fb-btn {
   padding: 12px 20px;
@@ -151,9 +50,8 @@
   font-weight: 600;
   cursor: pointer;
 }
-.fb-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .fb-btn-primary {
   background: var(--accent);
   color: #fff;
 }
-.fb-btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.fb-btn-primary:hover { background: var(--accent-hover); }

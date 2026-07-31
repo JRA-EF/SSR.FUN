@@ -1705,12 +1705,45 @@
     "src/internal-status/Dashboard.tsx"
   ],
   "supersedes": null,
-  "supersededBy": null,
+  "supersededBy": "DEC-0069",
   "evidence": [
     "tsc -b, vite build, oxlint all clean (new internalFeedback build entry confirmed in dist/ output)",
     "Google Drive folder/sheet genuinely created this session via the assistant's connected Drive access: folder id 1B1HMK1HHmnINSuQQ42iztgtTyU8-z5zv, sheet id 1xacWW9Bu0CmcUEBhw1TQsibdLwn6gZrK2OAiebmWQag, both owned by joao@enigma-fund.com",
     "FEEDBACK_DRIVE_FOLDER_ID/FEEDBACK_SHEET_ID confirmed added to Vercel (Production + Preview) via `vercel env add`",
     "No live end-to-end submission test performed -- GOOGLE_SERVICE_ACCOUNT_KEY is not yet configured (pending the user's GCP setup) and the destination folder/sheet have not yet been shared with a service account, so a real Drive write cannot succeed yet; the endpoint fails closed with an honest 'not configured' error in the meantime, never a fabricated success"
+  ]
+}
+```
+
+## DEC-0069
+
+```json
+{
+  "id": "DEC-0069",
+  "date": "2026-07-31",
+  "status": "confirmed",
+  "decision": "Abandon the Google service-account-based Drive/Sheets automation for /internal/feedback (DEC-0068) after the user hit organization policy blockers while creating the service account, and replace it with a simple gated link-through page pointing at a manually-maintained Google Sheet the user created and shared directly (\"SSR.fun — Simple Feedback\", already header-rowed: Date, Name/contact, Page/feature, Feedback, Screenshot or document link). Removed api/internal/_lib/googleAuth.ts, api/internal/_lib/googleDrive.ts, and api/internal/feedback-submit.ts entirely; /internal/feedback is now a static gated page with one link, no backend, no env vars.",
+  "context": "The user began creating the GCP service account this pass (email ssr-654@ssr-fun-feedback.iam.gserviceaccount.com was generated) but reported hitting 'organization blockers' before completing setup -- consistent with a Google Workspace/Cloud org policy blocking service-account key creation and/or sharing Drive files outside the organization's domain, both common default-security postures. An Apps-Script-Web-App alternative (running under the user's own identity, avoiding both blockers) was proposed and about to be discussed further when the user instead chose to sidestep Google API automation altogether and just maintain a Sheet manually.",
+  "rationale": "No further engineering effort is justified chasing an automated integration the user no longer wants -- they already created and shared a working Sheet themselves, which is simpler, needs no credentials of any kind, and cannot hit the same organizational restrictions since it's pure manual data entry, not an API integration. Keeping the page gated (same SSR_DASHBOARD_PASSWORD session) preserves the one property that mattered from the original request -- internal-team-only access -- while dropping everything else (custom form, screenshot upload, automated logging) that depended on infrastructure the org wouldn't allow.",
+  "alternativesConsidered": [
+    "Google Apps Script Web App (a genuine alternative that avoids both service-account keys and cross-domain sharing, since it runs under the sheet owner's own identity) -- proposed but not pursued once the user opted for a fully manual sheet instead",
+    "Leave the DEC-0068 code in place, dormant (rejected by the user's explicit choice -- 'repurpose it as a simple link page')",
+    "Revert /internal/feedback entirely (rejected -- the user still wants a gated internal entry point, just pointing at a manual sheet instead of a custom form)"
+  ],
+  "impact": "Deleted api/internal/_lib/googleAuth.ts, api/internal/_lib/googleDrive.ts, api/internal/feedback-submit.ts, src/internal-feedback/constants.ts. Rewrote src/internal-feedback/Feedback.tsx as a single-link static page (removed the form/screenshot-upload UI and feedback.css's now-unused form/thumbnail styles). middleware.ts's matcher no longer includes an /api/internal/feedback-submit entry. Removed GOOGLE_SERVICE_ACCOUNT_KEY (never set)/FEEDBACK_DRIVE_FOLDER_ID/FEEDBACK_SHEET_ID from .env.example and from Vercel (both Production and Preview, via `vercel env rm`) -- the page now needs zero server-side configuration. The Blockers entry this feature added to PROJECT_STATUS.md is resolved/removed accordingly.",
+  "affectedAreas": [
+    "src/internal-feedback/Feedback.tsx",
+    "src/internal-feedback/feedback.css",
+    "middleware.ts",
+    ".env.example",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": "DEC-0068",
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b, vite build, oxlint all clean; internalFeedback JS bundle shrank from 5.44kB to 1.24kB reflecting the removed form/upload logic",
+    "Sheet verified live and real via the assistant's Google Drive access: id 1Xk-9ngsu9_Gihe0s9Rd72fnzP2apsJ42tWLcfjU5QsM, title \"SSR.fun — Simple Feedback\", header row confirmed present",
+    "`vercel env ls` confirmed FEEDBACK_DRIVE_FOLDER_ID/FEEDBACK_SHEET_ID no longer present in either environment after removal"
   ]
 }
 ```
