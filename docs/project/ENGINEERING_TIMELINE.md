@@ -211,8 +211,8 @@
     "title": "Tradable DevNet Reserves and Multi-Asset Buy/Sell",
     "date": "2026-08-03",
     "status": "completed",
-    "source": "manual",
-    "note": "Committed in the same commit as this file's own update -- see git log on this repo for the exact hash rather than a self-referential one here.",
+    "commit": "6390122ab3f860ae69cc1e5b2af6021280400586",
+    "source": "git",
     "summary": [
       "Added a single shared eligibility function (packages/sdk/src/tradableAssets.ts) restricting every visible/tradable Reserve on the site to compositions built entirely from the 4 configured DevNet test mints (devUSDC, mockX, mockY, mockZ) -- wired into discovery/merge, landing-stats, swap-sign, and the Create-Reserve asset picker, so a Reserve holding any other asset (e.g. wrapped SOL) is excluded everywhere, never partially.",
       "Fixed the 'Buy only works for 100% devUSDC Reserves' limitation: Buy now mints a non-devUSDC leg (mockX/Y/Z) directly to the buyer from the swap authority's own mint authority over that specific test mint, reported honestly per-leg (never conflated with a genuine devUSDC payment).",
