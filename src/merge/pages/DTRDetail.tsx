@@ -4,7 +4,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { SOL_TEST_PRICE_USD, DEVUSDC, DEVUSDC_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
-import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError } from "@/lib/zapClient";
+import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
 import {
   AmbiguousConfirmationError,
@@ -53,6 +53,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { useLandingStats } from "@/hooks/useLandingStats";
 
 const CHART_COLORS = [
   "hsl(var(--chart-1))",
@@ -77,6 +78,8 @@ export function DTRDetail() {
   const dtr = dtrs.find((d) => d.id === (dtrId || ""));
   const { toast } = useToast();
   const { connection } = useConnection();
+  const landingStats = useLandingStats();
+  const reserveStats = dtr?.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve] : undefined;
   const walletCtx = useWallet();
 
   // Chart timeframe is local UI state -- it persists across live store updates
@@ -176,6 +179,12 @@ export function DTRDetail() {
     } catch {
       // Best-effort immediate refresh; RealReserveSync's regular poll will catch up regardless.
     }
+    // Holder count/24h volume must reflect a confirmed Buy/Sell too (a full
+    // exit changes who's a holder; any trade changes 24h volume) -- forces
+    // past landing-stats.ts's 60s cache rather than waiting for it to expire
+    // on its own. Best-effort: a failure here just leaves the previous
+    // figures in place, exactly like every other read in this function.
+    landingStats.refetch(true);
   }
 
   // Initial devUSDC balance read (refreshRealReserveNow only runs after a
@@ -349,6 +358,20 @@ export function DTRDetail() {
     }
   }
 
+  /** Every account this page itself can already name, for describeUnknownSignerMessage's client-side fallback relabeling -- see that function's header for why this is a fallback, not the primary fix. */
+  function knownAccountsForErrorMessages(): Record<string, string> {
+    const known: Record<string, string> = {};
+    if (dtr?.onChain) {
+      known["Reserve"] = dtr.onChain.reserve;
+      known["Reserve Token mint"] = dtr.onChain.reserveTokenMint;
+      known["mint authority"] = dtr.onChain.mintAuthority;
+      known["vault authority"] = dtr.onChain.vaultAuthority;
+      known["Reserve manager"] = dtr.onChain.manager;
+    }
+    if (walletCtx.publicKey) known["connected wallet"] = walletCtx.publicKey.toBase58();
+    return known;
+  }
+
   const handleBuy = async () => {
     if (!dtr.onChain) return;
     if (!walletCtx.publicKey) {
@@ -435,7 +458,8 @@ export function DTRDetail() {
         } else if (e instanceof ZapBuildError && e.code === "conversion_unsupported") {
           toast({ variant: "destructive", title: "Buy not available", description: e.message });
         } else {
-          toast({ variant: "destructive", title: "Buy Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+          const raw = e instanceof Error ? e.message : "The DevNet swap failed.";
+          toast({ variant: "destructive", title: "Buy Failed", description: describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()) });
         }
       }
     } finally {
@@ -560,7 +584,8 @@ export function DTRDetail() {
         } else if (e instanceof ZapBuildError && e.code === "swap_authority_low_sol") {
           toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
         } else {
-          toast({ variant: "destructive", title: "Sell Failed", description: e instanceof Error ? e.message : "The DevNet swap failed." });
+          const raw = e instanceof Error ? e.message : "The DevNet swap failed.";
+          toast({ variant: "destructive", title: "Sell Failed", description: describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()) });
         }
       }
     } finally {
@@ -662,7 +687,22 @@ export function DTRDetail() {
                   <Badge variant={isOnChain ? "default" : "secondary"} className="uppercase text-[10px] tracking-wide">
                     {isOnChain ? "Live on Solana DevNet" : "Simulated Demo"}
                   </Badge>
-                  <span>{isOnChain ? "Holder count not indexed" : `${dtr.holders.toLocaleString()} Holders`}</span>
+                  <span>
+                    {isOnChain ? (
+                      reserveStats ? (
+                        <>
+                          {reserveStats.holders.toLocaleString()} {reserveStats.holders === 1 ? "Holder" : "Holders"}
+                          {landingStats.stale && <span title="This figure may be a few minutes old"> (stale)</span>}
+                        </>
+                      ) : landingStats.status === "loading" ? (
+                        "Loading holder count…"
+                      ) : (
+                        "Holder count unavailable"
+                      )
+                    ) : (
+                      `${dtr.holders.toLocaleString()} Holders`
+                    )}
+                  </span>
                 </div>
                 <p className="text-muted-foreground max-w-xl leading-relaxed">
                   {dtr.description}
@@ -720,7 +760,7 @@ export function DTRDetail() {
           )}
 
           {/* Stats Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             <Card className="bg-secondary/40 border-transparent shadow-none">
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
@@ -766,6 +806,33 @@ export function DTRDetail() {
                 </div>
                 <p className={`text-xl font-merge-mono font-semibold ${dtr.change7d >= 0 ? 'text-positive' : 'text-destructive'}`}>
                   {dtr.change7d >= 0 ? '+' : ''}{dtr.change7d.toFixed(2)}%
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="bg-secondary/40 border-transparent shadow-none">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                  24h Volume
+                  <Tooltip>
+                    <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
+                    <TooltipContent>Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours, valued at fixed DevNet test prices.</TooltipContent>
+                  </Tooltip>
+                </div>
+                <p className="text-xl font-merge-mono font-semibold">
+                  {isOnChain ? (
+                    reserveStats ? (
+                      <>
+                        {formatUsdc(reserveStats.volume24hUsd, { compact: true })}
+                        {landingStats.stale && <span className="text-xs text-muted-foreground font-normal"> (stale)</span>}
+                      </>
+                    ) : landingStats.status === "loading" ? (
+                      <span className="text-sm text-muted-foreground font-normal">Loading…</span>
+                    ) : (
+                      <span className="text-sm text-muted-foreground font-normal">Unavailable</span>
+                    )
+                  ) : (
+                    formatUsdc(0, { compact: true })
+                  )}
                 </p>
               </CardContent>
             </Card>

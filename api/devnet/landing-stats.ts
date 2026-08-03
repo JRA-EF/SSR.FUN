@@ -15,7 +15,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import {
   buildReadOnlyProgram,
   discoverAllReserves,
-  fetchReserveTokenHolderCount,
+  fetchReserveTokenHolderOwners,
   fetchReserve24hVolumeUsd,
   isHiddenReserveAddress,
   DEVNET_FIXTURES,
@@ -30,6 +30,7 @@ import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
 interface ApiRequest {
   method?: string;
   headers: Record<string, string | string[] | undefined>;
+  url?: string;
   body?: unknown;
 }
 
@@ -51,11 +52,20 @@ const ASSET_TEST_PRICES_USD: Record<string, number> = {
   [DEVUSDC.mint]: 1, // devUSDC is pegged to $1 by design
 };
 
-interface LandingStats {
+interface PerReserveStats {
   holders: number;
+  volume24hUsd: number;
+}
+
+interface LandingStats {
+  /** Globally deduplicated: a wallet holding tokens from 3 different Reserves counts once, not 3 times. */
+  holders: number;
+  /** Sum of every displayable Reserve's own 24h volume -- each Reserve's volume is walked from its OWN transaction history (getSignaturesForAddress on its own PDA), so no single transaction can ever be double-counted across two Reserves' totals. */
   volume24hUsd: number;
   computedAt: number;
   reservesCounted: number;
+  /** Same source of truth as the aggregate fields above, keyed by Reserve address -- this is what the Reserve detail page reads for its own holder count/24h volume, so the per-Reserve and global numbers can never disagree with each other. */
+  perReserve: Record<string, PerReserveStats>;
 }
 
 let cached: LandingStats | null = null;
@@ -73,7 +83,12 @@ async function computeLandingStats(): Promise<LandingStats> {
   const displayable = reserves.filter((r) => r.assetCount !== 0 && !isHiddenReserveAddress(r.reserve));
 
   const sinceUnixSec = Math.floor(Date.now() / 1000) - TWENTY_FOUR_HOURS_SEC;
-  let holders = 0;
+  const perReserve: Record<string, PerReserveStats> = {};
+  // Union of every Reserve's real holder-owner set -- this (not a running
+  // sum of per-Reserve counts) is what makes the global figure a genuine
+  // deduplicated wallet count instead of over-counting anyone holding more
+  // than one Reserve's token.
+  const globalOwners = new Set<string>();
   let volume24hUsd = 0;
 
   await Promise.all(
@@ -84,23 +99,26 @@ async function computeLandingStats(): Promise<LandingStats> {
           for (const asset of reserve.assets) {
             pricing[asset.assetMint] = { decimals: asset.decimals, priceUsd: ASSET_TEST_PRICES_USD[asset.assetMint] ?? 0 };
           }
-          const [reserveHolders, reserveVolume] = await Promise.all([
-            fetchReserveTokenHolderCount(connection, new PublicKey(reserve.reserveTokenMint)),
+          const [reserveOwners, reserveVolume] = await Promise.all([
+            fetchReserveTokenHolderOwners(connection, new PublicKey(reserve.reserveTokenMint)),
             fetchReserve24hVolumeUsd(connection, program, new PublicKey(reserve.reserve), pricing, sinceUnixSec),
           ]);
-          holders += reserveHolders;
+          perReserve[reserve.reserve] = { holders: reserveOwners.size, volume24hUsd: reserveVolume };
+          for (const owner of reserveOwners) globalOwners.add(owner);
           volume24hUsd += reserveVolume;
         } catch {
           // One Reserve's read failing (e.g. a transient RPC hiccup) must
           // not abort the whole aggregate -- it's simply excluded from this
-          // computation's total, same "don't let one bad account ruin the
-          // rest" philosophy as discovery's own per-account error handling.
+          // computation's total (and absent from perReserve, which the
+          // frontend treats as "not yet available" for that one Reserve,
+          // never as a fabricated 0), same "don't let one bad account ruin
+          // the rest" philosophy as discovery's own per-account error handling.
         }
       }),
     ),
   );
 
-  return { holders, volume24hUsd, computedAt: Date.now(), reservesCounted: displayable.length };
+  return { holders: globalOwners.size, volume24hUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
@@ -109,7 +127,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
-  if (cached && Date.now() - cached.computedAt < CACHE_TTL_MS) {
+  // Bypasses the 60s cache only when explicitly asked (e.g. right after a
+  // confirmed Buy/Sell, so the holder count/volume the user just affected
+  // doesn't sit stale for up to a minute) -- never used for an ordinary page
+  // load, so this can't turn into an easy way to hammer the underlying
+  // Helius reads on every render.
+  const forceFresh = typeof req.url === "string" && /[?&]force=1(?:&|$)/.test(req.url);
+
+  if (!forceFresh && cached && Date.now() - cached.computedAt < CACHE_TTL_MS) {
     res.status(200).json(cached);
     return;
   }

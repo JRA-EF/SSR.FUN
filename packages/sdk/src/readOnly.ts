@@ -202,7 +202,7 @@ export function valueAssetLegsUsd(mints: string[], amountsRaw: (string | bigint)
 }
 
 export interface ParsedTokenAccountLike {
-  parsed?: { info?: { tokenAmount?: { uiAmount?: number | null } } };
+  parsed?: { info?: { owner?: string; tokenAmount?: { uiAmount?: number | null } } };
 }
 
 /** Pure: counts entries with a genuine non-zero balance -- a closed/emptied token account (uiAmount 0 or missing) is never counted as a holder. */
@@ -214,14 +214,50 @@ export function countHoldersFromParsedAccounts(accounts: ParsedTokenAccountLike[
   return holders;
 }
 
-/** Counts distinct non-zero-balance token accounts for a given mint -- a genuine Reserve Token holder count. Requires a provider with getProgramAccounts support (Helius; NOT the public DevNet endpoint, which 403s this call). */
-export async function fetchReserveTokenHolderCount(connection: Connection, mint: PublicKey): Promise<number> {
+/**
+ * Pure: the SET of distinct owner wallet addresses holding a genuine
+ * non-zero balance -- the single source of truth every holder count in this
+ * app (per-Reserve or global) is built from, so two different call sites can
+ * never silently disagree. Returning owners (not just a count) is what makes
+ * cross-Reserve deduplication possible: a wallet holding three different
+ * Reserves' tokens must count once globally, which requires knowing WHICH
+ * wallet, not just how many token accounts exist. A closed/emptied token
+ * account (uiAmount 0 or missing) is never included, matching
+ * countHoldersFromParsedAccounts's same rule.
+ */
+export function collectHolderOwners(accounts: ParsedTokenAccountLike[]): Set<string> {
+  const owners = new Set<string>();
+  for (const account of accounts) {
+    const owner = account.parsed?.info?.owner;
+    const uiAmount = account.parsed?.info?.tokenAmount?.uiAmount ?? 0;
+    if (owner && uiAmount > 0) owners.add(owner);
+  }
+  return owners;
+}
+
+/**
+ * Real distinct owner set for a Reserve Token mint. The Reserve Token mint
+ * itself is always classic SPL Token, never Token-2022 (seed_reserve/
+ * create_reserve always build it via the anchor_spl::token::Token program,
+ * fixed at 6 decimals, no freeze authority -- see DEC-0011 and
+ * docs/protocol/ACCOUNT_MODEL.md) -- only a Reserve's underlying Reserve
+ * Assets can ever be Token-2022, so a single TOKEN_PROGRAM_ID scan here is
+ * complete, not a simplification that misses accounts. Requires a provider
+ * with getProgramAccounts support (Helius; NOT the public DevNet endpoint,
+ * which 403s this call).
+ */
+export async function fetchReserveTokenHolderOwners(connection: Connection, mint: PublicKey): Promise<Set<string>> {
   const accounts = await withRateLimitRetryGeneric(() =>
     connection.getParsedProgramAccounts(TOKEN_PROGRAM_ID, {
       filters: [{ dataSize: 165 }, { memcmp: { offset: 0, bytes: mint.toBase58() } }],
     }),
   );
-  return countHoldersFromParsedAccounts(accounts.map(({ account }) => account.data as unknown as ParsedTokenAccountLike));
+  return collectHolderOwners(accounts.map(({ account }) => account.data as unknown as ParsedTokenAccountLike));
+}
+
+/** Counts distinct non-zero-balance token accounts for a given mint -- a genuine Reserve Token holder count. Requires a provider with getProgramAccounts support (Helius; NOT the public DevNet endpoint, which 403s this call). Thin wrapper over fetchReserveTokenHolderOwners so any single-Reserve caller that only needs a count doesn't have to build the full owner set itself. */
+export async function fetchReserveTokenHolderCount(connection: Connection, mint: PublicKey): Promise<number> {
+  return (await fetchReserveTokenHolderOwners(connection, mint)).size;
 }
 
 const VOLUME_MAX_SIGNATURE_PAGES = 5;

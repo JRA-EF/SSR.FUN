@@ -1747,3 +1747,42 @@
   ]
 }
 ```
+
+## DEC-0070
+
+```json
+{
+  "id": "DEC-0070",
+  "date": "2026-08-03",
+  "status": "confirmed",
+  "decision": "Fix api/devnet/swap-sign.ts's buy-devusdc action to only call tx.partialSign(swapAuthority) when at least one leg genuinely still needs the swap authority's test-asset-faucet mechanism (result.legSources.some(leg => leg.source === \"devnet-test-asset-faucet\")), instead of unconditionally. Separately, replace api/devnet/landing-stats.ts's holder count -- previously a naive per-Reserve sum -- with a globally deduplicated union of owner-address sets (new packages/sdk/src/readOnly.ts functions fetchReserveTokenHolderOwners/collectHolderOwners), exposing a perReserve breakdown so the Reserve-detail page and the landing page read the same computed numbers rather than risking two disagreeing implementations.",
+  "context": "Every Buy against a Reserve backed 100% by devUSDC failed before submission with 'Buy Failed -- unknown signer: Ef7vbQ...' (the shared DevNet swap-authority/devUSDC-mint-authority keypair, devnet-fixtures/manager-keypair.json). Traced to buildBuyZapInstructionsDevUsdc (packages/sdk/src/zapInstructions.ts) deliberately never including the swap authority as an account for a devUSDC leg (by design -- the user's own devUSDC funds that leg directly, no faucet/mint involved) combined with swap-sign.ts unconditionally trying to co-sign with it anyway; web3.js's Transaction.partialSign throws 'unknown signer: <pubkey>' when asked to sign with a key absent from the transaction's own required-signer list. Separately, while verifying AUM/NAV correctness against Reserve '123'/ABC (reserveId 20), found via getSignaturesForAddress + Anchor event decoding that it had genuinely been seeded with 100 devUSDC (2026-07-31) then fully redeemed (100/100 Reserve Tokens, 0 fee) the same day as this pass (2026-08-03) -- so its current $0 AUM is real, correct state, not a display bug; the AUM/NAV formula in src/merge/lib/onChainReserve.ts was independently confirmed already correct via a full live reproduction. Also found landing-stats.ts's holders figure summed each Reserve's own holder count independently, over-counting any wallet holding tokens from more than one Reserve.",
+  "rationale": "The signer fix is scoped precisely to the condition that makes the swap authority a genuine transaction party, rather than either always requiring it (which would defeat the entire point of the pure-devUSDC path -- no faucet funding should be involved) or unconditionally removing the partialSign call (which would silently break the mixed-asset devUSDC+other-asset case, if that gating is ever relaxed later). A generic describeUnknownSignerError/describeUnknownSignerMessage mapping (server-side authoritative, client-side defensive fallback) was added alongside the fix so any FUTURE unexpected-signer bug -- not just this one -- self-diagnoses with a named account role instead of a bare, unresolved public key. The holder-count fix moves from a count-based to a set-based computation specifically because deduplication is impossible without knowing WHICH wallet holds which Reserve's token, not just how many token accounts exist per Reserve.",
+  "alternativesConsidered": [
+    "Always partialSign with the swap authority in buy-devusdc regardless of leg sources, and just accept the extra unused signature slot -- rejected: a Transaction's signature array is keyed to its actual required-signer set; signing with a key that isn't one of them is exactly what throws unknown signer, so this isn't actually available as an option, only removing the call unconditionally or making it conditional are.",
+    "Remove tx.partialSign(swapAuthority) unconditionally from buy-devusdc -- rejected: would silently break the transaction the moment any leg legitimately needs swap-authority funding again (e.g. if the 100%-devUSDC-only gating on this action is ever relaxed), with no error until that day.",
+    "Treat Reserve 20's $0 AUM as a bug and 'fix' it by hardcoding a nonzero display -- explicitly rejected per the task's own instruction; the real vault balance is genuinely 0 after a real full redemption, and the correct fix is verifying the formula elsewhere, not force-displaying a stale number.",
+    "Keep summing per-Reserve holder counts for the global figure and add a second, separately-implemented deduplication pass just for the global number -- rejected: this is exactly the 'two competing counting systems' anti-pattern the corrective task explicitly warned against; a single owner-set-based function serving both the per-Reserve and global figures is the only version that can't disagree with itself."
+  ],
+  "impact": "api/devnet/swap-sign.ts (conditional partialSign + describeUnknownSignerError), src/merge/lib/zapClient.ts (describeUnknownSignerMessage), src/merge/pages/DTRDetail.tsx (error-toast wiring, holder-count display, new 24h Volume stat card, useLandingStats wiring), packages/sdk/src/readOnly.ts (fetchReserveTokenHolderOwners/collectHolderOwners, fetchReserveTokenHolderCount now a thin wrapper), api/devnet/landing-stats.ts (perReserve breakdown, deduplicated global holders, ?force=1 cache bypass), new src/merge/hooks/useLandingStats.ts (shared by Home.tsx and DTRDetail.tsx, replacing Home.tsx's own local copy). Every pure-devUSDC Reserve's Buy is fixed, not just Reserve 20's (which is itself now permanently unable to accept a new Buy regardless, per mint_reserve_tokens_in_kind's total_supply_before > 0 guard -- an independent, pre-existing protocol invariant, not something this pass changed or could change).",
+  "affectedAreas": [
+    "api/devnet/swap-sign.ts",
+    "packages/sdk/src/readOnly.ts",
+    "api/devnet/landing-stats.ts",
+    "src/merge/lib/zapClient.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/hooks/useLandingStats.ts",
+    "src/pages/Home.tsx",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live DevNet verification via new scripts/verify_corrective_pass.ts (a fresh single-asset-devUSDC Reserve, since reserveId 20 can never accept another mint): Create 2EV5pyvpyLi2HyfVToAVRZGRyTWqesSiKxTzSqS9DxiUjz2q8ZsuR4ZMECCfguPTBSW4wCarXz4EGeqK6mVEjeBs, Seed 4kUhTxVdF6g1BAgUx1ETnGqjREbqmBQDTupCaHwGK75xrheiRCaEhavEhxVAHJ5CT3SYt5nf4Yrc4XDvFURQqogB (AUM $100.00/NAV $1.00), Buy XeeUpsmqMXCbSMNrD9548SauoULRBReabjBKTUrQxUu6VBHtA4Fkz5dGRAP3KLfvy19EbtVJ4WHHGQR3qTNDfB2 (required-signer list confirmed to contain only the buyer; AUM $110.00/NAV $1.000455), Sell 62SqZnNrnUK7NKoKU5aPfa1kg1qmq1NQhRRh2a97EQjvUiHG4SaU4pNQGqogho2xjtKqipW8ByhPtKgj3i5iH7VD (AUM $55.00/NAV unchanged at $1.000455)",
+    "scripts/investigate_reserve_history.ts decoded reserveId 20's real event history: reserveCreated + reserveAssetInitialized (2026-07-31T10:11:42Z), reserveSeeded 100/100 (2026-07-31T10:12:23Z), reserveTokensRedeemed 100/100 fee-0 (2026-08-03T14:45:06Z)",
+    "145/145 pre-existing offline tests pass; tsc -b, tsc -p api/devnet/tsconfig.json --noEmit, vite build all clean",
+    "4 pre-existing TS errors in tests/phase_data_integrity.ts, tests/phase_devusdc_buy_architecture_fix.ts, tests/phase_landing_wallet_corrections.ts confirmed via git stash to predate this pass",
+    "tests/ssr_protocol.ts confirmed unable to run this session: cargo not on PATH in either bash or PowerShell, so anchor.workspace's cargo metadata call fails -- a pre-existing environment gap"
+  ]
+}
+```

@@ -49,6 +49,28 @@ export class ZapBuildError extends Error {
   }
 }
 
+/**
+ * Client-side counterpart to api/devnet/swap-sign.ts's describeUnknownSignerError
+ * -- that server-side mapping already relabels this failure using the fuller
+ * set of accounts it knows about (protocolConfig, mintAuthority, etc.), so in
+ * the normal case this is a no-op (the message it receives is already
+ * human-readable). This exists as defense-in-depth for any future path that
+ * throws a raw "unknown signer: <pubkey>" error the server never had a
+ * chance to relabel (e.g. the wallet's own signTransaction call, or a
+ * different endpoint added later) -- so a bare, unresolved public key is
+ * never the only thing a user or a future debugger sees. `knownAccounts`
+ * maps a human label to that account's base58 address; unmatched pubkeys are
+ * reported honestly as "an unrecognized account," never guessed at.
+ */
+export function describeUnknownSignerMessage(message: string, knownAccounts: Record<string, string>): string {
+  const match = message.match(/unknown signer: (\S+)/i);
+  if (!match) return message;
+  const badKey = match[1];
+  const role = Object.entries(knownAccounts).find(([, addr]) => addr === badKey)?.[0];
+  const label = role ? `the ${role} account` : "an unrecognized account";
+  return `This transaction unexpectedly required a signature from ${label} (${badKey}), which isn't available to sign here. This should never happen -- please report it. (${message})`;
+}
+
 export interface ZapExecutionResult {
   signature: string;
   quote: ZapQuote;

@@ -84,6 +84,30 @@ const PROGRAM_ID = new PublicKey(DEVNET_FIXTURES.programId);
 // error here rather than a confusing Phantom simulation failure later.
 const SWAP_AUTHORITY_SOL_BUFFER_LAMPORTS = 5_000_000n;
 
+/**
+ * web3.js's Transaction.sign()/partialSign() throws exactly
+ * `Error: unknown signer: <base58 pubkey>` when asked to sign with a keypair
+ * whose pubkey isn't among the transaction's own declared required signers
+ * (see Transaction._addSignature in @solana/web3.js). That raw pubkey means
+ * nothing to a user or to whoever reads the error later -- this maps it back
+ * to a human-readable role using every protocol account this handler already
+ * knows about, so ANY future "unknown signer" failure (not just the one this
+ * pass fixed) self-diagnoses instead of surfacing a bare, unresolved address.
+ * Falls back to labeling it "an unrecognized account" (never a fabricated
+ * guess) if the pubkey doesn't match anything known here.
+ */
+export function describeUnknownSignerError(e: unknown, knownAccounts: Record<string, PublicKey>): Error {
+  const message = e instanceof Error ? e.message : String(e);
+  const match = message.match(/unknown signer: (\S+)/i);
+  if (!match) return e instanceof Error ? e : new Error(message);
+  const badKey = match[1];
+  const role = Object.entries(knownAccounts).find(([, pk]) => pk.toBase58() === badKey)?.[0];
+  const label = role ? `the ${role} account` : "an unrecognized account";
+  return new Error(
+    `Internal error while building this transaction: it unexpectedly required a signature from ${label} (${badKey}), which this endpoint cannot provide on its own. This should never happen -- please report it. (Original error: ${message})`,
+  );
+}
+
 /** A distinguishable, non-500 failure so the client can tell "the DevNet swap adapter itself is out of SOL" apart from "your wallet lacks SOL" or "RPC congestion" -- never conflated into one generic message. */
 export class SwapAuthorityLowSolError extends Error {
   code = "swap_authority_low_sol" as const;
@@ -336,7 +360,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       tx.feePayer = userPubkey;
       const { blockhash, lastValidBlockHeight } = await withRateLimitRetry(() => connection.getLatestBlockhash("confirmed"), 3, 500);
       tx.recentBlockhash = blockhash;
-      tx.partialSign(swapAuthority);
+      // The swap authority is only a genuine party to this transaction when at
+      // least one leg still needs its test-asset mint/wrap mechanism (see
+      // buildBuyZapInstructionsDevUsdc's legSources) -- a Reserve backed 100%
+      // by devUSDC (guaranteed here, since a mixed Reserve was already
+      // rejected above) has every leg funded straight out of the user's own
+      // devUSDC balance, so the swap authority never appears as an account in
+      // `result.instructions` at all. Calling `tx.partialSign(swapAuthority)`
+      // unconditionally in that case throws web3.js's own
+      // "unknown signer: <pubkey>" error (it refuses to sign with a keypair
+      // that isn't one of the transaction's declared signers) -- this was the
+      // exact root cause of every pure-devUSDC Buy failing before submission.
+      // See docs/project/DECISION_LOG.md's corrective entry for this pass.
+      const needsSwapAuthoritySignature = result.legSources.some((leg) => leg.source === "devnet-test-asset-faucet");
+      if (needsSwapAuthoritySignature) {
+        tx.partialSign(swapAuthority);
+      }
 
       res.status(200).json({
         transactionBase64: tx.serialize({ requireAllSignatures: false }).toString("base64"),
@@ -445,6 +484,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       });
       return;
     }
-    res.status(500).json({ error: e instanceof Error ? e.message : "Failed to build the DevNet swap transaction.", code: "build_failed" });
+    const described = describeUnknownSignerError(e, {
+      "DevNet swap adapter": swapAuthority.publicKey,
+      "protocol configuration": protocolConfig,
+      "connected wallet": userPubkey,
+      "Reserve": reserve,
+      "Reserve Token mint": reserveTokenMint,
+      "mint authority": mintAuthority,
+      "vault authority": vaultAuthority,
+    });
+    res.status(500).json({ error: described.message, code: described === e ? "build_failed" : "unexpected_signer" });
   }
 }
