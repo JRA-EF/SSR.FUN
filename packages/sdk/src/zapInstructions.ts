@@ -394,6 +394,117 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
   };
 }
 
+export interface BuildSellZapDevUsdcParams {
+  program: Program<anchor.Idl>;
+  reserve: PublicKey;
+  reserveTokenMint: PublicKey;
+  vaultAuthority: PublicKey;
+  user: PublicKey;
+  swapAuthority: PublicKey;
+  /** Every asset must be one of the supported DevNet mints (devUSDC, mockX/Y/Z) -- callers (api/devnet/swap-sign.ts) verify this via packages/sdk/src/tradableAssets.ts before calling. Wrapped SOL is not handled here. */
+  assets: ZapAssetLeg[];
+  reserveTokenSupplyRaw: string;
+  redemptionFeeBps: bigint;
+  reserveTokensToRedeem: bigint;
+  assetTestPricesUsd: Record<string, number>;
+  devUsdcMint: PublicKey;
+  devUsdcDecimals: number;
+}
+
+/**
+ * devUSDC-settled Sell for a Reserve holding a mix of devUSDC and other
+ * supported test assets (mockX/Y/Z) -- the inverse of
+ * buildBuyZapInstructionsDevUsdc. redeem_reserve_tokens_in_kind deposits the
+ * redeemer's real proportional entitlement directly into their OWN token
+ * accounts for every asset leg (same single instruction as
+ * buildSellZapInstructions/buildRedeemToDevUsdcInstructions). Any devUSDC
+ * entitlement is real and simply stays in the user's wallet -- no further
+ * instruction touches it. Every OTHER (non-devUSDC) leg is then transferred
+ * from the user to the swap authority (giving up those worthless DevNet test
+ * tokens, exactly as buildSellZapInstructions already does), and the swap
+ * authority mints the user a devUSDC amount equal to those legs' combined
+ * DevNet test-price USD value -- using its own real devUSDC mint authority
+ * (the same authority api/devnet/faucet-devusdc.ts already uses), not a SOL
+ * payment. This removes the swap authority's SOL balance as a dependency for
+ * Sell entirely for this path (see api/devnet/swap-sign.ts, which no longer
+ * calls assertSwapAuthorityHasSol for this branch).
+ */
+export async function buildSellZapInstructionsDevUsdc(
+  params: BuildSellZapDevUsdcParams,
+): Promise<{ instructions: TransactionInstruction[]; assetAmountsRaw: bigint[]; devUsdcOutRaw: bigint }> {
+  const { program, reserve, reserveTokenMint, vaultAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw, devUsdcMint, devUsdcDecimals } = params;
+
+  const balances: AssetBalance[] = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
+  const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
+
+  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+
+  const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
+  const instructions: TransactionInstruction[] = [];
+  let totalUsdFromNonDevUsdcLegs = 0;
+  let devUsdcEntitlementRaw = 0n;
+
+  for (let i = 0; i < assets.length; i++) {
+    const leg = assets[i];
+    const mint = new PublicKey(leg.mint);
+    const userAta = getAssociatedTokenAddressSync(mint, user);
+    remainingAccounts.push(
+      { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
+      { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
+      { pubkey: userAta, isWritable: true, isSigner: false },
+      { pubkey: mint, isWritable: false, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+    );
+  }
+
+  const redeemIx = await program.methods
+    .redeemReserveTokensInKind(
+      new BN(params.reserveTokensToRedeem.toString()),
+      entitlements.map(() => new BN(0)),
+    )
+    .accounts({
+      reserve,
+      reserveTokenMint,
+      vaultAuthority,
+      redeemerReserveTokenAccount: redeemerReserveTokenAta,
+      redeemer: user,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+  instructions.push(redeemIx);
+
+  for (let i = 0; i < assets.length; i++) {
+    const leg = assets[i];
+    const mint = new PublicKey(leg.mint);
+    if (mint.equals(devUsdcMint)) {
+      // Already real devUSDC, already in the user's own wallet from the
+      // redeem instruction above -- nothing further to do for this leg.
+      devUsdcEntitlementRaw = entitlements[i].entitlement;
+      continue;
+    }
+    const userAta = getAssociatedTokenAddressSync(mint, user);
+    const swapAuthorityAta = getAssociatedTokenAddressSync(mint, swapAuthority);
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(swapAuthority, swapAuthorityAta, swapAuthority, mint));
+    instructions.push(createTransferInstruction(userAta, swapAuthorityAta, user, entitlements[i].entitlement));
+    const price = params.assetTestPricesUsd[leg.mint] ?? 0;
+    totalUsdFromNonDevUsdcLegs += (Number(entitlements[i].entitlement) / 10 ** leg.decimals) * price;
+  }
+
+  const devUsdcToMintRaw = BigInt(Math.floor(totalUsdFromNonDevUsdcLegs * 10 ** devUsdcDecimals));
+  const userDevUsdcAta = getAssociatedTokenAddressSync(devUsdcMint, user);
+  if (devUsdcToMintRaw > 0n) {
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userDevUsdcAta, user, devUsdcMint));
+    instructions.push(createMintToInstruction(devUsdcMint, userDevUsdcAta, swapAuthority, devUsdcToMintRaw));
+  }
+
+  return {
+    instructions,
+    assetAmountsRaw: entitlements.map((e) => e.entitlement),
+    devUsdcOutRaw: devUsdcEntitlementRaw + devUsdcToMintRaw,
+  };
+}
+
 export interface BuildRedeemToDevUsdcParams {
   program: Program<anchor.Idl>;
   reserve: PublicKey;

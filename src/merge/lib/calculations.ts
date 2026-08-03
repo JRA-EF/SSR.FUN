@@ -189,20 +189,41 @@ export function resolveTimeframeLookback(timeframe: ChartTimeframe, priceHistory
   return Math.max(priceHistory[priceHistory.length - 1].t - priceHistory[0].t, MINUTE);
 }
 
+export interface LineSeriesResult {
+  points: PricePoint[];
+  /**
+   * True when this Reserve has fewer than 2 ever-recorded real price points --
+   * there is genuinely no trend to show for ANY range, not just this one.
+   * When true, `points` is always empty; the caller must render an honest
+   * "insufficient history" state rather than a fabricated flat line. This is
+   * independent of `timeframe`/`now` -- a Reserve with 0 or 1 real
+   * observations is insufficient for every range identically, which is
+   * exactly why every range button used to look the same (a fabricated
+   * flatline anchored to a single point) instead of genuinely differing.
+   */
+  insufficientHistory: boolean;
+}
+
 /**
- * Line-chart series for a timeframe. Real points within the lookback window are used
- * as-is. When the window has no real history at all, this flatlines at the last known
- * price rather than rendering nothing -- "no trades" reads as "no movement," not a
- * blank chart. When the window's real history starts partway through (e.g. a single
- * recent trade), a flat lead-in point is prepended at the window start so that trade
- * reads as a rise/fall off a baseline instead of an isolated dot floating alone.
+ * Line-chart series for a timeframe. Real points within the lookback window are
+ * used as-is. A Reserve with 2+ real recorded points always has at least one
+ * genuine observation to anchor a lead-in point to (see `priorPoint` below),
+ * so a window with no points strictly inside it still flatlines at that real,
+ * previously-observed price rather than rendering nothing -- "no trades in
+ * this window" honestly reads as "price unchanged since the last real
+ * observation," anchored to real data, never invented. A Reserve with fewer
+ * than 2 real points ever has no genuine trend to show for ANY range --
+ * `insufficientHistory: true` is returned instead of a fabricated flatline
+ * (see LineSeriesResult). This function is pure and independent per call:
+ * two calls (e.g. from two chart instances, or two different Reserves) never
+ * share state and cannot influence each other's result.
  */
 export function buildLineSeries(
   priceHistory: PricePoint[],
   timeframe: ChartTimeframe,
   now: number = Date.now(),
-): PricePoint[] {
-  if (priceHistory.length === 0) return [];
+): LineSeriesResult {
+  if (priceHistory.length < 2) return { points: [], insufficientHistory: true };
   const windowStart = now - resolveTimeframeLookback(timeframe, priceHistory);
   const windowPoints = priceHistory.filter((p) => p.t >= windowStart);
 
@@ -210,13 +231,19 @@ export function buildLineSeries(
   const basePrice = priorPoint?.price ?? windowPoints[0]?.price ?? priceHistory[0].price;
 
   if (windowPoints.length === 0) {
-    return [
-      { t: windowStart, price: basePrice },
-      { t: now, price: basePrice },
-    ];
+    return {
+      points: [
+        { t: windowStart, price: basePrice },
+        { t: now, price: basePrice },
+      ],
+      insufficientHistory: false,
+    };
   }
   const needsLeadIn = windowPoints[0].t > windowStart + SECOND;
-  return needsLeadIn ? [{ t: windowStart, price: basePrice }, ...windowPoints] : windowPoints;
+  return {
+    points: needsLeadIn ? [{ t: windowStart, price: basePrice }, ...windowPoints] : windowPoints,
+    insufficientHistory: false,
+  };
 }
 
 /** Downsamples a point series for the line/area chart, always keeping the first and last (latest) point. */

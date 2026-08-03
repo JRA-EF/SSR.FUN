@@ -23,6 +23,7 @@ import {
   findMintAuthority,
   findVaultAuthority,
   isHiddenReserveAddress,
+  isReserveTradable,
   type FixtureReserve,
 } from "@ssr/sdk";
 
@@ -383,8 +384,20 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
   // (e.g. it registered an asset but was never seeded) but is equally never
   // genuinely tradeable and equally impossible to close on-chain right now.
   // See that file for the exact reasoning per entry.
+  // Also excludes any Reserve holding an asset outside the supported
+  // {devUSDC, mockX, mockY, mockZ} set (packages/sdk's isReserveTradable) --
+  // e.g. a Reserve created with wrapped SOL, which has no genuine
+  // devUSDC-settled Buy/Sell path. Checked against `assets` only when the
+  // discovery pass actually resolved all of them (assetsResolvedFully);
+  // an under-resolved Reserve (candidate-mint hint list didn't cover every
+  // registered asset) is deliberately NOT excluded here on partial data --
+  // that would risk hiding a genuinely tradable Reserve on a transient
+  // resolution gap, not a real composition problem.
   const discovered = rawDiscovered.filter(
-    (d) => d.onChain?.assetCount !== 0 && !(d.onChain && isHiddenReserveAddress(d.onChain.reserve)),
+    (d) =>
+      d.onChain?.assetCount !== 0 &&
+      !(d.onChain && isHiddenReserveAddress(d.onChain.reserve)) &&
+      !(d.onChain?.assetsResolvedFully && !isReserveTradable(d.onChain.assets.map((a) => a.mint))),
   );
   const byAddress = new Map(existingDtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
   const merged = discovered.map((fresh) => {

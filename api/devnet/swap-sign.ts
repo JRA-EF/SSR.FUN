@@ -46,12 +46,14 @@ import {
   fetchReserveOnChain,
   buildBuyZapInstructions,
   buildBuyZapInstructionsDevUsdc,
-  buildSellZapInstructions,
+  buildSellZapInstructionsDevUsdc,
   buildRedeemToDevUsdcInstructions,
   findProtocolConfig,
   findReserveTokenMint,
   findMintAuthority,
   findVaultAuthority,
+  isReserveTradable,
+  SUPPORTED_ASSET_MINTS,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   DEVUSDC,
@@ -246,10 +248,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       });
       return;
     }
-    const unsupportedMints = onChain.assets.filter((a) => !ALLOWED_ASSET_MINTS.has(a.assetMint)).map((a) => a.assetMint);
+    // "buy" is the legacy SOL-zap action (not exposed anywhere in the current
+    // UI, which only ever calls "buy-devusdc"/"sell") and keeps its original,
+    // wider allowlist (ALLOWED_ASSET_MINTS, includes wrapped SOL). Every
+    // action the live UI actually uses is gated to exactly the site-wide
+    // tradable set (packages/sdk/src/tradableAssets.ts's SUPPORTED_ASSET_MINTS
+    // -- devUSDC, mockX, mockY, mockZ, no wrapped SOL) -- the same set
+    // src/merge/lib/onChainReserve.ts's mergeDiscoveredReserves already uses
+    // to decide which Reserves are even visible on the site, so a Reserve
+    // that reaches this endpoint at all should already satisfy this, but it
+    // is re-checked here independently rather than trusted from the client.
+    const allowedMintsForAction = action === "buy" ? ALLOWED_ASSET_MINTS : SUPPORTED_ASSET_MINTS;
+    const unsupportedMints = onChain.assets.filter((a) => !allowedMintsForAction.has(a.assetMint)).map((a) => a.assetMint);
     if (unsupportedMints.length > 0) {
       res.status(400).json({
-        error: `The DevNet swap adapter is not authorized to zap the following Reserve asset mint(s): ${unsupportedMints.join(", ")}. Only the DevNet fixture test assets and wrapped SOL are supported.`,
+        error: `The DevNet swap adapter is not authorized to zap the following Reserve asset mint(s): ${unsupportedMints.join(", ")}. Only devUSDC, mockX, mockY, and mockZ are supported for Buy/Sell.`,
       });
       return;
     }
@@ -319,24 +332,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       }
 
       // devUSDC is SSR.fun's purchasing currency, never required to be one
-      // of a Reserve's own assets -- but this deployed program has no
-      // devUSDC -> other-asset conversion instruction. buildBuyZapInstructionsDevUsdc
-      // would otherwise fund any non-devUSDC leg (mockX/Y/Z mint, wrapped-SOL
-      // wrap) for free from the swap authority -- a real trader would then
-      // receive Reserve Tokens genuinely backed by assets nobody actually
-      // paid for. Reject here, server-side, rather than relying solely on
-      // the frontend disabling the button -- this is the actual "hidden
-      // funding" this endpoint must never perform for a real Buy (see
-      // docs/project/DECISION_LOG.md's Buy architecture correction).
-      const nonDevUsdcAssets = zapAssets.filter((a) => a.mint !== DEVUSDC_MINT.toBase58());
-      if (nonDevUsdcAssets.length > 0) {
-        res.status(400).json({
-          error: `This Reserve is not backed 100% by devUSDC (it also holds ${nonDevUsdcAssets.map((a) => a.mint).join(", ")}) -- a genuine devUSDC-to-Reserve-Asset conversion is not deployed on-chain yet, so Buy is unavailable for it.`,
-          code: "conversion_unsupported",
-        });
-        return;
-      }
-
+      // of a Reserve's own assets. A non-devUSDC leg (mockX/Y/Z) is funded by
+      // minting it directly to the buyer from the swap authority's own mint
+      // authority over that specific DevNet test mint -- reported honestly
+      // per-leg via `legSources` below, never silently conflated with a
+      // genuine devUSDC payment. This is a deliberate, documented departure
+      // from the earlier devUSDC-only restriction: every mock test asset is
+      // already a worthless, freely-mintable DevNet convenience token (the
+      // swap authority IS its mint authority), so minting the exact amount
+      // this Buy's own allocation requires is not "hidden funding" in any
+      // sense that matters economically -- it mirrors exactly how
+      // api/devnet/faucet-devusdc.ts already mints devUSDC on demand. Every
+      // asset mint was already re-verified against SUPPORTED_ASSET_MINTS
+      // above, so nothing here trusts an unverified composition.
       const result = await buildBuyZapInstructionsDevUsdc({
         program,
         protocolConfig,
@@ -404,11 +412,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     // -- redeem_reserve_tokens_in_kind already deposits the redeemer's real
     // proportional entitlement straight into their own token account, which
     // for this composition IS real devUSDC. No swap-authority co-signature,
-    // zap, or SOL leg is needed or used (see
+    // zap, or conversion of any kind is needed or used (see
     // packages/sdk/src/zapInstructions.ts's buildRedeemToDevUsdcInstructions
     // and docs/project/DECISION_LOG.md's Buy/Sell architecture correction).
-    // A mixed-composition Reserve still uses the existing SOL-settling zap
-    // below -- unchanged in this pass; see DEC-0054/DEC-0065.
     if (isReservePureDevUsdc(zapAssets.map((a) => a.mint), DEVUSDC_MINT.toBase58())) {
       const redeemResult = await buildRedeemToDevUsdcInstructions({
         program,
@@ -438,7 +444,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
 
-    const result = await buildSellZapInstructions({
+    // A mixed-composition Reserve (e.g. devUSDC + mockX, or 100% mockX/Y/Z)
+    // still redeems in-kind for real, then converts the non-devUSDC legs'
+    // combined DevNet test-price USD value into freshly-minted devUSDC paid
+    // to the user -- see buildSellZapInstructionsDevUsdc's header for the
+    // full mechanics. Every asset here was already re-verified against
+    // SUPPORTED_ASSET_MINTS above, so this never reaches a wrapped-SOL or
+    // other unsupported leg.
+    const result = await buildSellZapInstructionsDevUsdc({
       program,
       reserve,
       reserveTokenMint,
@@ -450,18 +463,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       redemptionFeeBps,
       reserveTokensToRedeem,
       assetTestPricesUsd: ASSET_TEST_PRICES_USD,
+      devUsdcMint: DEVUSDC_MINT,
+      devUsdcDecimals: DEVUSDC.decimals,
     });
-
-    // Sell always pays the user out of the swap authority's own SOL balance
-    // (see zapInstructions.ts's buildSellZapInstructions) -- unlike the Buy
-    // legs, this is the FULL sale proceeds, not just a wrapped-SOL leg.
-    await assertSwapAuthorityHasSol(connection, swapAuthority.publicKey, result.solLamportsOut);
 
     const tx = new Transaction();
     tx.add(...result.instructions);
     tx.feePayer = userPubkey;
     const { blockhash, lastValidBlockHeight } = await withRateLimitRetry(() => connection.getLatestBlockhash("confirmed"), 3, 500);
     tx.recentBlockhash = blockhash;
+    // The swap authority always co-signs this branch -- a mixed Reserve is
+    // guaranteed to have at least one non-devUSDC leg (the pure-devUSDC case
+    // already returned above), and that leg's transfer-away + the devUSDC
+    // mint-to both require the swap authority's signature.
     tx.partialSign(swapAuthority);
 
     res.status(200).json({
@@ -469,7 +483,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       lastValidBlockHeight,
       quote: {
         assetAmountsRaw: result.assetAmountsRaw.map((a) => a.toString()),
-        solLamportsOut: result.solLamportsOut.toString(),
+        devUsdcOutRaw: result.devUsdcOutRaw.toString(),
       },
     });
   } catch (e) {

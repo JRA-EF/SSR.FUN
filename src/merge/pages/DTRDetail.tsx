@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { SOL_TEST_PRICE_USD, DEVUSDC, DEVUSDC_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements } from "@ssr/sdk";
+import { DEVUSDC, DEVUSDC_MINT, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
@@ -224,15 +224,21 @@ export function DTRDetail() {
   const priceHistory = dtr?.priceHistory ?? [];
   const trades = dtr?.trades ?? [];
 
-  // Flatlines at the last known price when a timeframe has no real history, and leads
-  // in from a flat baseline when it has only a little -- so a quiet window reads as
-  // "nothing happened" and a single trade reads as a rise/fall, never a blank chart
-  // or an isolated dot.
-  const windowPoints = useMemo(() => buildLineSeries(priceHistory, timeframe), [priceHistory, timeframe]);
+  // Flatlines at the last known REAL price when a timeframe's own window has no
+  // point strictly inside it (anchored to a genuine prior observation -- "nothing
+  // happened since we last saw a real price," never invented), and leads in from
+  // that same real baseline when the window's history starts partway through --
+  // but a Reserve with fewer than 2 ever-recorded real price points has no trend
+  // to show for ANY range at all, so `insufficientHistory` is reported instead of
+  // fabricating a flatline out of a single point (see calculations.ts's
+  // buildLineSeries). Recomputed independently on every (priceHistory, timeframe)
+  // change -- this component's own local state, never shared with any other
+  // chart instance.
+  const lineSeries = useMemo(() => buildLineSeries(priceHistory, timeframe), [priceHistory, timeframe]);
 
   const chartData = useMemo(
-    () => sampleLinePoints(windowPoints, 300).map((p) => ({ ...p, dateStr: timeframeTickFormat(p.t, timeframe) })),
-    [windowPoints, timeframe],
+    () => sampleLinePoints(lineSeries.points, 300).map((p) => ({ ...p, dateStr: timeframeTickFormat(p.t, timeframe) })),
+    [lineSeries, timeframe],
   );
 
   const orderBook = useMemo(
@@ -312,12 +318,15 @@ export function DTRDetail() {
       return [];
     }
   })();
-  // The Reserve's real Sell execution today still settles as a fixed-rate
-  // DevNet conversion into SOL (see packages/sdk/src/zapInstructions.ts) --
-  // that mechanism is unchanged in this pass (Phase A is display/discovery
-  // only). Shown as an explicitly-disclosed SECONDARY figure, never the
-  // headline, and never implied to be a real market quote.
-  const estSolOut = isOnChain ? (numSellAmount * dtr.nav) / SOL_TEST_PRICE_USD : 0;
+  // For a mixed-composition Reserve, Sell redeems in-kind for real then
+  // converts every non-devUSDC leg's DevNet test-price USD value into
+  // freshly-minted devUSDC (see packages/sdk/src/zapInstructions.ts's
+  // buildSellZapInstructionsDevUsdc) -- since devUSDC is $1-pegged by
+  // design, the total devUSDC received is simply this redemption's total
+  // USD value. An estimate only (the real amount is computed server-side
+  // from live vault balances at execution time), shown as an explicitly
+  // secondary figure, never implied to be a real market quote.
+  const estDevUsdcOut = isOnChain ? numSellAmount * dtr.nav : 0;
 
   /** One-shot reconciliation for an ambiguous ("unresolved") outcome: does the trader's REAL, freshly-read devUSDC balance actually show the spend this Buy would have made? If so, report success based on that observed on-chain state -- never based on an assumption. Used both automatically right after an AmbiguousConfirmationError and from the pending-verification banner's manual "Check status" button. */
   async function reconcileBuy(signature: string) {
@@ -619,19 +628,26 @@ export function DTRDetail() {
   const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(devUsdcBalanceHuman) : 0;
   const buyInsufficientBalance = isOnChain && numBuyAmount > devUsdcBalanceHuman;
   // True when EVERY one of this Reserve's registered assets is devUSDC
-  // itself -- the only composition with a genuine, fabrication-free path in
-  // both directions today: mint_reserve_tokens_in_kind's own transfer_checked
+  // itself -- the only composition where Buy/Sell involve no swap-authority
+  // conversion at all: mint_reserve_tokens_in_kind's own transfer_checked
   // moves the user's real devUSDC straight into the vault on Buy, and
   // redeem_reserve_tokens_in_kind deposits real devUSDC straight back into
-  // the user's wallet on Sell -- no server-side minting, wrapping, or
-  // fixed-price zap of any kind is involved for either direction. Any other
-  // composition (mockX/Y/Z, wrapped SOL) has no genuine devUSDC <-> Reserve-Asset
-  // conversion deployed on-chain: Buy is disabled for those rather than
-  // silently minting those legs for free, and Sell still uses the existing
-  // fixed-rate SOL settlement (unchanged in this pass -- see DEC-0054/0065).
+  // the user's wallet on Sell. Used only for messaging nuance below (which
+  // disclosure to show), not for gating -- see isGenuineDevUsdcBuySupported.
   const isPureDevUsdcReserve =
     isOnChain && !!dtr.onChain && isReservePureDevUsdc(dtr.onChain.assets.map((a) => a.mint), DEVUSDC.mint);
-  const isGenuineDevUsdcBuySupported = isPureDevUsdcReserve;
+  // True for ANY Reserve composed entirely of the site-wide supported
+  // DevNet test assets (devUSDC, mockX, mockY, mockZ -- see
+  // packages/sdk/src/tradableAssets.ts, the same eligibility check that
+  // already determines whether a Reserve is discoverable/visible anywhere
+  // on the site at all). A non-devUSDC leg is funded by the swap authority
+  // minting that exact test asset to the buyer (Buy) or converting the
+  // redeemed amount into devUSDC for the seller (Sell) -- see
+  // api/devnet/swap-sign.ts. In practice this should always be true for any
+  // Reserve that reaches this page, since an ineligible Reserve is filtered
+  // out of the app's catalogue entirely before it could ever be opened here;
+  // kept as an explicit, independently-checked gate rather than assumed.
+  const isGenuineDevUsdcBuySupported = isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint));
   // Reason the 25/50/75/Max quick-select buttons can't be used right now, if
   // any -- distinct from buyProcessing (mid-transaction) so the UI can show
   // an honest "why" instead of a plain disabled control. Deliberately NOT
@@ -863,51 +879,61 @@ export function DTRDetail() {
               </div>
             </CardHeader>
             <CardContent className="p-0 sm:p-6 sm:pt-0 h-[350px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                  <defs>
-                    <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.16} />
-                      <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="dateStr"
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                    minTickGap={30}
-                  />
-                  <YAxis
-                    domain={yDomain}
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `$${value.toFixed(2)}`}
-                    width={60}
-                  />
-                  <RechartsTooltip
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--card-border))', borderRadius: '0.75rem', boxShadow: 'var(--shadow-md)', color: 'hsl(var(--foreground))' }}
-                    itemStyle={{ color: 'hsl(var(--primary))', fontWeight: 'bold' }}
-                    labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
-                    formatter={(value) => [formatUsdc(Number(value)), "Price"]}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="price"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
-                    fill="url(#priceGradient)"
-                    dot={false}
-                    isAnimationActive
-                    animationDuration={350}
-                    animationEasing="ease-out"
-                    activeDot={{ r: 6, fill: "hsl(var(--primary))", stroke: "hsl(var(--background))", strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+              {lineSeries.insufficientHistory ? (
+                <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6">
+                  <p className="text-sm font-semibold text-muted-foreground">Insufficient price history</p>
+                  <p className="text-xs text-muted-foreground/80 max-w-xs">
+                    This Reserve doesn't have enough recorded price history yet to chart any range. A chart appears once at least one real
+                    Buy or Sell has been confirmed.
+                  </p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                    <defs>
+                      <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.16} />
+                        <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="dateStr"
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
+                      minTickGap={30}
+                    />
+                    <YAxis
+                      domain={yDomain}
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => `$${value.toFixed(2)}`}
+                      width={60}
+                    />
+                    <RechartsTooltip
+                      contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--card-border))', borderRadius: '0.75rem', boxShadow: 'var(--shadow-md)', color: 'hsl(var(--foreground))' }}
+                      itemStyle={{ color: 'hsl(var(--primary))', fontWeight: 'bold' }}
+                      labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
+                      formatter={(value) => [formatUsdc(Number(value)), "Price"]}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="price"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth={2}
+                      fill="url(#priceGradient)"
+                      dot={false}
+                      isAnimationActive
+                      animationDuration={350}
+                      animationEasing="ease-out"
+                      activeDot={{ r: 6, fill: "hsl(var(--primary))", stroke: "hsl(var(--background))", strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
@@ -1075,7 +1101,12 @@ export function DTRDetail() {
                             Settlement asset
                             <Tooltip>
                               <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved. This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault.</TooltipContent>
+                              <TooltipContent>
+                                devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.
+                                {isPureDevUsdcReserve
+                                  ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
+                                  : " This Reserve holds other DevNet test assets too -- your devUSDC funds the devUSDC-denominated share directly, and the swap adapter mints the exact amount of each other asset this Reserve's allocation requires."}
+                              </TooltipContent>
                             </Tooltip>
                           </span>
                           <span className="font-merge-mono">devUSDC</span>
@@ -1094,11 +1125,16 @@ export function DTRDetail() {
                         </div>
                       </div>
                     ) : isOnChain ? (
+                      // Defensive fallback only -- a Reserve holding any asset outside the
+                      // supported set (devUSDC/mockX/mockY/mockZ) is excluded from discovery
+                      // entirely (see src/merge/lib/onChainReserve.ts's mergeDiscoveredReserves),
+                      // so this page should never actually be reachable for one. Kept as an
+                      // explicit, honest state rather than assumed unreachable.
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-destructive/30 mt-6">
                         <p className="text-sm font-semibold text-destructive">Buy not available for this Reserve</p>
                         <p className="text-xs text-muted-foreground">
-                          devUSDC is SSR.fun's purchasing currency, but converting it into this Reserve's other underlying assets isn't supported on-chain yet.
-                          Buy currently only works for a Reserve backed 100% by devUSDC.
+                          This Reserve holds an asset outside SSR.fun's currently supported DevNet test assets (devUSDC, mockX, mockY, mockZ),
+                          so no genuine Buy path exists for it.
                         </p>
                         <div className="pt-2 border-t border-border/50 space-y-1.5">
                           <p className="text-xs font-semibold text-muted-foreground">This Reserve's actual composition</p>
@@ -1269,25 +1305,24 @@ export function DTRDetail() {
                         )}
                         {isPureDevUsdcReserve ? (
                           <p className="text-[11px] text-muted-foreground/80 pt-1">
-                            This Reserve is backed 100% by devUSDC -- redemption deposits real devUSDC directly into your wallet. No SOL
-                            conversion, swap adapter, or fixed price is involved.
+                            This Reserve is backed 100% by devUSDC -- redemption deposits real devUSDC directly into your wallet. No
+                            conversion or swap adapter is involved.
                           </p>
                         ) : (
                           <div className="pt-3 border-t border-border/50 space-y-1.5">
                             <div className="flex justify-between text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
-                                Current settlement (secondary, fixed-rate)
+                                Settled in devUSDC
                                 <Tooltip>
                                   <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
                                   <TooltipContent>
-                                    This DevNet test environment currently settles Sell by redeeming in-kind (above) and then converting
-                                    that value to SOL at a FIXED DevNet test rate (${SOL_TEST_PRICE_USD.toFixed(2)}/SOL) -- not a real market
-                                    quote or an actual MOCX/asset-to-SOL swap. A genuine devUSDC-denominated settlement for a mixed-asset
-                                    Reserve requires the same conversion layer Buy is currently missing (see DEC-0054/0065).
+                                    Redeems in-kind (above) first -- any devUSDC entitlement lands directly in your wallet, and every other
+                                    asset is converted into devUSDC at its DevNet test price and paid to you as well, so you always receive
+                                    100% of this redemption's value in devUSDC.
                                   </TooltipContent>
                                 </Tooltip>
                               </span>
-                              <span className="font-merge-mono">~{estSolOut.toFixed(5)} SOL @ fixed ${SOL_TEST_PRICE_USD.toFixed(2)}/SOL</span>
+                              <span className="font-merge-mono">~{estDevUsdcOut.toFixed(2)} devUSDC</span>
                             </div>
                           </div>
                         )}

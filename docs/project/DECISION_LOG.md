@@ -1786,3 +1786,43 @@
   ]
 }
 ```
+
+## DEC-0071
+
+```json
+{
+  "id": "DEC-0071",
+  "date": "2026-08-03",
+  "status": "confirmed",
+  "decision": "Restrict every visible/tradable Reserve on the site to exactly the 4 configured DevNet test mints (devUSDC, mockX, mockY, mockZ), validated by mint address via a single new shared function (packages/sdk/src/tradableAssets.ts's isReserveTradable), enforced identically in discovery/merge, landing-stats, swap-sign, and the Create-Reserve asset picker. Remove the devUSDC-only restriction on Buy (api/devnet/swap-sign.ts) so any allocation of the 4 supported assets can genuinely Buy and Sell -- adding a new devUSDC-settled Sell builder (buildSellZapInstructionsDevUsdc) for mixed/multi-asset compositions that converts non-devUSDC proceeds into freshly-minted devUSDC instead of the prior fixed-rate SOL settlement.",
+  "context": "The site could show Reserves holding wrapped SOL or other unsupported assets with no genuine Buy/Sell path, and Buy itself was hard-restricted to Reserves backed 100% by devUSDC (DEC-0067) even though the underlying buildBuyZapInstructionsDevUsdc builder already correctly handled non-devUSDC legs (minted directly to the buyer via the swap authority's own mint authority) -- the restriction was a server-side rejection, not a capability gap. Sell for any non-pure-devUSDC Reserve still used the original fixed-rate SOL settlement (DEC-0054/0065's long-standing open gap), which was inconsistent with devUSDC now being the site's universal settlement currency.",
+  "rationale": "Every mock test mint (mockX/Y/Z) is a worthless, freely-mintable DevNet convenience token that the swap authority already controls the mint authority for -- the same trust boundary already accepted for devUSDC's own faucet (api/devnet/faucet-devusdc.ts). Extending that same mechanic to cover arbitrary allocations, and mirroring it on the Sell side (convert non-devUSDC proceeds into devUSDC via the same mint authority, rather than paying SOL from the swap authority's own balance), removes the SOL-balance dependency for Sell entirely and unifies the whole Buy/Sell surface on one settlement currency. Restricting the tradable catalogue to exactly these 4 mints (rather than continuing to allow wrapped SOL, which has no such conversion path) keeps every visible Reserve genuinely tradable -- a Reserve that isn't fully supported is hidden, not shown broken.",
+  "alternativesConsidered": [
+    "Keep the devUSDC-only Buy restriction and only fix the tradable-catalogue filtering -- rejected: this was the task's explicit, primary ask, and the underlying builder already supported it; leaving the restriction in place would have left the stated bug unfixed.",
+    "Extend the OLD fixed-rate SOL settlement to also cover mixed-composition Sell instead of building a devUSDC-settled path -- rejected: SOL settlement depends on the swap authority's own real SOL balance (an operational risk already flagged in Risks previously), whereas devUSDC is already freely mintable by the same authority with no comparable balance constraint, and unifies Buy/Sell on one settlement currency as the product model intends.",
+    "Also allow wrapped SOL in the tradable set, since the protocol itself has no restriction against it -- rejected: no genuine devUSDC-settled conversion path exists for SOL (nobody holds mint authority over it), so a SOL-containing Reserve would need to fall back to the old fixed-rate zap inconsistently with everything else; simpler and more honest to exclude it from the tradable catalogue entirely."
+  ],
+  "impact": "packages/sdk/src/tradableAssets.ts (new), src/merge/lib/onChainReserve.ts (mergeDiscoveredReserves filter), api/devnet/landing-stats.ts (displayable filter), api/devnet/swap-sign.ts (allowlist + removed buy-devusdc rejection + new Sell routing), packages/sdk/src/zapInstructions.ts (new buildSellZapInstructionsDevUsdc), src/merge/pages/CreateDTR.tsx (removed wrapped SOL from selectable assets), src/merge/pages/DTRDetail.tsx (gating + messaging + Price History fix), src/merge/lib/calculations.ts (buildLineSeries insufficientHistory), src/merge/lib/reserveCardProps.ts (updated call site). New risk introduced and explicitly flagged (not fixed): a 0%-devUSDC Reserve's Buy-then-Sell path has no rate limit of its own, unlike the dedicated devUSDC faucet.",
+  "affectedAreas": [
+    "packages/sdk/src/tradableAssets.ts",
+    "packages/sdk/src/zapInstructions.ts",
+    "api/devnet/swap-sign.ts",
+    "api/devnet/landing-stats.ts",
+    "src/merge/lib/onChainReserve.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/lib/calculations.ts",
+    "docs/project/PROJECT_STATUS.md",
+    "docs/project/ENGINEERING_TIMELINE.md"
+  ],
+  "supersedes": "DEC-0067",
+  "supersededBy": null,
+  "evidence": [
+    "Live DevNet verification via new scripts/verify_multi_asset_tradability.ts against 4 real persistent Reserves: 100% devUSDC (Buy 5j7TMVWV6j8oASKtXiXg8hMAj7n18bFTEzVMqiTnuWDLVBDFWpKw6AwGKMzGPHZz2hfHLkvh5FPjBTnt5jnQJhp6 / Sell 2BqhSDkZnPdJCrtSC6eoxMSXitXupUgg1yd7yNvXYtjU6c1bJZdHcUFr33UPZpJBLxXeM3jQppPZaPDRxy8RxYfL), 100% mockX/TestLo (Buy 3VPPdqFk6p6zR8zVHr2SfbPp2uJnPLJtoyNbR4CswkbAXLwT6VYkbfr6nWuH6wLrJA2nbMjxTx9qTTsCGzs7Eni3 / Sell 3TG7jmDSomTiMD88SLGSoGzhK2jqD23k9344M6qLMwg5AchGsLD5sXVc9ZWw5Kk5mUJYLkRxiKmukQE5kXQ8Lqiy), multi-asset mockX/Y/Z/DevNet Reserve Two (Buy 5EYrBuWwmPkrk1j78DWDMrAxXn5DtEs29mgXVxMZjDyZryKmqxMKzGjvha4KjLMND7mxRphmoNA5K5sbfCa6Awdj / Sell JoeJArhwn5goQ3V3chekVvoiMxZ9PzWjGWwzpVwgH7Auv41jDSo4KdS29M6bmN6yKhc3VYtvg6vz9RUMQjxcG16), mixed devUSDC+mockX/Phase C Reserve (Buy 59YGxj8ihHeJQP7czJXbgJxNhbyedbSacEEGjfn1FC3VEnpeY7MYABmvk9eP1eqrSJCdrhrfRmf4Me1X6fQrKt3f / Sell 9JZFtpvNUja4AdvvusSMrkgAT62MjKTPvAPB91r7u24nRNjfksf5u6qk7XsVGr8c5zbeBkgzJ5jfx4qpjaTRVK9)",
+    "Exact vault/supply/NAV deltas confirmed per composition including mockZ's differing 9-decimal mint; required-signer lists confirmed (single signer for pure devUSDC, buyer+swap-authority whenever a non-devUSDC leg is involved)",
+    "Cross-Reserve isolation explicitly confirmed: Reserves 1 and 2's own vault/supply state re-read byte-identical to their own post-trade snapshots after Reserves 3 and 4 traded",
+    "Real holder/volume refresh confirmed across all 4 compositions (2-5 holders, $11.98-$76.98 24h volume each)",
+    "18 new offline tests passing (163/163 total); tsc -b, tsc -p api/devnet/tsconfig.json --noEmit, vite build all clean"
+  ]
+}
+```

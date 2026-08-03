@@ -155,10 +155,26 @@ export interface InfraItem {
   source: 'git' | 'manual'
 }
 
+export interface FixEntry {
+  id: string
+  title: string
+  date: string
+  /** 'completed' -- implemented and verified; 'in_progress' -- implemented, verification pending/partial. Never fabricated as 'completed' if a required manual step (e.g. a browser click-through) is still outstanding. */
+  status: 'completed' | 'in_progress'
+  /** Present only when this fix can be tied to one specific commit without a circular self-reference (a commit can't cite its own hash) -- see `source`. */
+  commit?: string
+  source: 'git' | 'manual'
+  note?: string
+  summary: string[]
+  /** Work items intentionally left outstanding -- never omitted just to look more complete. */
+  remaining?: string[]
+}
+
 export interface EngineeringTimeline {
   milestones: Milestone[]
   timeline: TimelineEntry[]
   infra: InfraItem[]
+  fixes: FixEntry[]
 }
 
 export function parseEngineeringTimeline(markdown: string): EngineeringTimeline {
@@ -167,6 +183,7 @@ export function parseEngineeringTimeline(markdown: string): EngineeringTimeline 
     milestones: (extractFencedJson(sections.get('Milestones') ?? '') as Milestone[] | null) ?? [],
     timeline: (extractFencedJson(sections.get('Timeline') ?? '') as TimelineEntry[] | null) ?? [],
     infra: (extractFencedJson(sections.get('Infrastructure') ?? '') as InfraItem[] | null) ?? [],
+    fixes: (extractFencedJson(sections.get('Fixes') ?? '') as FixEntry[] | null) ?? [],
   }
 }
 

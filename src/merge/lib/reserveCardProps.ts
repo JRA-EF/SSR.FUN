@@ -30,7 +30,7 @@ export function buildReserveCardProps(dtr: DTR): ReserveCardData {
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 3)
     .map((a) => a.symbol);
-  const recentHistory = buildLineSeries(dtr.priceHistory, "7d");
+  const recentHistory = buildLineSeries(dtr.priceHistory, "7d").points;
 
   return {
     name: dtr.name,

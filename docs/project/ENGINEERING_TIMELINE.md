@@ -165,6 +165,73 @@
 ]
 ```
 
+## Fixes
+
+<!--
+  Verified corrective passes, shown as a dedicated dashboard panel distinct
+  from Milestones (net-new capability) and Timeline (chronological detail).
+  Each entry's `status` must never say "completed" if a required manual
+  verification step (e.g. a browser click-through) is still outstanding --
+  use `remaining` to say so explicitly instead. `commit` is omitted when a
+  fix is committed in the exact same commit as this file's own update (a
+  commit cannot cite its own hash) -- `source: "manual"` in that case, not
+  fabricated as git-verified.
+-->
+
+```json
+[
+  {
+    "id": "devnet-buy-flow-live-metrics",
+    "title": "DevNet Buy Flow and Live Metrics",
+    "date": "2026-08-03",
+    "status": "completed",
+    "commit": "9815b634a78805f203cf554a2536eda72b0fac31",
+    "source": "git",
+    "summary": [
+      "Fixed and verified the DevNet Buy flow.",
+      "Verified live AUM and NAV accounting using real on-chain balances.",
+      "Added real Reserve Token holder counts and 24-hour volume.",
+      "Automated DevNet Buy/Sell verification, typecheck, build, and 145 targeted tests passed.",
+      "Fixed the 'unknown signer' Buy failure caused by signing with the swap authority when the transaction did not require it.",
+      "Added per-Reserve holder indexing based on unique wallets with non-zero balances.",
+      "Added globally deduplicated holder totals to the landing-page KPIs.",
+      "Added visible per-Reserve 24-hour Buy and Sell volume.",
+      "Confirmed devUSDC valuation at $1.",
+      "Confirmed Reserve \"123\" correctly showed $0 AUM because it had been fully redeemed.",
+      "Confirmed proportional zero-fee Sells preserve NAV while reducing AUM and Reserve Token supply.",
+      "Verified accounting -- Seed: $100 AUM / 100 supply / $1 NAV. After Buy: $110 AUM / 109.95 supply / ~$1.000455 NAV. After Sell: $55 AUM / 54.975 supply / ~$1.000455 NAV."
+    ],
+    "remaining": [
+      "Perform one manual Phantom Buy and Sell through the deployed UI.",
+      "tests/ssr_protocol.ts remains blocked in this environment because Cargo is unavailable on PATH."
+    ]
+  },
+  {
+    "id": "tradable-reserves-multi-asset-buy-sell",
+    "title": "Tradable DevNet Reserves and Multi-Asset Buy/Sell",
+    "date": "2026-08-03",
+    "status": "completed",
+    "source": "manual",
+    "note": "Committed in the same commit as this file's own update -- see git log on this repo for the exact hash rather than a self-referential one here.",
+    "summary": [
+      "Added a single shared eligibility function (packages/sdk/src/tradableAssets.ts) restricting every visible/tradable Reserve on the site to compositions built entirely from the 4 configured DevNet test mints (devUSDC, mockX, mockY, mockZ) -- wired into discovery/merge, landing-stats, swap-sign, and the Create-Reserve asset picker, so a Reserve holding any other asset (e.g. wrapped SOL) is excluded everywhere, never partially.",
+      "Fixed the 'Buy only works for 100% devUSDC Reserves' limitation: Buy now mints a non-devUSDC leg (mockX/Y/Z) directly to the buyer from the swap authority's own mint authority over that specific test mint, reported honestly per-leg (never conflated with a genuine devUSDC payment).",
+      "Added a new devUSDC-settled Sell path (buildSellZapInstructionsDevUsdc) for mixed/multi-asset Reserves: redeems in-kind for real, keeps any real devUSDC entitlement with the seller, and converts every other asset's entitlement into freshly-minted devUSDC -- replacing the prior SOL-denominated settlement for these compositions and removing the swap authority's SOL balance as a Sell dependency entirely.",
+      "Fixed the Price History range selector: buildLineSeries now reports an honest 'insufficient history' state for a Reserve with fewer than 2 ever-recorded price points instead of fabricating an identical flatline for every range button -- the root cause of every range appearing to 'do the same thing'.",
+      "Live-verified real Buy then Sell against 4 real, persistent on-chain Reserves covering every required composition (100% devUSDC, 100% mockX via the existing TestLo fixture, multi-asset mockX/Y/Z via DevNet Reserve Two, and mixed devUSDC+mockX via the Phase C Reserve) -- exact vault/supply/NAV deltas confirmed per composition, including correct handling of mockZ's differing 9-decimal mint.",
+      "Explicitly confirmed cross-Reserve isolation: after trading Reserves 3 and 4, Reserves 1 and 2's own vault/supply state was re-read and found byte-identical to their own post-trade snapshots.",
+      "Confirmed real holder/volume refresh across all 4 compositions post-trade (2-5 holders and $11.98-$76.98 24h volume each, all genuine on-chain reads).",
+      "Added 18 new offline regression tests (tradable-asset eligibility, mergeDiscoveredReserves wiring, buildLineSeries range independence/insufficient-history/multi-instance isolation) -- 163/163 offline tests passing."
+    ],
+    "remaining": [
+      "A Reserve composed of 0% devUSDC lets a buyer acquire its non-devUSDC assets for free (swap-authority-minted, consistent with the pre-existing DevNet test-asset model) and then Sell converts that into freshly-minted real devUSDC with no cooldown or ceiling -- an unlimited devUSDC-minting path distinct from the rate-limited faucet. Flagged as a risk, not fixed in this pass (a rate-limit/ceiling decision for this specific path was outside this pass's scope).",
+      "No manual Phantom Buy/Sell UI click-through was performed (no browser-automation tool available in this environment, pre-existing gap) -- verified instead via real signed transactions against live DevNet using a throwaway keypair, matching this repo's established scripts/verify_*.ts pattern.",
+      "tests/ssr_protocol.ts remains blocked in this environment because Cargo is unavailable on PATH."
+    ]
+  }
+]
+```
+
 ## Timeline
 
 ```json

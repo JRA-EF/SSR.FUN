@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, WRAPPED_SOL_MINT, SOL_TEST_PRICE_USD, DEVUSDC } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
@@ -29,17 +29,21 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
 import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR, RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY } from "@/lib/types";
 
-// Real, genuinely supported DevNet assets -- native SOL (wrapped internally
-// where the SPL-token protocol requires it -- see createReserveClient.ts),
-// the real devUSDC settlement mint (Phase B), plus the 3 Gate-9 fixture test
-// mints -- every one of these is a mint the DevNet swap/faucet authority
-// actually holds mint authority over, so seed-funding and mint/redeem both
-// work for any of them. This is now the ONLY selectable asset list -- the
-// previous fictional/simulated asset list and its pure-simulation fallback
-// deploy path have been removed entirely (see DEC-0030 and this pass's
-// corrective DevNet data-integrity work in docs/project/PROJECT_STATUS.md).
+// Real, genuinely supported DevNet assets -- the real devUSDC settlement
+// mint (Phase B) plus the 3 Gate-9 fixture test mints. This is the exact
+// same set as packages/sdk/src/tradableAssets.ts's SUPPORTED_ASSET_MINTS --
+// the site-wide eligibility check that determines which Reserves are even
+// visible/tradable anywhere on the site -- so a Reserve created from this
+// list is guaranteed to be tradable, never immediately hidden after
+// creation. Native/wrapped SOL was removed from this list (it has no
+// genuine devUSDC-settled Buy/Sell path -- see api/devnet/swap-sign.ts) --
+// a Reserve holding it would be created successfully but then never be
+// discoverable/tradable anywhere on the site. This is the ONLY selectable
+// asset list -- the previous fictional/simulated asset list and its
+// pure-simulation fallback deploy path have been removed entirely (see
+// DEC-0030 and this pass's corrective DevNet data-integrity work in
+// docs/project/PROJECT_STATUS.md).
 const DEVNET_REAL_ASSETS = [
-  { symbol: "SOL", name: "Solana (native, wrapped automatically as needed)", real: true as const, mint: WRAPPED_SOL_MINT.toBase58(), decimals: 9 },
   { symbol: DEVUSDC.symbol, name: `${DEVUSDC.name} (DevNet settlement token, no real value)`, real: true as const, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
   ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({
     symbol: m.symbol.toUpperCase(),

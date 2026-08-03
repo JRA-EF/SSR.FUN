@@ -15,11 +15,13 @@ import {
   ScrollText,
   Sparkles,
   Users,
+  Wrench,
 } from 'lucide-react'
 import type {
   DecisionEntry,
   EngineeringArea,
   EngineeringTimeline,
+  FixEntry,
   InfraItem,
   Milestone,
   ProjectStatus,
@@ -394,6 +396,18 @@ function DashboardBody(props: {
         </div>
       </section>
 
+      {/* Fixes -- verified corrective passes, distinct from net-new Milestones */}
+      {engineering.fixes.length > 0 && (
+        <section className="dash-section dash-fade-in" style={{ animationDelay: '0.13s' }}>
+          <h2 className="dash-section-title">Fixes</h2>
+          <div className="dash-milestones-grid">
+            {engineering.fixes.map(f => (
+              <FixCard key={f.id} fix={f} remotePrefix={remotePrefix} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Milestones */}
       <section className="dash-section dash-fade-in" style={{ animationDelay: '0.15s' }}>
         <h2 className="dash-section-title">Milestones</h2>
@@ -545,6 +559,49 @@ function EngineeringAreaCard({ area }: { area: EngineeringArea }) {
       <div className="dash-area-card-name">{area.area}</div>
       <span className={`dash-pill dash-pill-sm dash-pill-${t}`}>{area.status.replace('_', ' ')}</span>
       <p className="dash-area-card-detail dash-muted dash-small">{area.detail}</p>
+    </div>
+  )
+}
+
+function FixCard({ fix, remotePrefix }: { fix: FixEntry; remotePrefix: string }) {
+  const url = fix.source === 'git' ? commitUrl(remotePrefix, fix.commit) : null
+  return (
+    <div className="dash-milestone-card">
+      <div className="dash-milestone-icon">
+        <Wrench size={18} />
+      </div>
+      <div className="dash-milestone-body">
+        <div className="dash-milestone-head">
+          <span className="dash-milestone-title">{fix.title}</span>
+          <span className={`dash-tag dash-tag-${fix.status === 'completed' ? 'git' : 'manual'}`}>
+            {fix.status === 'completed' ? 'completed' : 'in progress'}
+          </span>
+        </div>
+        <ul className="dash-muted dash-small" style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+          {fix.summary.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+        <div className="dash-milestone-foot">
+          <span className="dash-muted dash-small">{fix.date}</span>
+          {url && (
+            <a className="dash-mono dash-small dash-link" href={url} target="_blank" rel="noreferrer">
+              {shortHash(fix.commit)}
+            </a>
+          )}
+        </div>
+        {fix.note && <p className="dash-milestone-note dash-muted dash-small">{fix.note}</p>}
+        {fix.remaining && fix.remaining.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <p className="dash-muted dash-small" style={{ fontWeight: 600, margin: '0 0 2px' }}>Remaining</p>
+            <ul className="dash-muted dash-small" style={{ margin: 0, paddingLeft: 18 }}>
+              {fix.remaining.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

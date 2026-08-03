@@ -18,6 +18,7 @@ import {
   fetchReserveTokenHolderOwners,
   fetchReserve24hVolumeUsd,
   isHiddenReserveAddress,
+  isReserveTradable,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   DEVUSDC,
@@ -77,10 +78,19 @@ async function computeLandingStats(): Promise<LandingStats> {
 
   const { reserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints);
   // Same rules as the frontend's mergeDiscoveredReserves: a Reserve with zero
-  // registered assets never reached genuine tradeable status, and a Reserve
-  // in HIDDEN_RESERVE_ADDRESSES is a confirmed-abandoned Reserve excluded by
-  // exact address -- neither should ever contribute to a real stat.
-  const displayable = reserves.filter((r) => r.assetCount !== 0 && !isHiddenReserveAddress(r.reserve));
+  // registered assets never reached genuine tradeable status, a Reserve in
+  // HIDDEN_RESERVE_ADDRESSES is a confirmed-abandoned Reserve excluded by
+  // exact address, and a Reserve holding any asset outside the supported
+  // {devUSDC, mockX, mockY, mockZ} set (e.g. wrapped SOL) has no genuine
+  // Buy/Sell path -- none of these should ever contribute to a real stat.
+  // Same assetsResolvedFully guard as the frontend: only excluded on
+  // composition when this pass actually resolved every registered asset.
+  const displayable = reserves.filter(
+    (r) =>
+      r.assetCount !== 0 &&
+      !isHiddenReserveAddress(r.reserve) &&
+      !(r.resolvedAssetCount >= r.assetCount && !isReserveTradable(r.assets.map((a) => a.assetMint))),
+  );
 
   const sinceUnixSec = Math.floor(Date.now() / 1000) - TWENTY_FOUR_HOURS_SEC;
   const perReserve: Record<string, PerReserveStats> = {};
