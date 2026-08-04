@@ -2,18 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
+  resumeReserveDeploymentOnChain,
   estimateCreateReserveCost,
   reserveAccountExistsOnChain,
   savePendingReserveDeploy,
   readPendingReserveDeploy,
   clearPendingReserveDeploy,
+  determineDeploymentResumePoint,
+  isWalletRejectionError,
   CreateReserveStepError,
   type CreateReserveStep,
   type CreateReserveCostEstimate,
+  type PendingReserveDeploy,
+  type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
 import { explorerUrl } from "@/lib/solana-config";
 import { Button } from "@/components/ui/button";
@@ -87,6 +92,19 @@ export function CreateDTR() {
   // in-flight by a page reload (see readPendingReserveDeploy) -- shown
   // instead of a blank fresh form, which would invite a duplicate launch.
   const [recovering, setRecovering] = useState(false);
+  // A previous attempt's create-and-register transaction landed on-chain but
+  // seeding never completed -- set once mount-time reconciliation (or a
+  // failed submit -- see handleSubmitReal's catch block) confirms this via a
+  // fresh on-chain read. While set, the form is replaced by a dedicated
+  // Resume panel instead of offering a blank "Launch" form that would create
+  // a SEPARATE Reserve (the confirmed root cause of the reported "tells the
+  // user to create another Reserve" failure).
+  const [resumePending, setResumePending] = useState<PendingReserveDeploy | null>(null);
+  // Set when a pending deployment's real on-chain registered-asset count
+  // doesn't match what it expected -- refuses to offer Resume (or a fresh
+  // submission) automatically; this can only come from data corruption or an
+  // unrelated concurrent modification, never something safe to guess through.
+  const [resumeMismatch, setResumeMismatch] = useState<string | null>(null);
 
   // Form State
   const [name, setName] = useState("");
@@ -166,41 +184,102 @@ export function CreateDTR() {
     };
   }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection]);
 
-  // Recovers from a page reload that happened mid-deployment (see
-  // savePendingReserveDeploy/handleSubmitReal): reconciles the exact Reserve
-  // PDA this wallet's last attempt was building against real on-chain state
-  // BEFORE allowing a fresh submission -- "recovering, checking on-chain
-  // state" instead of a blank form that invites a duplicate launch.
+  // Recovers from a page reload (or a return visit, hours or days later --
+  // see PendingReserveDeploy's no-expiry note) that happened mid-deployment:
+  // reads REAL on-chain state for the exact Reserve PDA this wallet's last
+  // attempt was building, via determineDeploymentResumePoint's pure decision
+  // logic (see createReserveResume.ts), BEFORE allowing anything else --
+  // "recovering, checking on-chain state" instead of a blank form that would
+  // let the user create a separate, duplicate Reserve.
   useEffect(() => {
     if (!wallet.connected || !wallet.address) return;
     const pending = readPendingReserveDeploy(wallet.address);
     if (!pending) return;
     setRecovering(true);
     const programId = new PublicKey(DEVNET_FIXTURES.programId);
-    reserveAccountExistsOnChain(connection, new PublicKey(pending.reserve), programId)
-      .then((exists) => {
-        clearPendingReserveDeploy();
-        if (exists) {
-          toast({
-            title: "Previous deployment recovered",
-            description: `Your last Reserve creation attempt ("${pending.name}") actually landed on-chain despite an earlier error. Check Discover for it before launching a new one -- launching again now would create a separate, duplicate Reserve.`,
-          });
-          setLocation("/discover");
-        } else {
+    const candidateMints = pending.assets.map((a) => new PublicKey(a.mint));
+    fetchReserveOnChain(connection, programId, new PublicKey(pending.reserve), candidateMints)
+      .then((onChain) => {
+        const resumePoint = determineDeploymentResumePoint({
+          reserveExists: onChain !== null,
+          reserveStatus: (onChain?.status as ReserveOnChainStatus | undefined) ?? null,
+          onChainAssetCount: onChain?.assetCount ?? 0,
+          expectedAssetCount: pending.assets.length,
+        });
+        if (resumePoint.kind === "start-fresh") {
+          clearPendingReserveDeploy();
           toast({
             title: "Previous deployment did not land",
-            description: `Your last attempt ("${pending.name}") left no on-chain Reserve -- safe to try again.`,
+            description: `Your last attempt ("${pending.name}") left no on-chain Reserve -- safe to start a fresh one.`,
           });
+        } else if (resumePoint.kind === "already-complete") {
+          clearPendingReserveDeploy();
+          toast({
+            title: "Previous deployment already completed",
+            description: `Your last Reserve creation attempt ("${pending.name}") already finished successfully on-chain.`,
+          });
+          setLocation(`/dtr/devnet-${pending.reserveId}`);
+        } else if (resumePoint.kind === "asset-count-mismatch") {
+          // Deliberately NOT cleared -- this needs a human to look at it, not
+          // an automatic guess. Both Resume and a fresh submission stay blocked.
+          setResumeMismatch(
+            `On-chain Reserve ${pending.reserve} has ${resumePoint.onChainAssetCount} registered asset(s), but this pending deployment expected ${resumePoint.expectedAssetCount}. This needs manual verification on Explorer before continuing.`,
+          );
+        } else {
+          setResumePending(pending);
         }
       })
       .catch(() => {
         // Reconciliation read itself failed (RPC congestion) -- leave the
-        // marker in place; the next mount (or its own 10-minute staleness
-        // window) will retry rather than assuming either outcome.
+        // marker in place; the next mount will retry rather than assuming
+        // either outcome.
       })
       .finally(() => setRecovering(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet.connected, wallet.address, connection]);
+
+  const handleResumeDeployment = async () => {
+    if (!resumePending || submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    setCreateStep("fund-seed-assets");
+    useAppStore.getState().setTxInFlight(true);
+    try {
+      const result = await resumeReserveDeploymentOnChain({
+        connection,
+        wallet: walletCtx,
+        pending: resumePending,
+        onProgress: setCreateStep,
+      });
+      clearPendingReserveDeploy();
+      setResumePending(null);
+      const dtrId = `devnet-${result.reserveId}`;
+      syncRealHolding(dtrId, "0", 1); // Placeholder holding entry -- RealReserveSync's next poll (or DTRDetail's own on-chain read) fills in the real balance/composition immediately; this just avoids a blank flash.
+      toast({
+        title: "Reserve deployment resumed and completed",
+        description: `Reserve: ${explorerUrl("address", result.reserve)}${result.transactions.seed ? ` · Seed tx: ${explorerUrl("tx", result.transactions.seed)}` : " (was already fully seeded by the earlier attempt)"}`,
+      });
+      setLocation(`/dtr/${dtrId}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isWalletRejectionError(e)) {
+        toast({ title: "Cancelled in wallet", description: "Nothing was submitted -- safe to try Resume again whenever you're ready." });
+      } else if (e instanceof CreateReserveStepError) {
+        toast({
+          variant: "destructive",
+          title: `Resume failed (${CREATE_STEP_LABELS[e.step]})`,
+          description: `${msg} -- your Reserve's on-chain identity is unchanged. Click Resume Deployment again once ready; nothing already confirmed will be resubmitted.`,
+        });
+      } else {
+        toast({ variant: "destructive", title: "Resume failed", description: msg });
+      }
+    } finally {
+      setIsSubmitting(false);
+      setCreateStep(null);
+      submittingRef.current = false;
+      useAppStore.getState().setTxInFlight(false);
+    }
+  };
 
   if (recovering) {
     return (
@@ -210,6 +289,61 @@ export function CreateDTR() {
           <h1 className="text-2xl font-merge-display font-bold">Recovering...</h1>
           <p className="text-muted-foreground">Checking Solana DevNet for a Reserve creation left in progress before this page reloaded.</p>
         </div>
+      </div>
+    );
+  }
+
+  if (resumeMismatch) {
+    return (
+      <div className="container mx-auto px-4 py-24 text-center">
+        <div className="max-w-md mx-auto space-y-4">
+          <AlertCircle className="w-16 h-16 text-destructive mx-auto mb-4" />
+          <h1 className="text-2xl font-merge-display font-bold">Manual verification needed</h1>
+          <p className="text-muted-foreground">{resumeMismatch}</p>
+          <p className="text-sm text-muted-foreground">This is not something safe to resolve automatically -- please verify the Reserve's real composition before deploying anything else with this wallet.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (resumePending) {
+    return (
+      <div className="container max-w-2xl mx-auto px-4 py-24">
+        <Card className="border-primary/30 shadow-lg">
+          <CardHeader>
+            <CardTitle className="text-2xl font-merge-display flex items-center gap-2">
+              Resume Deployment
+              <Badge className="font-merge-mono">Solana DevNet</Badge>
+            </CardTitle>
+            <CardDescription>
+              Your Reserve "{resumePending.name}" ({resumePending.ticker}) was already created on-chain, but seeding didn't finish. Resuming continues from real on-chain state -- it will
+              never recreate the Reserve or fund an asset you already have enough of.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex justify-between items-center p-3 rounded-lg border border-border bg-muted/20 text-sm">
+              <span className="text-muted-foreground">Reserve address</span>
+              <span className="font-merge-mono text-xs truncate max-w-[220px]">{resumePending.reserve}</span>
+            </div>
+            <div className="flex justify-between items-center p-3 rounded-lg border border-border bg-muted/20 text-sm">
+              <span className="text-muted-foreground">Assets</span>
+              <span className="font-merge-mono text-xs">{resumePending.assets.length}</span>
+            </div>
+          </CardContent>
+          <CardFooter className="justify-end border-t border-border/40 pt-6">
+            <Button onClick={handleResumeDeployment} disabled={isSubmitting} className="font-bold gap-2 min-w-[180px]">
+              {isSubmitting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Resuming..."}
+                </>
+              ) : (
+                <>
+                  <Rocket className="w-4 h-4" /> Resume Deployment
+                </>
+              )}
+            </Button>
+          </CardFooter>
+        </Card>
       </div>
     );
   }
@@ -288,18 +422,37 @@ export function CreateDTR() {
     }
     // Synchronous re-entrancy guard -- see submittingRef's declaration.
     if (submittingRef.current) return;
+    // A pending deployment for this wallet (started in this tab OR another
+    // tab/session sharing the same browser's localStorage) means a
+    // half-built Reserve already exists -- starting a FRESH submission here
+    // would create a genuinely separate, duplicate Reserve. Re-read
+    // synchronously right before submitting (not just relying on the
+    // mount-time effect) so a deployment started in another tab moments ago
+    // is still caught.
+    const alreadyPending = readPendingReserveDeploy(walletCtx.publicKey.toBase58());
+    if (alreadyPending) {
+      setResumePending(alreadyPending);
+      toast({
+        variant: "destructive",
+        title: "A deployment is already in progress",
+        description: `Reserve "${alreadyPending.name}" (${alreadyPending.ticker}) has a deployment in progress for this wallet -- resume it instead of starting a new one.`,
+      });
+      return;
+    }
     submittingRef.current = true;
     setIsSubmitting(true);
     setCreateStep("create-and-register");
     const programId = new PublicKey(DEVNET_FIXTURES.programId);
     useAppStore.getState().setTxInFlight(true);
-    try {
-      const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
-      const realAssets = assets.map((a) => {
-        const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
-        return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeight) * 10_000), seedWeightFraction: a.weight / totalWeight };
-      });
 
+    const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
+    const realAssets = assets.map((a) => {
+      const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
+      return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeight) * 10_000), seedWeightFraction: a.weight / totalWeight };
+    });
+    const seedTotalUsd = parseFloat(initialSeedUsdc) || 10;
+
+    try {
       const result = await createReserveOnChain({
         connection,
         wallet: walletCtx,
@@ -308,12 +461,15 @@ export function CreateDTR() {
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,
         assets: realAssets,
-        seedTotalUsd: parseFloat(initialSeedUsdc) || 10,
+        seedTotalUsd,
         onProgress: setCreateStep,
-        // Persisted immediately -- if the page reloads anywhere after this
-        // fires, the mount-time recovery effect above can reconcile THIS
-        // exact Reserve PDA against real on-chain state instead of the user
-        // seeing a blank form that invites a duplicate launch.
+        // Persisted immediately -- if the page reloads (or the user leaves
+        // and comes back later) anywhere after this fires, the mount-time
+        // recovery effect above can reconcile THIS exact Reserve PDA against
+        // real on-chain state and offer Resume instead of a blank form that
+        // would let the user create a duplicate Reserve. Carries the full
+        // composition/seed target -- everything resumeReserveDeploymentOnChain
+        // needs to finish the deployment without re-deriving anything.
         onAddressesResolved: (addresses) => {
           savePendingReserveDeploy({
             wallet: walletCtx.publicKey!.toBase58(),
@@ -322,6 +478,8 @@ export function CreateDTR() {
             name,
             ticker: ticker.toUpperCase(),
             startedAt: Date.now(),
+            assets: realAssets.map((a) => ({ mint: a.mint, decimals: a.decimals, seedWeightFraction: a.seedWeightFraction })),
+            seedTotalUsd,
           });
         },
       });
@@ -395,26 +553,30 @@ export function CreateDTR() {
 
       toast({
         title: "Reserve deployed on Solana DevNet",
-        description: `Reserve: ${explorerUrl("address", result.reserve)} · Create tx: ${explorerUrl("tx", result.transactions.createAndRegister)}`,
+        description: `Reserve: ${explorerUrl("address", result.reserve)}${result.transactions.createAndRegister ? ` · Create tx: ${explorerUrl("tx", result.transactions.createAndRegister)}` : ""}`,
       });
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
 
-      if (e instanceof CreateReserveStepError && e.step !== "create-and-register") {
+      if (isWalletRejectionError(e)) {
+        // Rejected in the wallet popup itself -- strictly before any
+        // submission, so there is nothing to reconcile and nothing was ever
+        // saved to resume. Never treated as ambiguous.
+        toast({ title: "Cancelled in wallet", description: "Nothing was submitted -- safe to try again whenever you're ready." });
+      } else if (e instanceof CreateReserveStepError && e.step !== "create-and-register") {
         // A failure in fund-seed-assets/seed means create-and-register
         // already succeeded -- the Reserve definitely exists on-chain, just
-        // not fully seeded. Retrying handleSubmitReal from scratch would
-        // create a SEPARATE new Reserve, not resume this one (full
-        // step-level resumption is a documented, separate follow-up -- see
-        // createReserveClient.ts). Say so plainly instead of inviting a
-        // blind retry. The pending marker is cleared -- this outcome is
-        // already fully reconciled here, nothing left for a reload to check.
-        clearPendingReserveDeploy();
+        // not fully seeded. The pending marker (already saved, with the full
+        // composition) is kept -- switch straight into the Resume panel
+        // instead of dead-ending the user on a blank form whose only action
+        // would create a SEPARATE, duplicate Reserve.
+        const resumable = readPendingReserveDeploy(walletCtx.publicKey!.toBase58());
+        if (resumable) setResumePending(resumable);
         toast({
           variant: "destructive",
           title: `Deployment incomplete (${CREATE_STEP_LABELS[e.step]})`,
-          description: `${msg} -- the Reserve account was already created on-chain before this step. Check Discover for it before launching again; retrying this form creates a SEPARATE new Reserve, not a resume.`,
+          description: `${msg} -- the Reserve account was already created on-chain before this step. Use Resume Deployment below to finish it safely; it will never recreate the Reserve or a step that already succeeded.`,
         });
       } else if (e instanceof CreateReserveStepError && e.addresses) {
         // create-and-register itself threw. Reconcile against the EXACT
@@ -425,11 +587,14 @@ export function CreateDTR() {
         // on-chain despite the displayed failure.
         const exists = await reserveAccountExistsOnChain(connection, e.addresses.reserve, programId).catch(() => null);
         if (exists) {
-          clearPendingReserveDeploy();
+          // It landed after all -- the pending marker already has the full
+          // composition, so this is resumable too (most likely straight to
+          // seeding, since create-and-register itself is what "succeeded").
+          const resumable = readPendingReserveDeploy(walletCtx.publicKey!.toBase58());
+          if (resumable) setResumePending(resumable);
           toast({
-            title: "Submission status unclear -- do not retry yet",
-            description:
-              "The wallet reported a failure, but this Reserve now exists on-chain -- it may have actually succeeded. Check Discover for it before launching again to avoid creating a duplicate.",
+            title: "Submission status unclear -- Reserve already exists",
+            description: "The wallet reported a failure, but this Reserve now exists on-chain. Use Resume Deployment below instead of retrying the form, to avoid creating a duplicate.",
           });
         } else if (exists === null) {
           // Reconciliation read itself failed (still congested) -- leave the

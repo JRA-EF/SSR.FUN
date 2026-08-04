@@ -107,6 +107,12 @@ export interface ReserveOnChain {
   totalTargetWeightBps: number;
   /** Redemption fee in bps, read live from Reserve.feeConfig -- used for honest in-kind Sell estimates (see computeRedemptionEntitlements). */
   redemptionFeeBps: number;
+  /** Mint fee in bps, read live from Reserve.feeConfig. */
+  mintFeeBps: number;
+  /** Annualized TVL fee in bps, read live from Reserve.feeConfig. */
+  tvlFeeBps: number;
+  /** Fee destination wallet, read live from Reserve.feeConfig. */
+  feeDestination: string;
   metadataUri: string;
   reserveTokenSupplyRaw: string;
   assets: ReserveAssetOnChain[];
@@ -159,6 +165,9 @@ export async function fetchReserveOnChain(
     assetCount: reserveAccount.assetCount,
     totalTargetWeightBps: reserveAccount.totalTargetWeightBps,
     redemptionFeeBps: reserveAccount.feeConfig.redemptionFeeBps,
+    mintFeeBps: reserveAccount.feeConfig.mintFeeBps,
+    tvlFeeBps: reserveAccount.feeConfig.annualTvlFeeBps,
+    feeDestination: reserveAccount.feeConfig.feeDestination.toBase58(),
     metadataUri: reserveAccount.metadataUri,
     reserveTokenSupplyRaw: supply ? supply.value.amount : "0",
     assets,

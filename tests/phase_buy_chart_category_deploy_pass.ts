@@ -243,24 +243,41 @@ describe("Deployment-in-progress persistence (survives a reload mid-flight)", ()
 
   afterEach(() => clearPendingReserveDeploy());
 
+  const SAMPLE_ASSETS = [{ mint: "MintX", decimals: 6, seedWeightFraction: 1 }];
+
   it("round-trips a saved marker for the matching wallet", () => {
-    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() });
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now(), assets: SAMPLE_ASSETS, seedTotalUsd: 10 });
     const read = readPendingReserveDeploy("WalletA");
     expect(read?.reserve).to.equal("ReserveA");
+    expect(read?.assets).to.deep.equal(SAMPLE_ASSETS);
   });
 
   it("never returns a marker for a different wallet", () => {
-    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() });
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now(), assets: SAMPLE_ASSETS, seedTotalUsd: 10 });
     expect(readPendingReserveDeploy("WalletB")).to.equal(null);
   });
 
-  it("treats a marker older than 10 minutes as abandoned, not a live in-flight deployment", () => {
-    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() - 11 * 60 * 1000 });
+  it("has NO time-based expiry -- a real half-built Reserve stays resumable no matter how old the marker is (see createReserveResume.ts's isPendingDeployStale doc comment for why an earlier 10-minute cutoff was removed)", () => {
+    savePendingReserveDeploy({
+      wallet: "WalletA",
+      reserve: "ReserveA",
+      reserveId: "1",
+      name: "Test",
+      ticker: "TST",
+      startedAt: Date.now() - 7 * 24 * 60 * 60 * 1000, // a week old
+      assets: SAMPLE_ASSETS,
+      seedTotalUsd: 10,
+    });
+    expect(readPendingReserveDeploy("WalletA")?.reserve).to.equal("ReserveA");
+  });
+
+  it("treats a marker written by a pre-resumability version of this app (no assets array) as absent rather than resumable", () => {
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() } as never);
     expect(readPendingReserveDeploy("WalletA")).to.equal(null);
   });
 
   it("clearPendingReserveDeploy removes it", () => {
-    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now() });
+    savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now(), assets: SAMPLE_ASSETS, seedTotalUsd: 10 });
     clearPendingReserveDeploy();
     expect(readPendingReserveDeploy("WalletA")).to.equal(null);
   });
