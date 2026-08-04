@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-07-28T15:54:37.772Z",
+  "generatedAt": "2026-08-04T11:24:21.060Z",
   "generatedBy": "scripts/generate-repo-metrics.ts",
   "repository": {
     "remoteUrl": "https://github.com/JRA-EF/SSR.FUN.git",
-    "totalCommitsAllBranches": 83,
+    "totalCommitsAllBranches": 122,
     "firstCommit": {
       "hash": "8e0fa4bcf5fd4978a92556ef6829bab5ec2aa2c0",
       "date": "2026-07-13T22:32:09Z",
@@ -11,13 +11,19 @@
       "subject": "Initial commit"
     },
     "latestCommit": {
-      "hash": "b28cc231857a3585cc7543a051c3f17da3234ee4",
-      "date": "2026-07-28T16:46:57+01:00",
+      "hash": "b8dfe7085dd17dd724c6fcf8b7754c3bbb3e9bf4",
+      "date": "2026-08-04T11:10:31+01:00",
       "author": "Joao",
-      "subject": "Redesign /internal/status into an executive engineering dashboard"
+      "subject": "fix: make Reserve deployment resumable after partial failure"
     },
     "currentBranch": "main",
     "branches": [
+      {
+        "name": "experimental/devnet-amm-swap",
+        "remote": false,
+        "lastCommitDate": "2026-07-29T16:36:27+01:00",
+        "lastCommitSubject": "EXPERIMENTAL, INCOMPLETE: ssr_devnet_amm DevNet-only test swap program"
+      },
       {
         "name": "fable-functional-port",
         "remote": false,
@@ -27,8 +33,8 @@
       {
         "name": "main",
         "remote": false,
-        "lastCommitDate": "2026-07-28T16:46:57+01:00",
-        "lastCommitSubject": "Redesign /internal/status into an executive engineering dashboard"
+        "lastCommitDate": "2026-08-04T11:10:31+01:00",
+        "lastCommitSubject": "fix: make Reserve deployment resumable after partial failure"
       },
       {
         "name": "protocol/devnet-v1",
@@ -51,16 +57,16 @@
     ],
     "contributors": [
       {
+        "name": "Joao",
+        "email": "joao@enigma-fund.com",
+        "commits": 68,
+        "aiAssisted": true
+      },
+      {
         "name": "JRA-EF",
         "email": "joao@enigma-fund.com",
         "commits": 29,
         "aiAssisted": false
-      },
-      {
-        "name": "Joao",
-        "email": "joao@enigma-fund.com",
-        "commits": 29,
-        "aiAssisted": true
       },
       {
         "name": "Replit Agent",
@@ -110,16 +116,36 @@
       },
       {
         "date": "2026-07-28",
-        "commits": 24
+        "commits": 28
+      },
+      {
+        "date": "2026-07-29",
+        "commits": 18
+      },
+      {
+        "date": "2026-07-30",
+        "commits": 6
+      },
+      {
+        "date": "2026-07-31",
+        "commits": 7
+      },
+      {
+        "date": "2026-08-03",
+        "commits": 3
+      },
+      {
+        "date": "2026-08-04",
+        "commits": 1
       }
     ]
   },
   "codebase": {
-    "rustLinesOfCode": 3125,
-    "typescriptLinesOfCode": 13050,
-    "protocolInstructionCount": 18,
-    "documentationPageCount": 13,
-    "decisionLogEntryCount": 36,
-    "liveDevnetVerificationScriptCount": 7
+    "rustLinesOfCode": 3879,
+    "typescriptLinesOfCode": 20663,
+    "protocolInstructionCount": 23,
+    "documentationPageCount": 15,
+    "decisionLogEntryCount": 72,
+    "liveDevnetVerificationScriptCount": 18
   }
 }

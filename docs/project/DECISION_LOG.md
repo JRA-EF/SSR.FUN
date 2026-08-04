@@ -1863,3 +1863,37 @@
   ]
 }
 ```
+
+## DEC-0073
+
+```json
+{
+  "id": "DEC-0073",
+  "date": "2026-08-04",
+  "status": "confirmed",
+  "decision": "Stand up ssr.fun as its own production domain, on its own, completely separate Vercel project (ssr-fun-final -- distinct from ssr-fun, the project already serving strategic-super-reserve.fun), serving a static Coming Soon page ahead of public launch. ssr.fun is canonical; www.ssr.fun is configured as a real 308 (permanent) redirect to it, not a second, independently-servable copy. strategic-super-reserve.fun and its project/deployment/domain configuration/repository/branch were explicitly required to remain untouched throughout, and were verified untouched (domain-record updatedAt timestamps and a live health check both re-confirmed unchanged immediately after every Vercel-side change).",
+  "context": "This repository (SSR.FUN) and its ssr-fun Vercel project are the closed DevNet/beta testing site (strategic-super-reserve.fun) -- not the intended public-facing product domain. ssr.fun is that domain. The project ssr-fun-final and its Vercel domain attachments for ssr.fun/www.ssr.fun already existed (created ~21h before this decision was recorded, evidently a prior manual/session step never logged here) but were not DNS-live: GoDaddy (ssr.fun's registrar) still held its default parked-domain records, and no www->apex redirect had been configured. This decision and its evidence record what was actually done to finish and verify that setup, since it was materially incomplete and entirely undocumented before now.",
+  "rationale": "A second, fully separate Vercel project (rather than a second domain on the existing ssr-fun project) keeps the public marketing domain's deploy history, environment variables, and access entirely isolated from the closed DevNet/beta site -- a mistake in one can't affect the other, and it mirrors this repo's own established separation of concerns (DevNet-only endpoints already isolated under api/devnet/, DevNet-only secrets never shared with unrelated features). Canonical-apex-with-www-redirect (rather than serving identical content at both) avoids duplicate-content SEO issues and matches how strategic-super-reserve.fun/www.strategic-super-reserve.fun are already set up on the other project, for consistency. DNS was resolved through Vercel's own generated records (A 216.198.79.1 + 64.29.17.1 for the apex, CNAME for www) rather than switching ssr.fun to Vercel-managed nameservers, since the user's registrar (GoDaddy) and DNS management stay firmly outside Vercel/this session's control per explicit instruction -- only the exact records to add/remove at GoDaddy were reported, never applied directly.",
+  "alternativesConsidered": [
+    "Add ssr.fun as a second domain on the existing ssr-fun project (same project as strategic-super-reserve.fun) -- rejected per explicit instruction: the two must be fully separate to guarantee zero risk of the beta site's project/deployment/config being touched while working on the marketing domain.",
+    "Point ssr.fun at Vercel's own nameservers (ns1/ns2.vercel-dns.com) instead of adding A/CNAME records at the existing GoDaddy DNS -- rejected: would have required a full nameserver migration at the registrar, a much larger and more disruptive GoDaddy-side change than the two records actually needed, and was explicitly out of scope (no GoDaddy changes to be made or guessed at by this session).",
+    "Serve identical content at both ssr.fun and www.ssr.fun rather than redirecting -- rejected per explicit instruction to make ssr.fun canonical."
+  ],
+  "impact": "New production domain live: https://ssr.fun (Coming Soon page, project ssr-fun-final). www.ssr.fun redirects to it (308, Server: Vercel, own valid Let's Encrypt certificate). No files in this repository were changed by the Vercel-side work itself; a genuinely separate repository (ssr-fun-coming-soon, outside this repo, local-only -- see below) now holds the Coming Soon page's source. strategic-super-reserve.fun/ssr-fun confirmed untouched throughout (see evidence).",
+  "affectedAreas": [
+    "Vercel project ssr-fun-final (separate from this repository's ssr-fun project)",
+    "DNS: ssr.fun / www.ssr.fun (GoDaddy-managed; only the exact required records were reported, never applied by this session)",
+    "docs/project/PROJECT_STATUS.md (Environment Status, Dependencies)",
+    "docs/project/ENGINEERING_TIMELINE.md (Milestones, Infrastructure)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live verification, all passing: https://ssr.fun returns 200 with the Coming Soon page's real content ('SSR.fun' / 'Coming Soon...'); TLS certificate CN=ssr.fun, Let's Encrypt, issued 2026-08-04, SAN exactly ssr.fun, verified by curl against the default trust store with no -k needed; http://ssr.fun returns 308 -> https://ssr.fun/; https://www.ssr.fun returns 308 -> https://ssr.fun/ with its own valid certificate; http://www.ssr.fun upgrades to https first, then redirects to the apex.",
+    "Vercel domain-config API (GET /v6/domains/ssr.fun/config and /v6/domains/www.ssr.fun/config) confirmed misconfigured: false and conflicts: [] for both, and vercel certs ls confirmed both certificates issued, immediately after DNS was corrected at the registrar.",
+    "strategic-super-reserve.fun confirmed untouched: GET /v9/projects/ssr-fun/domains re-read immediately after the ssr.fun redirect change showed identical updatedAt timestamps to the pre-change read for all 3 of its domain records (no mutating call was ever made against project ssr-fun or its domains in this session); a direct live request to https://strategic-super-reserve.fun/ and https://www.strategic-super-reserve.fun/ both returned 200, served by Vercel, immediately after the ssr.fun work completed.",
+    "A stale intermediate state was caught and corrected, not assumed fixed: after the first round of GoDaddy changes, ssr.fun's apex still carried its old default parking A records (3.33.130.190 / 15.197.148.33) ALONGSIDE the two new Vercel records, confirmed live via two independent public resolvers (1.1.1.1, 8.8.8.8) and Vercel's own config API (misconfigured: true, explicit conflicts array) -- reported precisely as the remaining blocker rather than assumed resolved; re-checked and confirmed clean after the user's follow-up GoDaddy fix.",
+    "The Coming Soon page's source (previously not tracked in any repository -- the live deployment had no git origin at all) is now committed to a new, separate local git repository (not this one) at Projects/ssr-fun-coming-soon, branch main. Not yet pushed to a hosted remote -- no GitHub CLI/token/credential helper was available in this environment; flagged as an open follow-up, not fabricated as done."
+  ]
+}
+```
