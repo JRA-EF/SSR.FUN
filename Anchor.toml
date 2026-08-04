@@ -12,9 +12,14 @@ skip-lint = false
 # migrate to a multisig before any restricted beta (see DEC-0015).
 [programs.localnet]
 ssr_protocol = "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW"
+ssr_devnet_amm = "AJbXGWSU1x9LtJW7uRKJCwS3JZYqXwqHXpX6erY7dS6c"
 
 [programs.devnet]
 ssr_protocol = "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW"
+# DevNet-only test AMM (DEC-0051), reworked to a devUSDC hub (see DEC entry
+# for this pass) -- deliberately separate program ID from ssr_protocol
+# above; never intended for Mainnet.
+ssr_devnet_amm = "AJbXGWSU1x9LtJW7uRKJCwS3JZYqXwqHXpX6erY7dS6c"
 
 # Note: the [registry] section was removed in Anchor 1.0 (see
 # docs/protocol/DEVNET_RUNBOOK.md for the Anchor/Solana version this workspace

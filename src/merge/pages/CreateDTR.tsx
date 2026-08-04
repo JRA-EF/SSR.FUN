@@ -651,8 +651,8 @@ export function CreateDTR() {
   return (
     <div className="container max-w-4xl mx-auto px-4 py-12">
       <div className="mb-8">
-        <h1 className="text-4xl font-merge-display font-bold mb-2">Launch a Decentralized Token Reserve</h1>
-        <p className="text-muted-foreground">Launch a new Decentralized Token Reserve on SSR.FUN, live on Solana DevNet.</p>
+        <h1 className="text-4xl font-merge-display font-bold mb-2">Launch a Reserve</h1>
+        <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN, live on Solana DevNet.</p>
       </div>
 
       <div className="flex justify-between mb-8 relative">
@@ -889,7 +889,7 @@ export function CreateDTR() {
                       <TooltipTrigger><Info className="w-3 h-3 text-muted-foreground" /></TooltipTrigger>
                       <TooltipContent>
                         {isRealDeployment
-                          ? "The USD value to seed the reserve with. You'll provide the equivalent DevNet SOL shown below -- it's converted into the selected Reserve assets and deposited for you."
+                          ? "The USD value to seed the reserve with. You'll provide the equivalent DevNet SOL shown below -- it's converted into the selected reserve assets and deposited for you."
                           : "Initial capital to seed the reserve and set the starting AUM."}
                       </TooltipContent>
                     </Tooltip>
@@ -1217,7 +1217,7 @@ export function CreateDTR() {
                     )}
                     <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
                       <p className="font-semibold text-foreground">This will request {expectedApprovalCount(assets)} wallet approvals:</p>
-                      <p>1. Create the Decentralized Token Reserve + register {assets.length} Reserve{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
+                      <p>1. Create the Reserve + register {assets.length} reserve asset{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
                       {assets.some((a) => a.symbol === "SOL") && <p>2. Wrap your SOL for the seed deposit</p>}
                       <p>{assets.some((a) => a.symbol === "SOL") ? "3" : "2"}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>
                       <p className="pt-1">Expected result: you'll spend the SOL above and receive <span className="font-merge-mono text-foreground">{Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10)).toLocaleString()} {ticker || "Reserve"}</span> tokens. Any test-asset amounts appearing and disappearing from your wallet mid-flow (e.g. minted then immediately deposited) are expected intermediate steps, not final balances -- deployment isn't complete until the last step confirms.</p>
@@ -1294,7 +1294,7 @@ export function CreateDTR() {
                 ) : !costEstimate && !costEstimateError ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Calculating cost...</>
                 ) : (
-                  <><Rocket className="w-4 h-4" /> Launch Decentralized Token Reserve</>
+                  <><Rocket className="w-4 h-4" /> Launch Reserve</>
                 )}
               </Button>
             </CardFooter>

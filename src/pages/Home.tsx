@@ -118,7 +118,7 @@ export function Home() {
             </div>
           ) : featured.length === 0 ? (
             <div className="callout">
-              No Reserves have launched yet. <Link to="/create">Launch a Decentralized Token Reserve</Link> to be the
+              No Reserves have launched yet. <Link to="/create">Launch a Reserve</Link> to be the
               first.
             </div>
           ) : (
@@ -141,8 +141,8 @@ export function Home() {
               <div className="n display">01</div>
               <h3>Create</h3>
               <p>
-                <span className="emphasis">Create a Reserve in less than one minute.</span> Select up to 10 Reserve
-                Assets, define target allocations, and configure the available settings.
+                <span className="emphasis">Create a Reserve in less than one minute.</span> Select up to 10 reserve
+                assets, define target allocations, and configure the available settings.
               </p>
             </div>
             <div className="how-cell">
@@ -157,7 +157,7 @@ export function Home() {
               <div className="n display">03</div>
               <h3>Trade</h3>
               <p>
-                Use devUSDC to mint and redeem Reserve Tokens. Genuine on-chain activity updates the Reserve Asset
+                Use devUSDC to mint and redeem Reserve Tokens. Genuine on-chain activity updates the reserve asset
                 balances, Reserve Token supply, backing, and TVL.
               </p>
             </div>

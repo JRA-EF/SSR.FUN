@@ -252,7 +252,7 @@ export function buildDtrFromDiscoveredReserve(
   const meta =
     parsed ??
     KNOWN_FIXTURE_META[discovered.reserve] ?? {
-      name: `Unnamed Decentralized Token Reserve (#${discovered.reserveId})`,
+      name: `Unnamed Reserve (#${discovered.reserveId})`,
       ticker: `RSV${discovered.reserveId}`,
       description: "This Reserve's on-chain metadata could not be parsed -- name/ticker are placeholders, not fabricated data.",
       category: "DevNet",
@@ -367,7 +367,7 @@ export function buildDtrFromDiscoveredReserve(
 export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[], fullyVerified: boolean): DTR[] {
   // A Reserve with zero registered assets (Reserve.asset_count === 0, still
   // stuck in the pre-Active "created" lifecycle state) is never a genuine,
-  // tradeable Decentralized Token Reserve -- it's an abandoned/incomplete
+  // tradeable Reserve -- it's an abandoned/incomplete
   // creation (e.g. from before create+register was combined into one atomic
   // transaction). Excluded here, before either `merged` or
   // `discoveredAddresses` is computed below, so it never enters `dtrs` via a

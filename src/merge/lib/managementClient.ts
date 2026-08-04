@@ -1,22 +1,33 @@
-// Browser-side client for Phase F (composition management) and Phase G
-// (wind-down) -- see packages/sdk/src/managementInstructions.ts for the
-// instruction builders this wraps. Unlike Buy/Sell's zap, none of these need
-// a server-side co-signer: every action here is a single transaction signed
-// only by the connected wallet (the Reserve's root manager -- see
-// ManageDTR.tsx, which gates all of these to root-manager-only for now;
-// on-chain delegate signing for MANAGE_LIQUIDITY_CONFIG-permitted delegates
-// is a smallest-safe-extension follow-up, not built in this pass).
+// Browser-side client for Phase F (composition management), Phase G
+// (wind-down), and delegate management -- see
+// packages/sdk/src/managementInstructions.ts for the instruction builders
+// this wraps. Unlike Buy/Sell's zap, none of these need a server-side
+// co-signer: every action here is a single transaction signed only by the
+// connected wallet. Every function derives the signer's own real on-chain
+// Delegate PDA (via findDelegate) and passes it as the acting-delegate
+// account -- required so a genuinely permitted delegate (not only the
+// Reserve's root manager) can actually exercise a permission the program
+// already verifies on-chain (see require_reserve_permission in
+// programs/ssr_protocol/src/instructions/common.rs); it's harmless to pass
+// for a root-manager call too, since that path never deserializes the
+// account. See ManageDTR.tsx / onChainPermissions.ts's hasOnChainPermission
+// for how the frontend now gates each button on the real permission instead
+// of hard-locking to root.
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
   buildReadOnlyProgram,
+  buildAddDelegateInstruction,
   buildAddReserveAssetActiveInstruction,
   buildCloseReserveInstruction,
   buildFundNewReserveAssetInstruction,
   buildInitiateWindDownInstruction,
+  buildRemoveDelegateInstruction,
   buildRemoveReserveAssetInstruction,
+  buildUpdateDelegatePermissionsInstruction,
   buildUpdateTargetsInstruction,
   DEVNET_FIXTURES,
+  findDelegate,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 
@@ -47,12 +58,18 @@ export async function executeUpdateTargets(
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  // The signer's OWN Delegate PDA -- only actually deserialized on-chain when
+  // signer != reserve.manager (see require_reserve_permission); passing it
+  // correctly here (rather than wallet.publicKey itself) means this call
+  // also works for a genuinely permitted delegate, not only the root manager.
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildUpdateTargetsInstruction(
     program,
     programId,
-    new PublicKey(reserve),
+    reservePk,
     wallet.publicKey,
-    wallet.publicKey,
+    actingDelegate,
     assetMintsInOrder.map((m) => new PublicKey(m)),
     newTargetWeightsBps,
   );
@@ -68,12 +85,14 @@ export async function executeAddReserveAsset(
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildAddReserveAssetActiveInstruction(
     program,
     programId,
-    new PublicKey(reserve),
+    reservePk,
     wallet.publicKey,
-    wallet.publicKey,
+    actingDelegate,
     new PublicKey(assetMint),
     targetWeightBps,
   );
@@ -102,15 +121,80 @@ export async function executeRemoveReserveAsset(
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildRemoveReserveAssetInstruction(
     program,
     programId,
-    new PublicKey(reserve),
+    reservePk,
     new PublicKey(reserveManager),
     wallet.publicKey,
-    wallet.publicKey,
+    actingDelegate,
     new PublicKey(assetMint),
   );
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+/** Grants delegateWallet the given permission bitmask on `reserve`. `restricted` delegates are gated by the signer's own ADD_RESTRICTED_DELEGATE permission; an unrestricted grant is root-manager-only regardless of the signer's own delegate status -- see add_delegate.rs. */
+export async function executeAddDelegate(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  delegateWallet: string,
+  permissions: number,
+  restricted: boolean,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildAddDelegateInstruction(
+    program,
+    programId,
+    reservePk,
+    wallet.publicKey,
+    actingDelegate,
+    new PublicKey(delegateWallet),
+    permissions,
+    restricted,
+  );
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+export async function executeUpdateDelegatePermissions(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  delegateWallet: string,
+  newPermissions: number,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildUpdateDelegatePermissionsInstruction(
+    program,
+    programId,
+    reservePk,
+    wallet.publicKey,
+    actingDelegate,
+    new PublicKey(delegateWallet),
+    newPermissions,
+  );
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+export async function executeRemoveDelegate(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  delegateWallet: string,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildRemoveDelegateInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, new PublicKey(delegateWallet));
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
 

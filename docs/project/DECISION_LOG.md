@@ -1854,7 +1854,7 @@
     "docs/project/PROJECT_STATUS.md"
   ],
   "supersedes": null,
-  "supersededBy": null,
+  "supersededBy": ["DEC-0074"],
   "evidence": [
     "Confirmed via both programs/ssr_protocol/src/errors.rs and target/idl/ssr_protocol.json (41 custom errors, codes 6000-6040) and target/idl/ssr_devnet_amm.json (12 custom errors, codes 6000-6011) that error code 6400 exists in neither -- it is not a genuine custom error from any program in this repo as currently deployed.",
     "Live, read-only DevNet verification (no wallet signature) against the real deployed program at 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW: fetched real Reserve id 9 (GFP9nJQyFWurTkJCEYYkBxjksUQUXLt9i3ZoUDncTy5C, status Active, 3 registered assets) and confirmed fetchReserveOnChain's new mintFeeBps(50)/tvlFeeBps(100)/feeDestination fields decode correctly against real on-chain data; determineDeploymentResumePoint correctly returned asset-count-mismatch when given a stale/incomplete candidate-mint list and already-complete once given the real, full list; a non-existent Reserve address correctly returned start-fresh.",
@@ -1894,6 +1894,142 @@
     "strategic-super-reserve.fun confirmed untouched: GET /v9/projects/ssr-fun/domains re-read immediately after the ssr.fun redirect change showed identical updatedAt timestamps to the pre-change read for all 3 of its domain records (no mutating call was ever made against project ssr-fun or its domains in this session); a direct live request to https://strategic-super-reserve.fun/ and https://www.strategic-super-reserve.fun/ both returned 200, served by Vercel, immediately after the ssr.fun work completed.",
     "A stale intermediate state was caught and corrected, not assumed fixed: after the first round of GoDaddy changes, ssr.fun's apex still carried its old default parking A records (3.33.130.190 / 15.197.148.33) ALONGSIDE the two new Vercel records, confirmed live via two independent public resolvers (1.1.1.1, 8.8.8.8) and Vercel's own config API (misconfigured: true, explicit conflicts array) -- reported precisely as the remaining blocker rather than assumed resolved; re-checked and confirmed clean after the user's follow-up GoDaddy fix.",
     "The Coming Soon page's source (previously not tracked in any repository -- the live deployment had no git origin at all) is now committed to a new, separate local git repository (not this one) at Projects/ssr-fun-coming-soon, branch main. Not yet pushed to a hosted remote -- no GitHub CLI/token/credential helper was available in this environment; flagged as an open follow-up, not fabricated as done."
+  ]
+}
+```
+
+## DEC-0074
+
+```json
+{
+  "id": "DEC-0074",
+  "date": "2026-08-04",
+  "status": "confirmed",
+  "decision": "Reverse this repo's product terminology: 'Reserve' now means the complete basket/product (the fund), 'reserve assets' means its underlying holdings, and 'Reserve Token' is unchanged (the fund's fungible token). 'BYOR,' 'BOR,' 'DTR,' 'DTR Token,' 'DTR Asset,' and 'Decentralized Token Reserve' must never appear in new user-facing copy. CLAUDE.md's 'Mandatory terminology' section was rewritten accordingly. This is a full reversal of the 2026-07-29 round-3 wording (which used 'Decentralized Token Reserve' for the whole product and 'Reserve' for an underlying asset) and of DEC-0072's same-day decision, recorded only hours earlier, to keep that wording unchanged.",
+  "context": "This exact terminology question was put to this session directly, given a live conflict between the current corrective-pass task's own terminology instructions (Reserve = whole product) and CLAUDE.md's then-current 'Final, 2026-07-29' section (the opposite mapping) -- the same fork DEC-0072 had already hit and declined earlier the same day. Asked directly whether this was a deliberate reversal of that same-day decision (not an accidental answer to a question the user didn't realize had already been settled once today), the user confirmed twice, explicitly: once giving the new mapping unprompted (funds = reserves, underlying assets = reserve assets, the fund's token = reserve token), and again after being shown DEC-0072's exact declining language and asked to confirm the reversal was intentional.",
+  "rationale": "Two consecutive explicit confirmations from the user, the second made after being shown the exact prior decision being overturned, is sufficient basis to treat this as a genuine, deliberate change of direction rather than re-litigate or silently keep the old wording a second time. The Anchor account struct names (Reserve, ReserveAsset, Delegate, ProtocolConfig) already use 'Reserve' to mean the whole basket account -- under the OLD terminology this was flagged as a legacy mismatch needing a special carve-out explanation; under this new terminology the struct names and the product terminology now agree, which simplifies (but does not remove) CLAUDE.md's existing on-chain-discriminator-safety carve-out for internal identifiers.",
+  "alternativesConsidered": [
+    "Keep CLAUDE.md's 2026-07-29 wording a second time, as DEC-0072 did hours earlier -- rejected: the user was shown DEC-0072's exact language and explicitly confirmed this is a deliberate reversal, not confusion.",
+    "Apply the new terminology only to new copy going forward without touching CLAUDE.md's documented section -- rejected: would leave the terminology section actively wrong and contradicting the terminology actually being shipped, defeating its purpose as the source of truth for future sessions."
+  ],
+  "impact": "Changed: CLAUDE.md ('Mandatory terminology' section rewritten; approved hero copy in src/pages/Home.tsx confirmed to need no change, since it already reads correctly under either mapping). Affects all subsequent user-facing copy sweeps in this corrective pass (button labels, headings, empty states, toasts, the 'Unnamed Reserve (#N)' fallback name, the discovery-resolution banner text) -- internal technical identifiers (createDTR, DTRAsset/CreateDTRAssetInput types, CreateDTR.tsx/ManageDTR.tsx/DTRDetail.tsx filenames, and the Anchor Reserve/ReserveAsset/Delegate/ProtocolConfig struct names) are explicitly unaffected, per CLAUDE.md's own carve-out.",
+  "affectedAreas": [
+    "CLAUDE.md",
+    "src/merge/lib/onChainReserve.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/pages/ManageDTR.tsx"
+  ],
+  "supersedes": ["DEC-0072"],
+  "supersededBy": null,
+  "evidence": [
+    "Two explicit user confirmations in this session: an unprompted statement of the new mapping (funds = reserves, underlying assets = reserve assets, the fund's token = reserve token), then a direct AskUserQuestion confirmation after being shown DEC-0072's exact declining language, answered 'Yes, reverse it now.'",
+    "Direct read of src/pages/Home.tsx confirmed the approved hero copy ('SSR.fun is where anyone can create, launch, and trade decentralized tokenized reserves... issue a Reserve Token backed by transparent, on-chain holdings') never uses 'Reserve' to mean an underlying asset, so it required no edit under the new mapping."
+  ]
+}
+```
+
+## DEC-0075
+
+```json
+{
+  "id": "DEC-0075",
+  "date": "2026-08-04",
+  "status": "confirmed",
+  "decision": "Wire real on-chain delegate management (add_delegate/update_delegate_permissions/remove_delegate) into the frontend for the first time, and fix a real placeholder bug that meant no genuinely non-root delegate could ever successfully call any real management transaction from this dashboard before now. New SDK builders (packages/sdk/src/managementInstructions.ts: buildAddDelegateInstruction/buildUpdateDelegatePermissionsInstruction/buildRemoveDelegateInstruction) and managementClient.ts functions (executeAddDelegate/executeUpdateDelegatePermissions/executeRemoveDelegate). Fixed executeUpdateTargets/executeAddReserveAsset/executeRemoveReserveAsset, which all previously passed the connected wallet's own pubkey as the 'delegate' account placeholder instead of deriving its real Delegate PDA (findDelegate(reserve, signer, programId)) -- this only ever worked by accident for the root manager, since require_reserve_permission short-circuits when signer == reserve.manager; any real, permitted delegate calling one of these would have failed. New hasOnChainPermission helper (src/merge/lib/onChainPermissions.ts), fail-closed by design: an unresolved delegate (discovery only resolves from a candidate-wallet hint list, no getProgramAccounts on the public RPC) reads as 'no permission,' never silently treated as 'not a delegate.' ManageDTR.tsx's gating replaced isRoot with isRoot || hasOnChainPermission(...) for every genuinely delegate-capable action (update_targets -> UPDATE_TARGETS, add/remove_reserve_asset -> MANAGE_LIQUIDITY_CONFIG); wind-down/close/fund_new_reserve_asset correctly stay root-only (confirmed those instructions accept no delegate account at all). Added a real add/edit-permissions/remove delegate UI to the previously read-only Delegates tab. The local-simulated delegate system in useAppStore.ts is deliberately kept, unchanged, for Reserves with no dtr.onChain (a purely local/simulated demo Reserve has no real Delegate PDAs to point at) -- never used as a fallback for a genuinely on-chain Reserve.",
+  "context": "Part of the 2026-08-04 platform-wide DevNet corrective pass (see DEC-0074 for the terminology decision governing this same pass). Confirmed via direct source read that add_delegate/update_delegate_permissions/remove_delegate were fully implemented on-chain (real PDA, real permission-bitmask verification via require_reserve_permission) but had ZERO SDK-builder usage anywhere in this app -- delegate management existed only as a read-only, locally-labeled list, and every real management button hard-locked to isRoot regardless of any real on-chain delegate's actual permissions.",
+  "rationale": "require_reserve_permission (programs/ssr_protocol/src/instructions/common.rs) already implements the exact delegate-signature verification needed -- this was a frontend/SDK gap, not a program design gap. Deriving the real Delegate PDA via the already-existing findDelegate helper (rather than inventing a new derivation) and reusing the existing signAndSend/runOnChainAction patterns in managementClient.ts/ManageDTR.tsx kept this consistent with the rest of the codebase's established conventions.",
+  "alternativesConsidered": [
+    "Remove the local-simulated delegate system entirely now that a real path exists -- rejected: a purely local/simulated demo Reserve (no dtr.onChain) has no real Delegate PDAs to check against, so the simulation is the only thing that can exist for it; removing it would break that category of Reserve entirely.",
+    "Leave the wallet.publicKey delegate-placeholder bug alone since it 'worked' for the root manager -- rejected: it silently meant no real delegate could ever use these dashboard actions, a genuine correctness gap worth fixing while touching this exact code path."
+  ],
+  "impact": "New: packages/sdk/src/rpcResilience.ts is unrelated (see DEC-0074's sibling bug-fix work), packages/sdk/src/managementInstructions.ts (3 new builders), src/merge/lib/onChainPermissions.ts (hasOnChainPermission, PERMISSION_FLAGS), tests/phase_delegate_wiring.ts (10 new tests), scripts/verify_delegate_wiring.ts (live verification, not committed test infra but a real diagnostic script). Changed: src/merge/lib/managementClient.ts (3 new execute* functions, placeholder-bug fix across 3 existing functions), src/merge/pages/ManageDTR.tsx (real permission gating replacing isRoot in 3 places, new Grant/Edit/Remove Delegate UI).",
+  "affectedAreas": [
+    "packages/sdk/src/managementInstructions.ts",
+    "src/merge/lib/managementClient.ts",
+    "src/merge/lib/onChainPermissions.ts",
+    "src/merge/pages/ManageDTR.tsx",
+    "tests/phase_delegate_wiring.ts",
+    "scripts/verify_delegate_wiring.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live DevNet verification via scripts/verify_delegate_wiring.ts against the persistent Gate-9 fixture Reserve One (GFP9nJQyFWurTkJCEYYkBxjksUQUXLt9i3ZoUDncTy5C) and its two already-real restricted delegates: hasOnChainPermission's decoding matched real fetched permission bitmasks (perms=2 for the UPDATE_TARGETS-only delegate, perms=192 for the PAUSE_RESERVE+UNPAUSE_RESERVE-only delegate) exactly.",
+    "A genuinely non-root delegate (AKWHGN3EDPfkcpFhkG3EQcHBRY7eBFNCWNbV1osfDu7u, holding ONLY UPDATE_TARGETS) submitted a REAL, signed, confirmed update_targets transaction end to end for the first time via this fixed code path: signature 5t11fNo2Zq2TLuf5rWDGv3aWFVkVvdut6xd3gjtD1Mje5wCbmZrriN8RDdNDQSH7DxCZtsAzwA6tj611aQW1Mc8C.",
+    "The SAME instruction, attempted by the OTHER real delegate (68gfCCwZRCXnyQN8MzEKykBhhenMKCqWxDC9oxS7TiBt, holding only PAUSE_RESERVE/UNPAUSE_RESERVE, NOT UPDATE_TARGETS), was genuinely rejected on-chain with the correct DelegatePermissionDenied error (custom program error 0x178c/6028) -- confirming permission gating is truly enforced on-chain, not merely that signing works.",
+    "A full add_delegate -> update_delegate_permissions -> remove_delegate cycle against a fresh, disposable delegate wallet, all 3 real signed transactions confirmed (signatures do9seUHFkP79W8Q3VHudroKTLTapTzMWo1uq7U9JZiHrpYxfBCmUgmAhwAe8KQ3Tf8opqy6qi1fEMZG3FHMFiL2, M6TdJTFyVhuuM688Zrsd3wpg18VZvd3tt6MBgiDwnCDvMJcfSNoxevBEVFx2T4pFvVtBFrBHfSMJ76f34UuAEub, 3pVrpSTy2fd4vDw664Uw5xzREZkq2jFrqDgArDdfDsjAhFBKfuLog6izqS29wmmKQSYR2wK6bmTgEpbVoEctAeU2), with real before/after on-chain reads confirming the grant, the permission update, and the account's genuine closure.",
+    "13/13 checks passed in scripts/verify_delegate_wiring.ts's final run. 10 new offline tests in tests/phase_delegate_wiring.ts, all passing (full offline suite: 205/205). tsc -b --force, vite build, oxlint all clean."
+  ]
+}
+```
+
+## DEC-0076
+
+```json
+{
+  "id": "DEC-0076",
+  "date": "2026-08-04",
+  "status": "confirmed",
+  "decision": "Rework and merge the previously-unmerged, uninitialized ssr_devnet_amm program (branch experimental/devnet-amm-swap, commit d6d1979) into this repo's working tree, changing its pool design from a hardcoded wrapped-SOL hub to a runtime-configured hub asset (AmmConfig.hub_mint, set to devUSDC), so it can eventually provide genuine devUSDC<->mockX/Y/Z liquidity for Buy/Sell -- replacing the current architecture where Buy mints non-devUSDC legs and Sell mints devUSDC, both fabricated by a server-held authority rather than sourced from real liquidity (the still-open DEC-0054 gap). NOT BUILT, NOT DEPLOYED, NOT RUN: this environment has no cargo/rustc/anchor/solana on PATH (see this pass's final report) -- every Rust and script change here is written to the established Anchor 1.1.2 conventions already used elsewhere in this workspace, but has not been compiler-checked, built, or executed against any deployed program. Buy/Sell themselves are UNCHANGED in this pass -- they still fabricate legs exactly as before; this decision only lands the liquidity foundation a future pass's Buy/Sell rewrite would route through.",
+  "context": "Confirmed via direct source read that swap.rs/add_liquidity.rs/remove_liquidity.rs/Pool/AmmConfig were already fully generic over mint_a/mint_b -- only create_pool.rs and constants.rs referenced wrapped SOL specifically, and AmmConfig has never been initialized on DevNet (confirmed: the program is deployed bytecode but genuinely inert -- no config, no pools, no liquidity), so there was no on-chain migration cost to reshaping AmmConfig now.",
+  "rationale": "A runtime-configured hub_mint field (rather than a second hardcoded compile-time constant alongside WRAPPED_SOL_MINT) avoids permanently coupling this program to one specific devUSDC mint address -- devUSDC is a devnet-specific SPL mint this repo created itself (packages/sdk/src/devUsdc.ts), not a cross-cluster constant like wrapped SOL. 3 pools only (devUSDC/mockX, devUSDC/mockY, devUSDC/mockZ) -- no devUSDC/WSOL pool, since SOL is explicitly out of scope for settlement per this pass's 'no SOL payout' requirement. Liquidity seeding (scripts/setup_and_verify_devnet_amm.ts, rewritten) mints both legs directly to the pool's sole liquidity authority (already the mint authority for devUSDC and every mock asset) rather than wrapping SOL -- legitimate initial liquidity provisioning by the pool's own authority, not a per-trade fabrication substituting for a genuine trade (the distinction this whole pass's economy correction depends on).",
+  "alternativesConsidered": [
+    "Build a new swap mechanism inside ssr_protocol instead of reworking the existing ssr_devnet_amm -- rejected per explicit user decision: reuses already-implemented, already-generic swap/liquidity logic rather than duplicating it.",
+    "Hardcode devUSDC as a second compile-time constant (WRAPPED_SOL_MINT-style) rather than a runtime AmmConfig field -- rejected: needlessly re-couples the program to one specific mint address when AmmConfig has never been initialized and there's zero migration cost to making it configurable instead.",
+    "Attempt to build/deploy in this environment anyway -- not possible: no cargo/rustc/anchor/solana on PATH; confirmed via `which` before writing any code, not assumed."
+  ],
+  "impact": "New (checked out from experimental/devnet-amm-swap into the working tree, then reworked): programs/ssr_devnet_amm/** (Cargo.toml, constants.rs, errors.rs, events.rs, lib.rs, state/{config,pool}.rs, instructions/{initialize_amm_config,create_pool}.rs edited for the hub-mint rework; swap/add_liquidity/remove_liquidity/pause_amm/unpause_amm/common.rs brought in unmodified, confirmed generic), packages/sdk/idl/ssr_devnet_amm.json, packages/sdk/src/{ammCalculations,ammInstructions (hubMint param added),ammPda,ammReadOnly,network}.ts, scripts/setup_and_verify_devnet_amm.ts (fully rewritten for the 3 devUSDC-hub pools). Changed: Anchor.toml/Cargo.toml (workspace member + program ID registration), packages/sdk/src/index.ts (new exports). Cargo.lock NOT regenerated (requires cargo, unavailable here) -- flagged as a required step before any build attempt.",
+  "affectedAreas": [
+    "programs/ssr_devnet_amm",
+    "packages/sdk/src/ammInstructions.ts",
+    "packages/sdk/src/index.ts",
+    "scripts/setup_and_verify_devnet_amm.ts",
+    "Anchor.toml",
+    "Cargo.toml"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Direct source read confirmed swap.rs/add_liquidity.rs/remove_liquidity.rs contain zero references to WRAPPED_SOL_MINT/wrapped SOL after the rework (grep verified clean).",
+    "npx tsc -b --force, npx vite build, npx oxlint, and the full offline test suite (205/205) all pass with the new/changed TypeScript files present -- this confirms the TypeScript layer (SDK exports, script rewrite) is internally consistent, NOT that the Rust program compiles or runs (cargo/anchor unavailable).",
+    "No live transaction was submitted for any part of this decision -- the currently-deployed ssr_devnet_amm bytecode is still the OLD wrapped-SOL-hub version and does not accept the new initialize_amm_config(hub_mint, default_fee_bps) argument shape; running scripts/setup_and_verify_devnet_amm.ts against it today would fail, as documented in the script's own header comment."
+  ]
+}
+```
+
+## DEC-0077
+
+```json
+{
+  "id": "DEC-0077",
+  "date": "2026-08-04",
+  "status": "confirmed",
+  "decision": "Add a new ssr_protocol instruction, execute_rebalance_leg, that genuinely executes one rebalance leg (a real CPI'd swap of a Reserve's own vault assets via the reworked ssr_devnet_amm, see DEC-0076) -- unlike update_targets (writes target_weight_bps only, moves nothing) and record_rebalance (an unverified caller-supplied attestation), this instruction moves real value through a real on-chain swap. One leg (one CPI) per call, not an all-legs loop. Gated by the already-defined-but-never-checked EXECUTE_REBALANCE delegate permission flag via the existing require_reserve_permission helper. Reuses the Reserve's own vault_authority PDA (identical seeds redeem_reserve_tokens_in_kind already signs with) as the CPI's signing 'trader,' passing the Reserve's own registered-asset vaults directly as the AMM's trader_token_a/trader_token_b -- no intermediate transfer needed. Coexists with, does not replace, record_rebalance. New SDK builder (buildExecuteRebalanceLegInstruction) and a pure, offline-tested client-side planner (computeRebalancePlan) in a new packages/sdk/src/rebalanceExecutionInstructions.ts. NOT BUILT, NOT DEPLOYED, NOT TESTED against a real validator -- same toolchain gap as DEC-0076; frontend wiring (a ManageDTR.tsx 'Execute Rebalance' button, per-leg progress UI, and the executeRebalancePlan orchestrator in managementClient.ts) was deliberately NOT built in this pass, since wiring a UI to an instruction nobody can yet compile or deploy would add unverifiable surface area without proportionate value -- left as an explicit, disclosed follow-up.",
+  "context": "Confirmed via direct source read (programs/ssr_protocol/src/instructions/update_targets.rs, record_rebalance.rs) that no instruction anywhere in ssr_protocol moves assets between vaults for rebalancing purposes -- this is a genuine, previously-undisclosed-as-closeable gap in the lifecycle capability matrix this pass was asked to complete (create/buy/sell/manage/delegate/rebalance/wind-down).",
+  "rationale": "Reusing the identical vault_authority-PDA-signs-a-CPI pattern already proven correct for redeem_reserve_tokens_in_kind (rather than inventing a new signing mechanism) keeps this consistent with the rest of the program. The mint_sell/mint_buy accounts are validated against the AMM pool's own mint_a/mint_b (deriving a_to_b from that match) rather than trusting a separately-supplied boolean, removing a class of caller error. A coarse circuit-breaker (amount_in capped at half the sell vault's current balance) bounds blast radius per call given there is no on-chain price oracle to verify weight-correctness -- documented as a limitation, not hidden, mirroring record_rebalance.rs's own disclosure style exactly.",
+  "alternativesConsidered": [
+    "One instruction looping all legs in a single atomic transaction -- rejected: risks the compute-unit/account-count ceiling for a Reserve with several assets, and would force independent trades against independent pools to be atomic with each other for no real benefit, unlike a genuinely single trade's own legs.",
+    "Replace record_rebalance entirely -- rejected: record_rebalance remains useful for any future non-AMM-routed manual rebalance; this instruction's own event is already intrinsically trustworthy and doesn't need record_rebalance's attestation wrapper.",
+    "Build the ManageDTR.tsx UI/orchestrator anyway despite the instruction being unbuildable here -- rejected: would produce a large speculative UI surface for a transaction that cannot be tested end-to-end in this environment, disproportionate to the value delivered this pass."
+  ],
+  "impact": "New: programs/ssr_protocol/src/instructions/execute_rebalance_leg.rs, packages/sdk/src/rebalanceExecutionInstructions.ts (buildExecuteRebalanceLegInstruction, computeRebalancePlan), tests/phase_rebalance_execution.ts (7 new offline tests for computeRebalancePlan only). Changed: programs/ssr_protocol/src/{lib.rs (new dispatch entry),instructions/mod.rs (new module registration),errors.rs (2 new error variants, appended -- RebalanceLegExceedsCircuitBreaker, RebalanceLegSameAsset),events.rs (new RebalanceLegExecuted event)}, Cargo.toml for ssr_protocol (new path dependency on ssr_devnet_amm with the cpi feature). Explicitly NOT done: ManageDTR.tsx UI wiring, managementClient.ts orchestrator (executeRebalancePlan) -- left as a disclosed follow-up.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/execute_rebalance_leg.rs",
+    "programs/ssr_protocol/src/lib.rs",
+    "programs/ssr_protocol/src/instructions/mod.rs",
+    "programs/ssr_protocol/src/errors.rs",
+    "programs/ssr_protocol/src/events.rs",
+    "programs/ssr_protocol/Cargo.toml",
+    "packages/sdk/src/rebalanceExecutionInstructions.ts",
+    "tests/phase_rebalance_execution.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "New error variants appended at the END of the SsrError enum (confirmed by direct read before editing) -- Anchor assigns error codes sequentially from declaration order, so this cannot have changed any existing error's numeric code.",
+    "7 new offline tests for computeRebalancePlan, all passing (full offline suite: 205/205 -- 188 pre-existing plus 10 from DEC-0075 plus these 7). npx tsc -b --force, npx vite build, npx oxlint all clean with rebalanceExecutionInstructions.ts present.",
+    "No live transaction was attempted or could be attempted -- execute_rebalance_leg has never been built (no cargo/anchor/solana in this environment) or deployed; nothing about its runtime correctness is verified beyond the TypeScript-layer SDK builder's account/argument shape typechecking cleanly against the existing Program<anchor.Idl> pattern already used throughout this codebase for other newer instructions."
   ]
 }
 ```

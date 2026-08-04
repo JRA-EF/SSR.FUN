@@ -193,6 +193,22 @@ pub struct RebalanceRecorded {
     pub ts: i64,
 }
 
+/// Emitted by `execute_rebalance_leg` -- unlike `RebalanceRecorded`'s
+/// caller-supplied `balances_before`, every field here is derived from the
+/// real CPI'd swap itself (see instructions/execute_rebalance_leg.rs), so
+/// this event is intrinsically trustworthy on its own; a client should NOT
+/// also call `record_rebalance` after an AMM-routed leg.
+#[event]
+pub struct RebalanceLegExecuted {
+    pub reserve: Pubkey,
+    pub mint_sell: Pubkey,
+    pub mint_buy: Pubkey,
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub executed_by: Pubkey,
+    pub ts: i64,
+}
+
 #[event]
 pub struct MetadataUpdated {
     pub reserve: Pubkey,

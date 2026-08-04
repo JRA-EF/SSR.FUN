@@ -17,7 +17,7 @@ import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-tok
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority } from "./pda";
+import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority } from "./pda";
 
 /** reserve.asset_count ReserveAsset PDAs, in order_index order -- see common.rs::load_reserve_asset_configs. */
 export async function buildUpdateTargetsInstruction(
@@ -121,6 +121,63 @@ export async function buildRemoveReserveAssetInstruction(
       signer,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
+    .instruction();
+}
+
+/** Grants a new delegate (or re-adds a removed one). Restricted grants are gated by the acting signer's own ADD_RESTRICTED_DELEGATE permission (require_reserve_permission); an unrestricted grant is root-manager-only regardless of `actingDelegate`'s contents -- see add_delegate.rs. */
+export async function buildAddDelegateInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  signer: PublicKey,
+  actingDelegate: PublicKey,
+  delegateWallet: PublicKey,
+  permissions: number,
+  restricted: boolean,
+): Promise<TransactionInstruction> {
+  const [delegateAccount] = findDelegate(reserve, delegateWallet, programId);
+  return program.methods
+    .addDelegate(delegateWallet, permissions, restricted)
+    .accounts({
+      reserve,
+      delegateAccount,
+      actingDelegate,
+      signer,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+}
+
+/** Rewrites an existing delegate's permission bitmask. Gated the same way as buildAddDelegateInstruction -- see update_delegate_permissions.rs. */
+export async function buildUpdateDelegatePermissionsInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  signer: PublicKey,
+  actingDelegate: PublicKey,
+  delegateWallet: PublicKey,
+  newPermissions: number,
+): Promise<TransactionInstruction> {
+  const [delegateAccount] = findDelegate(reserve, delegateWallet, programId);
+  return program.methods
+    .updateDelegatePermissions(newPermissions)
+    .accounts({ reserve, delegateAccount, actingDelegate, signer })
+    .instruction();
+}
+
+/** Revokes a delegate, closing its PDA and reclaiming rent to `signer`. Gated the same way as buildAddDelegateInstruction -- see remove_delegate.rs. */
+export async function buildRemoveDelegateInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  signer: PublicKey,
+  actingDelegate: PublicKey,
+  delegateWallet: PublicKey,
+): Promise<TransactionInstruction> {
+  const [delegateAccount] = findDelegate(reserve, delegateWallet, programId);
+  return program.methods
+    .removeDelegate()
+    .accounts({ reserve, delegateAccount, actingDelegate, signer })
     .instruction();
 }
 

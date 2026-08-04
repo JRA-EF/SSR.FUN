@@ -35,6 +35,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getAccount } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "./readOnly";
 import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault } from "./pda";
+import { withRateLimitRetry } from "./rpcResilience";
 
 export interface ProtocolConfigView {
   authority: string;
@@ -158,7 +159,12 @@ export async function discoverAllReserves(
       const [vaultPda] = findReserveVault(reserveAddress, mint, programId);
       let reserveAsset: Awaited<ReturnType<typeof program.account.reserveAsset.fetchNullable>>;
       try {
-        reserveAsset = await program.account.reserveAsset.fetchNullable(reserveAssetPda);
+        // Retried: a transient RPC 429/error on even one of the (up to 4)
+        // legitimate candidate-asset reads must not permanently under-report
+        // resolvedAssetCount for an otherwise fully-supported Reserve -- that
+        // false positive is exactly what surfaced the "N registered, only M
+        // resolved" banner under ordinary RPC congestion.
+        reserveAsset = await withRateLimitRetry(() => program.account.reserveAsset.fetchNullable(reserveAssetPda));
       } catch (e) {
         issues.push({
           reserveId: id.toString(),
@@ -169,7 +175,7 @@ export async function discoverAllReserves(
         continue;
       }
       if (!reserveAsset) continue;
-      const vaultInfo = await getAccount(connection, vaultPda).catch((e) => {
+      const vaultInfo = await withRateLimitRetry(() => getAccount(connection, vaultPda)).catch((e) => {
         issues.push({
           reserveId: id.toString(),
           scope: "vault",

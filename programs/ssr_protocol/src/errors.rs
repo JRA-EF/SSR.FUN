@@ -103,4 +103,10 @@ pub enum SsrError {
     RebalanceMismatch,
     #[msg("No rebalance intent is currently pending for this Reserve.")]
     NoPendingRebalance,
+
+    // --- Rebalancing execution (execute_rebalance_leg) ---
+    #[msg("Requested leg amount exceeds the per-call circuit-breaker bound (half the sell asset's current vault balance).")]
+    RebalanceLegExceedsCircuitBreaker,
+    #[msg("The two rebalance legs must reference different asset mints.")]
+    RebalanceLegSameAsset,
 }

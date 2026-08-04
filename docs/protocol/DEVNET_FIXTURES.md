@@ -29,13 +29,14 @@ Persistent, documented fixture state on Solana DevNet for Gate 9/Gate 10, distin
 | mintY | 6 | `9ERxFYyuNTMjsduY24MCp1bvUDz7PkhoycjBx76Zh8Lv` |
 | mintZ | 9 | `GqNfJAmAMBVrYbJ3az38kBBrz8vyYdoFpwYmRBJd6zoS` |
 
-## Reserve One (2-asset)
+## Reserve One (2-asset at creation; a 3rd was added later -- see note)
 
 - Reserve: `GFP9nJQyFWurTkJCEYYkBxjksUQUXLt9i3ZoUDncTy5C` (reserve_id 9)
 - Reserve Token mint: `EqbWxWncXzXqestskKSNMWPVL58YEr2Z6qRC6Q19imK2`
-- Assets: mintX 60% (`4gdndjBhGSVrv78WmusC1HWNAXXiAPiTGB9QLSs4T3yE`), mintY 40% (`E2wQfVqPWdsFAx9QafC2ZjRUrYEfviTW4vnmxwq8grMu`)
+- Assets at creation: mintX 60% (`4gdndjBhGSVrv78WmusC1HWNAXXiAPiTGB9QLSs4T3yE`), mintY 40% (`E2wQfVqPWdsFAx9QafC2ZjRUrYEfviTW4vnmxwq8grMu`)
 - Seeded, then Holder A minted proportionally (balance after: 99500 Reserve Tokens).
 - Both restricted delegates were added here; pause -> unpause was exercised via the pause-scoped delegate, demonstrating both Active and Paused states. Left in the **Active** state.
+- **Note (added 2026-08-04, discovered during DEC-0075's live verification):** this Reserve genuinely has 3 registered assets on-chain today, not 2 -- mintZ was added later (Phase F/G's `add_reserve_asset_active` live verification, DEC-0046/0048, exercised adding/removing/re-adding/funding a 3rd asset against this exact persistent fixture) but this file was never updated to reflect it. Confirm the real current asset count via `fetchReserveOnChain` before assuming this doc's asset list is complete.
 
 ## Reserve Two (3-asset / multi-asset)
 

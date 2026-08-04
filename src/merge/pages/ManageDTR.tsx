@@ -16,14 +16,17 @@ import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
 import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
-import { decodeOnChainPermissions } from "@/lib/onChainPermissions";
+import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLAGS, PERMISSION_FLAGS } from "@/lib/onChainPermissions";
 import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC } from "@ssr/sdk";
 import {
+  executeAddDelegate,
   executeAddReserveAsset,
   executeCloseReserve,
   executeFundReserveAsset,
   executeInitiateWindDown,
+  executeRemoveDelegate,
   executeRemoveReserveAsset,
+  executeUpdateDelegatePermissions,
   executeUpdateTargets,
 } from "@/lib/managementClient";
 
@@ -33,17 +36,52 @@ const ADDABLE_ASSETS = [
   ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({ symbol: m.symbol.toUpperCase(), mint: m.address, decimals: m.decimals })),
 ];
 
-/** Read-only, verified-on-chain delegate row -- reused by both the Overview summary and the Delegates tab for a real (onChain) Reserve. Local labels are display-only and never imply on-chain storage; see delegateLabels.ts. */
-function OnChainDelegateRow({ reserveAddress, wallet, delegateAccount, permissions, restricted, canEditLabel }: {
+/**
+ * Verified-on-chain delegate row -- reused by both the Overview summary
+ * (label-editing only) and the Delegates tab (full permission-editing and
+ * removal for a real Reserve). Local labels are display-only and never
+ * imply on-chain storage; see delegateLabels.ts. Real permission edits and
+ * removal submit an actual signed update_delegate_permissions/remove_delegate
+ * transaction -- see managementClient.ts.
+ *
+ * Whether THIS SPECIFIC delegate can be edited/removed by the current
+ * signer depends on its own `restricted` flag (see
+ * update_delegate_permissions.rs/remove_delegate.rs): a restricted
+ * delegate's permissions/removal is gated by the signer's own
+ * ADD_RESTRICTED_DELEGATE/REMOVE_RESTRICTED_DELEGATE permission; an
+ * unrestricted delegate can only be edited/removed by the Root Manager,
+ * regardless of any delegate permission -- so `canEditPermissions`/
+ * `canRemove` must be computed per-row, not from a single page-level flag.
+ */
+function OnChainDelegateRow({
+  reserveAddress,
+  wallet,
+  delegateAccount,
+  permissions,
+  restricted,
+  canEditLabel,
+  canEditPermissions,
+  canRemove,
+  busy,
+  onSavePermissions,
+  onRemove,
+}: {
   reserveAddress: string;
   wallet: string;
   delegateAccount: string;
   permissions: number;
   restricted: boolean;
   canEditLabel: boolean;
+  canEditPermissions?: boolean;
+  canRemove?: boolean;
+  busy?: boolean;
+  onSavePermissions?: (newPermissions: number) => void;
+  onRemove?: () => void;
 }) {
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState(getDelegateLabel(reserveAddress, wallet) ?? "");
+  const [editingPerms, setEditingPerms] = useState(false);
+  const [permDraft, setPermDraft] = useState(permissions);
   const label = getDelegateLabel(reserveAddress, wallet);
   const caps = decodeOnChainPermissions(permissions);
 
@@ -70,11 +108,35 @@ function OnChainDelegateRow({ reserveAddress, wallet, delegateAccount, permissio
             )}
           </div>
         </div>
-        {canEditLabel && (
-          <Button variant="outline" size="sm" onClick={() => { setLabelDraft(label ?? ""); setEditingLabel((v) => !v); }} className="shrink-0 gap-1.5">
-            <Tag className="w-3.5 h-3.5" /> {label ? "Edit label" : "Set local label"}
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2 shrink-0">
+          {canEditLabel && (
+            <Button variant="outline" size="sm" onClick={() => { setLabelDraft(label ?? ""); setEditingLabel((v) => !v); }} className="gap-1.5">
+              <Tag className="w-3.5 h-3.5" /> {label ? "Edit label" : "Set local label"}
+            </Button>
+          )}
+          {onSavePermissions && (
+            <Button
+              variant="outline" size="sm"
+              disabled={!canEditPermissions || busy}
+              title={!canEditPermissions ? "You need the Root Manager or the matching restricted-delegate permission to edit this delegate." : undefined}
+              onClick={() => { setPermDraft(permissions); setEditingPerms((v) => !v); }}
+              className="gap-1.5"
+            >
+              <Edit2 className="w-3.5 h-3.5" /> Edit permissions
+            </Button>
+          )}
+          {onRemove && (
+            <Button
+              variant="destructive" size="sm"
+              disabled={!canRemove || busy}
+              title={!canRemove ? "You need the Root Manager or the matching restricted-delegate permission to remove this delegate." : undefined}
+              onClick={onRemove}
+              className="gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> {busy ? "Confirming..." : "Remove"}
+            </Button>
+          )}
+        </div>
       </div>
       {editingLabel && (
         <div className="flex gap-2 pt-2 border-t border-border/50">
@@ -85,6 +147,28 @@ function OnChainDelegateRow({ reserveAddress, wallet, delegateAccount, permissio
             className="text-sm"
           />
           <Button size="sm" onClick={() => { setDelegateLabel(reserveAddress, wallet, labelDraft); setEditingLabel(false); }}>Save</Button>
+        </div>
+      )}
+      {editingPerms && onSavePermissions && (
+        <div className="pt-3 border-t border-border/50 space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {ON_CHAIN_PERMISSION_FLAGS.map((f) => (
+              <div key={f.bit} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`onchain-perm-${wallet}-${f.bit}`}
+                  checked={(permDraft & f.bit) !== 0}
+                  onCheckedChange={() => setPermDraft((prev) => (prev & f.bit) !== 0 ? prev & ~f.bit : prev | f.bit)}
+                />
+                <label htmlFor={`onchain-perm-${wallet}-${f.bit}`} className="text-sm font-medium leading-none">{f.label}</label>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setEditingPerms(false)}>Cancel</Button>
+            <Button size="sm" disabled={busy} onClick={() => { onSavePermissions(permDraft); setEditingPerms(false); }}>
+              {busy ? "Confirming..." : "Save Permissions (real DevNet tx)"}
+            </Button>
+          </div>
         </div>
       )}
       <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/30">
@@ -108,6 +192,14 @@ export function ManageDTR() {
   // Delegate State
   const [newDelegateAddress, setNewDelegateAddress] = useState("");
   const [newDelegatePerms, setNewDelegatePerms] = useState<ManagerPermissions>(emptyPermissions());
+
+  // On-chain delegate management (real Reserves only) -- separate state from
+  // the simulated-demo fields above, since granting an on-chain delegate
+  // also needs a restricted/unrestricted choice (add_delegate.rs) that has
+  // no equivalent in the local simulation.
+  const [onChainNewDelegateWallet, setOnChainNewDelegateWallet] = useState("");
+  const [onChainNewDelegatePermBits, setOnChainNewDelegatePermBits] = useState(0);
+  const [onChainNewDelegateRestricted, setOnChainNewDelegateRestricted] = useState(true);
   const [editingDelegate, setEditingDelegate] = useState<string | null>(null);
   const [editPerms, setEditPerms] = useState<ManagerPermissions>(emptyPermissions());
 
@@ -192,6 +284,18 @@ export function ManageDTR() {
   const isRoot = dtr.managerAddress === wallet.address;
   const hasManageDelegates = canManageDelegates(dtr, wallet.address);
   const hasRebalance = canRebalance(dtr, wallet.address);
+  // Real on-chain permission checks (root manager OR a genuinely permitted
+  // delegate, per dtr.onChain.delegatesOnChain -- see hasOnChainPermission's
+  // fail-closed contract). Only meaningful for a genuinely on-chain Reserve;
+  // the !dtr.onChain branches above (hasManageDelegates/hasRebalance) keep
+  // using the local-simulated system for a purely local/demo Reserve.
+  const canUpdateTargetsOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_TARGETS);
+  const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
+  const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
+  const canRemoveRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.REMOVE_RESTRICTED_DELEGATE);
+  // Unified gate for the rebalance-edit table, shared by both the on-chain
+  // (real permission) and simulated (local permission) branches.
+  const canEditRebalance = dtr.onChain ? canUpdateTargetsOnChain : hasRebalance;
 
   // Handlers: Delegates
   const handleAddDelegate = () => {
@@ -576,9 +680,13 @@ export function ManageDTR() {
               <div className="bg-muted/30 border border-border/50 p-4 rounded-lg flex items-center gap-3">
                 <Shield className="w-5 h-5 shrink-0 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  Delegate management for live Solana DevNet Reserves (add, remove, or change capabilities) requires a signed on-chain
-                  transaction, which is not yet implemented -- see the DevNet implementation plan's Phase F. The list below is read-only
-                  and verified live on-chain; you can still set a local display label for each delegate.
+                  Granting, editing, and removing a delegate below submits a real signed transaction to Solana DevNet
+                  (<code className="font-merge-mono text-xs">add_delegate</code>, <code className="font-merge-mono text-xs">update_delegate_permissions</code>,
+                  <code className="font-merge-mono text-xs"> remove_delegate</code>). An unrestricted delegate can only be granted, edited, or removed
+                  by the Root Manager; a restricted delegate additionally accepts another delegate holding the matching Add/Remove Restricted
+                  Delegate permission. This list may not show every real on-chain delegate -- discovery only resolves wallets it already has a
+                  hint for (see docs/protocol's discovery limitation); an unresolved delegate still holds its real on-chain permissions even if
+                  it isn't listed here.
                 </p>
               </div>
 
@@ -599,19 +707,113 @@ export function ManageDTR() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {(dtr.onChain.delegatesOnChain ?? []).map((del) => (
-                        <OnChainDelegateRow
-                          key={del.wallet}
-                          reserveAddress={dtr.onChain!.reserve}
-                          wallet={del.wallet}
-                          delegateAccount={del.delegateAccount}
-                          permissions={del.permissions}
-                          restricted={del.restricted}
-                          canEditLabel={hasManageDelegates}
-                        />
-                      ))}
+                      {(dtr.onChain.delegatesOnChain ?? []).map((del) => {
+                        const canEditThis = del.restricted ? canAddRestrictedDelegateOnChain : isRoot;
+                        const canRemoveThis = del.restricted ? canRemoveRestrictedDelegateOnChain : isRoot;
+                        const busy = onChainTxPending === `update_delegate_permissions(${del.wallet})` || onChainTxPending === `remove_delegate(${del.wallet})`;
+                        return (
+                          <OnChainDelegateRow
+                            key={del.wallet}
+                            reserveAddress={dtr.onChain!.reserve}
+                            wallet={del.wallet}
+                            delegateAccount={del.delegateAccount}
+                            permissions={del.permissions}
+                            restricted={del.restricted}
+                            canEditLabel={hasManageDelegates}
+                            canEditPermissions={canEditThis}
+                            canRemove={canRemoveThis}
+                            busy={busy}
+                            onSavePermissions={(newPerms) =>
+                              void runOnChainAction(`update_delegate_permissions(${del.wallet})`, () =>
+                                executeUpdateDelegatePermissions(connection, walletCtx, dtr.onChain!.reserve, del.wallet, newPerms),
+                              )
+                            }
+                            onRemove={() =>
+                              void runOnChainAction(`remove_delegate(${del.wallet})`, () =>
+                                executeRemoveDelegate(connection, walletCtx, dtr.onChain!.reserve, del.wallet),
+                              )
+                            }
+                          />
+                        );
+                      })}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-xl font-merge-display">Grant a New Delegate</CardTitle>
+                  <CardDescription>
+                    {isRoot
+                      ? "As Root Manager, you can grant either a restricted or unrestricted delegate."
+                      : canAddRestrictedDelegateOnChain
+                        ? "You can grant a restricted delegate (only the Root Manager can grant an unrestricted one)."
+                        : "You need the Root Manager or a delegate with Add Restricted Delegate permission to grant a new delegate."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label htmlFor="onchain-new-delegate-wallet">Delegate wallet address</Label>
+                    <Input
+                      id="onchain-new-delegate-wallet"
+                      placeholder="Solana wallet address"
+                      className="font-merge-mono mt-1.5"
+                      value={onChainNewDelegateWallet}
+                      onChange={(e) => setOnChainNewDelegateWallet(e.target.value)}
+                      disabled={(!isRoot && !canAddRestrictedDelegateOnChain) || onChainTxPending !== null}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {ON_CHAIN_PERMISSION_FLAGS.map((f) => (
+                      <div key={f.bit} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`onchain-new-perm-${f.bit}`}
+                          checked={(onChainNewDelegatePermBits & f.bit) !== 0}
+                          onCheckedChange={() => setOnChainNewDelegatePermBits((prev) => (prev & f.bit) !== 0 ? prev & ~f.bit : prev | f.bit)}
+                          disabled={(!isRoot && !canAddRestrictedDelegateOnChain) || onChainTxPending !== null}
+                        />
+                        <label htmlFor={`onchain-new-perm-${f.bit}`} className="text-sm font-medium leading-none">{f.label}</label>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="onchain-new-delegate-restricted"
+                      checked={onChainNewDelegateRestricted}
+                      onCheckedChange={(c) => setOnChainNewDelegateRestricted(c === true)}
+                      disabled={!isRoot || onChainTxPending !== null}
+                    />
+                    <label htmlFor="onchain-new-delegate-restricted" className="text-sm font-medium leading-none">
+                      Restricted delegate {!isRoot && "(required -- only the Root Manager can grant an unrestricted delegate)"}
+                    </label>
+                  </div>
+                  <Button
+                    disabled={
+                      (!isRoot && !canAddRestrictedDelegateOnChain) ||
+                      onChainTxPending !== null ||
+                      !onChainNewDelegateWallet.trim() ||
+                      (!isRoot && !onChainNewDelegateRestricted)
+                    }
+                    onClick={() =>
+                      void runOnChainAction("add_delegate", () =>
+                        executeAddDelegate(
+                          connection,
+                          walletCtx,
+                          dtr.onChain!.reserve,
+                          onChainNewDelegateWallet.trim(),
+                          onChainNewDelegatePermBits,
+                          isRoot ? onChainNewDelegateRestricted : true,
+                        ),
+                      ).then(() => {
+                        setOnChainNewDelegateWallet("");
+                        setOnChainNewDelegatePermBits(0);
+                      })
+                    }
+                    className="gap-2"
+                  >
+                    <Plus className="w-4 h-4" /> {onChainTxPending === "add_delegate" ? "Confirming..." : "Grant Delegate (real DevNet tx)"}
+                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -762,7 +964,7 @@ export function ManageDTR() {
                     Target-weight changes below submit a real signed <code className="font-merge-mono text-xs">update_targets</code> transaction
                     to Solana DevNet (config only -- moves no real holdings; see the DevNet implementation plan's Phase F). Rebalance
                     <strong> trade execution</strong> (actually moving holdings toward target) remains unavailable pending a swap-mechanism
-                    decision (Phase E). {!isRoot && "Only the Root Manager can submit this transaction from this dashboard today."}
+                    decision (Phase E). {!canUpdateTargetsOnChain && "You need the Root Manager or a delegate with Update Targets permission to submit this transaction."}
                   </p>
                 </div>
               )}
@@ -779,7 +981,7 @@ export function ManageDTR() {
                       id="adjust-remaining" 
                       checked={adjustRemaining} 
                       onCheckedChange={(c) => setAdjustRemaining(c === true)}
-                      disabled={!hasRebalance}
+                      disabled={!canEditRebalance}
                       className="mt-1"
                     />
                     <div className="grid gap-1.5 leading-none">
@@ -824,7 +1026,7 @@ export function ManageDTR() {
                                     placeholder={(asset.weight * 100).toFixed(1)}
                                     value={isEdited ? (rebalanceEdits[asset.symbol] * 100).toString() : ""}
                                     onChange={(e) => handleWeightEdit(asset.symbol, e.target.value)}
-                                    disabled={!hasRebalance}
+                                    disabled={!canEditRebalance}
                                     step="0.1"
                                     min="0"
                                   />
@@ -872,7 +1074,7 @@ export function ManageDTR() {
                         <Save className="w-4 h-4" /> Execute Rebalance
                       </Button>
                     )}
-                    {hasRebalance && dtr.onChain && (
+                    {dtr.onChain && (
                       <Button
                         onClick={() => {
                           const orderedAssets = [...dtr.onChain!.assets].sort((a, b) => a.orderIndex - b.orderIndex);
@@ -883,8 +1085,8 @@ export function ManageDTR() {
                           });
                           void runOnChainAction("update_targets", () => executeUpdateTargets(connection, walletCtx, dtr.onChain!.reserve, assetMintsInOrder, newTargetWeightsBps));
                         }}
-                        disabled={!isPreviewValid || !isRoot || onChainTxPending !== null}
-                        title={!isRoot ? "Only the Root Manager can submit this transaction from this dashboard today." : undefined}
+                        disabled={!isPreviewValid || !canUpdateTargetsOnChain || onChainTxPending !== null}
+                        title={!canUpdateTargetsOnChain ? "You need the Root Manager or a delegate with Update Targets permission to submit this transaction." : undefined}
                         className="w-full sm:w-auto font-bold gap-2"
                       >
                         <Save className="w-4 h-4" /> {onChainTxPending === "update_targets" ? "Confirming..." : "Submit Target Weights (real DevNet tx)"}
@@ -907,9 +1109,10 @@ export function ManageDTR() {
                   <CardHeader>
                     <CardTitle className="text-xl font-merge-display">Reserve Composition</CardTitle>
                     <CardDescription>
-                      Add, fund, or remove a registered Reserve -- each is a separate real, signed DevNet transaction
+                      Add, fund, or remove a registered reserve asset -- each is a separate real, signed DevNet transaction
                       (<code className="font-merge-mono text-xs">add_reserve_asset_active</code>, <code className="font-merge-mono text-xs">fund_new_reserve_asset</code>,
-                      <code className="font-merge-mono text-xs"> remove_reserve_asset</code>). Root Manager only, from this dashboard.
+                      <code className="font-merge-mono text-xs"> remove_reserve_asset</code>). Adding/removing accepts the Root Manager or a delegate with Manage
+                      Liquidity Config permission; funding a newly-added asset is Root Manager only.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -954,7 +1157,8 @@ export function ManageDTR() {
                           {canRemove && (
                             <Button
                               variant="destructive" size="sm"
-                              disabled={!isRoot || onChainTxPending !== null}
+                              disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
+                              title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
                               onClick={() => void runOnChainAction(`remove_reserve_asset(${asset.symbol})`, () => executeRemoveReserveAsset(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.manager, asset.mint))}
                               className="gap-1.5 shrink-0"
                             >
@@ -966,13 +1170,13 @@ export function ManageDTR() {
                     })}
 
                     <div className="pt-4 border-t border-border/50 space-y-3">
-                      <Label>Add a new Reserve (registers at 0% target weight, zero balance -- fund it separately above once added)</Label>
+                      <Label>Add a reserve asset (registers at 0% target weight, zero balance -- fund it separately above once added)</Label>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <select
                           className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm sm:w-56"
                           value={addAssetMint}
                           onChange={(e) => setAddAssetMint(e.target.value)}
-                          disabled={!isRoot || onChainTxPending !== null}
+                          disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
                         >
                           <option value="">Select an asset...</option>
                           {ADDABLE_ASSETS.filter((a) => !dtr.onChain!.assets.some((existing) => existing.mint === a.mint)).map((a) => (
@@ -985,10 +1189,11 @@ export function ManageDTR() {
                           className="sm:w-40 font-merge-mono"
                           value={addAssetWeightBps}
                           onChange={(e) => setAddAssetWeightBps(e.target.value)}
-                          disabled={!isRoot || onChainTxPending !== null}
+                          disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
                         />
                         <Button
-                          disabled={!isRoot || onChainTxPending !== null || !addAssetMint}
+                          disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null || !addAssetMint}
+                          title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
                           onClick={() => {
                             const bps = Math.round(Number(addAssetWeightBps) * 100);
                             void runOnChainAction("add_reserve_asset_active", () => executeAddReserveAsset(connection, walletCtx, dtr.onChain!.reserve, addAssetMint, bps), [addAssetMint]).then(() => setAddAssetMint(""));

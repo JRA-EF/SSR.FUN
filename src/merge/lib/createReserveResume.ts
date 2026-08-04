@@ -11,7 +11,7 @@
 // step-level resume path at all -- a failure any time after the atomic
 // create-and-register transaction landed left a real, half-built Reserve
 // on-chain while the client discarded the one persisted pointer to it and
-// funneled the user back to a blank "Launch a Decentralized Token Reserve"
+// funneled the user back to a blank "Launch a Reserve"
 // form, whose only action created an entirely separate Reserve (a new
 // reserve_id, since ProtocolConfig.reserve_count had already incremented).
 // This module is what makes "read on-chain state, resume from the first

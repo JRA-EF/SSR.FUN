@@ -186,6 +186,18 @@ pub mod ssr_protocol {
         instructions::record_rebalance::handler(ctx, balances_before, note)
     }
 
+    /// One CPI'd swap leg via ssr_devnet_amm, genuinely moving this
+    /// Reserve's own vault assets -- see instructions/execute_rebalance_leg.rs
+    /// for the full design and its documented limitations. Coexists with
+    /// record_rebalance above; does not replace it.
+    pub fn execute_rebalance_leg<'info>(
+        ctx: Context<'info, ExecuteRebalanceLeg<'info>>,
+        amount_in: u64,
+        minimum_amount_out: u64,
+    ) -> Result<()> {
+        instructions::execute_rebalance_leg::handler(ctx, amount_in, minimum_amount_out)
+    }
+
     pub fn update_metadata<'info>(
         ctx: Context<'info, UpdateMetadata<'info>>,
         new_metadata_uri: String,

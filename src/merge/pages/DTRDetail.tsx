@@ -261,8 +261,11 @@ export function DTRDetail() {
   }
 
   const holding = holdings.find((h) => h.dtrId === dtr.id);
-  const premiumDiscount = (dtr.tokenPrice - dtr.nav) / dtr.nav;
-  const isPremium = premiumDiscount > 0;
+  // dtr.nav can be 0 when a Reserve's assets are under-resolved (AUM reads as
+  // $0) even though it already has token supply -- guard against NaN rather
+  // than computing 0/0.
+  const premiumDiscount = dtr.nav > 0 ? (dtr.tokenPrice - dtr.nav) / dtr.nav : null;
+  const isPremium = premiumDiscount !== null && premiumDiscount > 0;
 
   const chartMin = chartData.length ? Math.min(...chartData.map((d) => d.price)) : 0;
   const chartMax = chartData.length ? Math.max(...chartData.map((d) => d.price)) : 1;
@@ -388,15 +391,15 @@ export function DTRDetail() {
       return;
     }
     if (!canSubmitNewTransaction(buyPhase)) return; // Defensive -- the button is already disabled in this state.
-    // Defensive -- the button is already disabled for this case, but never
-    // rely on that alone: a genuine devUSDC -> other-Reserve-Asset
-    // conversion isn't deployed on-chain, so Buy only genuinely executes for
-    // a Reserve backed 100% by devUSDC. See isGenuineDevUsdcBuySupported.
+    // Defensive -- the button is already disabled for this case (an
+    // ineligible Reserve is filtered out of the catalogue before this page
+    // could ever be opened for it), but never rely on that alone. See
+    // isGenuineDevUsdcBuySupported.
     if (!isGenuineDevUsdcBuySupported) {
       toast({
         variant: "destructive",
         title: "Buy not available",
-        description: "This Reserve isn't backed 100% by devUSDC, and a genuine devUSDC-to-Reserve-Asset conversion isn't deployed yet -- Buy is unavailable for it right now.",
+        description: "This Reserve holds an asset outside the supported DevNet economy (devUSDC/mockX/mockY/mockZ), so Buy is unavailable for it.",
       });
       return;
     }
@@ -810,8 +813,8 @@ export function DTRDetail() {
                     <TooltipContent>Difference between market price and NAV. Premium implies high demand.</TooltipContent>
                   </Tooltip>
                 </div>
-                <p className={`text-xl font-merge-mono font-semibold ${isPremium ? 'text-positive' : 'text-destructive'}`}>
-                  {isPremium ? '+' : ''}{(premiumDiscount * 100).toFixed(2)}%
+                <p className={`text-xl font-merge-mono font-semibold ${premiumDiscount === null ? 'text-muted-foreground' : isPremium ? 'text-positive' : 'text-destructive'}`}>
+                  {premiumDiscount === null ? '—' : `${isPremium ? '+' : ''}${(premiumDiscount * 100).toFixed(2)}%`}
                 </p>
               </CardContent>
             </Card>

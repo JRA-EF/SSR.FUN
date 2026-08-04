@@ -10,17 +10,17 @@ Vite + React 19 + TypeScript. Two design systems coexist in this repo:
 
 ## Mandatory terminology
 
-**Final, as of 2026-07-29 (see `docs/project/DECISION_LOG.md` and `docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md` round 3) — this supersedes the prior wording of this section, which used "Reserve" for the whole basket entity:**
+**Final, as of 2026-08-04 (see `docs/project/DECISION_LOG.md` DEC-0074) — this supersedes both the 2026-07-29 round-3 wording of this section and DEC-0072's same-day decision to keep that wording:**
 
-- **Decentralized Token Reserve** = the complete basket/product.
-- **Reserve** = each underlying asset held *inside* a Decentralized Token Reserve (e.g. a specific DevNet test mint backing the basket). Do not use "Reserve" alone to mean the whole product in new copy.
-- **Reserve Token** = the fungible token representing ownership of the complete Decentralized Token Reserve.
+- **Reserve** = the complete basket/product (the fund).
+- **reserve assets** = the underlying assets held *inside* a Reserve (e.g. a specific DevNet test mint backing the basket). Lowercase, generic — not a proper noun.
+- **Reserve Token** = the fungible token representing ownership of a Reserve.
 
-SSR.fun exclusively uses **"Launch a Decentralized Token Reserve"** (not "Launch a Reserve") as the user-facing call to action for creating/deploying the whole basket product, everywhere — headings, buttons, nav items, empty states, everything.
+SSR.fun exclusively uses **"Launch a Reserve"** as the user-facing call to action for creating/deploying the whole basket product, everywhere — headings, buttons, nav items, empty states, everything.
 
-**"Create Your Reserve," "Create Reserve," "Deploy Your Reserve," "Deploy Reserve," "Launch Your Reserve," "Launch Reserve" (unqualified), "BYOR," "BOR," "DTR Asset," and "Reserve asset" must never appear in user-facing product copy** — navigation, buttons, headings, empty states, onboarding, forms, tooltips, success messages, mobile UI, accessibility labels, mock content, or copy constants. Use "Reserve" only when referring to an underlying holding, never the whole basket.
+**"BYOR," "BOR," "DTR," "DTR Token," "DTR Asset," and "Decentralized Token Reserve" must never appear in user-facing product copy** — navigation, buttons, headings, empty states, onboarding, forms, tooltips, success messages, mobile UI, accessibility labels, mock content, or copy constants. Use "Reserve" for the whole product and "reserve assets" for its holdings.
 
-**This does not apply to internal technical identifiers** (e.g. the `createDTR` store action, `DTRAsset`/`CreateDTRAssetInput` TypeScript types, Anchor instruction names, database fields, or types) — those stay as-is unless there's a separate reason to rename them. **In particular, do not rename the deployed on-chain Anchor account structs `Reserve`, `ReserveAsset`, `Delegate`, or `ProtocolConfig`** (`programs/ssr_protocol/src/state/*.rs`) regardless of this terminology change: Anchor derives each account's on-chain discriminator from its struct name at compile time, so renaming any of them would change the discriminator new builds expect and break deserialization of every already-initialized account on live DevNet. These are documented as legacy technical identifiers, not approved product terminology — the product-facing meaning of "Reserve" above does not apply to the Rust/Anchor `Reserve`/`ReserveAsset` struct names, which keep their pre-existing sense (the account model's "Reserve" = the whole basket account, matching the *old* product terminology) purely for on-chain compatibility.
+**This does not apply to internal technical identifiers** (e.g. the `createDTR` store action, `DTRAsset`/`CreateDTRAssetInput` TypeScript types, component filenames like `CreateDTR.tsx`/`ManageDTR.tsx`/`DTRDetail.tsx`, Anchor instruction names, database fields, or types) — those stay as-is unless there's a separate reason to rename them. **In particular, do not rename the deployed on-chain Anchor account structs `Reserve`, `ReserveAsset`, `Delegate`, or `ProtocolConfig`** (`programs/ssr_protocol/src/state/*.rs`) regardless of this terminology change: Anchor derives each account's on-chain discriminator from its struct name at compile time, so renaming any of them would change the discriminator new builds expect and break deserialization of every already-initialized account on live DevNet. These are documented as legacy technical identifiers, not approved product terminology — conveniently, the `Reserve`/`ReserveAsset` struct names already match the *current* product-facing sense above (Reserve = whole basket account), so no meaning mismatch needs to be carried going forward.
 
 ## Approved hero copy
 

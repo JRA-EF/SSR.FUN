@@ -19,6 +19,12 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { version = "1.1.2", features = ["init-if-needed"] }
 anchor-spl = { version = "1.1.2", features = ["token", "associated_token", "token_2022"] }
+# CPI into ssr_devnet_amm's swap instruction for execute_rebalance_leg (see
+# this pass's DECISION_LOG entry). `features = ["cpi"]` generates the
+# `ssr_devnet_amm::cpi`/`ssr_devnet_amm::cpi::accounts` modules this crate
+# calls into -- see instructions/execute_rebalance_leg.rs. Path dependency,
+# same workspace (Cargo.toml's `members` list) -- not published anywhere.
+ssr_devnet_amm = { path = "../ssr_devnet_amm", features = ["cpi"] }
 
 # Silences cosmetic "unexpected cfg condition value" warnings from
 # anchor-lang's own macro-generated code, which checks for optional
