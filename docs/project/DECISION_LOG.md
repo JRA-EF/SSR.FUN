@@ -2077,3 +2077,41 @@
   ]
 }
 ```
+
+## DEC-0079
+
+```json
+{
+  "id": "DEC-0079",
+  "date": "2026-08-05",
+  "status": "confirmed",
+  "decision": "Fixed a visual regression introduced by DEC-0078 in which every merge-scoped control (Price History range buttons, all 16 information-tooltip triggers, the Buy/Sell tabs, the 25/50/75/Max percentage buttons) rendered with raw user-agent button chrome -- gray ButtonFace fills, outset bevels, inset shadows, square corners. Root cause: DEC-0078 scoped src/index.css's global button reset away from .merge-scope (via `button:not(.merge-scope *)`) to stop it clobbering Tailwind padding/background utilities. That did fix the clobbering, but src/merge/merge.css DELIBERATELY skips Tailwind's Preflight (see its own header comment -- it imports only the theme and utilities layers), so that global reset was the ONLY native-appearance reset merge-scoped buttons had; removing it let native browser chrome through everywhere. Correct fix, replacing BOTH prior attempts: keep the reset applying document-wide, but move it into @layer base and declare in index.css the same cascade-layer order merge.css already declares. Tailwind's utilities are emitted into `utilities` (the last layer), so they now cleanly override the reset, while any control WITHOUT such a utility still gets native chrome stripped. Extended the reset to mirror Preflight's own button handling: appearance:none (the actual source of the bevel/inset shadow) and border-width:0 + border-style:solid (so a Tailwind border utility yields a real 1px solid border instead of applying Tailwind's width to the UA's inherited outset style). Additionally centralised the 16 duplicated TooltipTrigger+Info call sites into one accessible InfoTip component (circular, aria-labelled, design-system border and focus ring), and restyled the range buttons and percentage buttons onto existing tokens (purple --primary selected state, lavender --border inactive, --ring keyboard-only focus, border present in both states so hover never shifts layout).",
+  "context": "User-reported immediately after DEC-0078 shipped, with screenshots: several Reserve-detail controls looked like unstyled 1990s browser-default HTML buttons. This is the SECOND regression in the same button reset -- DEC-0078 fixed the first (an unlayered reset beating layered Tailwind utilities, collapsing 10 range buttons into one concatenated string) but did so by removing the reset from merge-scope rather than by layering it, trading one failure mode for a worse one. Radix's TooltipTrigger renders a completely class-less button, and shadcn's TabsTrigger styles only its ACTIVE state, so both had nothing but the global reset standing between them and native chrome -- which is why the information icons and the inactive Buy/Sell tab were the most visibly broken.",
+  "rationale": "Cascade layers are the mechanism actually at issue, so the fix belongs there rather than in per-component CSS: a layered reset loses to later layers regardless of specificity, which is exactly the semantics needed (utilities win where present, reset applies where they are absent). Declaring the layer order explicitly in index.css (identical to merge.css's) makes the outcome deterministic rather than dependent on which stylesheet the bundler happens to emit first. Centralising the tooltip triggers follows the user's explicit instruction not to patch each button with one-off CSS, and simultaneously fixes a real accessibility gap -- an icon-only trigger with no accessible name -- rather than only its appearance. FABLE's own hand-written homepage/navbar rules are unlayered and therefore still win over the base layer, so the native pages are provably unaffected.",
+  "alternativesConsidered": [
+    "Revert DEC-0078 entirely -- rejected: it also carried the corrected chart/time-range behaviour, the centralised price-history fallback, and the RPC-misclassification fixes, none of which are implicated in this regression.",
+    "Re-add Tailwind's full Preflight to merge.css -- rejected: merge.css skips it deliberately so Tailwind never resets element defaults document-wide and clobbers FABLE's own homepage styling; adding it back would risk a much broader regression than the one being fixed.",
+    "Give each affected component explicit background/border utilities so nothing relies on a global reset -- rejected: it leaves the underlying trap in place for every future class-less control (the exact way Radix's TooltipTrigger was caught), and the user explicitly asked for the shared cause to be fixed rather than each button patched."
+  ],
+  "impact": "Changed: src/index.css (explicit @layer order declaration; button reset moved into @layer base and extended to Preflight-equivalent properties), src/merge/components/ChartTimeframeSelector.tsx (token-based purple/lavender styling, exported DEFAULT_CHART_TIMEFRAME), src/merge/pages/DTRDetail.tsx (11 InfoTip migrations, percentage buttons restyled as pills, default timeframe now the exported constant), src/merge/pages/CreateDTR.tsx (4 InfoTip migrations), src/merge/components/DevnetOnboarding.tsx (1 InfoTip migration), tests/phase_chart_range_selector.ts (extended). New: src/merge/components/InfoTip.tsx, tests/util/aliases.ts (a hand-rolled, dependency-free '@/*' resolver for the CommonJS test runner, matching this repo's minimal-dependency convention). NOT touched: calculations.ts's buildLineSeries, reserveCardProps.ts, and every chart code path in DTRDetail (verified by grepping the diff for chart-related identifiers -- zero hits), so DEC-0078's corrected chart behaviour is fully preserved.",
+  "affectedAreas": [
+    "src/index.css",
+    "src/merge/components/InfoTip.tsx",
+    "src/merge/components/ChartTimeframeSelector.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/components/DevnetOnboarding.tsx",
+    "tests/phase_chart_range_selector.ts",
+    "tests/util/aliases.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "242/242 offline tests passing (up from 230), including 4 NEW tests that pin the reset contract itself -- asserting index.css declares base ahead of utilities, that the button reset lives inside @layer base, that it is NOT scoped away from .merge-scope, and that it neutralises appearance/background-color/border-style specifically. These exist because this same reset has now caused two separate regressions; the component tests alone would not have caught either.",
+    "Verified against the BUILT CSS, not just source: the reset bundle (jsx-runtime-*.css) emits @layer theme; then @layer base{...} then @layer components,utilities;, loads before main-*.css per dist/index.html's stylesheet order, and every utility the restyled controls depend on (bg-primary, text-primary-foreground, border-border, rounded-md, rounded-full, bg-background, h-7) is confirmed present in the utilities layer rather than purged.",
+    "Verified against the DEPLOYED CSS after release: https://strategic-super-reserve.fun/assets/jsx-runtime-CJCptCQc.css contains @layer base{button,[type=button],[type=submit],[type=reset]{appearance:none;...;background-color:#0000;background-image:none;border:0 solid;border-radius:0;margin:0;padding:0}}, with no button:not(.merge-scope *) rule remaining.",
+    "tsc -b --force, tsc -p api/devnet/tsconfig.json, oxlint (exit 0, only pre-existing warnings in tests/ssr_protocol.ts), and vite build all clean.",
+    "NO browser-based visual verification was performed -- no browser-automation tool exists in this environment (a standing, previously-documented gap). The rendered appearance is verified indirectly: real component render output asserted in tests, plus the CSS cascade verified in the built AND deployed bundles. A human visual pass at desktop and mobile widths remains outstanding and is NOT claimed as done."
+  ]
+}
+```
