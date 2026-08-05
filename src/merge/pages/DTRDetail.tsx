@@ -42,7 +42,7 @@ import {
   Cell,
 } from "recharts";
 import { format } from "date-fns";
-import { ChevronLeft, Info, ArrowUpRight, ArrowDownRight, Layers, BarChart3, Activity } from "lucide-react";
+import { ChevronLeft, ArrowUpRight, ArrowDownRight, Layers, BarChart3, Activity } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -51,10 +51,10 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { InfoTip } from "@/components/InfoTip";
 import { useToast } from "@/hooks/use-toast";
 import { useLandingStats } from "@/hooks/useLandingStats";
-import { ChartTimeframeSelector } from "@/components/ChartTimeframeSelector";
+import { ChartTimeframeSelector, DEFAULT_CHART_TIMEFRAME } from "@/components/ChartTimeframeSelector";
 
 const CHART_COLORS = [
   "hsl(var(--chart-1))",
@@ -83,7 +83,7 @@ export function DTRDetail() {
 
   // Chart timeframe is local UI state -- it persists across live store updates
   // (trades, price ticks) since this component only re-renders, never remounts.
-  const [timeframe, setTimeframe] = useState<ChartTimeframe>("7d");
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>(DEFAULT_CHART_TIMEFRAME);
 
   // Trading state
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
@@ -787,10 +787,7 @@ export function DTRDetail() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   AUM
-                  <Tooltip>
-                    <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                    <TooltipContent>Assets Under Management (Total value of underlying assets)</TooltipContent>
-                  </Tooltip>
+                  <InfoTip label="More information about AUM">Assets Under Management (Total value of underlying assets)</InfoTip>
                 </div>
                 <p className="text-xl font-merge-mono font-semibold">{formatUsdc(dtr.aum, { compact: true })}</p>
               </CardContent>
@@ -799,10 +796,7 @@ export function DTRDetail() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   NAV per Token
-                  <Tooltip>
-                    <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                    <TooltipContent>Net Asset Value: The underlying value backing each token.</TooltipContent>
-                  </Tooltip>
+                  <InfoTip label="More information about NAV per Token">Net Asset Value: The underlying value backing each token.</InfoTip>
                 </div>
                 <p className="text-xl font-merge-mono font-semibold">{formatUsdc(dtr.nav)}</p>
               </CardContent>
@@ -811,10 +805,7 @@ export function DTRDetail() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   Prem/Discount
-                  <Tooltip>
-                    <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                    <TooltipContent>Difference between market price and NAV. Premium implies high demand.</TooltipContent>
-                  </Tooltip>
+                  <InfoTip label="More information about Premium/Discount">Difference between market price and NAV. Premium implies high demand.</InfoTip>
                 </div>
                 <p className={`text-xl font-merge-mono font-semibold ${premiumDiscount === null ? 'text-muted-foreground' : isPremium ? 'text-positive' : 'text-destructive'}`}>
                   {premiumDiscount === null ? '—' : `${isPremium ? '+' : ''}${(premiumDiscount * 100).toFixed(2)}%`}
@@ -835,10 +826,7 @@ export function DTRDetail() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   24h Volume
-                  <Tooltip>
-                    <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                    <TooltipContent>Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours, valued at fixed DevNet test prices.</TooltipContent>
-                  </Tooltip>
+                  <InfoTip label="More information about 24h Volume">Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours, valued at fixed DevNet test prices.</InfoTip>
                 </div>
                 <p className="text-xl font-merge-mono font-semibold">
                   {isOnChain ? (
@@ -1079,7 +1067,7 @@ export function DTRDetail() {
                           key={pct}
                           variant="outline"
                           size="sm"
-                          className="bg-muted/30 text-xs h-7 border-border/50"
+                          className="h-7 rounded-full border-border bg-background text-xs font-medium text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
                           onClick={() => setBuyPct(pct)}
                           disabled={!wallet.connected || buyProcessing || !!buyPctUnavailableReason}
                           title={buyPctUnavailableReason ?? undefined}
@@ -1097,15 +1085,12 @@ export function DTRDetail() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Settlement asset
-                            <Tooltip>
-                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>
-                                devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.
-                                {isPureDevUsdcReserve
-                                  ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
-                                  : " This Reserve holds other DevNet test assets too -- your devUSDC funds the devUSDC-denominated share directly, and the swap adapter mints the exact amount of each other asset this Reserve's allocation requires."}
-                              </TooltipContent>
-                            </Tooltip>
+                            <InfoTip label="More information about the settlement asset">
+                              devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.
+                              {isPureDevUsdcReserve
+                                ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
+                                : " This Reserve holds other DevNet test assets too -- your devUSDC funds the devUSDC-denominated share directly, and the swap adapter mints the exact amount of each other asset this Reserve's allocation requires."}
+                            </InfoTip>
                           </span>
                           <span className="font-merge-mono">devUSDC</span>
                         </div>
@@ -1160,10 +1145,7 @@ export function DTRDetail() {
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground flex items-center gap-1">
                           Trading Fee
-                          <Tooltip>
-                            <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                            <TooltipContent>SSR.FUN protocol fee (0.10%)</TooltipContent>
-                          </Tooltip>
+                          <InfoTip label="More information about the trading fee">SSR.FUN protocol fee (0.10%)</InfoTip>
                         </span>
                         <span className="font-merge-mono text-destructive">-{formatTokenAmount(buyQuote.fee)} {dtr.ticker}</span>
                       </div>
@@ -1175,10 +1157,7 @@ export function DTRDetail() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Price Impact
-                            <Tooltip>
-                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>Buys push this Reserve's price up against its liquidity depth -- larger orders move it more.</TooltipContent>
-                            </Tooltip>
+                            <InfoTip label="More information about price impact">Buys push this Reserve's price up against its liquidity depth -- larger orders move it more.</InfoTip>
                           </span>
                           <span className="font-merge-mono text-positive">+{buyQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(buyQuote.newPrice)}</span>
                         </div>
@@ -1269,7 +1248,7 @@ export function DTRDetail() {
                           key={pct}
                           variant="outline"
                           size="sm"
-                          className="bg-muted/30 text-xs h-7 border-border/50"
+                          className="h-7 rounded-full border-border bg-background text-xs font-medium text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
                           onClick={() => setSellPct(pct)}
                           disabled={!wallet.connected || sellProcessing || !holding}
                         >
@@ -1283,10 +1262,7 @@ export function DTRDetail() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Canonical redemption
-                            <Tooltip>
-                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>Proportional, on-chain redemption into this Reserve's actual underlying asset(s) -- computed live from real vault balances and supply, not a synthetic price.</TooltipContent>
-                            </Tooltip>
+                            <InfoTip label="More information about canonical redemption">Proportional, on-chain redemption into this Reserve's actual underlying asset(s) -- computed live from real vault balances and supply, not a synthetic price.</InfoTip>
                           </span>
                         </div>
                         {sellEntitlements.length > 0 ? (
@@ -1311,14 +1287,11 @@ export function DTRDetail() {
                             <div className="flex justify-between text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
                                 Settled in devUSDC
-                                <Tooltip>
-                                  <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                                  <TooltipContent>
-                                    Redeems in-kind (above) first -- any devUSDC entitlement lands directly in your wallet, and every other
-                                    asset is converted into devUSDC at its DevNet test price and paid to you as well, so you always receive
-                                    100% of this redemption's value in devUSDC.
-                                  </TooltipContent>
-                                </Tooltip>
+                                <InfoTip label="More information about devUSDC settlement">
+                                  Redeems in-kind (above) first -- any devUSDC entitlement lands directly in your wallet, and every other
+                                  asset is converted into devUSDC at its DevNet test price and paid to you as well, so you always receive
+                                  100% of this redemption's value in devUSDC.
+                                </InfoTip>
                               </span>
                               <span className="font-merge-mono">~{estDevUsdcOut.toFixed(2)} devUSDC</span>
                             </div>
@@ -1338,10 +1311,7 @@ export function DTRDetail() {
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground flex items-center gap-1">
                           Trading Fee
-                          <Tooltip>
-                            <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                            <TooltipContent>SSR.FUN protocol fee (0.10%)</TooltipContent>
-                          </Tooltip>
+                          <InfoTip label="More information about the trading fee">SSR.FUN protocol fee (0.10%)</InfoTip>
                         </span>
                         <span className="font-merge-mono text-destructive">-{formatUsdc(sellQuote.fee)}</span>
                       </div>
@@ -1353,10 +1323,7 @@ export function DTRDetail() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Price Impact
-                            <Tooltip>
-                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>Sells push this Reserve's price down against its liquidity depth -- larger orders move it more.</TooltipContent>
-                            </Tooltip>
+                            <InfoTip label="More information about price impact">Sells push this Reserve's price down against its liquidity depth -- larger orders move it more.</InfoTip>
                           </span>
                           <span className="font-merge-mono text-destructive">{sellQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(sellQuote.newPrice)}</span>
                         </div>

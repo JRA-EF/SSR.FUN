@@ -28,9 +28,9 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Info, Rocket } from "lucide-react";
+import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Rocket } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { InfoTip } from "@/components/InfoTip";
 import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
 import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR, RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY } from "@/lib/types";
 
@@ -885,14 +885,11 @@ export function CreateDTR() {
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="seed" className="flex items-center gap-2">
                     {isRealDeployment ? "Initial Reserve Value (USD)" : "Seed Amount (USDC)"}
-                    <Tooltip>
-                      <TooltipTrigger><Info className="w-3 h-3 text-muted-foreground" /></TooltipTrigger>
-                      <TooltipContent>
-                        {isRealDeployment
-                          ? "The USD value to seed the reserve with. You'll provide the equivalent DevNet SOL shown below -- it's converted into the selected reserve assets and deposited for you."
-                          : "Initial capital to seed the reserve and set the starting AUM."}
-                      </TooltipContent>
-                    </Tooltip>
+                    <InfoTip label="More information about the initial Reserve value">
+                      {isRealDeployment
+                        ? "The USD value to seed the reserve with. You'll provide the equivalent DevNet SOL shown below -- it's converted into the selected reserve assets and deposited for you."
+                        : "Initial capital to seed the reserve and set the starting AUM."}
+                    </InfoTip>
                   </Label>
                   <div className="relative">
                     <span className="absolute inset-y-0 left-3 flex items-center text-muted-foreground text-sm">$</span>
@@ -1160,10 +1157,7 @@ export function CreateDTR() {
                   <div className="bg-primary/5 p-4 border-b border-border">
                     <h3 className="font-semibold flex items-center gap-2">
                       Wallet Cost Summary
-                      <Tooltip>
-                        <TooltipTrigger><Info className="w-3.5 h-3.5 text-muted-foreground" /></TooltipTrigger>
-                        <TooltipContent>Every DevNet SOL this wallet will actually be asked to spend, shown before Phantom does.</TooltipContent>
-                      </Tooltip>
+                      <InfoTip label="More information about the wallet cost summary">Every DevNet SOL this wallet will actually be asked to spend, shown before Phantom does.</InfoTip>
                     </h3>
                   </div>
                   <div className="p-4 space-y-3">
@@ -1185,10 +1179,7 @@ export function CreateDTR() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Account creation &amp; rent
-                            <Tooltip>
-                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>Solana requires new accounts (the Reserve, its assets, vaults, and Reserve Token mint) to be rent-exempt -- this SOL isn't a fee, it stays locked in those accounts.</TooltipContent>
-                            </Tooltip>
+                            <InfoTip label="More information about account creation and rent">Solana requires new accounts (the Reserve, its assets, vaults, and Reserve Token mint) to be rent-exempt -- this SOL isn't a fee, it stays locked in those accounts.</InfoTip>
                           </span>
                           <span className="font-merge-mono">{(Number(costEstimate.totalRentLamports) / 1e9).toFixed(5)} SOL</span>
                         </div>
@@ -1199,10 +1190,7 @@ export function CreateDTR() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Protocol fees
-                            <Tooltip>
-                              <TooltipTrigger><Info className="w-3 h-3" /></TooltipTrigger>
-                              <TooltipContent>No fee is charged at creation itself -- Mint Fee ({mintFeePct.toFixed(2)}%) and TVL Fee ({tvlFeePct.toFixed(2)}%) apply to future Buy/holding activity, configured above.</TooltipContent>
-                            </Tooltip>
+                            <InfoTip label="More information about protocol fees">No fee is charged at creation itself -- Mint Fee ({mintFeePct.toFixed(2)}%) and TVL Fee ({tvlFeePct.toFixed(2)}%) apply to future Buy/holding activity, configured above.</InfoTip>
                           </span>
                           <span className="font-merge-mono text-muted-foreground">$0.00 now</span>
                         </div>

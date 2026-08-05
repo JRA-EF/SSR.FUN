@@ -19,8 +19,7 @@ import { DEVUSDC, DEVUSDC_MINT, fetchTokenBalanceRaw } from "@ssr/sdk";
 import { explorerUrl } from "@/lib/solana-config";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Info } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { InfoTip } from "@/components/InfoTip";
 
 type ClaimStatus = "idle" | "submitting" | "confirmed" | "failed";
 
@@ -114,10 +113,7 @@ export function DevnetOnboarding() {
       <CardHeader className="pb-4">
         <CardTitle className="text-lg flex items-center gap-2">
           DevNet Onboarding
-          <Tooltip>
-            <TooltipTrigger><Info className="w-3.5 h-3.5 text-muted-foreground" /></TooltipTrigger>
-            <TooltipContent>Real Solana DevNet assets with zero monetary value, for internal testing only.</TooltipContent>
-          </Tooltip>
+          <InfoTip label="More information about DevNet onboarding">Real Solana DevNet assets with zero monetary value, for internal testing only.</InfoTip>
         </CardTitle>
         <CardDescription>SSR Test USD (devUSDC) and DevNet SOL have no real value -- this panel only ever operates on Solana DevNet.</CardDescription>
       </CardHeader>

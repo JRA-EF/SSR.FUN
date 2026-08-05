@@ -1,6 +1,17 @@
 /* External CSS imports must come first. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
+/* Declares the SAME cascade-layer order as src/merge/merge.css, so the order
+   is deterministic no matter which stylesheet the bundler happens to emit
+   first (index.css is imported by main.tsx; merge.css by MergeLayout.tsx --
+   their relative order is a module-graph detail we should not depend on).
+   Everything else in THIS file stays deliberately unlayered, which keeps
+   FABLE's hand-written homepage/navbar styles winning over any layered rule
+   exactly as before; only the native-element reset below is layered, so that
+   Tailwind's own utilities (emitted into `utilities`, the last layer) can
+   override it inside .merge-scope pages. */
+@layer theme, base, components, utilities;
+
 /* ---------------------------------- tokens ---------------------------------- */
 
 :root {
@@ -147,20 +158,60 @@ a:hover {
   text-underline-offset: 3px;
 }
 
-/* :not(.merge-scope *) -- this is unlayered CSS, so (per the .container note
-   below) it always wins over Tailwind's own layered utilities regardless of
-   specificity. Without this exclusion it silently zeroed out every
-   .merge-scope button's Tailwind padding/background/border (e.g. px-2.5,
-   bg-background, bg-muted/50, rounded-sm on DTRDetail.tsx's Price History
-   range-selector buttons), collapsing them into bare, padding-less inline
-   text that visually ran together with no gap between adjacent buttons. */
-button:not(.merge-scope *) {
-  font: inherit;
-  color: inherit;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
+/* Native-control reset, deliberately placed in the `base` LAYER rather than
+   left unlayered (and never scoped away from .merge-scope).
+
+   Why it must apply everywhere: src/merge/merge.css intentionally skips
+   Tailwind's Preflight (see its header comment) and imports only the theme +
+   utilities layers. That makes THIS rule the only thing standing between
+   .merge-scope pages and raw user-agent button styling -- gray ButtonFace
+   fills, `border-style: outset` bevels, inset shadows. A previous pass
+   scoped this reset away from .merge-scope to stop it clobbering Tailwind
+   padding/background utilities; that fixed the clobbering but removed the
+   only reset those buttons had, so every merge-scoped control (Radix
+   TooltipTrigger, which renders a class-less <button>; inactive TabsTrigger,
+   which only styles its ACTIVE state; the chart range buttons) fell back to
+   native browser chrome.
+
+   Why `base` fixes both at once: layered rules always lose to later layers
+   regardless of specificity, and Tailwind's utilities are emitted into
+   `utilities` -- the last layer -- so `px-2.5`, `bg-muted/50`, `border`,
+   `rounded-md` etc. now beat this reset cleanly, while any button WITHOUT
+   such a utility still gets stripped of native chrome. FABLE's own unlayered
+   rules (.btn, .seg button, ...) are unlayered and therefore still win over
+   this too, so the native homepage/navbar is unaffected.
+
+   Mirrors Preflight's own button handling: `appearance: none` kills the
+   native widget rendering outright (the actual source of the bevel/inset
+   shadow), and `border-width: 0` + `border-style: solid` means a Tailwind
+   `border` utility yields a real 1px SOLID border instead of inheriting the
+   UA's `outset` style at the width Tailwind sets. */
+@layer base {
+  button,
+  [type='button'],
+  [type='submit'],
+  [type='reset'] {
+    -webkit-appearance: none;
+    appearance: none;
+    font: inherit;
+    color: inherit;
+    background-color: transparent;
+    background-image: none;
+    border-width: 0;
+    border-style: solid;
+    border-color: currentColor;
+    border-radius: 0;
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [type='button']:disabled,
+  [type='submit']:disabled,
+  [type='reset']:disabled {
+    cursor: default;
+  }
 }
 
 input, select, textarea {
