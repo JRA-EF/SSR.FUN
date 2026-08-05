@@ -30,6 +30,12 @@ The homepage hero description is approved, exact copy — do not paraphrase it:
 
 (Lives in `src/pages/Home.tsx`, the `.lede` paragraph in the hero section.)
 
+## UI Baseline (approved, 2026-08-05)
+
+As of commit `993b764` (see `docs/project/DECISION_LOG.md` DEC-0080, tag `ui-baseline-2026-08-05`), the current visual design of the SSR.fun frontend is the **approved baseline**: colors, typography, spacing, borders, radii, and shadows; card and page layouts; the Price History chart, its range controls, and its flatline fallback; metric information icons; the Buy/Sell tabs, percentage controls, and primary actions; and desktop/responsive behavior.
+
+**Future functional work must preserve this visual system unless a redesign is explicitly requested.** Reuse the existing shared components (`ChartTimeframeSelector`, `InfoTip`, the shadcn `Button`/`Tabs`/`Tooltip` primitives under `src/merge/components/ui`) and the existing design tokens (`src/index.css`'s `:root` tokens for native pages, `src/merge/merge.css`'s `@theme`/CSS-variable tokens for merge-scoped pages) as the source of truth for any new or modified control — do not introduce new colors, spacing values, radii, or component patterns ad hoc. See DEC-0079 (`docs/project/DECISION_LOG.md`) for why a shared, layered `src/index.css` button reset — not per-component styling — is what keeps merge-scoped controls looking like this baseline instead of falling back to native browser chrome; that mechanism must stay intact.
+
 ## Project Status and Decision Logging
 
 This repo has an internal, password-protected project dashboard at `/internal/status`, rendered server-side from two source-of-truth files:

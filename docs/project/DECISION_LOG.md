@@ -2115,3 +2115,31 @@
   ]
 }
 ```
+
+## DEC-0080
+
+```json
+{
+  "id": "DEC-0080",
+  "date": "2026-08-05",
+  "status": "confirmed",
+  "decision": "Declared the current SSR.fun frontend visual design the approved UI baseline, at commit `993b764` on `main` (tagged `ui-baseline-2026-08-05`). Documented in CLAUDE.md's new 'UI Baseline' section: colors, typography, spacing, borders, radii, shadows, card/page layouts, the Price History chart and its flatline fallback, the 10 separate time-range controls, metric information icons, the Buy/Sell tabs, percentage controls, primary actions, and desktop/responsive behavior are all now the reference standard. Future functional work must preserve this visual system and reuse the existing shared components (`ChartTimeframeSelector`, `InfoTip`, the shadcn primitives under `src/merge/components/ui`) and design tokens (`src/index.css`'s `:root` tokens; `src/merge/merge.css`'s theme tokens) rather than introducing new ones ad hoc, unless a redesign is explicitly requested. This is a documentation/milestone decision only -- no source, styling, or behavior was changed to produce it.",
+  "context": "Direct instruction, immediately following DEC-0079's control-styling restoration: the current UI (as fixed by DEC-0078/DEC-0079) is explicitly approved and should be locked in as a durable reference point so future work does not accidentally regress it the way DEC-0078's own fix briefly did (twice, in the same button-reset mechanism). Confirmed via `git status`/`git log` before making any change that the working tree was already clean at `993b764` (only the pre-existing, unrelated, untracked `docs/architecture/`/`docs/journey-map/` directories present, both predating this session and left untouched throughout) -- no unfinished or unrelated work needed to be excluded from the baseline.",
+  "rationale": "A CLAUDE.md section (read at the start of every future session, per this repo's own convention) is the right place for a standing constraint like 'do not restyle without being asked' -- the same durability CLAUDE.md's terminology and approved-hero-copy sections already provide. Pointing it at a specific commit and an annotated tag, rather than a vague 'current state,' gives future sessions (and `git diff`/`git log` against the tag) a concrete, checkable reference for what 'the baseline' actually was. Visual regression coverage was left as-is rather than expanded: DEC-0079 already added tests that render the real ChartTimeframeSelector/InfoTip components and assert on their output, plus 4 tests pinning the CSS reset's cascade-layer contract specifically -- exactly the mechanism that caused two prior regressions -- which is the maximum coverage this repo's existing pure-render-to-string test approach supports without adopting a jsdom/testing-library stack (a deliberate, previously-documented convention this repo has not adopted).",
+  "alternativesConsidered": [
+    "Add a jsdom/testing-library/visual-snapshot toolchain for pixel-level regression coverage -- rejected as out of scope for a documentation-only milestone pass; this repo's zero-component-test-framework convention is itself a considered, previously-documented choice (see DEC-0078's discussion of the same tradeoff), not an oversight to fix here.",
+    "Tag an earlier commit (e.g. `19a785d`, the styling fix itself, before its own follow-up docs commit) -- rejected: the baseline should represent the fully-documented, pushed state of `main` at the moment of approval, not an intermediate commit whose own regression (DEC-0079) hadn't yet been recorded."
+  ],
+  "impact": "Changed: CLAUDE.md (new 'UI Baseline' section). New: git tag `ui-baseline-2026-08-05` (annotated, pointing at commit `993b764`). No application source, styling, or test files were modified -- this decision documents and marks a milestone, it does not alter behavior.",
+  "affectedAreas": [
+    "CLAUDE.md",
+    "git tag ui-baseline-2026-08-05"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`git status --short` confirmed a clean working tree (only the pre-existing, unrelated untracked docs/architecture/ and docs/journey-map/ directories) before this decision was recorded, and `git log`/`git branch -vv` confirmed `main` was already in sync with `origin/main` at commit `993b764`.",
+    "242/242 offline tests passing (unchanged from DEC-0079, re-run as a sanity check, not because any test or source file changed in this pass) -- including the DEC-0079 tests that directly cover the range selector, InfoTip, and the button-reset CSS contract this baseline depends on."
+  ]
+}
+```
