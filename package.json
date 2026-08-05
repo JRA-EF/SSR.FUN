@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run build --workspace=packages/sdk && tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "test:program": "ts-mocha -p ./tests/tsconfig.json -t 1000000 tests/**/*.ts"

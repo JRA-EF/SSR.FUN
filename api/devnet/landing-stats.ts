@@ -12,6 +12,11 @@
 // TVL elsewhere -- never fabricated, and this endpoint fails with a real
 // error rather than ever returning a synthetic 0 on a read failure.
 import { Connection, PublicKey } from "@solana/web3.js";
+// Imported via the "@ssr/sdk" package name -- see api/devnet/swap-sign.ts's
+// header comment for why a relative "../../packages/sdk/src" import crashes
+// this endpoint when deployed (resolves to raw ESM .ts source a CommonJS
+// require() can't load), while the package name resolves through
+// packages/sdk/package.json's "main" to the real compiled CommonJS output.
 import {
   buildReadOnlyProgram,
   discoverAllReserves,
@@ -23,7 +28,7 @@ import {
   DEVUSDC,
   DEVUSDC_MINT,
   type AssetPricing,
-} from "../../packages/sdk/src";
+} from "@ssr/sdk";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
 

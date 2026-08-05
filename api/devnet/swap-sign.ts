@@ -41,6 +41,16 @@
 // "asset mint not supported" error, not a generic "unknown Reserve" error.
 
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
+// Imported via the "@ssr/sdk" package name, not a relative "../../packages/sdk/src"
+// path -- the latter resolves (both locally and in Vercel's deployed Node.js
+// Function) straight to the raw .ts source, which uses ESM export/import
+// syntax that a CommonJS require() cannot load, producing a genuine deployed-
+// only "SyntaxError: Unexpected token 'export'" crash (never reproducible via
+// local ts-node/vite, which both transpile on the fly). The package name
+// resolves through packages/sdk/package.json's "main" field instead, which
+// points at the real compiled CommonJS output in packages/sdk/dist/ (built by
+// "npm run build --workspace=packages/sdk", wired into the root build script)
+// -- see docs/project/DECISION_LOG.md's entry for this fix.
 import {
   buildReadOnlyProgram,
   fetchReserveOnChain,
@@ -58,7 +68,7 @@ import {
   WRAPPED_SOL_MINT,
   DEVUSDC,
   DEVUSDC_MINT,
-} from "../../packages/sdk/src";
+} from "@ssr/sdk";
 import { loadDevnetAuthority } from "./_lib/authority";
 import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
 import { isRateLimitError, withRateLimitRetry } from "../../src/merge/lib/rpcResilience";

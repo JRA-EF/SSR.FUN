@@ -9,6 +9,9 @@
   "functions": {
     "api/dashboard/content.ts": {
       "includeFiles": "docs/project/*.{md,json}"
+    },
+    "api/devnet/*.ts": {
+      "includeFiles": "packages/sdk/**"
     }
   },
   "rewrites": [

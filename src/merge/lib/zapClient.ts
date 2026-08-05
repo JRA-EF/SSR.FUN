@@ -104,15 +104,31 @@ async function requestSignedZapTransaction(body: Record<string, unknown>): Promi
     // LABELED "rpc_congested" when the HTTP status itself is genuinely 429;
     // any other status (a 500 crash, a 502/504 gateway error, etc.) is a
     // real, different failure and must say so honestly rather than being
-    // folded into the congestion message.
-    const json = (await res.json().catch(() => null)) as SwapSignResponse | null;
+    // folded into the congestion message. Read the body as text first (not
+    // res.json(), which consumes the stream) so a genuine platform-level
+    // crash still surfaces its own short diagnostic text instead of the bare
+    // "unexpected response" placeholder that used to be the only signal --
+    // see api/devnet/swap-sign.ts's own header comment for why a raw
+    // FUNCTION_INVOCATION_FAILED page (an uncaught exception outside this
+    // handler's own try/catch, e.g. a module-resolution failure at cold
+    // start) never reaches swap-sign.ts's JSON error path at all.
+    const rawText = await res.text();
+    let json: SwapSignResponse | null = null;
+    try {
+      json = JSON.parse(rawText) as SwapSignResponse;
+    } catch {
+      json = null;
+    }
     if (json === null) {
       if (attempt < 3) {
         await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
         continue;
       }
+      const snippet = rawText.trim().slice(0, 200);
       throw new ZapBuildError(
-        `The DevNet swap adapter returned an unexpected response (HTTP ${res.status}). Please try again.`,
+        snippet
+          ? `The DevNet swap adapter returned a non-JSON response (HTTP ${res.status}): ${snippet}`
+          : `The DevNet swap adapter returned an empty response (HTTP ${res.status}). Please try again.`,
         res.status === 429 ? "rpc_congested" : "build_failed",
       );
     }

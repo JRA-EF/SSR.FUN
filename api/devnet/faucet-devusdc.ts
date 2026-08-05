@@ -19,7 +19,10 @@
 //      a substitute for (1).
 import { Connection, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction, getAssociatedTokenAddressSync, getAccount } from "@solana/spl-token";
-import { DEVUSDC, DEVUSDC_MINT, DEVUSDC_DECIMALS } from "../../packages/sdk/src";
+// Imported via the "@ssr/sdk" package name -- see api/devnet/swap-sign.ts's
+// header comment for why a relative "../../packages/sdk/src" import crashes
+// this endpoint when deployed.
+import { DEVUSDC, DEVUSDC_MINT, DEVUSDC_DECIMALS } from "@ssr/sdk";
 import { loadDevnetAuthority } from "./_lib/authority";
 import { assertDevnetCluster, NotDevnetError } from "./_lib/network";
 import { cooldownRemainingMs, recordAction } from "./_lib/rateLimit";

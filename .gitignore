@@ -33,3 +33,8 @@ target/
 .anchor/
 test-ledger/
 devnet-fixtures/
+
+# Scratch lockfiles Vercel's local `vercel build`/`vercel --prod` generates
+# per-function inside api/** during its own zero-config dependency install --
+# not meaningful, never intentionally created.
+api/**/package-lock.json

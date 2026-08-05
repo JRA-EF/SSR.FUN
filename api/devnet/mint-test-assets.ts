@@ -10,7 +10,10 @@
 // an open mint.
 import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { DEVNET_FIXTURES, DEVUSDC } from "../../packages/sdk/src";
+// Imported via the "@ssr/sdk" package name -- see api/devnet/swap-sign.ts's
+// header comment for why a relative "../../packages/sdk/src" import crashes
+// this endpoint when deployed.
+import { DEVNET_FIXTURES, DEVUSDC } from "@ssr/sdk";
 import { loadDevnetAuthority } from "./_lib/authority";
 import { resolveRpcUrl } from "./_lib/rpc";
 
