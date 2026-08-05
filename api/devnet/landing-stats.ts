@@ -17,8 +17,7 @@ import {
   discoverAllReserves,
   fetchReserveTokenHolderOwners,
   fetchReserve24hVolumeUsd,
-  isHiddenReserveAddress,
-  isReserveTradable,
+  evaluateReserveEligibility,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   DEVUSDC,
@@ -77,19 +76,21 @@ async function computeLandingStats(): Promise<LandingStats> {
   const candidateAssetMints = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m: MintMeta) => new PublicKey(m.address))];
 
   const { reserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints);
-  // Same rules as the frontend's mergeDiscoveredReserves: a Reserve with zero
-  // registered assets never reached genuine tradeable status, a Reserve in
-  // HIDDEN_RESERVE_ADDRESSES is a confirmed-abandoned Reserve excluded by
-  // exact address, and a Reserve holding any asset outside the supported
-  // {devUSDC, mockX, mockY, mockZ} set (e.g. wrapped SOL) has no genuine
-  // Buy/Sell path -- none of these should ever contribute to a real stat.
-  // Same assetsResolvedFully guard as the frontend: only excluded on
-  // composition when this pass actually resolved every registered asset.
+  // The exact same canonical eligibility check the frontend's
+  // mergeDiscoveredReserves uses (packages/sdk/src/reserveEligibility.ts) --
+  // one shared function, so this endpoint's public Reserve counts can never
+  // silently disagree with what Discover/Featured/Portfolio/Manage actually
+  // show.
   const displayable = reserves.filter(
     (r) =>
-      r.assetCount !== 0 &&
-      !isHiddenReserveAddress(r.reserve) &&
-      !(r.resolvedAssetCount >= r.assetCount && !isReserveTradable(r.assets.map((a) => a.assetMint))),
+      evaluateReserveEligibility({
+        reserve: r.reserve,
+        assetCount: r.assetCount,
+        resolvedAssetCount: r.resolvedAssetCount,
+        assetMints: r.assets.map((a) => a.assetMint),
+        status: r.status,
+        reserveTokenSupplyRaw: r.reserveTokenSupplyRaw,
+      }).eligible,
   );
 
   const sinceUnixSec = Math.floor(Date.now() / 1000) - TWENTY_FOUR_HOURS_SEC;

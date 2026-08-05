@@ -45,6 +45,7 @@ import {
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   usdToSolLamports,
+  isSupportedAssetMint,
   type NewReserveAddresses,
   type ReserveAssetAddresses,
   type ReserveOnChain,
@@ -89,6 +90,37 @@ export interface CreateReserveResult {
 
 function isWrappedSol(mint: string): boolean {
   return mint === WRAPPED_SOL_MINT.toBase58();
+}
+
+/**
+ * Defense-in-depth guard against creating a Reserve that would immediately
+ * fail the public eligibility check (packages/sdk's
+ * evaluateReserveEligibility) -- CreateDTR.tsx's asset picker is already
+ * built exclusively from SUPPORTED_ASSET_MINTS and already blocks duplicate/
+ * over-100% selection at the UI layer, but this is the ONE choke point every
+ * caller of createReserveOnChain goes through (the real UI today; any future
+ * script or API entry point tomorrow), so it re-validates independently
+ * rather than trusting caller-side state. Throws with a plain, user-showable
+ * message -- never silently drops or auto-corrects a bad asset list.
+ */
+export function validateCreateReserveAssets(assets: CreateReserveAssetInput[]): void {
+  if (assets.length === 0) {
+    throw new Error("Select at least one reserve asset.");
+  }
+  const seenMints = new Set<string>();
+  for (const a of assets) {
+    if (!isSupportedAssetMint(a.mint)) {
+      throw new Error(`Unsupported reserve asset (${a.mint}) -- only SSR.fun's canonical DevNet test assets can be selected.`);
+    }
+    if (seenMints.has(a.mint)) {
+      throw new Error("Duplicate reserve asset selected -- each asset may appear only once.");
+    }
+    seenMints.add(a.mint);
+  }
+  const totalWeightBps = assets.reduce((sum, a) => sum + a.weightBps, 0);
+  if (totalWeightBps <= 0 || totalWeightBps > 10_000) {
+    throw new Error(`Invalid allocation total (${(totalWeightBps / 100).toFixed(2)}%) -- allocations must sum to more than 0% and no more than 100%.`);
+  }
 }
 
 /**
@@ -411,6 +443,7 @@ export async function createReserveOnChain(params: {
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
+  validateCreateReserveAssets(params.assets);
   const programId = new PublicKey(DEVNET_FIXTURES.programId);
   const program = buildReadOnlyProgram(connection) as any;
 

@@ -68,7 +68,13 @@ describe("Reserve tradability -- isReserveTradable / isSupportedAssetMint (pure)
   });
 });
 
-function makeDtr(id: string, mints: string[], resolvedFully = true): DTR {
+// `assetCountOverride` lets a test construct a genuine registered-vs-resolved
+// mismatch (assetCount higher than `assets.length`) -- the exact on-chain
+// shape of the reserveId 0-8 bug this pass fixes (see
+// packages/sdk/src/reserveEligibility.ts). Omitted, assetCount always
+// matches mints.length (fully resolved).
+function makeDtr(id: string, mints: string[], assetCountOverride?: number): DTR {
+  const assetCount = assetCountOverride ?? mints.length;
   return {
     id,
     name: id,
@@ -113,8 +119,8 @@ function makeDtr(id: string, mints: string[], resolvedFully = true): DTR {
       totalTargetWeightBps: 10000,
       reserveTokenSupplyRaw: "1000000",
       vaultBalancesRaw: {},
-      assetCount: mints.length,
-      assetsResolvedFully: resolvedFully,
+      assetCount,
+      assetsResolvedFully: mints.length >= assetCount,
     },
   } as DTR;
 }
@@ -122,26 +128,39 @@ function makeDtr(id: string, mints: string[], resolvedFully = true): DTR {
 describe("Reserve tradability -- wired into mergeDiscoveredReserves (single shared gate)", () => {
   it("keeps a freshly-discovered, fully-resolved, all-supported-asset Reserve", () => {
     const fresh = [makeDtr("r1", [DEVUSDC_MINT, MOCK_X])];
-    const merged = mergeDiscoveredReserves([], fresh, true);
-    expect(merged.map((d) => d.id)).to.deep.equal(["r1"]);
+    const { dtrs } = mergeDiscoveredReserves([], fresh, true);
+    expect(dtrs.map((d) => d.id)).to.deep.equal(["r1"]);
   });
 
   it("excludes a freshly-discovered, fully-resolved Reserve holding wrapped SOL", () => {
     const fresh = [makeDtr("r-sol", [DEVUSDC_MINT, WRAPPED_SOL])];
-    const merged = mergeDiscoveredReserves([], fresh, true);
-    expect(merged).to.deep.equal([]);
+    const { dtrs } = mergeDiscoveredReserves([], fresh, true);
+    expect(dtrs).to.deep.equal([]);
   });
 
-  it("does NOT exclude an under-resolved Reserve on composition alone -- avoids hiding a genuinely tradable Reserve on a transient resolution gap", () => {
-    const partial = [makeDtr("r-partial", [WRAPPED_SOL], /* resolvedFully */ false)];
-    const merged = mergeDiscoveredReserves([], partial, true);
-    expect(merged.map((d) => d.id)).to.deep.equal(["r-partial"]);
+  // Policy corrected this pass (see packages/sdk/src/reserveEligibility.ts):
+  // an under-resolved Reserve -- registered assetCount higher than what this
+  // pass actually resolved -- is now EXCLUDED, not kept. This is the exact
+  // shape of the real reserveId 0-8 bug (2 registered, 0 resolved forever,
+  // since their original pre-fixture-registry mints can never appear in any
+  // future candidate-mint hint list) that motivated this pass; the previous
+  // policy of never excluding on under-resolution alone is what let those 9
+  // Reserves leak into the public catalogue with a broken Buy path.
+  // Transient single-pass RPC hiccups remain protected by the SEPARATE,
+  // pass-level `fullyVerified`/`untouched` retention path below, not by
+  // ever accepting a fresh, self-consistent under-resolved result.
+  it("excludes a genuinely under-resolved Reserve (registered assetCount > resolved assets.length)", () => {
+    const partial = [makeDtr("r-partial", [MOCK_X], /* assetCountOverride */ 2)];
+    const { dtrs, quarantined } = mergeDiscoveredReserves([], partial, true);
+    expect(dtrs).to.deep.equal([]);
+    expect(quarantined.map((q) => q.id)).to.deep.equal(["r-partial"]);
+    expect(quarantined[0].reason).to.match(/2 registered.*only 1 resolve/);
   });
 
   it("drops a previously-known ineligible Reserve on the next fully-verified pass even if it's simply absent from fresh results", () => {
     const existing = [makeDtr("r-sol", [DEVUSDC_MINT, WRAPPED_SOL])];
-    const merged = mergeDiscoveredReserves(existing, [], true);
-    expect(merged).to.deep.equal([]);
+    const { dtrs } = mergeDiscoveredReserves(existing, [], true);
+    expect(dtrs).to.deep.equal([]);
   });
 });
 

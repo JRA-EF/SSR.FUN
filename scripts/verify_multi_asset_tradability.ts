@@ -23,7 +23,7 @@ import handler from "../api/devnet/swap-sign";
 import { buildReadOnlyProgram, fetchReserveOnChain, discoverAllReserves, fetchReserveTokenHolderOwners, fetchReserve24hVolumeUsd, isReserveTradable, DEVNET_FIXTURES, DEVUSDC, DEVUSDC_MINT, type AssetPricing } from "../packages/sdk/src";
 import { buildDtrFromDiscoveredReserve } from "../src/merge/lib/onChainReserve";
 
-const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+const connection = new Connection(process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com", "confirmed");
 const programId = new PublicKey(DEVNET_FIXTURES.programId);
 const MOCK_X = new PublicKey(DEVNET_FIXTURES.mints.mintX.address);
 const MOCK_Y = new PublicKey(DEVNET_FIXTURES.mints.mintY.address);

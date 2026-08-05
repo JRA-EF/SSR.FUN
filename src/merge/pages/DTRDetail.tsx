@@ -4,6 +4,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { DEVUSDC, DEVUSDC_MINT, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
+import { resolveDtrPageState } from "@/lib/onChainReserve";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
 import {
@@ -73,8 +74,10 @@ function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, mergeOnChainReserve, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
-  const dtr = dtrs.find((d) => d.id === (dtrId || ""));
+  const { wallet, holdings, dtrs, quarantinedReserves, mergeOnChainReserve, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
+  const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves);
+  const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
+  const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
   const { toast } = useToast();
   const { connection } = useConnection();
   const landingStats = useLandingStats();
@@ -252,6 +255,23 @@ export function DTRDetail() {
   const recentTrades = useMemo(() => [...trades].reverse(), [trades]);
 
   if (!dtr) {
+    // A genuinely-existing on-chain Reserve that failed the canonical public
+    // eligibility check (packages/sdk's evaluateReserveEligibility) --
+    // opened directly by address/id rather than surfaced through Discover.
+    // Deliberately shows nothing else: no chart, no stats, no trading
+    // controls, no diagnostic detail -- just the honest quarantine message
+    // and a way back.
+    if (quarantined) {
+      return (
+        <div className="container mx-auto px-4 py-24 text-center">
+          <h1 className="text-3xl font-merge-display font-bold mb-4">Legacy Reserve</h1>
+          <p className="text-muted-foreground mb-8">This legacy DevNet Reserve is not supported by the current SSR test environment.</p>
+          <Button asChild>
+            <Link href="/discover">Back to Discover</Link>
+          </Button>
+        </div>
+      );
+    }
     return (
       <div className="container mx-auto px-4 py-24 text-center">
         <h1 className="text-3xl font-merge-display font-bold mb-4">Reserve Not Found</h1>

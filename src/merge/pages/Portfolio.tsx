@@ -33,7 +33,7 @@ function PnlText({ value, pct, className = "" }: { value: number; pct?: number; 
 }
 
 export function Portfolio() {
-  const { wallet, holdings, dtrs, chainDiscoveryStatus, txInFlight } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, txInFlight } = useAppStore();
   // Distinct from "genuinely empty": a fresh mount whose first discovery
   // pass hasn't resolved yet, an in-flight Buy/Sell/deployment, or a
   // discovery pass that failed and is showing last-known state (see
@@ -241,7 +241,48 @@ export function Portfolio() {
                 <TableBody>
                   {holdings.map((holding) => {
                     const dtr = dtrs.find((d) => d.id === holding.dtrId);
-                    if (!dtr) return null;
+                    if (!dtr) {
+                      // A real wallet-owned Reserve Token balance in a
+                      // Reserve that failed the public eligibility check
+                      // (packages/sdk's evaluateReserveEligibility) -- the
+                      // holding itself is never erased, but no price/value/
+                      // cost-basis/P&L is ever computed or guessed for it.
+                      const legacy = quarantinedReserves[holding.dtrId];
+                      if (!legacy) return null;
+                      return (
+                        <TableRow key={holding.dtrId} className="border-border/50 hover:bg-muted/20 opacity-70">
+                          <TableCell className="py-4">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-8 w-8 border border-border">
+                                <AvatarFallback className="bg-muted text-muted-foreground text-xs font-bold">
+                                  {legacy.ticker.slice(0, 2)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <p className="font-semibold text-foreground">{legacy.name}</p>
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <Badge variant="secondary" className="font-merge-mono text-[10px] px-1 py-0 h-4">{legacy.ticker}</Badge>
+                                  <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 uppercase tracking-wide">Legacy -- Unsupported</Badge>
+                                </div>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right font-merge-mono">
+                            {holding.tokenBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                          </TableCell>
+                          <TableCell className="text-right font-merge-mono text-muted-foreground">--</TableCell>
+                          <TableCell className="text-right font-merge-mono text-muted-foreground">--</TableCell>
+                          <TableCell className="text-right font-merge-mono text-muted-foreground">--</TableCell>
+                          <TableCell className="text-right font-merge-mono text-muted-foreground">--</TableCell>
+                          <TableCell className="text-right font-merge-mono text-muted-foreground">--</TableCell>
+                          <TableCell className="text-right">
+                            <Button asChild size="sm" variant="outline">
+                              <Link href={`/dtr/${holding.dtrId}`}>Details</Link>
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
 
                     const currentValue = calcHoldingValue(holding, dtr);
                     const costBasis = calcCostBasis(holding);

@@ -13,11 +13,31 @@ import type { DTR, Trade } from "../src/merge/lib/types";
 import { buyAvailableFromDevUsdcBalance, isReservePureDevUsdc, appendPricePoint } from "../src/merge/lib/calculations";
 import { RESERVE_CATEGORIES, normalizeReserveCategory } from "../src/merge/lib/types";
 import { mergeDiscoveredReserves } from "../src/merge/lib/onChainReserve";
-import { isHiddenReserveAddress, HIDDEN_RESERVE_ADDRESSES } from "../packages/sdk/src";
+import { isHiddenReserveAddress, HIDDEN_RESERVE_ADDRESSES, SUPPORTED_ASSET_MINTS } from "../packages/sdk/src";
 import { CreateReserveStepError, savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy } from "../src/merge/lib/createReserveClient";
 
-function makeDtr(id: string, opts: { assetCount?: number; status?: string; reserve?: string; priceHistory?: DTR["priceHistory"]; trades?: Trade[] } = {}): DTR {
+const SUPPORTED_MINTS_ARR = [...SUPPORTED_ASSET_MINTS];
+
+// `opts.assets`/`opts.reserveTokenSupplyRaw` default to a genuinely eligible
+// (fully-resolved, supported-mint, seeded) shape matching `assetCount`, so a
+// test overriding one field to exercise a SPECIFIC exclusion reason doesn't
+// also trip an unrelated eligibility check (resolved-vs-registered count,
+// seeded supply) by accident.
+function makeDtr(
+  id: string,
+  opts: { assetCount?: number; status?: string; reserve?: string; priceHistory?: DTR["priceHistory"]; trades?: Trade[] } = {},
+): DTR {
   const reserve = opts.reserve ?? id;
+  const assetCount = opts.assetCount ?? 0;
+  const assets = Array.from({ length: assetCount }, (_, i) => ({
+    mint: SUPPORTED_MINTS_ARR[i % SUPPORTED_MINTS_ARR.length],
+    symbol: `A${i}`,
+    decimals: 6,
+    weightBps: assetCount > 0 ? Math.floor(10_000 / assetCount) : 0,
+    reserveAsset: `ReserveAsset${i}11111111111111111111111111`,
+    vault: `Vault${i}1111111111111111111111111111111`,
+    orderIndex: i,
+  }));
   return {
     id,
     name: id,
@@ -57,10 +77,10 @@ function makeDtr(id: string, opts: { assetCount?: number; status?: string; reser
       mintAuthority: "11111111111111111111111111111111",
       vaultAuthority: "11111111111111111111111111111111",
       manager: "11111111111111111111111111111111",
-      assets: [],
+      assets,
       status: opts.status ?? "active",
       totalTargetWeightBps: 0,
-      reserveTokenSupplyRaw: "0",
+      reserveTokenSupplyRaw: assetCount > 0 ? "1000000" : "0",
       vaultBalancesRaw: {},
       assetCount: opts.assetCount,
     },
@@ -194,14 +214,19 @@ describe("Hidden Reserve registry (EGAYQQ)", () => {
   it("mergeDiscoveredReserves excludes the hidden address even though its assetCount is nonzero (unlike the assetCount===0 filter)", () => {
     const hidden = makeDtr("ozeegay", { assetCount: 1, status: "assetsInitializing", reserve: EGAYQQ_ADDRESS });
     const good = makeDtr("good", { assetCount: 2 });
-    const merged = mergeDiscoveredReserves([], [hidden, good], true);
-    expect(merged.map((d) => d.id)).to.deep.equal(["good"]);
+    const { dtrs } = mergeDiscoveredReserves([], [hidden, good], true);
+    expect(dtrs.map((d) => d.id)).to.deep.equal(["good"]);
   });
 
   it("does not exclude a similarly-shaped Reserve at a DIFFERENT address", () => {
-    const notHidden = makeDtr("ozeegay-lookalike", { assetCount: 1, status: "assetsInitializing", reserve: "SomeOtherAssetsInitializingReserveAddress11111111" });
-    const merged = mergeDiscoveredReserves([], [notHidden], true);
-    expect(merged.map((d) => d.id)).to.deep.equal(["ozeegay-lookalike"]);
+    // status: "active" (not "assetsInitializing") -- this test isolates the
+    // ADDRESS-based hiding mechanism specifically; a stuck-initializing
+    // lifecycle status is now its own, separate exclusion reason (see
+    // packages/sdk/src/reserveEligibility.ts), covered by
+    // tests/phase_reserve_eligibility.ts instead.
+    const notHidden = makeDtr("ozeegay-lookalike", { assetCount: 1, status: "active", reserve: "SomeOtherAssetsInitializingReserveAddress11111111" });
+    const { dtrs } = mergeDiscoveredReserves([], [notHidden], true);
+    expect(dtrs.map((d) => d.id)).to.deep.equal(["ozeegay-lookalike"]);
   });
 });
 

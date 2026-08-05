@@ -12,6 +12,7 @@ import type {
   OnChainDelegateMeta,
   PricePoint,
   ProfileSocials,
+  QuarantinedReserveInfo,
   Trade,
   UserProfile,
   WalletProviderId,
@@ -62,6 +63,19 @@ interface AppState {
   wallet: WalletState;
   holdings: Holding[];
   dtrs: DTR[];
+  /**
+   * Genuinely-existing on-chain Reserves that fail the canonical public
+   * eligibility check (packages/sdk's evaluateReserveEligibility), keyed by
+   * DTR id ("devnet-<reserveId>") -- e.g. the pre-fixture-registry Reserves
+   * whose registered assets can never resolve against the current DevNet
+   * asset registry. Never a full DTR (no fabricated price/AUM/NAV is
+   * possible from this shape). Entries accumulate across discovery passes
+   * (a transient-issue pass that misses one doesn't make it disappear) and
+   * are only ever added or overwritten, never speculatively removed here --
+   * see DTRDetail.tsx (direct-link quarantine page) and Portfolio.tsx
+   * (unsupported legacy holdings) for the two places this is read.
+   */
+  quarantinedReserves: Record<string, QuarantinedReserveInfo>;
   profiles: Record<string, UserProfile>;
   /**
    * Coarse status of the canonical on-chain discovery pass (see
@@ -105,7 +119,7 @@ interface AppState {
    * history/trade log for a Reserve already known, rather than resetting it
    * on every poll tick.
    */
-  /** `fullyVerified` (default true): pass false only when this discovery pass itself had unresolved per-account issues, so a previously-known on-chain DTR missing from `discovered` isn't assumed closed -- see the implementation for the fail-closed reasoning. */
+  /** `fullyVerified` (default true): pass false only when this discovery pass itself had unresolved per-account issues, so a previously-known on-chain DTR missing from `discovered` isn't assumed closed -- see the implementation for the fail-closed reasoning. Also accumulates any newly-ineligible Reserves into `quarantinedReserves`. */
   applyDiscoveredReserves: (discovered: DTR[], fullyVerified?: boolean) => void;
   /** Registers a newly (really) created Reserve so it shows up in Discover/DTRDetail like any other real DTR. */
   registerRealReserve: (dtr: DTR) => void;
@@ -173,6 +187,7 @@ export const useAppStore = create<AppState>()(
       wallet: initialWallet,
       holdings: [],
       dtrs: [...REAL_PLACEHOLDER_DTRS],
+      quarantinedReserves: {},
       profiles: {},
       chainDiscoveryStatus: "loading",
       chainDiscoveryError: null,
@@ -192,7 +207,12 @@ export const useAppStore = create<AppState>()(
       // from a fully-verified discovery pass) lives in the pure, testable
       // mergeDiscoveredReserves -- see src/merge/lib/onChainReserve.ts.
       applyDiscoveredReserves: (discovered, fullyVerified = true) => {
-        set((state) => ({ dtrs: mergeDiscoveredReserves(state.dtrs, discovered, fullyVerified) }));
+        set((state) => {
+          const { dtrs, quarantined } = mergeDiscoveredReserves(state.dtrs, discovered, fullyVerified);
+          const quarantinedReserves = { ...state.quarantinedReserves };
+          for (const q of quarantined) quarantinedReserves[q.id] = q;
+          return { dtrs, quarantinedReserves };
+        });
       },
 
       registerRealReserve: (dtr) => {

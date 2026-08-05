@@ -25,6 +25,7 @@ dist-ssr
 *.sw?
 .vercel
 .env.local
+.env.vercel.*
 
 # Solana / Anchor -- never commit keypairs or local validator state
 *-keypair.json

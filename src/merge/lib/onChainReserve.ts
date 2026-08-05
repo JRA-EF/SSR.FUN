@@ -12,7 +12,7 @@
 // UI (built for the old AMM simulation) has something coherent to render for
 // a real, oracle-free Reserve.
 import { PublicKey } from "@solana/web3.js";
-import type { DTR, OnChainAssetMeta, OnChainDelegateMeta, OnChainReserveMeta } from "./types";
+import type { DTR, OnChainAssetMeta, OnChainDelegateMeta, OnChainReserveMeta, QuarantinedReserveInfo } from "./types";
 import type { DiscoveredDelegate, DiscoveredReserve, ReserveOnChain } from "@ssr/sdk";
 import {
   DEVNET_FIXTURES,
@@ -22,8 +22,7 @@ import {
   parseReserveMetadataUri,
   findMintAuthority,
   findVaultAuthority,
-  isHiddenReserveAddress,
-  isReserveTradable,
+  evaluateReserveEligibility,
   type FixtureReserve,
 } from "@ssr/sdk";
 
@@ -364,41 +363,50 @@ export function buildDtrFromDiscoveredReserve(
  * 429 on one account), since in that case the "missing" Reserve might just
  * be a transient read failure, not a real closure.
  */
-export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[], fullyVerified: boolean): DTR[] {
-  // A Reserve with zero registered assets (Reserve.asset_count === 0, still
-  // stuck in the pre-Active "created" lifecycle state) is never a genuine,
-  // tradeable Reserve -- it's an abandoned/incomplete
-  // creation (e.g. from before create+register was combined into one atomic
-  // transaction). Excluded here, before either `merged` or
-  // `discoveredAddresses` is computed below, so it never enters `dtrs` via a
-  // fresh discovery pass AND a previously-cached copy from an existing
-  // user's localStorage is correctly dropped on the next fully-verified
-  // poll too (it can't be "rescued" by the `untouched` branch below, since
-  // that only keeps entries when `fullyVerified` is false). `assetCount` is
-  // only ever `0` for a genuinely-empty on-chain Reserve -- `undefined`
-  // (the 2 hardcoded Gate-9-fixture path) never matches this filter.
-  //
-  // Also excludes any address in HIDDEN_RESERVE_ADDRESSES (packages/sdk) --
-  // a small, explicit, address-verified registry for a specific abandoned
-  // Reserve that doesn't share the assetCount===0 structural signature above
-  // (e.g. it registered an asset but was never seeded) but is equally never
-  // genuinely tradeable and equally impossible to close on-chain right now.
-  // See that file for the exact reasoning per entry.
-  // Also excludes any Reserve holding an asset outside the supported
-  // {devUSDC, mockX, mockY, mockZ} set (packages/sdk's isReserveTradable) --
-  // e.g. a Reserve created with wrapped SOL, which has no genuine
-  // devUSDC-settled Buy/Sell path. Checked against `assets` only when the
-  // discovery pass actually resolved all of them (assetsResolvedFully);
-  // an under-resolved Reserve (candidate-mint hint list didn't cover every
-  // registered asset) is deliberately NOT excluded here on partial data --
-  // that would risk hiding a genuinely tradable Reserve on a transient
-  // resolution gap, not a real composition problem.
-  const discovered = rawDiscovered.filter(
-    (d) =>
-      d.onChain?.assetCount !== 0 &&
-      !(d.onChain && isHiddenReserveAddress(d.onChain.reserve)) &&
-      !(d.onChain?.assetsResolvedFully && !isReserveTradable(d.onChain.assets.map((a) => a.mint))),
-  );
+export interface MergeDiscoveredReservesResult {
+  dtrs: DTR[];
+  /** Every fresh-discovery Reserve that failed the canonical eligibility check this pass, with why. Not accumulated across passes here -- see useAppStore's applyDiscoveredReserves for that. */
+  quarantined: QuarantinedReserveInfo[];
+}
+
+/**
+ * Adapts a DTR's on-chain fields into the canonical eligibility input and
+ * calls packages/sdk's evaluateReserveEligibility -- the ONE place this
+ * decision is made. See that function's own header for the full rule list.
+ */
+function checkDtrEligibility(d: DTR): { eligible: boolean; reason: string | null } {
+  if (!d.onChain) return { eligible: false, reason: "Not a genuine on-chain Reserve." };
+  return evaluateReserveEligibility({
+    reserve: d.onChain.reserve,
+    assetCount: d.onChain.assetCount,
+    resolvedAssetCount: d.onChain.assets.length,
+    assetMints: d.onChain.assets.map((a) => a.mint),
+    status: d.onChain.status,
+    reserveTokenSupplyRaw: d.onChain.reserveTokenSupplyRaw,
+  });
+}
+
+export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[], fullyVerified: boolean): MergeDiscoveredReservesResult {
+  const discovered: DTR[] = [];
+  const quarantined: QuarantinedReserveInfo[] = [];
+  for (const d of rawDiscovered) {
+    const { eligible, reason } = checkDtrEligibility(d);
+    if (eligible) {
+      discovered.push(d);
+    } else if (d.onChain) {
+      quarantined.push({
+        id: d.id,
+        reserve: d.onChain.reserve,
+        reserveId: d.onChain.reserveId,
+        name: d.name,
+        ticker: d.ticker,
+        reason: reason ?? "This Reserve is not currently supported.",
+      });
+    }
+    // A `d.onChain === undefined` fresh-discovery entry (shouldn't normally
+    // occur -- discovery always resolves real on-chain data) is simply
+    // dropped, matching the "non-onChain DTR never kept" policy below.
+  }
   const byAddress = new Map(existingDtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
   const merged = discovered.map((fresh) => {
     const existing = fresh.onChain ? byAddress.get(fresh.onChain.reserve) : undefined;
@@ -422,5 +430,27 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
     if (discoveredAddresses.has(d.onChain.reserve)) return false;
     return !fullyVerified;
   });
-  return [...untouched, ...merged];
+  return { dtrs: [...untouched, ...merged], quarantined };
+}
+
+export type DtrPageState =
+  | { kind: "found"; dtr: DTR }
+  | { kind: "quarantined"; info: QuarantinedReserveInfo }
+  | { kind: "not-found" };
+
+/**
+ * Pure routing decision behind DTRDetail.tsx's direct-link handling --
+ * extracted so it's unit-testable without rendering the full page component
+ * (which has heavy wallet/RPC hook dependencies). A requested id resolves to
+ * exactly one of: a genuine, eligible DTR to render normally; a genuinely
+ * on-chain but quarantined Reserve (shows the honest "not supported"
+ * message + Back to Discover, nothing else); or truly nonexistent (generic
+ * "Reserve Not Found").
+ */
+export function resolveDtrPageState(dtrId: string | undefined, dtrs: DTR[], quarantinedReserves: Record<string, QuarantinedReserveInfo>): DtrPageState {
+  const dtr = dtrs.find((d) => d.id === (dtrId ?? ""));
+  if (dtr) return { kind: "found", dtr };
+  const info = dtrId ? quarantinedReserves[dtrId] : undefined;
+  if (info) return { kind: "quarantined", info };
+  return { kind: "not-found" };
 }

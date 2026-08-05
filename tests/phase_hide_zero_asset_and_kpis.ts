@@ -8,9 +8,28 @@
 import { expect } from "chai";
 import type { DTR } from "../src/merge/lib/types";
 import { mergeDiscoveredReserves } from "../src/merge/lib/onChainReserve";
-import { valueAssetLegsUsd, countHoldersFromParsedAccounts, type AssetPricing } from "../packages/sdk/src";
+import { valueAssetLegsUsd, countHoldersFromParsedAccounts, SUPPORTED_ASSET_MINTS, type AssetPricing } from "../packages/sdk/src";
 
+const SUPPORTED_MINTS_ARR = [...SUPPORTED_ASSET_MINTS];
+
+// Genuinely eligible (fully-resolved, supported-mint, active, seeded) by
+// default -- so a test overriding one field (assetCount, status) to exercise
+// a SPECIFIC exclusion reason doesn't also trip an unrelated, newer
+// eligibility check (resolved-vs-registered, seeded supply) by accident.
 function makeDtr(id: string, assetCount: number | undefined, status = "active"): DTR {
+  const resolvedAssetsCount = assetCount ?? 1;
+  const assets =
+    assetCount === 0
+      ? []
+      : Array.from({ length: resolvedAssetsCount }, (_, i) => ({
+          mint: SUPPORTED_MINTS_ARR[i % SUPPORTED_MINTS_ARR.length],
+          symbol: `A${i}`,
+          decimals: 6,
+          weightBps: Math.floor(10_000 / resolvedAssetsCount),
+          reserveAsset: `ReserveAsset${i}11111111111111111111111111`,
+          vault: `Vault${i}1111111111111111111111111111111`,
+          orderIndex: i,
+        }));
   return {
     id,
     name: id,
@@ -50,10 +69,10 @@ function makeDtr(id: string, assetCount: number | undefined, status = "active"):
       mintAuthority: "11111111111111111111111111111111",
       vaultAuthority: "11111111111111111111111111111111",
       manager: "11111111111111111111111111111111",
-      assets: [],
+      assets,
       status,
       totalTargetWeightBps: 0,
-      reserveTokenSupplyRaw: "0",
+      reserveTokenSupplyRaw: assetCount === 0 ? "0" : "1000000",
       vaultBalancesRaw: {},
       assetCount,
     },
@@ -64,15 +83,15 @@ describe("Zero-asset Reserve hiding -- mergeDiscoveredReserves", () => {
   it("never includes a freshly-discovered Reserve with assetCount === 0", () => {
     const good = makeDtr("good", 2);
     const bad = makeDtr("bad-created", 0, "created");
-    const merged = mergeDiscoveredReserves([], [good, bad], true);
-    expect(merged.map((d) => d.id)).to.deep.equal(["good"]);
+    const { dtrs } = mergeDiscoveredReserves([], [good, bad], true);
+    expect(dtrs.map((d) => d.id)).to.deep.equal(["good"]);
   });
 
   it("drops a previously-cached zero-asset Reserve on the next fully-verified discovery pass, even if it's no longer present at all", () => {
     const staleBad = makeDtr("bad-created", 0, "created");
     const freshGood = makeDtr("good", 2);
-    const merged = mergeDiscoveredReserves([staleBad], [freshGood], true);
-    expect(merged.map((d) => d.id)).to.deep.equal(["good"]);
+    const { dtrs } = mergeDiscoveredReserves([staleBad], [freshGood], true);
+    expect(dtrs.map((d) => d.id)).to.deep.equal(["good"]);
   });
 
   it("still excludes a zero-asset Reserve appearing in a fresh (but not-fully-verified) discovery pass", () => {
@@ -83,22 +102,22 @@ describe("Zero-asset Reserve hiding -- mergeDiscoveredReserves", () => {
     // Reserves NOT present in this pass at all) is conditional on
     // `fullyVerified`. A zero-asset Reserve that IS present in this fresh
     // pass is filtered out either way.
-    const merged = mergeDiscoveredReserves([], [bad], false);
-    expect(merged.find((d) => d.id === "bad-created")).to.equal(undefined);
+    const { dtrs } = mergeDiscoveredReserves([], [bad], false);
+    expect(dtrs.find((d) => d.id === "bad-created")).to.equal(undefined);
   });
 
   it("never affects a Reserve whose assetCount is unresolved (undefined) -- only an explicit 0 is excluded", () => {
     const legacyFixture = makeDtr("legacy", undefined);
-    const merged = mergeDiscoveredReserves([], [legacyFixture], true);
-    expect(merged.map((d) => d.id)).to.deep.equal(["legacy"]);
+    const { dtrs } = mergeDiscoveredReserves([], [legacyFixture], true);
+    expect(dtrs.map((d) => d.id)).to.deep.equal(["legacy"]);
   });
 
   it("does not disturb non-zero-asset Reserves' existing merge behavior (price history/trades carried over)", () => {
     const existing = makeDtr("good", 2);
     existing.trades = [{ id: "t1", t: 1, side: "buy", price: 1, amountUsdc: 1, amountToken: 1 } as never];
     const fresh = makeDtr("good", 2);
-    const merged = mergeDiscoveredReserves([existing], [fresh], true);
-    expect(merged[0].trades).to.deep.equal(existing.trades);
+    const { dtrs } = mergeDiscoveredReserves([existing], [fresh], true);
+    expect(dtrs[0].trades).to.deep.equal(existing.trades);
   });
 });
 

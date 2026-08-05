@@ -185,6 +185,24 @@ export interface DTR {
   chainError?: string;
 }
 
+/**
+ * Lightweight record of a genuinely-existing on-chain Reserve that failed
+ * the canonical public eligibility check (packages/sdk's
+ * evaluateReserveEligibility) -- deliberately NOT a full DTR, so it can
+ * never carry a fabricated price/AUM/NAV. Kept so a direct link to the
+ * Reserve's address (DTRDetail) or a wallet's real token balance in it
+ * (Portfolio) can be labeled honestly instead of looking like the Reserve
+ * never existed.
+ */
+export interface QuarantinedReserveInfo {
+  id: string;
+  reserve: string;
+  reserveId: string;
+  name: string;
+  ticker: string;
+  reason: string;
+}
+
 export interface OnChainAssetMeta {
   mint: string;
   symbol: string;

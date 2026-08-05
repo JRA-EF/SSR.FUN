@@ -67,28 +67,28 @@ function makeLegacyDtr(id: string): DTR {
 describe("Corrective pass -- legacy/mock Reserve exclusion (mergeDiscoveredReserves)", () => {
   it("never includes a non-onChain (legacy/seed/simulated) DTR regardless of what discovery returns", () => {
     const legacy = makeLegacyDtr("blue");
-    const merged = mergeDiscoveredReserves([legacy], [], true);
-    expect(merged.find((d) => d.id === "blue")).to.equal(undefined);
+    const { dtrs } = mergeDiscoveredReserves([legacy], [], true);
+    expect(dtrs.find((d) => d.id === "blue")).to.equal(undefined);
   });
 
   it("fails closed: drops a previously-known on-chain DTR that's missing from a fully-verified discovery pass (genuinely closed)", () => {
     const closed = makeOnChainDtr("closed-one", "AAA");
-    const merged = mergeDiscoveredReserves([closed], [], true);
-    expect(merged).to.have.length(0);
+    const { dtrs } = mergeDiscoveredReserves([closed], [], true);
+    expect(dtrs).to.have.length(0);
   });
 
   it("does NOT drop a previously-known on-chain DTR missing from a pass that itself had unresolved issues (transient failure, not a real closure)", () => {
     const maybeTransient = makeOnChainDtr("maybe-transient", "BBB");
-    const merged = mergeDiscoveredReserves([maybeTransient], [], false);
-    expect(merged.find((d) => d.onChain?.reserve === "BBB")).to.not.equal(undefined);
+    const { dtrs } = mergeDiscoveredReserves([maybeTransient], [], false);
+    expect(dtrs.find((d) => d.onChain?.reserve === "BBB")).to.not.equal(undefined);
   });
 
   it("keeps a genuinely re-discovered on-chain DTR and preserves its session-accumulated price history", () => {
     const existing = { ...makeOnChainDtr("live-one", "CCC"), priceHistory: [{ t: 1, price: 1 }, { t: 2, price: 1.1 }, { t: 3, price: 1.2 }] };
     const fresh = makeOnChainDtr("live-one", "CCC");
-    const merged = mergeDiscoveredReserves([existing], [fresh], true);
-    expect(merged).to.have.length(1);
-    expect(merged[0].priceHistory).to.have.length(3);
+    const { dtrs } = mergeDiscoveredReserves([existing], [fresh], true);
+    expect(dtrs).to.have.length(1);
+    expect(dtrs[0].priceHistory).to.have.length(3);
   });
 });
 
