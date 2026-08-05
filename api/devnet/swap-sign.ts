@@ -60,7 +60,7 @@ import {
   DEVUSDC_MINT,
 } from "../../packages/sdk/src";
 import { loadDevnetAuthority } from "./_lib/authority";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
 import { isRateLimitError, withRateLimitRetry } from "../../src/merge/lib/rpcResilience";
 import { isReservePureDevUsdc } from "../../src/merge/lib/calculations";
 
@@ -491,13 +491,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       res.status(503).json({ error: e.message, code: e.code });
       return;
     }
-    if (isRateLimitError(e)) {
-      res.status(503).json({
-        error: "Solana DevNet RPC is temporarily congested. Please try again in a few seconds.",
-        code: "rpc_congested",
-      });
-      return;
-    }
+    // Specific, self-diagnosing error classes are checked BEFORE the generic
+    // rate-limit check -- a real build/signer/validation error must never be
+    // silently relabeled as "RPC congested" just because isRateLimitError
+    // happened to run first (this exact misclassification was found and
+    // fixed this pass: an "unknown signer: <pubkey>" error was being shown
+    // to users as "DevNet RPC congested" whenever the pubkey's base58 text
+    // contained a "429"-like run). describeUnknownSignerError returns `e`
+    // itself, unchanged, whenever the error does NOT match its pattern --
+    // `described === e` is how we detect that and fall through to the
+    // genuine rate-limit check next.
     const described = describeUnknownSignerError(e, {
       "DevNet swap adapter": swapAuthority.publicKey,
       "protocol configuration": protocolConfig,
@@ -507,6 +510,23 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       "mint authority": mintAuthority,
       "vault authority": vaultAuthority,
     });
-    res.status(500).json({ error: described.message, code: described === e ? "build_failed" : "unexpected_signer" });
+    if (described !== e) {
+      res.status(500).json({ error: redactRpcSecrets(described.message), code: "unexpected_signer" });
+      return;
+    }
+    if (isRateLimitError(e)) {
+      res.status(503).json({
+        error: "Solana DevNet RPC is temporarily congested. Please try again in a few seconds.",
+        code: "rpc_congested",
+      });
+      return;
+    }
+    // Log the real underlying error server-side so a genuine,
+    // not-yet-self-diagnosing failure is still debuggable after the fact --
+    // redacted the same way as the client-facing message, since server logs
+    // are not an exemption from the "never expose the RPC URL/API key" rule.
+    const safeMessage = redactRpcSecrets(described.message);
+    console.error("swap-sign: unclassified build failure", safeMessage);
+    res.status(500).json({ error: safeMessage, code: "build_failed" });
   }
 }

@@ -185,65 +185,115 @@ export const TIMEFRAME_LOOKBACK_MS: Record<Exclude<ChartTimeframe, "All">, numbe
 /** Resolves a timeframe (including the dynamic "All") into a concrete lookback window. */
 export function resolveTimeframeLookback(timeframe: ChartTimeframe, priceHistory: PricePoint[]): number {
   if (timeframe !== "All") return TIMEFRAME_LOOKBACK_MS[timeframe];
-  if (priceHistory.length === 0) return 365 * DAY;
+  // Fewer than 2 real points has no genuine span to measure "All" against
+  // (a single point spans zero time) -- fall back to the same 1-year default
+  // used for a genuinely empty history, rather than a near-zero window.
+  if (priceHistory.length < 2) return 365 * DAY;
   return Math.max(priceHistory[priceHistory.length - 1].t - priceHistory[0].t, MINUTE);
 }
+
+/** Evenly-spaced point count for a client-side flatline fallback -- enough for a smooth line and meaningfully-distinct tooltip positions across the full selected range, without being excessive (sampleLinePoints downsamples anyway for the chart itself). */
+const FALLBACK_FLATLINE_POINTS = 30;
 
 export interface LineSeriesResult {
   points: PricePoint[];
   /**
-   * True when this Reserve has fewer than 2 ever-recorded real price points --
-   * there is genuinely no trend to show for ANY range, not just this one.
-   * When true, `points` is always empty; the caller must render an honest
-   * "insufficient history" state rather than a fabricated flat line. This is
-   * independent of `timeframe`/`now` -- a Reserve with 0 or 1 real
-   * observations is insufficient for every range identically, which is
-   * exactly why every range button used to look the same (a fabricated
-   * flatline anchored to a single point) instead of genuinely differing.
+   * True when `points` is a client-side flatline fallback -- not genuine
+   * recorded trade/mint/redeem observations. Never persisted anywhere; a
+   * pure rendering aid so a Reserve with sparse real history still shows an
+   * honest, current-value line instead of an empty panel. The caller should
+   * disclose this (e.g. "No price movement recorded yet.") rather than
+   * present it as indistinguishable from genuine history.
    */
-  insufficientHistory: boolean;
+  isFallback: boolean;
+  /**
+   * True when there is nothing valid to show at all -- fewer than 2 real
+   * observations AND no genuine current value to fall back to. `points` is
+   * always empty in this case; the caller must render an honest "Price
+   * unavailable" state, never a fabricated $0 line.
+   */
+  unavailable: boolean;
 }
 
 /**
- * Line-chart series for a timeframe. Real points within the lookback window are
- * used as-is. A Reserve with 2+ real recorded points always has at least one
- * genuine observation to anchor a lead-in point to (see `priorPoint` below),
- * so a window with no points strictly inside it still flatlines at that real,
- * previously-observed price rather than rendering nothing -- "no trades in
- * this window" honestly reads as "price unchanged since the last real
- * observation," anchored to real data, never invented. A Reserve with fewer
- * than 2 real points ever has no genuine trend to show for ANY range --
- * `insufficientHistory: true` is returned instead of a fabricated flatline
- * (see LineSeriesResult). This function is pure and independent per call:
- * two calls (e.g. from two chart instances, or two different Reserves) never
- * share state and cannot influence each other's result.
+ * Line-chart series for a timeframe, always returning a renderable series
+ * when either genuine history or a genuine current value exists -- see
+ * `LineSeriesResult`'s three cases:
+ *
+ * 1. **2+ real recorded points**: real points within the lookback window are
+ *    used as-is (`priorPoint`/`basePrice` below flatline a window with no
+ *    points strictly inside it at the last real observed price beforehand,
+ *    never inventing a trend). `currentNav`, when genuinely valid, is
+ *    appended as the latest point if it's newer than the last real one --
+ *    this reflects the Reserve's real live state, it never alters or removes
+ *    a real historical point.
+ * 2. **Fewer than 2 real points, but a genuine current value exists**:
+ *    a client-side-only flatline, anchored to that ONE real point's price if
+ *    exactly one exists (extended backward across the whole range), or to
+ *    `currentNav` if zero real points exist. `isFallback: true` marks this
+ *    as a rendering aid, never persisted as if it were a real observation.
+ * 3. **Fewer than 2 real points AND no genuine current value**: `unavailable:
+ *    true`, `points: []` -- never a fabricated flatline at an invalid ($0 or
+ *    missing) value.
+ *
+ * Pure and independent per call: two calls (e.g. from two chart instances,
+ * or two different Reserves) never share state and cannot influence each
+ * other's result.
  */
 export function buildLineSeries(
   priceHistory: PricePoint[],
   timeframe: ChartTimeframe,
+  currentNav: number | null,
   now: number = Date.now(),
 ): LineSeriesResult {
-  if (priceHistory.length < 2) return { points: [], insufficientHistory: true };
-  const windowStart = now - resolveTimeframeLookback(timeframe, priceHistory);
-  const windowPoints = priceHistory.filter((p) => p.t >= windowStart);
+  const hasValidNav = currentNav !== null && Number.isFinite(currentNav) && currentNav > 0;
 
-  const priorPoint = [...priceHistory].reverse().find((p) => p.t <= windowStart);
-  const basePrice = priorPoint?.price ?? windowPoints[0]?.price ?? priceHistory[0].price;
+  if (priceHistory.length >= 2) {
+    const windowStart = now - resolveTimeframeLookback(timeframe, priceHistory);
+    const windowPoints = priceHistory.filter((p) => p.t >= windowStart);
 
-  if (windowPoints.length === 0) {
-    return {
-      points: [
+    const priorPoint = [...priceHistory].reverse().find((p) => p.t <= windowStart);
+    const basePrice = priorPoint?.price ?? windowPoints[0]?.price ?? priceHistory[0].price;
+
+    let points: PricePoint[];
+    if (windowPoints.length === 0) {
+      points = [
         { t: windowStart, price: basePrice },
         { t: now, price: basePrice },
-      ],
-      insufficientHistory: false,
-    };
+      ];
+    } else {
+      const needsLeadIn = windowPoints[0].t > windowStart + SECOND;
+      points = needsLeadIn ? [{ t: windowStart, price: basePrice }, ...windowPoints] : [...windowPoints];
+    }
+    // Reflect the Reserve's genuinely current value as the latest point when
+    // it's newer than the last real observation -- never replaces or backdates
+    // a real historical point, only extends the line to "now."
+    if (hasValidNav) {
+      const last = points[points.length - 1];
+      if (!last || now > last.t) points = [...points, { t: now, price: currentNav as number }];
+    }
+    return { points, isFallback: false, unavailable: false };
   }
-  const needsLeadIn = windowPoints[0].t > windowStart + SECOND;
-  return {
-    points: needsLeadIn ? [{ t: windowStart, price: basePrice }, ...windowPoints] : windowPoints,
-    insufficientHistory: false,
-  };
+
+  // Truly nothing to anchor even a fallback to: no real observation AND no
+  // valid current value. A single real point is used below regardless of
+  // whether currentNav is valid -- only a genuinely EMPTY history with no
+  // valid NAV is "unavailable."
+  if (priceHistory.length === 0 && !hasValidNav) {
+    return { points: [], isFallback: false, unavailable: true };
+  }
+
+  // Fewer than 2 real points: a client-side-only flatline, never persisted.
+  // Exactly one real point extends THAT real (once-observed) value backward;
+  // zero real points anchors to the current live value instead.
+  const anchorPrice = priceHistory.length === 1 ? priceHistory[0].price : (currentNav as number);
+  const windowMs = resolveTimeframeLookback(timeframe, priceHistory);
+  const windowStart = now - windowMs;
+  const points: PricePoint[] = [];
+  for (let i = 0; i < FALLBACK_FLATLINE_POINTS; i++) {
+    points.push({ t: windowStart + (windowMs * i) / (FALLBACK_FLATLINE_POINTS - 1), price: anchorPrice });
+  }
+  return { points, isFallback: true, unavailable: false };
 }
 
 /** Downsamples a point series for the line/area chart, always keeping the first and last (latest) point. */

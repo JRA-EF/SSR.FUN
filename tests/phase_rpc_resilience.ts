@@ -204,6 +204,24 @@ describe("RPC-resilience -- isRateLimitError / withRateLimitRetry (still used fo
     expect(isRateLimitError(new Error("Invalid public key"))).to.equal(false);
   });
 
+  it("regression: does not misclassify an 'unknown signer' error as RPC congestion just because the offending base58 pubkey happens to contain the digit run '429'", () => {
+    // A real bug found and fixed this pass: swap-sign.ts's catch-all checked
+    // isRateLimitError(e) BEFORE describeUnknownSignerError(e, ...), so any
+    // error whose message contained "429" anywhere -- including as a
+    // coincidental substring inside an unrelated base58 pubkey -- was
+    // silently relabeled "DevNet RPC congested" instead of surfacing the
+    // real, actionable unknown-signer diagnosis. `\b429\b` (word-boundary)
+    // must NOT match "429" embedded inside a longer alphanumeric run, since
+    // every character in a base58 string is a `\w` character and so no word
+    // boundary exists on either side of an embedded "429".
+    const pubkeyWithEmbedded429 = "Ef7vbQg429FghKzLzUnyJsvov1f5f9aRSfWksiaSmWp";
+    expect(isRateLimitError(new Error(`unknown signer: ${pubkeyWithEmbedded429}`))).to.equal(false);
+  });
+
+  it("still classifies a genuine 429 even when it appears with surrounding punctuation, not just at the message start", () => {
+    expect(isRateLimitError(new Error("Request failed (status 429): rate limited"))).to.equal(true);
+  });
+
   it("retries only genuine rate-limit errors, bounded", async () => {
     let attempts = 0;
     const result = await withRateLimitRetry(

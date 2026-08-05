@@ -145,26 +145,59 @@ describe("Reserve tradability -- wired into mergeDiscoveredReserves (single shar
   });
 });
 
-describe("Price History -- buildLineSeries (pure)", () => {
+describe("Price History -- buildLineSeries (pure, centralized fallback helper shared by DTRDetail's chart and Featured's sparkline)", () => {
   const now = 1_000_000_000_000; // fixed reference instant
+  const DAY = 24 * 60 * 60 * 1000;
 
-  it("reports insufficientHistory for a Reserve with 0 price points", () => {
-    const result = buildLineSeries([], "24h", now);
-    expect(result.insufficientHistory).to.equal(true);
+  it("reports unavailable (never a fabricated $0 line) for a Reserve with 0 price points AND no valid current NAV", () => {
+    const result = buildLineSeries([], "24h", null, now);
+    expect(result.unavailable).to.equal(true);
+    expect(result.isFallback).to.equal(false);
     expect(result.points).to.deep.equal([]);
   });
 
-  it("reports insufficientHistory for a Reserve with only 1 ever-recorded price point, for EVERY range identically", () => {
-    const history = [{ t: now - 1000, price: 1.0 }];
-    for (const tf of ["1s", "1m", "5m", "1h", "4h", "24h", "7d", "30d", "1y", "All"] as const) {
-      const result = buildLineSeries(history, tf, now);
-      expect(result.insufficientHistory, `timeframe ${tf}`).to.equal(true);
-      expect(result.points, `timeframe ${tf}`).to.deep.equal([]);
+  it("reports unavailable when the current NAV is 0, negative, or non-finite -- never treats those as a genuine value", () => {
+    for (const badNav of [0, -1, NaN, Infinity]) {
+      const result = buildLineSeries([], "24h", badNav, now);
+      expect(result.unavailable, `nav ${badNav}`).to.equal(true);
+      expect(result.points, `nav ${badNav}`).to.deep.equal([]);
     }
   });
 
+  it("generates a client-side flatline anchored to the current NAV for a Reserve with 0 real price points, for EVERY range, spanning the exact selected window", () => {
+    for (const tf of ["1s", "1m", "5m", "1h", "4h", "24h", "7d", "30d", "1y", "All"] as const) {
+      const result = buildLineSeries([], tf, 1.23, now);
+      expect(result.unavailable, `timeframe ${tf}`).to.equal(false);
+      expect(result.isFallback, `timeframe ${tf}`).to.equal(true);
+      expect(result.points.length, `timeframe ${tf}`).to.be.greaterThan(2);
+      expect(result.points.every((p) => p.price === 1.23), `timeframe ${tf}`).to.equal(true);
+      expect(result.points[result.points.length - 1].t, `timeframe ${tf}`).to.equal(now);
+    }
+  });
+
+  it("the default 7d fallback spans exactly 7 days before now to now", () => {
+    const result = buildLineSeries([], "7d", 1.0, now);
+    expect(result.points[0].t).to.equal(now - 7 * DAY);
+    expect(result.points[result.points.length - 1].t).to.equal(now);
+  });
+
+  it("extends a single genuine observation's own value backward across the whole range, rather than substituting the current NAV", () => {
+    const history = [{ t: now - 1000, price: 2.5 }];
+    const result = buildLineSeries(history, "7d", 9.99, now); // current NAV deliberately different from the one real point
+    expect(result.unavailable).to.equal(false);
+    expect(result.isFallback).to.equal(true);
+    expect(result.points.every((p) => p.price === 2.5)).to.equal(true);
+  });
+
+  it("still flatlines the single real observation's value even with no current NAV available", () => {
+    const history = [{ t: now - 1000, price: 3.3 }];
+    const result = buildLineSeries(history, "24h", null, now);
+    expect(result.unavailable).to.equal(false);
+    expect(result.isFallback).to.equal(true);
+    expect(result.points.every((p) => p.price === 3.3)).to.equal(true);
+  });
+
   it("with 2+ real points, different ranges produce genuinely different windows -- not the same dataset stretched across every range", () => {
-    const DAY = 24 * 60 * 60 * 1000;
     const history = [
       { t: now - 400 * DAY, price: 1.0 },
       { t: now - 200 * DAY, price: 1.1 },
@@ -173,12 +206,12 @@ describe("Price History -- buildLineSeries (pure)", () => {
       { t: now - 12 * 60 * 60 * 1000, price: 1.4 },
       { t: now - 30 * 1000, price: 1.5 },
     ];
-    const oneHour = buildLineSeries(history, "1h", now);
-    const sevenDay = buildLineSeries(history, "7d", now);
-    const oneYear = buildLineSeries(history, "1y", now);
-    expect(oneHour.insufficientHistory).to.equal(false);
-    expect(sevenDay.insufficientHistory).to.equal(false);
-    expect(oneYear.insufficientHistory).to.equal(false);
+    const oneHour = buildLineSeries(history, "1h", null, now);
+    const sevenDay = buildLineSeries(history, "7d", null, now);
+    const oneYear = buildLineSeries(history, "1y", null, now);
+    expect(oneHour.isFallback).to.equal(false);
+    expect(sevenDay.isFallback).to.equal(false);
+    expect(oneYear.isFallback).to.equal(false);
     // Genuinely different point counts/content per range -- proves real
     // per-range filtering, not one dataset reused for every button.
     expect(oneHour.points.length).to.not.equal(sevenDay.points.length);
@@ -193,13 +226,26 @@ describe("Price History -- buildLineSeries (pure)", () => {
     expect(oneYear.points[0].price).to.equal(1.0);
   });
 
+  it("appends the current genuine NAV as the latest point when it's newer than the last real observation, without altering any real historical point", () => {
+    const history = [
+      { t: now - 100_000, price: 1.0 },
+      { t: now - 50_000, price: 1.1 },
+    ];
+    const result = buildLineSeries(history, "1h", 1.25, now);
+    expect(result.isFallback).to.equal(false);
+    expect(result.points[result.points.length - 1]).to.deep.equal({ t: now, price: 1.25 });
+    // The real historical points are untouched.
+    expect(result.points.find((p) => p.t === now - 100_000)?.price).to.equal(1.0);
+    expect(result.points.find((p) => p.t === now - 50_000)?.price).to.equal(1.1);
+  });
+
   it("flatlines a quiet window at the last REAL observed price, not an invented one", () => {
     const history = [
       { t: now - 10_000, price: 2.5 },
       { t: now - 5_000, price: 2.5 },
     ];
-    const result = buildLineSeries(history, "1s", now); // window: last 60s, no point strictly newer than -5000ms... both are within 60s actually
-    expect(result.insufficientHistory).to.equal(false);
+    const result = buildLineSeries(history, "1s", null, now); // window: last 60s, no point strictly newer than -5000ms... both are within 60s actually
+    expect(result.isFallback).to.equal(false);
     expect(result.points.every((p) => p.price === 2.5)).to.equal(true);
   });
 
@@ -208,21 +254,21 @@ describe("Price History -- buildLineSeries (pure)", () => {
       { t: now - 100_000, price: 1.0 },
       { t: now - 1_000, price: 1.05 },
     ];
-    const historyB = [{ t: now - 500, price: 9.9 }]; // insufficient (only 1 point)
+    const historyB = [{ t: now - 500, price: 9.9 }]; // fewer than 2 real points -- fallback path
 
-    const a1 = buildLineSeries(historyA, "1h", now);
-    const b1 = buildLineSeries(historyB, "1h", now);
-    const a2 = buildLineSeries(historyA, "24h", now);
-    const b2 = buildLineSeries(historyB, "24h", now);
+    const a1 = buildLineSeries(historyA, "1h", null, now);
+    const b1 = buildLineSeries(historyB, "1h", 9.9, now);
+    const a2 = buildLineSeries(historyA, "24h", null, now);
+    const b2 = buildLineSeries(historyB, "24h", 9.9, now);
 
-    expect(a1.insufficientHistory).to.equal(false);
-    expect(b1.insufficientHistory).to.equal(true);
-    expect(a2.insufficientHistory).to.equal(false);
-    expect(b2.insufficientHistory).to.equal(true);
+    expect(a1.isFallback).to.equal(false);
+    expect(b1.isFallback).to.equal(true);
+    expect(a2.isFallback).to.equal(false);
+    expect(b2.isFallback).to.equal(true);
     // Interleaving calls for two different "instances" must not cross-
     // contaminate: A's results are identical regardless of B being called
     // in between, and vice versa.
-    expect(buildLineSeries(historyA, "1h", now)).to.deep.equal(a1);
-    expect(buildLineSeries(historyB, "1h", now)).to.deep.equal(b1);
+    expect(buildLineSeries(historyA, "1h", null, now)).to.deep.equal(a1);
+    expect(buildLineSeries(historyB, "1h", 9.9, now)).to.deep.equal(b1);
   });
 });

@@ -54,6 +54,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useLandingStats } from "@/hooks/useLandingStats";
+import { ChartTimeframeSelector } from "@/components/ChartTimeframeSelector";
 
 const CHART_COLORS = [
   "hsl(var(--chart-1))",
@@ -62,8 +63,6 @@ const CHART_COLORS = [
   "hsl(var(--chart-4))",
   "hsl(var(--chart-5))",
 ];
-
-const CHART_TIMEFRAMES: ChartTimeframe[] = ["1s", "1m", "5m", "1h", "4h", "24h", "7d", "30d", "1y", "All"];
 
 /** Axis tick label, chosen by how fine the selected timeframe's resolution is. */
 function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
@@ -84,7 +83,7 @@ export function DTRDetail() {
 
   // Chart timeframe is local UI state -- it persists across live store updates
   // (trades, price ticks) since this component only re-renders, never remounts.
-  const [timeframe, setTimeframe] = useState<ChartTimeframe>("24h");
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>("7d");
 
   // Trading state
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
@@ -227,14 +226,18 @@ export function DTRDetail() {
   // Flatlines at the last known REAL price when a timeframe's own window has no
   // point strictly inside it (anchored to a genuine prior observation -- "nothing
   // happened since we last saw a real price," never invented), and leads in from
-  // that same real baseline when the window's history starts partway through --
-  // but a Reserve with fewer than 2 ever-recorded real price points has no trend
-  // to show for ANY range at all, so `insufficientHistory` is reported instead of
-  // fabricating a flatline out of a single point (see calculations.ts's
-  // buildLineSeries). Recomputed independently on every (priceHistory, timeframe)
-  // change -- this component's own local state, never shared with any other
+  // that same real baseline when the window's history starts partway through.
+  // A Reserve with fewer than 2 ever-recorded real price points still renders a
+  // client-side-only flatline anchored to its current genuine NAV (`isFallback:
+  // true`, never persisted) -- only a Reserve with NEITHER real history NOR a
+  // valid current NAV reports `unavailable: true` (see calculations.ts's
+  // buildLineSeries). Recomputed independently on every (priceHistory, timeframe,
+  // nav) change -- this component's own local state, never shared with any other
   // chart instance.
-  const lineSeries = useMemo(() => buildLineSeries(priceHistory, timeframe), [priceHistory, timeframe]);
+  const lineSeries = useMemo(
+    () => buildLineSeries(priceHistory, timeframe, dtr && dtr.nav > 0 ? dtr.nav : null),
+    [priceHistory, timeframe, dtr?.nav],
+  );
 
   const chartData = useMemo(
     () => sampleLinePoints(lineSeries.points, 300).map((p) => ({ ...p, dateStr: timeframeTickFormat(p.t, timeframe) })),
@@ -863,35 +866,26 @@ export function DTRDetail() {
               <CardTitle className="text-lg font-merge-display flex items-center gap-2">
                 <Activity className="w-5 h-5 text-primary" /> Price History
               </CardTitle>
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 lg:mx-0 lg:px-0">
-                <div className="flex shrink-0 bg-muted/50 p-1 rounded-md">
-                  {CHART_TIMEFRAMES.map((tf) => (
-                    <button
-                      key={tf}
-                      onClick={() => setTimeframe(tf)}
-                      className={`px-2.5 py-1 text-xs font-medium rounded-sm transition-colors whitespace-nowrap ${
-                        timeframe === tf
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                      }`}
-                    >
-                      {tf}
-                    </button>
-                  ))}
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <ChartTimeframeSelector timeframe={timeframe} onChange={setTimeframe} />
               </div>
             </CardHeader>
-            <CardContent className="p-0 sm:p-6 sm:pt-0 h-[350px] w-full">
-              {lineSeries.insufficientHistory ? (
+            <CardContent className="p-0 sm:p-6 sm:pt-0 h-[350px] w-full relative">
+              {lineSeries.unavailable ? (
                 <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6">
-                  <p className="text-sm font-semibold text-muted-foreground">Insufficient price history</p>
+                  <p className="text-sm font-semibold text-muted-foreground">Price unavailable</p>
                   <p className="text-xs text-muted-foreground/80 max-w-xs">
-                    This Reserve doesn't have enough recorded price history yet to chart any range. A chart appears once at least one real
-                    Buy or Sell has been confirmed.
+                    This Reserve's current NAV could not be read. Its price chart will appear once a valid NAV is available.
                   </p>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <>
+                  {lineSeries.isFallback && (
+                    <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
+                      No price movement recorded yet.
+                    </p>
+                  )}
+                  <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chartData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                     <defs>
                       <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
@@ -935,7 +929,8 @@ export function DTRDetail() {
                       activeDot={{ r: 6, fill: "hsl(var(--primary))", stroke: "hsl(var(--background))", strokeWidth: 2 }}
                     />
                   </AreaChart>
-                </ResponsiveContainer>
+                  </ResponsiveContainer>
+                </>
               )}
             </CardContent>
           </Card>

@@ -147,7 +147,14 @@ a:hover {
   text-underline-offset: 3px;
 }
 
-button {
+/* :not(.merge-scope *) -- this is unlayered CSS, so (per the .container note
+   below) it always wins over Tailwind's own layered utilities regardless of
+   specificity. Without this exclusion it silently zeroed out every
+   .merge-scope button's Tailwind padding/background/border (e.g. px-2.5,
+   bg-background, bg-muted/50, rounded-sm on DTRDetail.tsx's Price History
+   range-selector buttons), collapsing them into bare, padding-less inline
+   text that visually ran together with no gap between adjacent buttons. */
+button:not(.merge-scope *) {
   font: inherit;
   color: inherit;
   background: none;

@@ -100,15 +100,21 @@ async function requestSignedZapTransaction(body: Record<string, unknown>): Promi
     });
     // A malformed (non-JSON) response body -- e.g. a platform-level gateway
     // timeout/error page rather than anything swap-sign.ts itself returned --
-    // is treated as congestion and retried the same bounded way, instead of
-    // letting a raw JSON.parse SyntaxError reach the caller.
+    // is worth one bounded retry regardless of cause, but must only be
+    // LABELED "rpc_congested" when the HTTP status itself is genuinely 429;
+    // any other status (a 500 crash, a 502/504 gateway error, etc.) is a
+    // real, different failure and must say so honestly rather than being
+    // folded into the congestion message.
     const json = (await res.json().catch(() => null)) as SwapSignResponse | null;
     if (json === null) {
       if (attempt < 3) {
         await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
         continue;
       }
-      throw new ZapBuildError("The DevNet swap adapter returned an unexpected response. Please try again.", "rpc_congested");
+      throw new ZapBuildError(
+        `The DevNet swap adapter returned an unexpected response (HTTP ${res.status}). Please try again.`,
+        res.status === 429 ? "rpc_congested" : "build_failed",
+      );
     }
     if (!res.ok) {
       // swap-sign.ts's catch-all normalizes every internal error to HTTP 500

@@ -60,11 +60,15 @@ function makeOnChainDtr(id: string, aum: number): DTR {
       mintAuthority: "11111111111111111111111111111111",
       vaultAuthority: "11111111111111111111111111111111",
       manager: "11111111111111111111111111111111",
-      assets: [],
+      // A real, fully-resolved, supported (devUSDC) asset -- selectFeaturedReserves
+      // now also requires assetsResolvedFully and a tradable composition (see
+      // this pass's Featured-Reserves exclusion fix), not just "has onChain".
+      assets: [{ mint: DEVUSDC.mint, symbol: "devUSDC", decimals: DEVUSDC.decimals, weightBps: 10_000, reserveAsset: "ra", vault: "v", vaultBalanceRaw: "0" }],
       status: "active",
       totalTargetWeightBps: 10_000,
       reserveTokenSupplyRaw: "0",
       vaultBalancesRaw: {},
+      assetsResolvedFully: true,
     },
   });
 }
