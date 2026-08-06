@@ -33,12 +33,14 @@ if (!process.env.DATABASE_URL) {
 
 const sql = neon(process.env.DATABASE_URL)
 
-// Exact control-ID inventory, mirrored from the `controls` array in
-// public/road-to-mainnet.html (category prefix -> count). Keep in sync if
-// that array's set of controls ever changes.
+// Exact control-ID inventory, mirrored from the `controls` array (archived
+// 107-item DevNet record) and `speedrunItems` array (15-item closed-Mainnet
+// speedrun checklist) in public/road-to-mainnet.html (category prefix ->
+// count). Keep in sync if either array's set of items ever changes.
 const CONTROL_GROUPS = [
   ['CP', 18], ['AC', 10], ['PM', 10], ['LC', 9], ['JR', 10],
   ['SM', 5], ['UX', 10], ['IX', 7], ['SE', 10], ['DP', 10], ['QA', 8],
+  ['MS', 15],
 ]
 const CONTROL_IDS = CONTROL_GROUPS.flatMap(([prefix, count]) =>
   Array.from({ length: count }, (_, i) => `${prefix}-${String(i + 1).padStart(2, '0')}`),

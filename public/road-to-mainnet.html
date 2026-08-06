@@ -14,6 +14,7 @@
     .hero{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(300px,.6fr);gap:24px;align-items:end;padding:36px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,rgba(21,28,38,.96),rgba(12,17,24,.96));box-shadow:var(--shadow)}.eyebrow{color:var(--cyan);font-weight:750;text-transform:uppercase;letter-spacing:.14em;font-size:11px}.hero h1{margin:10px 0 12px;font-size:clamp(38px,6vw,76px);line-height:.95;letter-spacing:-.055em}.hero p{max-width:760px;color:#b7c2cf;font-size:16px}.hero-meta{display:grid;gap:10px}.meta-row{display:flex;justify-content:space-between;gap:14px;padding-bottom:8px;border-bottom:1px solid var(--line)}.meta-row span:first-child{color:var(--muted)}.editable{background:transparent;border:0;border-bottom:1px dashed #506074;color:var(--text);min-width:80px;text-align:right}.editable:focus{outline:0;border-color:var(--cyan)}
     section{scroll-margin-top:26px;margin-top:48px}.section-head{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:18px}.section-head h2{margin:0;font-size:26px;letter-spacing:-.025em}.section-head p{margin:4px 0 0;color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--panel);padding:6px 9px;border-radius:999px;color:var(--muted);font-size:12px;white-space:nowrap}.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
     .notice{padding:16px 18px;border:1px solid rgba(244,201,93,.35);border-left:3px solid var(--yellow);border-radius:11px;background:rgba(244,201,93,.06);color:#e8d9a9}.notice strong{color:var(--yellow)}
+    .notice.info{border-color:rgba(112,167,255,.35);border-left-color:var(--blue);background:rgba(112,167,255,.06);color:#c7d7f5}.notice.info strong{color:var(--blue)}
     .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}.card .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.09em}.card .value{margin-top:4px;font-size:29px;font-weight:800}.progress{height:7px;margin-top:14px;border-radius:99px;background:#222b37;overflow:hidden}.progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--blue));transition:width .25s}
     .scope-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.scope-card{padding:20px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}.scope-card h3{margin:0 0 8px}.scope-card p{margin:0;color:var(--muted)}.scope-card.core{border-top:3px solid var(--cyan)}.scope-card.route{border-top:3px solid var(--blue)}.scope-card.market{border-top:3px solid var(--purple)}
     .toolbar{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:9px;padding:12px;margin-bottom:12px;border:1px solid var(--line);border-radius:12px;background:rgba(10,14,20,.93);backdrop-filter:blur(12px)}.control{min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}input.control{min-width:210px;flex:1}.btn{min-height:38px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}.btn:hover{border-color:#4b5b70}.btn.primary{border-color:rgba(78,225,193,.45);background:rgba(78,225,193,.12);color:var(--cyan)}
@@ -29,10 +30,47 @@
     .conflict-box{grid-column:1/-1;padding:12px;border:1px solid rgba(255,107,120,.4);border-radius:10px;background:rgba(255,107,120,.08);font-size:12px;color:#f3c9cd}.conflict-box b{color:var(--red)}.conflict-box .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
     .history-box{grid-column:1/-1;margin-top:4px;border-top:1px dashed var(--line);padding-top:10px}.history-entry{padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;color:#c6d0db}.history-entry:last-child{border-bottom:0}.history-meta{color:var(--muted);font-size:11px;margin-bottom:3px}
     .readonly-flag{opacity:.55;pointer-events:none}
-    @media print{.sync-banner,.editor-tag,.sync-tag,.conflict-box,.history-box{display:none!important}}
+
+    /* Speedrun checklist -- big checkboxes */
+    .sr-groups{display:grid;gap:22px}.sr-group{display:grid;gap:10px}.sr-group-title{font-size:13px;font-weight:750;color:var(--muted);text-transform:uppercase;letter-spacing:.09em;padding-left:2px}
+    .sr-item{display:flex;gap:16px;align-items:flex-start;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+    .sr-item.checked{border-color:rgba(101,217,139,.4);background:linear-gradient(145deg,rgba(101,217,139,.06),var(--panel))}
+    .sr-check{flex:none;width:32px;height:32px;border-radius:9px;border:2px solid var(--line);background:#0b1016;display:flex;align-items:center;justify-content:center;color:transparent;font-size:19px;font-weight:900;transition:.15s}
+    .sr-check:hover{border-color:var(--cyan)}
+    .sr-item.checked .sr-check{background:var(--green);border-color:var(--green);color:#062012}
+    .sr-body{flex:1;min-width:0}.sr-title{font-weight:700;font-size:15.5px}.sr-item.checked .sr-title{color:var(--green)}.sr-desc{margin-top:4px;color:#b7c2cf;font-size:13px;line-height:1.5}
+    .sr-foot{margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sr-foot button{font-size:11px}.sr-note{width:100%;margin-top:8px;border:1px solid var(--line);border-radius:8px;background:#0b1016;color:var(--text);padding:8px;min-height:56px;resize:vertical}
+
+    /* Architecture flow diagram */
+    .flow{display:grid;gap:10px;justify-items:center}
+    .flow-row{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;width:100%}
+    .flow-col{display:grid;gap:8px;justify-items:center;flex:1;min-width:220px;max-width:340px}
+    .flow-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em;font-weight:700}
+    .flow-box{width:100%;padding:13px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);text-align:center;font-weight:700}
+    .flow-box small{display:block;margin-top:3px;color:var(--muted);font-weight:500;font-size:11.5px}
+    .flow-box.user{border-color:rgba(185,150,255,.4);color:var(--purple)}
+    .flow-box.chain{border-color:rgba(78,225,193,.4);color:var(--cyan)}
+    .flow-box.warn{border-color:rgba(244,201,93,.4);color:var(--yellow)}
+    .flow-box.future{border-style:dashed;border-color:rgba(112,167,255,.5);color:var(--blue);background:rgba(112,167,255,.05)}
+    .flow-arrow{color:var(--muted);font-size:13px}
+    .flow-aside{margin-top:26px;padding-top:22px;border-top:1px dashed var(--line);display:grid;gap:8px;justify-items:center;max-width:340px;margin-left:auto;margin-right:auto}
+
+    /* Integration / architecture cards */
+    .int-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+    .int-card{padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);display:flex;flex-direction:column;gap:8px}
+    .int-card h4{margin:0;font-size:15.5px}
+    .int-card .int-status{align-self:flex-start}
+    .int-card p{margin:0;color:#b7c2cf;font-size:13px;line-height:1.55}
+    .int-card .alt-title{margin-top:4px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+    .int-card ul.alts{margin:4px 0 0;padding-left:18px;color:#c6d0db;font-size:12.5px;line-height:1.6}
+    .int-card.needed{border-top:3px solid var(--blue)}
+    .int-card.live{border-top:3px solid var(--cyan)}
+    .int-card.risk{border-top:3px solid var(--yellow)}
+
+    @media print{.sync-banner,.editor-tag,.sync-tag,.conflict-box,.history-box,.sr-foot button,#archive summary{display:none!important}details{display:block!important}details>*{display:block!important}}
     @media(max-width:1050px){.shell{grid-template-columns:1fr}.sidebar{display:none}.hero{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}.scope-grid{grid-template-columns:1fr}.gate{grid-template-columns:1fr}.item-main{grid-template-columns:64px 1fr 160px 30px}}
     @media(max-width:680px){.main{padding:18px 12px 50px}.hero{padding:24px}.cards{grid-template-columns:1fr 1fr}.item-main{grid-template-columns:54px 1fr 30px}.item-main .status{grid-column:1/-1}.item-details{grid-template-columns:1fr}.field.full{grid-column:auto}.footer{display:block}.toolbar{position:static}}
-    @media print{body{background:#fff;color:#111}.shell{display:block}.sidebar,.toolbar,.chev,.copy,.btn{display:none!important}.main{padding:0}.hero,.card,.scope-card,.item,.gate,.table-wrap{box-shadow:none;background:#fff;border-color:#bbb}.hero p,.section-head p,.scope-card p,.item-criterion,.gate p,.footer{color:#444}.item-details{display:grid!important}.editable,.field input,.field textarea,.status{color:#111;background:#fff;border-color:#bbb}.prompt-box{display:none}section{break-inside:avoid}.item{break-inside:avoid}}
+    @media print{body{background:#fff;color:#111}.shell{display:block}.sidebar,.toolbar,.chev,.copy,.btn{display:none!important}.main{padding:0}.hero,.card,.scope-card,.item,.gate,.table-wrap,.sr-item,.int-card,.flow-box{box-shadow:none;background:#fff;border-color:#bbb}.hero p,.section-head p,.scope-card p,.item-criterion,.gate p,.footer,.sr-desc,.int-card p{color:#444}.item-details{display:grid!important}.editable,.field input,.field textarea,.status{color:#111;background:#fff;border-color:#bbb}.prompt-box{display:none}section{break-inside:avoid}.item{break-inside:avoid}}
   </style>
 </head>
 <body>
@@ -40,32 +78,129 @@
   <aside class="sidebar">
     <div class="brand">SSR.FUN<small>Protocol readiness</small></div>
     <nav class="nav">
-      <a href="#overview">Overview</a><a href="#scope">Architecture scope</a><a href="#checklist">DevNet checklist</a><a href="#gaps">Gap analysis</a><a href="#workstreams">Workstreams</a><a href="#risks">Risk register</a><a href="#gates">Approval gates</a><a href="#claude">Claude prompt</a>
+      <a href="#overview">Overview</a><a href="#speedrun">Speedrun checklist</a><a href="#architecture">Architecture</a><a href="#integrations">Integrations</a><a href="#archive">Full DevNet archive</a>
     </nav>
     <div class="side-note">Formal sign-off rule: a claim is not Passed until its evidence can be independently reproduced.</div>
   </aside>
   <main class="main"><div class="wrap">
     <header class="hero" id="overview">
-      <div><div class="eyebrow">DevNet acceptance → Mainnet readiness</div><h1>Road to<br>Mainnet</h1><p>A living acceptance record for SSR.FUN. It separates code existence, automated tests, live DevNet verification and production readiness so approval decisions remain evidence-based.</p></div>
+      <div><div class="eyebrow">Closed-Mainnet speedrun</div><h1>Road to<br>Mainnet</h1><p>SSR.FUN is deliberately skipping most of the exhaustive DevNet checklist and fast-tracking to a small, capped, closed Mainnet — because some things (real Jupiter routing, real liquidity, real wallet behavior) can never be proven on DevNet no matter how much longer we wait there. This page now leads with the short list that actually gates that move. The full 107-control DevNet acceptance record is preserved below, collapsed by default — nothing was deleted.</p></div>
       <div class="hero-meta">
         <div class="meta-row"><span>Document owner</span><input class="editable persist-meta" data-key="owner" value="Unassigned"></div>
         <div class="meta-row"><span>Release candidate</span><input class="editable persist-meta" data-key="release" value="TBD"></div>
-        <div class="meta-row"><span>Target network</span><strong>Solana Mainnet-Beta</strong></div>
+        <div class="meta-row"><span>Target network</span><strong>Solana Mainnet-Beta (closed/capped)</strong></div>
         <div class="meta-row"><span>Last updated</span><strong id="updated"></strong></div>
         <div class="meta-row"><span>Decision state</span><strong style="color:var(--yellow)">Not approved</strong></div>
       </div>
     </header>
 
-    <section><div class="notice"><strong>Evidence standard.</strong> Compiling code, a green build, source inspection, mocked tests or local simulations do not prove live functionality. They may support a status of Partial. Passed requires the acceptance criterion to be executed against the named deployment, with reproducible evidence and expected state changes.</div></section>
+    <section>
+      <div class="toolbar" style="position:static">
+        <div id="syncBanner" class="sync-banner state-loading"><span class="sdot"></span><span id="syncBannerText">Connecting…</span><button class="btn hidden" id="syncRetry">Retry</button></div>
+        <div class="editor-tag">Editing as <b id="editorNameLabel">…</b><button id="changeEditorName" type="button">change</button></div>
+        <button class="btn" id="logoutBtn">Log out</button>
+      </div>
+    </section>
+
+    <section id="speedrun">
+      <div class="section-head"><div><h2>Closed-Mainnet speedrun checklist</h2><p>15 items. Each is either a real security/correctness gate that doesn't go away by moving faster, or a genuinely new integration Mainnet requires. Nothing else on this page blocks the closed launch.</p></div><span class="badge"><span class="dot" style="background:var(--green)"></span><span id="srCount">0</span>/<span id="srTotal">0</span> checked</span></div>
+      <div class="progress" style="margin-bottom:18px"><span id="srBar"></span></div>
+      <div id="speedrunContainer" class="sr-groups"></div>
+    </section>
+
+    <section id="architecture">
+      <div class="section-head"><div><h2>Architecture — what's actually live today</h2><p>Every piece currently running, and how a request flows through them.</p></div></div>
+      <div class="notice info" style="margin-bottom:18px"><strong>Read this first.</strong> Reading data and writing data take genuinely different paths. Reads go through Helius to the deployed program. Writes (Buy/Sell/Create) currently go through a DevNet-only server-held key that stands in for real liquidity — that's the exact thing MS-01 and MS-05 below replace.</div>
+      <div class="flow">
+        <div class="flow-row"><div class="flow-box user" style="max-width:280px">Your wallet<small>Phantom, Solflare, etc.</small></div></div>
+        <div class="flow-arrow">↓ connect / sign</div>
+        <div class="flow-row"><div class="flow-box" style="max-width:340px">SSR.fun frontend<small>Vite + React 19, hosted on Vercel</small></div></div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-row two-col">
+          <div class="flow-col">
+            <div class="flow-label">Reading data</div>
+            <div class="flow-box">Helius RPC<small>dedicated provider, DevNet tier only</small></div>
+            <div class="flow-arrow">↓</div>
+            <div class="flow-box chain">Solana DevNet<small>ssr_protocol program, 23 instructions</small></div>
+          </div>
+          <div class="flow-col">
+            <div class="flow-label">Buy / Sell / Create</div>
+            <div class="flow-box">Vercel serverless functions<small>api/devnet/*.ts</small></div>
+            <div class="flow-arrow">↓</div>
+            <div class="flow-box warn">DevNet swap authority<small>server-held key — stands in for real liquidity today</small></div>
+            <div class="flow-arrow">↓</div>
+            <div class="flow-box chain">Solana DevNet<small>ssr_protocol program</small></div>
+          </div>
+        </div>
+      </div>
+      <div class="flow-aside">
+        <div class="flow-label">This checklist page only</div>
+        <div class="flow-box">road-to-mainnet.html<small>this page's own sync layer</small></div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-box">Neon Postgres<small>separate database — not used by the protocol/app itself</small></div>
+      </div>
+
+      <div class="section-head" style="margin-top:34px"><div><h3 style="margin:0;font-size:19px">Every component</h3></div></div>
+      <div class="int-grid">
+        <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>Live — strategic-super-reserve.fun</span><h4>SSR.fun frontend</h4><p>Vite + React 19. Discover, Create Reserve, Portfolio, Manage, Reserve-detail pages, plus this checklist.</p></div>
+        <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>Live on Solana DevNet</span><h4>ssr_protocol</h4><p>The core Anchor program. Reserve creation, mint/redeem, delegates, pause, lifecycle. 23 instructions.</p></div>
+        <div class="int-card risk"><span class="badge int-status"><span class="dot" style="background:var(--yellow)"></span>Written, never built or deployed</span><h4>ssr_devnet_amm</h4><p>A second, DevNet-only constant-product AMM meant to replace the fabricated swap legs below. Program ID reserved in Anchor.toml; no pools, no liquidity, nothing on-chain yet.</p></div>
+        <div class="int-card risk"><span class="badge int-status"><span class="dot" style="background:var(--yellow)"></span>DevNet-only, zero real value</span><h4>DevNet swap authority</h4><p>A server-held keypair that mints non-devUSDC legs on Buy and mints devUSDC on Sell — a stand-in for real liquidity, not real liquidity. This is what MS-01/MS-05 replace.</p></div>
+        <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>In use</span><h4>Vercel</h4><p>Hosting, serverless functions (api/*), Routing Middleware (the auth gate in front of this page), and environment/secret storage.</p></div>
+        <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>DevNet tier</span><h4>Helius</h4><p>Dedicated Solana RPC provider. Server calls it directly; the browser goes through a same-origin proxy function so the API key is never exposed client-side.</p></div>
+        <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>New, this page only</span><h4>Neon Postgres</h4><p>Backs this Road to Mainnet checklist's shared/collaborative state. Not read or written by the protocol or the main app at all.</p></div>
+        <div class="int-card risk"><span class="badge int-status"><span class="dot" style="background:var(--yellow)"></span>Never driven by a real human</span><h4>Wallet Adapter</h4><p>solana/wallet-adapter-react. Every on-chain action so far has been verified by scripts using a throwaway keypair, never a real browser + Phantom click-through (MS-04).</p></div>
+      </div>
+    </section>
+
+    <section id="integrations">
+      <div class="section-head"><div><h2>Integrations — what's needed for Mainnet</h2><p>Four things stand between the current DevNet setup and a real closed Mainnet. Alternatives are the 2-3 biggest players in each category as of mid-2026 — worth a quick compare before committing.</p></div></div>
+      <div class="int-grid">
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Not integrated at all</span>
+          <h4>Swap routing — Jupiter</h4>
+          <p>Replaces the DevNet swap authority above with real execution and real liquidity. Note: Jupiter itself has zero DevNet awareness (confirmed by a real API test in this repo's history) — this can only be proven on Mainnet, which is exactly why it's on the speedrun list.</p>
+          <div class="alt-title">Jupiter is the default (~90% of Solana DEX-aggregation volume, reportedly). Alternatives:</div>
+          <ul class="alts"><li><b>OKX DEX</b> — multi-chain aggregator incl. Solana, reported ~$300–450M/day Solana volume, CEX+DEX hybrid quotes.</li><li><b>dFlow</b> — auction-based routing, MEV protection by design (fills come from competing market makers, not a public mempool).</li></ul>
+        </div>
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Not integrated at all</span>
+          <h4>Price oracle — Pyth</h4>
+          <p>Every USD-denominated number on screen (NAV, AUM, price) is a hardcoded test constant today. Core mint/redeem math itself doesn't need a price feed — this is specifically a "the numbers on screen are fake" gap, not a correctness gap.</p>
+          <div class="alt-title">Pyth is the natural default (Solana-native, sub-second feeds). Alternatives:</div>
+          <ul class="alts"><li><b>Chainlink</b> — overall oracle market leader (reportedly ~70% share across chains), has Solana feeds, most widely trusted by integrators.</li><li><b>Switchboard</b> — Solana-native alternative, long track record on this exact chain, permissionless feed creation.</li></ul>
+        </div>
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Single dev key today</span>
+          <h4>Upgrade authority — Multisig</h4>
+          <p>The program's upgrade authority (and the reused swap/mint-authority key) is one person's keypair. Before real funds are at risk, this moves to a multisig.</p>
+          <div class="alt-title">Recommendation:</div>
+          <ul class="alts"><li><b>Squads</b> — the dominant Solana-native multisig/treasury product; this is the default choice, not really a 3-way market decision the way Jupiter/Pyth are.</li></ul>
+        </div>
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>DevNet tier only</span>
+          <h4>Production RPC — Helius Mainnet</h4>
+          <p>Same provider already trusted for DevNet, just the paid Mainnet-tier plan instead of the DevNet key currently configured.</p>
+          <div class="alt-title">If comparing:</div>
+          <ul class="alts"><li><b>Triton One</b> — established, performance-focused Solana RPC infrastructure.</li><li><b>QuickNode</b> — large multi-chain RPC provider with a mature Solana offering.</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <details id="archive">
+    <summary style="cursor:pointer;font-size:20px;font-weight:750;margin-top:56px;padding:14px 0;border-top:1px solid var(--line)">Full DevNet acceptance archive — 107 controls, gap analysis, gates, prompt (click to expand)</summary>
+    <div class="notice" style="margin:18px 0"><strong>Archived, not deleted.</strong> Everything below is the original evidence-first DevNet acceptance record. It stays fully editable and synced — the speedrun above just isn't gated on it anymore.</div>
 
     <section id="scope">
-      <div class="section-head"><div><h2>Architecture scope</h2><p>Three surfaces are evaluated independently to prevent optional integrations from obscuring protocol readiness.</p></div></div>
+      <div class="section-head"><div><h2>Architecture scope (original 3-surface framing)</h2><p>Three surfaces evaluated independently to prevent optional integrations from obscuring protocol readiness.</p></div></div>
       <div class="scope-grid">
         <article class="scope-card core"><h3>1. Core protocol</h3><p>Reserve creation, Reserve deposits and redemptions, Reserve Token accounting, governance, permissions, fees, lifecycle controls and program security.</p></article>
         <article class="scope-card route"><h3>2. Jupiter routing</h3><p>Optional execution path for acquiring or disposing of Reserves. Quote integrity, slippage, transaction construction, failure recovery and degraded-mode behavior.</p></article>
         <article class="scope-card market"><h3>3. Secondary market</h3><p>Optional liquidity for Reserve Tokens. Pool creation and market trading are not prerequisites for proportional protocol minting and redemption unless formally made so.</p></article>
       </div>
     </section>
+
+    <section><div class="notice"><strong>Evidence standard.</strong> Compiling code, a green build, source inspection, mocked tests or local simulations do not prove live functionality. They may support a status of Partial. Passed requires the acceptance criterion to be executed against the named deployment, with reproducible evidence and expected state changes.</div></section>
 
     <section>
       <div class="section-head"><div><h2>Readiness summary</h2><p>Calculated from the acceptance checklist. Not applicable items are excluded.</p></div><span class="badge"><span class="dot" style="background:var(--cyan)"></span><span id="totalCount">0</span> controls</span></div>
@@ -79,11 +214,6 @@
 
     <section id="checklist">
       <div class="section-head"><div><h2>DevNet acceptance checklist</h2><p>Expand any control to record signatures, addresses, test results, evidence links and notes.</p></div></div>
-      <div class="toolbar" style="position:static">
-        <div id="syncBanner" class="sync-banner state-loading"><span class="sdot"></span><span id="syncBannerText">Connecting…</span><button class="btn hidden" id="syncRetry">Retry</button></div>
-        <div class="editor-tag">Editing as <b id="editorNameLabel">…</b><button id="changeEditorName" type="button">change</button></div>
-        <button class="btn" id="logoutBtn">Log out</button>
-      </div>
       <div class="toolbar">
         <input id="search" class="control" placeholder="Search controls…">
         <select id="categoryFilter" class="control"><option value="">All categories</option></select>
@@ -96,7 +226,7 @@
     </section>
 
     <section id="gaps">
-      <div class="section-head"><div><h2>Mainnet gap analysis</h2><p>Target architecture compared with the verified state. Editable cells persist in this browser.</p></div><span class="badge">Baseline: requires repository verification</span></div>
+      <div class="section-head"><div><h2>Mainnet gap analysis</h2><p>Target architecture compared with the verified state. Editable cells persist and sync.</p></div><span class="badge">Baseline: repository-verified 2026-08-06</span></div>
       <div class="table-wrap"><table id="gapTable"><thead><tr><th>Area</th><th>Mainnet requirement</th><th>Verified DevNet state</th><th>Gap / required action</th><th>Priority</th><th>Dependency</th></tr></thead><tbody></tbody></table></div>
     </section>
 
@@ -134,12 +264,35 @@
       <div class="section-head"><div><h2>Repository inspection prompt for Claude</h2><p>Use from the SSR.FUN repository root. This is a complete standalone prompt.</p></div></div>
       <div class="prompt-box"><button class="btn copy" id="copyPrompt">Copy prompt</button><textarea id="claudePrompt" spellcheck="false"></textarea></div>
     </section>
+    </details>
 
-    <footer class="footer"><span>SSR.FUN · Road to Mainnet</span><span>Evidence-first DevNet acceptance and Mainnet governance</span></footer>
+    <footer class="footer"><span>SSR.FUN · Road to Mainnet</span><span>Speedrunning a closed Mainnet, evidence-first where it still matters</span></footer>
   </div></main>
 </div>
 <script>
 const STATUSES=['Passed','Failed','Partial','Blocked','Not tested','Not applicable'];
+
+// The 15-item speedrun checklist. Same underlying entity type ('control')
+// and persistence/versioning/sync as the archived 107 -- IDs are just in a
+// disjoint MS-* namespace so nothing collides.
+const speedrunItems=[
+['MS-01','Fix now (network-independent)','Real liquidity for every Buy/Sell','Replace the server-minted fake legs for non-devUSDC Reserves with real liquidity (via the new AMM or Jupiter). Only 100%-devUSDC Reserves are genuinely backed today.'],
+['MS-02','Fix now (network-independent)','Multisig on the upgrade authority','Migrate the program’s upgrade authority (and the reused swap/mint-authority key) off a single dev-controlled keypair onto a multisig, e.g. Squads.'],
+['MS-03','Fix now (network-independent)','Independent security review','Get the core program looked at by someone who didn’t write it. A scoped review is fine for a capped closed Mainnet — it just has to happen.'],
+['MS-04','Fix now (network-independent)','One real browser + wallet click-through','Actually connect a real wallet and click Buy / Sell / Create / Redeem once, end to end. Never done — everything so far is script-verified with a throwaway keypair.'],
+['MS-05','New integrations','Jupiter (or chosen alternative) wired in','Real swap routing replacing the DevNet fixed-price swap authority. Cannot be proven on DevNet at all — Jupiter has zero DevNet awareness.'],
+['MS-06','New integrations','Pyth (or chosen alternative) wired in','Real USD price feed for NAV/AUM/price display. Current numbers are hardcoded test constants; core mint/redeem math itself doesn’t depend on this.'],
+['MS-07','New integrations','Production RPC confirmed','Upgrade Helius (or provider of choice) to a Mainnet-tier plan — the current key is DevNet-only.'],
+['MS-08','Mainnet deployment & assets','Program deployed to Mainnet-Beta','New program ID, signed deployment manifest, confirmed on-chain — separate from the DevNet program and its DevNet-only upgrade keypair.'],
+['MS-09','Mainnet deployment & assets','Real-asset allowlist decided','Which actual SPL tokens can back a Reserve on Mainnet. No more mockX/Y/Z fixtures — those don’t exist as real assets Pyth or Jupiter can even price/route.'],
+['MS-10','Closed-phase guardrails','Deposit/exposure caps set','A hard per-user and/or protocol-wide TVL ceiling for the closed phase, so a mistake is bounded in dollar terms, not just in user count.'],
+['MS-11','Closed-phase guardrails','Access gating built','Decide and build how the first real users get in — whitelist, invite code, or similar. Not open to the public at this stage.'],
+['MS-12','Closed-phase guardrails','Pause tested for real','Rehearse the emergency pause/unpause live on Mainnet with the actual multisig, before anyone outside the team can deposit.'],
+['MS-13','Ops','Minimal monitoring live','Balance, invariant, authority-change and pause-state alerts wired up before real funds are at risk.'],
+['MS-14','Ops','Incident runbook written','One page: who does what, in what order, if something goes wrong during the closed phase.'],
+['MS-15','Sign-off','Named human approval recorded','Someone’s name, and the date, on the decision to open the closed phase to its first real user.'],
+];
+
 const controls=[
 ['CP-01','Core protocol','Program deployment identity','Record program IDs, executable status, deployment slot and source/commit mapping.'],
 ['CP-02','Core protocol','Clean deployment reproducibility','A clean DevNet deployment from documented commands produces the expected program IDs and configuration.'],
@@ -317,6 +470,7 @@ async function apiFetch(path,opts={}){
 function markAuthExpired(){
   authExpired=true;
   document.getElementById('checklistContainer').classList.add('readonly-flag');
+  document.getElementById('speedrunContainer')?.classList.add('readonly-flag');
   document.getElementById('gapTable')?.classList.add('readonly-flag');
   document.getElementById('gatesContainer')?.classList.add('readonly-flag');
   setBanner('auth','Your session expired — reload the page to sign in again.');
@@ -338,9 +492,11 @@ async function loadServerState(isRetry){
     save();
     authExpired=false;
     document.getElementById('checklistContainer').classList.remove('readonly-flag');
+    document.getElementById('speedrunContainer')?.classList.remove('readonly-flag');
     document.getElementById('gapTable')?.classList.remove('readonly-flag');
     document.getElementById('gatesContainer')?.classList.remove('readonly-flag');
     setBanner('synced','Synced • '+fmtTime(body.serverTime));
+    renderSpeedrun();
     render();
     renderGaps();
     renderGates();
@@ -388,12 +544,12 @@ function showConflict(itemId,current){
   if(!el)return;
   el.classList.add('open');
   let box=el.querySelector('.conflict-box');
-  if(!box){box=document.createElement('div');box.className='conflict-box';el.querySelector('.item-details').appendChild(box)}
-  box.innerHTML=`<b>Edit conflict.</b> ${esc(current.updatedBy||'Someone else')} saved a change to this control at ${esc(fmtTime(current.updatedAt))}, after you loaded it. Your latest edit was not saved.<div class="row"><button class="btn" data-act="reload">Use their version</button><button class="btn primary" data-act="overwrite">Overwrite with mine</button></div>`;
+  if(!box){box=document.createElement('div');box.className='conflict-box';(el.querySelector('.item-details')||el.querySelector('.sr-body')).appendChild(box)}
+  box.innerHTML=`<b>Edit conflict.</b> ${esc(current.updatedBy||'Someone else')} saved a change to this item at ${esc(fmtTime(current.updatedAt))}, after you loaded it. Your latest edit was not saved.<div class="row"><button class="btn" data-act="reload">Use their version</button><button class="btn primary" data-act="overwrite">Overwrite with mine</button></div>`;
   box.querySelector('[data-act="reload"]').onclick=()=>{
     state[itemId]={status:current.values.status,evidence:current.values.evidence,environment:current.values.environment,tester:current.values.tester,notes:current.values.notes};
     versions.controls[itemId]={version:current.version,updatedAt:current.updatedAt,updatedBy:current.updatedBy};
-    delete conflicts[itemId];save();render();
+    delete conflicts[itemId];save();render();renderSpeedrun();
   };
   box.querySelector('[data-act="overwrite"]').onclick=async()=>{
     const ok=await pushEntity('control',itemId,state[itemId],itemId);
@@ -417,11 +573,47 @@ async function loadHistory(id,container){
       row.innerHTML=`<div class="history-meta">${esc(e.changedBy||'Unknown')} • ${esc(fmtTime(e.changedAt))} • status: ${esc(e.afterValue.status||'')}</div><div>${esc((e.afterValue.notes||e.afterValue.evidence||'').slice(0,240))}</div><button class="btn" data-restore>Restore this version</button>`;
       row.querySelector('[data-restore]').onclick=()=>{
         state[id]={status:e.afterValue.status,evidence:e.afterValue.evidence,environment:e.afterValue.environment,tester:e.afterValue.tester,notes:e.afterValue.notes};
-        save();render();
+        save();render();renderSpeedrun();
       };
       container.appendChild(row);
     });
   }catch{container.innerHTML='<div class="history-meta">Could not load history (offline?).</div>'}
+}
+
+// --- Speedrun checklist (big checkboxes) ---
+function speedrunSummary(){
+  const vals=speedrunItems.map(x=>(state[x[0]]||{}).status||'Not tested');
+  const checked=vals.filter(v=>v==='Passed').length;
+  document.getElementById('srCount').textContent=checked;
+  document.getElementById('srTotal').textContent=speedrunItems.length;
+  document.getElementById('srBar').style.width=(checked/speedrunItems.length*100)+'%';
+}
+function renderSpeedrun(){
+  const c=document.getElementById('speedrunContainer'); if(!c)return; c.innerHTML='';
+  const grouped={}; speedrunItems.forEach(x=>{(grouped[x[1]]??=[]).push(x)});
+  Object.entries(grouped).forEach(([group,items])=>{
+    const g=document.createElement('div'); g.className='sr-group';
+    g.innerHTML=`<div class="sr-group-title">${esc(group)}</div>`;
+    items.forEach(x=>{
+      const [id,,title,desc]=x;
+      const d=state[id]||{}; const checked=d.status==='Passed'; const v=versions.controls[id];
+      const el=document.createElement('article'); el.className='item sr-item'+(checked?' checked':''); el.dataset.id=id;
+      el.innerHTML=`<button class="sr-check" aria-label="Toggle ${esc(id)}">✓</button><div class="sr-body"><div class="sr-title">${esc(id)} — ${esc(title)}</div><div class="sr-desc">${esc(desc)}</div><div class="sr-foot"><span class="sync-tag" data-sync-tag>${v?('Last saved '+fmtTime(v.updatedAt)+(v.updatedBy?' by '+esc(v.updatedBy):'')):'Not yet synced'}</span><button class="btn" data-note-toggle>${d.notes?'Edit note':'+ add note'}</button></div><textarea class="sr-note hidden" data-note placeholder="Optional note — who checked this, evidence link, blocker…">${esc(d.notes||'')}</textarea></div>`;
+      el.querySelector('.sr-check').onclick=()=>{
+        state[id]??={};
+        state[id].status=checked?'Not tested':'Passed';
+        state[id].evidence=state[id].evidence||''; state[id].environment=state[id].environment||''; state[id].tester=state[id].tester||''; state[id].notes=state[id].notes||'';
+        save(); renderSpeedrun(); syncControl(id);
+      };
+      const noteEl=el.querySelector('[data-note]');
+      el.querySelector('[data-note-toggle]').onclick=()=>{noteEl.classList.toggle('hidden'); if(!noteEl.classList.contains('hidden'))noteEl.focus()};
+      noteEl.onblur=()=>{state[id]??={};state[id].notes=noteEl.value;save();syncControl(id)};
+      if(conflicts[id])showConflict(id,conflicts[id]);
+      g.appendChild(el);
+    });
+    c.appendChild(g);
+  });
+  speedrunSummary();
 }
 
 function render(){
@@ -464,6 +656,7 @@ function setup(){
   ['search','categoryFilter','statusFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',render));
   document.getElementById('expandAll').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.classList.add('open'));document.getElementById('collapseAll').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.classList.remove('open'));
   document.querySelectorAll('.persist-meta').forEach(x=>{x.value=state.meta?.[x.dataset.key]||x.value;x.onchange=()=>{state.meta??={};state.meta[x.dataset.key]=x.value;save();syncMeta(x.dataset.key)}});
+  renderSpeedrun();
   renderGaps();
   renderGates();
   document.getElementById('claudePrompt').value=prompt;document.getElementById('copyPrompt').onclick=async()=>{await navigator.clipboard.writeText(document.getElementById('claudePrompt').value);document.getElementById('copyPrompt').textContent='Copied';setTimeout(()=>document.getElementById('copyPrompt').textContent='Copy prompt',1300)};
@@ -475,7 +668,7 @@ function setup(){
     if(!confirm('Importing will push these values to the shared checklist for everyone with access. Continue?'))return;
     await loadServerState(true); // refresh versions immediately before writing, to minimize false conflicts
     let pushed=0,conflicted=0;
-    for(const id of controls.map(c=>c[0])){
+    for(const id of [...controls.map(c=>c[0]),...speedrunItems.map(c=>c[0])]){
       if(!incoming[id])continue;
       state[id]=incoming[id];
       const ok=await pushEntity('control',id,{status:incoming[id].status||'Not tested',evidence:incoming[id].evidence||'',environment:incoming[id].environment||'',tester:incoming[id].tester||'',notes:incoming[id].notes||''},id);
