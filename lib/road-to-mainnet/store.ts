@@ -139,10 +139,19 @@ export async function getFullState() {
   return { controls: controlsOut, gaps: gapsOut, gates: gatesOut, meta: metaOut, serverTime: new Date().toISOString() }
 }
 
-export type UpsertResult =
-  | { ok: true; version: number; updatedAt: string; updatedBy: string | null }
-  | { ok: false; kind: 'conflict'; current: EntityRow }
-  | { ok: false; kind: 'not_found' }
+// A flat shape with every field optional (rather than a discriminated union)
+// on purpose: Vercel's isolated per-function build-time typecheck does not
+// apply the same control-flow narrowing as this repo's normal bundler-mode
+// project config, so `if (result.ok) {...} else if (result.kind === ...)`
+// needs every property to already be valid on the un-narrowed type.
+export interface UpsertResult {
+  ok: boolean
+  kind?: 'conflict' | 'not_found'
+  version?: number
+  updatedAt?: string
+  updatedBy?: string | null
+  current?: EntityRow
+}
 
 export async function upsertEntity(
   entityType: EntityType,
