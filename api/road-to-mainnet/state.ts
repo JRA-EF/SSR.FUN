@@ -14,7 +14,7 @@
 
 import type { DashboardRequest, DashboardResponse } from '../../lib/dashboard/http.js'
 import { isAuthenticated, isSameOriginRequest, unauthorized } from '../../lib/road-to-mainnet/auth.js'
-import { getFullState, upsertEntity, validateEditor, validateEntityId, validateValues, type EntityType } from '../../lib/road-to-mainnet/store.js'
+import { getFullState, upsertEntity, validateEditor, validateEntityId, validateValues, type EntityType, type UpsertResult } from '../../lib/road-to-mainnet/store.js'
 
 const ENTITY_TYPES: EntityType[] = ['control', 'gap_row', 'gate', 'meta']
 
@@ -73,7 +73,7 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
     }
     const editor = validateEditor(body.editor)
 
-    const result = await upsertEntity(entityType, entityId, values, expectedVersion, editor)
+    const result: UpsertResult = await upsertEntity(entityType, entityId, values, expectedVersion, editor)
     if (result.ok) {
       res.status(200).json({ version: result.version, updatedAt: result.updatedAt, updatedBy: result.updatedBy })
       return
