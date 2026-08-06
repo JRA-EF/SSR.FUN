@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Road to Mainnet — SSR.FUN</title>
+  <style>
+    :root{--bg:#080b10;--panel:#10151d;--panel2:#151c26;--text:#edf2f7;--muted:#8e9bab;--line:#273140;--cyan:#4ee1c1;--blue:#70a7ff;--yellow:#f4c95d;--red:#ff6b78;--green:#65d98b;--purple:#b996ff;--radius:14px;--shadow:0 18px 50px rgba(0,0,0,.28)}
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;background:radial-gradient(circle at 85% -10%,rgba(78,225,193,.10),transparent 27%),var(--bg);color:var(--text);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    button,input,select,textarea{font:inherit} button{cursor:pointer} a{color:var(--cyan)}
+    .shell{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;padding:26px 20px;border-right:1px solid var(--line);background:rgba(8,11,16,.88);backdrop-filter:blur(14px);overflow:auto}.brand{font-size:18px;font-weight:800;letter-spacing:.02em}.brand small{display:block;margin-top:4px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.14em}.nav{display:grid;gap:5px;margin-top:28px}.nav a{padding:9px 11px;border-radius:9px;color:var(--muted);text-decoration:none}.nav a:hover{background:var(--panel);color:var(--text)}.side-note{margin-top:26px;padding:13px;border:1px solid var(--line);border-radius:11px;color:var(--muted);font-size:12px}.main{min-width:0;padding:38px clamp(20px,4vw,62px) 80px}.wrap{max-width:1440px;margin:auto}
+    .hero{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(300px,.6fr);gap:24px;align-items:end;padding:36px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,rgba(21,28,38,.96),rgba(12,17,24,.96));box-shadow:var(--shadow)}.eyebrow{color:var(--cyan);font-weight:750;text-transform:uppercase;letter-spacing:.14em;font-size:11px}.hero h1{margin:10px 0 12px;font-size:clamp(38px,6vw,76px);line-height:.95;letter-spacing:-.055em}.hero p{max-width:760px;color:#b7c2cf;font-size:16px}.hero-meta{display:grid;gap:10px}.meta-row{display:flex;justify-content:space-between;gap:14px;padding-bottom:8px;border-bottom:1px solid var(--line)}.meta-row span:first-child{color:var(--muted)}.editable{background:transparent;border:0;border-bottom:1px dashed #506074;color:var(--text);min-width:80px;text-align:right}.editable:focus{outline:0;border-color:var(--cyan)}
+    section{scroll-margin-top:26px;margin-top:48px}.section-head{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:18px}.section-head h2{margin:0;font-size:26px;letter-spacing:-.025em}.section-head p{margin:4px 0 0;color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--panel);padding:6px 9px;border-radius:999px;color:var(--muted);font-size:12px;white-space:nowrap}.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+    .notice{padding:16px 18px;border:1px solid rgba(244,201,93,.35);border-left:3px solid var(--yellow);border-radius:11px;background:rgba(244,201,93,.06);color:#e8d9a9}.notice strong{color:var(--yellow)}
+    .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}.card .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.09em}.card .value{margin-top:4px;font-size:29px;font-weight:800}.progress{height:7px;margin-top:14px;border-radius:99px;background:#222b37;overflow:hidden}.progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--blue));transition:width .25s}
+    .scope-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.scope-card{padding:20px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}.scope-card h3{margin:0 0 8px}.scope-card p{margin:0;color:var(--muted)}.scope-card.core{border-top:3px solid var(--cyan)}.scope-card.route{border-top:3px solid var(--blue)}.scope-card.market{border-top:3px solid var(--purple)}
+    .toolbar{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:9px;padding:12px;margin-bottom:12px;border:1px solid var(--line);border-radius:12px;background:rgba(10,14,20,.93);backdrop-filter:blur(12px)}.control{min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}input.control{min-width:210px;flex:1}.btn{min-height:38px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}.btn:hover{border-color:#4b5b70}.btn.primary{border-color:rgba(78,225,193,.45);background:rgba(78,225,193,.12);color:var(--cyan)}
+    .checklist{display:grid;gap:10px}.group-title{display:flex;align-items:center;justify-content:space-between;margin-top:18px;padding:10px 2px 4px;font-size:16px;font-weight:780}.item{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}.item-main{display:grid;grid-template-columns:74px minmax(280px,1.4fr) minmax(180px,.55fr) 34px;gap:12px;align-items:center;padding:14px}.item-id{color:var(--muted);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.item-title{font-weight:680}.item-criterion{margin-top:4px;color:var(--muted);font-size:12px}.status{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:#0e131a;color:var(--text);font-weight:650}.status[data-status="Passed"]{color:var(--green);border-color:rgba(101,217,139,.35)}.status[data-status="Failed"]{color:var(--red);border-color:rgba(255,107,120,.4)}.status[data-status="Partial"],.status[data-status="Blocked"]{color:var(--yellow);border-color:rgba(244,201,93,.4)}.chev{border:0;background:transparent;color:var(--muted);font-size:18px}.item-details{display:none;grid-template-columns:1fr 1fr;gap:12px;padding:0 14px 14px}.item.open .item-details{display:grid}.field{display:grid;gap:5px}.field.full{grid-column:1/-1}.field label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.09em}.field input,.field textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:#0b1016;color:var(--text);padding:9px}.field textarea{min-height:74px;resize:vertical}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:var(--radius)}table{width:100%;border-collapse:collapse;min-width:900px;background:var(--panel)}th,td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}th{position:sticky;top:0;background:#151c26;color:#aab6c4;font-size:11px;text-transform:uppercase;letter-spacing:.09em}td[contenteditable="true"]{outline:none}td[contenteditable="true"]:focus{background:#1a2330;box-shadow:inset 2px 0 var(--cyan)}.priority{font-weight:800}.p0{color:var(--red)}.p1{color:var(--yellow)}.p2{color:var(--blue)}
+    .gates{display:grid;gap:12px}.gate{display:grid;grid-template-columns:120px 1fr 180px;gap:18px;padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}.gate h3{margin:0}.gate p{margin:4px 0;color:var(--muted)}.gate ul{margin:8px 0 0;padding-left:18px;color:#c6d0db}.approval{display:grid;gap:6px}.approval input,.approval select{width:100%}
+    .prompt-box{position:relative}.prompt-box textarea{width:100%;min-height:540px;padding:20px;border:1px solid var(--line);border-radius:var(--radius);background:#090d12;color:#c9d4df;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}.copy{position:absolute;right:12px;top:12px}
+    .footer{margin-top:54px;padding-top:20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;color:var(--muted);font-size:12px}.hidden{display:none!important}
+    .sync-banner{display:flex;align-items:center;gap:9px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font-size:12px;color:var(--muted)}.sync-banner .sdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}.sync-banner.state-loading .sdot,.sync-banner.state-saving .sdot{background:var(--blue);animation:pulse 1s infinite}.sync-banner.state-synced .sdot{background:var(--green)}.sync-banner.state-offline .sdot,.sync-banner.state-error .sdot{background:var(--yellow)}.sync-banner.state-auth .sdot{background:var(--red)}.sync-banner button.btn{min-height:auto;padding:4px 9px;font-size:11px}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+    .editor-tag{display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font-size:12px;color:var(--muted)}.editor-tag b{color:var(--text);font-weight:650}.editor-tag button{border:0;background:transparent;color:var(--cyan);font-size:11px;text-decoration:underline}
+    .sync-tag{font-size:10px;color:var(--muted);text-align:right;white-space:nowrap}.sync-tag.saving{color:var(--blue)}.sync-tag.saved{color:var(--green)}.sync-tag.error,.sync-tag.conflict{color:var(--red)}
+    .conflict-box{grid-column:1/-1;padding:12px;border:1px solid rgba(255,107,120,.4);border-radius:10px;background:rgba(255,107,120,.08);font-size:12px;color:#f3c9cd}.conflict-box b{color:var(--red)}.conflict-box .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    .history-box{grid-column:1/-1;margin-top:4px;border-top:1px dashed var(--line);padding-top:10px}.history-entry{padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;color:#c6d0db}.history-entry:last-child{border-bottom:0}.history-meta{color:var(--muted);font-size:11px;margin-bottom:3px}
+    .readonly-flag{opacity:.55;pointer-events:none}
+    @media print{.sync-banner,.editor-tag,.sync-tag,.conflict-box,.history-box{display:none!important}}
+    @media(max-width:1050px){.shell{grid-template-columns:1fr}.sidebar{display:none}.hero{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}.scope-grid{grid-template-columns:1fr}.gate{grid-template-columns:1fr}.item-main{grid-template-columns:64px 1fr 160px 30px}}
+    @media(max-width:680px){.main{padding:18px 12px 50px}.hero{padding:24px}.cards{grid-template-columns:1fr 1fr}.item-main{grid-template-columns:54px 1fr 30px}.item-main .status{grid-column:1/-1}.item-details{grid-template-columns:1fr}.field.full{grid-column:auto}.footer{display:block}.toolbar{position:static}}
+    @media print{body{background:#fff;color:#111}.shell{display:block}.sidebar,.toolbar,.chev,.copy,.btn{display:none!important}.main{padding:0}.hero,.card,.scope-card,.item,.gate,.table-wrap{box-shadow:none;background:#fff;border-color:#bbb}.hero p,.section-head p,.scope-card p,.item-criterion,.gate p,.footer{color:#444}.item-details{display:grid!important}.editable,.field input,.field textarea,.status{color:#111;background:#fff;border-color:#bbb}.prompt-box{display:none}section{break-inside:avoid}.item{break-inside:avoid}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">SSR.FUN<small>Protocol readiness</small></div>
+    <nav class="nav">
+      <a href="#overview">Overview</a><a href="#scope">Architecture scope</a><a href="#checklist">DevNet checklist</a><a href="#gaps">Gap analysis</a><a href="#workstreams">Workstreams</a><a href="#risks">Risk register</a><a href="#gates">Approval gates</a><a href="#claude">Claude prompt</a>
+    </nav>
+    <div class="side-note">Formal sign-off rule: a claim is not Passed until its evidence can be independently reproduced.</div>
+  </aside>
+  <main class="main"><div class="wrap">
+    <header class="hero" id="overview">
+      <div><div class="eyebrow">DevNet acceptance → Mainnet readiness</div><h1>Road to<br>Mainnet</h1><p>A living acceptance record for SSR.FUN. It separates code existence, automated tests, live DevNet verification and production readiness so approval decisions remain evidence-based.</p></div>
+      <div class="hero-meta">
+        <div class="meta-row"><span>Document owner</span><input class="editable persist-meta" data-key="owner" value="Unassigned"></div>
+        <div class="meta-row"><span>Release candidate</span><input class="editable persist-meta" data-key="release" value="TBD"></div>
+        <div class="meta-row"><span>Target network</span><strong>Solana Mainnet-Beta</strong></div>
+        <div class="meta-row"><span>Last updated</span><strong id="updated"></strong></div>
+        <div class="meta-row"><span>Decision state</span><strong style="color:var(--yellow)">Not approved</strong></div>
+      </div>
+    </header>
+
+    <section><div class="notice"><strong>Evidence standard.</strong> Compiling code, a green build, source inspection, mocked tests or local simulations do not prove live functionality. They may support a status of Partial. Passed requires the acceptance criterion to be executed against the named deployment, with reproducible evidence and expected state changes.</div></section>
+
+    <section id="scope">
+      <div class="section-head"><div><h2>Architecture scope</h2><p>Three surfaces are evaluated independently to prevent optional integrations from obscuring protocol readiness.</p></div></div>
+      <div class="scope-grid">
+        <article class="scope-card core"><h3>1. Core protocol</h3><p>Reserve creation, Reserve deposits and redemptions, Reserve Token accounting, governance, permissions, fees, lifecycle controls and program security.</p></article>
+        <article class="scope-card route"><h3>2. Jupiter routing</h3><p>Optional execution path for acquiring or disposing of Reserves. Quote integrity, slippage, transaction construction, failure recovery and degraded-mode behavior.</p></article>
+        <article class="scope-card market"><h3>3. Secondary market</h3><p>Optional liquidity for Reserve Tokens. Pool creation and market trading are not prerequisites for proportional protocol minting and redemption unless formally made so.</p></article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head"><div><h2>Readiness summary</h2><p>Calculated from the acceptance checklist. Not applicable items are excluded.</p></div><span class="badge"><span class="dot" style="background:var(--cyan)"></span><span id="totalCount">0</span> controls</span></div>
+      <div class="cards">
+        <div class="card"><div class="label">Verified passed</div><div class="value" id="passCount">0</div><div class="progress"><span id="passBar"></span></div></div>
+        <div class="card"><div class="label">Failed / blocked</div><div class="value" id="riskCount">0</div></div>
+        <div class="card"><div class="label">Partial</div><div class="value" id="partialCount">0</div></div>
+        <div class="card"><div class="label">Not tested</div><div class="value" id="untestedCount">0</div></div>
+      </div>
+    </section>
+
+    <section id="checklist">
+      <div class="section-head"><div><h2>DevNet acceptance checklist</h2><p>Expand any control to record signatures, addresses, test results, evidence links and notes.</p></div></div>
+      <div class="toolbar" style="position:static">
+        <div id="syncBanner" class="sync-banner state-loading"><span class="sdot"></span><span id="syncBannerText">Connecting…</span><button class="btn hidden" id="syncRetry">Retry</button></div>
+        <div class="editor-tag">Editing as <b id="editorNameLabel">…</b><button id="changeEditorName" type="button">change</button></div>
+        <button class="btn" id="logoutBtn">Log out</button>
+      </div>
+      <div class="toolbar">
+        <input id="search" class="control" placeholder="Search controls…">
+        <select id="categoryFilter" class="control"><option value="">All categories</option></select>
+        <select id="statusFilter" class="control"><option value="">All statuses</option></select>
+        <button class="btn" id="expandAll">Expand all</button><button class="btn" id="collapseAll">Collapse all</button>
+        <button class="btn primary" id="exportData">Export evidence</button><button class="btn" id="importData">Import evidence</button><input id="importFile" type="file" accept="application/json" hidden>
+        <button class="btn" onclick="window.print()">Print / PDF</button>
+      </div>
+      <div id="checklistContainer" class="checklist"></div>
+    </section>
+
+    <section id="gaps">
+      <div class="section-head"><div><h2>Mainnet gap analysis</h2><p>Target architecture compared with the verified state. Editable cells persist in this browser.</p></div><span class="badge">Baseline: requires repository verification</span></div>
+      <div class="table-wrap"><table id="gapTable"><thead><tr><th>Area</th><th>Mainnet requirement</th><th>Verified DevNet state</th><th>Gap / required action</th><th>Priority</th><th>Dependency</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section id="workstreams">
+      <div class="section-head"><div><h2>Prioritized workstreams</h2><p>Execution sequence after evidence collection.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Order</th><th>Workstream</th><th>Exit condition</th><th>Dependencies</th><th>Owner</th></tr></thead><tbody>
+        <tr><td class="priority p0">P0.1</td><td>Freeze architecture and invariants</td><td>Signed specification for accounting, authority model, fees, supported Reserve types and lifecycle rules.</td><td>Product + protocol decisions</td><td contenteditable="true">TBD</td></tr>
+        <tr><td class="priority p0">P0.2</td><td>Close protocol correctness gaps</td><td>All core checklist controls Passed; deterministic reconciliation across program, RPC and indexer.</td><td>Frozen invariants</td><td contenteditable="true">TBD</td></tr>
+        <tr><td class="priority p0">P0.3</td><td>Security hardening and audit</td><td>Threat model complete; critical/high findings resolved; deploy and upgrade procedures rehearsed.</td><td>Release-candidate programs</td><td contenteditable="true">TBD</td></tr>
+        <tr><td class="priority p1">P1.1</td><td>Production infrastructure</td><td>Redundant RPC, indexer backfill, monitoring, alerting, secrets and incident runbooks validated.</td><td>Stable schemas and events</td><td contenteditable="true">TBD</td></tr>
+        <tr><td class="priority p1">P1.2</td><td>Jupiter production path</td><td>Supported routes, guardrails, quote expiry, price impact and degraded-mode behavior accepted.</td><td>Core protocol stable</td><td contenteditable="true">TBD</td></tr>
+        <tr><td class="priority p1">P1.3</td><td>Release candidate and public rehearsal</td><td>Clean deployment, migration rehearsal, load/chaos tests and complete UAT evidence pack.</td><td>Audit remediation + infra</td><td contenteditable="true">TBD</td></tr>
+        <tr><td class="priority p2">P2</td><td>Optional Reserve Token market</td><td>Separate liquidity plan, venue risk review, disclosures and monitoring approved.</td><td>Token metadata + launch policy</td><td contenteditable="true">TBD</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <section id="risks">
+      <div class="section-head"><div><h2>Initial risk register</h2><p>Validate, refine and assign during repository inspection.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Risk</th><th>Impact</th><th>Early indicator</th><th>Required mitigation</th><th>Owner</th></tr></thead><tbody>
+        <tr><td>Accounting divergence</td><td class="priority p0">Critical</td><td>NAV, AUM, supply or user balances disagree across sources.</td><td>Canonical formulas, invariant tests, reconciliation job and launch-blocking alerts.</td><td contenteditable="true">TBD</td></tr>
+        <tr><td>Authority compromise or misconfiguration</td><td class="priority p0">Critical</td><td>Single hot key can upgrade, drain, pause or change material parameters.</td><td>Multisig, timelock where appropriate, least privilege, key rotation and rehearsed recovery.</td><td contenteditable="true">TBD</td></tr>
+        <tr><td>Routing dependency failure</td><td class="priority p1">High</td><td>Stale quotes, unsupported DevNet assets, excess impact or Jupiter outage.</td><td>Keep core mint/redeem independent; explicit degraded mode; quote and slippage bounds.</td><td contenteditable="true">TBD</td></tr>
+        <tr><td>Indexer lag or reorg handling</td><td class="priority p1">High</td><td>UI reports stale holders, volume, activity or Reserve composition.</td><td>Freshness indicators, idempotent backfill, confirmation policy and RPC fallback.</td><td contenteditable="true">TBD</td></tr>
+        <tr><td>Unsupported token behavior</td><td class="priority p1">High</td><td>Decimals, Token-2022 extensions, transfer fees or frozen accounts break assumptions.</td><td>Explicit allowlist and validation at Reserve creation and rebalance.</td><td contenteditable="true">TBD</td></tr>
+        <tr><td>Operational launch error</td><td class="priority p1">High</td><td>Wrong program ID, authority, treasury, metadata, RPC or environment configuration.</td><td>Signed manifest, two-person verification, dry run, rollback/containment plan.</td><td contenteditable="true">TBD</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <section id="gates">
+      <div class="section-head"><div><h2>Formal approval gates</h2><p>No gate is implied by completion of a later gate. Each requires its own evidence and sign-off.</p></div></div>
+      <div id="gatesContainer" class="gates"></div>
+    </section>
+
+    <section id="claude">
+      <div class="section-head"><div><h2>Repository inspection prompt for Claude</h2><p>Use from the SSR.FUN repository root. This is a complete standalone prompt.</p></div></div>
+      <div class="prompt-box"><button class="btn copy" id="copyPrompt">Copy prompt</button><textarea id="claudePrompt" spellcheck="false"></textarea></div>
+    </section>
+
+    <footer class="footer"><span>SSR.FUN · Road to Mainnet</span><span>Evidence-first DevNet acceptance and Mainnet governance</span></footer>
+  </div></main>
+</div>
+<script>
+const STATUSES=['Passed','Failed','Partial','Blocked','Not tested','Not applicable'];
+const controls=[
+['CP-01','Core protocol','Program deployment identity','Record program IDs, executable status, deployment slot and source/commit mapping.'],
+['CP-02','Core protocol','Clean deployment reproducibility','A clean DevNet deployment from documented commands produces the expected program IDs and configuration.'],
+['CP-03','Core protocol','Reserve creation','An authorized wallet creates a Reserve with valid Reserves, weights, metadata, fees and authorities.'],
+['CP-04','Core protocol','Reserve creation validation','Invalid mint, duplicate Reserve, bad decimals, unsupported token program and invalid weights are rejected.'],
+['CP-05','Core protocol','Cross-Reserve isolation','Actions and accounts for one Reserve cannot mutate or debit another Reserve.'],
+['CP-06','Core protocol','Initial capitalization','Initial Reserve deposits mint the expected Reserve Token supply and establish the correct initial NAV.'],
+['CP-07','Core protocol','Proportional mint','Depositing the required Reserve basket mints the exact net Reserve Token amount after fees and rounding.'],
+['CP-08','Core protocol','Proportional redemption','Burning Reserve Tokens returns the correct pro-rata Reserves after fees and rounding.'],
+['CP-09','Core protocol','Minimum amount and dust handling','Minimum inputs, zero amounts and dust cannot produce value leakage or stranded balances.'],
+['CP-10','Core protocol','Decimal handling','Mixed mint decimals calculate consistently without precision loss beyond documented bounds.'],
+['CP-11','Core protocol','Supply invariant','Reserve Token supply changes only through authorized mint/burn paths and reconciles with transactions.'],
+['CP-12','Core protocol','Custody invariant','Program-controlled Reserve accounts match attributed liabilities and contain no unexplained deficit.'],
+['CP-13','Core protocol','Fee collection','Mint and redemption fees reach the configured treasury in the correct asset and amount.'],
+['CP-14','Core protocol','Fee bounds and updates','Fees cannot exceed approved bounds; updates require the correct authority and emit observable state changes.'],
+['CP-15','Core protocol','Atomic execution','Partial transfers or partial state updates cannot survive a failed mint, redeem, rebalance or lifecycle instruction.'],
+['CP-16','Core protocol','Concurrent transaction safety','Competing transactions preserve balances, nonce/state expectations and accounting invariants.'],
+['CP-17','Core protocol','Token account creation','Missing associated token accounts are handled or rejected predictably with accurate wallet instructions.'],
+['CP-18','Core protocol','Token compatibility policy','Only explicitly supported SPL Token / Token-2022 features can enter a Reserve.'],
+['AC-01','Accounting & economics','NAV formula','On-chain and displayed NAV follow one documented formula with named price sources and rounding.'],
+['AC-02','Accounting & economics','AUM calculation','AUM equals verified Reserve balances valued at accepted prices and excludes unrelated funds.'],
+['AC-03','Accounting & economics','Price freshness','Stale, missing, zero or outlier prices block or safely degrade value-sensitive actions.'],
+['AC-04','Accounting & economics','Reserve weights','Displayed and computed weights reconcile to actual balances and accepted prices.'],
+['AC-05','Accounting & economics','Buy price impact','A successful acquisition changes balances, supply/NAV and charts exactly as defined.'],
+['AC-06','Accounting & economics','Sell price impact','A successful disposal changes balances, supply/NAV and charts exactly as defined.'],
+['AC-07','Accounting & economics','Volume 24h','Volume counts qualifying settled transactions once, uses explicit USD pricing and a rolling 24-hour window.'],
+['AC-08','Accounting & economics','Holder count','Holder count follows a documented dust/exclusion policy and matches independent token-account queries.'],
+['AC-09','Accounting & economics','Historical charts','1h, 4h, 24h and 1m ranges use correct timestamps, aggregation and empty-state behavior.'],
+['AC-10','Accounting & economics','Reconciliation report','A repeatable report reconciles program state, vault balances, Reserve Token supply, fees and indexed views.'],
+['PM-01','Permissions & governance','Authority inventory','Every admin, upgrade, treasury, pause, delegate and operational authority is enumerated.'],
+['PM-02','Permissions & governance','Unauthorized action rejection','A non-authorized wallet is rejected for every privileged instruction.'],
+['PM-03','Permissions & governance','Delegate creation','Authorized roles can add a delegate only within documented permission bounds.'],
+['PM-04','Permissions & governance','Delegate scope enforcement','A delegate cannot perform actions outside its Reserve, role, limits or expiration.'],
+['PM-05','Permissions & governance','Delegate revocation','Revocation takes effect predictably and prevents all subsequent privileged actions.'],
+['PM-06','Permissions & governance','Pause and unpause','Correct authority can pause/unpause; paused operations and permitted escape paths match policy.'],
+['PM-07','Permissions & governance','Authority transfer','Two-step or otherwise safe authority transfer prevents accidental loss or hostile takeover.'],
+['PM-08','Permissions & governance','Upgrade authority','Upgrade authority matches launch policy and cannot be exercised by an unintended single key.'],
+['PM-09','Permissions & governance','Treasury authority','Fee destinations cannot be changed or drained outside approved governance.'],
+['PM-10','Permissions & governance','Audit trail','All privileged changes are attributable by signature, signer, slot and before/after value.'],
+['LC-01','Lifecycle operations','Add a Reserve','An authorized composition change adds a supported Reserve without breaking accounting.'],
+['LC-02','Lifecycle operations','Remove a Reserve','A Reserve can be removed only after satisfying exposure, redemption and policy constraints.'],
+['LC-03','Lifecycle operations','Weight update','Valid target weights are applied with explicit timing and invalid totals are rejected.'],
+['LC-04','Lifecycle operations','Rebalance execution','Rebalance changes actual holdings, respects bounds and produces reconcilable results.'],
+['LC-05','Lifecycle operations','Rebalance slippage and limits','Per-Reserve slippage, price impact, size and timing limits are enforced.'],
+['LC-06','Lifecycle operations','Wind-down initiation','Authorized wind-down freezes prohibited actions and publishes a clear lifecycle state.'],
+['LC-07','Lifecycle operations','Wind-down redemption','Holders retain a tested, fair exit path throughout wind-down.'],
+['LC-08','Lifecycle operations','Final closure','Zero-liability accounts close safely; rent and residual assets go to approved destinations.'],
+['LC-09','Lifecycle operations','Migration path','Program/config migrations preserve user claims and include a rehearsed rollback or containment plan.'],
+['JR-01','Jupiter routing','Integration boundary','Core proportional mint/redeem remains functional when Jupiter is unavailable.'],
+['JR-02','Jupiter routing','Quote authenticity and freshness','Quotes come from the intended endpoint and expire within a documented safe window.'],
+['JR-03','Jupiter routing','Route asset validation','Input, output, intermediary assets and token programs comply with the approved policy.'],
+['JR-04','Jupiter routing','Slippage protection','User and protocol slippage limits are enforced in the final signed transaction.'],
+['JR-05','Jupiter routing','Price-impact guardrail','Routes above approved price impact are blocked with a clear reason.'],
+['JR-06','Jupiter routing','Transaction signer correctness','All required signers are present and no unknown or unnecessary signer is introduced.'],
+['JR-07','Jupiter routing','Priority fees and compute','Fee/compute settings are bounded, visible and reliable under DevNet congestion tests.'],
+['JR-08','Jupiter routing','Quote-to-execution integrity','Executed mints, amounts and accounts match the user-confirmed quote within bounds.'],
+['JR-09','Jupiter routing','Route failure recovery','Expired blockhash, stale quote, simulation failure and on-chain failure leave no false success or partial accounting.'],
+['JR-10','Jupiter routing','Unsupported route UX','Unavailable routes explain why and offer a safe proportional mint/redeem path where applicable.'],
+['SM-01','Optional secondary market','Protocol independence','Absence of a Reserve Token liquidity pool does not block core minting or redemption.'],
+['SM-02','Optional secondary market','Pool configuration','Venue, pair, fee tier, initial liquidity and authority policy are documented and approved.'],
+['SM-03','Optional secondary market','Market price distinction','UI clearly distinguishes market price from protocol NAV and quantifies premium/discount.'],
+['SM-04','Optional secondary market','Liquidity and manipulation risk','Thin-liquidity and manipulation scenarios do not corrupt protocol accounting or unsafe actions.'],
+['SM-05','Optional secondary market','Market disclosures','Users see routing, liquidity, impact, fee and non-guaranteed exit disclosures.'],
+['UX-01','Frontend & wallet UX','Network enforcement','Frontend detects wrong network and prevents transactions until DevNet is selected.'],
+['UX-02','Frontend & wallet UX','Wallet compatibility','Supported wallets connect, sign, reject and reconnect consistently.'],
+['UX-03','Frontend & wallet UX','Transaction preview','Action, amounts, fees, price impact, authority and consequences are shown before signature.'],
+['UX-04','Frontend & wallet UX','Wallet rejection','Rejecting a signature returns the interface to a safe, truthful and retryable state.'],
+['UX-05','Frontend & wallet UX','Pending and confirmation states','Submitted, processed, confirmed, finalized, failed and timed-out states are not conflated.'],
+['UX-06','Frontend & wallet UX','Explorer evidence','Successful operations expose the correct explorer link and transaction signature.'],
+['UX-07','Frontend & wallet UX','Double-submit prevention','Repeated clicks and reconnects cannot create unintended duplicate actions.'],
+['UX-08','Frontend & wallet UX','Balance refresh','Wallet and Reserve balances update after confirmation without requiring a hard reload.'],
+['UX-09','Frontend & wallet UX','Error quality','Program, RPC, routing and wallet errors are translated without hiding actionable detail.'],
+['UX-10','Frontend & wallet UX','Responsive and accessibility baseline','Critical flows work by keyboard and on supported mobile/desktop viewports.'],
+['IX-01','Indexing & data','Canonical data-source map','Every KPI and status names its source: program account, RPC, indexer, price feed or derived value.'],
+['IX-02','Indexing & data','Initial backfill','Indexer reconstructs all relevant history from deployment slot without duplicates or gaps.'],
+['IX-03','Indexing & data','Idempotent replay','Repeated ingestion and restart produce identical indexed state.'],
+['IX-04','Indexing & data','Confirmation and reorg policy','Commitment level, fork handling and rollback behavior are documented and tested.'],
+['IX-05','Indexing & data','Freshness visibility','UI exposes data age or degraded state when indexer/RPC freshness exceeds threshold.'],
+['IX-06','Indexing & data','RPC failover','Read paths fail over without silently mixing incompatible or stale results.'],
+['IX-07','Indexing & data','Program upgrade/schema change','Indexer detects version/schema changes and fails safely until compatible.'],
+['SE-01','Security & failure handling','Threat model','Assets, trust boundaries, actors, attack paths and mitigations are documented.'],
+['SE-02','Security & failure handling','Account ownership checks','Every supplied account is validated for expected owner, mint, seeds and relationship.'],
+['SE-03','Security & failure handling','PDA and seed constraints','PDA derivation prevents substitution, collisions and cross-Reserve access.'],
+['SE-04','Security & failure handling','Arithmetic safety','Overflow, underflow, divide-by-zero and adversarial rounding tests cannot create value.'],
+['SE-05','Security & failure handling','CPI safety','External program calls validate program IDs, writable/signing accounts and returned state.'],
+['SE-06','Security & failure handling','Replay and stale-state protection','Transactions cannot reuse stale quotes, epochs or state assumptions beyond policy.'],
+['SE-07','Security & failure handling','Denial-of-service bounds','Large Reserve counts, account lists and compute use remain within documented limits.'],
+['SE-08','Security & failure handling','Unexpected token transfers','Donated or unsolicited vault tokens cannot distort claims or become trapped without policy.'],
+['SE-09','Security & failure handling','Emergency containment','Pause, communication, evidence capture and safe-exit procedures are rehearsed.'],
+['SE-10','Security & failure handling','Independent security review','Release candidate receives independent review; findings have owners and closure evidence.'],
+['DP-01','Deployment & operations','Environment separation','Local, test, DevNet and Mainnet configs cannot be confused or bundled accidentally.'],
+['DP-02','Deployment & operations','Configuration manifest','Program IDs, mints, authorities, treasuries, RPCs, feature flags and start slots are signed off.'],
+['DP-03','Deployment & operations','Secret management','No private keys or sensitive endpoints exist in source, client bundles, logs or artifacts.'],
+['DP-04','Deployment & operations','Monitoring and alerts','Balances, invariant failures, pause state, authority changes, errors, indexer lag and RPC health alert.'],
+['DP-05','Deployment & operations','Incident runbook','Severity, roles, containment, communications, recovery and postmortem steps are documented.'],
+['DP-06','Deployment & operations','Backup and recovery','Indexer databases, configs and critical operational material restore within accepted objectives.'],
+['DP-07','Deployment & operations','Load and soak tests','Sustained and burst transaction/read loads remain correct within capacity targets.'],
+['DP-08','Deployment & operations','Release rollback/containment','Bad frontend, indexer and program releases have separately rehearsed containment strategies.'],
+['DP-09','Deployment & operations','Mainnet rehearsal','Deployment and launch checklist is executed end-to-end on a clean DevNet release candidate.'],
+['DP-10','Deployment & operations','User-facing disclosures','Network, experimental state, fees, pricing, routing and lifecycle risks are accurate.'],
+['QA-01','Testing & sign-off','Unit test coverage','Critical math, serialization, authorization and validation branches have meaningful automated tests.'],
+['QA-02','Testing & sign-off','Integration test coverage','Real program instructions and accounts are exercised without replacing core behavior with mocks.'],
+['QA-03','Testing & sign-off','End-to-end wallet tests','Browser-to-wallet-to-finalized-state flows are executed on DevNet.'],
+['QA-04','Testing & sign-off','Negative test matrix','Unauthorized, malformed, stale, insufficient-funds and dependency-failure cases are verified.'],
+['QA-05','Testing & sign-off','Multi-user and scale tests','Multiple wallets and Reserves expose no isolation, concurrency or indexing defects.'],
+['QA-06','Testing & sign-off','Evidence pack completeness','Every Passed item has reproducible evidence tied to deployment and release candidate.'],
+['QA-07','Testing & sign-off','Known-issues disposition','Every open defect has severity, owner, workaround, target and launch decision.'],
+['QA-08','Testing & sign-off','Final regression','All P0/P1 fixes are followed by complete regression against the frozen release candidate.']
+];
+
+const gapRows=[
+['Program architecture','Auditable, versioned Solana programs with frozen invariants and explicit upgrade policy.','To verify: program IDs, deployed bytecode, source mapping and authority state.','Build a signed deployment inventory; freeze or document upgrade governance.','P0','Architecture decision'],
+['Reserve discovery','Deterministic on-chain discovery with schema/version compatibility.','Reported live on-chain discovery exists; evidence and coverage not yet attached.','Verify all production-eligible Reserves and eliminate mock/unsupported entries.','P0','Program schema + indexer'],
+['Reserve Token accounting','Exact supply, NAV, AUM, fees and pro-rata claims under all lifecycle states.','Reported fixes to NAV/AUM/buy behavior require transaction-level reconciliation.','Publish formulas and complete invariant/reconciliation suite.','P0','Price policy + core program'],
+['Mint and redemption','Permissionless, proportional, atomic and independent of secondary liquidity.','Live DevNet behavior not yet evidenced in this document.','Execute positive, negative, concurrency and dust test matrix.','P0','Supported token policy'],
+['Permissions','Least-privilege roles, multisig-controlled material authorities, auditable changes.','Delegate and pause flows reported; exact authority topology unverified.','Inventory keys; test scope/revocation; approve Mainnet custody model.','P0','Governance design'],
+['Lifecycle','Safe composition changes, rebalance, pause, migration and wind-down with holder exits.','Implementation and full end-to-end evidence unknown.','Specify state machine and pass lifecycle rehearsal including wind-down.','P0','Core invariants + routing'],
+['Security','Independent review of stable release candidate; critical/high findings closed.','Automated gates reported but not equivalent to an external security review.','Threat model, fuzz/property tests, audit, remediation and deploy rehearsal.','P0','Frozen programs'],
+['Jupiter routing','Bounded, observable execution; core path survives routing outage.','DevNet route availability and prior signer issue indicate integration risk.','Define supported assets, failure modes, quote policy and Mainnet endpoints.','P1','Core protocol + Jupiter'],
+['Indexer and metrics','Replayable history, freshness, reorg policy and reconciled user-facing KPIs.','Holder/volume/chart corrections reported; backfill and replay proof absent.','Implement deterministic backfill, freshness UX, alerts and reconciliation.','P1','Events/schema + RPC'],
+['Frontend transaction UX','Truthful preview, signer clarity, network checks and finalized-state handling.','Requires full wallet matrix and failure-path verification.','Run browser/wallet E2E suite and attach signatures/screenshots.','P1','Stable frontend + programs'],
+['Infrastructure','Redundant RPC/indexing, secrets, monitoring, incident response and recovery.','DevNet deployment exists; production SLOs and runbooks unverified.','Select providers, define SLOs, add alerts, rehearse incidents and restore.','P1','Budget + owners'],
+['Optional market','Reserve Token liquidity separated from protocol NAV and redemption.','No Mainnet requirement should be inferred from UI or routing code.','Make an explicit launch decision; document venue, liquidity and manipulation risk.','P2','Launch strategy']
+];
+
+const gates=[
+['Gate A','Specification freeze','Protocol invariants, supported tokens, fee policy, authority model and lifecycle state machine are approved.'],
+['Gate B','DevNet functional acceptance','All applicable core controls Passed; no unresolved critical/high correctness defects; evidence pack complete.'],
+['Gate C','Security acceptance','Threat model approved; independent review complete; critical/high findings resolved; residual risk signed off.'],
+['Gate D','Operational readiness','Deployment manifest, monitoring, alerts, incident response, key custody, backups and provider capacity are rehearsed.'],
+['Gate E','Release candidate rehearsal','Frozen build deployed cleanly; full regression, load/soak, failure recovery and migration/containment tests Passed.'],
+['Gate F','Mainnet launch authorization','Named technical, security, product and operational approvers sign the exact manifest, commit and program artifacts.'],
+['Gate G','Post-launch stabilization','Heightened monitoring window completed; reconciliation clean; no launch-blocking incident; handover to steady operations.']
+];
+
+const prompt=`Read CLAUDE.md first.\n\nYou are working in the SSR.FUN repository. Update the standalone file “road-to-mainnet.html” as an evidence-based DevNet acceptance and Mainnet readiness document. Do not create a second checklist or replace the document with Markdown. Preserve its standalone HTML/CSS/JavaScript behavior, responsive layout, local persistence, JSON evidence import/export and print support.\n\nOBJECTIVE\nInspect the entire repository and prefill every checklist item and Mainnet gap-analysis field that can be supported by evidence. The output must distinguish source existence, automated verification, live DevNet verification and Mainnet readiness.\n\nNON-NEGOTIABLE EVIDENCE RULES\n1. Never mark an item Passed merely because code exists, compiles, builds, typechecks, has a UI control, or has a mocked/unit test.\n2. Passed means the acceptance criterion was actually executed against the identified DevNet deployment and produced the expected on-chain and user-visible state, with reproducible evidence.\n3. Use Partial when implementation or automated evidence exists but live DevNet behavior is incomplete or unproven.\n4. Use Blocked only when a named dependency prevents verification. Use Failed when an executed test produced the wrong result. Use Not tested when no qualifying test was found or run.\n5. Do not invent transaction signatures, addresses, test runs, owners, dates, audit status or approvals.\n6. A successful transaction is insufficient if required post-state, accounting or permissions were not verified.\n7. Treat historical notes and prior status documents as leads, not current proof, unless their evidence is reproducible against the current release candidate.\n8. Keep the core protocol, Jupiter-based routing and any optional Reserve Token secondary market strictly separated. Jupiter or secondary-market availability must not be treated as proof of core proportional mint/redemption.\n9. Use SSR terminology consistently: “Reserve” means an underlying asset; “Reserve Token” means the fungible token representing a Decentralized Token Reserve. Remove legacy terminology where technically safe.\n\nINSPECTION\n- Identify the current branch, HEAD commit, dirty files, package versions, build commands and deployment configuration.\n- Inventory Solana programs, program IDs, IDLs, instructions, accounts, PDAs, authorities, token-program assumptions, errors and emitted/logged state.\n- Map frontend actions to actual program instructions and identify mocked, fixture, fallback or disabled paths.\n- Inventory all tests and classify them as unit, mocked integration, local-validator integration, DevNet integration or browser/wallet E2E.\n- Locate deployed DevNet addresses, transaction signatures, explorer links, RPC configuration and release mapping. Verify that evidence belongs to the current deployment and code.\n- Trace accounting formulas for supply, NAV, AUM, Reserve weights, fees, volume, holders and historical charts. State each canonical source and reconciliation boundary.\n- Trace authority and delegate scope, pause behavior, upgrades, treasury controls, rebalancing, Reserve changes, wind-down, closure and migration.\n- Trace Jupiter quote/swap construction, supported assets, signer requirements, slippage, price impact, expiry, compute/priority fees and error recovery.\n- Inspect indexing/backfill, idempotency, commitment policy, freshness, failover and schema upgrade behavior.\n- Inspect CI, deployment, secret handling, monitoring, alerts, runbooks, backup/recovery and release rollback/containment.\n- Search for TODO, FIXME, mock, fixture, hardcoded, fallback, dev-only, fake, placeholder and disabled behavior.\n\nSAFE VERIFICATION\nRun non-destructive repository tests, typecheck, lint and production build. If repository instructions explicitly provide safe DevNet read-only checks, run them. Do not spend funds, deploy/upgrade programs, change authorities, mutate shared state, expose secrets or execute privileged/live transactions without explicit human authorization. Record such controls as Not tested or Blocked with the exact required manual test.\n\nHOW TO PREFILL\nFor each checklist control, set the most defensible status and populate:\n- Evidence: exact file paths and line references, test names/results, program IDs, account addresses, DevNet signatures/explorer URLs, screenshots or reproducible commands.\n- Environment: network, RPC class (do not expose credentials), program/deployment ID, commit and date.\n- Tester/owner when known.\n- Notes: what was verified, what remains unproven, and the exact next test needed.\nKeep transaction signatures and addresses distinct and copyable. Multiple evidence items may be newline-separated.\n\nUpdate the gap analysis from the verified results. For each area, state the verified DevNet state, concrete Mainnet gap, priority and dependency. Do not use vague phrases such as “productionize” without naming the missing control or architecture change. Update workstreams and risks only when repository evidence supports a more precise entry. Do not mark or fabricate approval-gate sign-offs.\n\nDELIVERABLES\n1. Updated road-to-mainnet.html.\n2. A concise terminal summary containing:\n   - files changed;\n   - commands run and outcomes;\n   - counts by checklist status;\n   - the highest-priority gaps;\n   - tests that require a human wallet, privileged signer or shared DevNet mutation;\n   - any conflicts between documentation, code, deployed state and UI.\n3. Ensure the HTML opens without a server, has no external runtime dependencies, and retains all checklist controls and interactive functions.\n\nBefore finishing, reopen the HTML locally or use the available browser/screenshot workflow to verify that the document renders, filters work, evidence fields persist, JSON export/import remains valid and printing does not conceal evidence.`;
+
+const stateKey='ssr-road-mainnet-v1';
+const EDITOR_KEY='ssr-rtm-editor-name';
+let state=JSON.parse(localStorage.getItem(stateKey)||'{}');
+// Per-entity {version, updatedAt, updatedBy} from the server -- never
+// persisted to localStorage/export; refreshed on every successful load or
+// write so the next edit's optimistic-concurrency check is always current.
+let versions={controls:{},gaps:{},gates:{},meta:{}};
+let authExpired=false;
+
+function save(){localStorage.setItem(stateKey,JSON.stringify(state));document.getElementById('updated').textContent=new Date().toLocaleString();}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtTime(iso){try{return new Date(iso).toLocaleString()}catch{return iso||''}}
+
+function getEditorName(){
+  let name=localStorage.getItem(EDITOR_KEY);
+  if(!name){name=(window.prompt('Your name or initials (shown to other collaborators on your edits):')||'').trim()||'Unknown';localStorage.setItem(EDITOR_KEY,name)}
+  return name;
+}
+function setEditorLabel(){document.getElementById('editorNameLabel').textContent=getEditorName()}
+
+function setBanner(kind,text,{retry}={}){
+  const b=document.getElementById('syncBanner');
+  b.className='sync-banner state-'+kind;
+  document.getElementById('syncBannerText').textContent=text;
+  document.getElementById('syncRetry').classList.toggle('hidden',!retry);
+}
+
+// Thin fetch wrapper: same-origin credentials, JSON in/out. Throws only on
+// genuine network failure (offline, DNS, etc) -- HTTP error statuses are
+// returned normally so callers can branch on 401/403/404/409.
+async function apiFetch(path,opts={}){
+  const res=await fetch(path,{credentials:'same-origin',headers:{'content-type':'application/json'},...opts});
+  let body=null;
+  try{body=await res.json()}catch{}
+  return {status:res.status,ok:res.ok,body};
+}
+
+function markAuthExpired(){
+  authExpired=true;
+  document.getElementById('checklistContainer').classList.add('readonly-flag');
+  document.getElementById('gapTable')?.classList.add('readonly-flag');
+  document.getElementById('gatesContainer')?.classList.add('readonly-flag');
+  setBanner('auth','Your session expired — reload the page to sign in again.');
+}
+
+async function loadServerState(isRetry){
+  setBanner('loading',isRetry?'Reconnecting…':'Loading shared checklist…');
+  try{
+    const {status,ok,body}=await apiFetch('/api/road-to-mainnet/state');
+    if(status===401){markAuthExpired();return}
+    if(!ok||!body){setBanner('error','Could not load the shared checklist.',{retry:true});return}
+    Object.entries(body.controls||{}).forEach(([id,e])=>{state[id]={status:e.values.status,evidence:e.values.evidence,environment:e.values.environment,tester:e.values.tester,notes:e.values.notes};versions.controls[id]={version:e.version,updatedAt:e.updatedAt,updatedBy:e.updatedBy}});
+    state.gaps=state.gaps||[];
+    Object.entries(body.gaps||{}).forEach(([ri,e])=>{state.gaps[Number(ri)]=e.values.cells;versions.gaps[ri]={version:e.version,updatedAt:e.updatedAt,updatedBy:e.updatedBy}});
+    state.gates=state.gates||[];
+    Object.entries(body.gates||{}).forEach(([gi,e])=>{state.gates[Number(gi)]={decision:e.values.decision,approver:e.values.approver,notes:e.values.notes};versions.gates[gi]={version:e.version,updatedAt:e.updatedAt,updatedBy:e.updatedBy}});
+    state.meta=state.meta||{};
+    Object.entries(body.meta||{}).forEach(([key,e])=>{state.meta[key]=e.values.value;versions.meta[key]={version:e.version,updatedAt:e.updatedAt,updatedBy:e.updatedBy}});
+    save();
+    authExpired=false;
+    document.getElementById('checklistContainer').classList.remove('readonly-flag');
+    document.getElementById('gapTable')?.classList.remove('readonly-flag');
+    document.getElementById('gatesContainer')?.classList.remove('readonly-flag');
+    setBanner('synced','Synced • '+fmtTime(body.serverTime));
+    render();
+    renderGaps();
+    renderGates();
+    document.querySelectorAll('.persist-meta').forEach(x=>x.value=state.meta?.[x.dataset.key]??x.value);
+  }catch(err){
+    setBanner('offline','Offline — showing your last saved local copy. Changes will not be shared until reconnected.',{retry:true});
+  }
+}
+
+// Generic versioned write. Returns true on success. On 409 it never
+// overwrites silently -- it renders a conflict box the user must resolve.
+async function pushEntity(entityType,entityId,values,onConflictKey,tagEl){
+  if(authExpired)return false;
+  const vKey=entityType==='control'?'controls':entityType==='gap_row'?'gaps':entityType==='gate'?'gates':'meta';
+  const known=versions[vKey][entityId];
+  const expectedVersion=known?.version||1;
+  if(tagEl){tagEl.textContent='Saving…';tagEl.className='sync-tag saving'}
+  try{
+    const {status,ok,body}=await apiFetch('/api/road-to-mainnet/state',{method:'POST',body:JSON.stringify({entityType,entityId,values,expectedVersion,editor:getEditorName()})});
+    if(status===401){markAuthExpired();if(tagEl){tagEl.textContent='Not saved — session expired';tagEl.className='sync-tag error'}return false}
+    if(status===409){
+      versions[vKey][entityId]={version:body.current.version,updatedAt:body.current.updatedAt,updatedBy:body.current.updatedBy};
+      if(tagEl){tagEl.textContent='Conflict — not saved';tagEl.className='sync-tag conflict'}
+      if(onConflictKey){
+        showConflict(onConflictKey,body.current);
+      }else{
+        setBanner('offline',`Edit conflict: someone else changed this ${entityType.replace('_',' ')} first — your change was not saved. Retry to load the latest shared version.`,{retry:true});
+      }
+      return false;
+    }
+    if(!ok){if(tagEl){tagEl.textContent='Save failed';tagEl.className='sync-tag error'}return false}
+    versions[vKey][entityId]={version:body.version,updatedAt:body.updatedAt,updatedBy:body.updatedBy};
+    if(tagEl){tagEl.textContent='Saved '+fmtTime(body.updatedAt);tagEl.className='sync-tag saved'}
+    return true;
+  }catch(err){
+    if(tagEl){tagEl.textContent='Save failed — offline';tagEl.className='sync-tag error'}
+    return false;
+  }
+}
+
+const conflicts={}; // itemId -> current server value, surfaced inline until resolved
+function showConflict(itemId,current){
+  conflicts[itemId]=current;
+  const el=document.querySelector(`.item[data-id="${CSS.escape(itemId)}"]`);
+  if(!el)return;
+  el.classList.add('open');
+  let box=el.querySelector('.conflict-box');
+  if(!box){box=document.createElement('div');box.className='conflict-box';el.querySelector('.item-details').appendChild(box)}
+  box.innerHTML=`<b>Edit conflict.</b> ${esc(current.updatedBy||'Someone else')} saved a change to this control at ${esc(fmtTime(current.updatedAt))}, after you loaded it. Your latest edit was not saved.<div class="row"><button class="btn" data-act="reload">Use their version</button><button class="btn primary" data-act="overwrite">Overwrite with mine</button></div>`;
+  box.querySelector('[data-act="reload"]').onclick=()=>{
+    state[itemId]={status:current.values.status,evidence:current.values.evidence,environment:current.values.environment,tester:current.values.tester,notes:current.values.notes};
+    versions.controls[itemId]={version:current.version,updatedAt:current.updatedAt,updatedBy:current.updatedBy};
+    delete conflicts[itemId];save();render();
+  };
+  box.querySelector('[data-act="overwrite"]').onclick=async()=>{
+    const ok=await pushEntity('control',itemId,state[itemId],itemId);
+    if(ok){delete conflicts[itemId];box.remove()}
+  };
+}
+
+async function syncControl(id){await pushEntity('control',id,{status:state[id]?.status||'Not tested',evidence:state[id]?.evidence||'',environment:state[id]?.environment||'',tester:state[id]?.tester||'',notes:state[id]?.notes||''},id,document.querySelector(`.item[data-id="${CSS.escape(id)}"] [data-sync-tag]`))}
+async function syncMeta(key){await pushEntity('meta',key,{value:state.meta?.[key]||''})}
+async function syncGapRow(ri){await pushEntity('gap_row',String(ri),{cells:state.gaps[ri]})}
+async function syncGate(i){await pushEntity('gate',String(i),state.gates[i])}
+
+async function loadHistory(id,container){
+  container.innerHTML='<div class="history-meta">Loading history…</div>';
+  try{
+    const {ok,body}=await apiFetch(`/api/road-to-mainnet/history?entityType=control&entityId=${encodeURIComponent(id)}`);
+    if(!ok||!body.entries?.length){container.innerHTML='<div class="history-meta">No recorded revisions yet.</div>';return}
+    container.innerHTML='';
+    body.entries.forEach(e=>{
+      const row=document.createElement('div');row.className='history-entry';
+      row.innerHTML=`<div class="history-meta">${esc(e.changedBy||'Unknown')} • ${esc(fmtTime(e.changedAt))} • status: ${esc(e.afterValue.status||'')}</div><div>${esc((e.afterValue.notes||e.afterValue.evidence||'').slice(0,240))}</div><button class="btn" data-restore>Restore this version</button>`;
+      row.querySelector('[data-restore]').onclick=()=>{
+        state[id]={status:e.afterValue.status,evidence:e.afterValue.evidence,environment:e.afterValue.environment,tester:e.afterValue.tester,notes:e.afterValue.notes};
+        save();render();
+      };
+      container.appendChild(row);
+    });
+  }catch{container.innerHTML='<div class="history-meta">Could not load history (offline?).</div>'}
+}
+
+function render(){
+  const c=document.getElementById('checklistContainer'); c.innerHTML='';
+  const q=document.getElementById('search').value.toLowerCase(), cf=document.getElementById('categoryFilter').value, sf=document.getElementById('statusFilter').value;
+  const grouped={}; controls.forEach(x=>{const d=state[x[0]]||{};const st=d.status||'Not tested';if((q&&!x.join(' ').toLowerCase().includes(q)&&!String(d.notes||'').toLowerCase().includes(q))||(cf&&x[1]!==cf)||(sf&&st!==sf))return;(grouped[x[1]]??=[]).push(x)});
+  Object.entries(grouped).forEach(([group,items])=>{
+    const gt=document.createElement('div');gt.className='group-title';gt.innerHTML=`<span>${esc(group)}</span><span class="badge">${items.length} controls</span>`;c.appendChild(gt);
+    items.forEach(x=>{const d=state[x[0]]||{},st=d.status||'Not tested';const v=versions.controls[x[0]];const el=document.createElement('article');el.className='item';el.dataset.id=x[0];el.innerHTML=`<div class="item-main"><div class="item-id">${x[0]}</div><div><div class="item-title">${esc(x[2])}</div><div class="item-criterion">${esc(x[3])}</div></div><select class="status" data-field="status" data-status="${st}">${STATUSES.map(s=>`<option ${s===st?'selected':''}>${s}</option>`).join('')}</select><button class="chev" aria-label="Expand">⌄</button></div><div class="item-details"><div class="field full"><label>Evidence — signatures, addresses, tests, paths, links</label><textarea data-field="evidence">${esc(d.evidence||'')}</textarea></div><div class="field"><label>Environment / deployment / commit</label><input data-field="environment" value="${esc(d.environment||'')}"></div><div class="field"><label>Tester / owner / date</label><input data-field="tester" value="${esc(d.tester||'')}"></div><div class="field full"><label>Notes, gap and exact next test</label><textarea data-field="notes">${esc(d.notes||'')}</textarea></div><div class="field full"><span class="sync-tag" data-sync-tag>${v?('Last saved '+fmtTime(v.updatedAt)+(v.updatedBy?' by '+esc(v.updatedBy):'')):'Not yet synced'}</span> <button class="btn" data-history style="margin-left:8px">History</button><div class="history-box hidden" data-history-box></div></div></div>`;
+      el.querySelector('.chev').onclick=()=>el.classList.toggle('open');
+      el.querySelectorAll('[data-field]').forEach(inp=>inp.onchange=()=>{state[x[0]]??={};state[x[0]][inp.dataset.field]=inp.value;if(inp.dataset.field==='status'){inp.dataset.status=inp.value;summary()}save();syncControl(x[0])});
+      const hb=el.querySelector('[data-history-box]');
+      el.querySelector('[data-history]').onclick=()=>{hb.classList.toggle('hidden');if(!hb.classList.contains('hidden'))loadHistory(x[0],hb)};
+      if(conflicts[x[0]])showConflict(x[0],conflicts[x[0]]);
+      c.appendChild(el);
+    });
+  });summary();
+}
+function summary(){const vals=controls.map(x=>(state[x[0]]||{}).status||'Not tested');const applicable=vals.filter(x=>x!=='Not applicable').length;const passed=vals.filter(x=>x==='Passed').length;document.getElementById('totalCount').textContent=controls.length;document.getElementById('passCount').textContent=passed;document.getElementById('riskCount').textContent=vals.filter(x=>x==='Failed'||x==='Blocked').length;document.getElementById('partialCount').textContent=vals.filter(x=>x==='Partial').length;document.getElementById('untestedCount').textContent=vals.filter(x=>x==='Not tested').length;document.getElementById('passBar').style.width=(applicable?passed/applicable*100:0)+'%'}
+
+function renderGaps(){
+  const gb=document.querySelector('#gapTable tbody');gb.innerHTML='';
+  gapRows.forEach((r,ri)=>{const tr=document.createElement('tr');r.forEach((v,ci)=>{const td=document.createElement('td');td.contentEditable=true;td.innerHTML=esc(state.gaps?.[ri]?.[ci]??v);if(ci===4)td.className='priority '+(v==='P0'?'p0':v==='P1'?'p1':'p2');
+    td.oninput=()=>{state.gaps??=[];state.gaps[ri]??=[];state.gaps[ri][ci]=td.innerText;save()};
+    td.onblur=()=>syncGapRow(ri);
+    tr.appendChild(td)});gb.appendChild(tr)});
+}
+function renderGates(){
+  const gc=document.getElementById('gatesContainer');gc.innerHTML='';
+  gates.forEach((g,i)=>{const d=state.gates?.[i]||{};const el=document.createElement('article');el.className='gate';el.innerHTML=`<div><div class="eyebrow">${g[0]}</div><h3>${g[1]}</h3></div><div><p>${g[2]}</p><ul><li>Evidence pack attached and reproducible</li><li>Open risks explicitly accepted or gate-blocking</li><li>Exact release candidate and deployment identified</li></ul></div><div class="approval"><select class="control"><option ${!d.decision?'selected':''}>Not reviewed</option><option ${d.decision==='Approved'?'selected':''}>Approved</option><option ${d.decision==='Rejected'?'selected':''}>Rejected</option><option ${d.decision==='Conditional'?'selected':''}>Conditional</option></select><input class="control" placeholder="Approver + date" value="${esc(d.approver||'')}"><textarea class="control" placeholder="Conditions / evidence">${esc(d.notes||'')}</textarea></div>`;const [sel,inp,ta]=el.querySelectorAll('select,input,textarea');[sel,inp,ta].forEach((x,j)=>x.onchange=()=>{state.gates??=[];state.gates[i]??={};state.gates[i][['decision','approver','notes'][j]]=x.value;save();syncGate(i)});gc.appendChild(el)});
+}
+
+function setup(){
+  document.getElementById('updated').textContent=new Date().toLocaleString();
+  setEditorLabel();
+  document.getElementById('changeEditorName').onclick=()=>{localStorage.removeItem(EDITOR_KEY);setEditorLabel()};
+  document.getElementById('syncRetry').onclick=()=>loadServerState(true);
+  document.getElementById('logoutBtn').onclick=async()=>{await apiFetch('/api/dashboard/logout',{method:'POST'});location.href='/road-to-mainnet'};
+  const cats=[...new Set(controls.map(x=>x[1]))];cats.forEach(x=>document.getElementById('categoryFilter').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));STATUSES.forEach(x=>document.getElementById('statusFilter').insertAdjacentHTML('beforeend',`<option>${x}</option>`));
+  ['search','categoryFilter','statusFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',render));
+  document.getElementById('expandAll').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.classList.add('open'));document.getElementById('collapseAll').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.classList.remove('open'));
+  document.querySelectorAll('.persist-meta').forEach(x=>{x.value=state.meta?.[x.dataset.key]||x.value;x.onchange=()=>{state.meta??={};state.meta[x.dataset.key]=x.value;save();syncMeta(x.dataset.key)}});
+  renderGaps();
+  renderGates();
+  document.getElementById('claudePrompt').value=prompt;document.getElementById('copyPrompt').onclick=async()=>{await navigator.clipboard.writeText(document.getElementById('claudePrompt').value);document.getElementById('copyPrompt').textContent='Copied';setTimeout(()=>document.getElementById('copyPrompt').textContent='Copy prompt',1300)};
+  document.getElementById('exportData').onclick=()=>{const blob=new Blob([JSON.stringify({document:'SSR.FUN Road to Mainnet',version:1,exportedAt:new Date().toISOString(),state},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='road-to-mainnet-evidence.json';a.click();URL.revokeObjectURL(a.href)};
+  document.getElementById('importData').onclick=()=>document.getElementById('importFile').click();
+  document.getElementById('importFile').onchange=async e=>{
+    let j;try{j=JSON.parse(await e.target.files[0].text())}catch{alert('The selected file is not valid Road to Mainnet evidence JSON.');return}
+    const incoming=j.state||j;
+    if(!confirm('Importing will push these values to the shared checklist for everyone with access. Continue?'))return;
+    await loadServerState(true); // refresh versions immediately before writing, to minimize false conflicts
+    let pushed=0,conflicted=0;
+    for(const id of controls.map(c=>c[0])){
+      if(!incoming[id])continue;
+      state[id]=incoming[id];
+      const ok=await pushEntity('control',id,{status:incoming[id].status||'Not tested',evidence:incoming[id].evidence||'',environment:incoming[id].environment||'',tester:incoming[id].tester||'',notes:incoming[id].notes||''},id);
+      ok?pushed++:conflicted++;
+    }
+    if(Array.isArray(incoming.gaps))for(let ri=0;ri<incoming.gaps.length&&ri<gapRows.length;ri++){state.gaps[ri]=incoming.gaps[ri];(await pushEntity('gap_row',String(ri),{cells:incoming.gaps[ri]}))?pushed++:conflicted++}
+    if(Array.isArray(incoming.gates))for(let gi=0;gi<incoming.gates.length&&gi<gates.length;gi++){state.gates[gi]=incoming.gates[gi];(await pushEntity('gate',String(gi),incoming.gates[gi]))?pushed++:conflicted++}
+    if(incoming.meta)for(const key of Object.keys(incoming.meta)){state.meta[key]=incoming.meta[key];(await pushEntity('meta',key,{value:incoming.meta[key]}))?pushed++:conflicted++}
+    save();
+    alert(`Import complete: ${pushed} items saved, ${conflicted} conflicted (unchanged — someone else edited those since your import file was made; review and re-apply if still needed).`);
+    await loadServerState(true);
+  };
+  render();
+  loadServerState(false);
+}
+setup();
+</script>
+</body>
+</html>

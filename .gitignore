@@ -38,3 +38,4 @@ devnet-fixtures/
 # per-function inside api/** during its own zero-config dependency install --
 # not meaningful, never intentionally created.
 api/**/package-lock.json
+.env*

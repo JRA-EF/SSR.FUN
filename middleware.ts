@@ -1,14 +1,16 @@
 // Vercel Routing Middleware: the only gate in front of internal-team-only
 // pages. Scoped narrowly via config.matcher to /internal/status + its data
-// endpoint, and /internal/feedback (a simple gated link-through to a
-// manually-maintained feedback Sheet -- no backend of its own) -- every
-// other route on the site is completely untouched, unauthenticated, and
-// unaffected by this file. Both pages share the exact same session
-// cookie/password (SSR_DASHBOARD_PASSWORD) -- one login covers both.
+// endpoint, /internal/feedback (a simple gated link-through to a
+// manually-maintained feedback Sheet -- no backend of its own), and
+// /road-to-mainnet (the collaborative DevNet-acceptance checklist + its
+// state/history APIs) -- every other route on the site is completely
+// untouched, unauthenticated, and unaffected by this file. All three pages
+// share the exact same session cookie/password (SSR_DASHBOARD_PASSWORD) --
+// one login covers all of them.
 //
-// Runs before the cache, so an unauthenticated request never reaches either
+// Runs before the cache, so an unauthenticated request never reaches any
 // page's static bundle or data endpoint -- the login page below is the only
-// thing an unauthenticated visitor to either path ever gets.
+// thing an unauthenticated visitor to any matched path ever gets.
 
 import { next } from '@vercel/functions'
 import { verifySessionCookie, parseCookie, SESSION_COOKIE_NAME } from './lib/dashboard/session.js'
@@ -19,7 +21,7 @@ const LOGIN_PAGE_HTML = `<!doctype html>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
-<title>SSR.fun - Internal Status</title>
+<title>SSR.fun - Sign in</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -51,7 +53,7 @@ const LOGIN_PAGE_HTML = `<!doctype html>
 </head>
 <body>
   <form id="login-form">
-    <h1>Internal Project Status</h1>
+    <h1>Internal access</h1>
     <p class="sub">Password required.</p>
     <input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus required />
     <button type="submit">Sign in</button>
@@ -108,18 +110,29 @@ export default async function middleware(request: Request): Promise<Response> {
   const sessionValue = parseCookie(request.headers.get('cookie'), SESSION_COOKIE_NAME)
   const authenticated = await verifySessionCookie(sessionValue, password)
 
-  if (url.pathname === '/api/dashboard/content') {
+  if (url.pathname === '/api/dashboard/content' || url.pathname === '/api/road-to-mainnet/state' || url.pathname === '/api/road-to-mainnet/history') {
     return authenticated ? next() : unauthorizedJson()
   }
 
-  // /internal/status + /internal/feedback (their public-facing paths) and
-  // /internal-status.html + /internal-feedback.html (the literal built files
-  // the rewrites in vercel.json point at -- both must be gated per page,
-  // since a rewrite doesn't stop the underlying file from also being
-  // reachable directly at its own path).
+  // /internal/status + /internal/feedback + /road-to-mainnet (their
+  // public-facing paths) and /internal-status.html + /internal-feedback.html
+  // + /road-to-mainnet.html (the literal built files the rewrites in
+  // vercel.json point at -- each must be gated per page, since a rewrite
+  // doesn't stop the underlying file from also being reachable directly at
+  // its own path).
   return authenticated ? next() : loginPageResponse()
 }
 
 export const config = {
-  matcher: ['/internal/status', '/internal-status.html', '/api/dashboard/content', '/internal/feedback', '/internal-feedback.html'],
+  matcher: [
+    '/internal/status',
+    '/internal-status.html',
+    '/api/dashboard/content',
+    '/internal/feedback',
+    '/internal-feedback.html',
+    '/road-to-mainnet',
+    '/road-to-mainnet.html',
+    '/api/road-to-mainnet/state',
+    '/api/road-to-mainnet/history',
+  ],
 }
