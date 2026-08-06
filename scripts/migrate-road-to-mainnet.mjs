@@ -51,11 +51,11 @@ const GAP_ROWS = [
   ['Program architecture', 'Auditable, versioned Solana programs with frozen invariants and explicit upgrade policy.', 'To verify: program IDs, deployed bytecode, source mapping and authority state.', 'Build a signed deployment inventory; freeze or document upgrade governance.', 'P0', 'Architecture decision'],
   ['Reserve discovery', 'Deterministic on-chain discovery with schema/version compatibility.', 'Reported live on-chain discovery exists; evidence and coverage not yet attached.', 'Verify all production-eligible Reserves and eliminate mock/unsupported entries.', 'P0', 'Program schema + indexer'],
   ['Reserve Token accounting', 'Exact supply, NAV, AUM, fees and pro-rata claims under all lifecycle states.', 'Reported fixes to NAV/AUM/buy behavior require transaction-level reconciliation.', 'Publish formulas and complete invariant/reconciliation suite.', 'P0', 'Price policy + core program'],
-  ['Mint and redemption', 'Permissionless, proportional, atomic and independent of secondary liquidity.', 'Live DevNet behavior not yet evidenced in this document.', 'Execute positive, negative, concurrency and dust test matrix.', 'P0', 'Supported token policy'],
-  ['Permissions', 'Least-privilege roles, multisig-controlled material authorities, auditable changes.', 'Delegate and pause flows reported; exact authority topology unverified.', 'Inventory keys; test scope/revocation; approve Mainnet custody model.', 'P0', 'Governance design'],
+  ['Mint and redemption', 'Permissionless, proportional, atomic and independent of secondary liquidity.', "programs/ssr_protocol/src/lib.rs:105-129 defines mint_reserve_tokens_in_kind/redeem_reserve_tokens_in_kind with no pool-account dependency (repo-verified). docs/project/PROJECT_STATUS.md reports live-signed Buy/Sell for 100%-devUSDC-backed Reserves as fully genuine, no fabricated legs (DEC-0067) -- not independently reproduced this session. For Reserves holding non-devUSDC assets, Buy/Sell legs are reported as fabricated: minted directly by a server-held swap authority rather than sourced from real liquidity (DEC-0054, still open as of 2026-08-05).", 'Independently re-execute the full positive/negative/concurrency/dust matrix against the current release candidate. Replace the fabricated non-devUSDC legs with real liquidity sourcing before any Mainnet mint/redeem path can be considered genuine for non-devUSDC-backed Reserves -- see Jupiter routing row below.', 'P0', 'Supported token policy'],
+  ['Permissions', 'Least-privilege roles, multisig-controlled material authorities, auditable changes.', 'Delegate add/update/remove flows are implemented; docs/project/PROJECT_STATUS.md reports these as live-verified with real signed transactions in a prior session (DEC-0075) -- not independently reproduced this session. Anchor.toml (repo-verified) confirms the current protocol upgrade authority is a single dev-controlled keypair, not a multisig.', 'Migrate upgrade/treasury/pause authorities to a multisig (tracked, still open per DEC-0015) before any Mainnet or restricted-beta deployment holds real value. Independently re-verify delegate scope/revocation against the current release candidate.', 'P0', 'Governance design'],
   ['Lifecycle', 'Safe composition changes, rebalance, pause, migration and wind-down with holder exits.', 'Implementation and full end-to-end evidence unknown.', 'Specify state machine and pass lifecycle rehearsal including wind-down.', 'P0', 'Core invariants + routing'],
-  ['Security', 'Independent review of stable release candidate; critical/high findings closed.', 'Automated gates reported but not equivalent to an external security review.', 'Threat model, fuzz/property tests, audit, remediation and deploy rehearsal.', 'P0', 'Frozen programs'],
-  ['Jupiter routing', 'Bounded, observable execution; core path survives routing outage.', 'DevNet route availability and prior signer issue indicate integration risk.', 'Define supported assets, failure modes, quote policy and Mainnet endpoints.', 'P1', 'Core protocol + Jupiter'],
+  ['Security', 'Independent review of stable release candidate; critical/high findings closed.', 'No independent security review exists (repo-verified: no audit report/artifact anywhere in docs/). Upgrade authority is a single dev-controlled key, not a multisig (Anchor.toml). The protocol-level integration test suite (tests/ssr_protocol.ts) cannot currently execute in this environment (ANCHOR_PROVIDER_URL unset, confirmed this session).', 'Threat model, fuzz/property tests, external audit, remediation and a rehearsed deploy are all still to be started. A working local-validator/Anchor test environment is also a prerequisite for meaningful automated security-relevant test coverage.', 'P0', 'Frozen programs'],
+  ['Jupiter routing', 'Bounded, observable execution; core path survives routing outage.', "No Jupiter integration exists in this codebase (repo-verified this session: no Jupiter SDK/API dependency or call site found anywhere in src/, packages/, api/, or programs/ -- the only 'jupiter' match in source is a mock JUP token-list entry, src/data/assets.ts:32, not a routing integration). Buy/Sell currently route through a DevNet-only fixed-price swap authority. A separate constant-product AMM (ssr_devnet_amm, program ID declared in Anchor.toml) was designed to eventually replace the fabricated legs but has never been built or deployed (no working Rust/Anchor toolchain validator available in recent sessions per docs/project/PROJECT_STATUS.md). Real Jupiter routing has not been attempted. Additionally: docs/project/PROJECT_STATUS.md (DEC-0045, 2026-07-29) reports a real API test against Jupiter's live aggregator returned Mainnet-only quotes regardless of the mint queried -- Jupiter has zero DevNet awareness. This is a structural constraint, not a configuration gap: real Jupiter routing cannot be exercised on DevNet at all, which is the documented reason a separate DevNet-only AMM was designed instead of integrating Jupiter directly.", "Real Jupiter integration has not been started -- this is earlier-stage than the original 'integration risk' framing suggested. Before Mainnet: either build+deploy ssr_devnet_amm or integrate real Jupiter quote/swap; define supported-asset policy, slippage/price-impact guardrails, and failure-mode handling, none of which can be defined yet because no routing implementation exists to bound.", 'P1', 'Core protocol + Jupiter'],
   ['Indexer and metrics', 'Replayable history, freshness, reorg policy and reconciled user-facing KPIs.', 'Holder/volume/chart corrections reported; backfill and replay proof absent.', 'Implement deterministic backfill, freshness UX, alerts and reconciliation.', 'P1', 'Events/schema + RPC'],
   ['Frontend transaction UX', 'Truthful preview, signer clarity, network checks and finalized-state handling.', 'Requires full wallet matrix and failure-path verification.', 'Run browser/wallet E2E suite and attach signatures/screenshots.', 'P1', 'Stable frontend + programs'],
   ['Infrastructure', 'Redundant RPC/indexing, secrets, monitoring, incident response and recovery.', 'DevNet deployment exists; production SLOs and runbooks unverified.', 'Select providers, define SLOs, add alerts, rehearse incidents and restore.', 'P1', 'Budget + owners'],
@@ -92,18 +92,18 @@ const EVIDENCE = {
   'QA-01': {
     status: 'Blocked',
     evidence:
-      'Ran `npm run test:program` (2026-08-06): fails immediately with "Error: ANCHOR_PROVIDER_URL is not defined" before any test executes (tests/ssr_protocol.ts:48). tests/ssr_protocol.ts:1-9 itself carries an "UNVERIFIED / UNCOMPILED NOTICE": written without a working Anchor/Solana toolchain, typed against a stub Idl because `anchor build` has not produced the real generated program types.',
-    environment: 'Local repository, no Anchor local-validator/provider configured',
-    tester: 'Automation-verified (command run, failed to start), 2026-08-06',
+      'Ran `npm run test:program` (2026-08-06): fails immediately with "Error: ANCHOR_PROVIDER_URL is not defined" before any test executes (tests/ssr_protocol.ts:48). Retested with ANCHOR_PROVIDER_URL/ANCHOR_WALLET set and the machine\'s existing cargo/anchor/solana toolchain added to PATH (~/.cargo/bin, /c/devtools/solana/solana-release/bin -- confirmed present on this machine, just not on this session\'s default PATH): gets past that guard and a `cargo metadata` guard, then stalls with sustained 429s from the public DevNet RPC (api.devnet.solana.com) during setup, for the full 100s allotted -- no pass/fail result obtained either way. tests/ssr_protocol.ts:1-9 itself carries an "UNVERIFIED / UNCOMPILED NOTICE": written without a working Anchor/Solana toolchain, typed against a stub Idl because `anchor build` has not produced the real generated program types.',
+    environment: 'Local repository, public DevNet RPC (no private/Helius endpoint available to local runs -- that key is Vercel-only)',
+    tester: 'Automation-verified (command run, did not complete), 2026-08-06',
     notes:
-      'Blocked by missing local-validator/ANCHOR_PROVIDER_URL setup, not a code defect. Exact next step: stand up `solana-test-validator` (or run via `anchor test`), set ANCHOR_PROVIDER_URL/ANCHOR_WALLET, run `anchor build` to generate real IDL types, then re-run and record pass/fail per test with output.',
+      'Not simply "blocked from starting" -- it starts (once PATH/env are fixed) and then stalls on public-RPC rate limiting, a separately pre-existing documented risk (docs/project/PROJECT_STATUS.md Risks). Exact next step: run with a private RPC endpoint, or enable Windows Developer Mode so solana-test-validator/anchor test can run fully offline (also currently blocked per PROJECT_STATUS.md Blockers) instead of live DevNet.',
   },
   'QA-02': {
     status: 'Blocked',
-    evidence: 'Same run as QA-01 -- test:program cannot start (ANCHOR_PROVIDER_URL undefined), so no instruction was actually exercised against a live program in this pass.',
-    environment: 'Local repository, no Anchor local-validator/provider configured',
-    tester: 'Automation-verified (command run, failed to start), 2026-08-06',
-    notes: 'Same blocker and next step as QA-01. tests/ssr_protocol.ts targets real instructions/accounts (not mocks) by design once runnable -- that design intent is not the same as executed evidence.',
+    evidence: 'Same retest as QA-01 -- test:program starts once PATH/env are fixed, then stalls on public-DevNet-RPC rate limiting during setup; no instruction was actually exercised to completion against a live program in this pass.',
+    environment: 'Local repository, public DevNet RPC (no private/Helius endpoint available to local runs)',
+    tester: 'Automation-verified (command run, did not complete), 2026-08-06',
+    notes: 'Same refined blocker and next step as QA-01. tests/ssr_protocol.ts targets real instructions/accounts (not mocks) by design once runnable -- that design intent is not the same as executed evidence.',
   },
   'SM-01': {
     status: 'Partial',
@@ -114,6 +114,18 @@ const EVIDENCE = {
     notes:
       'Static evidence that mint/redeem have no structural pool dependency. Does not prove runtime behavior under all conditions (e.g. with zero liquidity pools actually deployed) -- exact next test: execute mint and redeem live on DevNet with no secondary-market pool for the Reserve present, confirm both succeed normally.',
   },
+}
+
+// Notes-only pointers for critical/manual controls -- status is deliberately
+// left at whatever it already is (these do NOT become Passed/Partial from
+// this alone). Saves the next reviewer a re-discovery pass by citing exactly
+// where a prior, unreproduced lead lives, per the doc's own rule that a
+// historical report is a lead, not proof, until reproduced against the
+// current release candidate.
+const NOTES_ONLY = {
+  'CP-07': "Lead, not proof: docs/project/PROJECT_STATUS.md (DEC-0067, DEC-0078) reports live-signed proportional-mint Buy transactions for 100%-devUSDC-backed Reserves as fully genuine (real signatures logged, e.g. under 'Technical Health' 2026-07-30/2026-08-05 entries). NOT independently reproduced this session. For Reserves holding non-devUSDC assets, the same doc (DEC-0054) reports mint legs as fabricated (server-minted), not sourced from real liquidity. Exact next test: re-execute a live mint against the current release candidate for both a devUSDC-only and a mixed-asset Reserve, and verify post-state directly, not just the transaction succeeding.",
+  'CP-08': "Lead, not proof: same sourcing as CP-07 -- docs/project/PROJECT_STATUS.md reports live-signed proportional-redeem (Sell) transactions as genuine for devUSDC-only Reserves (DEC-0067), fabricated (server-minted devUSDC payout) for mixed-asset Reserves (DEC-0054, open). NOT independently reproduced this session. Exact next test: re-execute a live redeem against the current release candidate, verify NAV/AUM/vault balances before and after directly.",
+  'PM-08': "Repo-verified structural fact (not the full live-authority-topology test this control requires): Anchor.toml's [programs.devnet]/[programs.localnet] sections and its accompanying comment confirm the current DevNet upgrade authority is a single dev-controlled keypair, not a multisig -- docs/project/PROJECT_STATUS.md (DEC-0015) tracks migrating this to a multisig as still open before any Mainnet or restricted-beta deployment. Exact next test: confirm the deployed program's actual upgrade authority on-chain (not just the local keypair config) and formally decide/execute the multisig migration.",
 }
 
 async function main() {
@@ -172,6 +184,26 @@ async function main() {
     console.log(`  seeded evidence for ${id}: ${ev.status}`)
   }
   console.log(`Evidence-backed prefill applied: ${evidenceApplied}/${Object.keys(EVIDENCE).length}.`)
+
+  let notesApplied = 0
+  for (const [id, noteText] of Object.entries(NOTES_ONLY)) {
+    const current = await sql`select status, evidence, environment, tester, notes, version from rtm_controls where control_id = ${id}`
+    if (current.length === 0) {
+      console.warn(`  ! skipped ${id}: not found in rtm_controls`)
+      continue
+    }
+    const row = current[0]
+    if (row.notes === noteText) continue
+    await sql`
+      update rtm_controls
+      set notes = ${noteText}, version = version + 1, updated_at = now(), updated_by = ${'migration script (repo evidence, notes-only)'}
+      where control_id = ${id}
+    `
+    await sql`insert into rtm_revisions (entity_type, entity_id, before_value, after_value, changed_by) values ('control', ${id}, ${JSON.stringify({ status: row.status, evidence: row.evidence, environment: row.environment, tester: row.tester, notes: row.notes })}, ${JSON.stringify({ status: row.status, evidence: row.evidence, environment: row.environment, tester: row.tester, notes: noteText })}, 'migration script (repo evidence, notes-only)')`
+    notesApplied++
+    console.log(`  seeded notes-only lead for ${id} (status unchanged: ${row.status})`)
+  }
+  console.log(`Notes-only leads applied: ${notesApplied}/${Object.keys(NOTES_ONLY).length}.`)
 
   console.log('Done.')
 }
