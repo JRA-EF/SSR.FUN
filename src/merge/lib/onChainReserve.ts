@@ -436,6 +436,15 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
 export type DtrPageState =
   | { kind: "found"; dtr: DTR }
   | { kind: "quarantined"; info: QuarantinedReserveInfo }
+  /**
+   * Not in `dtrs`/`quarantinedReserves` yet, but background discovery hasn't
+   * proven it doesn't exist either -- e.g. a just-created or just-resumed
+   * Reserve, opened before RealReserveSync's next poll has merged it in, or
+   * a fresh page load whose very first discovery pass hasn't completed. Must
+   * never be presented as the terminal "Reserve Not Found" -- see
+   * `resolveDtrPageState`'s root-cause comment below.
+   */
+  | { kind: "indexing" }
   | { kind: "not-found" };
 
 /**
@@ -444,13 +453,53 @@ export type DtrPageState =
  * (which has heavy wallet/RPC hook dependencies). A requested id resolves to
  * exactly one of: a genuine, eligible DTR to render normally; a genuinely
  * on-chain but quarantined Reserve (shows the honest "not supported"
- * message + Back to Discover, nothing else); or truly nonexistent (generic
- * "Reserve Not Found").
+ * message + Back to Discover, nothing else); still-indexing (background
+ * discovery hasn't completed even one pass yet, so absence from `dtrs` isn't
+ * meaningful); or truly nonexistent (generic "Reserve Not Found").
+ *
+ * Root cause this fixes: this function used to treat "not in `dtrs` yet" as
+ * unconditionally "not-found," rendered immediately. That's exactly what
+ * turned a background-discovery timing gap (RealReserveSync's poll hasn't
+ * run yet, or a resumed deployment wasn't registered into the store -- see
+ * CreateDTR.tsx's handleResumeDeployment) into a dead-end "Reserve Not
+ * Found" page for a Reserve that had, in fact, already landed on-chain --
+ * the reported "new Reserve initially showed 'Reserve not found,' then
+ * later appeared" behavior. `chainDiscoveryStatus !== "ready"` covers the
+ * common case (discovery is actively running); DTRDetail.tsx/ManageDTR.tsx
+ * additionally perform one bounded direct on-chain read (see
+ * `parseOnChainReserveId`) before ever rendering the terminal state, to
+ * cover the rarer case where a pass already completed without this
+ * particular (very recently created) Reserve yet.
  */
-export function resolveDtrPageState(dtrId: string | undefined, dtrs: DTR[], quarantinedReserves: Record<string, QuarantinedReserveInfo>): DtrPageState {
+export function resolveDtrPageState(
+  dtrId: string | undefined,
+  dtrs: DTR[],
+  quarantinedReserves: Record<string, QuarantinedReserveInfo>,
+  chainDiscoveryStatus: "loading" | "ready" | "error",
+): DtrPageState {
   const dtr = dtrs.find((d) => d.id === (dtrId ?? ""));
   if (dtr) return { kind: "found", dtr };
   const info = dtrId ? quarantinedReserves[dtrId] : undefined;
   if (info) return { kind: "quarantined", info };
+  if (chainDiscoveryStatus !== "ready") return { kind: "indexing" };
   return { kind: "not-found" };
+}
+
+/**
+ * Extracts the numeric on-chain `reserveId` from this app's `devnet-<id>`
+ * DTR-id convention (see `buildDtrFromDiscoveredReserve`/CreateDTR.tsx,
+ * which both mint ids this exact way for every genuinely on-chain Reserve).
+ * Returns null for anything else (a simulated/legacy id, a malformed
+ * param, or a non-numeric suffix) -- callers use this to decide whether a
+ * "not found" id is even worth a direct fallback on-chain read.
+ */
+export function parseOnChainReserveId(dtrId: string | undefined): bigint | null {
+  if (!dtrId) return null;
+  const match = /^devnet-(\d+)$/.exec(dtrId);
+  if (!match) return null;
+  try {
+    return BigInt(match[1]);
+  } catch {
+    return null;
+  }
 }

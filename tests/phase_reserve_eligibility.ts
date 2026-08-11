@@ -125,30 +125,35 @@ describe("resolveDtrPageState (src/merge/lib/onChainReserve.ts) -- DTRDetail dir
   const quarantined: Record<string, QuarantinedReserveInfo> = { "devnet-3": quarantineInfo };
 
   it("resolves to 'found' when the id matches a real, eligible DTR", () => {
-    const state = resolveDtrPageState("devnet-27", [foundDtr], {});
+    const state = resolveDtrPageState("devnet-27", [foundDtr], {}, "ready");
     expect(state.kind).to.equal("found");
     if (state.kind === "found") expect(state.dtr).to.equal(foundDtr);
   });
 
   it("resolves to 'quarantined' when the id isn't a public DTR but IS a known-quarantined on-chain Reserve", () => {
-    const state = resolveDtrPageState("devnet-3", [foundDtr], quarantined);
+    const state = resolveDtrPageState("devnet-3", [foundDtr], quarantined, "ready");
     expect(state.kind).to.equal("quarantined");
     if (state.kind === "quarantined") expect(state.info).to.deep.equal(quarantineInfo);
   });
 
-  it("resolves to 'not-found' when the id is neither a public DTR nor a known-quarantined Reserve", () => {
-    const state = resolveDtrPageState("devnet-999", [foundDtr], quarantined);
+  it("resolves to 'not-found' when the id is neither a public DTR nor a known-quarantined Reserve, once discovery has completed a pass", () => {
+    const state = resolveDtrPageState("devnet-999", [foundDtr], quarantined, "ready");
     expect(state.kind).to.equal("not-found");
   });
 
-  it("resolves to 'not-found' for an undefined id", () => {
-    const state = resolveDtrPageState(undefined, [foundDtr], quarantined);
+  it("resolves to 'not-found' for an undefined id, once discovery has completed a pass", () => {
+    const state = resolveDtrPageState(undefined, [foundDtr], quarantined, "ready");
     expect(state.kind).to.equal("not-found");
+  });
+
+  it("resolves to 'indexing' -- never the terminal 'not-found' -- while discovery hasn't completed a pass yet", () => {
+    const state = resolveDtrPageState("devnet-999", [foundDtr], quarantined, "loading");
+    expect(state.kind).to.equal("indexing");
   });
 
   it("prefers 'found' over 'quarantined' if an id somehow matches both (found DTR is always authoritative)", () => {
     const dtrAtQuarantinedId = { id: "devnet-3", name: "Actually fine now" } as DTR;
-    const state = resolveDtrPageState("devnet-3", [dtrAtQuarantinedId], quarantined);
+    const state = resolveDtrPageState("devnet-3", [dtrAtQuarantinedId], quarantined, "ready");
     expect(state.kind).to.equal("found");
   });
 });

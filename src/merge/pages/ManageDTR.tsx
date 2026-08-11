@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
+import { resolveDtrPageState, parseOnChainReserveId } from "@/lib/onChainReserve";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,7 +18,7 @@ import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCi
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
 import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLAGS, PERMISSION_FLAGS } from "@/lib/onChainPermissions";
-import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC } from "@ssr/sdk";
+import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC, findReserve } from "@ssr/sdk";
 import {
   executeAddDelegate,
   executeAddReserveAsset,
@@ -181,11 +182,41 @@ function OnChainDelegateRow({
 
 export function ManageDTR() {
   const { dtrId } = useParams();
-  const { wallet, dtrs, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve } = useAppStore();
-  const dtr = dtrs.find((d) => d.id === (dtrId || ""));
+  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve } = useAppStore();
+  const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
+  const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const { toast } = useToast();
   const { connection } = useConnection();
   const walletCtx = useWallet();
+
+  // See DTRDetail.tsx's identical direct-check effect for the full
+  // root-cause explanation -- covers the gap where discovery already
+  // completed a pass ("ready") but this specific Reserve wasn't in it yet.
+  const [directCheck, setDirectCheck] = useState<"idle" | "checking" | "confirmed-absent">("idle");
+  useEffect(() => {
+    if (pageState.kind !== "not-found") {
+      if (directCheck !== "idle") setDirectCheck("idle");
+      return;
+    }
+    const reserveId = parseOnChainReserveId(dtrId);
+    if (reserveId === null) return;
+    let cancelled = false;
+    setDirectCheck("checking");
+    const programId = new PublicKey(DEVNET_FIXTURES.programId);
+    const [reserveAddress] = findReserve(reserveId, programId);
+    fetchReserveOnChain(connection, programId, reserveAddress, [])
+      .then((onChain) => {
+        if (cancelled) return;
+        if (!onChain) setDirectCheck("confirmed-absent");
+      })
+      .catch(() => {
+        // Inconclusive transport failure -- not confirmation of absence.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageState.kind, dtrId, connection]);
 
   const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance">("overview");
 
@@ -256,6 +287,15 @@ export function ManageDTR() {
   }
 
   if (!dtr) {
+    const stillIndexing = pageState.kind === "indexing" || (pageState.kind === "not-found" && directCheck !== "confirmed-absent" && parseOnChainReserveId(dtrId) !== null);
+    if (stillIndexing) {
+      return (
+        <div className="container mx-auto px-4 py-24 text-center">
+          <h1 className="text-3xl font-merge-display font-bold mb-4">Verifying on DevNet...</h1>
+          <p className="text-muted-foreground mb-8">This Reserve was just created or resumed and is still being confirmed on Solana DevNet. It will appear automatically in a moment.</p>
+        </div>
+      );
+    }
     return (
       <div className="container mx-auto px-4 py-24 text-center">
         <h1 className="text-3xl font-merge-display font-bold mb-4">Reserve Not Found</h1>

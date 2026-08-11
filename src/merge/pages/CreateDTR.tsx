@@ -239,7 +239,7 @@ export function CreateDTR() {
   }, [wallet.connected, wallet.address, connection]);
 
   const handleResumeDeployment = async () => {
-    if (!resumePending || submittingRef.current) return;
+    if (!resumePending || submittingRef.current || !walletCtx.publicKey) return;
     submittingRef.current = true;
     setIsSubmitting(true);
     setCreateStep("fund-seed-assets");
@@ -252,8 +252,81 @@ export function CreateDTR() {
         onProgress: setCreateStep,
       });
       clearPendingReserveDeploy();
-      setResumePending(null);
       const dtrId = `devnet-${result.reserveId}`;
+      // Registers this Reserve into the store immediately, mirroring
+      // handleSubmitReal's fresh-creation path below -- without this, a
+      // successful Resume left `dtrs` without an entry for it until
+      // RealReserveSync's next poll (up to MAX_POLL_MS later), so navigating
+      // straight to /dtr/{dtrId} showed a transient "Reserve Not Found"
+      // right after a genuinely successful deployment (the confirmed root
+      // cause of the reported "eventually appeared after waiting/refreshing"
+      // behavior). description/category/fee config aren't knowable from
+      // `resumePending` alone (this may be a fresh page load after the
+      // original form's state was lost) -- honest defaults here; the very
+      // next discovery poll overwrites with full on-chain-verified data
+      // (mergeDiscoveredReserves merges by on-chain address, same as any
+      // other discovered Reserve). DTRDetail.tsx/ManageDTR.tsx's "indexing"
+      // state is the real safety net for every other path into this same
+      // gap; this is belt-and-suspenders for the resume path specifically.
+      const onChainResumed: OnChainReserveMeta = {
+        programId: DEVNET_FIXTURES.programId,
+        reserveId: result.reserveId,
+        reserve: result.reserve,
+        reserveTokenMint: result.reserveTokenMint,
+        mintAuthority: result.mintAuthority,
+        vaultAuthority: result.vaultAuthority,
+        manager: walletCtx.publicKey.toBase58(),
+        assets: result.assets.map((a, i) => ({
+          mint: a.mint,
+          symbol: DEVNET_REAL_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
+          decimals: a.decimals,
+          weightBps: a.weightBps,
+          reserveAsset: a.reserveAsset,
+          vault: a.vault,
+          orderIndex: i,
+        })),
+        status: "active",
+        totalTargetWeightBps: 10_000,
+        reserveTokenSupplyRaw: String(Math.max(1, Math.floor(resumePending.seedTotalUsd)) * 1_000_000),
+        vaultBalancesRaw: {},
+      };
+      registerRealReserve({
+        id: dtrId,
+        name: resumePending.name,
+        ticker: resumePending.ticker,
+        description: "",
+        category: DEFAULT_RESERVE_CATEGORY,
+        tags: [DEFAULT_RESERVE_CATEGORY, "devnet", "real"],
+        logoSeed: dtrId,
+        dtrAddress: result.reserve,
+        managerAddress: walletCtx.publicKey.toBase58(),
+        delegates: [],
+        feeConfig: {
+          mintFeePct: 0,
+          tvlFeePct: 0,
+          managerBuyTaxPct: 0,
+          managerSellTaxPct: 0,
+          creatorFeeDestination: walletCtx.publicKey.toBase58(),
+          feeRecipients: [],
+        },
+        tokenPrice: 1,
+        nav: 1,
+        aum: resumePending.seedTotalUsd,
+        liquidityUsdc: resumePending.seedTotalUsd,
+        change24h: 0,
+        change7d: 0,
+        holders: 1,
+        composition: result.assets.map((a) => {
+          const meta = DEVNET_REAL_ASSETS.find((m) => m.mint === a.mint);
+          return { symbol: meta?.symbol ?? "?", name: meta?.name ?? a.mint, weight: a.weightBps / 10_000 };
+        }),
+        unallocatedPct: 0,
+        isUserCreated: true,
+        priceHistory: [{ t: Date.now(), price: 1 }],
+        trades: [],
+        onChain: onChainResumed,
+      });
+      setResumePending(null);
       syncRealHolding(dtrId, "0", 1); // Placeholder holding entry -- RealReserveSync's next poll (or DTRDetail's own on-chain read) fills in the real balance/composition immediately; this just avoids a blank flash.
       toast({
         title: "Reserve deployment resumed and completed",

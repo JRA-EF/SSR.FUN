@@ -132,16 +132,22 @@ export async function fetchReserveOnChain(
   candidateAssetMints: PublicKey[],
 ): Promise<ReserveOnChain | null> {
   const program = buildReadOnlyProgram(connection);
-  const reserveAccount = await program.account.reserve.fetchNullable(reserveAddress);
+  // Retried (mirroring discovery.ts's batched-and-retried reserve reads):
+  // this single-Reserve fetch backs the post-launch redirect, resumability
+  // reconciliation, and direct-link lookups -- an unretried transient 429
+  // here was a direct contributor to a freshly-created or freshly-resumed
+  // Reserve intermittently reading back as "doesn't exist" immediately after
+  // its own transaction confirmed.
+  const reserveAccount = await withRateLimitRetryGeneric(() => program.account.reserve.fetchNullable(reserveAddress));
   if (!reserveAccount) return null;
 
   const assets: ReserveAssetOnChain[] = [];
   for (const mint of candidateAssetMints) {
     const [reserveAssetPda] = findReserveAsset(reserveAddress, mint, programId);
     const [vaultPda] = findReserveVault(reserveAddress, mint, programId);
-    const reserveAsset = await program.account.reserveAsset.fetchNullable(reserveAssetPda);
+    const reserveAsset = await withRateLimitRetryGeneric(() => program.account.reserveAsset.fetchNullable(reserveAssetPda));
     if (!reserveAsset) continue;
-    const vaultInfo = await getAccount(connection, vaultPda).catch(() => null);
+    const vaultInfo = await withRateLimitRetryGeneric(() => getAccount(connection, vaultPda)).catch(() => null);
     assets.push({
       assetMint: mint.toBase58(),
       reserveAsset: reserveAssetPda.toBase58(),

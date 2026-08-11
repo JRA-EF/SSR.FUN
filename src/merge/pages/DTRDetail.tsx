@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVUSDC, DEVUSDC_MINT, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements } from "@ssr/sdk";
+import { DEVUSDC, DEVUSDC_MINT, DEVNET_FIXTURES, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements, findReserve } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
-import { resolveDtrPageState } from "@/lib/onChainReserve";
+import { resolveDtrPageState, parseOnChainReserveId } from "@/lib/onChainReserve";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
 import {
@@ -74,12 +74,51 @@ function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, quarantinedReserves, mergeOnChainReserve, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
-  const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves);
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
+  const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
   const { toast } = useToast();
   const { connection } = useConnection();
+
+  // Covers the rarer gap resolveDtrPageState's chainDiscoveryStatus check
+  // doesn't: a discovery pass already completed ("ready") but this
+  // particular (very recently created/resumed) Reserve wasn't included in
+  // it yet -- the next background poll will pick it up, but a direct-link
+  // visitor shouldn't see a dead-end "Reserve Not Found" in the meantime.
+  // One bounded, existence-only on-chain read (no asset resolution needed,
+  // hence the empty candidate-mint list) decides whether to keep showing the
+  // "still indexing" panel or the genuine terminal state.
+  const [directCheck, setDirectCheck] = useState<"idle" | "checking" | "confirmed-absent">("idle");
+  useEffect(() => {
+    if (pageState.kind !== "not-found") {
+      if (directCheck !== "idle") setDirectCheck("idle");
+      return;
+    }
+    const reserveId = parseOnChainReserveId(dtrId);
+    if (reserveId === null) return; // not a real on-chain id shape -- genuinely nothing to check.
+    let cancelled = false;
+    setDirectCheck("checking");
+    const programId = new PublicKey(DEVNET_FIXTURES.programId);
+    const [reserveAddress] = findReserve(reserveId, programId);
+    fetchReserveOnChain(connection, programId, reserveAddress, [])
+      .then((onChain) => {
+        if (cancelled) return;
+        // Found on-chain but not yet in the store: leave state as
+        // "checking" (rendered identically to "indexing") -- RealReserveSync's
+        // next poll will merge it in and this component re-renders normally.
+        // Only a confirmed absence should ever unlock the terminal state.
+        if (!onChain) setDirectCheck("confirmed-absent");
+      })
+      .catch(() => {
+        // Transport failure -- inconclusive, not confirmation of absence.
+        // Leave as "checking" rather than falsely declaring not-found.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageState.kind, dtrId, connection]);
   const landingStats = useLandingStats();
   const reserveStats = dtr?.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve] : undefined;
   const walletCtx = useWallet();
@@ -269,6 +308,20 @@ export function DTRDetail() {
           <Button asChild>
             <Link href="/discover">Back to Discover</Link>
           </Button>
+        </div>
+      );
+    }
+    // Still-indexing: either resolveDtrPageState itself already knows
+    // discovery hasn't completed a pass yet, or it has but the bounded
+    // direct on-chain check above hasn't yet confirmed genuine absence.
+    // Never render the terminal "Not Found" state while either is true --
+    // see resolveDtrPageState's root-cause comment (onChainReserve.ts).
+    const stillIndexing = pageState.kind === "indexing" || (pageState.kind === "not-found" && directCheck !== "confirmed-absent" && parseOnChainReserveId(dtrId) !== null);
+    if (stillIndexing) {
+      return (
+        <div className="container mx-auto px-4 py-24 text-center">
+          <h1 className="text-3xl font-merge-display font-bold mb-4">Verifying on DevNet...</h1>
+          <p className="text-muted-foreground mb-8">This Reserve was just created or resumed and is still being confirmed on Solana DevNet. It will appear automatically in a moment.</p>
         </div>
       );
     }

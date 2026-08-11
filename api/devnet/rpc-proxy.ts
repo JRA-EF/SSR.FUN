@@ -32,13 +32,13 @@
 import { resolveRpcUrl, FALLBACK_RPC_URL } from "./_lib/rpc";
 import { checkRateWindow } from "./_lib/rateLimit";
 
-interface ApiRequest {
+export interface ApiRequest {
   method?: string;
   headers: Record<string, string | string[] | undefined>;
   body?: unknown;
 }
 
-interface ApiResponse {
+export interface ApiResponse {
   status(code: number): ApiResponse;
   json(body: unknown): void;
 }
@@ -59,6 +59,15 @@ const MAX_BATCH_SIZE = 20;
 const MAX_BODY_BYTES = 50_000;
 const THROTTLE_WINDOW_MS = 1_000;
 const THROTTLE_MAX_PER_WINDOW = 40; // generous for one client's own concurrent-read cap (4) plus bursts across several tabs
+
+// Global (single shared key, not per-IP) sendTransaction throttle -- see the
+// call site below. Kept conservatively under Helius's paid-plan cap (5
+// sendTransaction/sec, shared across every client of this deployment) to
+// leave headroom for the server-signed sends this proxy never sees (faucet/
+// swap-sign use their own direct Connection, outside this proxy).
+const SEND_TRANSACTION_THROTTLE_KEY = "rpc-proxy:sendTransaction:global";
+const SEND_TRANSACTION_THROTTLE_WINDOW_MS = 1_000;
+const SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW = 3;
 
 interface JsonRpcRequest {
   jsonrpc?: unknown;
@@ -169,6 +178,29 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // header. Reads are safe to retry against a different endpoint; a send is
   // never retried against a second endpoint under any circumstance.
   const containsSend = toForward.some((r) => r.method === "sendTransaction");
+
+  if (containsSend && !checkRateWindow(SEND_TRANSACTION_THROTTLE_KEY, SEND_TRANSACTION_THROTTLE_WINDOW_MS, SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW)) {
+    // A SEPARATE, GLOBAL (not per-IP) throttle -- the per-IP one above
+    // exists to blunt one client hammering the proxy, but Helius's paid
+    // plan caps sendTransaction specifically at a shared rate across every
+    // client (not per-IP), which the per-IP throttle does nothing to
+    // protect. Deliberately conservative (under the real plan limit, see
+    // docs/project/PROJECT_STATUS.md's Helius-integration entry) so a burst
+    // of concurrent Reserve-launch/Buy/Sell submissions degrades into a
+    // 429 the client already reconciles safely (CreateDTR.tsx/zapClient.ts's
+    // existing isRateLimitError/on-chain-reconciliation paths, unchanged)
+    // rather than risking an unpredictable upstream rejection. Only ever
+    // gates the forward -- never causes a send to be retried or routed to
+    // the fallback endpoint (see the file header's "never resubmitted"
+    // guarantee, which this fully preserves).
+    res.status(429).json(
+      isBatch
+        ? toForward.map((r) => ({ jsonrpc: "2.0", id: r.id, error: { code: -32005, message: "DevNet RPC sendTransaction is temporarily rate-limited (shared provider budget)." } }))
+        : { jsonrpc: "2.0", id: (toForward[0] as JsonRpcRequest | undefined)?.id ?? null, error: { code: -32005, message: "DevNet RPC sendTransaction is temporarily rate-limited (shared provider budget)." } },
+    );
+    return;
+  }
+
   const primaryUrl = resolveRpcUrl();
 
   const forwardPayload = isBatch ? toForward : toForward[0];

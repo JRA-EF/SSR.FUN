@@ -32,10 +32,26 @@
 // account model itself already exposes verified counts to detect
 // under-resolution honestly (see `resolvedAssetCount`/`assetCount` below).
 import { Connection, PublicKey } from "@solana/web3.js";
-import { getAccount } from "@solana/spl-token";
+import { unpackAccount, unpackMint } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "./readOnly";
 import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault } from "./pda";
 import { withRateLimitRetry } from "./rpcResilience";
+
+/**
+ * Solana's `getMultipleAccounts` accepts up to ~100 pubkeys per call --
+ * chunked conservatively under that so a single call never risks a
+ * provider-side rejection. Pure and exported so its boundary behavior (0, 1,
+ * exactly the chunk size, one more) is directly unit-tested without needing
+ * a live Connection -- see tests/phase_discovery_reliability.ts.
+ */
+export function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) throw new Error("chunk size must be positive");
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+const MAX_ACCOUNTS_PER_BATCH = 90;
 
 export interface ProtocolConfigView {
   authority: string;
@@ -129,85 +145,155 @@ export async function discoverAllReserves(
   if (!protocolConfig) return { reserves: [], protocolConfig: null, issues: [] };
 
   const program = buildReadOnlyProgram(connection);
-  const reserves: DiscoveredReserve[] = [];
   const issues: DiscoveryIssue[] = [];
 
+  // --- Pass 1: batch-fetch every candidate Reserve account -----------------
+  // Previously one sequential, UNRETRIED fetchNullable per reserveId -- at
+  // the current ~30 Reserves (and growing) that's 30 unretried round trips
+  // just for this pass, and a single transient hiccup on any one of them
+  // silently dropped that Reserve for the whole poll cycle with no retry at
+  // all (unlike the per-asset reads below, which already retried). Batched
+  // via Anchor's fetchMultiple (one getMultipleAccounts call per chunk,
+  // chunked under Solana's ~100-account limit) and retried per chunk -- a
+  // chunk that fails even after retry records an issue for every reserveId
+  // in it (never silently drops a whole chunk without a trace) but still
+  // lets every OTHER chunk resolve normally.
+  interface ReserveCandidate {
+    id: bigint;
+    address: PublicKey;
+  }
+  const candidates: ReserveCandidate[] = [];
   for (let id = 0n; id < protocolConfig.reserveCount; id++) {
-    const [reserveAddress] = findReserve(id, programId);
-    let reserveAccount: Awaited<ReturnType<typeof program.account.reserve.fetchNullable>>;
-    try {
-      reserveAccount = await program.account.reserve.fetchNullable(reserveAddress);
-    } catch (e) {
-      // A malformed/undecodable account at this id must not abort discovery
-      // of every OTHER Reserve -- record it honestly and move on.
-      issues.push({
-        reserveId: id.toString(),
-        scope: "reserve",
-        detail: reserveAddress.toBase58(),
-        message: e instanceof Error ? e.message : String(e),
-      });
-      continue;
-    }
-    // A gap here would mean create_reserve succeeded without incrementing
-    // reserve_count, which the program's own invariants don't allow -- but
-    // never assume; skip honestly rather than throw the whole enumeration away.
-    if (!reserveAccount) continue;
+    candidates.push({ id, address: findReserve(id, programId)[0] });
+  }
 
-    const assets: DiscoveredReserveAsset[] = [];
+  type ReserveAccountDecoded = Awaited<ReturnType<typeof program.account.reserve.fetchNullable>>;
+  const reserveAccountByAddress = new Map<string, NonNullable<ReserveAccountDecoded>>();
+  for (const batch of chunkArray(candidates, MAX_ACCOUNTS_PER_BATCH)) {
+    try {
+      const results = await withRateLimitRetry(() => program.account.reserve.fetchMultiple(batch.map((c) => c.address)));
+      results.forEach((account, i) => {
+        // A gap here would mean create_reserve succeeded without
+        // incrementing reserve_count, which the program's own invariants
+        // don't allow -- but never assume; skip honestly rather than throw
+        // the whole enumeration away.
+        if (account) reserveAccountByAddress.set(batch[i].address.toBase58(), account);
+      });
+    } catch (e) {
+      for (const c of batch) {
+        issues.push({ reserveId: c.id.toString(), scope: "reserve", detail: c.address.toBase58(), message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+  const resolvedReserves = candidates.filter((c) => reserveAccountByAddress.has(c.address.toBase58()));
+
+  // --- Pass 2: batch-fetch every candidate (reserve, asset) PDA ------------
+  // Previously up to `candidateAssetMints.length` sequential reads PER
+  // reserve (already retried individually, but still one round trip each).
+  // Flattened across every resolved Reserve and batched the same way.
+  interface AssetCandidate {
+    id: bigint;
+    reserveAddress: PublicKey;
+    mint: PublicKey;
+    reserveAssetPda: PublicKey;
+    vaultPda: PublicKey;
+  }
+  const assetCandidates: AssetCandidate[] = [];
+  for (const { id, address: reserveAddress } of resolvedReserves) {
     for (const mint of candidateAssetMints) {
       const [reserveAssetPda] = findReserveAsset(reserveAddress, mint, programId);
       const [vaultPda] = findReserveVault(reserveAddress, mint, programId);
-      let reserveAsset: Awaited<ReturnType<typeof program.account.reserveAsset.fetchNullable>>;
-      try {
-        // Retried: a transient RPC 429/error on even one of the (up to 4)
-        // legitimate candidate-asset reads must not permanently under-report
-        // resolvedAssetCount for an otherwise fully-supported Reserve -- that
-        // false positive is exactly what surfaced the "N registered, only M
-        // resolved" banner under ordinary RPC congestion.
-        reserveAsset = await withRateLimitRetry(() => program.account.reserveAsset.fetchNullable(reserveAssetPda));
-      } catch (e) {
-        issues.push({
-          reserveId: id.toString(),
-          scope: "asset",
-          detail: `${mint.toBase58()} (${reserveAssetPda.toBase58()})`,
-          message: e instanceof Error ? e.message : String(e),
-        });
-        continue;
-      }
-      if (!reserveAsset) continue;
-      const vaultInfo = await withRateLimitRetry(() => getAccount(connection, vaultPda)).catch((e) => {
-        issues.push({
-          reserveId: id.toString(),
-          scope: "vault",
-          detail: vaultPda.toBase58(),
-          message: e instanceof Error ? e.message : String(e),
-        });
-        return null;
+      assetCandidates.push({ id, reserveAddress, mint, reserveAssetPda, vaultPda });
+    }
+  }
+
+  type ReserveAssetDecoded = Awaited<ReturnType<typeof program.account.reserveAsset.fetchNullable>>;
+  const reserveAssetByPda = new Map<string, NonNullable<ReserveAssetDecoded>>();
+  for (const batch of chunkArray(assetCandidates, MAX_ACCOUNTS_PER_BATCH)) {
+    try {
+      const results = await withRateLimitRetry(() => program.account.reserveAsset.fetchMultiple(batch.map((c) => c.reserveAssetPda)));
+      results.forEach((account, i) => {
+        if (account) reserveAssetByPda.set(batch[i].reserveAssetPda.toBase58(), account);
       });
-      assets.push({
-        assetMint: mint.toBase58(),
-        reserveAsset: reserveAssetPda.toBase58(),
-        vault: vaultPda.toBase58(),
+    } catch (e) {
+      for (const c of batch) {
+        issues.push({
+          reserveId: c.id.toString(),
+          scope: "asset",
+          detail: `${c.mint.toBase58()} (${c.reserveAssetPda.toBase58()})`,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+  }
+
+  // Vaults are raw SPL token accounts (not Anchor-decoded) -- batch the same
+  // way via connection.getMultipleAccountsInfo, only for assets that
+  // genuinely resolved above (a vault for a never-registered asset doesn't
+  // exist and was never fetched individually either).
+  const resolvedAssetCandidates = assetCandidates.filter((c) => reserveAssetByPda.has(c.reserveAssetPda.toBase58()));
+  const vaultBalanceByPda = new Map<string, string>();
+  for (const batch of chunkArray(resolvedAssetCandidates, MAX_ACCOUNTS_PER_BATCH)) {
+    try {
+      const infos = await withRateLimitRetry(() => connection.getMultipleAccountsInfo(batch.map((c) => c.vaultPda)));
+      infos.forEach((info, i) => {
+        try {
+          vaultBalanceByPda.set(batch[i].vaultPda.toBase58(), unpackAccount(batch[i].vaultPda, info).amount.toString());
+        } catch (e) {
+          issues.push({ reserveId: batch[i].id.toString(), scope: "vault", detail: batch[i].vaultPda.toBase58(), message: e instanceof Error ? e.message : String(e) });
+        }
+      });
+    } catch (e) {
+      for (const c of batch) {
+        issues.push({ reserveId: c.id.toString(), scope: "vault", detail: c.vaultPda.toBase58(), message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+
+  // --- Pass 3: batch-fetch every resolved Reserve's token-supply mint ------
+  // Previously one sequential, UNRETRIED connection.getTokenSupply per
+  // resolved Reserve. Batched via getMultipleAccountsInfo + unpackMint
+  // (decoding the raw Mint layout ourselves, since there's no batched
+  // get-token-supply RPC method) and retried per chunk, same as passes 1-2.
+  const supplyByMint = new Map<string, string>();
+  for (const batch of chunkArray(resolvedReserves, MAX_ACCOUNTS_PER_BATCH)) {
+    const mints = batch.map((c) => reserveAccountByAddress.get(c.address.toBase58())!.reserveTokenMint);
+    try {
+      const infos = await withRateLimitRetry(() => connection.getMultipleAccountsInfo(mints));
+      infos.forEach((info, i) => {
+        try {
+          supplyByMint.set(mints[i].toBase58(), unpackMint(mints[i], info).supply.toString());
+        } catch (e) {
+          issues.push({ reserveId: batch[i].id.toString(), scope: "supply", detail: mints[i].toBase58(), message: e instanceof Error ? e.message : String(e) });
+        }
+      });
+    } catch (e) {
+      batch.forEach((c, i) => {
+        issues.push({ reserveId: c.id.toString(), scope: "supply", detail: mints[i].toBase58(), message: e instanceof Error ? e.message : String(e) });
+      });
+    }
+  }
+
+  // --- Assemble ---------------------------------------------------------
+  const reserves: DiscoveredReserve[] = resolvedReserves.map(({ address: reserveAddress }) => {
+    const reserveAccount = reserveAccountByAddress.get(reserveAddress.toBase58())!;
+    const assets: DiscoveredReserveAsset[] = assetCandidates
+      .filter((c) => c.reserveAddress.equals(reserveAddress))
+      .map((c) => reserveAssetByPda.has(c.reserveAssetPda.toBase58()) ? { c, reserveAsset: reserveAssetByPda.get(c.reserveAssetPda.toBase58())! } : null)
+      .filter((x): x is { c: AssetCandidate; reserveAsset: NonNullable<ReserveAssetDecoded> } => x !== null)
+      .map(({ c, reserveAsset }) => ({
+        assetMint: c.mint.toBase58(),
+        reserveAsset: c.reserveAssetPda.toBase58(),
+        vault: c.vaultPda.toBase58(),
         decimals: reserveAsset.decimals,
         targetWeightBps: reserveAsset.targetWeightBps,
         enabled: reserveAsset.enabled,
         orderIndex: reserveAsset.orderIndex,
-        vaultBalanceRaw: vaultInfo ? vaultInfo.amount.toString() : "0",
-      });
-    }
-    assets.sort((a, b) => a.orderIndex - b.orderIndex);
+        vaultBalanceRaw: vaultBalanceByPda.get(c.vaultPda.toBase58()) ?? "0",
+      }))
+      .sort((a, b) => a.orderIndex - b.orderIndex);
 
-    const supply = await connection.getTokenSupply(reserveAccount.reserveTokenMint).catch((e) => {
-      issues.push({
-        reserveId: id.toString(),
-        scope: "supply",
-        detail: reserveAccount!.reserveTokenMint.toBase58(),
-        message: e instanceof Error ? e.message : String(e),
-      });
-      return null;
-    });
-
-    reserves.push({
+    return {
       reserveId: reserveAccount.reserveId.toString(),
       reserve: reserveAddress.toBase58(),
       manager: reserveAccount.manager.toBase58(),
@@ -225,11 +311,11 @@ export async function discoverAllReserves(
       pendingManagerFeeShares: reserveAccount.feeConfig.pendingManagerFeeShares.toString(),
       pendingProtocolFeeShares: reserveAccount.feeConfig.pendingProtocolFeeShares.toString(),
       metadataUri: reserveAccount.metadataUri,
-      reserveTokenSupplyRaw: supply ? supply.value.amount : "0",
+      reserveTokenSupplyRaw: supplyByMint.get(reserveAccount.reserveTokenMint.toBase58()) ?? "0",
       delegateCount: reserveAccount.delegateCount,
       assets,
-    });
-  }
+    };
+  });
 
   return { reserves, protocolConfig, issues };
 }
