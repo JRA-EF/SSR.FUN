@@ -19,6 +19,7 @@ import type {
   WalletState,
 } from "@/lib/types";
 import { emptyPermissions } from "@/lib/types";
+import { isManagerOrDelegate, canManageDelegates, canRebalance } from "@/lib/permissions";
 import { pickLogoForId } from "@/lib/seed-data";
 import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS } from "@/lib/onChainReserve";
 import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
@@ -161,25 +162,12 @@ const initialWallet: WalletState = {
   sol: 0,
 };
 
-/** Root Manager and every wallet with `manageDelegates` may edit delegates. */
-export function canManageDelegates(dtr: DTR, address: string | null): boolean {
-  if (!address) return false;
-  if (dtr.managerAddress === address) return true;
-  return dtr.delegates.some((d) => d.address === address && d.permissions.manageDelegates);
-}
-
-/** Root Manager and every wallet with `rebalance` may propose/execute a rebalance. */
-export function canRebalance(dtr: DTR, address: string | null): boolean {
-  if (!address) return false;
-  if (dtr.managerAddress === address) return true;
-  return dtr.delegates.some((d) => d.address === address && d.permissions.rebalance);
-}
-
-/** Root Manager plus any delegate at all may open the manager dashboard. */
-export function isManagerOrDelegate(dtr: DTR, address: string | null): boolean {
-  if (!address) return false;
-  return dtr.managerAddress === address || dtr.delegates.some((d) => d.address === address);
-}
+// isManagerOrDelegate/canManageDelegates/canRebalance now live in
+// permissions.ts (pure logic, no zustand dependency -- see that file's
+// header comment) and are re-exported here so existing import sites
+// (`import { isManagerOrDelegate } from "@/store/useAppStore"`) keep working
+// unchanged.
+export { isManagerOrDelegate, canManageDelegates, canRebalance };
 
 export const useAppStore = create<AppState>()(
   persist(

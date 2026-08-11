@@ -248,6 +248,12 @@ export interface OnChainReserveMeta {
   delegatesOnChain?: OnChainDelegateMeta[];
   /** Redemption fee in bps, read live from Reserve.feeConfig.redemptionFeeBps -- used for honest in-kind Sell estimates (see computeRedemptionEntitlements). */
   redemptionFeeBps?: number;
+  /** The Manager's configured fee-payout wallet, read live from Reserve.feeConfig.feeDestination -- required (not derivable) for a real collect_fees call. */
+  feeDestination?: string;
+  /** Pending Manager-share Reserve Token units accrued but not yet paid out -- read live from Reserve.feeConfig.pendingManagerFeeShares. Raw base units (RESERVE_TOKEN_DECIMALS), not human-formatted. */
+  pendingManagerFeeShares?: string;
+  /** Pending protocol-share Reserve Token units accrued but not yet paid out -- read live from Reserve.feeConfig.pendingProtocolFeeShares. Raw base units. */
+  pendingProtocolFeeShares?: string;
 }
 
 export type WalletProviderId = "phantom" | "solflare" | "backpack";

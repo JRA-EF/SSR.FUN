@@ -191,6 +191,9 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
     // "unknown" on every routine balance/composition poll.
     delegatesOnChain: prev.onChain?.delegatesOnChain,
     delegateCountOnChain: prev.onChain?.delegateCountOnChain,
+    feeDestination: onChain.feeDestination,
+    pendingManagerFeeShares: onChain.pendingManagerFeeShares,
+    pendingProtocolFeeShares: onChain.pendingProtocolFeeShares,
   };
 
   return {
@@ -302,6 +305,9 @@ export function buildDtrFromDiscoveredReserve(
     redemptionFeeBps: discovered.redemptionFeeBps,
     delegateCountOnChain: discovered.delegateCount,
     delegatesOnChain: delegates.map(onChainDelegateFromDiscovered),
+    feeDestination: discovered.feeDestination,
+    pendingManagerFeeShares: discovered.pendingManagerFeeShares,
+    pendingProtocolFeeShares: discovered.pendingProtocolFeeShares,
   };
 
   return {

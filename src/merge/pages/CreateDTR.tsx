@@ -1061,17 +1061,33 @@ export function CreateDTR() {
                     onChange={(e) => setFeeDestination(e.target.value)}
                     className="font-merge-mono text-sm"
                   />
-                  <p className="text-xs text-muted-foreground">Address that receives the Manager's share of revenue, plus whatever isn't routed to a recipient below.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Address that receives 100% of the Manager's fee share on-chain. Defaults to your connected wallet ({wallet.address ? `${wallet.address.slice(0, 4)}...${wallet.address.slice(-4)}` : "—"})
+                    until you change it -- this is the exact wallet the Review step below will show as Primary.
+                  </p>
                 </div>
 
                 <div className="space-y-3 pt-2">
                   <Label className="flex justify-between items-center">
                     <span>Additional Fee Recipients</span>
-                    <span className={`font-merge-mono text-xs ${feeRecipientTotalPct > 100 ? 'text-destructive' : 'text-muted-foreground'}`}>
-                      {feeRecipientTotalPct.toFixed(1)}% of total fees
-                    </span>
+                    {!realDeploymentCandidate && (
+                      <span className={`font-merge-mono text-xs ${feeRecipientTotalPct > 100 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                        {feeRecipientTotalPct.toFixed(1)}% of total fees
+                      </span>
+                    )}
                   </Label>
-                  <p className="text-xs text-muted-foreground">Split off a percentage of total fee revenue to other wallets. Whatever's left goes to the primary destination above.</p>
+                  {realDeploymentCandidate ? (
+                    <div className="flex items-start gap-2 p-3 bg-muted/40 border border-dashed border-border rounded-lg text-sm text-muted-foreground">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>
+                        Not yet supported on-chain for a real Reserve -- the deployed protocol has exactly one manager fee destination
+                        (<code className="font-merge-mono text-xs">fee_config.fee_destination</code>), never a multi-wallet split. The
+                        Primary Fee Destination above is the only wallet that will actually receive the Manager's fee share.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Split off a percentage of total fee revenue to other wallets. Whatever's left goes to the primary destination above.</p>
+                  )}
 
                   {feeRecipients.length > 0 && (
                     <div className="space-y-2">
@@ -1080,40 +1096,46 @@ export function CreateDTR() {
                           <span className="font-merge-mono text-xs truncate">{r.address}</span>
                           <div className="flex items-center gap-2 shrink-0">
                             <Badge variant="secondary" className="font-merge-mono">{r.pct}%</Badge>
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeFeeRecipient(r.address)}>
-                              <X className="w-3.5 h-3.5" />
-                            </Button>
+                            {!realDeploymentCandidate && (
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeFeeRecipient(r.address)}>
+                                <X className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Recipient wallet address"
-                      className="font-merge-mono text-sm"
-                      value={newRecipientAddress}
-                      onChange={(e) => setNewRecipientAddress(e.target.value)}
-                    />
-                    <Input
-                      type="number"
-                      placeholder="%"
-                      className="w-24 font-merge-mono"
-                      min="0"
-                      max="100"
-                      value={newRecipientPct}
-                      onChange={(e) => setNewRecipientPct(e.target.value)}
-                    />
-                    <Button variant="outline" onClick={addFeeRecipient} className="shrink-0 gap-1.5">
-                      <Plus className="w-4 h-4" /> Add
-                    </Button>
-                  </div>
-                  {feeRecipientTotalPct > 100 && (
-                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
-                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                      <p>Recipient percentages exceed 100% of total fees. Please adjust.</p>
-                    </div>
+                  {!realDeploymentCandidate && (
+                    <>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Recipient wallet address"
+                          className="font-merge-mono text-sm"
+                          value={newRecipientAddress}
+                          onChange={(e) => setNewRecipientAddress(e.target.value)}
+                        />
+                        <Input
+                          type="number"
+                          placeholder="%"
+                          className="w-24 font-merge-mono"
+                          min="0"
+                          max="100"
+                          value={newRecipientPct}
+                          onChange={(e) => setNewRecipientPct(e.target.value)}
+                        />
+                        <Button variant="outline" onClick={addFeeRecipient} className="shrink-0 gap-1.5">
+                          <Plus className="w-4 h-4" /> Add
+                        </Button>
+                      </div>
+                      {feeRecipientTotalPct > 100 && (
+                        <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                          <p>Recipient percentages exceed 100% of total fees. Please adjust.</p>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -1314,14 +1336,20 @@ export function CreateDTR() {
                 <div className="space-y-2">
                   <div className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
                     <span className="font-merge-mono text-xs truncate">{feeDestination || wallet.address}</span>
-                    <Badge variant="outline" className="bg-background shrink-0">Primary</Badge>
+                    <Badge variant="outline" className="bg-background shrink-0">{realDeploymentCandidate ? "Only fee destination on-chain" : "Primary"}</Badge>
                   </div>
                   {feeRecipients.map((r) => (
-                    <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                    <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm opacity-60">
                       <span className="font-merge-mono text-xs truncate">{r.address}</span>
-                      <span className="font-merge-mono font-bold shrink-0">{r.pct}%</span>
+                      <span className="font-merge-mono font-bold shrink-0">{realDeploymentCandidate ? "Not routed" : `${r.pct}%`}</span>
                     </div>
                   ))}
+                  {realDeploymentCandidate && feeRecipients.length > 0 && (
+                    <p className="text-xs text-muted-foreground italic">
+                      These wallets will NOT receive any fee share on-chain -- only the single destination above will. See the note on
+                      the Fee Configuration step.
+                    </p>
+                  )}
                 </div>
               </div>
 

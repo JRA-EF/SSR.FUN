@@ -166,6 +166,15 @@ export function DTRDetail() {
   // "Buy/Sell zap architecture". Everything below this flag is the ONLY
   // behavioral branch point; the surrounding JSX structure is unchanged.
   const isOnChain = !!dtr?.onChain;
+  // WD-01 fix: a wound-down Reserve stays visible (reserveEligibility.ts no
+  // longer quarantines it) instead of disappearing -- Buy is disabled here
+  // (also already blocked on-chain: mint_reserve_tokens_in_kind requires
+  // exactly Active) while Sell/redeem stays fully available, since
+  // require_redemption_allowed already permits it during WindDown BY DESIGN
+  // (close_reserve requires supply to reach zero, i.e. holders must be able
+  // to claim out while winding down) -- this is what actually lets prior
+  // holders claim their share instead of the Reserve just vanishing.
+  const isWindingDown = isOnChain && dtr.onChain?.status === "windDown";
 
   /**
    * Re-fetches THIS Reserve's on-chain state + the connected wallet's real
@@ -779,6 +788,11 @@ export function DTRDetail() {
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mb-4">
                   <Badge variant="outline" className="bg-background/50 border-border">{normalizeReserveCategory(dtr.category)}</Badge>
+                  {isWindingDown && (
+                    <Badge variant="outline" className="uppercase text-[10px] tracking-wide border-amber-500/50 text-amber-600 dark:text-amber-400">
+                      Wind Down
+                    </Badge>
+                  )}
                   <Badge variant={isOnChain ? "default" : "secondary"} className="uppercase text-[10px] tracking-wide">
                     {isOnChain ? "Live on Solana DevNet" : "Simulated Demo"}
                   </Badge>
@@ -851,6 +865,12 @@ export function DTRDetail() {
             <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--destructive, #e5484d)", color: "var(--destructive, #e5484d)" }}>
               Live DevNet data could not be refreshed{dtr.chainError ? `: ${dtr.chainError}` : "."} Figures below are the last known
               on-chain state, not necessarily current.
+            </div>
+          )}
+          {isWindingDown && (
+            <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn, #d9a13c)" }}>
+              This Reserve's manager has initiated wind-down. New Buys are disabled -- if you already hold this Reserve Token, you can
+              still Sell/redeem your full proportional share at any time before it closes; there is no deadline forced by this UI.
             </div>
           )}
 
@@ -1089,10 +1109,12 @@ export function DTRDetail() {
         <div className="lg:col-span-1">
           <div className="sticky top-24">
             <Card className="border-border shadow-xl bg-card">
-              <Tabs value={tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
+              <Tabs value={isWindingDown ? "sell" : tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
                 <CardHeader className="pb-4">
                   <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="buy" className="font-bold data-[state=active]:text-primary">Buy</TabsTrigger>
+                    <TabsTrigger value="buy" disabled={isWindingDown} className="font-bold data-[state=active]:text-primary disabled:opacity-40 disabled:cursor-not-allowed" title={isWindingDown ? "This Reserve is winding down -- new Buys are disabled." : undefined}>
+                      Buy
+                    </TabsTrigger>
                     <TabsTrigger value="sell" className="font-bold data-[state=active]:text-destructive">Sell</TabsTrigger>
                   </TabsList>
                 </CardHeader>

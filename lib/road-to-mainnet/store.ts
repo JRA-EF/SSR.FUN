@@ -243,6 +243,74 @@ export async function upsertEntity(
   return { ok: true, version: u.version, updatedAt: u.updated_at, updatedBy: u.updated_by }
 }
 
+// --- Append-only comments thread, grouped into locked/open "passes" -------
+// See schema.sql's rtm_comments comment for the model. The current pass
+// number is derived GLOBALLY (not per-entity) from the table itself, rather
+// than tracked in a separate counter: max(pass) across every comment, open
+// (not yet locked) unless every row at that pass has already been locked --
+// in which case the next comment starts pass+1. `lockOpenComments` locks
+// every currently-open row across every entity in one action, matching "the
+// 1st pass ones get locked" as a single event for a whole round of
+// feedback, not a per-item toggle.
+
+export interface CommentRow {
+  id: number
+  entityType: string
+  entityId: string
+  pass: number
+  author: string
+  body: string
+  createdAt: string
+  lockedAt: string | null
+}
+
+function rowToComment(r: any): CommentRow {
+  return { id: Number(r.id), entityType: r.entity_type, entityId: r.entity_id, pass: r.pass, author: r.author, body: r.body, createdAt: r.created_at, lockedAt: r.locked_at }
+}
+
+export function validateCommentBody(body: unknown): string | null {
+  const str = typeof body === 'string' ? body.trim() : ''
+  if (!str) return null
+  return cap(str, 10000)
+}
+
+export async function getComments(entityType: EntityType, entityId: string): Promise<CommentRow[]> {
+  const sql = getSql()
+  const rows = await sql`
+    select id, entity_type, entity_id, pass, author, body, created_at, locked_at
+    from rtm_comments
+    where entity_type = ${entityType} and entity_id = ${entityId}
+    order by pass asc, created_at asc
+  `
+  return (rows as any[]).map(rowToComment)
+}
+
+async function currentOpenPass(): Promise<number> {
+  const sql = getSql()
+  const [{ max_pass }] = (await sql`select max(pass) as max_pass from rtm_comments`) as { max_pass: number | null }[]
+  if (max_pass === null) return 1
+  const [{ open_count }] = (await sql`select count(*)::int as open_count from rtm_comments where pass = ${max_pass} and locked_at is null`) as { open_count: number }[]
+  return open_count > 0 ? max_pass : max_pass + 1
+}
+
+export async function addComment(entityType: EntityType, entityId: string, author: string, body: string): Promise<CommentRow> {
+  const sql = getSql()
+  const pass = await currentOpenPass()
+  const [row] = await sql`
+    insert into rtm_comments (entity_type, entity_id, pass, author, body)
+    values (${entityType}, ${entityId}, ${pass}, ${author}, ${body})
+    returning id, entity_type, entity_id, pass, author, body, created_at, locked_at
+  `
+  return rowToComment(row)
+}
+
+/** Locks every currently-open comment across every entity -- see this section's header comment. Returns how many rows were locked. */
+export async function lockOpenComments(): Promise<number> {
+  const sql = getSql()
+  const rows = await sql`update rtm_comments set locked_at = now() where locked_at is null returning id`
+  return (rows as any[]).length
+}
+
 export async function getHistory(entityType: EntityType, entityId: string, limit = 50) {
   const sql = getSql()
   const rows = await sql`

@@ -3,7 +3,7 @@ import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
-import { resolveDtrPageState, parseOnChainReserveId } from "@/lib/onChainReserve";
+import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD } from "@/lib/onChainReserve";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,19 +14,22 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { formatPct, formatUsdc } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
-import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins } from "lucide-react";
+import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, Pause, Play, History, ExternalLink, Search } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
 import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLAGS, PERMISSION_FLAGS } from "@/lib/onChainPermissions";
-import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC, findReserve } from "@ssr/sdk";
+import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC, findReserve, buildReadOnlyProgram, fetchReserveActivityLog, type ActivityLogEntry } from "@ssr/sdk";
 import {
   executeAddDelegate,
   executeAddReserveAsset,
   executeCloseReserve,
+  executeCollectFees,
   executeFundReserveAsset,
   executeInitiateWindDown,
+  executePauseReserve,
   executeRemoveDelegate,
   executeRemoveReserveAsset,
+  executeUnpauseReserve,
   executeUpdateDelegatePermissions,
   executeUpdateTargets,
 } from "@/lib/managementClient";
@@ -218,7 +221,33 @@ export function ManageDTR() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageState.kind, dtrId, connection]);
 
-  const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance" | "activity">("overview");
+
+  // DL-01b fix: lazy-loaded only when the Activity tab is actually opened
+  // (never an unconditional background poll) -- see
+  // packages/sdk/src/activityLog.ts's fetchReserveActivityLog, which decodes
+  // every governance-relevant on-chain event for this Reserve.
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[] | null>(null);
+  const [activityStatus, setActivityStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  useEffect(() => {
+    if (activeTab !== "activity" || !dtr?.onChain || activityStatus !== "idle") return;
+    let cancelled = false;
+    setActivityStatus("loading");
+    const program = buildReadOnlyProgram(connection) as any;
+    fetchReserveActivityLog(connection, program, new PublicKey(dtr.onChain.reserve))
+      .then((entries) => {
+        if (cancelled) return;
+        setActivityLog(entries);
+        setActivityStatus("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setActivityStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, dtr?.onChain?.reserve]);
 
   // Delegate State
   const [newDelegateAddress, setNewDelegateAddress] = useState("");
@@ -237,6 +266,11 @@ export function ManageDTR() {
   // Rebalance State
   const [rebalanceEdits, setRebalanceEdits] = useState<Record<string, number>>({});
   const [adjustRemaining, setAdjustRemaining] = useState(true);
+  // AR-01 fix: search box for the redesigned Rebalance tab's asset picker
+  // (mirrors CreateDTR.tsx's Basket Composition step -- search+add on the
+  // left, current holdings with before/after weight comparison on the
+  // right), separate from Delegates tab's own search-less list.
+  const [rebalanceAssetSearch, setRebalanceAssetSearch] = useState("");
   const [onChainTxPending, setOnChainTxPending] = useState<string | null>(null); // which action is in flight, for button disabling
 
   // Composition management (Phase F) state -- on-chain Reserves only.
@@ -332,6 +366,12 @@ export function ManageDTR() {
   const canUpdateTargetsOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_TARGETS);
   const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
   const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
+  // PU-01 fix: pause_reserve/unpause_reserve are real, deployed, already-
+  // permission-checked-on-chain instructions that simply had no SDK/UI
+  // wiring anywhere before this -- see managementClient.ts's
+  // executePauseReserve/executeUnpauseReserve.
+  const canPauseOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.PAUSE_RESERVE);
+  const canUnpauseOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UNPAUSE_RESERVE);
   const canRemoveRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.REMOVE_RESTRICTED_DELEGATE);
   // Unified gate for the rebalance-edit table, shared by both the on-chain
   // (real permission) and simulated (local permission) branches.
@@ -487,6 +527,15 @@ export function ManageDTR() {
             <Sliders className="w-4 h-4" /> Rebalance
             {!hasRebalance && <span className="ml-auto text-[10px] uppercase tracking-wider opacity-60">Locked</span>}
           </button>
+
+          {dtr.onChain && (
+            <button
+              onClick={() => setActiveTab("activity")}
+              className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors flex items-center gap-3 ${activeTab === "activity" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+            >
+              <History className="w-4 h-4" /> Activity
+            </button>
+          )}
         </div>
 
         <div className="md:col-span-3">
@@ -645,8 +694,85 @@ export function ManageDTR() {
                       </div>
                     </div>
                   )}
+                  {dtr.onChain && (
+                    <div className="pt-4 border-t border-border/50">
+                      <p className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <Coins className="w-4 h-4" /> Pending Fees (uncollected)
+                      </p>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Fees accrue in-kind as pending Reserve Token shares (minted to the destinations below, never a USDC transfer) and
+                        only pay out once collected -- collect_fees is permissionless, so any wallet may trigger the payout.
+                      </p>
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
+                          <p className="text-xs text-muted-foreground mb-1">Manager share</p>
+                          <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingManagerFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
+                        </div>
+                        <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
+                          <p className="text-xs text-muted-foreground mb-1">Protocol share</p>
+                          <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingProtocolFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          onChainTxPending !== null ||
+                          ((dtr.onChain.pendingManagerFeeShares ?? "0") === "0" && (dtr.onChain.pendingProtocolFeeShares ?? "0") === "0")
+                        }
+                        onClick={() =>
+                          void runOnChainAction("collect_fees", () =>
+                            executeCollectFees(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, dtr.onChain!.feeDestination ?? dtr.managerAddress),
+                          )
+                        }
+                        className="gap-2"
+                      >
+                        <Coins className="w-4 h-4" /> {onChainTxPending === "collect_fees" ? "Confirming..." : "Collect Fees"}
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
+
+              {dtr.onChain && (dtr.onChain.status === "active" || dtr.onChain.status === "paused") && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-xl font-merge-display flex items-center gap-2">
+                      {dtr.onChain.status === "paused" ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />} Pause / Unpause
+                    </CardTitle>
+                    <CardDescription>
+                      Pausing blocks new Buys/mints and management actions immediately; redemption stays available throughout (same as
+                      Wind Down). Unpausing restores normal operation. Root Manager or a delegate with the matching permission.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Current status:</span>
+                      <Badge variant={dtr.onChain.status === "active" ? "outline" : "secondary"} className="uppercase">{dtr.onChain.status}</Badge>
+                    </div>
+                    {dtr.onChain.status === "active" ? (
+                      <Button
+                        variant="outline"
+                        disabled={!canPauseOnChain || onChainTxPending !== null}
+                        title={!canPauseOnChain ? "You need the Root Manager or a delegate with Pause Reserve permission." : undefined}
+                        onClick={() => void runOnChainAction("pause_reserve", () => executePauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
+                        className="gap-2"
+                      >
+                        <Pause className="w-4 h-4" /> {onChainTxPending === "pause_reserve" ? "Confirming..." : "Pause Reserve"}
+                      </Button>
+                    ) : (
+                      <Button
+                        disabled={!canUnpauseOnChain || onChainTxPending !== null}
+                        title={!canUnpauseOnChain ? "You need the Root Manager or a delegate with Unpause Reserve permission." : undefined}
+                        onClick={() => void runOnChainAction("unpause_reserve", () => executeUnpauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
+                        className="gap-2"
+                      >
+                        <Play className="w-4 h-4" /> {onChainTxPending === "unpause_reserve" ? "Confirming..." : "Unpause Reserve"}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {dtr.onChain && (
                 <Card>
@@ -990,131 +1116,308 @@ export function ManageDTR() {
 
           {activeTab === "rebalance" && (
             <div className="space-y-6">
-              {!hasRebalance && (
+              {!hasRebalance && !dtr.onChain && (
                 <div className="bg-destructive/10 text-destructive p-4 rounded-lg flex items-center gap-3 border border-destructive/20">
                   <AlertCircle className="w-5 h-5 shrink-0" />
                   <p className="font-medium">You do not have permission to rebalance this reserve. This view is read-only.</p>
                 </div>
               )}
 
-              {dtr.onChain && (
-                <div className="bg-muted/30 border border-border/50 p-4 rounded-lg flex items-center gap-3">
-                  <Sliders className="w-5 h-5 shrink-0 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">
-                    Target-weight changes below submit a real signed <code className="font-merge-mono text-xs">update_targets</code> transaction
-                    to Solana DevNet (config only -- moves no real holdings; see the DevNet implementation plan's Phase F). Rebalance
-                    <strong> trade execution</strong> (actually moving holdings toward target) remains unavailable pending a swap-mechanism
-                    decision (Phase E). {!canUpdateTargetsOnChain && "You need the Root Manager or a delegate with Update Targets permission to submit this transaction."}
-                  </p>
-                </div>
-              )}
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-xl font-merge-display">Portfolio Rebalance</CardTitle>
-                  <CardDescription>Adjust target weights. Edits are processed atomically.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  
-                  <div className="flex items-start space-x-3 p-4 bg-primary/5 border border-primary/20 rounded-lg">
-                    <Checkbox 
-                      id="adjust-remaining" 
-                      checked={adjustRemaining} 
-                      onCheckedChange={(c) => setAdjustRemaining(c === true)}
-                      disabled={!canEditRebalance}
-                      className="mt-1"
-                    />
-                    <div className="grid gap-1.5 leading-none">
-                      <label htmlFor="adjust-remaining" className="text-sm font-bold cursor-pointer text-foreground">
-                        Adjust Remaining Assets
-                      </label>
-                      <p className="text-sm text-muted-foreground">
-                        When checked, unedited assets are scaled proportionally so the basket remains 100% invested. 
-                        When unchecked, the difference becomes an Unallocated USDC Reserve.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Asset</TableHead>
-                          <TableHead className="text-right">Current Weight</TableHead>
-                          <TableHead className="text-right w-40">New Target Weight</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {dtr.composition.map(asset => {
-                          const isEdited = rebalanceEdits[asset.symbol] !== undefined;
-                          const previewWeight = preview.comp.find(a => a.symbol === asset.symbol)?.weight || 0;
-                          const willChange = adjustRemaining && !isEdited && Object.keys(rebalanceEdits).length > 0;
-                          
-                          return (
-                            <TableRow key={asset.symbol} className={isEdited ? "bg-muted/50" : ""}>
-                              <TableCell className="font-medium">
-                                {asset.name} <span className="text-muted-foreground text-xs font-merge-mono ml-1">{asset.symbol}</span>
-                              </TableCell>
-                              <TableCell className="text-right font-merge-mono">
-                                {(asset.weight * 100).toFixed(1)}%
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <div className="flex items-center justify-end">
-                                  <Input 
-                                    type="number"
-                                    className={`w-20 h-8 text-right font-merge-mono ${isEdited ? 'border-primary' : ''}`}
-                                    placeholder={(asset.weight * 100).toFixed(1)}
-                                    value={isEdited ? (rebalanceEdits[asset.symbol] * 100).toString() : ""}
-                                    onChange={(e) => handleWeightEdit(asset.symbol, e.target.value)}
-                                    disabled={!canEditRebalance}
-                                    step="0.1"
-                                    min="0"
-                                  />
-                                  <span className="text-muted-foreground ml-1 text-sm">%</span>
-                                </div>
-                                {willChange && (
-                                  <p className="text-[10px] text-muted-foreground mt-1 text-right italic">
-                                    Auto-scales to {(previewWeight * 100).toFixed(1)}%
-                                  </p>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  <div className="p-4 border-t border-border mt-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-                    <div className="space-y-1 text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">Asset Weights:</span>
-                        <span className={`font-merge-mono font-bold ${previewTotal > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
-                          {(preview.comp.reduce((sum, a) => sum + a.weight, 0) * 100).toFixed(1)}%
-                        </span>
+              {!dtr.onChain ? (
+                // Simulated/demo Reserve -- unchanged simple weight table, see AR-01's real-Reserve redesign below.
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-xl font-merge-display">Portfolio Rebalance</CardTitle>
+                    <CardDescription>Adjust target weights. Edits are processed atomically.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="flex items-start space-x-3 p-4 bg-primary/5 border border-primary/20 rounded-lg">
+                      <Checkbox
+                        id="adjust-remaining"
+                        checked={adjustRemaining}
+                        onCheckedChange={(c) => setAdjustRemaining(c === true)}
+                        disabled={!canEditRebalance}
+                        className="mt-1"
+                      />
+                      <div className="grid gap-1.5 leading-none">
+                        <label htmlFor="adjust-remaining" className="text-sm font-bold cursor-pointer text-foreground">
+                          Adjust Remaining Assets
+                        </label>
+                        <p className="text-sm text-muted-foreground">
+                          When checked, unedited assets are scaled proportionally so the basket remains 100% invested.
+                          When unchecked, the difference becomes an Unallocated USDC Reserve.
+                        </p>
                       </div>
-                      {preview.unallocated > 0 && (
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Asset</TableHead>
+                            <TableHead className="text-right">Current Weight</TableHead>
+                            <TableHead className="text-right w-40">New Target Weight</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {dtr.composition.map(asset => {
+                            const isEdited = rebalanceEdits[asset.symbol] !== undefined;
+                            const previewWeight = preview.comp.find(a => a.symbol === asset.symbol)?.weight || 0;
+                            const willChange = adjustRemaining && !isEdited && Object.keys(rebalanceEdits).length > 0;
+                            return (
+                              <TableRow key={asset.symbol} className={isEdited ? "bg-muted/50" : ""}>
+                                <TableCell className="font-medium">
+                                  {asset.name} <span className="text-muted-foreground text-xs font-merge-mono ml-1">{asset.symbol}</span>
+                                </TableCell>
+                                <TableCell className="text-right font-merge-mono">{(asset.weight * 100).toFixed(1)}%</TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex items-center justify-end">
+                                    <Input
+                                      type="number"
+                                      className={`w-20 h-8 text-right font-merge-mono ${isEdited ? 'border-primary' : ''}`}
+                                      placeholder={(asset.weight * 100).toFixed(1)}
+                                      value={isEdited ? (rebalanceEdits[asset.symbol] * 100).toString() : ""}
+                                      onChange={(e) => handleWeightEdit(asset.symbol, e.target.value)}
+                                      disabled={!canEditRebalance}
+                                      step="0.1"
+                                      min="0"
+                                    />
+                                    <span className="text-muted-foreground ml-1 text-sm">%</span>
+                                  </div>
+                                  {willChange && (
+                                    <p className="text-[10px] text-muted-foreground mt-1 text-right italic">Auto-scales to {(previewWeight * 100).toFixed(1)}%</p>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    <div className="p-4 border-t border-border mt-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                      <div className="space-y-1 text-sm">
                         <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Unallocated USDC Reserve:</span>
-                          <span className="font-merge-mono font-medium">{(preview.unallocated * 100).toFixed(1)}%</span>
+                          <span className="text-muted-foreground">Asset Weights:</span>
+                          <span className={`font-merge-mono font-bold ${previewTotal > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
+                            {(preview.comp.reduce((sum, a) => sum + a.weight, 0) * 100).toFixed(1)}%
+                          </span>
                         </div>
+                        {preview.unallocated > 0 && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-muted-foreground">Unallocated USDC Reserve:</span>
+                            <span className="font-merge-mono font-medium">{(preview.unallocated * 100).toFixed(1)}%</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                          <span className="text-muted-foreground text-xs">Total (assets + unallocated):</span>
+                          <span className="font-merge-mono text-xs font-medium">{(previewTotal * 100).toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      {hasRebalance && (
+                        <Button onClick={executeRebalance} disabled={!isPreviewValid} className="w-full sm:w-auto font-bold gap-2">
+                          <Save className="w-4 h-4" /> Execute Rebalance
+                        </Button>
                       )}
-                      <div className="flex items-center gap-2 pt-1 border-t border-border/50">
-                        <span className="text-muted-foreground text-xs">Total (assets + unallocated):</span>
-                        <span className="font-merge-mono text-xs font-medium">{(previewTotal * 100).toFixed(1)}%</span>
+                    </div>
+                    {previewTotal > 1.0001 && (
+                      <div className="bg-destructive/10 text-destructive p-3 rounded text-sm flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        Total weight exceeds 100%. Please adjust.
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                // AR-01 fix (2026-08-11): redesigned to mirror CreateDTR.tsx's Basket
+                // Composition step -- search+browse addable assets on the left,
+                // current Reserve assets with real balance/USD value and a
+                // before/after target-weight comparison on the right. Every
+                // action below submits the EXACT SAME already-working, already-
+                // permission-checked real transactions as before
+                // (update_targets/add_reserve_asset_active/fund_new_reserve_asset/
+                // remove_reserve_asset) -- this is a layout/UX change only, no new
+                // on-chain capability.
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-xl font-merge-display">Reserve Composition & Rebalance</CardTitle>
+                    <CardDescription>
+                      Target-weight changes below submit a real signed <code className="font-merge-mono text-xs">update_targets</code> transaction
+                      (config only -- moves no real holdings; trade execution remains unavailable pending a swap-mechanism decision, Phase E).
+                      Adding/funding/removing an asset are each a separate real transaction. {!canUpdateTargetsOnChain && "You need the Root Manager or a delegate with Update Targets permission to submit target-weight changes."}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      {/* Left: search + add a new reserve asset */}
+                      <div className="space-y-4">
+                        <h4 className="font-semibold text-sm">Add a Reserve Asset</h4>
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            placeholder="Search assets to add..."
+                            className="pl-9"
+                            value={rebalanceAssetSearch}
+                            onChange={(e) => setRebalanceAssetSearch(e.target.value)}
+                            disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
+                          />
+                        </div>
+                        <div className="border border-border rounded-lg max-h-[280px] overflow-y-auto p-2 bg-muted/20 space-y-1">
+                          {ADDABLE_ASSETS.filter((a) => !dtr.onChain!.assets.some((existing) => existing.mint === a.mint))
+                            .filter((a) => a.symbol.toLowerCase().includes(rebalanceAssetSearch.toLowerCase()))
+                            .map((a) => (
+                              <div
+                                key={a.mint}
+                                className={`flex items-center justify-between p-2 rounded-md transition-colors cursor-pointer ${addAssetMint === a.mint ? "bg-primary/10 border border-primary/30" : "hover:bg-muted"}`}
+                                onClick={() => canManageLiquidityConfigOnChain && onChainTxPending === null && setAddAssetMint(a.mint)}
+                              >
+                                <span className="font-semibold font-merge-mono text-sm">{a.symbol}</span>
+                                {addAssetMint === a.mint && <Badge variant="secondary" className="text-[10px]">Selected</Badge>}
+                              </div>
+                            ))}
+                          {ADDABLE_ASSETS.filter((a) => !dtr.onChain!.assets.some((existing) => existing.mint === a.mint)).length === 0 && (
+                            <div className="p-4 text-center text-sm text-muted-foreground">Every supported asset is already in this Reserve.</div>
+                          )}
+                        </div>
+                        {addAssetMint && (
+                          <div className="flex flex-col sm:flex-row gap-2 p-3 border border-border rounded-lg bg-card">
+                            <Input
+                              type="number" min="0" max="100" step="0.1"
+                              placeholder="Target weight %"
+                              className="font-merge-mono"
+                              value={addAssetWeightBps}
+                              onChange={(e) => setAddAssetWeightBps(e.target.value)}
+                              disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
+                            />
+                            <Button
+                              disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
+                              title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
+                              onClick={() => {
+                                const bps = Math.round(Number(addAssetWeightBps) * 100);
+                                void runOnChainAction("add_reserve_asset_active", () => executeAddReserveAsset(connection, walletCtx, dtr.onChain!.reserve, addAssetMint, bps), [addAssetMint]).then(() => setAddAssetMint(""));
+                              }}
+                              className="gap-1.5 shrink-0"
+                            >
+                              <Plus className="w-4 h-4" /> {onChainTxPending === "add_reserve_asset_active" ? "Confirming..." : "Add Asset"}
+                            </Button>
+                          </div>
+                        )}
+                        <p className="text-xs text-muted-foreground">Registers at the target weight above with zero balance -- fund it on the right once added.</p>
+                      </div>
+
+                      {/* Right: current Reserve assets -- real balance/USD value, before/after weight comparison */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold text-sm">Current Reserve Assets</h4>
+                          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                            <Checkbox checked={adjustRemaining} onCheckedChange={(c) => setAdjustRemaining(c === true)} disabled={!canUpdateTargetsOnChain} />
+                            Adjust remaining proportionally
+                          </label>
+                        </div>
+                        <div className="space-y-3">
+                          {[...dtr.onChain.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((asset, i, arr) => {
+                            const vaultBalanceRaw = dtr.onChain!.vaultBalancesRaw[asset.mint] ?? "0";
+                            const isEmpty = vaultBalanceRaw === "0";
+                            const isLast = i === arr.length - 1;
+                            const canRemove = isEmpty && isLast;
+                            const balanceHuman = Number(vaultBalanceRaw) / 10 ** asset.decimals;
+                            const usdValue = balanceHuman * (TEST_ASSET_PRICES_USD[asset.mint] ?? 0);
+                            const currentWeight = asset.weightBps / 10_000;
+                            const isEdited = rebalanceEdits[asset.symbol] !== undefined;
+                            const targetWeight = preview.comp.find((p) => p.symbol === asset.symbol)?.weight ?? currentWeight;
+
+                            return (
+                              <div key={asset.mint} className="p-3 border border-border rounded-lg bg-card space-y-2.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-semibold font-merge-mono text-sm">{asset.symbol}</span>
+                                  <span className="text-xs text-muted-foreground font-merge-mono">{formatUsdc(usdValue, { compact: true })} &middot; {balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })} bal.</span>
+                                </div>
+
+                                {/* Before/after weight comparison bar -- current weight as the base fill, target weight as an overlaid marker. */}
+                                <div className="relative h-2 rounded-full bg-muted overflow-hidden">
+                                  <div className="absolute inset-y-0 left-0 bg-muted-foreground/30" style={{ width: `${Math.min(100, currentWeight * 100)}%` }} />
+                                  {isEdited && (
+                                    <div className="absolute inset-y-0 w-0.5 bg-primary" style={{ left: `${Math.min(100, targetWeight * 100)}%` }} title={`Target: ${(targetWeight * 100).toFixed(1)}%`} />
+                                  )}
+                                </div>
+
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-xs text-muted-foreground">Current <span className="font-merge-mono font-medium text-foreground">{(currentWeight * 100).toFixed(1)}%</span></span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-xs text-muted-foreground">Target</span>
+                                    <Input
+                                      type="number"
+                                      className={`w-20 h-7 text-right font-merge-mono text-xs ${isEdited ? 'border-primary' : ''}`}
+                                      placeholder={(currentWeight * 100).toFixed(1)}
+                                      value={isEdited ? (rebalanceEdits[asset.symbol] * 100).toString() : ""}
+                                      onChange={(e) => handleWeightEdit(asset.symbol, e.target.value)}
+                                      disabled={!canUpdateTargetsOnChain}
+                                      step="0.1"
+                                      min="0"
+                                    />
+                                    <span className="text-muted-foreground text-xs">%</span>
+                                  </div>
+                                </div>
+
+                                {(isEmpty || canRemove) && (
+                                  <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                                    {isEmpty && (
+                                      <>
+                                        <Input
+                                          type="number" min="0" placeholder="raw amount to fund"
+                                          className="h-8 text-xs font-merge-mono flex-1"
+                                          value={fundAmounts[asset.mint] ?? ""}
+                                          onChange={(e) => setFundAmounts((prev) => ({ ...prev, [asset.mint]: e.target.value }))}
+                                          disabled={!isRoot || onChainTxPending !== null}
+                                        />
+                                        <Button
+                                          variant="outline" size="sm"
+                                          disabled={!isRoot || onChainTxPending !== null || !fundAmounts[asset.mint] || Number(fundAmounts[asset.mint]) <= 0}
+                                          onClick={() => {
+                                            const amount = BigInt(fundAmounts[asset.mint]);
+                                            void runOnChainAction(`fund_new_reserve_asset(${asset.symbol})`, () => executeFundReserveAsset(connection, walletCtx, dtr.onChain!.reserve, asset.mint, amount));
+                                          }}
+                                          className="gap-1 shrink-0"
+                                        >
+                                          <Coins className="w-3.5 h-3.5" /> Fund
+                                        </Button>
+                                      </>
+                                    )}
+                                    {canRemove && (
+                                      <Button
+                                        variant="destructive" size="sm"
+                                        disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
+                                        title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
+                                        onClick={() => void runOnChainAction(`remove_reserve_asset(${asset.symbol})`, () => executeRemoveReserveAsset(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.manager, asset.mint))}
+                                        className="gap-1 shrink-0"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" /> Remove
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
-                    
-                    {hasRebalance && !dtr.onChain && (
-                      <Button
-                        onClick={executeRebalance}
-                        disabled={!isPreviewValid}
-                        className="w-full sm:w-auto font-bold gap-2"
-                      >
-                        <Save className="w-4 h-4" /> Execute Rebalance
-                      </Button>
-                    )}
-                    {dtr.onChain && (
+
+                    <div className="p-4 border-t border-border mt-2 flex flex-col sm:flex-row justify-between items-center gap-4">
+                      <div className="space-y-1 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Asset Weights:</span>
+                          <span className={`font-merge-mono font-bold ${previewTotal > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
+                            {(preview.comp.reduce((sum, a) => sum + a.weight, 0) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        {preview.unallocated > 0 && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-muted-foreground">Unallocated USDC Reserve:</span>
+                            <span className="font-merge-mono font-medium">{(preview.unallocated * 100).toFixed(1)}%</span>
+                          </div>
+                        )}
+                      </div>
                       <Button
                         onClick={() => {
                           const orderedAssets = [...dtr.onChain!.assets].sort((a, b) => a.orderIndex - b.orderIndex);
@@ -1131,122 +1434,74 @@ export function ManageDTR() {
                       >
                         <Save className="w-4 h-4" /> {onChainTxPending === "update_targets" ? "Confirming..." : "Submit Target Weights (real DevNet tx)"}
                       </Button>
-                    )}
-                  </div>
-                  
-                  {previewTotal > 1.0001 && (
-                    <div className="bg-destructive/10 text-destructive p-3 rounded text-sm flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      Total weight exceeds 100%. Please adjust.
                     </div>
-                  )}
-
-                </CardContent>
-              </Card>
-
-              {dtr.onChain && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-xl font-merge-display">Reserve Composition</CardTitle>
-                    <CardDescription>
-                      Add, fund, or remove a registered reserve asset -- each is a separate real, signed DevNet transaction
-                      (<code className="font-merge-mono text-xs">add_reserve_asset_active</code>, <code className="font-merge-mono text-xs">fund_new_reserve_asset</code>,
-                      <code className="font-merge-mono text-xs"> remove_reserve_asset</code>). Adding/removing accepts the Root Manager or a delegate with Manage
-                      Liquidity Config permission; funding a newly-added asset is Root Manager only.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {[...dtr.onChain.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((asset, i, arr) => {
-                      const vaultBalanceRaw = dtr.onChain!.vaultBalancesRaw[asset.mint] ?? "0";
-                      const isEmpty = vaultBalanceRaw === "0";
-                      const isLast = i === arr.length - 1;
-                      const canRemove = isEmpty && isLast;
-                      return (
-                        <div key={asset.mint} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/20">
-                          <div className="min-w-0 sm:w-40 shrink-0">
-                            <p className="font-medium">{asset.symbol}</p>
-                            <p className="text-xs text-muted-foreground font-merge-mono">order_index {asset.orderIndex} · {formatPct(asset.weightBps / 10_000)}</p>
-                          </div>
-                          <p className="text-xs text-muted-foreground font-merge-mono flex-1 min-w-0 truncate">
-                            vault balance (raw): {vaultBalanceRaw}
-                          </p>
-                          {isEmpty && (
-                            <div className="flex items-center gap-2 shrink-0">
-                              <Input
-                                type="number"
-                                min="0"
-                                placeholder="raw amount"
-                                className="w-32 h-8 text-sm font-merge-mono"
-                                value={fundAmounts[asset.mint] ?? ""}
-                                onChange={(e) => setFundAmounts((prev) => ({ ...prev, [asset.mint]: e.target.value }))}
-                                disabled={!isRoot || onChainTxPending !== null}
-                              />
-                              <Button
-                                variant="outline" size="sm"
-                                disabled={!isRoot || onChainTxPending !== null || !fundAmounts[asset.mint] || Number(fundAmounts[asset.mint]) <= 0}
-                                onClick={() => {
-                                  const amount = BigInt(fundAmounts[asset.mint]);
-                                  void runOnChainAction(`fund_new_reserve_asset(${asset.symbol})`, () => executeFundReserveAsset(connection, walletCtx, dtr.onChain!.reserve, asset.mint, amount));
-                                }}
-                                className="gap-1.5"
-                              >
-                                <Coins className="w-3.5 h-3.5" /> Fund
-                              </Button>
-                            </div>
-                          )}
-                          {canRemove && (
-                            <Button
-                              variant="destructive" size="sm"
-                              disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
-                              title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
-                              onClick={() => void runOnChainAction(`remove_reserve_asset(${asset.symbol})`, () => executeRemoveReserveAsset(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.manager, asset.mint))}
-                              className="gap-1.5 shrink-0"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" /> Remove
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    <div className="pt-4 border-t border-border/50 space-y-3">
-                      <Label>Add a reserve asset (registers at 0% target weight, zero balance -- fund it separately above once added)</Label>
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        <select
-                          className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm sm:w-56"
-                          value={addAssetMint}
-                          onChange={(e) => setAddAssetMint(e.target.value)}
-                          disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
-                        >
-                          <option value="">Select an asset...</option>
-                          {ADDABLE_ASSETS.filter((a) => !dtr.onChain!.assets.some((existing) => existing.mint === a.mint)).map((a) => (
-                            <option key={a.mint} value={a.mint}>{a.symbol}</option>
-                          ))}
-                        </select>
-                        <Input
-                          type="number" min="0" max="100" step="0.1"
-                          placeholder="Target weight %"
-                          className="sm:w-40 font-merge-mono"
-                          value={addAssetWeightBps}
-                          onChange={(e) => setAddAssetWeightBps(e.target.value)}
-                          disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
-                        />
-                        <Button
-                          disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null || !addAssetMint}
-                          title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
-                          onClick={() => {
-                            const bps = Math.round(Number(addAssetWeightBps) * 100);
-                            void runOnChainAction("add_reserve_asset_active", () => executeAddReserveAsset(connection, walletCtx, dtr.onChain!.reserve, addAssetMint, bps), [addAssetMint]).then(() => setAddAssetMint(""));
-                          }}
-                          className="gap-1.5"
-                        >
-                          <Plus className="w-4 h-4" /> Add Asset
-                        </Button>
+                    {previewTotal > 1.0001 && (
+                      <div className="bg-destructive/10 text-destructive p-3 rounded text-sm flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        Total weight exceeds 100%. Please adjust.
                       </div>
-                    </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
+            </div>
+          )}
+
+          {activeTab === "activity" && dtr.onChain && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-xl font-merge-display flex items-center gap-2">
+                    <History className="w-5 h-5" /> Activity Log
+                  </CardTitle>
+                  <CardDescription>
+                    Every governance/management action taken on this Reserve, decoded directly from its real on-chain transaction
+                    history -- delegate grants, target-weight changes, composition edits, pause/unpause, wind-down, fee collection.
+                    This is a live view of the same immutable record already kept on the protocol side (every action here already
+                    emits a real on-chain event); nothing is stored separately. Shows up to the 100 most recent entries.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {activityStatus === "loading" && (
+                    <div className="text-center p-6 text-muted-foreground text-sm">Reading on-chain history...</div>
+                  )}
+                  {activityStatus === "error" && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>Could not read on-chain history right now (DevNet RPC congestion) -- switch tabs and back to retry.</p>
+                    </div>
+                  )}
+                  {activityStatus === "ready" && activityLog && activityLog.length === 0 && (
+                    <div className="text-center p-6 border border-dashed border-border rounded-lg text-muted-foreground text-sm">
+                      No governance actions recorded yet for this Reserve.
+                    </div>
+                  )}
+                  {activityStatus === "ready" && activityLog && activityLog.length > 0 && (
+                    <div className="space-y-2">
+                      {activityLog.map((entry) => (
+                        <div key={`${entry.signature}-${entry.kind}`} className="flex items-start justify-between gap-3 p-3 rounded-lg border border-border/50 bg-muted/20">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">{entry.summary}</p>
+                            <p className="text-xs text-muted-foreground font-merge-mono mt-0.5">
+                              {entry.ts > 0 ? new Date(entry.ts * 1000).toLocaleString() : "unknown time"}
+                              {entry.actor && <> &middot; {shortenAddress(entry.actor)}</>}
+                            </p>
+                          </div>
+                          <a
+                            href={`https://explorer.solana.com/tx/${entry.signature}?cluster=devnet`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="shrink-0 text-muted-foreground hover:text-primary"
+                            title="View transaction on Solana Explorer"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           )}
         </div>

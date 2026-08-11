@@ -113,6 +113,10 @@ export interface ReserveOnChain {
   tvlFeeBps: number;
   /** Fee destination wallet, read live from Reserve.feeConfig. */
   feeDestination: string;
+  /** Pending Manager-share Reserve Token units accrued but not yet paid out, read live from Reserve.feeConfig -- raw base units. */
+  pendingManagerFeeShares: string;
+  /** Pending protocol-share Reserve Token units accrued but not yet paid out, read live from Reserve.feeConfig -- raw base units. */
+  pendingProtocolFeeShares: string;
   metadataUri: string;
   reserveTokenSupplyRaw: string;
   assets: ReserveAssetOnChain[];
@@ -174,6 +178,8 @@ export async function fetchReserveOnChain(
     mintFeeBps: reserveAccount.feeConfig.mintFeeBps,
     tvlFeeBps: reserveAccount.feeConfig.annualTvlFeeBps,
     feeDestination: reserveAccount.feeConfig.feeDestination.toBase58(),
+    pendingManagerFeeShares: reserveAccount.feeConfig.pendingManagerFeeShares.toString(),
+    pendingProtocolFeeShares: reserveAccount.feeConfig.pendingProtocolFeeShares.toString(),
     metadataUri: reserveAccount.metadataUri,
     reserveTokenSupplyRaw: supply ? supply.value.amount : "0",
     assets,

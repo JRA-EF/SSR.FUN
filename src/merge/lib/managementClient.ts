@@ -20,14 +20,18 @@ import {
   buildAddDelegateInstruction,
   buildAddReserveAssetActiveInstruction,
   buildCloseReserveInstruction,
+  buildCollectFeesInstruction,
   buildFundNewReserveAssetInstruction,
   buildInitiateWindDownInstruction,
+  buildPauseReserveInstruction,
   buildRemoveDelegateInstruction,
   buildRemoveReserveAssetInstruction,
+  buildUnpauseReserveInstruction,
   buildUpdateDelegatePermissionsInstruction,
   buildUpdateTargetsInstruction,
   DEVNET_FIXTURES,
   findDelegate,
+  fetchProtocolConfig,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 
@@ -195,6 +199,60 @@ export async function executeRemoveDelegate(
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildRemoveDelegateInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, new PublicKey(delegateWallet));
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+/** PU-01 fix: pause_reserve/unpause_reserve were deployed, real, working instructions with zero SDK/UI wiring anywhere before this -- see buildPauseReserveInstruction's header comment. */
+export async function executePauseReserve(connection: Connection, wallet: WalletContextState, reserve: string): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildPauseReserveInstruction(program, reservePk, wallet.publicKey, actingDelegate);
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+export async function executeUnpauseReserve(connection: Connection, wallet: WalletContextState, reserve: string): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildUnpauseReserveInstruction(program, reservePk, wallet.publicKey, actingDelegate);
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+/**
+ * FE-01b fix: collect_fees was deployed, real, permissionless, and working
+ * (any wallet may call it -- see buildCollectFeesInstruction's header
+ * comment), with zero SDK/UI wiring anywhere. This is why a Reserve's
+ * configured fee destination could show zero inbound activity even after
+ * genuine mint-fee-generating trades: fees accrue as PENDING RESERVE TOKEN
+ * SHARES (Reserve.feeConfig.pendingManagerFeeShares/pendingProtocolFeeShares,
+ * paid via mint_to when collected -- never a USDC transfer, by protocol
+ * design) but nothing had ever triggered the payout. `protocolFeeDestination`
+ * is read fresh here (not derivable/cacheable as a PDA) rather than trusted
+ * from possibly-stale caller state.
+ */
+export async function executeCollectFees(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  reserveTokenMint: string,
+  managerFeeDestination: string,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const protocolConfig = await fetchProtocolConfig(connection, programId);
+  if (!protocolConfig) throw new Error("SSR Protocol is not initialized on this DevNet endpoint.");
+  const ix = await buildCollectFeesInstruction(
+    program,
+    programId,
+    new PublicKey(reserve),
+    new PublicKey(reserveTokenMint),
+    new PublicKey(managerFeeDestination),
+    new PublicKey(protocolConfig.defaultProtocolFeeDestination),
+    wallet.publicKey,
+  );
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
 

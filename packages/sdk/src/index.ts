@@ -20,3 +20,4 @@ export * from "./ammReadOnly";
 export * from "./ammCalculations";
 export * from "./ammInstructions";
 export * from "./rebalanceExecutionInstructions";
+export * from "./activityLog";

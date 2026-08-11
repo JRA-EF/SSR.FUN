@@ -49,7 +49,25 @@ export interface ReserveEligibilityResult {
   reason: string | null;
 }
 
-const LIFECYCLE_STATUSES_PERMITTING_NORMAL_USE = new Set(["active", "paused"]);
+/**
+ * Statuses eligible to appear on the public product at all. Named for what
+ * it now actually gates -- "visible/functional," not "supports every
+ * action" -- since `windDown` was added here (2026-08-11): a wound-down
+ * Reserve was previously excluded entirely (quarantined exactly like a
+ * broken legacy Reserve), which was the confirmed root cause of a live
+ * report that a Reserve "just disappears" after wind-down. Checked directly
+ * against the deployed program: `Reserve::require_redemption_allowed`
+ * (programs/ssr_protocol/src/state/reserve.rs) already explicitly permits
+ * redemption during `WindDown` BY DESIGN -- `close_reserve` requires supply
+ * to reach zero, which requires holders to still be able to redeem out
+ * while winding down -- while `mint_reserve_tokens_in_kind` requires
+ * exactly `Active`, so minting/Buy is already blocked on-chain during
+ * WindDown regardless of anything checked here. Callers (DTRDetail.tsx)
+ * are responsible for showing a distinct "Wind Down" state and disabling
+ * Buy in the UI -- this function only decides "visible at all," never
+ * "which actions are offered."
+ */
+const LIFECYCLE_STATUSES_PERMITTING_NORMAL_USE = new Set(["active", "paused", "windDown"]);
 
 /**
  * Fail-closed: any check this function can't affirmatively confirm results

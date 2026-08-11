@@ -23,12 +23,19 @@
     .gates{display:grid;gap:12px}.gate{display:grid;grid-template-columns:120px 1fr 180px;gap:18px;padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}.gate h3{margin:0}.gate p{margin:4px 0;color:var(--muted)}.gate ul{margin:8px 0 0;padding-left:18px;color:#c6d0db}.approval{display:grid;gap:6px}.approval input,.approval select{width:100%}
     .prompt-box{position:relative}.prompt-box textarea{width:100%;min-height:540px;padding:20px;border:1px solid var(--line);border-radius:var(--radius);background:#090d12;color:#c9d4df;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}.copy{position:absolute;right:12px;top:12px}
     .footer{margin-top:54px;padding-top:20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;color:var(--muted);font-size:12px}.hidden{display:none!important}
+    .tabbar{display:flex;gap:8px;margin:28px 0 6px;border-bottom:1px solid var(--line)}.tabbtn{padding:11px 16px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-weight:700;font-size:14.5px}.tabbtn:hover{color:var(--text)}.tabbtn.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+    .tabpanel{display:none}.tabpanel.active{display:block}
     .sync-banner{display:flex;align-items:center;gap:9px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font-size:12px;color:var(--muted)}.sync-banner .sdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}.sync-banner.state-loading .sdot,.sync-banner.state-saving .sdot{background:var(--blue);animation:pulse 1s infinite}.sync-banner.state-synced .sdot{background:var(--green)}.sync-banner.state-offline .sdot,.sync-banner.state-error .sdot{background:var(--yellow)}.sync-banner.state-auth .sdot{background:var(--red)}.sync-banner button.btn{min-height:auto;padding:4px 9px;font-size:11px}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
     .editor-tag{display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font-size:12px;color:var(--muted)}.editor-tag b{color:var(--text);font-weight:650}.editor-tag button{border:0;background:transparent;color:var(--cyan);font-size:11px;text-decoration:underline}
     .sync-tag{font-size:10px;color:var(--muted);text-align:right;white-space:nowrap}.sync-tag.saving{color:var(--blue)}.sync-tag.saved{color:var(--green)}.sync-tag.error,.sync-tag.conflict{color:var(--red)}
     .conflict-box{grid-column:1/-1;padding:12px;border:1px solid rgba(255,107,120,.4);border-radius:10px;background:rgba(255,107,120,.08);font-size:12px;color:#f3c9cd}.conflict-box b{color:var(--red)}.conflict-box .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
     .history-box{grid-column:1/-1;margin-top:4px;border-top:1px dashed var(--line);padding-top:10px}.history-entry{padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;color:#c6d0db}.history-entry:last-child{border-bottom:0}.history-meta{color:var(--muted);font-size:11px;margin-bottom:3px}
+    .comments-box{grid-column:1/-1;margin-top:4px;border-top:1px dashed var(--line);padding-top:10px}
+    .pass-divider{display:flex;align-items:center;gap:8px;margin:12px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}.pass-divider:first-child{margin-top:0}
+    .pass-tag{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--panel2)}.pass-tag.locked{color:var(--muted)}.pass-tag.open{color:var(--cyan);border-color:rgba(78,225,193,.4)}
+    .comment-entry{padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px;color:#dbe3ec}.comment-entry:last-child{border-bottom:0}.comment-meta{color:var(--muted);font-size:11px;margin-bottom:3px}.comment-body{white-space:pre-wrap;line-height:1.5}
+    .comment-form{display:flex;flex-direction:column;gap:8px;margin-top:10px}.comment-form textarea{width:100%;min-height:64px;border:1px solid var(--line);border-radius:8px;background:#0b1016;color:var(--text);padding:9px;resize:vertical}.comment-form .row{display:flex;justify-content:flex-end;gap:8px}
     .readonly-flag{opacity:.55;pointer-events:none}
 
     /* Speedrun checklist -- big checkboxes */
@@ -67,7 +74,7 @@
     .int-card.live{border-top:3px solid var(--cyan)}
     .int-card.risk{border-top:3px solid var(--yellow)}
 
-    @media print{.sync-banner,.editor-tag,.sync-tag,.conflict-box,.history-box,.sr-foot button,#archive summary{display:none!important}details{display:block!important}details>*{display:block!important}}
+    @media print{.sync-banner,.editor-tag,.sync-tag,.conflict-box,.history-box,.sr-foot button,#archive summary{display:none!important}details{display:block!important}details>*{display:block!important}.tabpanel{display:block!important}.tabbar{display:none!important}}
     @media(max-width:1050px){.shell{grid-template-columns:1fr}.sidebar{display:none}.hero{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}.scope-grid{grid-template-columns:1fr}.gate{grid-template-columns:1fr}.item-main{grid-template-columns:64px 1fr 160px 30px}}
     @media(max-width:680px){.main{padding:18px 12px 50px}.hero{padding:24px}.cards{grid-template-columns:1fr 1fr}.item-main{grid-template-columns:54px 1fr 30px}.item-main .status{grid-column:1/-1}.item-details{grid-template-columns:1fr}.field.full{grid-column:auto}.footer{display:block}.toolbar{position:static}}
     @media print{body{background:#fff;color:#111}.shell{display:block}.sidebar,.toolbar,.chev,.copy,.btn{display:none!important}.main{padding:0}.hero,.card,.scope-card,.item,.gate,.table-wrap,.sr-item,.int-card,.flow-box{box-shadow:none;background:#fff;border-color:#bbb}.hero p,.section-head p,.scope-card p,.item-criterion,.gate p,.footer,.sr-desc,.int-card p{color:#444}.item-details{display:grid!important}.editable,.field input,.field textarea,.status{color:#111;background:#fff;border-color:#bbb}.prompt-box{display:none}section{break-inside:avoid}.item{break-inside:avoid}}
@@ -78,9 +85,14 @@
   <aside class="sidebar">
     <div class="brand">SSR.FUN<small>Protocol readiness</small></div>
     <nav class="nav">
-      <a href="#overview">Overview</a><a href="#speedrun">Speedrun checklist</a><a href="#architecture">Architecture</a><a href="#integrations">Integrations</a><a href="#archive">Full DevNet archive</a>
+      <a href="#overview">Overview</a><a href="#speedrun">Speedrun checklist</a><a href="#critical-functions">Function checklist</a><a href="#architecture">Architecture</a><a href="#integrations" data-tab="integrations">Integrations &amp; to-do</a><a href="#archive">Full DevNet archive</a>
     </nav>
     <div class="side-note">Formal sign-off rule: a claim is not Passed until its evidence can be independently reproduced.</div>
+    <div class="side-note">
+      Comment threads (per item, under "Comments") are grouped into numbered passes. Locking closes every currently-open
+      comment across the whole checklist into permanent track record; the next comment posted anywhere starts a new pass.
+      <button class="btn" id="lockPassBtn" style="margin-top:9px;width:100%">Lock current pass</button>
+    </div>
   </aside>
   <main class="main"><div class="wrap">
     <header class="hero" id="overview">
@@ -94,6 +106,12 @@
       </div>
     </header>
 
+    <div class="tabbar" role="tablist">
+      <button class="tabbtn active" type="button" data-tab="checklist" role="tab" aria-selected="true">Checklist</button>
+      <button class="tabbtn" type="button" data-tab="integrations" role="tab" aria-selected="false">Integrations &amp; to-do</button>
+    </div>
+
+    <div id="panel-checklist" class="tabpanel active" role="tabpanel">
     <section>
       <div class="toolbar" style="position:static">
         <div id="syncBanner" class="sync-banner state-loading"><span class="sdot"></span><span id="syncBannerText">Connecting…</span><button class="btn hidden" id="syncRetry">Retry</button></div>
@@ -106,6 +124,18 @@
       <div class="section-head"><div><h2>Closed-Mainnet speedrun checklist</h2><p>15 items. Each is either a real security/correctness gate that doesn't go away by moving faster, or a genuinely new integration Mainnet requires. Nothing else on this page blocks the closed launch.</p></div><span class="badge"><span class="dot" style="background:var(--green)"></span><span id="srCount">0</span>/<span id="srTotal">0</span> checked</span></div>
       <div class="progress" style="margin-bottom:18px"><span id="srBar"></span></div>
       <div id="speedrunContainer" class="sr-groups"></div>
+    </section>
+
+    <section id="critical-functions">
+      <div class="section-head"><div><h2>DevNet function checklist</h2><p>One item per protocol function — every one of the 23 ssr_protocol instructions, grouped into the 10 actions that actually move balances, supply, AUM or authority, plus a closing sign-off that someone other than the builder checked each one. Expand any control to record evidence, tester and notes. Same evidence standard as the full archive below: compiling, a green build or a mocked test is not Passed.</p></div><span class="badge"><span class="dot" style="background:var(--cyan)"></span><span id="cfPassCount">0</span>/<span id="cfTotalCount">0</span> passed</span></div>
+      <div class="progress" style="margin-bottom:18px"><span id="cfBar"></span></div>
+      <div class="toolbar">
+        <input id="cfSearch" class="control" placeholder="Search…">
+        <select id="cfCategoryFilter" class="control"><option value="">All functions</option></select>
+        <select id="cfStatusFilter" class="control"><option value="">All statuses</option></select>
+        <button class="btn" id="cfExpandAll">Expand all</button><button class="btn" id="cfCollapseAll">Collapse all</button>
+      </div>
+      <div id="criticalFunctionsContainer" class="checklist"></div>
     </section>
 
     <section id="architecture">
@@ -150,40 +180,6 @@
         <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>DevNet tier</span><h4>Helius</h4><p>Dedicated Solana RPC provider. Server calls it directly; the browser goes through a same-origin proxy function so the API key is never exposed client-side.</p></div>
         <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>New, this page only</span><h4>Neon Postgres</h4><p>Backs this Road to Mainnet checklist's shared/collaborative state. Not read or written by the protocol or the main app at all.</p></div>
         <div class="int-card risk"><span class="badge int-status"><span class="dot" style="background:var(--yellow)"></span>Never driven by a real human</span><h4>Wallet Adapter</h4><p>solana/wallet-adapter-react. Every on-chain action so far has been verified by scripts using a throwaway keypair, never a real browser + Phantom click-through (MS-04).</p></div>
-      </div>
-    </section>
-
-    <section id="integrations">
-      <div class="section-head"><div><h2>Integrations — what's needed for Mainnet</h2><p>Four things stand between the current DevNet setup and a real closed Mainnet. Alternatives are the 2-3 biggest players in each category as of mid-2026 — worth a quick compare before committing.</p></div></div>
-      <div class="int-grid">
-        <div class="int-card needed">
-          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Not integrated at all</span>
-          <h4>Swap routing — Jupiter</h4>
-          <p>Replaces the DevNet swap authority above with real execution and real liquidity. Note: Jupiter itself has zero DevNet awareness (confirmed by a real API test in this repo's history) — this can only be proven on Mainnet, which is exactly why it's on the speedrun list.</p>
-          <div class="alt-title">Jupiter is the default (~90% of Solana DEX-aggregation volume, reportedly). Alternatives:</div>
-          <ul class="alts"><li><b>OKX DEX</b> — multi-chain aggregator incl. Solana, reported ~$300–450M/day Solana volume, CEX+DEX hybrid quotes.</li><li><b>dFlow</b> — auction-based routing, MEV protection by design (fills come from competing market makers, not a public mempool).</li></ul>
-        </div>
-        <div class="int-card needed">
-          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Not integrated at all</span>
-          <h4>Price oracle — Pyth</h4>
-          <p>Every USD-denominated number on screen (NAV, AUM, price) is a hardcoded test constant today. Core mint/redeem math itself doesn't need a price feed — this is specifically a "the numbers on screen are fake" gap, not a correctness gap.</p>
-          <div class="alt-title">Pyth is the natural default (Solana-native, sub-second feeds). Alternatives:</div>
-          <ul class="alts"><li><b>Chainlink</b> — overall oracle market leader (reportedly ~70% share across chains), has Solana feeds, most widely trusted by integrators.</li><li><b>Switchboard</b> — Solana-native alternative, long track record on this exact chain, permissionless feed creation.</li></ul>
-        </div>
-        <div class="int-card needed">
-          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Single dev key today</span>
-          <h4>Upgrade authority — Multisig</h4>
-          <p>The program's upgrade authority (and the reused swap/mint-authority key) is one person's keypair. Before real funds are at risk, this moves to a multisig.</p>
-          <div class="alt-title">Recommendation:</div>
-          <ul class="alts"><li><b>Squads</b> — the dominant Solana-native multisig/treasury product; this is the default choice, not really a 3-way market decision the way Jupiter/Pyth are.</li></ul>
-        </div>
-        <div class="int-card needed">
-          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>DevNet tier only</span>
-          <h4>Production RPC — Helius Mainnet</h4>
-          <p>Same provider already trusted for DevNet, just the paid Mainnet-tier plan instead of the DevNet key currently configured.</p>
-          <div class="alt-title">If comparing:</div>
-          <ul class="alts"><li><b>Triton One</b> — established, performance-focused Solana RPC infrastructure.</li><li><b>QuickNode</b> — large multi-chain RPC provider with a mature Solana offering.</li></ul>
-        </div>
       </div>
     </section>
 
@@ -265,6 +261,43 @@
       <div class="prompt-box"><button class="btn copy" id="copyPrompt">Copy prompt</button><textarea id="claudePrompt" spellcheck="false"></textarea></div>
     </section>
     </details>
+    </div><!-- /panel-checklist -->
+
+    <div id="panel-integrations" class="tabpanel" role="tabpanel">
+    <section id="integrations">
+      <div class="section-head"><div><h2>Integrations — what's needed for Mainnet</h2><p>Four things stand between the current DevNet setup and a real closed Mainnet. Alternatives are the 2-3 biggest players in each category as of mid-2026 — worth a quick compare before committing.</p></div></div>
+      <div class="int-grid">
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Not integrated at all</span>
+          <h4>Swap routing — Jupiter</h4>
+          <p>Replaces the DevNet swap authority above with real execution and real liquidity. Note: Jupiter itself has zero DevNet awareness (confirmed by a real API test in this repo's history) — this can only be proven on Mainnet, which is exactly why it's on the speedrun list.</p>
+          <div class="alt-title">Jupiter is the default (~90% of Solana DEX-aggregation volume, reportedly). Alternatives:</div>
+          <ul class="alts"><li><b>OKX DEX</b> — multi-chain aggregator incl. Solana, reported ~$300–450M/day Solana volume, CEX+DEX hybrid quotes.</li><li><b>dFlow</b> — auction-based routing, MEV protection by design (fills come from competing market makers, not a public mempool).</li></ul>
+        </div>
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Not integrated at all</span>
+          <h4>Price oracle — Pyth</h4>
+          <p>Every USD-denominated number on screen (NAV, AUM, price) is a hardcoded test constant today. Core mint/redeem math itself doesn't need a price feed — this is specifically a "the numbers on screen are fake" gap, not a correctness gap.</p>
+          <div class="alt-title">Pyth is the natural default (Solana-native, sub-second feeds). Alternatives:</div>
+          <ul class="alts"><li><b>Chainlink</b> — overall oracle market leader (reportedly ~70% share across chains), has Solana feeds, most widely trusted by integrators.</li><li><b>Switchboard</b> — Solana-native alternative, long track record on this exact chain, permissionless feed creation.</li></ul>
+        </div>
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>Single dev key today</span>
+          <h4>Upgrade authority — Multisig</h4>
+          <p>The program's upgrade authority (and the reused swap/mint-authority key) is one person's keypair. Before real funds are at risk, this moves to a multisig.</p>
+          <div class="alt-title">Recommendation:</div>
+          <ul class="alts"><li><b>Squads</b> — the dominant Solana-native multisig/treasury product; this is the default choice, not really a 3-way market decision the way Jupiter/Pyth are.</li></ul>
+        </div>
+        <div class="int-card needed">
+          <span class="badge int-status"><span class="dot" style="background:var(--blue)"></span>DevNet tier only</span>
+          <h4>Production RPC — Helius Mainnet</h4>
+          <p>Same provider already trusted for DevNet, just the paid Mainnet-tier plan instead of the DevNet key currently configured.</p>
+          <div class="alt-title">If comparing:</div>
+          <ul class="alts"><li><b>Triton One</b> — established, performance-focused Solana RPC infrastructure.</li><li><b>QuickNode</b> — large multi-chain RPC provider with a mature Solana offering.</li></ul>
+        </div>
+      </div>
+    </section>
+    </div><!-- /panel-integrations -->
 
     <footer class="footer"><span>SSR.FUN · Road to Mainnet</span><span>Speedrunning a closed Mainnet, evidence-first where it still matters</span></footer>
   </div></main>
@@ -291,6 +324,29 @@ const speedrunItems=[
 ['MS-13','Ops','Minimal monitoring live','Balance, invariant, authority-change and pause-state alerts wired up before real funds are at risk.'],
 ['MS-14','Ops','Incident runbook written','One page: who does what, in what order, if something goes wrong during the closed phase.'],
 ['MS-15','Sign-off','Named human approval recorded','Someone’s name, and the date, on the decision to open the closed phase to its first real user.'],
+];
+
+// DevNet function checklist: one item per protocol function, manually
+// exercised end-to-end on DevNet by a human (not just script/mocked/compile
+// evidence) -- covers all 23 ssr_protocol instructions (everything in
+// programs/ssr_protocol/src/lib.rs except the one-time initialize_protocol
+// deploy step, tracked separately under the archive's deployment controls),
+// plus one independent-review sign-off. Same underlying entity type
+// ('control') and persistence/versioning/sync as the archived 107 and the
+// speedrun 15 -- IDs are in disjoint per-function namespaces
+// (CR/MT/RD/AR/RR/RB/DL/PU/FE/WD/SEC) so nothing collides.
+const criticalFunctionItems=[
+['CR-01','Create Reserve','Reserve created correctly end-to-end','create_reserve, initialize_reserve_asset and seed_reserve, manually exercised together: an authorized wallet creates a Reserve with valid assets, weights, metadata, fees and authorities; invalid input (bad mint, duplicate Reserve, bad decimals, unsupported token program, invalid weights) is rejected with no partial state created; a non-authorized wallet cannot create one; initial balances, Reserve Token supply and starting NAV match exactly what was seeded, per the documented formula.'],
+['MT-01','Mint (Buy)','Mint correct end-to-end','mint_reserve_tokens_in_kind, manually exercised: depositor and Reserve Token balances change by the exact expected amounts; total Reserve Token supply and AUM increase proportionately; NAV is unchanged by a fair mint; mint fee is charged at the configured rate and reaches the treasury; minimum amounts, zero amounts and dust cannot mint zero value or leak value; mixed-decimal Reserve assets calculate with no precision loss beyond documented bounds.'],
+['RD-01','Redeem (Sell)','Redeem correct end-to-end','redeem_reserve_tokens_in_kind, manually exercised: redeemer Reserve Token balance decreases and underlying assets pay out by the exact expected pro-rata amounts; total supply and AUM decrease proportionately; NAV is unchanged by a fair redemption; redemption fee reaches the treasury; minimum redemptions, zero amounts and dust cannot strand funds or leak value.'],
+['AR-01','Add Reserve asset','Adding a Reserve asset works and is guarded','add_reserve_asset_active and fund_new_reserve_asset, manually exercised: an authorized wallet adds a new supported asset with correct weight and funds it without breaking existing accounting; AUM and displayed weights reconcile to the new composition immediately after; a non-authorized wallet cannot add or fund a new asset.'],
+['RR-01','Remove Reserve asset','Removing a Reserve asset works and is guarded','remove_reserve_asset, manually exercised: an asset can only be removed after exposure/redemption policy constraints are satisfied; balances, weights and AUM reconcile correctly immediately after removal; a non-authorized wallet cannot remove an asset.'],
+['RB-01','Rebalance','Rebalance changes holdings correctly and is guarded','update_targets, record_rebalance and execute_rebalance_leg, manually exercised: a rebalance moves actual on-chain holdings toward the approved target weights; total AUM before and after matches within documented slippage bounds, with per-asset slippage/price-impact/size limits enforced; a non-authorized wallet cannot trigger a rebalance or change targets.'],
+['DL-01','Delegates & authority','Delegate and manager-authority controls work and are guarded','add_delegate, update_delegate_permissions, remove_delegate and transfer_reserve_manager, manually exercised: an authorized role can add a delegate only within documented permission bounds; a delegate cannot act outside its Reserve, role, limits or expiration; revocation takes effect immediately and blocks all further privileged actions by that delegate; Reserve-manager transfer cannot be performed by an unauthorized wallet.'],
+['PU-01','Pause / Unpause','Pause and unpause work and are guarded','pause_reserve and unpause_reserve, manually exercised: an authorized wallet can pause the Reserve, blocking mint, redeem and other guarded actions while paused; an authorized wallet can unpause, immediately resuming normal operation; a non-authorized wallet cannot pause or unpause.'],
+['FE-01','Fees & protocol config','Fee accrual/collection and config updates work and are guarded','accrue_fees, collect_fees, update_protocol_config and update_metadata, manually exercised: fees accrue and collect at the configured rate to the correct treasury address; protocol config and Reserve metadata can only be updated by the correct authority, with the resulting state change visible on-chain.'],
+['WD-01','Wind-down / Closure','Wind-down and closure work correctly end-to-end','initiate_wind_down and close_reserve, manually exercised: initiating wind-down blocks new deposits/creation while holders retain a working, fair redemption path throughout; final closure leaves zero-liability accounts closed safely, with no rent or residual assets stranded or misdirected.'],
+['SEC-01','Security','Checked by someone other than the builder','Every function above has been manually reviewed and exercised on DevNet by a team member who did not write that code — not just self-tested by the original implementer. Record who reviewed each function, and when, in the notes field below.'],
 ];
 
 const controls=[
@@ -471,6 +527,7 @@ function markAuthExpired(){
   authExpired=true;
   document.getElementById('checklistContainer').classList.add('readonly-flag');
   document.getElementById('speedrunContainer')?.classList.add('readonly-flag');
+  document.getElementById('criticalFunctionsContainer')?.classList.add('readonly-flag');
   document.getElementById('gapTable')?.classList.add('readonly-flag');
   document.getElementById('gatesContainer')?.classList.add('readonly-flag');
   setBanner('auth','Your session expired — reload the page to sign in again.');
@@ -493,10 +550,12 @@ async function loadServerState(isRetry){
     authExpired=false;
     document.getElementById('checklistContainer').classList.remove('readonly-flag');
     document.getElementById('speedrunContainer')?.classList.remove('readonly-flag');
+    document.getElementById('criticalFunctionsContainer')?.classList.remove('readonly-flag');
     document.getElementById('gapTable')?.classList.remove('readonly-flag');
     document.getElementById('gatesContainer')?.classList.remove('readonly-flag');
     setBanner('synced','Synced • '+fmtTime(body.serverTime));
     renderSpeedrun();
+    renderCriticalFunctions();
     render();
     renderGaps();
     renderGates();
@@ -580,6 +639,75 @@ async function loadHistory(id,container){
   }catch{container.innerHTML='<div class="history-meta">Could not load history (offline?).</div>'}
 }
 
+// --- Comments thread (1st pass / 2nd pass) ---------------------------------
+// Separate from the History box above: History replays edits to the
+// status/evidence/notes fields themselves; this is a running discussion
+// underneath a control, grouped into numbered "passes". A pass, once
+// locked (via the "Lock current pass" toolbar action), renders permanently
+// read-only -- new comments always land in the next open pass instead. See
+// api/road-to-mainnet/comments.ts / comments/lock.ts.
+async function loadComments(id,container){
+  container.innerHTML='<div class="history-meta">Loading comments…</div>';
+  try{
+    const {ok,body}=await apiFetch(`/api/road-to-mainnet/comments?entityType=control&entityId=${encodeURIComponent(id)}`);
+    if(!ok){container.innerHTML='<div class="history-meta">Could not load comments.</div>';return}
+    container.innerHTML='';
+    const comments=body.comments||[];
+    let lastPass=null;
+    comments.forEach(c=>{
+      if(c.pass!==lastPass){
+        lastPass=c.pass;
+        const div=document.createElement('div');div.className='pass-divider';
+        const locked=comments.filter(x=>x.pass===c.pass).every(x=>x.lockedAt);
+        div.innerHTML=`Pass ${c.pass} <span class="pass-tag ${locked?'locked':'open'}">${locked?'🔒 Locked — track record':'● Open'}</span>`;
+        container.appendChild(div);
+      }
+      const row=document.createElement('div');row.className='comment-entry';
+      row.innerHTML=`<div class="comment-meta">${esc(c.author||'Unknown')} • ${esc(fmtTime(c.createdAt))}</div><div class="comment-body">${esc(c.body)}</div>`;
+      container.appendChild(row);
+    });
+    if(comments.length===0){
+      const empty=document.createElement('div');empty.className='history-meta';empty.textContent='No comments yet.';
+      container.appendChild(empty);
+    }
+    // Only ever offer a new-comment box for the CURRENT open pass (never a
+    // locked one) -- matches the server's own currentOpenPass rule, so what
+    // you see here always matches what a POST would actually do.
+    const form=document.createElement('div');form.className='comment-form';
+    form.innerHTML=`<textarea placeholder="Add a comment…"></textarea><div class="row"><button class="btn primary" data-post>Post Comment</button></div>`;
+    const textarea=form.querySelector('textarea');
+    form.querySelector('[data-post]').onclick=async()=>{
+      const text=textarea.value.trim();
+      if(!text)return;
+      const btn=form.querySelector('[data-post]');btn.disabled=true;btn.textContent='Posting…';
+      try{
+        const {ok,status}=await apiFetch('/api/road-to-mainnet/comments',{method:'POST',body:JSON.stringify({entityType:'control',entityId:id,author:getEditorName(),body:text})});
+        if(status===401){markAuthExpired();return}
+        if(!ok){btn.disabled=false;btn.textContent='Post Comment';return}
+        await loadComments(id,container);
+      }catch{btn.disabled=false;btn.textContent='Post Comment'}
+    };
+    container.appendChild(form);
+  }catch{container.innerHTML='<div class="history-meta">Could not load comments (offline?).</div>'}
+}
+
+// Locks every currently-open comment across the WHOLE checklist in one
+// action ("the 1st pass ones get locked", a single event for a round of
+// feedback, not a per-item toggle) -- see api/road-to-mainnet/comments/lock.ts.
+async function lockCurrentPass(){
+  if(!window.confirm('Lock every open comment across the whole checklist into its pass? Locked comments become permanent, read-only track record; the next comment posted anywhere starts a new pass. This cannot be undone.'))return;
+  try{
+    const {ok,status,body}=await apiFetch('/api/road-to-mainnet/comments/lock',{method:'POST'});
+    if(status===401){markAuthExpired();return}
+    if(!ok){window.alert('Could not lock the current pass.');return}
+    window.alert(`Locked ${body.lockedCount} comment(s). Any open comment box on screen will refresh next time you open it.`);
+    document.querySelectorAll('[data-comments-box]:not(.hidden)').forEach(box=>{
+      const item=box.closest('.item');
+      if(item)loadComments(item.dataset.id,box);
+    });
+  }catch{window.alert('Could not lock the current pass (offline?).')}
+}
+
 // --- Speedrun checklist (big checkboxes) ---
 function speedrunSummary(){
   const vals=speedrunItems.map(x=>(state[x[0]]||{}).status||'Not tested');
@@ -622,17 +750,41 @@ function render(){
   const grouped={}; controls.forEach(x=>{const d=state[x[0]]||{};const st=d.status||'Not tested';if((q&&!x.join(' ').toLowerCase().includes(q)&&!String(d.notes||'').toLowerCase().includes(q))||(cf&&x[1]!==cf)||(sf&&st!==sf))return;(grouped[x[1]]??=[]).push(x)});
   Object.entries(grouped).forEach(([group,items])=>{
     const gt=document.createElement('div');gt.className='group-title';gt.innerHTML=`<span>${esc(group)}</span><span class="badge">${items.length} controls</span>`;c.appendChild(gt);
-    items.forEach(x=>{const d=state[x[0]]||{},st=d.status||'Not tested';const v=versions.controls[x[0]];const el=document.createElement('article');el.className='item';el.dataset.id=x[0];el.innerHTML=`<div class="item-main"><div class="item-id">${x[0]}</div><div><div class="item-title">${esc(x[2])}</div><div class="item-criterion">${esc(x[3])}</div></div><select class="status" data-field="status" data-status="${st}">${STATUSES.map(s=>`<option ${s===st?'selected':''}>${s}</option>`).join('')}</select><button class="chev" aria-label="Expand">⌄</button></div><div class="item-details"><div class="field full"><label>Evidence — signatures, addresses, tests, paths, links</label><textarea data-field="evidence">${esc(d.evidence||'')}</textarea></div><div class="field"><label>Environment / deployment / commit</label><input data-field="environment" value="${esc(d.environment||'')}"></div><div class="field"><label>Tester / owner / date</label><input data-field="tester" value="${esc(d.tester||'')}"></div><div class="field full"><label>Notes, gap and exact next test</label><textarea data-field="notes">${esc(d.notes||'')}</textarea></div><div class="field full"><span class="sync-tag" data-sync-tag>${v?('Last saved '+fmtTime(v.updatedAt)+(v.updatedBy?' by '+esc(v.updatedBy):'')):'Not yet synced'}</span> <button class="btn" data-history style="margin-left:8px">History</button><div class="history-box hidden" data-history-box></div></div></div>`;
+    items.forEach(x=>{const d=state[x[0]]||{},st=d.status||'Not tested';const v=versions.controls[x[0]];const el=document.createElement('article');el.className='item';el.dataset.id=x[0];el.innerHTML=`<div class="item-main"><div class="item-id">${x[0]}</div><div><div class="item-title">${esc(x[2])}</div><div class="item-criterion">${esc(x[3])}</div></div><select class="status" data-field="status" data-status="${st}">${STATUSES.map(s=>`<option ${s===st?'selected':''}>${s}</option>`).join('')}</select><button class="chev" aria-label="Expand">⌄</button></div><div class="item-details"><div class="field full"><label>Evidence — signatures, addresses, tests, paths, links</label><textarea data-field="evidence">${esc(d.evidence||'')}</textarea></div><div class="field"><label>Environment / deployment / commit</label><input data-field="environment" value="${esc(d.environment||'')}"></div><div class="field"><label>Tester / owner / date</label><input data-field="tester" value="${esc(d.tester||'')}"></div><div class="field full"><label>Notes, gap and exact next test</label><textarea data-field="notes">${esc(d.notes||'')}</textarea></div><div class="field full"><span class="sync-tag" data-sync-tag>${v?('Last saved '+fmtTime(v.updatedAt)+(v.updatedBy?' by '+esc(v.updatedBy):'')):'Not yet synced'}</span> <button class="btn" data-history style="margin-left:8px">History</button><button class="btn" data-comments style="margin-left:8px">Comments</button><div class="history-box hidden" data-history-box></div><div class="comments-box hidden" data-comments-box></div></div></div>`;
       el.querySelector('.chev').onclick=()=>el.classList.toggle('open');
       el.querySelectorAll('[data-field]').forEach(inp=>inp.onchange=()=>{state[x[0]]??={};state[x[0]][inp.dataset.field]=inp.value;if(inp.dataset.field==='status'){inp.dataset.status=inp.value;summary()}save();syncControl(x[0])});
       const hb=el.querySelector('[data-history-box]');
       el.querySelector('[data-history]').onclick=()=>{hb.classList.toggle('hidden');if(!hb.classList.contains('hidden'))loadHistory(x[0],hb)};
+      const cb=el.querySelector('[data-comments-box]');
+      el.querySelector('[data-comments]').onclick=()=>{cb.classList.toggle('hidden');if(!cb.classList.contains('hidden'))loadComments(x[0],cb)};
       if(conflicts[x[0]])showConflict(x[0],conflicts[x[0]]);
       c.appendChild(el);
     });
   });summary();
 }
 function summary(){const vals=controls.map(x=>(state[x[0]]||{}).status||'Not tested');const applicable=vals.filter(x=>x!=='Not applicable').length;const passed=vals.filter(x=>x==='Passed').length;document.getElementById('totalCount').textContent=controls.length;document.getElementById('passCount').textContent=passed;document.getElementById('riskCount').textContent=vals.filter(x=>x==='Failed'||x==='Blocked').length;document.getElementById('partialCount').textContent=vals.filter(x=>x==='Partial').length;document.getElementById('untestedCount').textContent=vals.filter(x=>x==='Not tested').length;document.getElementById('passBar').style.width=(applicable?passed/applicable*100:0)+'%'}
+
+// --- Critical-function checklist (same detailed item UI as the archive,
+// scoped to just Create Reserve / Mint / Redeem / lifecycle sub-checks) ---
+function renderCriticalFunctions(){
+  const c=document.getElementById('criticalFunctionsContainer'); if(!c)return; c.innerHTML='';
+  const q=document.getElementById('cfSearch').value.toLowerCase(), cf=document.getElementById('cfCategoryFilter').value, sf=document.getElementById('cfStatusFilter').value;
+  const grouped={}; criticalFunctionItems.forEach(x=>{const d=state[x[0]]||{};const st=d.status||'Not tested';if((q&&!x.join(' ').toLowerCase().includes(q)&&!String(d.notes||'').toLowerCase().includes(q))||(cf&&x[1]!==cf)||(sf&&st!==sf))return;(grouped[x[1]]??=[]).push(x)});
+  Object.entries(grouped).forEach(([group,items])=>{
+    const gt=document.createElement('div');gt.className='group-title';gt.innerHTML=`<span>${esc(group)}</span><span class="badge">${items.length} checks</span>`;c.appendChild(gt);
+    items.forEach(x=>{const d=state[x[0]]||{},st=d.status||'Not tested';const v=versions.controls[x[0]];const el=document.createElement('article');el.className='item';el.dataset.id=x[0];el.innerHTML=`<div class="item-main"><div class="item-id">${x[0]}</div><div><div class="item-title">${esc(x[2])}</div><div class="item-criterion">${esc(x[3])}</div></div><select class="status" data-field="status" data-status="${st}">${STATUSES.map(s=>`<option ${s===st?'selected':''}>${s}</option>`).join('')}</select><button class="chev" aria-label="Expand">⌄</button></div><div class="item-details"><div class="field full"><label>Evidence — signatures, addresses, tests, paths, links</label><textarea data-field="evidence">${esc(d.evidence||'')}</textarea></div><div class="field"><label>Environment / deployment / commit</label><input data-field="environment" value="${esc(d.environment||'')}"></div><div class="field"><label>Tester / owner / date</label><input data-field="tester" value="${esc(d.tester||'')}"></div><div class="field full"><label>Notes, gap and exact next test</label><textarea data-field="notes">${esc(d.notes||'')}</textarea></div><div class="field full"><span class="sync-tag" data-sync-tag>${v?('Last saved '+fmtTime(v.updatedAt)+(v.updatedBy?' by '+esc(v.updatedBy):'')):'Not yet synced'}</span> <button class="btn" data-history style="margin-left:8px">History</button><button class="btn" data-comments style="margin-left:8px">Comments</button><div class="history-box hidden" data-history-box></div><div class="comments-box hidden" data-comments-box></div></div></div>`;
+      el.querySelector('.chev').onclick=()=>el.classList.toggle('open');
+      el.querySelectorAll('[data-field]').forEach(inp=>inp.onchange=()=>{state[x[0]]??={};state[x[0]][inp.dataset.field]=inp.value;if(inp.dataset.field==='status'){inp.dataset.status=inp.value;cfSummary()}save();syncControl(x[0])});
+      const hb=el.querySelector('[data-history-box]');
+      el.querySelector('[data-history]').onclick=()=>{hb.classList.toggle('hidden');if(!hb.classList.contains('hidden'))loadHistory(x[0],hb)};
+      const cb=el.querySelector('[data-comments-box]');
+      el.querySelector('[data-comments]').onclick=()=>{cb.classList.toggle('hidden');if(!cb.classList.contains('hidden'))loadComments(x[0],cb)};
+      if(conflicts[x[0]])showConflict(x[0],conflicts[x[0]]);
+      c.appendChild(el);
+    });
+  });cfSummary();
+}
+function cfSummary(){const vals=criticalFunctionItems.map(x=>(state[x[0]]||{}).status||'Not tested');const applicable=vals.filter(x=>x!=='Not applicable').length;const passed=vals.filter(x=>x==='Passed').length;document.getElementById('cfTotalCount').textContent=criticalFunctionItems.length;document.getElementById('cfPassCount').textContent=passed;document.getElementById('cfBar').style.width=(applicable?passed/applicable*100:0)+'%'}
 
 function renderGaps(){
   const gb=document.querySelector('#gapTable tbody');gb.innerHTML='';
@@ -646,17 +798,29 @@ function renderGates(){
   gates.forEach((g,i)=>{const d=state.gates?.[i]||{};const el=document.createElement('article');el.className='gate';el.innerHTML=`<div><div class="eyebrow">${g[0]}</div><h3>${g[1]}</h3></div><div><p>${g[2]}</p><ul><li>Evidence pack attached and reproducible</li><li>Open risks explicitly accepted or gate-blocking</li><li>Exact release candidate and deployment identified</li></ul></div><div class="approval"><select class="control"><option ${!d.decision?'selected':''}>Not reviewed</option><option ${d.decision==='Approved'?'selected':''}>Approved</option><option ${d.decision==='Rejected'?'selected':''}>Rejected</option><option ${d.decision==='Conditional'?'selected':''}>Conditional</option></select><input class="control" placeholder="Approver + date" value="${esc(d.approver||'')}"><textarea class="control" placeholder="Conditions / evidence">${esc(d.notes||'')}</textarea></div>`;const [sel,inp,ta]=el.querySelectorAll('select,input,textarea');[sel,inp,ta].forEach((x,j)=>x.onchange=()=>{state.gates??=[];state.gates[i]??={};state.gates[i][['decision','approver','notes'][j]]=x.value;save();syncGate(i)});gc.appendChild(el)});
 }
 
+function activateTab(name){
+  document.querySelectorAll('.tabbtn').forEach(b=>{const on=b.dataset.tab===name;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false')});
+  document.querySelectorAll('.tabpanel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+name));
+}
+
 function setup(){
+  document.querySelectorAll('.tabbtn').forEach(b=>b.onclick=()=>activateTab(b.dataset.tab));
+  document.querySelectorAll('.nav a[href^="#"]').forEach(a=>{a.addEventListener('click',()=>activateTab(a.dataset.tab==='integrations'?'integrations':'checklist'))});
   document.getElementById('updated').textContent=new Date().toLocaleString();
   setEditorLabel();
   document.getElementById('changeEditorName').onclick=()=>{localStorage.removeItem(EDITOR_KEY);setEditorLabel()};
   document.getElementById('syncRetry').onclick=()=>loadServerState(true);
   document.getElementById('logoutBtn').onclick=async()=>{await apiFetch('/api/dashboard/logout',{method:'POST'});location.href='/road-to-mainnet'};
+  document.getElementById('lockPassBtn').onclick=lockCurrentPass;
   const cats=[...new Set(controls.map(x=>x[1]))];cats.forEach(x=>document.getElementById('categoryFilter').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));STATUSES.forEach(x=>document.getElementById('statusFilter').insertAdjacentHTML('beforeend',`<option>${x}</option>`));
   ['search','categoryFilter','statusFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',render));
   document.getElementById('expandAll').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.classList.add('open'));document.getElementById('collapseAll').onclick=()=>document.querySelectorAll('.item').forEach(x=>x.classList.remove('open'));
+  const cfCats=[...new Set(criticalFunctionItems.map(x=>x[1]))];cfCats.forEach(x=>document.getElementById('cfCategoryFilter').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));STATUSES.forEach(x=>document.getElementById('cfStatusFilter').insertAdjacentHTML('beforeend',`<option>${x}</option>`));
+  ['cfSearch','cfCategoryFilter','cfStatusFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='cfSearch'?'input':'change',renderCriticalFunctions));
+  document.getElementById('cfExpandAll').onclick=()=>document.querySelectorAll('#criticalFunctionsContainer .item').forEach(x=>x.classList.add('open'));document.getElementById('cfCollapseAll').onclick=()=>document.querySelectorAll('#criticalFunctionsContainer .item').forEach(x=>x.classList.remove('open'));
   document.querySelectorAll('.persist-meta').forEach(x=>{x.value=state.meta?.[x.dataset.key]||x.value;x.onchange=()=>{state.meta??={};state.meta[x.dataset.key]=x.value;save();syncMeta(x.dataset.key)}});
   renderSpeedrun();
+  renderCriticalFunctions();
   renderGaps();
   renderGates();
   document.getElementById('claudePrompt').value=prompt;document.getElementById('copyPrompt').onclick=async()=>{await navigator.clipboard.writeText(document.getElementById('claudePrompt').value);document.getElementById('copyPrompt').textContent='Copied';setTimeout(()=>document.getElementById('copyPrompt').textContent='Copy prompt',1300)};
@@ -668,7 +832,7 @@ function setup(){
     if(!confirm('Importing will push these values to the shared checklist for everyone with access. Continue?'))return;
     await loadServerState(true); // refresh versions immediately before writing, to minimize false conflicts
     let pushed=0,conflicted=0;
-    for(const id of [...controls.map(c=>c[0]),...speedrunItems.map(c=>c[0])]){
+    for(const id of [...controls.map(c=>c[0]),...speedrunItems.map(c=>c[0]),...criticalFunctionItems.map(c=>c[0])]){
       if(!incoming[id])continue;
       state[id]=incoming[id];
       const ok=await pushEntity('control',id,{status:incoming[id].status||'Not tested',evidence:incoming[id].evidence||'',environment:incoming[id].environment||'',tester:incoming[id].tester||'',notes:incoming[id].notes||''},id);

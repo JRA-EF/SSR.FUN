@@ -34,13 +34,20 @@ if (!process.env.DATABASE_URL) {
 const sql = neon(process.env.DATABASE_URL)
 
 // Exact control-ID inventory, mirrored from the `controls` array (archived
-// 107-item DevNet record) and `speedrunItems` array (15-item closed-Mainnet
-// speedrun checklist) in public/road-to-mainnet.html (category prefix ->
-// count). Keep in sync if either array's set of items ever changes.
+// 107-item DevNet record), `speedrunItems` array (15-item closed-Mainnet
+// speedrun checklist) and `criticalFunctionItems` array (11-item DevNet
+// function checklist, one item per protocol function plus one security
+// sign-off) in public/road-to-mainnet.html (category prefix -> count). Keep
+// in sync if any array's set of items ever changes. Old CR-02..05, MT-02..07,
+// RD-02..06, AR-02..03, RR-02..03, RB-02..04, PU-02..03, WD-02..03 rows from
+// the prior 34-item version are left in rtm_controls (harmless, just no
+// longer referenced by the frontend) rather than deleted, to preserve any
+// history already recorded against them.
 const CONTROL_GROUPS = [
   ['CP', 18], ['AC', 10], ['PM', 10], ['LC', 9], ['JR', 10],
   ['SM', 5], ['UX', 10], ['IX', 7], ['SE', 10], ['DP', 10], ['QA', 8],
   ['MS', 15],
+  ['CR', 1], ['MT', 1], ['RD', 1], ['AR', 1], ['RR', 1], ['RB', 1], ['DL', 1], ['PU', 1], ['FE', 1], ['WD', 1], ['SEC', 1],
 ]
 const CONTROL_IDS = CONTROL_GROUPS.flatMap(([prefix, count]) =>
   Array.from({ length: count }, (_, i) => `${prefix}-${String(i + 1).padStart(2, '0')}`),
@@ -130,6 +137,52 @@ const NOTES_ONLY = {
   'PM-08': "Repo-verified structural fact (not the full live-authority-topology test this control requires): Anchor.toml's [programs.devnet]/[programs.localnet] sections and its accompanying comment confirm the current DevNet upgrade authority is a single dev-controlled keypair, not a multisig -- docs/project/PROJECT_STATUS.md (DEC-0015) tracks migrating this to a multisig as still open before any Mainnet or restricted-beta deployment. Exact next test: confirm the deployed program's actual upgrade authority on-chain (not just the local keypair config) and formally decide/execute the multisig migration.",
 }
 
+// One-time (idempotent) archival of the 2026-08-11 feedback round into the
+// new rtm_comments thread (see lib/road-to-mainnet/schema.sql) as pass 1,
+// plus this session's own reply summarizing exactly what was found/fixed
+// for each item -- then locks pass 1 so it becomes permanent track record
+// and any further discussion starts pass 2. Never touches the existing
+// status/evidence/notes fields on rtm_controls (left exactly as the user
+// entered them) -- this is an additional, append-only layer underneath.
+const COMMENTS_BACKFILL = [
+  {
+    id: 'AR-01',
+    original:
+      "OK start typing this the main problem about the portfolio rebalancing section of the manage Reserve section is Portfolio rebalance and reserve composition are two different sections I want the rebalancing option to display exactly the select assets section of the create reserve flow What happens is that to the left you have the search function and the reserves the reserve tokens to the right you have the pre selected pre existing reserve assets list and their current balance and USD value and and perform the changes and maybe you have like a yellow it's like yellow Umm sort of like benchmark in the slide there And in the comparison of the pre before and after in the before and after of the balances you know like as is and as will be but the section is like left is the reserve and how it's going to look like",
+    reply:
+      "Rebalance tab redesigned to mirror Create Reserve's asset-selection step: search+browse addable assets on the left, current Reserve assets with real balance/USD value and a before/after target-weight comparison on the right. Same underlying on-chain actions (update_targets, add/fund/remove_reserve_asset) -- layout/UX only, no new on-chain capability. See src/merge/pages/ManageDTR.tsx.",
+  },
+  {
+    id: 'DL-01',
+    original:
+      "OK there is an issue here in I grant delegate to a certain wallet that reserve does not display in the manager dashboard of that wallet owner Oh there There needs to be the governance history log if all changes made to the reserve on the manager's dashboard which is kept as well on the protocol side",
+    reply:
+      "Two fixes. (1) Confirmed bug: isManagerOrDelegate only checked the local/simulated delegate list, never a real on-chain delegate grant -- a genuinely-granted delegate never saw the Reserve on their own dashboard. Fixed in src/merge/lib/permissions.ts. (2) Added a real Activity Log to the manager dashboard: decodes every governance event already emitted on-chain (delegate grants, target changes, pause/unpause, wind-down, fee collection, etc. -- see programs/ssr_protocol/src/events.rs) via packages/sdk/src/activityLog.ts. This is a live view of the same record already kept on the protocol side, not a new store.",
+  },
+  {
+    id: 'PU-01',
+    original: 'There is current pause / unpause mint and redeem option ',
+    reply:
+      "Confirmed: pause_reserve/unpause_reserve were real, deployed instructions with zero SDK or UI wiring anywhere (only ever called from a one-off setup script, scripts/devnet_fixtures.ts). Added SDK builders (packages/sdk/src/managementInstructions.ts), client wrappers (src/merge/lib/managementClient.ts), and a Pause/Unpause control on the manager dashboard, gated by the real on-chain PAUSE_RESERVE/UNPAUSE_RESERVE permission.",
+  },
+  {
+    id: 'WD-01',
+    original:
+      'There is an issue after the wind down the reserve just disappears instead we need away for it to remain open in a wind down status with a function 4 people who held that reserve prior to be able to go in there and claim right now it just disappears',
+    reply:
+      "Root cause: the eligibility gate (packages/sdk/src/reserveEligibility.ts) excluded 'windDown' status entirely, so a wound-down Reserve was quarantined exactly like a broken legacy Reserve -- that's the 'disappears' behavior. Checked the program directly: redemption is ALREADY permitted during WindDown by design (close_reserve requires supply to reach zero, so holders must be able to redeem out -- see programs/ssr_protocol/src/state/reserve.rs's require_redemption_allowed), and Buy is separately already blocked on-chain (mint requires exactly Active). Fixed the frontend only: a wound-down Reserve now stays visible with a clear Wind Down badge, Buy disabled, Sell/redeem fully available so prior holders can claim out. No program changes needed or made.",
+  },
+  {
+    id: 'FE-01',
+    original:
+      "OK there's an actual problem in this flow - in the create the reserve flow if there is if there is list a certain wallet and the primary fee destination wallet field and I add another wallet and the additional fee recipients as 100% fee recipient when I go to review and move on to the next step the wallet that appears as fee routing primary is the creator wallet and the routes manager wallet not.\n\nOK another problem is a designated fee routes wallet is not getting anything - see please this setup https://strategic-super-reserve.fun/#/dtr/devnet-39 -- \n\nthere are no transactiosn of the mint fee distro into the fee destination wallet, or the protocol wallet - there's only mint to's in the solscan, no inbound, received USDC",
+    reply:
+      "Two fixes. (1) The Review step already showed the real configured Primary Fee Destination (verified directly in the code) -- clarified the copy so it's clear the field defaults to your own connected wallet until you change it. (2) Root cause of 'fee destination gets nothing': collect_fees is a real, permissionless, deployed instruction with zero UI wiring anywhere -- fees accrue as PENDING Reserve Token shares (in-kind, minted on collection, never a USDC transfer, by protocol design) and nothing had ever triggered the payout for devnet-39. Added a Collect Fees action + pending-fee display to the manager dashboard. Separately, confirmed 'Additional Fee Recipients' has never been wired on-chain at all (the Reserve account has exactly one fee_destination field) -- per your call, relabeled it as not-yet-supported for a real Reserve instead of building new on-chain fee-splitting, which would need a program change and a redeploy.",
+  },
+]
+const COMMENTS_AUTHOR_ORIGINAL = 'JRA'
+const COMMENTS_AUTHOR_REPLY = 'Claude'
+
 async function main() {
   console.log(`Applying schema to ${new URL(process.env.DATABASE_URL).host} ...`)
   const schemaSql = fs.readFileSync(path.join(root, 'lib/road-to-mainnet/schema.sql'), 'utf8')
@@ -206,6 +259,39 @@ async function main() {
     console.log(`  seeded notes-only lead for ${id} (status unchanged: ${row.status})`)
   }
   console.log(`Notes-only leads applied: ${notesApplied}/${Object.keys(NOTES_ONLY).length}.`)
+
+  let commentsInserted = 0
+  for (const item of COMMENTS_BACKFILL) {
+    const existing = await sql`select body, author from rtm_comments where entity_type = 'control' and entity_id = ${item.id} order by created_at asc`
+    const hasOriginal = existing.some(r => r.author === COMMENTS_AUTHOR_ORIGINAL && r.body === item.original)
+    const hasReply = existing.some(r => r.author === COMMENTS_AUTHOR_REPLY && r.body === item.reply)
+    // Both comments for one item share the same pass -- compute it once
+    // from current global state, exactly like addComment in store.ts, so
+    // the original and the reply land in the same pass regardless of
+    // insertion order (never trust a stale pass number across two inserts).
+    async function currentOpenPass() {
+      const [{ max_pass }] = await sql`select max(pass) as max_pass from rtm_comments`
+      if (max_pass === null) return 1
+      const [{ open_count }] = await sql`select count(*)::int as open_count from rtm_comments where pass = ${max_pass} and locked_at is null`
+      return open_count > 0 ? max_pass : max_pass + 1
+    }
+    if (!hasOriginal) {
+      const pass = await currentOpenPass()
+      await sql`insert into rtm_comments (entity_type, entity_id, pass, author, body) values ('control', ${item.id}, ${pass}, ${COMMENTS_AUTHOR_ORIGINAL}, ${item.original})`
+      commentsInserted++
+      console.log(`  archived original feedback for ${item.id} (pass ${pass})`)
+    }
+    if (!hasReply) {
+      const pass = await currentOpenPass()
+      await sql`insert into rtm_comments (entity_type, entity_id, pass, author, body) values ('control', ${item.id}, ${pass}, ${COMMENTS_AUTHOR_REPLY}, ${item.reply})`
+      commentsInserted++
+      console.log(`  added reply for ${item.id} (pass ${pass})`)
+    }
+  }
+  console.log(`Comments backfilled: ${commentsInserted} new.`)
+
+  const lockedRows = await sql`update rtm_comments set locked_at = now() where locked_at is null returning id`
+  console.log(`Locked ${lockedRows.length} open comment(s) into their pass (idempotent -- 0 means everything was already locked).`)
 
   console.log('Done.')
 }

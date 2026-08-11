@@ -86,6 +86,10 @@ export function selectFeaturedReserves(dtrs: DTR[], n = 3): DTR[] {
       if (d.onChain.assetsResolvedFully !== true) return false;
       if (!isReserveTradable(d.onChain.assets.map((a) => a.mint))) return false;
       if (d.name.startsWith("Unnamed Reserve")) return false;
+      // A wound-down Reserve is genuinely visible/tradable-out (see
+      // reserveEligibility.ts's WD-01 fix) but shouldn't be curated as a
+      // "Featured" highlight while it's on its way to closing.
+      if (d.onChain.status === "windDown") return false;
       return true;
     })
     .sort((a, b) => b.aum - a.aum)

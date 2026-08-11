@@ -58,3 +58,23 @@ create table if not exists rtm_revisions (
 
 create index if not exists rtm_revisions_entity_idx
   on rtm_revisions (entity_type, entity_id, changed_at desc);
+
+-- Append-only discussion thread per entity, separate from (and never
+-- overwriting) the mutable status/evidence/notes fields above. Grouped into
+-- numbered "passes": every comment belongs to exactly one pass, and once a
+-- pass is locked (locked_at set), every comment in it becomes permanently
+-- read-only track record -- a new comment always starts (or continues) the
+-- next open pass instead. See api/road-to-mainnet/comments.ts.
+create table if not exists rtm_comments (
+  id           bigserial primary key,
+  entity_type  text not null,
+  entity_id    text not null,
+  pass         integer not null,
+  author       text not null default 'Unknown',
+  body         text not null,
+  created_at   timestamptz not null default now(),
+  locked_at    timestamptz
+);
+
+create index if not exists rtm_comments_entity_idx
+  on rtm_comments (entity_type, entity_id, pass, created_at);

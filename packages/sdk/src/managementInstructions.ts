@@ -13,11 +13,11 @@
 // or manager-or-permitted-delegate, never something a DevNet swap-authority
 // key could or should co-sign.
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority } from "./pda";
+import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority, findMintAuthority } from "./pda";
 
 /** reserve.asset_count ReserveAsset PDAs, in order_index order -- see common.rs::load_reserve_asset_configs. */
 export async function buildUpdateTargetsInstruction(
@@ -187,6 +187,69 @@ export async function buildInitiateWindDownInstruction(
   manager: PublicKey,
 ): Promise<TransactionInstruction> {
   return program.methods.initiateWindDown().accounts({ reserve, manager }).instruction();
+}
+
+/** Manager-or-permitted-delegate (PAUSE_RESERVE) only. Requires the Reserve to be genuinely Active on-chain -- see pause_reserve.rs. */
+export async function buildPauseReserveInstruction(
+  program: Program<anchor.Idl>,
+  reserve: PublicKey,
+  signer: PublicKey,
+  delegate: PublicKey,
+): Promise<TransactionInstruction> {
+  return program.methods.pauseReserve().accounts({ reserve, delegate, signer }).instruction();
+}
+
+/** Manager-or-permitted-delegate (UNPAUSE_RESERVE) only. Requires the Reserve to be genuinely Paused on-chain -- see unpause_reserve.rs. */
+export async function buildUnpauseReserveInstruction(
+  program: Program<anchor.Idl>,
+  reserve: PublicKey,
+  signer: PublicKey,
+  delegate: PublicKey,
+): Promise<TransactionInstruction> {
+  return program.methods.unpauseReserve().accounts({ reserve, delegate, signer }).instruction();
+}
+
+/**
+ * Permissionless -- see collect_fees.rs's header comment: this only mints
+ * already-accounted pending shares to fixed, Reserve/ProtocolConfig-
+ * configured destinations; the caller cannot redirect funds anywhere, so
+ * ANY wallet may call this (and cover the one-time destination-ATA rent as
+ * `payer` if either destination doesn't have a Reserve Token account yet).
+ * `managerFeeDestination`/`protocolFeeDestination` must be read live from
+ * chain immediately before calling (Reserve.feeConfig.feeDestination /
+ * ProtocolConfig.defaultProtocolFeeDestination) -- neither is a derivable
+ * PDA, and the program itself validates both against those exact fields.
+ */
+export async function buildCollectFeesInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  reserveTokenMint: PublicKey,
+  managerFeeDestination: PublicKey,
+  protocolFeeDestination: PublicKey,
+  payer: PublicKey,
+): Promise<TransactionInstruction> {
+  const [protocolConfig] = findProtocolConfig(programId);
+  const [mintAuthority] = findMintAuthority(reserve, programId);
+  const managerFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, managerFeeDestination);
+  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  return program.methods
+    .collectFees()
+    .accounts({
+      protocolConfig,
+      reserve,
+      reserveTokenMint,
+      mintAuthority,
+      managerFeeDestinationTokenAccount,
+      managerFeeDestination,
+      protocolFeeDestinationTokenAccount,
+      protocolFeeDestination,
+      payer,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
 }
 
 /** remaining_accounts: reserve.asset_count pairs of [reserveAsset, vault], in order_index order -- see close_reserve.rs. */

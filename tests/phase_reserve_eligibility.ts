@@ -84,14 +84,17 @@ describe("evaluateReserveEligibility (packages/sdk/src/reserveEligibility.ts) --
     expect(result.reason).to.match(/lifecycle status/);
   });
 
-  it("is NOT eligible for created/windDown/closed lifecycle statuses either", () => {
+  it("is NOT eligible for created/closed lifecycle statuses", () => {
     expect(evaluateReserveEligibility(baseInput({ status: "created" })).eligible).to.equal(false);
-    expect(evaluateReserveEligibility(baseInput({ status: "windDown" })).eligible).to.equal(false);
     expect(evaluateReserveEligibility(baseInput({ status: "closed" })).eligible).to.equal(false);
   });
 
   it("IS eligible for a paused Reserve (redemption/visibility stays available while paused, matching the rest of the app's convention)", () => {
     expect(evaluateReserveEligibility(baseInput({ status: "paused" })).eligible).to.equal(true);
+  });
+
+  it("IS eligible for a windDown Reserve (2026-08-11, WD-01) -- stays visible so prior holders can still redeem out; see tests/phase_road_to_mainnet_feedback.ts for the full root-cause coverage", () => {
+    expect(evaluateReserveEligibility(baseInput({ status: "windDown" })).eligible).to.equal(true);
   });
 
   it("is NOT eligible for a never-seeded Reserve (zero Reserve Token supply) even if otherwise fully valid", () => {
