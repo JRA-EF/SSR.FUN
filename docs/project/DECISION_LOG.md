@@ -2307,3 +2307,33 @@
   ]
 }
 ```
+
+## DEC-0085
+
+```json
+{
+  "id": "DEC-0085",
+  "date": "2026-08-12",
+  "status": "confirmed",
+  "decision": "Fixed a real, live-reported bug in DEC-0084's just-deployed Rebalance tab: reducing an existing asset to 0% and driving a newly-added asset to 100% could produce a false 'Proposed weights must total exactly 100% before submitting.' error immediately after a genuine, successful Phantom approval. Root cause, found by re-reading the exact code path rather than guessing: Submit Rebalance's success handler unconditionally pruned the just-registered new asset's mint out of sessionAddedAssets the moment the transaction signature confirmed, assuming the immediately-following on-chain refresh (refreshRealReserveNow) would already show it as a real ReserveAsset. A read moments after 'confirmed' commitment can still lag behind on the RPC node actually serving that read (a real, well-known Solana read-after-write consistency gap, more likely through a proxied/load-balanced endpoint) -- if that refresh's dtr.onChain.assets read landed before the node had caught up, the newly-registered asset was ALREADY pruned from sessionAddedAssets (so no longer rendered as a session row) AND not yet present in dtr.onChain.assets (so not yet rendered as an on-chain row either) -- it vanished from proposedAssetRows entirely for that render, silently dropping its weight out of the summed total and tripping the exactly-100% guard on a proposal that was, in fact, already exactly 100% when submitted. Fix: removed the optimistic prune entirely; sessionAddedAssets now only drops a mint once the seeding effect's own onChainAssets (the same confirmed on-chain read already driving that effect) genuinely contains it -- proposedAssetRows' existing de-dup filter already prevented any double-count once that happens, so the fix closes the gap without reintroducing one. Separately fixed a second, independent defect in the same handler: handleSliderChange computed its 'current composition' snapshot from the component's render-time proposedWeightsBps closure rather than from the latest value inside its setState updater, which could let sequential edits fired faster than a React re-render (e.g. dragging one slider immediately after another) build on a stale starting point instead of each other's actual result; fixed by reading the prior state from inside the updater. Also uniformized the copy under each slider from 'Current X% -> $Y projected' to 'Current X%, -> Y% proposed ($Z balance projected)', per direct user feedback, so the proposed percentage and the projected USD value are both shown together in one consistent phrase.",
+  "context": "User reported, after using the DEC-0084 Rebalance redesign live on strategic-super-reserve.fun: (1) the per-asset summary line under each slider was formatted inconsistently ('Current X% -> $0 projected', missing the proposed percentage); (2) reducing a pre-existing asset to 0% and setting a newly-added asset to 100% produced the 'must total exactly 100%' error immediately after a real, successful Phantom approval, despite the proposal genuinely being 100% allocated.",
+  "rationale": "The optimistic prune was replaced with a purely reactive one (driven only by confirmed on-chain data already flowing through the existing seeding effect) rather than, say, delaying the prune by a fixed timeout or retrying the refresh read -- a truth-driven prune can never race ahead of what's actually confirmed on-chain, whereas any timing-based guess would only narrow the window without closing it. handleSliderChange's fix (reading state from inside the updater) is the standard, minimal-diff correct pattern for React state that must compose correctly across updates arriving faster than a render -- no additional debouncing/throttling of Slider events was introduced, since the actual defect was in how state was READ, not in how often events fired.",
+  "alternativesConsidered": [
+    "Retry/poll the post-submit refresh until the new asset is confirmed present, before pruning sessionAddedAssets (rejected: adds real latency and a new bounded-retry surface for a problem the existing seeding effect already solves passively and correctly once any later read -- from this refresh or the next background poll -- catches up)",
+    "Debounce/throttle Slider onValueChange to reduce the rate of handleSliderChange calls (rejected: does not fix the underlying stale-read defect, only makes it rarer; reading `prev` inside the updater fixes it unconditionally)",
+    "Show the projected USD value only, without the proposed percentage, to keep the line shorter (rejected: user explicitly asked for the percentage to be included alongside the projected value)"
+  ],
+  "impact": "Changed: src/merge/pages/ManageDTR.tsx (removed the optimistic sessionAddedAssets prune from Submit Rebalance's success handler; added truth-based pruning to the existing seeding effect; handleSliderChange now reads prior state from inside its setState updater; uniformized the per-asset summary line copy). tests/phase_rebalance_slider.ts (+1 net test covering the sequential-edit composition pattern the fixed handler now always uses; two initially-added tests were found, on closer analysis, not to actually reproduce the reported defect -- which lives in React-level state timing, not the pure function -- and were corrected/removed rather than left as misleading coverage). 331/331 offline tests passing; tsc -b --force, oxlint, npm run build all clean.",
+  "affectedAreas": [
+    "src/merge/pages/ManageDTR.tsx",
+    "tests/phase_rebalance_slider.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "331/331 offline tests passing (net +1 vs. DEC-0084's 330, after correcting two tests that did not actually reproduce the reported defect); tsc -b --force, oxlint, full npm run build all clean.",
+    "Direct code-path read confirms the optimistic prune (setSessionAddedAssets keyed off an assumed-successful signature) is fully removed and replaced with a prune keyed only off the seeding effect's own onChainAssets, which is the same confirmed data already driving every other part of that effect.",
+    "This fix was NOT live-verified against a real Phantom approval in this environment (no browser-automation/wallet tool available, same documented gap as every prior pass) -- verification is the code-path read above plus full offline test/typecheck/lint/build coverage. The original defect itself WAS live-reported by a real user against the DEC-0084 production deploy, which is why this fix exists."
+  ]
+}
+```

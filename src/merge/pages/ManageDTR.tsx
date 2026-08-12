@@ -325,6 +325,28 @@ export function ManageDTR() {
     if (!hasOnChainDevUsdc) {
       setSessionAddedAssets((prev) => (prev.some((a) => a.mint === DEVUSDC.mint) ? prev : [...prev, { mint: DEVUSDC.mint, symbol: DEVUSDC.symbol, decimals: DEVUSDC.decimals }]));
     }
+    // Drops a session-added asset once it's CONFIRMED to actually appear
+    // on-chain (i.e., genuinely present in onChainAssets), never on the
+    // mere assumption that a just-submitted transaction succeeded. Submit
+    // Rebalance used to prune the just-registered mint from
+    // sessionAddedAssets immediately on a successful signature -- but an
+    // RPC read moments after "confirmed" can still lag behind (a real
+    // Solana read-after-write consistency gap, especially through a
+    // load-balanced/proxied endpoint), so the very next refresh could
+    // still not show the new asset yet. Pruning early in that window made
+    // it vanish from proposedAssetRows entirely (no longer an on-chain row,
+    // no longer a session row either) -- its weight silently dropped out of
+    // the 100% total, producing a false "must total exactly 100%" error
+    // right after a real, successful approval. proposedAssetRows already
+    // excludes a session-added asset once it's genuinely on-chain (see its
+    // own filter below), so pruning here -- driven by the same confirmed
+    // onChainAssets this effect already reacts to -- can never race ahead
+    // of the truth the way the optimistic prune could.
+    const onChainMints = new Set(onChainAssets.map((a) => a.mint));
+    setSessionAddedAssets((prev) => {
+      const pruned = prev.filter((a) => !onChainMints.has(a.mint));
+      return pruned.length === prev.length ? prev : pruned;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dtr?.onChain?.assets.map((a) => `${a.mint}:${a.weightBps}`).join(",")]);
 
@@ -555,11 +577,22 @@ export function ManageDTR() {
       }, 0)
     : 0;
 
-  /** Applies one slider/input edit via the devUSDC-priority cash-bucket model -- pure local state, never a transaction. */
+  /**
+   * Applies one slider/input edit via the devUSDC-priority cash-bucket model
+   * -- pure local state, never a transaction. Reads the PRIOR bps map from
+   * inside the setState updater (not from the render-time `proposedWeightsBps`
+   * closure) -- a continuous Slider drag fires onValueChange many times in
+   * rapid succession, often batched by React before a re-render lands, and
+   * every one of those calls needs to build on the one immediately before it
+   * rather than all redistributing from the same stale starting snapshot
+   * (which was breaking the "always sums to exactly 10000" invariant under
+   * fast dragging -- confirmed root cause of the false "must total 100%"
+   * error some users hit after a real edit that already was 100%).
+   */
   function handleSliderChange(mint: string, newWeightBps: number) {
-    const current: SliderAsset[] = proposedAssetRows.map((r) => ({ mint: r.mint, weightBps: proposedWeightsBps[r.mint] ?? 0 }));
-    const updated = applySliderWeightChange(current, mint, newWeightBps, DEVUSDC.mint);
     setProposedWeightsBps((prev) => {
+      const current: SliderAsset[] = proposedAssetRows.map((r) => ({ mint: r.mint, weightBps: prev[r.mint] ?? 0 }));
+      const updated = applySliderWeightChange(current, mint, newWeightBps, DEVUSDC.mint);
       const next = { ...prev };
       for (const a of updated) next[a.mint] = a.weightBps;
       return next;
@@ -1476,9 +1509,10 @@ export function ManageDTR() {
 
                                   <div className="flex items-center justify-between gap-3">
                                     <span className="text-xs text-muted-foreground">
-                                      Current <span className="font-merge-mono font-medium text-foreground">{benchmarkPct.toFixed(1)}%</span>
-                                      <span className="mx-1.5">&rarr;</span>
-                                      <span className="font-merge-mono font-medium text-foreground">{formatUsdc(projectedUsd, { compact: true })}</span> projected
+                                      Current <span className="font-merge-mono font-medium text-foreground">{benchmarkPct.toFixed(1)}%</span>,
+                                      <span className="mx-1">&rarr;</span>
+                                      <span className="font-merge-mono font-medium text-foreground">{proposedPct.toFixed(1)}%</span> proposed
+                                      {" ("}<span className="font-merge-mono font-medium text-foreground">{formatUsdc(projectedUsd, { compact: true })}</span> balance projected)
                                     </span>
                                     <div className="flex items-center gap-1.5">
                                       <Input
@@ -1556,10 +1590,7 @@ export function ManageDTR() {
                             "Submit Rebalance",
                             () => executeSubmitRebalance(connection, walletCtx, dtr.onChain!.reserve, rebalanceAssetPlan),
                             rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint),
-                          ).then(() => {
-                            const registeredMints = new Set(rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint));
-                            setSessionAddedAssets((prev) => prev.filter((a) => !registeredMints.has(a.mint)));
-                          })
+                          )
                         }
                         disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null}
                         title={

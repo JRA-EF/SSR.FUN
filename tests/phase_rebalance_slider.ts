@@ -193,4 +193,35 @@ describe("applySliderWeightChange (src/merge/lib/rebalanceSlider.ts)", () => {
     const result = applySliderWeightChange(assets, "NotInComposition11111111111111111111111111", 5000, DEVUSDC);
     expect(result).to.equal(assets);
   });
+
+  // Regression coverage for the "reduce an existing asset to 0%, then drive
+  // a newly-added asset to 100%" flow a real user reported hitting a false
+  // "must total exactly 100%" error on, right after a real Phantom approval
+  // (DEC-0084 follow-up). This pure function was never the defect -- every
+  // call here composes correctly, in sequence, exactly the way
+  // ManageDTR.tsx's handleSliderChange now always calls it (reading the
+  // PRIOR bps map from inside its setState updater, not from a render-time
+  // closure, so rapid-fire Slider drag events can never redistribute from a
+  // stale starting snapshot). The actual root cause of the reported error
+  // lived one layer up, in React state orchestration around Submit
+  // Rebalance's post-confirmation refresh (see the comment on the
+  // `sessionAddedAssets` pruning logic in ManageDTR.tsx's seeding effect) --
+  // not reproducible as a pure-function test, since it was a race against a
+  // live RPC read's eventual consistency, not a math error.
+  it("stays exactly 10000 across a sequential chain of edits, each built on the previous result", () => {
+    let assets: SliderAsset[] = [
+      { mint: DEVUSDC, weightBps: 0 },
+      { mint: MINT_X, weightBps: 6000 },
+      { mint: MINT_Y, weightBps: 4000 },
+      { mint: MINT_Z, weightBps: 0 }, // a newly-added asset, already in the composition at 0%
+    ];
+    assets = applySliderWeightChange(assets, MINT_X, 0, DEVUSDC); // reduce an existing asset to 0%
+    expect(sum(assets)).to.equal(10_000);
+    assets = applySliderWeightChange(assets, MINT_Z, 10_000, DEVUSDC); // then drive the new asset to 100%
+    expect(sum(assets)).to.equal(10_000);
+    expect(find(assets, MINT_Z)).to.equal(10_000);
+    expect(find(assets, MINT_X)).to.equal(0);
+    expect(find(assets, MINT_Y)).to.equal(0);
+    expect(find(assets, DEVUSDC)).to.equal(0);
+  });
 });
