@@ -2303,7 +2303,7 @@
     "Direct code-path read confirms zero runOnChainAction/signAndSend/wallet.signTransaction calls in the redesigned branch's add/adjust/remove-before-submit handlers (handleAddAssetToSession, handleSliderChange, handleRemoveSessionAsset are pure setState) -- the only reachable wallet-prompting calls in this tab are Submit Rebalance, Fund, and the permanent Remove action, all clearly separate and already gated by their existing on-chain permission checks.",
     "Repo-wide grep confirms zero remaining 'real DevNet tx' or 'Phase E' occurrences anywhere under src/.",
     "No wallet/browser-automation tool is available in this environment (same documented gap as every prior pass) -- executeSubmitRebalance's real batched signed transaction was NOT exercised against live DevNet. This is the only claim in this entry not independently live-verified; everything else above was directly re-run and observed this session.",
-    "This work is uncommitted in the working tree as of this entry -- not committed to git, not pushed, not deployed to strategic-super-reserve.fun."
+    "Committed and pushed to main as commit 8519870 (git push origin main, fast-forward, no conflicts) -- not yet deployed to strategic-super-reserve.fun (still serving the prior tip, 41b503d, pending a future vercel --prod)."
   ]
 }
 ```
