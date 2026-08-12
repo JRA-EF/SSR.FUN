@@ -2303,7 +2303,7 @@
     "Direct code-path read confirms zero runOnChainAction/signAndSend/wallet.signTransaction calls in the redesigned branch's add/adjust/remove-before-submit handlers (handleAddAssetToSession, handleSliderChange, handleRemoveSessionAsset are pure setState) -- the only reachable wallet-prompting calls in this tab are Submit Rebalance, Fund, and the permanent Remove action, all clearly separate and already gated by their existing on-chain permission checks.",
     "Repo-wide grep confirms zero remaining 'real DevNet tx' or 'Phase E' occurrences anywhere under src/.",
     "No wallet/browser-automation tool is available in this environment (same documented gap as every prior pass) -- executeSubmitRebalance's real batched signed transaction was NOT exercised against live DevNet. This is the only claim in this entry not independently live-verified; everything else above was directly re-run and observed this session.",
-    "Committed and pushed to main as commit 8519870 (git push origin main, fast-forward, no conflicts) -- not yet deployed to strategic-super-reserve.fun (still serving the prior tip, 41b503d, pending a future vercel --prod)."
+    "Committed and pushed to main (8519870, then a doc-status correction e90efd1), then deployed live via vercel --prod as dpl_9KEt7maJoTBnKfYCM8vncCUKmNiR, aliased to strategic-super-reserve.fun/www.strategic-super-reserve.fun/ssr-fun.vercel.app (confirmed via vercel inspect). Post-deploy: both custom domains return 200, rpc-proxy/landing-stats return healthy real data, vercel logs --since 5m showed real live traffic and zero error/fatal/fail-matching lines."
   ]
 }
 ```
