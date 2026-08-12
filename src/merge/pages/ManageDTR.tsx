@@ -4,6 +4,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD } from "@/lib/onChainReserve";
+import { explorerUrl } from "@/lib/solana-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +20,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Slider } from "@/components/ui/slider";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
 import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLAGS, PERMISSION_FLAGS } from "@/lib/onChainPermissions";
-import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC, findReserve, buildReadOnlyProgram, fetchReserveActivityLog, type ActivityLogEntry } from "@ssr/sdk";
+import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC, findReserve, type ActivityLogEntry } from "@ssr/sdk";
 import {
   executeAddDelegate,
   executeCloseReserve,
@@ -224,20 +225,33 @@ export function ManageDTR() {
   const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance" | "activity">("overview");
 
   // DL-01b fix: lazy-loaded only when the Activity tab is actually opened
-  // (never an unconditional background poll) -- see
-  // packages/sdk/src/activityLog.ts's fetchReserveActivityLog, which decodes
-  // every governance-relevant on-chain event for this Reserve.
+  // (never an unconditional background poll). Reads from the Reserve
+  // Activity Log's own Postgres index (api/devnet/reserve-activity.ts,
+  // lib/reserve-activity/) instead of walking live RPC directly from the
+  // browser -- a live-RPC hiccup during that endpoint's best-effort
+  // background sync is reported via `activitySyncError` but never blocks
+  // reading whatever is already indexed, and the index holds this
+  // Reserve's COMPLETE history (resumable backfill), not just a recent
+  // window.
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[] | null>(null);
   const [activityStatus, setActivityStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [activitySyncError, setActivitySyncError] = useState<string | null>(null);
+  const [activityBackfillComplete, setActivityBackfillComplete] = useState(true);
   useEffect(() => {
     if (activeTab !== "activity" || !dtr?.onChain || activityStatus !== "idle") return;
     let cancelled = false;
     setActivityStatus("loading");
-    const program = buildReadOnlyProgram(connection) as any;
-    fetchReserveActivityLog(connection, program, new PublicKey(dtr.onChain.reserve))
-      .then((entries) => {
+    fetch(`/api/devnet/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load the activity log.");
+        return data as { entries: ActivityLogEntry[]; backfillComplete: boolean; syncError: string | null };
+      })
+      .then((data) => {
         if (cancelled) return;
-        setActivityLog(entries);
+        setActivityLog(data.entries);
+        setActivitySyncError(data.syncError);
+        setActivityBackfillComplete(data.backfillComplete);
         setActivityStatus("ready");
       })
       .catch(() => {
@@ -668,15 +682,13 @@ export function ManageDTR() {
             className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors flex items-center gap-3 ${activeTab === "delegates" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
           >
             <Users className="w-4 h-4" /> Delegates
-            {!hasManageDelegates && <span className="ml-auto text-[10px] uppercase tracking-wider opacity-60">Locked</span>}
           </button>
-          
+
           <button
             onClick={() => setActiveTab("rebalance")}
             className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors flex items-center gap-3 ${activeTab === "rebalance" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
           >
             <Sliders className="w-4 h-4" /> Rebalance
-            {!hasRebalance && <span className="ml-auto text-[10px] uppercase tracking-wider opacity-60">Locked</span>}
           </button>
 
           {dtr.onChain && (
@@ -1577,20 +1589,26 @@ export function ManageDTR() {
                     <History className="w-5 h-5" /> Activity Log
                   </CardTitle>
                   <CardDescription>
-                    Every governance/management action taken on this Reserve, decoded directly from its real on-chain transaction
-                    history -- delegate grants, target-weight changes, composition edits, pause/unpause, wind-down, fee collection.
-                    This is a live view of the same immutable record already kept on the protocol side (every action here already
-                    emits a real on-chain event); nothing is stored separately. Shows up to the 100 most recent entries.
+                    Every governance/management action ever taken on this Reserve -- delegate grants, target-weight changes,
+                    composition edits, pause/unpause, wind-down, fee collection -- decoded from its real on-chain transaction
+                    history and kept here so it loads instantly and reliably, without depending on a live network call every
+                    time you open this tab.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   {activityStatus === "loading" && (
-                    <div className="text-center p-6 text-muted-foreground text-sm">Reading on-chain history...</div>
+                    <div className="text-center p-6 text-muted-foreground text-sm">Loading activity...</div>
                   )}
                   {activityStatus === "error" && (
                     <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
                       <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                      <p>Could not read on-chain history right now (DevNet RPC congestion) -- switch tabs and back to retry.</p>
+                      <p>Couldn't load the activity log right now -- switch tabs and back to retry.</p>
+                    </div>
+                  )}
+                  {activityStatus === "ready" && activitySyncError && (
+                    <div className="flex items-start gap-2 p-3 mb-3 bg-muted/40 text-muted-foreground rounded-lg text-xs">
+                      <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                      <p>Showing saved history -- couldn't check for the very latest activity just now. Try again shortly.</p>
                     </div>
                   )}
                   {activityStatus === "ready" && activityLog && activityLog.length === 0 && (
@@ -1610,7 +1628,7 @@ export function ManageDTR() {
                             </p>
                           </div>
                           <a
-                            href={`https://explorer.solana.com/tx/${entry.signature}?cluster=devnet`}
+                            href={explorerUrl("tx", entry.signature)}
                             target="_blank"
                             rel="noreferrer"
                             className="shrink-0 text-muted-foreground hover:text-primary"
@@ -1621,6 +1639,11 @@ export function ManageDTR() {
                         </div>
                       ))}
                     </div>
+                  )}
+                  {activityStatus === "ready" && !activityBackfillComplete && (
+                    <p className="text-xs text-muted-foreground mt-3 text-center">
+                      Still loading this Reserve's older history -- check back shortly for earlier entries.
+                    </p>
                   )}
                 </CardContent>
               </Card>

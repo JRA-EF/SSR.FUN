@@ -79,32 +79,56 @@ export function summarizeActivityEvent(name: string, data: Record<string, unknow
   }
 }
 
-const ACTIVITY_MAX_SIGNATURE_PAGES = 4;
+const ACTIVITY_DEFAULT_MAX_PAGES = 4;
 const ACTIVITY_SIGNATURES_PER_PAGE = 50;
 const ACTIVITY_MAX_ENTRIES = 100;
 
+export interface ActivityLogWalkOptions {
+  /** Only signatures older than this one are considered -- passed straight through to getSignaturesForAddress's own `before`. Omit to start from the newest signature. */
+  before?: string;
+  /** Caps how many pages of ACTIVITY_SIGNATURES_PER_PAGE signatures this call will walk -- keeps a single call's RPC cost bounded regardless of how much real history a Reserve has. Defaults to ACTIVITY_DEFAULT_MAX_PAGES. */
+  maxPages?: number;
+}
+
+export interface ActivityLogWalkResult {
+  /** Newest first (matches getSignaturesForAddress's own order). */
+  entries: ActivityLogEntry[];
+  /** The oldest signature this call actually walked past -- pass as the next call's `before` to continue walking further back (e.g. resuming a backfill). Undefined if no signatures were found at all. */
+  oldestSignatureWalked: string | undefined;
+  /** True once a page came back shorter than ACTIVITY_SIGNATURES_PER_PAGE -- i.e. this walk genuinely reached the very first transaction in the Reserve's history, not just its own page/entry cap. */
+  reachedRealEnd: boolean;
+}
+
 /**
  * Bounded, read-only walk of a Reserve's real transaction history, decoding
- * every governance-relevant event via summarizeActivityEvent above. Newest
- * first (matches getSignaturesForAddress's own order). Bounded by both a
- * page cap and an entry cap so one very active Reserve can never make this
- * unbounded-expensive -- callers should treat a full page as "there may be
- * more" (not exposed as pagination yet; a v1 scoped to "recent activity").
+ * every governance-relevant event via summarizeActivityEvent above. A
+ * boundable primitive (via `before`/`maxPages`) rather than a single fixed
+ * "give me the recent log" call, so the same walk can serve two different
+ * callers: an incremental top-up (no `before`, stop early once already-seen
+ * history is reached) and a resumable multi-request backfill (chained
+ * `before` = the previous call's `oldestSignatureWalked`) -- see
+ * lib/reserve-activity/indexer.ts, which persists what this returns into
+ * Postgres so the frontend never has to run this walk live on every view.
  */
 export async function fetchReserveActivityLog(
   connection: Connection,
   program: Program<SsrProtocol>,
   reserveAddress: PublicKey,
-): Promise<ActivityLogEntry[]> {
+  options: ActivityLogWalkOptions = {},
+): Promise<ActivityLogWalkResult> {
+  const maxPages = options.maxPages ?? ACTIVITY_DEFAULT_MAX_PAGES;
   const eventParser = new EventParser(program.programId, program.coder);
   const entries: ActivityLogEntry[] = [];
-  let before: string | undefined;
+  let before = options.before;
+  let oldestSignatureWalked: string | undefined;
+  let reachedRealEnd = false;
 
-  for (let page = 0; page < ACTIVITY_MAX_SIGNATURE_PAGES && entries.length < ACTIVITY_MAX_ENTRIES; page++) {
+  for (let page = 0; page < maxPages && entries.length < ACTIVITY_MAX_ENTRIES; page++) {
     const sigInfos = await withRateLimitRetryGeneric(() => connection.getSignaturesForAddress(reserveAddress, { limit: ACTIVITY_SIGNATURES_PER_PAGE, before }));
     if (sigInfos.length === 0) break;
 
     for (const sigInfo of sigInfos) {
+      oldestSignatureWalked = sigInfo.signature;
       if (sigInfo.err) continue; // a failed transaction changed nothing worth logging
       const tx = await withRateLimitRetryGeneric(() => connection.getTransaction(sigInfo.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
       const logs = tx?.meta?.logMessages;
@@ -122,9 +146,12 @@ export async function fetchReserveActivityLog(
       if (entries.length >= ACTIVITY_MAX_ENTRIES) break;
     }
 
-    if (sigInfos.length < ACTIVITY_SIGNATURES_PER_PAGE) break;
+    if (sigInfos.length < ACTIVITY_SIGNATURES_PER_PAGE) {
+      reachedRealEnd = true;
+      break;
+    }
     before = sigInfos[sigInfos.length - 1].signature;
   }
 
-  return entries;
+  return { entries, oldestSignatureWalked, reachedRealEnd };
 }
