@@ -22,6 +22,14 @@ SSR.fun exclusively uses **"Launch a Reserve"** as the user-facing call to actio
 
 **This does not apply to internal technical identifiers** (e.g. the `createDTR` store action, `DTRAsset`/`CreateDTRAssetInput` TypeScript types, component filenames like `CreateDTR.tsx`/`ManageDTR.tsx`/`DTRDetail.tsx`, Anchor instruction names, database fields, or types) — those stay as-is unless there's a separate reason to rename them. **In particular, do not rename the deployed on-chain Anchor account structs `Reserve`, `ReserveAsset`, `Delegate`, or `ProtocolConfig`** (`programs/ssr_protocol/src/state/*.rs`) regardless of this terminology change: Anchor derives each account's on-chain discriminator from its struct name at compile time, so renaming any of them would change the discriminator new builds expect and break deserialization of every already-initialized account on live DevNet. These are documented as legacy technical identifiers, not approved product terminology — conveniently, the `Reserve`/`ReserveAsset` struct names already match the *current* product-facing sense above (Reserve = whole basket account), so no meaning mismatch needs to be carried going forward.
 
+## Interface Copy Standards
+
+**All user-facing interface copy must explain the user's action and its outcome in plain language.** Every button label, description, tooltip, banner, and status message a user can see must describe *what the user is changing* and *what happens as a result* in ordinary words -- never assume the reader knows this codebase's internals.
+
+**Internal function names, Anchor instruction names (e.g. `update_targets`, `add_reserve_asset_active`, `collect_fees`), store action names, and other developer shorthand belong only in code, comments, commit messages, and logs/diagnostics -- never in visible UI text.** This also covers status-leaking phrasing like "(real DevNet tx)": state plainly what an action does and, if relevant, that it will prompt a wallet approval -- never expose the underlying transaction/environment mechanics as copy.
+
+This is a durable rule for all new and edited UI copy going forward, applied the same way the Mandatory Terminology rules above are -- see DEC-0084 (`docs/project/DECISION_LOG.md`) for the pass that introduced it and the `ManageDTR.tsx` cleanup that first enforced it.
+
 ## Approved hero copy
 
 The homepage hero description is approved, exact copy — do not paraphrase it:

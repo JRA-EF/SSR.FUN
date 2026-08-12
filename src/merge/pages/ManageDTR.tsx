@@ -14,14 +14,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { formatPct, formatUsdc } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
-import { ChevronLeft, Shield, Users, Sliders, Save, Plus, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, Pause, Play, History, ExternalLink, Search } from "lucide-react";
+import { ChevronLeft, Shield, Users, Sliders, Save, Plus, X, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, Pause, Play, History, ExternalLink, Search } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Slider } from "@/components/ui/slider";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
 import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLAGS, PERMISSION_FLAGS } from "@/lib/onChainPermissions";
 import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC, findReserve, buildReadOnlyProgram, fetchReserveActivityLog, type ActivityLogEntry } from "@ssr/sdk";
 import {
   executeAddDelegate,
-  executeAddReserveAsset,
   executeCloseReserve,
   executeCollectFees,
   executeFundReserveAsset,
@@ -29,10 +29,12 @@ import {
   executePauseReserve,
   executeRemoveDelegate,
   executeRemoveReserveAsset,
+  executeSubmitRebalance,
   executeUnpauseReserve,
   executeUpdateDelegatePermissions,
-  executeUpdateTargets,
+  type RebalanceAssetPlan,
 } from "@/lib/managementClient";
+import { applySliderWeightChange, type SliderAsset } from "@/lib/rebalanceSlider";
 
 /** Real DevNet SPL mints eligible to be added as a new Reserve Asset -- the same set CreateDTR.tsx offers at creation time, minus wrapped SOL (composition-management is meant for ordinary SPL test assets, not the native-SOL zap leg). */
 const ADDABLE_ASSETS = [
@@ -170,7 +172,7 @@ function OnChainDelegateRow({
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setEditingPerms(false)}>Cancel</Button>
             <Button size="sm" disabled={busy} onClick={() => { onSavePermissions(permDraft); setEditingPerms(false); }}>
-              {busy ? "Confirming..." : "Save Permissions (real DevNet tx)"}
+              {busy ? "Confirming..." : "Save Permissions"}
             </Button>
           </div>
         </div>
@@ -274,9 +276,57 @@ export function ManageDTR() {
   const [onChainTxPending, setOnChainTxPending] = useState<string | null>(null); // which action is in flight, for button disabling
 
   // Composition management (Phase F) state -- on-chain Reserves only.
-  const [addAssetMint, setAddAssetMint] = useState("");
-  const [addAssetWeightBps, setAddAssetWeightBps] = useState("0");
   const [fundAmounts, setFundAmounts] = useState<Record<string, string>>({});
+
+  // DEC-0084: slider-based local-preview rebalance editor for the real
+  // on-chain branch. `sessionAddedAssets` holds assets the user has added
+  // to the proposed composition THIS SESSION but not yet submitted --
+  // ordinary slider rows, removable pre-submit with zero transactions.
+  // `proposedWeightsBps` is the live proposed composition in bps, seeded
+  // (fill-gaps-only) from each on-chain asset's real weight. Neither state
+  // is touched by adjusting a slider, adding, or removing an asset -- only
+  // Submit Rebalance ever prompts the wallet.
+  const [sessionAddedAssets, setSessionAddedAssets] = useState<{ mint: string; symbol: string; decimals: number }[]>([]);
+  const [proposedWeightsBps, setProposedWeightsBps] = useState<Record<string, number>>({});
+
+  // Seeds proposedWeightsBps from each on-chain asset's real weight
+  // whenever a new mint appears (e.g. after Submit Rebalance's own
+  // refresh) -- fills gaps only, never clobbers an in-progress edit. If the
+  // Reserve's on-chain assets don't already sum to 10,000bps and devUSDC
+  // isn't already registered, auto-seeds a devUSDC row (as a session-added
+  // asset) holding the slack -- this model has no separate "unallocated"
+  // concept, devUSDC absorbs it.
+  useEffect(() => {
+    if (!dtr?.onChain) return;
+    const onChainAssets = dtr.onChain.assets;
+    const existingTotal = onChainAssets.reduce((s, a) => s + a.weightBps, 0);
+    const slack = Math.max(0, 10_000 - existingTotal);
+    const hasOnChainDevUsdc = onChainAssets.some((a) => a.mint === DEVUSDC.mint);
+    // devUSDC is this model's permanent cash slot -- always present in the
+    // proposed composition (even at 0%) so every edit has somewhere to move
+    // weight to/from, and any currently-unallocated on-chain weight (slack)
+    // is folded into its seed value rather than left floating outside the
+    // model, which would otherwise make 100% unreachable by any slider edit.
+    setProposedWeightsBps((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const a of onChainAssets) {
+        if (!(a.mint in next)) {
+          next[a.mint] = a.mint === DEVUSDC.mint ? a.weightBps + slack : a.weightBps;
+          changed = true;
+        }
+      }
+      if (!hasOnChainDevUsdc && !(DEVUSDC.mint in next)) {
+        next[DEVUSDC.mint] = slack;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+    if (!hasOnChainDevUsdc) {
+      setSessionAddedAssets((prev) => (prev.some((a) => a.mint === DEVUSDC.mint) ? prev : [...prev, { mint: DEVUSDC.mint, symbol: DEVUSDC.symbol, decimals: DEVUSDC.decimals }]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dtr?.onChain?.assets.map((a) => `${a.mint}:${a.weightBps}`).join(",")]);
 
   /** Re-fetches this Reserve's on-chain state immediately after a confirmed composition/wind-down/rebalance tx, rather than waiting for RealReserveSync's next poll. `extraCandidateMints` covers a mint just registered this call (e.g. via add_reserve_asset_active) that wouldn't otherwise be in the known asset list yet. */
   async function refreshRealReserveNow(extraCandidateMints: string[] = []) {
@@ -478,6 +528,82 @@ export function ManageDTR() {
   const preview = getPreviewWeights();
   const previewTotal = preview.comp.reduce((sum, a) => sum + a.weight, 0) + preview.unallocated;
   const isPreviewValid = previewTotal <= 1.0001 && Object.keys(rebalanceEdits).length > 0;
+
+  // DEC-0084: proposed composition for the real on-chain branch's slider
+  // editor -- existing on-chain assets (orderIndex order) followed by any
+  // asset added this session but not yet submitted. This order is exactly
+  // the order_index order Submit Rebalance must use.
+  const proposedAssetRows = dtr.onChain
+    ? [
+        ...[...dtr.onChain.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((a) => ({
+          mint: a.mint,
+          symbol: a.symbol,
+          decimals: a.decimals,
+          isNew: false,
+          benchmarkBps: a.weightBps,
+        })),
+        ...sessionAddedAssets
+          .filter((sa) => !dtr.onChain!.assets.some((a) => a.mint === sa.mint))
+          .map((sa) => ({ ...sa, isNew: true, benchmarkBps: 0 })),
+      ]
+    : [];
+  const totalProposedBps = proposedAssetRows.reduce((sum, r) => sum + (proposedWeightsBps[r.mint] ?? 0), 0);
+  const totalReserveUsd = dtr.onChain
+    ? dtr.onChain.assets.reduce((sum, a) => {
+        const balanceHuman = Number(dtr.onChain!.vaultBalancesRaw[a.mint] ?? "0") / 10 ** a.decimals;
+        return sum + balanceHuman * (TEST_ASSET_PRICES_USD[a.mint] ?? 0);
+      }, 0)
+    : 0;
+
+  /** Applies one slider/input edit via the devUSDC-priority cash-bucket model -- pure local state, never a transaction. */
+  function handleSliderChange(mint: string, newWeightBps: number) {
+    const current: SliderAsset[] = proposedAssetRows.map((r) => ({ mint: r.mint, weightBps: proposedWeightsBps[r.mint] ?? 0 }));
+    const updated = applySliderWeightChange(current, mint, newWeightBps, DEVUSDC.mint);
+    setProposedWeightsBps((prev) => {
+      const next = { ...prev };
+      for (const a of updated) next[a.mint] = a.weightBps;
+      return next;
+    });
+  }
+
+  /** One click moves an asset from the search list into the proposed composition -- pure local state, never a transaction. Seeded at 0% so it never silently displaces another asset's weight. */
+  function handleAddAssetToSession(asset: { symbol: string; mint: string; decimals: number }) {
+    setSessionAddedAssets((prev) => (prev.some((a) => a.mint === asset.mint) ? prev : [...prev, asset]));
+    setProposedWeightsBps((prev) => (asset.mint in prev ? prev : { ...prev, [asset.mint]: 0 }));
+  }
+
+  /** Undoes an in-session add -- zeroes its slider (redistributing its weight away first) then drops the row. Pure local state, never a transaction; a not-yet-submitted asset was never registered on-chain, so there is nothing to undo there either. */
+  function handleRemoveSessionAsset(mint: string) {
+    handleSliderChange(mint, 0);
+    setSessionAddedAssets((prev) => prev.filter((a) => a.mint !== mint));
+    setProposedWeightsBps((prev) => {
+      const next = { ...prev };
+      delete next[mint];
+      return next;
+    });
+  }
+
+  // A session-added asset left at 0% is simply never submitted -- no point
+  // registering a zero-weight asset (wastes an asset slot for nothing), so
+  // it silently drops out of the plan rather than round-tripping through
+  // add_reserve_asset_active(0) followed by nothing.
+  const rebalanceAssetPlan: RebalanceAssetPlan[] = dtr.onChain
+    ? [
+        ...[...dtr.onChain.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((a) => ({
+          mint: a.mint,
+          isNew: false,
+          targetWeightBps: proposedWeightsBps[a.mint] ?? a.weightBps,
+        })),
+        ...sessionAddedAssets
+          .map((sa) => ({ mint: sa.mint, isNew: true, targetWeightBps: proposedWeightsBps[sa.mint] ?? 0 }))
+          .filter((a) => a.targetWeightBps > 0),
+      ]
+    : [];
+  const submitNeedsLiquidityConfig = rebalanceAssetPlan.some((a) => a.isNew);
+  const canSubmitRebalance = canUpdateTargetsOnChain && (!submitNeedsLiquidityConfig || canManageLiquidityConfigOnChain);
+  const hasRebalanceChanges = dtr.onChain
+    ? submitNeedsLiquidityConfig || dtr.onChain.assets.some((a) => (proposedWeightsBps[a.mint] ?? a.weightBps) !== a.weightBps)
+    : false;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -701,7 +827,7 @@ export function ManageDTR() {
                       </p>
                       <p className="text-xs text-muted-foreground mb-3">
                         Fees accrue in-kind as pending Reserve Token shares (minted to the destinations below, never a USDC transfer) and
-                        only pay out once collected -- collect_fees is permissionless, so any wallet may trigger the payout.
+                        only pay out once collected. Any wallet may trigger the payout below, not only the Root Manager.
                       </p>
                       <div className="grid grid-cols-2 gap-3 mb-3">
                         <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
@@ -721,13 +847,13 @@ export function ManageDTR() {
                           ((dtr.onChain.pendingManagerFeeShares ?? "0") === "0" && (dtr.onChain.pendingProtocolFeeShares ?? "0") === "0")
                         }
                         onClick={() =>
-                          void runOnChainAction("collect_fees", () =>
+                          void runOnChainAction("Collect Fees", () =>
                             executeCollectFees(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, dtr.onChain!.feeDestination ?? dtr.managerAddress),
                           )
                         }
                         className="gap-2"
                       >
-                        <Coins className="w-4 h-4" /> {onChainTxPending === "collect_fees" ? "Confirming..." : "Collect Fees"}
+                        <Coins className="w-4 h-4" /> {onChainTxPending === "Collect Fees" ? "Confirming..." : "Collect Fees"}
                       </Button>
                     </div>
                   )}
@@ -755,19 +881,19 @@ export function ManageDTR() {
                         variant="outline"
                         disabled={!canPauseOnChain || onChainTxPending !== null}
                         title={!canPauseOnChain ? "You need the Root Manager or a delegate with Pause Reserve permission." : undefined}
-                        onClick={() => void runOnChainAction("pause_reserve", () => executePauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
+                        onClick={() => void runOnChainAction("Pause Reserve", () => executePauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
                         className="gap-2"
                       >
-                        <Pause className="w-4 h-4" /> {onChainTxPending === "pause_reserve" ? "Confirming..." : "Pause Reserve"}
+                        <Pause className="w-4 h-4" /> {onChainTxPending === "Pause Reserve" ? "Confirming..." : "Pause Reserve"}
                       </Button>
                     ) : (
                       <Button
                         disabled={!canUnpauseOnChain || onChainTxPending !== null}
                         title={!canUnpauseOnChain ? "You need the Root Manager or a delegate with Unpause Reserve permission." : undefined}
-                        onClick={() => void runOnChainAction("unpause_reserve", () => executeUnpauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
+                        onClick={() => void runOnChainAction("Unpause Reserve", () => executeUnpauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
                         className="gap-2"
                       >
-                        <Play className="w-4 h-4" /> {onChainTxPending === "unpause_reserve" ? "Confirming..." : "Unpause Reserve"}
+                        <Play className="w-4 h-4" /> {onChainTxPending === "Unpause Reserve" ? "Confirming..." : "Unpause Reserve"}
                       </Button>
                     )}
                   </CardContent>
@@ -798,10 +924,10 @@ export function ManageDTR() {
                         variant="destructive"
                         disabled={!isRoot || onChainTxPending !== null}
                         title={!isRoot ? "Only the Root Manager may initiate wind-down." : undefined}
-                        onClick={() => void runOnChainAction("initiate_wind_down", () => executeInitiateWindDown(connection, walletCtx, dtr.onChain!.reserve))}
+                        onClick={() => void runOnChainAction("Initiate Wind Down", () => executeInitiateWindDown(connection, walletCtx, dtr.onChain!.reserve))}
                         className="gap-2"
                       >
-                        <PowerOff className="w-4 h-4" /> {onChainTxPending === "initiate_wind_down" ? "Confirming..." : "Initiate Wind Down"}
+                        <PowerOff className="w-4 h-4" /> {onChainTxPending === "Initiate Wind Down" ? "Confirming..." : "Initiate Wind Down"}
                       </Button>
                     )}
 
@@ -813,7 +939,7 @@ export function ManageDTR() {
                         <div className="space-y-3">
                           <p className="text-sm text-muted-foreground">
                             Reserve Token supply remaining: <span className="font-merge-mono font-medium text-foreground">{supplyRemaining}</span>.
-                            close_reserve requires this to reach zero (every holder must redeem out first -- redemption remains open during Wind Down)
+                            Closing requires this to reach zero (every holder must redeem out first -- redemption remains open during Wind Down)
                             and every asset vault balance to be zero.
                           </p>
                           <Button
@@ -822,11 +948,11 @@ export function ManageDTR() {
                             title={!isRoot ? "Only the Root Manager may close this Reserve." : !canClose ? "Supply and every vault balance must be zero first." : undefined}
                             onClick={() => {
                               const assetMintsInOrder = [...dtr.onChain!.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((a) => a.mint);
-                              void runOnChainAction("close_reserve", () => executeCloseReserve(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, assetMintsInOrder));
+                              void runOnChainAction("Close Reserve", () => executeCloseReserve(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, assetMintsInOrder));
                             }}
                             className="gap-2"
                           >
-                            <XCircle className="w-4 h-4" /> {onChainTxPending === "close_reserve" ? "Confirming..." : "Close Reserve"}
+                            <XCircle className="w-4 h-4" /> {onChainTxPending === "Close Reserve" ? "Confirming..." : "Close Reserve"}
                           </Button>
                         </div>
                       );
@@ -846,13 +972,10 @@ export function ManageDTR() {
               <div className="bg-muted/30 border border-border/50 p-4 rounded-lg flex items-center gap-3">
                 <Shield className="w-5 h-5 shrink-0 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  Granting, editing, and removing a delegate below submits a real signed transaction to Solana DevNet
-                  (<code className="font-merge-mono text-xs">add_delegate</code>, <code className="font-merge-mono text-xs">update_delegate_permissions</code>,
-                  <code className="font-merge-mono text-xs"> remove_delegate</code>). An unrestricted delegate can only be granted, edited, or removed
-                  by the Root Manager; a restricted delegate additionally accepts another delegate holding the matching Add/Remove Restricted
-                  Delegate permission. This list may not show every real on-chain delegate -- discovery only resolves wallets it already has a
-                  hint for (see docs/protocol's discovery limitation); an unresolved delegate still holds its real on-chain permissions even if
-                  it isn't listed here.
+                  Granting, editing, or removing a delegate below asks your wallet to approve a real change on Solana DevNet. An
+                  unrestricted delegate can only be granted, edited, or removed by the Root Manager; a restricted delegate can also be
+                  managed by another delegate holding the matching permission. This list may not show every delegate this Reserve
+                  actually has -- an unresolved wallet still holds its real permissions even if it isn't listed here.
                 </p>
               </div>
 
@@ -876,7 +999,7 @@ export function ManageDTR() {
                       {(dtr.onChain.delegatesOnChain ?? []).map((del) => {
                         const canEditThis = del.restricted ? canAddRestrictedDelegateOnChain : isRoot;
                         const canRemoveThis = del.restricted ? canRemoveRestrictedDelegateOnChain : isRoot;
-                        const busy = onChainTxPending === `update_delegate_permissions(${del.wallet})` || onChainTxPending === `remove_delegate(${del.wallet})`;
+                        const busy = onChainTxPending === `Update permissions for ${shortenAddress(del.wallet)}` || onChainTxPending === `Remove delegate ${shortenAddress(del.wallet)}`;
                         return (
                           <OnChainDelegateRow
                             key={del.wallet}
@@ -890,12 +1013,12 @@ export function ManageDTR() {
                             canRemove={canRemoveThis}
                             busy={busy}
                             onSavePermissions={(newPerms) =>
-                              void runOnChainAction(`update_delegate_permissions(${del.wallet})`, () =>
+                              void runOnChainAction(`Update permissions for ${shortenAddress(del.wallet)}`, () =>
                                 executeUpdateDelegatePermissions(connection, walletCtx, dtr.onChain!.reserve, del.wallet, newPerms),
                               )
                             }
                             onRemove={() =>
-                              void runOnChainAction(`remove_delegate(${del.wallet})`, () =>
+                              void runOnChainAction(`Remove delegate ${shortenAddress(del.wallet)}`, () =>
                                 executeRemoveDelegate(connection, walletCtx, dtr.onChain!.reserve, del.wallet),
                               )
                             }
@@ -962,7 +1085,7 @@ export function ManageDTR() {
                       (!isRoot && !onChainNewDelegateRestricted)
                     }
                     onClick={() =>
-                      void runOnChainAction("add_delegate", () =>
+                      void runOnChainAction("Grant Delegate", () =>
                         executeAddDelegate(
                           connection,
                           walletCtx,
@@ -978,7 +1101,7 @@ export function ManageDTR() {
                     }
                     className="gap-2"
                   >
-                    <Plus className="w-4 h-4" /> {onChainTxPending === "add_delegate" ? "Confirming..." : "Grant Delegate (real DevNet tx)"}
+                    <Plus className="w-4 h-4" /> {onChainTxPending === "Grant Delegate" ? "Confirming..." : "Grant Delegate"}
                   </Button>
                 </CardContent>
               </Card>
@@ -1229,27 +1352,28 @@ export function ManageDTR() {
                   </CardContent>
                 </Card>
               ) : (
-                // AR-01 fix (2026-08-11): redesigned to mirror CreateDTR.tsx's Basket
-                // Composition step -- search+browse addable assets on the left,
-                // current Reserve assets with real balance/USD value and a
-                // before/after target-weight comparison on the right. Every
-                // action below submits the EXACT SAME already-working, already-
-                // permission-checked real transactions as before
-                // (update_targets/add_reserve_asset_active/fund_new_reserve_asset/
-                // remove_reserve_asset) -- this is a layout/UX change only, no new
-                // on-chain capability.
+                // DEC-0084: slider-based local-preview editor. Search+add on
+                // the left and every slider on the right are pure local
+                // state -- nothing here ever prompts the wallet. Submit
+                // Rebalance below is the ONLY action in this tab that does,
+                // applying the whole proposed composition (new-asset
+                // registration + every final weight) in one signed
+                // transaction (executeSubmitRebalance). Fund and permanently
+                // removing an empty asset stay separate, clearly-secondary
+                // maintenance actions with their own individual approvals.
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-xl font-merge-display">Reserve Composition & Rebalance</CardTitle>
                     <CardDescription>
-                      Target-weight changes below submit a real signed <code className="font-merge-mono text-xs">update_targets</code> transaction
-                      (config only -- moves no real holdings; trade execution remains unavailable pending a swap-mechanism decision, Phase E).
-                      Adding/funding/removing an asset are each a separate real transaction. {!canUpdateTargetsOnChain && "You need the Root Manager or a delegate with Update Targets permission to submit target-weight changes."}
+                      Drag a slider to propose a new target weight -- this only records what you intend the Reserve to look like, it
+                      doesn't move any assets yet. Adding, adjusting, or removing an asset below never asks your wallet to approve
+                      anything; only Submit Rebalance does, and it applies your complete proposal in a single approval.{" "}
+                      {!canUpdateTargetsOnChain && "You need the Root Manager or a delegate with Update Targets permission to submit a rebalance."}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                      {/* Left: search + add a new reserve asset */}
+                      {/* Left: search + add a new reserve asset -- one click, purely local */}
                       <div className="space-y-4">
                         <h4 className="font-semibold text-sm">Add a Reserve Asset</h4>
                         <div className="relative">
@@ -1259,146 +1383,160 @@ export function ManageDTR() {
                             className="pl-9"
                             value={rebalanceAssetSearch}
                             onChange={(e) => setRebalanceAssetSearch(e.target.value)}
-                            disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
                           />
                         </div>
                         <div className="border border-border rounded-lg max-h-[280px] overflow-y-auto p-2 bg-muted/20 space-y-1">
-                          {ADDABLE_ASSETS.filter((a) => !dtr.onChain!.assets.some((existing) => existing.mint === a.mint))
+                          {ADDABLE_ASSETS.filter((a) => !proposedAssetRows.some((r) => r.mint === a.mint))
                             .filter((a) => a.symbol.toLowerCase().includes(rebalanceAssetSearch.toLowerCase()))
                             .map((a) => (
-                              <div
-                                key={a.mint}
-                                className={`flex items-center justify-between p-2 rounded-md transition-colors cursor-pointer ${addAssetMint === a.mint ? "bg-primary/10 border border-primary/30" : "hover:bg-muted"}`}
-                                onClick={() => canManageLiquidityConfigOnChain && onChainTxPending === null && setAddAssetMint(a.mint)}
-                              >
+                              <div key={a.mint} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
                                 <span className="font-semibold font-merge-mono text-sm">{a.symbol}</span>
-                                {addAssetMint === a.mint && <Badge variant="secondary" className="text-[10px]">Selected</Badge>}
+                                <Button
+                                  variant="ghost" size="sm" className="h-8 w-8 p-0"
+                                  disabled={!canManageLiquidityConfigOnChain}
+                                  title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission to register a new asset." : undefined}
+                                  onClick={() => handleAddAssetToSession(a)}
+                                >
+                                  <Plus className="w-4 h-4 text-primary" />
+                                </Button>
                               </div>
                             ))}
-                          {ADDABLE_ASSETS.filter((a) => !dtr.onChain!.assets.some((existing) => existing.mint === a.mint)).length === 0 && (
-                            <div className="p-4 text-center text-sm text-muted-foreground">Every supported asset is already in this Reserve.</div>
+                          {ADDABLE_ASSETS.filter((a) => !proposedAssetRows.some((r) => r.mint === a.mint)).length === 0 && (
+                            <div className="p-4 text-center text-sm text-muted-foreground">Every supported asset is already in your proposed composition.</div>
                           )}
                         </div>
-                        {addAssetMint && (
-                          <div className="flex flex-col sm:flex-row gap-2 p-3 border border-border rounded-lg bg-card">
-                            <Input
-                              type="number" min="0" max="100" step="0.1"
-                              placeholder="Target weight %"
-                              className="font-merge-mono"
-                              value={addAssetWeightBps}
-                              onChange={(e) => setAddAssetWeightBps(e.target.value)}
-                              disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
-                            />
-                            <Button
-                              disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
-                              title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
-                              onClick={() => {
-                                const bps = Math.round(Number(addAssetWeightBps) * 100);
-                                void runOnChainAction("add_reserve_asset_active", () => executeAddReserveAsset(connection, walletCtx, dtr.onChain!.reserve, addAssetMint, bps), [addAssetMint]).then(() => setAddAssetMint(""));
-                              }}
-                              className="gap-1.5 shrink-0"
-                            >
-                              <Plus className="w-4 h-4" /> {onChainTxPending === "add_reserve_asset_active" ? "Confirming..." : "Add Asset"}
-                            </Button>
-                          </div>
-                        )}
-                        <p className="text-xs text-muted-foreground">Registers at the target weight above with zero balance -- fund it on the right once added.</p>
+                        <p className="text-xs text-muted-foreground">
+                          Adding an asset here is free and only changes your proposal below -- it's registered on-chain, at zero
+                          balance, once Submit Rebalance succeeds. Fund it separately afterward.
+                        </p>
                       </div>
 
-                      {/* Right: current Reserve assets -- real balance/USD value, before/after weight comparison */}
+                      {/* Right: proposed composition -- one slider per asset, yellow marker at its real current on-chain weight */}
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                          <h4 className="font-semibold text-sm">Current Reserve Assets</h4>
-                          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                            <Checkbox checked={adjustRemaining} onCheckedChange={(c) => setAdjustRemaining(c === true)} disabled={!canUpdateTargetsOnChain} />
-                            Adjust remaining proportionally
-                          </label>
+                          <h4 className="font-semibold text-sm">Proposed Composition</h4>
+                          <span className={`font-merge-mono text-xs font-bold ${totalProposedBps === 10_000 ? "text-primary" : "text-destructive"}`}>
+                            {(totalProposedBps / 100).toFixed(1)}%
+                          </span>
                         </div>
                         <div className="space-y-3">
-                          {[...dtr.onChain.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((asset, i, arr) => {
-                            const vaultBalanceRaw = dtr.onChain!.vaultBalancesRaw[asset.mint] ?? "0";
-                            const isEmpty = vaultBalanceRaw === "0";
-                            const isLast = i === arr.length - 1;
-                            const canRemove = isEmpty && isLast;
-                            const balanceHuman = Number(vaultBalanceRaw) / 10 ** asset.decimals;
-                            const usdValue = balanceHuman * (TEST_ASSET_PRICES_USD[asset.mint] ?? 0);
-                            const currentWeight = asset.weightBps / 10_000;
-                            const isEdited = rebalanceEdits[asset.symbol] !== undefined;
-                            const targetWeight = preview.comp.find((p) => p.symbol === asset.symbol)?.weight ?? currentWeight;
+                          {(() => {
+                            const lastOnChainMint = [...dtr.onChain.assets].sort((a, b) => b.orderIndex - a.orderIndex)[0]?.mint;
+                            return proposedAssetRows.map((row) => {
+                              const proposedBps = proposedWeightsBps[row.mint] ?? 0;
+                              const proposedPct = proposedBps / 100;
+                              const benchmarkPct = row.benchmarkBps / 100;
+                              const vaultBalanceRaw = dtr.onChain!.vaultBalancesRaw[row.mint] ?? "0";
+                              const isEmpty = vaultBalanceRaw === "0";
+                              const balanceHuman = Number(vaultBalanceRaw) / 10 ** row.decimals;
+                              const balanceUsd = balanceHuman * (TEST_ASSET_PRICES_USD[row.mint] ?? 0);
+                              const projectedUsd = (proposedBps / 10_000) * totalReserveUsd;
+                              const isDrivenToZero = proposedBps === 0 && row.benchmarkBps > 0;
+                              const canRemoveOnChain = !row.isNew && isEmpty && row.mint === lastOnChainMint;
 
-                            return (
-                              <div key={asset.mint} className="p-3 border border-border rounded-lg bg-card space-y-2.5">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-semibold font-merge-mono text-sm">{asset.symbol}</span>
-                                  <span className="text-xs text-muted-foreground font-merge-mono">{formatUsdc(usdValue, { compact: true })} &middot; {balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })} bal.</span>
-                                </div>
-
-                                {/* Before/after weight comparison bar -- current weight as the base fill, target weight as an overlaid marker. */}
-                                <div className="relative h-2 rounded-full bg-muted overflow-hidden">
-                                  <div className="absolute inset-y-0 left-0 bg-muted-foreground/30" style={{ width: `${Math.min(100, currentWeight * 100)}%` }} />
-                                  {isEdited && (
-                                    <div className="absolute inset-y-0 w-0.5 bg-primary" style={{ left: `${Math.min(100, targetWeight * 100)}%` }} title={`Target: ${(targetWeight * 100).toFixed(1)}%`} />
-                                  )}
-                                </div>
-
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="text-xs text-muted-foreground">Current <span className="font-merge-mono font-medium text-foreground">{(currentWeight * 100).toFixed(1)}%</span></span>
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-xs text-muted-foreground">Target</span>
-                                    <Input
-                                      type="number"
-                                      className={`w-20 h-7 text-right font-merge-mono text-xs ${isEdited ? 'border-primary' : ''}`}
-                                      placeholder={(currentWeight * 100).toFixed(1)}
-                                      value={isEdited ? (rebalanceEdits[asset.symbol] * 100).toString() : ""}
-                                      onChange={(e) => handleWeightEdit(asset.symbol, e.target.value)}
-                                      disabled={!canUpdateTargetsOnChain}
-                                      step="0.1"
-                                      min="0"
-                                    />
-                                    <span className="text-muted-foreground text-xs">%</span>
-                                  </div>
-                                </div>
-
-                                {(isEmpty || canRemove) && (
-                                  <div className="flex items-center gap-2 pt-1 border-t border-border/50">
-                                    {isEmpty && (
-                                      <>
-                                        <Input
-                                          type="number" min="0" placeholder="raw amount to fund"
-                                          className="h-8 text-xs font-merge-mono flex-1"
-                                          value={fundAmounts[asset.mint] ?? ""}
-                                          onChange={(e) => setFundAmounts((prev) => ({ ...prev, [asset.mint]: e.target.value }))}
-                                          disabled={!isRoot || onChainTxPending !== null}
-                                        />
+                              return (
+                                <div key={row.mint} className="p-3 border border-border rounded-lg bg-card space-y-2.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold font-merge-mono text-sm">{row.symbol}</span>
+                                      {row.isNew && <Badge variant="secondary" className="text-[10px]">New</Badge>}
+                                      {isDrivenToZero && <Badge variant="outline" className="text-[10px] text-destructive border-destructive/40">Reducing to 0%</Badge>}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground font-merge-mono">
+                                        {formatUsdc(balanceUsd, { compact: true })} bal.
+                                      </span>
+                                      {row.isNew && (
                                         <Button
-                                          variant="outline" size="sm"
-                                          disabled={!isRoot || onChainTxPending !== null || !fundAmounts[asset.mint] || Number(fundAmounts[asset.mint]) <= 0}
-                                          onClick={() => {
-                                            const amount = BigInt(fundAmounts[asset.mint]);
-                                            void runOnChainAction(`fund_new_reserve_asset(${asset.symbol})`, () => executeFundReserveAsset(connection, walletCtx, dtr.onChain!.reserve, asset.mint, amount));
-                                          }}
+                                          variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                          onClick={() => handleRemoveSessionAsset(row.mint)}
+                                          title="Remove from proposed composition"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="relative pt-2 pb-1">
+                                    <Slider
+                                      value={[proposedPct]}
+                                      max={100}
+                                      step={0.1}
+                                      onValueChange={([v]) => handleSliderChange(row.mint, Math.round(v * 100))}
+                                      disabled={!canUpdateTargetsOnChain}
+                                    />
+                                    {/* Yellow benchmark marker: this asset's real current on-chain target weight (0 for a not-yet-registered asset) so current vs. proposed is visible at a glance. */}
+                                    <div
+                                      className="pointer-events-none absolute top-0 h-3.5 w-0.5 -translate-x-1/2 rounded-full bg-amber-500 dark:bg-amber-400"
+                                      style={{ left: `${Math.min(100, Math.max(0, benchmarkPct))}%` }}
+                                      title={`Current on-chain target: ${benchmarkPct.toFixed(1)}%`}
+                                    />
+                                  </div>
+
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="text-xs text-muted-foreground">
+                                      Current <span className="font-merge-mono font-medium text-foreground">{benchmarkPct.toFixed(1)}%</span>
+                                      <span className="mx-1.5">&rarr;</span>
+                                      <span className="font-merge-mono font-medium text-foreground">{formatUsdc(projectedUsd, { compact: true })}</span> projected
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <Input
+                                        type="number"
+                                        className="w-20 h-7 text-right font-merge-mono text-xs"
+                                        value={+proposedPct.toFixed(1)}
+                                        onChange={(e) => handleSliderChange(row.mint, Math.round((parseFloat(e.target.value) || 0) * 100))}
+                                        disabled={!canUpdateTargetsOnChain}
+                                        step="0.1"
+                                        min="0"
+                                        max="100"
+                                      />
+                                      <span className="text-muted-foreground text-xs">%</span>
+                                    </div>
+                                  </div>
+
+                                  {!row.isNew && (isEmpty || canRemoveOnChain) && (
+                                    <div className="flex items-center gap-2 pt-1.5 border-t border-border/50">
+                                      {isEmpty && (
+                                        <>
+                                          <Input
+                                            type="number" min="0" placeholder="amount to fund"
+                                            className="h-8 text-xs font-merge-mono flex-1"
+                                            value={fundAmounts[row.mint] ?? ""}
+                                            onChange={(e) => setFundAmounts((prev) => ({ ...prev, [row.mint]: e.target.value }))}
+                                            disabled={!isRoot || onChainTxPending !== null}
+                                          />
+                                          <Button
+                                            variant="outline" size="sm"
+                                            disabled={!isRoot || onChainTxPending !== null || !fundAmounts[row.mint] || Number(fundAmounts[row.mint]) <= 0}
+                                            onClick={() => {
+                                              const amount = BigInt(fundAmounts[row.mint]);
+                                              void runOnChainAction(`Fund ${row.symbol}`, () => executeFundReserveAsset(connection, walletCtx, dtr.onChain!.reserve, row.mint, amount));
+                                            }}
+                                            className="gap-1 shrink-0"
+                                          >
+                                            <Coins className="w-3.5 h-3.5" /> Fund
+                                          </Button>
+                                        </>
+                                      )}
+                                      {canRemoveOnChain && (
+                                        <Button
+                                          variant="destructive" size="sm"
+                                          disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
+                                          title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
+                                          onClick={() => void runOnChainAction(`Remove ${row.symbol}`, () => executeRemoveReserveAsset(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.manager, row.mint))}
                                           className="gap-1 shrink-0"
                                         >
-                                          <Coins className="w-3.5 h-3.5" /> Fund
+                                          <Trash2 className="w-3.5 h-3.5" /> Remove
                                         </Button>
-                                      </>
-                                    )}
-                                    {canRemove && (
-                                      <Button
-                                        variant="destructive" size="sm"
-                                        disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
-                                        title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
-                                        onClick={() => void runOnChainAction(`remove_reserve_asset(${asset.symbol})`, () => executeRemoveReserveAsset(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.manager, asset.mint))}
-                                        className="gap-1 shrink-0"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" /> Remove
-                                      </Button>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                                      )}
+                                      <p className="text-[10px] text-muted-foreground ml-auto shrink-0">Separate action -- approves on its own.</p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            });
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -1406,39 +1544,40 @@ export function ManageDTR() {
                     <div className="p-4 border-t border-border mt-2 flex flex-col sm:flex-row justify-between items-center gap-4">
                       <div className="space-y-1 text-sm">
                         <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Asset Weights:</span>
-                          <span className={`font-merge-mono font-bold ${previewTotal > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
-                            {(preview.comp.reduce((sum, a) => sum + a.weight, 0) * 100).toFixed(1)}%
+                          <span className="text-muted-foreground">Proposed Total:</span>
+                          <span className={`font-merge-mono font-bold ${totalProposedBps === 10_000 ? "text-primary" : "text-destructive"}`}>
+                            {(totalProposedBps / 100).toFixed(1)}%
                           </span>
                         </div>
-                        {preview.unallocated > 0 && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground">Unallocated USDC Reserve:</span>
-                            <span className="font-merge-mono font-medium">{(preview.unallocated * 100).toFixed(1)}%</span>
-                          </div>
-                        )}
                       </div>
                       <Button
-                        onClick={() => {
-                          const orderedAssets = [...dtr.onChain!.assets].sort((a, b) => a.orderIndex - b.orderIndex);
-                          const assetMintsInOrder = orderedAssets.map((a) => a.mint);
-                          const newTargetWeightsBps = orderedAssets.map((a) => {
-                            const w = preview.comp.find((p) => p.symbol === a.symbol)?.weight ?? a.weightBps / 10_000;
-                            return Math.round(w * 10_000);
-                          });
-                          void runOnChainAction("update_targets", () => executeUpdateTargets(connection, walletCtx, dtr.onChain!.reserve, assetMintsInOrder, newTargetWeightsBps));
-                        }}
-                        disabled={!isPreviewValid || !canUpdateTargetsOnChain || onChainTxPending !== null}
-                        title={!canUpdateTargetsOnChain ? "You need the Root Manager or a delegate with Update Targets permission to submit this transaction." : undefined}
+                        onClick={() =>
+                          void runOnChainAction(
+                            "Submit Rebalance",
+                            () => executeSubmitRebalance(connection, walletCtx, dtr.onChain!.reserve, rebalanceAssetPlan),
+                            rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint),
+                          ).then(() => {
+                            const registeredMints = new Set(rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint));
+                            setSessionAddedAssets((prev) => prev.filter((a) => !registeredMints.has(a.mint)));
+                          })
+                        }
+                        disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null}
+                        title={
+                          !canUpdateTargetsOnChain
+                            ? "You need the Root Manager or a delegate with Update Targets permission to submit a rebalance."
+                            : !canSubmitRebalance
+                              ? "You need the Root Manager or a delegate with Manage Liquidity Config permission to register a new asset."
+                              : undefined
+                        }
                         className="w-full sm:w-auto font-bold gap-2"
                       >
-                        <Save className="w-4 h-4" /> {onChainTxPending === "update_targets" ? "Confirming..." : "Submit Target Weights (real DevNet tx)"}
+                        <Save className="w-4 h-4" /> {onChainTxPending === "Submit Rebalance" ? "Confirming..." : "Submit Rebalance"}
                       </Button>
                     </div>
-                    {previewTotal > 1.0001 && (
+                    {totalProposedBps !== 10_000 && (
                       <div className="bg-destructive/10 text-destructive p-3 rounded text-sm flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0" />
-                        Total weight exceeds 100%. Please adjust.
+                        Proposed weights must total exactly 100% before submitting.
                       </div>
                     )}
                   </CardContent>

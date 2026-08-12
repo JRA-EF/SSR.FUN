@@ -30,6 +30,7 @@ import {
   buildUpdateDelegatePermissionsInstruction,
   buildUpdateTargetsInstruction,
   DEVNET_FIXTURES,
+  describeOnChainError,
   findDelegate,
   fetchProtocolConfig,
 } from "@ssr/sdk";
@@ -46,7 +47,10 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, t
   const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
   const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
-  if (outcome.status === "failed") throw new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`);
+  // describeOnChainError decodes a real ssr_protocol custom-error code
+  // against the deployed IDL instead of surfacing a raw, undecoded blob --
+  // see createReserveClient.ts's signAndSend for the identical pattern.
+  if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
   throw new AmbiguousConfirmationError(signature);
 }
@@ -101,6 +105,73 @@ export async function executeAddReserveAsset(
     targetWeightBps,
   );
   return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+export interface RebalanceAssetPlan {
+  mint: string;
+  /** True if this asset is not yet registered on-chain for this Reserve --
+   * gets an add_reserve_asset_active(target_weight_bps=0) instruction first.
+   * Registering at 0 (rather than the asset's real final weight) is what
+   * fixes the previously-reported TargetWeightExceedsTotal failure: every
+   * existing asset still holds its OLD on-chain weight at the moment this
+   * instruction runs, so registering at any nonzero weight could blow the
+   * 10,000bps cap before the trailing update_targets below ever gets a
+   * chance to bring the total back in line. */
+  isNew: boolean;
+  /** Final on-chain target weight (bps, 0-10000) after this transaction,
+   * for every asset -- new and existing alike -- applied by the single
+   * trailing update_targets instruction. */
+  targetWeightBps: number;
+}
+
+/**
+ * Submits an entire proposed Reserve Composition & Rebalance as ONE signed
+ * transaction: one add_reserve_asset_active(0) instruction per `isNew`
+ * entry (in the given order -- this fixes each new asset's on-chain
+ * order_index), followed by exactly one update_targets instruction
+ * covering every entry (existing + newly-registered) with its real final
+ * weight. Solana executes instructions within a transaction sequentially
+ * against shared account state, so update_targets' remaining-accounts
+ * check correctly sees an asset registered earlier in this same
+ * transaction. `assetPlan` MUST already be in final order_index order:
+ * every existing asset first (in its current order_index order), then
+ * every new asset in the order it should be registered.
+ */
+export async function executeSubmitRebalance(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  assetPlan: RebalanceAssetPlan[],
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const tx = new Transaction();
+  for (const a of assetPlan) {
+    if (!a.isNew) continue;
+    const ix = await buildAddReserveAssetActiveInstruction(
+      program,
+      programId,
+      reservePk,
+      wallet.publicKey,
+      actingDelegate,
+      new PublicKey(a.mint),
+      0,
+    );
+    tx.add(ix);
+  }
+  const updateIx = await buildUpdateTargetsInstruction(
+    program,
+    programId,
+    reservePk,
+    wallet.publicKey,
+    actingDelegate,
+    assetPlan.map((a) => new PublicKey(a.mint)),
+    assetPlan.map((a) => a.targetWeightBps),
+  );
+  tx.add(updateIx);
+  return signAndSend(connection, wallet, tx);
 }
 
 export async function executeFundReserveAsset(
