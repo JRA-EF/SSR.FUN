@@ -2,6 +2,7 @@
 // Kept pure and deterministic so the store stays a thin wrapper around these.
 
 import type { ChartTimeframe, DTR, DTRAsset, Holding, OrderBookLevel, PricePoint, SimulatedOrderBook, TradeQuote } from "./types";
+import { TEST_ASSET_PRICES_USD } from "./onChainReserve";
 
 /** Fixed SSR.FUN-routed secondary-market fee, applied on both buy and sell. */
 export const TRADING_FEE_RATE = 0.001; // 10 basis points
@@ -387,6 +388,32 @@ export function calc24hPnl(holding: Holding, dtr: DTR | undefined): number {
   const currentValue = calcHoldingValue(holding, dtr);
   const prevValue = currentValue / (1 + dtr.change24h / 100);
   return currentValue - prevValue;
+}
+
+/**
+ * Asset-level P&L % for a Reserve's OWN underlying holding (e.g. the mockX
+ * sitting in a Reserve's vault) -- distinct from calcUnrealizedPnlPct above,
+ * which is a USER's Reserve Token position. Compares the asset's current
+ * price against a reference ("entry") price: today, referenceAssetPriceUsd
+ * and the current price both read the same DevNet fixed TEST_ASSET_PRICES_USD
+ * table (see onChainReserve.ts), since no live oracle or historical
+ * entry-price snapshot exists for a reserve asset yet -- see
+ * PROJECT_STATUS.md's Mainnet-Readiness Gaps ("Oracle/pricing": Mainnet
+ * needs Pyth or similar for any displayed USD value). Reporting exactly
+ * 0.00% here is therefore correct, not a placeholder -- the formula is real
+ * and mainnet-ready: the day referenceAssetPriceUsd is backed by a genuine
+ * price captured when the asset entered the Reserve, this same function
+ * starts returning real P&L with no further changes.
+ */
+export function referenceAssetPriceUsd(mint: string): number {
+  return TEST_ASSET_PRICES_USD[mint] ?? 0;
+}
+
+export function calcReserveAssetPnlPct(mint: string): number {
+  const reference = referenceAssetPriceUsd(mint);
+  if (reference <= 0) return 0;
+  const current = TEST_ASSET_PRICES_USD[mint] ?? 0;
+  return ((current - reference) / reference) * 100;
 }
 
 /** Total value of all DTR Token holdings, in USDC. */

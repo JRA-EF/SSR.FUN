@@ -4,7 +4,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { DEVUSDC, DEVUSDC_MINT, DEVNET_FIXTURES, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements, findReserve } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
-import { resolveDtrPageState, parseOnChainReserveId } from "@/lib/onChainReserve";
+import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD } from "@/lib/onChainReserve";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
 import {
@@ -29,6 +29,7 @@ import {
   formatUsdc,
   formatTokenAmount,
   sampleLinePoints,
+  calcReserveAssetPnlPct,
 } from "@/lib/calculations";
 import { normalizeReserveCategory, type ChartTimeframe } from "@/lib/types";
 import {
@@ -359,8 +360,17 @@ export function DTRDetail() {
   const yPad = Math.max((chartMax - chartMin) * 0.05, chartMax * 0.01, 0.01);
   const yDomain = [chartMin - yPad, chartMax + yPad];
 
+  // A rebalance can drive an asset's target weight to exactly 0% without
+  // removing its on-chain registration (update_targets only changes intent,
+  // per DEC-0017 -- see managementClient.ts) -- once an asset is no longer
+  // part of the intended composition, it shouldn't keep cluttering this
+  // card's pie slice/row. Filters the DISPLAY only; dtr.composition itself
+  // (used elsewhere, e.g. ManageDTR.tsx's Rebalance tab, which needs to show
+  // a 0%-weight asset so it can be edited) is untouched.
+  const compositionDisplay = dtr.composition.filter((a) => a.weight > 0);
+
   // Pie chart data
-  const pieData = dtr.composition.map(a => ({
+  const pieData = compositionDisplay.map(a => ({
     name: a.symbol,
     value: a.weight
   }));
@@ -1059,25 +1069,51 @@ export function DTRDetail() {
                         <TableHead>Asset</TableHead>
                         <TableHead className="text-right">Weight</TableHead>
                         <TableHead className="text-right hidden sm:table-cell">Value in Reserve</TableHead>
+                        <TableHead className="text-right hidden sm:table-cell">
+                          P&amp;L %
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {dtr.composition.map((asset, index) => (
-                        <TableRow key={asset.symbol} className="border-border/50">
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
-                              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
-                              {asset.name} <span className="text-muted-foreground font-normal ml-1">{asset.symbol}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-merge-mono">
-                            {(asset.weight * 100).toFixed(2)}%
-                          </TableCell>
-                          <TableCell className="text-right font-merge-mono text-muted-foreground hidden sm:table-cell">
-                            {formatUsdc(asset.weight * dtr.aum, { compact: true })}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {compositionDisplay.map((asset, index) => {
+                        // Real on-chain assets carry a mint (matched by
+                        // symbol against dtr.onChain.assets), which is what
+                        // both the real balance-based value and the P&L %
+                        // calc need. A purely simulated/demo Reserve has no
+                        // real balances at all, so it keeps the prior
+                        // weight-of-AUM estimate and shows no P&L (nothing
+                        // to compute it from).
+                        const onChainAsset = dtr.onChain?.assets.find((a) => a.symbol === asset.symbol);
+                        const valueUsd = onChainAsset
+                          ? (Number(dtr.onChain!.vaultBalancesRaw[onChainAsset.mint] ?? "0") / 10 ** onChainAsset.decimals) * (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? 0)
+                          : asset.weight * dtr.aum;
+                        const pnlPct = onChainAsset ? calcReserveAssetPnlPct(onChainAsset.mint) : null;
+                        return (
+                          <TableRow key={asset.symbol} className="border-border/50">
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
+                                {asset.name} <span className="text-muted-foreground font-normal ml-1">{asset.symbol}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right font-merge-mono">
+                              {(asset.weight * 100).toFixed(2)}%
+                            </TableCell>
+                            <TableCell className="text-right font-merge-mono text-muted-foreground hidden sm:table-cell">
+                              {formatUsdc(valueUsd, { compact: true })}
+                            </TableCell>
+                            <TableCell className="text-right font-merge-mono hidden sm:table-cell">
+                              {pnlPct === null ? (
+                                <span className="text-muted-foreground">&mdash;</span>
+                              ) : (
+                                <span className={pnlPct > 0 ? "text-positive" : pnlPct < 0 ? "text-destructive" : "text-muted-foreground"}>
+                                  {pnlPct > 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                                </span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>

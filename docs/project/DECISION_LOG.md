@@ -2369,3 +2369,34 @@
   ]
 }
 ```
+
+## DEC-0087
+
+```json
+{
+  "id": "DEC-0087",
+  "date": "2026-08-12",
+  "status": "confirmed",
+  "decision": "DTRDetail.tsx's Reserve Composition card (pie chart + table) now excludes any asset with an exactly-0% target weight from both the pie slices and the table rows (new compositionDisplay, filtered from dtr.composition, used only for this card's display -- dtr.composition itself is untouched, since ManageDTR.tsx's Rebalance tab still needs to show and edit a 0%-weight asset). This closes the gap where rebalancing an asset down to 0% (update_targets is config-only, per DEC-0017 -- it never removes the on-chain registration) left it visibly cluttering the trade page's composition view forever. Added a new 'P&L %' column after 'Value in Reserve', backed by two new pure functions in calculations.ts (referenceAssetPriceUsd, calcReserveAssetPnlPct) that compare an asset's current price against a reference/entry price -- both currently read the same DevNet-fixed TEST_ASSET_PRICES_USD table (no live oracle or historical entry-price snapshot exists for a reserve asset yet), so every asset correctly and honestly shows 0.00% today, per explicit user decision to ship the real formula/plumbing now rather than wait for live pricing, since Mainnet readiness is the standing goal (see PROJECT_STATUS.md's Mainnet-Readiness Gaps, 'Oracle/pricing'). 'Value in Reserve' was also corrected, for real (onChain) Reserves, from a target-weight-derived estimate (asset.weight * dtr.aum) to the asset's actual current balance x price (matching how dtr.aum itself is already computed) -- the two only coincided when a Reserve was perfectly on-target, and showing a real per-asset P&L % next to a target-derived (not actual) value would have been internally inconsistent. A purely simulated/demo Reserve (no onChain data, no real balances to read) keeps the prior weight-of-AUM estimate for value and shows '--' (not 0.00%) for P&L, since there's nothing to compute a real figure from at all.",
+  "context": "User asked, in one request: (1) remove an asset from the Reserve Composition card once it's been zeroed out by a rebalance; (2) add a P&L % column after Value in Reserve on that same card. Clarifying question asked and answered: since this is a DevNet environment with zero live/historical pricing (TEST_ASSET_PRICES_USD is a single fixed value per mint, SOL_TEST_PRICE_USD is a hardcoded constant, never a feed), a genuine price-based P&L would always read 0.00% today -- user confirmed that's fine, explicitly framing this as building the feature correctly now so it's ready to work the moment Mainnet pricing exists ('remember mainnet is always the goal'), rather than deferring it or reframing it as something else. Separately, the user also asked for a rebalance/delegate activity log in Manage Reserve -- confirmed this already exists (Manage Reserve's Activity tab, DEC-0083) and covers every event type requested; user confirmed no further action needed there.",
+  "rationale": "referenceAssetPriceUsd was added as its own named function (rather than inlining TEST_ASSET_PRICES_USD directly into the P&L formula twice) specifically to mark the exact seam where a real oracle-backed entry price will plug in later -- swapping this one function's body is the entire migration path to genuine Mainnet P&L, with zero UI changes needed. compositionDisplay's filter lives in DTRDetail.tsx only, not in the shared dtr.composition builder (onChainReserve.ts), because the Rebalance tab's editing UI has the opposite requirement (it must show a 0%-weight asset so the user can raise it back up) -- a single shared filter would have broken that. 'Value in Reserve' was fixed as part of this pass rather than left alone, since adding a real per-asset P&L % column right next to a column that wasn't actually showing that asset's real value would have been visibly inconsistent (and arguably more misleading than not adding a P&L column at all).",
+  "alternativesConsidered": [
+    "Show 'N/A'/'--' for P&L % instead of a real 0.00% (rejected per explicit user decision -- they want the real, computed value now, honestly reflecting 'no movement possible yet' rather than 'not implemented')",
+    "Snapshot-based P&L (capture each asset's current value as a baseline the moment this feature ships, compare future views against it) (rejected per user decision in favor of the reference-price-formula approach -- a snapshot baseline is not itself a real acquisition/entry price, and the user wants the eventual Mainnet swap-in to be a real oracle-backed entry price, not a client-captured baseline)",
+    "Leave 'Value in Reserve' as the target-weight-derived estimate (rejected: would sit inconsistently next to a real per-asset P&L % column reading a different asset's actual price)",
+    "Filter dtr.composition itself, globally, instead of only this card's local compositionDisplay (rejected: would break ManageDTR.tsx's Rebalance tab, which must keep showing a 0%-weight asset so it can be edited back up)"
+  ],
+  "impact": "Changed: src/merge/pages/DTRDetail.tsx (compositionDisplay filter, real balance-based Value in Reserve, new P&L % column), src/merge/lib/calculations.ts (+referenceAssetPriceUsd, +calcReserveAssetPnlPct). New: tests/phase_reserve_asset_pnl.ts (3 new tests). 334/334 offline tests passing (331 prior + 3 new); tsc -b --force, oxlint, npm run build all clean. No change needed for the activity-log request -- already covered by DEC-0083's Activity tab, confirmed by the user.",
+  "affectedAreas": [
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/lib/calculations.ts",
+    "tests/phase_reserve_asset_pnl.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "334/334 offline tests passing (3 new, covering calcReserveAssetPnlPct/referenceAssetPriceUsd against every currently-known TEST_ASSET_PRICES_USD mint plus an unknown-mint fallback); tsc -b --force, oxlint, full npm run build all clean.",
+    "This pass was NOT live-verified against a real browser session (no browser-automation tool available in this environment, same documented gap as every prior pass) -- verification is offline tests, typecheck, lint, build, and direct code-path reading."
+  ]
+}
+```
