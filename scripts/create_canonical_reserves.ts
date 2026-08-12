@@ -199,8 +199,13 @@ async function createCanonicalReserve(spec: CanonicalReserveSpec, deployer: Keyp
     mintFeeBps: 50,
     redemptionFeeBps: 0,
     tvlFeeBps: 100,
-    managerFeeShareBps: 8000,
-    protocolFeeShareBps: 2000,
+    // 50/50 manager/protocol split -- matches createReserveClient.ts's
+    // corrected default (was 8000/2000); see docs/project/DECISION_LOG.md's
+    // entry for this pass. Only affects Reserves created by a future run of
+    // this script -- the canonical Reserves already created (28/29/30, see
+    // DEC-0081) keep their original 80/20 split, immutable on-chain.
+    managerFeeShareBps: 5000,
+    protocolFeeShareBps: 5000,
     feeDestination: deployer.publicKey,
   });
   const assetAddrs = spec.assets.map((a) => deriveReserveAssetAddresses(addresses.reserve, a.mint, programId));

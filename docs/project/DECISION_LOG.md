@@ -2438,3 +2438,36 @@
   ]
 }
 ```
+
+## DEC-0089
+
+```json
+{
+  "id": "DEC-0089",
+  "date": "2026-08-12",
+  "status": "confirmed",
+  "decision": "Fixed the default manager/protocol fee split for newly-created Reserves from 80%/20% to 50%/50% (createReserveClient.ts's managerFeeShareBps/protocolFeeShareBps, and the matching literals in scripts/create_canonical_reserves.ts). Root cause of the reported 'Manager share 0.8 ZZZZ / Protocol share 0.2 ZZZZ' Pending Fees display: this was never a display bug -- FeeConfig.manager_fee_share_bps/protocol_fee_share_bps are genuinely per-Reserve, set once at create_reserve time, and createReserveClient.ts hardcoded 8000/2000 there, unconditionally, for every Reserve the app has ever created. DEC-0032 (2026-08-04) had already explicitly flagged this exact value as a DevNet placeholder pending a real fee-schedule decision, not final economics -- this pass is that decision (50/50). Confirmed there is no update_fee_config (or equivalent) instruction anywhere in the deployed program -- FeeConfig is immutable on-chain once a Reserve is created -- so this fix only changes the split for Reserves created FROM NOW ON; every already-created Reserve (including whichever one the user was looking at) permanently keeps its original 80/20 split, and changing it would require a new on-chain instruction and a program redeploy, not attempted in this pass. Separately, fixed a real silent-failure bug in the Road to Mainnet checklist's comment form (public/road-to-mainnet.html): posting a comment that failed for any reason OTHER than an expired session (e.g. a validation error, a rejected request) silently reset the Post button with zero feedback -- now shows the real server-returned error message (mirroring the existing pattern already used for the checklist's field-save error states). This is the most likely explanation for the user's own report that they 'couldn't post' a comment -- probably failed with no visible reason why. The user's actual comment (about the fee-split issue above) was posted directly against the database using the exact same addComment logic the API route itself calls, authored as 'JRA', under control FE-01 ('Fees & protocol config') -- landed in the currently-open pass (pass 2).",
+  "context": "User reported, from the Manage Reserve dashboard: 'Pending Fees (uncollected) ... Manager share 0.8 ZZZZ ... Protocol share 0.2 ZZZZ ... this should be 50%/50% as per the criteria. double check whats wrong in the distribution of fees please.' Separately reported being unable to post a comment on the Road to Mainnet checklist HTML page, and asked for that same fee-split comment to be reposted as 'JRA' under the Fees & protocol config section once the posting issue was found.",
+  "rationale": "Fixed the default going forward rather than attempting to retrofit already-created Reserves, since FeeConfig has no on-chain update path today and adding one is a materially bigger, separate decision (new instruction + program redeploy) than what was asked for here -- flagged explicitly rather than silently left unaddressed. The comment-form fix mirrors pushEntity's already-established error-surfacing pattern (sync-tag error class, real server message) exactly, rather than inventing a new error-display convention for this one form. Posting the user's comment directly via the database (rather than only fixing the bug and asking them to retry through the browser) both unblocks their immediate request and end-to-end-proves the fix's premise -- that addComment itself works correctly and the prior failure was purely a silent-UI problem, not a server-side one.",
+  "alternativesConsidered": [
+    "Add a new update_fee_config instruction so existing Reserves' split could be corrected on-chain (rejected as out of this pass's scope: a program change + redeploy is a materially bigger and riskier action than the reported issue calls for; flagged as the real limitation instead of silently working around it)",
+    "Only fix the comment-form bug and ask the user to repost through the browser (rejected: they explicitly asked for the comment to be posted now, and the direct-DB post both satisfies that and proves the underlying fix)"
+  ],
+  "impact": "Changed: src/merge/lib/createReserveClient.ts (fee-split default 8000/2000 -> 5000/5000), scripts/create_canonical_reserves.ts (matching fix for future runs), public/road-to-mainnet.html (comment-form now surfaces real POST failures instead of silently resetting). Data: one new row in the live rtm_comments table (control FE-01, author JRA, pass 2). No test changes -- both fixes are either a literal-value change with no branching logic to unit-test, or a browser-DOM error-display change outside this repo's pure-function test scope. 342/342 offline tests still passing (unchanged from DEC-0088); tsc -b --force, tsc -p api/devnet/tsconfig.json, oxlint, full npm run build all clean.",
+  "affectedAreas": [
+    "src/merge/lib/createReserveClient.ts",
+    "scripts/create_canonical_reserves.ts",
+    "public/road-to-mainnet.html"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "342/342 offline tests passing (unchanged), tsc -b --force, tsc -p api/devnet/tsconfig.json, oxlint, full npm run build all clean.",
+    "Confirmed via a direct source-tree search that no update_fee_config (or equivalently-named) instruction exists anywhere under programs/ssr_protocol/src/instructions/ -- FeeConfig is genuinely immutable once a Reserve is created.",
+    "The requested comment was posted for real against the live production database (rtm_comments id 14, control FE-01, author JRA, pass 2) -- confirmed by the insert's own returned row, not assumed.",
+    "The delegate edit/remove permission-gating issue also reported in the same message was investigated (isRoot/hasOnChainPermission/canAddRestrictedDelegateOnChain/canRemoveRestrictedDelegateOnChain in ManageDTR.tsx) and found to correctly implement the documented, previously-live-verified on-chain permission model (DEC-0075/DEC-0083) in every code path traced -- root manager is never blocked in the current code. NOT fixed in this pass pending clarification from the user on which wallet/Reserve exhibited the issue, since a wrong guess here risks weakening real on-chain-mirroring access control rather than fixing a genuine bug."
+  ]
+}
+```
+}
+```

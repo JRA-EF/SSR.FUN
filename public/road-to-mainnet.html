@@ -674,18 +674,19 @@ async function loadComments(id,container){
     // locked one) -- matches the server's own currentOpenPass rule, so what
     // you see here always matches what a POST would actually do.
     const form=document.createElement('div');form.className='comment-form';
-    form.innerHTML=`<textarea placeholder="Add a comment…"></textarea><div class="row"><button class="btn primary" data-post>Post Comment</button></div>`;
+    form.innerHTML=`<textarea placeholder="Add a comment…"></textarea><div class="row"><button class="btn primary" data-post>Post Comment</button><span class="sync-tag" data-post-error></span></div>`;
     const textarea=form.querySelector('textarea');
+    const errEl=form.querySelector('[data-post-error]');
     form.querySelector('[data-post]').onclick=async()=>{
       const text=textarea.value.trim();
       if(!text)return;
-      const btn=form.querySelector('[data-post]');btn.disabled=true;btn.textContent='Posting…';
+      const btn=form.querySelector('[data-post]');btn.disabled=true;btn.textContent='Posting…';errEl.textContent='';errEl.className='sync-tag';
       try{
-        const {ok,status}=await apiFetch('/api/road-to-mainnet/comments',{method:'POST',body:JSON.stringify({entityType:'control',entityId:id,author:getEditorName(),body:text})});
-        if(status===401){markAuthExpired();return}
-        if(!ok){btn.disabled=false;btn.textContent='Post Comment';return}
+        const {ok,status,body}=await apiFetch('/api/road-to-mainnet/comments',{method:'POST',body:JSON.stringify({entityType:'control',entityId:id,author:getEditorName(),body:text})});
+        if(status===401){markAuthExpired();btn.disabled=false;btn.textContent='Post Comment';errEl.textContent='Not posted — session expired.';errEl.className='sync-tag error';return}
+        if(!ok){btn.disabled=false;btn.textContent='Post Comment';errEl.textContent='Not posted — '+(body&&body.error?body.error:'the server rejected this comment (status '+status+').');errEl.className='sync-tag error';return}
         await loadComments(id,container);
-      }catch{btn.disabled=false;btn.textContent='Post Comment'}
+      }catch{btn.disabled=false;btn.textContent='Post Comment';errEl.textContent='Not posted — network error, check your connection and try again.';errEl.className='sync-tag error'}
     };
     container.appendChild(form);
   }catch{container.innerHTML='<div class="history-meta">Could not load comments (offline?).</div>'}

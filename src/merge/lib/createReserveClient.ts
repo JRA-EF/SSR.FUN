@@ -459,8 +459,17 @@ export async function createReserveOnChain(params: {
       mintFeeBps: params.mintFeeBps,
       redemptionFeeBps: 0,
       tvlFeeBps: params.tvlFeeBps,
-      managerFeeShareBps: 8000,
-      protocolFeeShareBps: 2000,
+      // 50/50 manager/protocol fee split -- see docs/project/DECISION_LOG.md's
+      // entry for this pass. Was hardcoded 8000/2000 (80/20); DEC-0032
+      // (2026-08-04) already flagged every FeeConfig default here as an
+      // explicit DevNet placeholder, "not final economics, pending a real
+      // fee-schedule decision" -- this is that decision. Only affects
+      // Reserves created from this point forward: manager_fee_share_bps/
+      // protocol_fee_share_bps are set once at create_reserve and are
+      // immutable on-chain (no update_fee_config instruction exists), so an
+      // already-created Reserve keeps whatever split it was created with.
+      managerFeeShareBps: 5000,
+      protocolFeeShareBps: 5000,
       feeDestination: params.feeDestination,
     });
     const registerIxs = await Promise.all(
