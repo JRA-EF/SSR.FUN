@@ -2333,7 +2333,8 @@
   "evidence": [
     "331/331 offline tests passing (net +1 vs. DEC-0084's 330, after correcting two tests that did not actually reproduce the reported defect); tsc -b --force, oxlint, full npm run build all clean.",
     "Direct code-path read confirms the optimistic prune (setSessionAddedAssets keyed off an assumed-successful signature) is fully removed and replaced with a prune keyed only off the seeding effect's own onChainAssets, which is the same confirmed data already driving every other part of that effect.",
-    "This fix was NOT live-verified against a real Phantom approval in this environment (no browser-automation/wallet tool available, same documented gap as every prior pass) -- verification is the code-path read above plus full offline test/typecheck/lint/build coverage. The original defect itself WAS live-reported by a real user against the DEC-0084 production deploy, which is why this fix exists."
+    "This fix was NOT live-verified against a real Phantom approval in this environment (no browser-automation/wallet tool available, same documented gap as every prior pass) -- verification is the code-path read above plus full offline test/typecheck/lint/build coverage. The original defect itself WAS live-reported by a real user against the DEC-0084 production deploy, which is why this fix exists.",
+    "Deployed live: commit f2d1f67 pushed to main, then vercel --prod promoted it to strategic-super-reserve.fun as deployment dpl_4cq8kk4C59bujNhYg6KD9MYBWkjA (aliased to strategic-super-reserve.fun/www.strategic-super-reserve.fun/ssr-fun.vercel.app, confirmed via vercel inspect). Post-deploy: curl -I against strategic-super-reserve.fun returned 200, vercel logs --since 3m showed zero error/fatal/fail-matching lines."
   ]
 }
 ```
