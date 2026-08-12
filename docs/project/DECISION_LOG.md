@@ -2338,3 +2338,34 @@
   ]
 }
 ```
+
+## DEC-0086
+
+```json
+{
+  "id": "DEC-0086",
+  "date": "2026-08-12",
+  "status": "confirmed",
+  "decision": "Disabled the Pause/Unpause Reserve feature in the app, per explicit user decision to turn it off 'for now.' Removed: ManageDTR.tsx's Pause/Unpause Card (Overview tab) and its canPauseOnChain/canUnpauseOnChain permission gating; managementClient.ts's executePauseReserve/executeUnpauseReserve client wrappers; packages/sdk/src/managementInstructions.ts's buildPauseReserveInstruction/buildUnpauseReserveInstruction SDK builders. Deliberately NOT touched: the deployed on-chain pause_reserve/unpause_reserve Anchor instructions (programs/ssr_protocol/src/instructions/pause_reserve.rs, unpause_reserve.rs) and the PAUSE_RESERVE/UNPAUSE_RESERVE permission-flag bits in src/merge/lib/onChainPermissions.ts -- the latter must stay so any real delegate already holding those on-chain permission bits (e.g. DEC-0083's live-verified pauseUnpause delegate against the Gate-9 fixture) continues to decode/display correctly everywhere else permissions are shown, and the former is a live, already-deployed program capability that this pass does not revoke or redeploy. scripts/verify_delegate_wiring.ts and scripts/devnet_fixtures.ts, which reference the PAUSE_RESERVE/UNPAUSE_RESERVE permission bits as example values for testing the general delegate-permission mechanism (not the pause action itself), were confirmed unaffected and left untouched. Archived the pre-removal state as an annotated git tag, archive/pause-unpause-reserve-ui, pointing at commit 981594a (the last commit with the feature intact) -- includes exact restore instructions and a manifest of every file/function the removal touched, so bringing the feature back later is a small, well-scoped diff rather than an archaeology exercise.",
+  "context": "User asked to disable the pause option on Reserves for now, remove it from the UI and its supporting functions, and archive it in git in case it's wanted again later.",
+  "rationale": "Scoped the removal to exactly the app-level layers implementing the UI-exposed ACTION (SDK instruction builders + client wrapper + UI card), not the underlying protocol capability or the shared permission-bit vocabulary used to decode real on-chain data elsewhere in the app -- removing either of those would have been a materially bigger, riskier, and unrequested change (a program redeploy in the first case; broken/undecodable real delegate permissions in the second). A git tag (rather than, say, moving the removed code into a dedicated 'archive/' source directory that still ships in the bundle) was chosen as the archive mechanism because it fully preserves the exact pre-removal state, needs zero ongoing maintenance as the rest of the codebase evolves around it, and adds nothing to the shipped app -- restoring later is a normal git operation (diff/cherry-pick/checkout against the tag), not a search through dead code paths left lying around in the live tree.",
+  "alternativesConsidered": [
+    "Also remove the deployed on-chain pause_reserve/unpause_reserve instructions and rebuild/redeploy the program (rejected: a redeploy is a materially larger, riskier action than 'disable the UI for now' asked for, and was never requested)",
+    "Also remove PAUSE_RESERVE/UNPAUSE_RESERVE from onChainPermissions.ts's permission-flag vocabulary (rejected: these bits describe REAL on-chain delegate permission state that must keep decoding correctly wherever permissions are displayed, regardless of whether the app currently exposes an action for them)",
+    "Move the removed code into a dedicated archive/ directory inside the source tree instead of a git tag (rejected: would still ship as dead code in the bundle, or need its own build-exclusion wiring, for no benefit over a tag that costs nothing and fully preserves the exact prior state)"
+  ],
+  "impact": "Changed: src/merge/pages/ManageDTR.tsx (Pause/Unpause Card, canPauseOnChain/canUnpauseOnChain, Pause/Play icon imports removed), src/merge/lib/managementClient.ts (executePauseReserve/executeUnpauseReserve removed), packages/sdk/src/managementInstructions.ts (buildPauseReserveInstruction/buildUnpauseReserveInstruction removed). New: git tag archive/pause-unpause-reserve-ui at commit 981594a. 331/331 offline tests still passing (no test exercised the removed functions directly); tsc -b --force, tsc -p api/devnet/tsconfig.json, oxlint, npm run build all clean.",
+  "affectedAreas": [
+    "src/merge/pages/ManageDTR.tsx",
+    "src/merge/lib/managementClient.ts",
+    "packages/sdk/src/managementInstructions.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "331/331 offline tests passing (unchanged from DEC-0085 -- no test directly exercised executePauseReserve/executeUnpauseReserve/buildPauseReserveInstruction/buildUnpauseReserveInstruction), tsc -b --force, tsc -p api/devnet/tsconfig.json, oxlint, full npm run build all clean.",
+    "Repo-wide grep confirms zero remaining references to executePauseReserve/executeUnpauseReserve/buildPauseReserveInstruction/buildUnpauseReserveInstruction/canPauseOnChain/canUnpauseOnChain, and confirms scripts/verify_delegate_wiring.ts and scripts/devnet_fixtures.ts only reference the still-present PERMISSION_FLAGS.PAUSE_RESERVE/UNPAUSE_RESERVE bit constants, not any removed function.",
+    "git tag -v archive/pause-unpause-reserve-ui resolves to commit 981594a, the real last commit with the feature intact, with the full restore manifest in the tag message."
+  ]
+}
+```

@@ -189,26 +189,6 @@ export async function buildInitiateWindDownInstruction(
   return program.methods.initiateWindDown().accounts({ reserve, manager }).instruction();
 }
 
-/** Manager-or-permitted-delegate (PAUSE_RESERVE) only. Requires the Reserve to be genuinely Active on-chain -- see pause_reserve.rs. */
-export async function buildPauseReserveInstruction(
-  program: Program<anchor.Idl>,
-  reserve: PublicKey,
-  signer: PublicKey,
-  delegate: PublicKey,
-): Promise<TransactionInstruction> {
-  return program.methods.pauseReserve().accounts({ reserve, delegate, signer }).instruction();
-}
-
-/** Manager-or-permitted-delegate (UNPAUSE_RESERVE) only. Requires the Reserve to be genuinely Paused on-chain -- see unpause_reserve.rs. */
-export async function buildUnpauseReserveInstruction(
-  program: Program<anchor.Idl>,
-  reserve: PublicKey,
-  signer: PublicKey,
-  delegate: PublicKey,
-): Promise<TransactionInstruction> {
-  return program.methods.unpauseReserve().accounts({ reserve, delegate, signer }).instruction();
-}
-
 /**
  * Permissionless -- see collect_fees.rs's header comment: this only mints
  * already-accounted pending shares to fixed, Reserve/ProtocolConfig-

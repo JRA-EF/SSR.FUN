@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { formatPct, formatUsdc } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
-import { ChevronLeft, Shield, Users, Sliders, Save, Plus, X, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, Pause, Play, History, ExternalLink, Search } from "lucide-react";
+import { ChevronLeft, Shield, Users, Sliders, Save, Plus, X, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, History, ExternalLink, Search } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Slider } from "@/components/ui/slider";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
@@ -26,11 +26,9 @@ import {
   executeCollectFees,
   executeFundReserveAsset,
   executeInitiateWindDown,
-  executePauseReserve,
   executeRemoveDelegate,
   executeRemoveReserveAsset,
   executeSubmitRebalance,
-  executeUnpauseReserve,
   executeUpdateDelegatePermissions,
   type RebalanceAssetPlan,
 } from "@/lib/managementClient";
@@ -438,12 +436,6 @@ export function ManageDTR() {
   const canUpdateTargetsOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_TARGETS);
   const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
   const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
-  // PU-01 fix: pause_reserve/unpause_reserve are real, deployed, already-
-  // permission-checked-on-chain instructions that simply had no SDK/UI
-  // wiring anywhere before this -- see managementClient.ts's
-  // executePauseReserve/executeUnpauseReserve.
-  const canPauseOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.PAUSE_RESERVE);
-  const canUnpauseOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UNPAUSE_RESERVE);
   const canRemoveRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.REMOVE_RESTRICTED_DELEGATE);
   // Unified gate for the rebalance-edit table, shared by both the on-chain
   // (real permission) and simulated (local permission) branches.
@@ -892,46 +884,6 @@ export function ManageDTR() {
                   )}
                 </CardContent>
               </Card>
-
-              {dtr.onChain && (dtr.onChain.status === "active" || dtr.onChain.status === "paused") && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-xl font-merge-display flex items-center gap-2">
-                      {dtr.onChain.status === "paused" ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />} Pause / Unpause
-                    </CardTitle>
-                    <CardDescription>
-                      Pausing blocks new Buys/mints and management actions immediately; redemption stays available throughout (same as
-                      Wind Down). Unpausing restores normal operation. Root Manager or a delegate with the matching permission.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Current status:</span>
-                      <Badge variant={dtr.onChain.status === "active" ? "outline" : "secondary"} className="uppercase">{dtr.onChain.status}</Badge>
-                    </div>
-                    {dtr.onChain.status === "active" ? (
-                      <Button
-                        variant="outline"
-                        disabled={!canPauseOnChain || onChainTxPending !== null}
-                        title={!canPauseOnChain ? "You need the Root Manager or a delegate with Pause Reserve permission." : undefined}
-                        onClick={() => void runOnChainAction("Pause Reserve", () => executePauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
-                        className="gap-2"
-                      >
-                        <Pause className="w-4 h-4" /> {onChainTxPending === "Pause Reserve" ? "Confirming..." : "Pause Reserve"}
-                      </Button>
-                    ) : (
-                      <Button
-                        disabled={!canUnpauseOnChain || onChainTxPending !== null}
-                        title={!canUnpauseOnChain ? "You need the Root Manager or a delegate with Unpause Reserve permission." : undefined}
-                        onClick={() => void runOnChainAction("Unpause Reserve", () => executeUnpauseReserve(connection, walletCtx, dtr.onChain!.reserve))}
-                        className="gap-2"
-                      >
-                        <Play className="w-4 h-4" /> {onChainTxPending === "Unpause Reserve" ? "Confirming..." : "Unpause Reserve"}
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
 
               {dtr.onChain && (
                 <Card>

@@ -23,10 +23,8 @@ import {
   buildCollectFeesInstruction,
   buildFundNewReserveAssetInstruction,
   buildInitiateWindDownInstruction,
-  buildPauseReserveInstruction,
   buildRemoveDelegateInstruction,
   buildRemoveReserveAssetInstruction,
-  buildUnpauseReserveInstruction,
   buildUpdateDelegatePermissionsInstruction,
   buildUpdateTargetsInstruction,
   DEVNET_FIXTURES,
@@ -270,25 +268,6 @@ export async function executeRemoveDelegate(
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildRemoveDelegateInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, new PublicKey(delegateWallet));
-  return signAndSend(connection, wallet, new Transaction().add(ix));
-}
-
-/** PU-01 fix: pause_reserve/unpause_reserve were deployed, real, working instructions with zero SDK/UI wiring anywhere before this -- see buildPauseReserveInstruction's header comment. */
-export async function executePauseReserve(connection: Connection, wallet: WalletContextState, reserve: string): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
-  const program = buildReadOnlyProgram(connection) as any;
-  const reservePk = new PublicKey(reserve);
-  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
-  const ix = await buildPauseReserveInstruction(program, reservePk, wallet.publicKey, actingDelegate);
-  return signAndSend(connection, wallet, new Transaction().add(ix));
-}
-
-export async function executeUnpauseReserve(connection: Connection, wallet: WalletContextState, reserve: string): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
-  const program = buildReadOnlyProgram(connection) as any;
-  const reservePk = new PublicKey(reserve);
-  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
-  const ix = await buildUnpauseReserveInstruction(program, reservePk, wallet.publicKey, actingDelegate);
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
 
