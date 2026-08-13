@@ -13,7 +13,7 @@
 **Tester:** Claude (autonomous agent session), acting on behalf of the repository owner.
 **Date:** 2026-08-13.
 **Environment:** Solana DevNet (`https://api.devnet.solana.com`, submitted via a Helius RPC endpoint for reliability), program `2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW`, upgraded in this pass (upgrade signature `EQKWBsze7FLXWt1kYBL9vGbbGSdahd6v9comaaqvVzRPQAHDBJ88qUWbNXofDBSfiYzCHvTNmgRA2o2T1MSa8uJ`, slot 483439975). Frontend not yet re-deployed at the time transactions below were submitted (protocol-level verification only; frontend deploy is a separate step recorded in DECISION_LOG.md DEC-0093).
-**Commit:** the commit introducing this file (see `git log` / DEC-0093 in `docs/project/DECISION_LOG.md` for the exact hash).
+**Commit:** `8703e73` (pushed to `origin/main`).
 **Verification script:** `scripts/verify_winddown_closure_fees_2026_08_13.ts` (reusable; not deleted after use, unlike the earlier throwaway `_check_fee_collision.ts`).
 
 ## Status legend
