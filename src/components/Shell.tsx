@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, navigate, usePath } from '../lib/router'
+import { Link, usePath } from '../lib/router'
 import { useStore } from '../state/store'
 import { useAppStore } from '@/store/useAppStore'
 import { WalletModal } from './WalletModal'
 import { WalletPanel } from './WalletPanel'
+import { ReserveSearch } from './ReserveSearch'
 
 const LINKS = [
   { to: '/discover', label: 'Discover Reserves' },
@@ -11,32 +12,6 @@ const LINKS = [
   { to: '/portfolio', label: 'Portfolio' },
   { to: '/manage', label: 'Manage' },
 ]
-
-function NavSearch() {
-  const [q, setQ] = useState('')
-  return (
-    <form
-      className="nav-search"
-      role="search"
-      onSubmit={e => {
-        e.preventDefault()
-        navigate(q.trim() ? `/discover?q=${encodeURIComponent(q.trim())}` : '/discover')
-        setQ('')
-      }}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="11" cy="11" r="7" />
-        <path d="m20 20-3.5-3.5" />
-      </svg>
-      <input
-        placeholder="Search Reserves..."
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        aria-label="Search Reserves"
-      />
-    </form>
-  )
-}
 
 type Theme = 'dark' | 'light'
 
@@ -122,7 +97,7 @@ export function Shell({ children }: { children: ReactNode }) {
               </Link>
             ))}
           </nav>
-          <NavSearch />
+          <ReserveSearch />
           <ThemeToggle />
           {wallet.connected ? (
             <div className="wallet-panel-wrap">
