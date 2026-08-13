@@ -16,10 +16,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { DEVUSDC, DEVUSDC_MINT, fetchTokenBalanceRaw } from "@ssr/sdk";
-import { explorerUrl } from "@/lib/solana-config";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { InfoTip } from "@/components/InfoTip";
+import { TransactionConfirmedCard } from "@/components/TransactionConfirmation";
 
 type ClaimStatus = "idle" | "submitting" | "confirmed" | "failed";
 
@@ -135,14 +135,11 @@ export function DevnetOnboarding() {
               </Button>
             </div>
             {devUsdcClaim.status === "confirmed" && (
-              <p className="text-xs text-positive">
-                Confirmed on Solana DevNet.{" "}
-                {devUsdcClaim.signature && (
-                  <a href={explorerUrl("tx", devUsdcClaim.signature)} target="_blank" rel="noreferrer" className="underline">
-                    View transaction &rarr;
-                  </a>
-                )}
-              </p>
+              devUsdcClaim.signature ? (
+                <TransactionConfirmedCard headline="Confirmed on Solana DevNet" signature={devUsdcClaim.signature} size="xs" className="text-positive" />
+              ) : (
+                <p className="text-xs text-positive">Confirmed on Solana DevNet.</p>
+              )
             )}
             {devUsdcClaim.status === "failed" && <p className="text-xs text-destructive">{devUsdcClaim.error}</p>}
             <p className="text-[11px] text-muted-foreground">devUSDC has no monetary value and exists only for DevNet testing.</p>
@@ -167,14 +164,11 @@ export function DevnetOnboarding() {
               </Button>
             </div>
             {solClaim.status === "confirmed" && (
-              <p className="text-xs text-positive">
-                Confirmed on Solana DevNet.{" "}
-                {solClaim.signature && (
-                  <a href={explorerUrl("tx", solClaim.signature)} target="_blank" rel="noreferrer" className="underline">
-                    View transaction &rarr;
-                  </a>
-                )}
-              </p>
+              solClaim.signature ? (
+                <TransactionConfirmedCard headline="Confirmed on Solana DevNet" signature={solClaim.signature} size="xs" className="text-positive" />
+              ) : (
+                <p className="text-xs text-positive">Confirmed on Solana DevNet.</p>
+              )
             )}
             {solClaim.status === "failed" && <p className="text-xs text-destructive">{solClaim.error}</p>}
             <p className="text-[11px] text-muted-foreground">

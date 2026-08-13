@@ -5,6 +5,7 @@ import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD } from "@/lib/onChainReserve";
 import { explorerUrl } from "@/lib/solana-config";
+import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -395,7 +396,7 @@ export function ManageDTR() {
     setOnChainTxPending(label);
     try {
       const signature = await action();
-      toast({ title: "Transaction confirmed", description: `${label}: ${signature.slice(0, 20)}...` });
+      toast(transactionConfirmedToast(signature, `${label} confirmed`));
       await refreshRealReserveNow(extraCandidateMints);
     } catch (e) {
       toast({ variant: "destructive", title: `${label} failed`, description: e instanceof Error ? e.message : String(e) });

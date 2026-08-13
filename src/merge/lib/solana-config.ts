@@ -30,3 +30,9 @@ export function explorerUrl(kind: "address" | "tx", value: string): string {
   const cluster = SOLANA_CLUSTER === "mainnet-beta" ? "" : `?cluster=${SOLANA_CLUSTER}`;
   return `https://explorer.solana.com/${kind === "tx" ? "tx" : "address"}/${value}${cluster}`;
 }
+
+/** Solscan URL for an address or transaction signature, tagged with the correct cluster (omitted for Mainnet, which is Solscan's default). */
+export function solscanUrl(kind: "address" | "tx", value: string): string {
+  const cluster = SOLANA_CLUSTER === "mainnet-beta" ? "" : `?cluster=${SOLANA_CLUSTER}`;
+  return `https://solscan.io/${kind === "tx" ? "tx" : "account"}/${value}${cluster}`;
+}

@@ -20,7 +20,8 @@ import {
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
-import { explorerUrl } from "@/lib/solana-config";
+import { solscanUrl } from "@/lib/solana-config";
+import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -330,7 +331,26 @@ export function CreateDTR() {
       syncRealHolding(dtrId, "0", 1); // Placeholder holding entry -- RealReserveSync's next poll (or DTRDetail's own on-chain read) fills in the real balance/composition immediately; this just avoids a blank flash.
       toast({
         title: "Reserve deployment resumed and completed",
-        description: `Reserve: ${explorerUrl("address", result.reserve)}${result.transactions.seed ? ` · Seed tx: ${explorerUrl("tx", result.transactions.seed)}` : " (was already fully seeded by the earlier attempt)"}`,
+        description: (
+          <div className="space-y-1">
+            <div>
+              Reserve:{" "}
+              <a href={solscanUrl("address", result.reserve)} target="_blank" rel="noreferrer" className="underline">
+                View on Solscan
+              </a>
+            </div>
+            {result.transactions.seed ? (
+              <div className="flex items-center gap-2">
+                <a href={solscanUrl("tx", result.transactions.seed)} target="_blank" rel="noreferrer" className="underline">
+                  Seed transaction confirmed &mdash; View on Solscan
+                </a>
+                <CopySignatureButton signature={result.transactions.seed} size="xs" />
+              </div>
+            ) : (
+              <div>Was already fully seeded by the earlier attempt.</div>
+            )}
+          </div>
+        ),
       });
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {
@@ -626,7 +646,24 @@ export function CreateDTR() {
 
       toast({
         title: "Reserve deployed on Solana DevNet",
-        description: `Reserve: ${explorerUrl("address", result.reserve)}${result.transactions.createAndRegister ? ` · Create tx: ${explorerUrl("tx", result.transactions.createAndRegister)}` : ""}`,
+        description: (
+          <div className="space-y-1">
+            <div>
+              Reserve:{" "}
+              <a href={solscanUrl("address", result.reserve)} target="_blank" rel="noreferrer" className="underline">
+                View on Solscan
+              </a>
+            </div>
+            {result.transactions.createAndRegister && (
+              <div className="flex items-center gap-2">
+                <a href={solscanUrl("tx", result.transactions.createAndRegister)} target="_blank" rel="noreferrer" className="underline">
+                  Create transaction confirmed &mdash; View on Solscan
+                </a>
+                <CopySignatureButton signature={result.transactions.createAndRegister} size="xs" />
+              </div>
+            )}
+          </div>
+        ),
       });
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {

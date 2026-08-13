@@ -7,6 +7,7 @@ import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD } from "@/lib/onChainReserve";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
+import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import {
   AmbiguousConfirmationError,
   BALANCE_CACHE_TTL_MS,
@@ -446,14 +447,7 @@ export function DTRDetail() {
         await refreshRealReserveNow();
         recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
         setBuyAmount("");
-        toast({
-          title: "Buy confirmed on Solana DevNet",
-          description: (
-            <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
-              View transaction on Solana Explorer (DevNet) &rarr;
-            </a>
-          ),
-        });
+        toast(transactionConfirmedToast(signature, "Buy confirmed"));
       } else {
         toast({
           title: "Still verifying",
@@ -535,14 +529,7 @@ export function DTRDetail() {
       const spentUsdc = Number(devUsdcAmountRaw) / 10 ** DEVUSDC.decimals;
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
       setBuyAmount("");
-      toast({
-        title: "Buy confirmed on Solana DevNet",
-        description: (
-          <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
-            View transaction on Solana Explorer (DevNet) &rarr;
-          </a>
-        ),
-      });
+      toast(transactionConfirmedToast(signature, "Buy confirmed"));
     } catch (e) {
       if (e instanceof AmbiguousConfirmationError) {
         setBuyPhase("unresolved");
@@ -612,14 +599,7 @@ export function DTRDetail() {
         await refreshRealReserveNow();
         recordConfirmedTrade(dtr.id, "sell", redeemedTokens, redeemedTokens * (dtr.nav || 1));
         setSellAmount("");
-        toast({
-          title: "Sell confirmed on Solana DevNet",
-          description: (
-            <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
-              View transaction on Solana Explorer (DevNet) &rarr;
-            </a>
-          ),
-        });
+        toast(transactionConfirmedToast(signature, "Sell confirmed"));
       } else {
         toast({
           title: "Still verifying",
@@ -667,14 +647,7 @@ export function DTRDetail() {
       await refreshRealReserveNow();
       recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
       setSellAmount("");
-      toast({
-        title: "Sell confirmed on Solana DevNet",
-        description: (
-          <a href={explorerUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline">
-            View transaction on Solana Explorer (DevNet) &rarr;
-          </a>
-        ),
-      });
+      toast(transactionConfirmedToast(signature, "Sell confirmed"));
     } catch (e) {
       if (e instanceof AmbiguousConfirmationError) {
         setSellPhase("unresolved");
