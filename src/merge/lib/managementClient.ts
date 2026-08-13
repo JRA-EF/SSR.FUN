@@ -21,6 +21,9 @@ import {
   buildAddReserveAssetActiveInstruction,
   buildCloseReserveInstruction,
   buildCollectFeesInstruction,
+  buildCollectManagerFeeShareInstruction,
+  buildInitializeManagerFeeRecipientsInstruction,
+  buildUpdateFeeRecipientsInstruction,
   buildFundNewReserveAssetInstruction,
   buildInitiateWindDownInstruction,
   buildRemoveDelegateInstruction,
@@ -31,6 +34,7 @@ import {
   describeOnChainError,
   findDelegate,
   fetchProtocolConfig,
+  type RecipientInput,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 
@@ -302,6 +306,79 @@ export async function executeCollectFees(
     new PublicKey(managerFeeDestination),
     new PublicKey(protocolConfig.defaultProtocolFeeDestination),
     wallet.publicKey,
+  );
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+// --- DEC-0094: multi-recipient Manager fees ---
+
+/** Opts a Reserve into multi-recipient Manager fee routing for the first time. `recipients` must include the Primary Fee Destination if it's to keep any share, and allocations must sum to exactly 100%. */
+export async function executeInitializeManagerFeeRecipients(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  recipients: RecipientInput[],
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildInitializeManagerFeeRecipientsInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, wallet.publicKey, recipients);
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+/**
+ * Replaces an already-migrated Reserve's Manager fee routing. On-chain, this
+ * is blocked while any CURRENT recipient still has an uncollected pending
+ * balance -- so this auto-bundles one `collect_manager_fee_share` per
+ * current recipient with a nonzero `pendingFeeShares` into the SAME signed
+ * transaction ahead of the routing change, so the safety gate is invisible
+ * friction for the caller rather than a dead end requiring a separate step.
+ */
+export async function executeUpdateFeeRecipients(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  reserveTokenMint: string,
+  currentRecipients: { wallet: string; pendingFeeShares: string }[],
+  newRecipients: RecipientInput[],
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const reserveTokenMintPk = new PublicKey(reserveTokenMint);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+
+  const tx = new Transaction();
+  for (const r of currentRecipients) {
+    if (BigInt(r.pendingFeeShares) <= 0n) continue;
+    const collectIx = await buildCollectManagerFeeShareInstruction(program, programId, reservePk, reserveTokenMintPk, new PublicKey(r.wallet), wallet.publicKey, true);
+    tx.add(collectIx);
+  }
+  const updateIx = await buildUpdateFeeRecipientsInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, newRecipients);
+  tx.add(updateIx);
+  return signAndSend(connection, wallet, tx);
+}
+
+/** Permissionless -- pays out ONE named recipient's own accrued balance. `managerFeeRecipientsExists` should reflect whether this Reserve has opted into multi-recipient routing (fetchManagerFeeRecipients's `initialized` flag); the legacy fallback path is used when it hasn't. */
+export async function executeCollectManagerFeeShare(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  reserveTokenMint: string,
+  recipient: string,
+  managerFeeRecipientsExists: boolean,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const ix = await buildCollectManagerFeeShareInstruction(
+    program,
+    programId,
+    new PublicKey(reserve),
+    new PublicKey(reserveTokenMint),
+    new PublicKey(recipient),
+    wallet.publicKey,
+    managerFeeRecipientsExists,
   );
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }

@@ -258,6 +258,24 @@ export interface OnChainReserveMeta {
   pendingManagerFeeShares?: string;
   /** Pending protocol-share Reserve Token units accrued but not yet paid out -- read live from Reserve.feeConfig.pendingProtocolFeeShares. Raw base units. */
   pendingProtocolFeeShares?: string;
+  /** Configured (manager-set) gross Mint fee, in bps, read live from Reserve.feeConfig.mintFeeBps. */
+  mintFeeBps?: number;
+  /** Configured (manager-set) gross Annualized TVL fee, in bps, read live from Reserve.feeConfig.annualTvlFeeBps. */
+  tvlFeeBps?: number;
+  /**
+   * DEC-0094: effective Protocol/Manager split for the Mint fee and the
+   * Annualized TVL fee, computed fresh client-side via the same SSR.fun fee
+   * formula the on-chain program applies at every mint/accrual (see
+   * packages/sdk/src/feeMath.ts) -- always live/authoritative, unlike
+   * managerFeeShareBps/protocolFeeShareBps above (now just informational
+   * "last effective mint-fee split applied" telemetry).
+   */
+  effectiveMintFeeProtocolBps?: number;
+  effectiveMintFeeManagerBps?: number;
+  effectiveMintFeeTotalBps?: number;
+  effectiveTvlFeeProtocolBps?: number;
+  effectiveTvlFeeManagerBps?: number;
+  effectiveTvlFeeTotalBps?: number;
 }
 
 export type WalletProviderId = "phantom" | "solflare" | "backpack";

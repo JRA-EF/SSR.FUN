@@ -35,6 +35,7 @@ import {
   deriveNewReserveAddresses,
   buildCreateReserveInstruction,
   buildInitializeReserveAssetInstruction,
+  buildInitializeManagerFeeRecipientsInstruction,
   deriveReserveAssetAddresses,
   buildSeedReserveInstruction,
   fetchReserveOnChain,
@@ -42,6 +43,8 @@ import {
   findMintAuthority,
   findVaultAuthority,
   findProtocolConfig,
+  findDelegate,
+  validateFeeRecipientInputs,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   usdToSolLamports,
@@ -49,6 +52,7 @@ import {
   type NewReserveAddresses,
   type ReserveAssetAddresses,
   type ReserveOnChain,
+  type RecipientInput,
 } from "@ssr/sdk";
 import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 import { computeFundingShortfall, determineDeploymentResumePoint, type ReserveOnChainStatus } from "./createReserveResume";
@@ -435,6 +439,16 @@ export async function createReserveOnChain(params: {
   mintFeeBps: number;
   tvlFeeBps: number;
   feeDestination: PublicKey;
+  /**
+   * Manager fee recipients beyond the Primary Fee Destination (DEC-0094).
+   * When omitted or containing only the Primary at 100%, no extra
+   * instruction is needed -- `feeDestination` alone already covers that
+   * case. When >1 entries, `initializeManagerFeeRecipients` is bundled into
+   * the SAME create-and-register transaction. If provided, MUST include the
+   * Primary (`feeDestination`) as one entry and allocations must sum to
+   * exactly 100%.
+   */
+  feeRecipients?: RecipientInput[];
   assets: CreateReserveAssetInput[];
   seedTotalUsd: number;
   onProgress: (step: CreateReserveStep) => void;
@@ -454,28 +468,41 @@ export async function createReserveOnChain(params: {
 
   let createAndRegisterSig: string;
   try {
+    // DEC-0094: the Protocol/Manager fee split is no longer set here -- it's
+    // always derived on-chain, fresh at every mint/accrual, from
+    // mintFeeBps/tvlFeeBps alone (see packages/sdk/src/feeMath.ts and
+    // fee_math.rs). feeDestination is the Primary Fee Destination, the sole
+    // implicit Manager fee recipient unless additional recipients are
+    // configured below.
     const createIx = await buildCreateReserveInstruction(program, addresses, wallet.publicKey, {
       metadataUri: params.metadataUri,
       mintFeeBps: params.mintFeeBps,
       redemptionFeeBps: 0,
       tvlFeeBps: params.tvlFeeBps,
-      // 50/50 manager/protocol fee split -- see docs/project/DECISION_LOG.md's
-      // entry for this pass. Was hardcoded 8000/2000 (80/20); DEC-0032
-      // (2026-08-04) already flagged every FeeConfig default here as an
-      // explicit DevNet placeholder, "not final economics, pending a real
-      // fee-schedule decision" -- this is that decision. Only affects
-      // Reserves created from this point forward: manager_fee_share_bps/
-      // protocol_fee_share_bps are set once at create_reserve and are
-      // immutable on-chain (no update_fee_config instruction exists), so an
-      // already-created Reserve keeps whatever split it was created with.
-      managerFeeShareBps: 5000,
-      protocolFeeShareBps: 5000,
       feeDestination: params.feeDestination,
     });
     const registerIxs = await Promise.all(
       params.assets.map((a, i) => buildInitializeReserveAssetInstruction(program, addresses, assetAddresses[i], wallet.publicKey!, a.weightBps)),
     );
-    createAndRegisterSig = await signAndSend(connection, wallet, [createIx, ...registerIxs]);
+
+    const ixs: TransactionInstruction[] = [createIx, ...registerIxs];
+    const recipients = params.feeRecipients;
+    if (recipients && recipients.length > 1) {
+      validateFeeRecipientInputs(recipients);
+      const [delegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
+      const initRecipientsIx = await buildInitializeManagerFeeRecipientsInstruction(
+        program,
+        programId,
+        addresses.reserve,
+        wallet.publicKey,
+        delegate,
+        wallet.publicKey,
+        recipients,
+      );
+      ixs.push(initRecipientsIx);
+    }
+
+    createAndRegisterSig = await signAndSend(connection, wallet, ixs);
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses);
   }

@@ -14,6 +14,12 @@
       "includeFiles": "packages/sdk/**"
     }
   },
+  "crons": [
+    {
+      "path": "/api/devnet/accrue-fees-cron",
+      "schedule": "0 6 * * 1"
+    }
+  ],
   "rewrites": [
     { "source": "/internal/status", "destination": "/internal-status.html" },
     { "source": "/internal/feedback", "destination": "/internal-feedback.html" },

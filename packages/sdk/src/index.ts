@@ -1,5 +1,6 @@
 export * from "./pda";
 export * from "./calculations";
+export * from "./feeMath";
 export * from "./client";
 export * from "./fixtures";
 export * from "./readOnly";

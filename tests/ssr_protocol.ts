@@ -153,8 +153,9 @@ describe("ssr_protocol", () => {
           50, // mint_fee_bps, matches DEC-0013 provisional default
           0, // redemption_fee_bps
           100, // annual_tvl_fee_bps
-          8000, // manager_fee_share_bps
-          2000, // protocol_fee_share_bps
+          // DEC-0094: manager_fee_share_bps/protocol_fee_share_bps removed --
+          // the Protocol/Manager split is now always derived on-chain from
+          // mint_fee_bps/annual_tvl_fee_bps alone.
           reserveManager.publicKey, // fee_destination
         )
         .accounts({

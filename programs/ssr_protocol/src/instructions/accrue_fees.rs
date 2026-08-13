@@ -1,10 +1,15 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::Mint as SplMint;
 
-use crate::constants::{BPS_DENOMINATOR, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, SECONDS_PER_DAY};
+use super::common::credit_manager_fee_shares;
+use crate::constants::{
+    BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, RESERVE_SEED,
+    RESERVE_TOKEN_MINT_SEED, SECONDS_PER_DAY,
+};
 use crate::errors::SsrError;
-use crate::events::FeesAccrued;
-use crate::state::Reserve;
+use crate::events::{FeesAccrued, ManagerFeeAccrualSource};
+use crate::fee_math::{split_configured_bps, split_total_fee};
+use crate::state::{ManagerFeeRecipients, Reserve};
 
 /// Permissionless, matching the reference protocol's own `distributeFees`
 /// being callable by anyone (RESERVE_REFERENCE_ANALYSIS.md section 8) --
@@ -20,6 +25,15 @@ use crate::state::Reserve;
 /// linear accrual is deterministic, simple to audit, and close enough at
 /// the fee magnitudes involved (single-digit % APY) for a first DevNet
 /// release -- revisit before Mainnet if exact compounding parity matters.
+///
+/// DEC-0094: this is now ALSO called internally (via [`checkpoint_tvl_fee`])
+/// from `mint_reserve_tokens_in_kind` and `redeem_reserve_tokens_in_kind`, so
+/// a normal mint/redeem checkpoints the TVL fee for free in the same
+/// transaction ("settle during normal Reserve transactions" -- see the
+/// task's cadence requirement). This standalone instruction remains the
+/// permissionless fallback for a dormant Reserve -- see
+/// `api/devnet/accrue-fees-cron.ts`'s weekly keeper, which guarantees this
+/// runs at least every ~25-30 days even with zero organic activity.
 #[derive(Accounts)]
 pub struct AccrueFees<'info> {
     #[account(
@@ -35,10 +49,37 @@ pub struct AccrueFees<'info> {
         address = reserve.reserve_token_mint,
     )]
     pub reserve_token_mint: Account<'info, SplMint>,
+
+    /// Optional (DEC-0094): pass the program ID itself as a "None" sentinel
+    /// for a Reserve that hasn't opted into multi-recipient routing. See
+    /// `state/manager_fee_recipients.rs` and `common::credit_manager_fee_shares`.
+    #[account(
+        mut,
+        seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
+        bump = manager_fee_recipients.bump,
+    )]
+    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
 }
 
 pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
-    let reserve = &ctx.accounts.reserve;
+    let supply = ctx.accounts.reserve_token_mint.supply;
+    checkpoint_tvl_fee(
+        &mut ctx.accounts.reserve,
+        &mut ctx.accounts.manager_fee_recipients,
+        supply,
+    )
+}
+
+/// Core TVL-fee checkpoint, shared by the standalone `accrue_fees`
+/// instruction and the mint/redeem piggyback call sites. A safe no-op if
+/// less than one full day has elapsed since the last checkpoint -- callers
+/// may invoke this as often as they like (e.g. every single mint/redeem)
+/// with zero risk of double-charging.
+pub fn checkpoint_tvl_fee<'info>(
+    reserve: &mut Account<'info, Reserve>,
+    manager_fee_recipients: &mut Option<Account<'info, ManagerFeeRecipients>>,
+    reserve_token_mint_supply: u64,
+) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let elapsed_seconds = now
         .checked_sub(reserve.fee_config.last_fee_accrual_ts)
@@ -47,13 +88,18 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
 
     if elapsed_days <= 0 {
         // No-op: nothing has crossed a full day boundary yet. Not an error --
-        // callers may poke this frequently without penalty.
+        // callers (including every mint/redeem) may poke this frequently
+        // without penalty.
         return Ok(());
     }
 
-    let supply = ctx.accounts.reserve_token_mint.supply as u128;
+    let supply = reserve_token_mint_supply as u128;
+    let configured_bps = reserve.fee_config.annual_tvl_fee_bps;
+    let (protocol_bps, manager_bps) = split_configured_bps(configured_bps, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
+    let effective_total_bps = (protocol_bps as u128) + (manager_bps as u128);
+
     let numerator = supply
-        .checked_mul(reserve.fee_config.annual_tvl_fee_bps as u128)
+        .checked_mul(effective_total_bps)
         .ok_or(error!(SsrError::MathOverflow))?
         .checked_mul(elapsed_days as u128)
         .ok_or(error!(SsrError::MathOverflow))?;
@@ -67,18 +113,8 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
     let total_fee_shares =
         u64::try_from(total_fee_shares_u128).map_err(|_| error!(SsrError::MathOverflow))?;
 
-    // manager_fee_shares floor-rounded, protocol_fee_shares is the EXACT
-    // remainder -- see the identical fix + rationale in
-    // mint_reserve_tokens_in_kind.rs: guarantees
-    // manager_fee_shares + protocol_fee_shares == total_fee_shares exactly,
-    // valid because create_reserve now requires the two share bps to sum to
-    // exactly BPS_DENOMINATOR.
-    let manager_fee_shares = ((total_fee_shares as u128)
-        * (reserve.fee_config.manager_fee_share_bps as u128)
-        / (BPS_DENOMINATOR as u128)) as u64;
-    let protocol_fee_shares = total_fee_shares
-        .checked_sub(manager_fee_shares)
-        .ok_or(error!(SsrError::MathUnderflow))?;
+    let (protocol_fee_shares, manager_fee_shares) =
+        split_total_fee(total_fee_shares, protocol_bps, manager_bps)?;
 
     let accrued_until_ts = reserve
         .fee_config
@@ -90,18 +126,19 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
         )
         .ok_or(error!(SsrError::MathOverflow))?;
 
-    let reserve = &mut ctx.accounts.reserve;
-    reserve.fee_config.pending_manager_fee_shares = reserve
-        .fee_config
-        .pending_manager_fee_shares
-        .checked_add(manager_fee_shares)
-        .ok_or(error!(SsrError::MathOverflow))?;
     reserve.fee_config.pending_protocol_fee_shares = reserve
         .fee_config
         .pending_protocol_fee_shares
         .checked_add(protocol_fee_shares)
         .ok_or(error!(SsrError::MathOverflow))?;
     reserve.fee_config.last_fee_accrual_ts = accrued_until_ts;
+
+    credit_manager_fee_shares(
+        reserve,
+        manager_fee_recipients,
+        manager_fee_shares,
+        ManagerFeeAccrualSource::AnnualTvlFee,
+    )?;
 
     emit!(FeesAccrued {
         reserve: reserve.key(),

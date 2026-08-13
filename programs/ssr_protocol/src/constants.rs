@@ -19,6 +19,9 @@ pub const RESERVE_TOKEN_MINT_SEED: &[u8] = b"reserve_token_mint";
 pub const MINT_AUTHORITY_SEED: &[u8] = b"mint_authority";
 /// PDA seed prefix for a `Delegate` account (combined with `reserve` + `wallet`).
 pub const DELEGATE_SEED: &[u8] = b"delegate";
+/// PDA seed prefix for a `ManagerFeeRecipients` account (combined with `reserve`).
+/// See DEC-0094 (multi-recipient Manager fees) and state/manager_fee_recipients.rs.
+pub const MANAGER_FEE_RECIPIENTS_SEED: &[u8] = b"manager_fee_recipients";
 
 /// Reserve Token decimals. See docs/protocol/SSR_ARCHITECTURE.md section 2.
 pub const RESERVE_TOKEN_DECIMALS: u8 = 6;
@@ -59,14 +62,28 @@ pub const MIN_SEED_AMOUNT_PER_ASSET: u64 = 1_000; // smallest-unit amount, pre-d
 pub const DEFAULT_MINT_FEE_BPS: u16 = 50; // 0.50%
 pub const DEFAULT_REDEMPTION_FEE_BPS: u16 = 0; // not charged in v1
 pub const DEFAULT_ANNUAL_TVL_FEE_BPS: u16 = 100; // 1.00% / year
-pub const DEFAULT_MANAGER_FEE_SHARE_BPS: u16 = 8000; // 80% of collected fee pool
-pub const DEFAULT_PROTOCOL_FEE_SHARE_BPS: u16 = 2000; // 20% of collected fee pool
+
+/// SSR.fun Protocol/Manager fee-split formula (DEC-0094): applied
+/// independently to the Mint fee and the Annualized TVL fee, computed fresh
+/// at every accrual (never a caller-chosen ratio -- see fee_math.rs):
+///   protocol_bps = max(PROTOCOL_MIN_..._FEE_BPS, configured_bps / 2)
+///   manager_bps  = max(configured_bps - protocol_bps, 0)
+/// Both floors are 0.5% today; kept as two separate constants (rather than
+/// one shared one) because the task's rules name them independently and a
+/// future divergence between mint/TVL floors should not require touching
+/// unrelated call sites.
+pub const PROTOCOL_MIN_MINT_FEE_BPS: u16 = 50; // 0.5%
+pub const PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS: u16 = 50; // 0.5%
 
 /// Absolute caps no FeeConfig update may exceed, regardless of who's
 /// authorized to change fees -- distinct from the *default* values above.
 pub const MAX_MINT_FEE_BPS: u16 = 500; // 5%
 pub const MAX_REDEMPTION_FEE_BPS: u16 = 500; // 5%
 pub const MAX_ANNUAL_TVL_FEE_BPS: u16 = 1000; // 10%/year, matches reference protocol's own cap
+
+/// Maximum number of Manager fee recipients a Reserve may configure at once,
+/// including the Primary Fee Destination. See DEC-0094 / state/manager_fee_recipients.rs.
+pub const MAX_FEE_RECIPIENTS: u8 = 10;
 
 /// Seconds in a day, used for the daily-boundary TVL fee accrual checkpoint
 /// (adopting the reference protocol's discrete-daily-snapshot pattern rather

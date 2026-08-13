@@ -35,6 +35,7 @@ use anchor_lang::prelude::*;
 pub mod constants;
 pub mod errors;
 pub mod events;
+pub mod fee_math;
 pub mod instructions;
 pub mod state;
 
@@ -64,15 +65,12 @@ pub mod ssr_protocol {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_reserve<'info>(
         ctx: Context<'info, CreateReserve<'info>>,
         metadata_uri: String,
         mint_fee_bps: u16,
         redemption_fee_bps: u16,
         annual_tvl_fee_bps: u16,
-        manager_fee_share_bps: u16,
-        protocol_fee_share_bps: u16,
         fee_destination: Pubkey,
     ) -> Result<()> {
         instructions::create_reserve::handler(
@@ -81,8 +79,6 @@ pub mod ssr_protocol {
             mint_fee_bps,
             redemption_fee_bps,
             annual_tvl_fee_bps,
-            manager_fee_share_bps,
-            protocol_fee_share_bps,
             fee_destination,
         )
     }
@@ -176,6 +172,28 @@ pub mod ssr_protocol {
 
     pub fn collect_fees<'info>(ctx: Context<'info, CollectFees<'info>>) -> Result<()> {
         instructions::collect_fees::handler(ctx)
+    }
+
+    // --- DEC-0094: multi-recipient Manager fees ---
+
+    pub fn initialize_manager_fee_recipients<'info>(
+        ctx: Context<'info, InitializeManagerFeeRecipients<'info>>,
+        recipients: Vec<crate::state::FeeRecipientInput>,
+    ) -> Result<()> {
+        instructions::initialize_manager_fee_recipients::handler(ctx, recipients)
+    }
+
+    pub fn update_fee_recipients<'info>(
+        ctx: Context<'info, UpdateFeeRecipients<'info>>,
+        recipients: Vec<crate::state::FeeRecipientInput>,
+    ) -> Result<()> {
+        instructions::update_fee_recipients::handler(ctx, recipients)
+    }
+
+    pub fn collect_manager_fee_share<'info>(
+        ctx: Context<'info, CollectManagerFeeShare<'info>>,
+    ) -> Result<()> {
+        instructions::collect_manager_fee_share::handler(ctx)
     }
 
     pub fn record_rebalance<'info>(

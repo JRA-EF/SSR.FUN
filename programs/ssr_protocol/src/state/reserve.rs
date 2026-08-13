@@ -40,19 +40,27 @@ pub enum ReserveStatus {
 }
 
 /// All fee values here are explicit DevNet placeholders, not final economics.
-/// See DEC-0013.
+/// See DEC-0013. `mint_fee_bps`/`annual_tvl_fee_bps` are each the
+/// "configured" (manager-set) gross rate -- the actual EFFECTIVE rate
+/// charged, and its Protocol/Manager split, is derived fresh at every
+/// mint/accrual by `fee_math::split_configured_bps` (DEC-0094), never a
+/// value stored or chosen here.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
 pub struct FeeConfig {
     pub mint_fee_bps: u16,
     pub redemption_fee_bps: u16,
     pub annual_tvl_fee_bps: u16,
-    /// Manager's share of the collected fee pool, out of BPS_DENOMINATOR.
+    /// DEC-0094: repurposed as program-maintained, informational telemetry
+    /// only -- "the effective Manager mint-fee bps last applied," written by
+    /// `mint_reserve_tokens_in_kind` every time it runs. NEVER read for
+    /// control flow and NOT caller-configurable (pre-DEC-0094 Reserves may
+    /// still carry their original create-time value here until their next
+    /// mint recomputes it). The real, current split for any Reserve is
+    /// always `fee_math::split_configured_bps(mint_fee_bps, ..)`, evaluated
+    /// live, not this field.
     pub manager_fee_share_bps: u16,
-    /// Protocol's share of the collected fee pool, out of BPS_DENOMINATOR.
-    /// `manager_fee_share_bps + protocol_fee_share_bps` need not equal
-    /// BPS_DENOMINATOR; any residual is intentionally left unminted (burned
-    /// in effect, mirroring the reference protocol's `folioFeeForSelf`
-    /// concept) rather than silently dropped or misattributed.
+    /// DEC-0094: same repurposing as `manager_fee_share_bps` above, but for
+    /// the effective Protocol mint-fee bps.
     pub protocol_fee_share_bps: u16,
     pub fee_destination: Pubkey,
     /// Unix timestamp of the last `accrue_fees` checkpoint. TVL fee accrues

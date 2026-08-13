@@ -65,11 +65,18 @@ use crate::state::{permission_flags, Reserve, ReserveAsset};
 /// underlying claim was otherwise unverified.
 #[derive(Accounts)]
 pub struct ExecuteRebalanceLeg<'info> {
+    // Boxed: this Accounts struct already has 15 fields, and its generated
+    // `try_accounts` overflowed Solana's 4096-byte BPF stack frame limit by
+    // 128 bytes before this (first-ever `cargo build-sbf` run for this
+    // never-before-built instruction -- see the module's own "NOT YET
+    // BUILT/DEPLOYED" header). Boxing the single largest account struct
+    // moves it to the heap, well clear of the limit -- the standard Anchor
+    // fix for this class of error, not a functional change.
     #[account(
         seeds = [RESERVE_SEED, reserve.reserve_id.to_le_bytes().as_ref()],
         bump = reserve.bump,
     )]
-    pub reserve: Account<'info, Reserve>,
+    pub reserve: Box<Account<'info, Reserve>>,
 
     /// CHECK: see `common::require_reserve_permission`.
     pub delegate: UncheckedAccount<'info>,
@@ -140,7 +147,11 @@ pub struct ExecuteRebalanceLeg<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<ExecuteRebalanceLeg>, amount_in: u64, minimum_amount_out: u64) -> Result<()> {
+pub fn handler<'info>(
+    ctx: Context<'info, ExecuteRebalanceLeg<'info>>,
+    amount_in: u64,
+    minimum_amount_out: u64,
+) -> Result<()> {
     ctx.accounts.reserve.require_not_paused()?;
     require!(amount_in > 0, SsrError::ZeroValue);
 
@@ -226,7 +237,7 @@ pub fn handler(ctx: Context<ExecuteRebalanceLeg>, amount_in: u64, minimum_amount
         token_program: ctx.accounts.token_program.to_account_info(),
     };
     let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.amm_program.to_account_info(),
+        ctx.accounts.amm_program.key(),
         cpi_accounts,
         signer_seeds,
     );

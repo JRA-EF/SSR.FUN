@@ -78,6 +78,46 @@
               }
             ]
           }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
         }
       ],
       "args": []
@@ -473,6 +513,46 @@
                   105,
                   116,
                   121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
                 ]
               },
               {
@@ -1002,14 +1082,6 @@
         },
         {
           "name": "annual_tvl_fee_bps",
-          "type": "u16"
-        },
-        {
-          "name": "manager_fee_share_bps",
-          "type": "u16"
-        },
-        {
-          "name": "protocol_fee_share_bps",
           "type": "u16"
         },
         {
@@ -1681,6 +1753,46 @@
           "signer": true
         },
         {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
@@ -1927,6 +2039,46 @@
         {
           "name": "redeemer",
           "signer": true
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
         },
         {
           "name": "token_program",
@@ -2814,6 +2966,281 @@
           }
         }
       ]
+    },
+    {
+      "name": "initialize_manager_fee_recipients",
+      "discriminator": [
+        50,
+        162,
+        159,
+        92,
+        109,
+        82,
+        125,
+        95
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [114, 101, 115, 101, 114, 118, 101]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 97, 110, 97, 103, 101, 114, 95, 102, 101, 101, 95, 114, 101, 99, 105, 112, 105, 101, 110, 116, 115]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delegate",
+          "docs": [
+            "see `common::require_reserve_permission`."
+          ]
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "recipients",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "FeeRecipientInput"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_fee_recipients",
+      "discriminator": [
+        24,
+        65,
+        38,
+        202,
+        8,
+        234,
+        8,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [114, 101, 115, 101, 114, 118, 101]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 97, 110, 97, 103, 101, 114, 95, 102, 101, 101, 95, 114, 101, 99, 105, 112, 105, 101, 110, 116, 115]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delegate",
+          "docs": [
+            "see `common::require_reserve_permission`."
+          ]
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "recipients",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "FeeRecipientInput"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "collect_manager_fee_share",
+      "discriminator": [
+        74,
+        74,
+        66,
+        106,
+        104,
+        255,
+        88,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [114, 101, 115, 101, 114, 118, 101]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_token_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [114, 101, 115, 101, 114, 118, 101, 95, 116, 111, 107, 101, 110, 95, 109, 105, 110, 116]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 105, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 97, 110, 97, 103, 101, 114, 95, 102, 101, 101, 95, 114, 101, 99, 105, 112, 105, 101, 110, 116, 115]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recipient",
+          "docs": [
+            "the recipient being paid out -- validated in the handler."
+          ]
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "recipient"
+              },
+              {
+                "kind": "const",
+                "value": [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]
+              },
+              {
+                "kind": "account",
+                "path": "reserve_token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]
+            }
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -2828,6 +3255,19 @@
         38,
         38,
         247
+      ]
+    },
+    {
+      "name": "ManagerFeeRecipients",
+      "discriminator": [
+        243,
+        176,
+        244,
+        130,
+        159,
+        220,
+        15,
+        116
       ]
     },
     {
@@ -2921,6 +3361,45 @@
         90,
         12,
         191
+      ]
+    },
+    {
+      "name": "ManagerFeeRecipientsConfigured",
+      "discriminator": [
+        140,
+        93,
+        123,
+        47,
+        78,
+        197,
+        87,
+        86
+      ]
+    },
+    {
+      "name": "ManagerFeeShareAccrued",
+      "discriminator": [
+        220,
+        74,
+        90,
+        65,
+        16,
+        200,
+        54,
+        37
+      ]
+    },
+    {
+      "name": "ManagerFeeShareCollected",
+      "discriminator": [
+        185,
+        2,
+        88,
+        9,
+        152,
+        191,
+        72,
+        169
       ]
     },
     {
@@ -3391,6 +3870,56 @@
       "code": 6043,
       "name": "PendingFeesNotCollected",
       "msg": "close_reserve requires every pending fee share (manager and protocol) to be collected first -- call collect_fees, then retry."
+    },
+    {
+      "code": 6044,
+      "name": "InvalidFeeRecipientCount",
+      "msg": "Manager fee recipient list must contain between 1 and MAX_FEE_RECIPIENTS entries."
+    },
+    {
+      "code": 6045,
+      "name": "DuplicateFeeRecipientWallet",
+      "msg": "Manager fee recipient wallets must be unique -- this wallet appears more than once."
+    },
+    {
+      "code": 6046,
+      "name": "ZeroFeeRecipientAllocation",
+      "msg": "Manager fee recipient allocation must be greater than zero."
+    },
+    {
+      "code": 6047,
+      "name": "FeeRecipientZeroAddress",
+      "msg": "Manager fee recipient wallet must not be the default/zero address."
+    },
+    {
+      "code": 6048,
+      "name": "FeeRecipientAllocationNotFull",
+      "msg": "Manager fee recipient allocations must sum to exactly 10,000 basis points (100% of the Manager's share)."
+    },
+    {
+      "code": 6049,
+      "name": "PendingFeesBlockRoutingChange",
+      "msg": "This routing change is blocked because at least one current recipient still has an uncollected pending fee share -- collect it first so the change can never reallocate already-accrued fees."
+    },
+    {
+      "code": 6050,
+      "name": "RecipientNotFound",
+      "msg": "This wallet is not a configured Manager fee recipient for this Reserve."
+    },
+    {
+      "code": 6051,
+      "name": "ManagerFeeRecipientsMismatch",
+      "msg": "This ManagerFeeRecipients account does not belong to the supplied Reserve."
+    },
+    {
+      "code": 6052,
+      "name": "ManagerFeeRecipientsAlreadyInitialized",
+      "msg": "A ManagerFeeRecipients account already exists for this Reserve -- use update_fee_recipients instead."
+    },
+    {
+      "code": 6053,
+      "name": "PendingManagerFeeSharesNotCollected",
+      "msg": "close_reserve requires every Manager fee recipient's pending fee share to be collected first."
     }
   ],
   "types": [
@@ -3578,6 +4107,214 @@
           {
             "name": "pending_protocol_fee_shares",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeRecipientInput",
+      "docs": [
+        "Caller-supplied instruction argument for initialize_manager_fee_recipients",
+        "and update_fee_recipients -- one entry per desired recipient."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "allocation_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeRecipientSlot",
+      "docs": [
+        "One Manager fee recipient slot. allocation_bps is the recipient's share",
+        "of the MANAGER's pool (never of the total assessed fee)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "allocation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "pending_fee_shares",
+            "type": "u64"
+          },
+          {
+            "name": "collected_fee_shares",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeAccrualSource",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "MintFee"
+          },
+          {
+            "name": "AnnualTvlFee"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeRecipients",
+      "docs": [
+        "Up to MAX_FEE_RECIPIENTS Manager fee recipients for one Reserve. A",
+        "separate, additive account (NOT a field grown onto Reserve/FeeConfig)",
+        "so no already-initialized Reserve account ever needs a realloc/migration."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "schema_version",
+            "type": "u8"
+          },
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient_count",
+            "type": "u8"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "FeeRecipientSlot"
+                  }
+                },
+                10
+              ]
+            }
+          },
+          {
+            "name": "routing_updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeRecipientsConfigured",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "allocations_bps",
+            "type": {
+              "vec": "u16"
+            }
+          },
+          {
+            "name": "configured_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "routing_updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeShareAccrued",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "amounts",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "source",
+            "type": {
+              "defined": {
+                "name": "ManagerFeeAccrualSource"
+              }
+            }
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeShareCollected",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "collected_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
           }
         ]
       }

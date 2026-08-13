@@ -36,6 +36,7 @@ import { unpackAccount, unpackMint } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "./readOnly";
 import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault } from "./pda";
 import { withRateLimitRetry } from "./rpcResilience";
+import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
 
 /**
  * Solana's `getMultipleAccounts` accepts up to ~100 pubkeys per call --
@@ -110,6 +111,15 @@ export interface DiscoveredReserve {
   feeDestination: string;
   pendingManagerFeeShares: string;
   pendingProtocolFeeShares: string;
+  /** Unix seconds of the last accrue_fees checkpoint -- used by api/devnet/accrue-fees-cron.ts to find dormant Reserves needing a TVL-fee catch-up. */
+  lastFeeAccrualTs: string;
+  /** DEC-0094: effective Protocol/Manager split, computed fresh via feeMath.computeEffectiveFeeSplit -- see ReserveOnChain's identical fields in readOnly.ts for the full explanation. */
+  effectiveMintFeeProtocolBps: number;
+  effectiveMintFeeManagerBps: number;
+  effectiveMintFeeTotalBps: number;
+  effectiveTvlFeeProtocolBps: number;
+  effectiveTvlFeeManagerBps: number;
+  effectiveTvlFeeTotalBps: number;
   metadataUri: string;
   reserveTokenSupplyRaw: string;
   /** Verified on-chain count of granted delegates -- see `discoverDelegatesForReserve` for resolving actual wallets. */
@@ -310,6 +320,13 @@ export async function discoverAllReserves(
       feeDestination: reserveAccount.feeConfig.feeDestination.toBase58(),
       pendingManagerFeeShares: reserveAccount.feeConfig.pendingManagerFeeShares.toString(),
       pendingProtocolFeeShares: reserveAccount.feeConfig.pendingProtocolFeeShares.toString(),
+      lastFeeAccrualTs: reserveAccount.feeConfig.lastFeeAccrualTs.toString(),
+      effectiveMintFeeProtocolBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).protocolBps),
+      effectiveMintFeeManagerBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).managerBps),
+      effectiveMintFeeTotalBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).effectiveTotalBps),
+      effectiveTvlFeeProtocolBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS).protocolBps),
+      effectiveTvlFeeManagerBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS).managerBps),
+      effectiveTvlFeeTotalBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS).effectiveTotalBps),
       metadataUri: reserveAccount.metadataUri,
       reserveTokenSupplyRaw: supplyByMint.get(reserveAccount.reserveTokenMint.toBase58()) ?? "0",
       delegateCount: reserveAccount.delegateCount,

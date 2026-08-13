@@ -119,4 +119,27 @@ pub enum SsrError {
     // errors that were never touched by this change.
     #[msg("close_reserve requires every pending fee share (manager and protocol) to be collected first -- call collect_fees, then retry.")]
     PendingFeesNotCollected,
+
+    // --- Manager fee recipients (DEC-0094, multi-recipient Manager fees) ---
+    // Appended at the end deliberately -- same append-only rule as above.
+    #[msg("Manager fee recipient list must contain between 1 and MAX_FEE_RECIPIENTS entries.")]
+    InvalidFeeRecipientCount,
+    #[msg("Manager fee recipient wallets must be unique -- this wallet appears more than once.")]
+    DuplicateFeeRecipientWallet,
+    #[msg("Manager fee recipient allocation must be greater than zero.")]
+    ZeroFeeRecipientAllocation,
+    #[msg("Manager fee recipient wallet must not be the default/zero address.")]
+    FeeRecipientZeroAddress,
+    #[msg("Manager fee recipient allocations must sum to exactly 10,000 basis points (100% of the Manager's share).")]
+    FeeRecipientAllocationNotFull,
+    #[msg("This routing change is blocked because at least one current recipient still has an uncollected pending fee share -- collect it first so the change can never reallocate already-accrued fees.")]
+    PendingFeesBlockRoutingChange,
+    #[msg("This wallet is not a configured Manager fee recipient for this Reserve.")]
+    RecipientNotFound,
+    #[msg("This ManagerFeeRecipients account does not belong to the supplied Reserve.")]
+    ManagerFeeRecipientsMismatch,
+    #[msg("A ManagerFeeRecipients account already exists for this Reserve -- use update_fee_recipients instead.")]
+    ManagerFeeRecipientsAlreadyInitialized,
+    #[msg("close_reserve requires every Manager fee recipient's pending fee share to be collected first.")]
+    PendingManagerFeeSharesNotCollected,
 }

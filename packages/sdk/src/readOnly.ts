@@ -9,7 +9,8 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
-import { findReserveAsset, findReserveVault } from "./pda";
+import { findReserveAsset, findReserveVault, findManagerFeeRecipients } from "./pda";
+import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
 
 /**
  * A transient RPC failure (429/timeout) while reading token supply must
@@ -117,10 +118,25 @@ export interface ReserveOnChain {
   managerFeeShareBps: number;
   /** Protocol's share of every collected fee, in bps of the fee (not of the trade) -- read live from Reserve.feeConfig. */
   protocolFeeShareBps: number;
-  /** Pending Manager-share Reserve Token units accrued but not yet paid out, read live from Reserve.feeConfig -- raw base units. */
+  /** Pending Manager-share Reserve Token units accrued but not yet paid out, read live from Reserve.feeConfig -- raw base units. Stays 0 forever once a Reserve opts into multi-recipient routing (see ManagerFeeRecipients). */
   pendingManagerFeeShares: string;
   /** Pending protocol-share Reserve Token units accrued but not yet paid out, read live from Reserve.feeConfig -- raw base units. */
   pendingProtocolFeeShares: string;
+  /**
+   * DEC-0094: effective Protocol/Manager split for the Mint fee and the
+   * Annualized TVL fee, computed fresh client-side via the SAME formula the
+   * on-chain program applies at every mint/accrual (packages/sdk/src/feeMath.ts)
+   * -- never trust `managerFeeShareBps`/`protocolFeeShareBps` above for this
+   * (those are now just informational "last effective mint-fee split
+   * applied" telemetry, not live/authoritative). `effectiveMintFeeTotalBps`
+   * can exceed `mintFeeBps` when `mintFeeBps` is below the Protocol floor.
+   */
+  effectiveMintFeeProtocolBps: number;
+  effectiveMintFeeManagerBps: number;
+  effectiveMintFeeTotalBps: number;
+  effectiveTvlFeeProtocolBps: number;
+  effectiveTvlFeeManagerBps: number;
+  effectiveTvlFeeTotalBps: number;
   metadataUri: string;
   reserveTokenSupplyRaw: string;
   assets: ReserveAssetOnChain[];
@@ -171,6 +187,9 @@ export async function fetchReserveOnChain(
 
   const supply = await getTokenSupplyWithRetry(connection, reserveAccount.reserveTokenMint);
 
+  const mintSplit = computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS);
+  const tvlSplit = computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
+
   return {
     reserveId: reserveAccount.reserveId.toString(),
     manager: reserveAccount.manager.toBase58(),
@@ -186,9 +205,79 @@ export async function fetchReserveOnChain(
     protocolFeeShareBps: reserveAccount.feeConfig.protocolFeeShareBps,
     pendingManagerFeeShares: reserveAccount.feeConfig.pendingManagerFeeShares.toString(),
     pendingProtocolFeeShares: reserveAccount.feeConfig.pendingProtocolFeeShares.toString(),
+    effectiveMintFeeProtocolBps: Number(mintSplit.protocolBps),
+    effectiveMintFeeManagerBps: Number(mintSplit.managerBps),
+    effectiveMintFeeTotalBps: Number(mintSplit.effectiveTotalBps),
+    effectiveTvlFeeProtocolBps: Number(tvlSplit.protocolBps),
+    effectiveTvlFeeManagerBps: Number(tvlSplit.managerBps),
+    effectiveTvlFeeTotalBps: Number(tvlSplit.effectiveTotalBps),
     metadataUri: reserveAccount.metadataUri,
     reserveTokenSupplyRaw: supply ? supply.value.amount : "0",
     assets,
+  };
+}
+
+// --- DEC-0094: multi-recipient Manager fees ---
+
+export interface ManagerFeeRecipientOnChain {
+  wallet: string;
+  allocationBps: number;
+  pendingFeeShares: string;
+  collectedFeeShares: string;
+}
+
+export interface ManagerFeeRecipientsOnChain {
+  /** False when this Reserve has never opted into multi-recipient routing -- `recipients` below is a SYNTHESIZED single-entry fallback (100% to `legacyFeeDestination`), not real on-chain data, so callers can render sensibly either way without a special case at every call site. */
+  initialized: boolean;
+  recipients: ManagerFeeRecipientOnChain[];
+  routingUpdatedAt: number;
+}
+
+/**
+ * Reads a Reserve's Manager fee recipient routing. Returns a synthesized
+ * "100% legacy destination" shape (not real on-chain data -- `initialized:
+ * false`) when the Reserve hasn't opted into multi-recipient routing yet,
+ * so a not-yet-migrated Reserve still renders a sensible single-recipient
+ * view instead of an empty list.
+ */
+export async function fetchManagerFeeRecipients(
+  connection: Connection,
+  programId: PublicKey,
+  reserve: PublicKey,
+  legacyFeeDestination: string,
+  legacyPendingManagerFeeShares: string,
+): Promise<ManagerFeeRecipientsOnChain> {
+  const program = buildReadOnlyProgram(connection) as any;
+  const [managerFeeRecipientsPda] = findManagerFeeRecipients(reserve, programId);
+  const account: any = await withRateLimitRetryGeneric<any>(() => program.account.managerFeeRecipients.fetchNullable(managerFeeRecipientsPda));
+
+  if (!account) {
+    return {
+      initialized: false,
+      recipients: [
+        {
+          wallet: legacyFeeDestination,
+          allocationBps: 10_000,
+          pendingFeeShares: legacyPendingManagerFeeShares,
+          collectedFeeShares: "0",
+        },
+      ],
+      routingUpdatedAt: 0,
+    };
+  }
+
+  const recipientCount: number = account.recipientCount;
+  const recipients: ManagerFeeRecipientOnChain[] = (account.recipients as any[]).slice(0, recipientCount).map((r) => ({
+    wallet: r.wallet.toBase58(),
+    allocationBps: r.allocationBps,
+    pendingFeeShares: r.pendingFeeShares.toString(),
+    collectedFeeShares: r.collectedFeeShares.toString(),
+  }));
+
+  return {
+    initialized: true,
+    recipients,
+    routingUpdatedAt: Number(account.routingUpdatedAt.toString()),
   };
 }
 

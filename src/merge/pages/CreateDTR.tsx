@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, type RecipientInput } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
@@ -487,7 +487,9 @@ export function CreateDTR() {
   const addFeeRecipient = () => {
     const pct = parseFloat(newRecipientPct);
     if (!newRecipientAddress.trim() || !pct || pct <= 0) return;
+    if (feeRecipients.length + 1 >= 10) return; // +1 for the Primary, MAX_FEE_RECIPIENTS = 10
     if (feeRecipients.some((r) => r.address === newRecipientAddress.trim())) return;
+    if (newRecipientAddress.trim() === (feeDestination || wallet.address)) return; // Primary is already implicitly a recipient
     setFeeRecipients([...feeRecipients, { address: newRecipientAddress.trim(), pct }]);
     setNewRecipientAddress("");
     setNewRecipientPct("");
@@ -539,6 +541,16 @@ export function CreateDTR() {
     useAppStore.getState().setTxInFlight(true);
 
     const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
+    // DEC-0094: Primary gets whatever's left after the explicitly-configured
+    // additional recipients' shares -- if that remainder is 0 (additional
+    // recipients already sum to exactly 100%), the Primary is correctly
+    // omitted rather than submitted as an invalid zero-allocation entry.
+    const additionalRecipientsForChain: RecipientInput[] = feeRecipients.map((r) => ({ wallet: r.address, allocationBps: Math.round(r.pct * 100) }));
+    const primaryAllocationBps = 10_000 - additionalRecipientsForChain.reduce((sum, r) => sum + r.allocationBps, 0);
+    const recipientsForChain: RecipientInput[] | undefined =
+      feeRecipients.length > 0
+        ? [...(primaryAllocationBps > 0 ? [{ wallet: feeDestinationKey.toBase58(), allocationBps: primaryAllocationBps }] : []), ...additionalRecipientsForChain]
+        : undefined;
     const realAssets = assets.map((a) => {
       const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
       return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeight) * 10_000), seedWeightFraction: a.weight / totalWeight };
@@ -553,6 +565,7 @@ export function CreateDTR() {
         mintFeeBps: Math.round(mintFeePct * 100),
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,
+        feeRecipients: recipientsForChain,
         assets: realAssets,
         seedTotalUsd,
         onProgress: setCreateStep,
@@ -618,7 +631,11 @@ export function CreateDTR() {
           managerBuyTaxPct: 0,
           managerSellTaxPct: 0,
           creatorFeeDestination: feeDestinationKey.toBase58(),
-          feeRecipients: [],
+          // Safe to store here (not []): this write only runs after
+          // createReserveOnChain resolved successfully, which means
+          // recipientsForChain -- when provided -- was already confirmed
+          // on-chain in the very same transaction as create_reserve itself.
+          feeRecipients,
         },
         tokenPrice: 1,
         nav: 1,
@@ -1028,62 +1045,95 @@ export function CreateDTR() {
 
               <div className="space-y-6">
                 <h3 className="font-semibold text-lg pb-2">Fee Configuration</h3>
-                
+                <p className="text-xs text-muted-foreground -mt-4">
+                  SSR.fun always keeps at least 0.5% of the Mint Fee and 0.5% annualized of the TVL Fee for the protocol -- if you set a fee below that,
+                  the effective fee charged still floors at 0.5% (the Manager receives nothing extra in that case). Above the minimum, the Protocol and
+                  Manager split the configured fee 50/50.
+                </p>
+
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Mint Fee</span>
                       <span className="font-merge-mono text-primary">{mintFeePct.toFixed(2)}%</span>
                     </Label>
-                    <Slider 
-                      value={[mintFeePct]} 
-                      max={5} 
+                    <Slider
+                      value={[mintFeePct]}
+                      max={5}
                       step={0.05}
                       onValueChange={(v) => setMintFeePct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">Charged on new issuance. Protocol default is 0.50%.</p>
+                    {realDeploymentCandidate && (() => {
+                      const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                      return (
+                        <p className="text-xs font-merge-mono text-muted-foreground">
+                          Effective: {(Number(split.protocolBps) / 100).toFixed(2)}% Protocol + {(Number(split.managerBps) / 100).toFixed(2)}% Manager = {(Number(split.effectiveTotalBps) / 100).toFixed(2)}% total
+                        </p>
+                      );
+                    })()}
                   </div>
-                  
+
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Annualized TVL Fee</span>
                       <span className="font-merge-mono text-primary">{tvlFeePct.toFixed(2)}%</span>
                     </Label>
-                    <Slider 
-                      value={[tvlFeePct]} 
-                      max={5} 
+                    <Slider
+                      value={[tvlFeePct]}
+                      max={5}
                       step={0.05}
                       onValueChange={(v) => setTvlFeePct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">Accrues to Manager. Protocol default is 1.00%.</p>
+                    {realDeploymentCandidate && (() => {
+                      const split = computeEffectiveFeeSplit(BigInt(Math.round(tvlFeePct * 100)), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
+                      return (
+                        <p className="text-xs font-merge-mono text-muted-foreground">
+                          Effective: {(Number(split.protocolBps) / 100).toFixed(2)}% Protocol + {(Number(split.managerBps) / 100).toFixed(2)}% Manager = {(Number(split.effectiveTotalBps) / 100).toFixed(2)}% total
+                        </p>
+                      );
+                    })()}
                   </div>
-                  
+
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Buy Tax</span>
-                      <span className="font-merge-mono text-primary">{managerBuyTaxPct.toFixed(2)}%</span>
+                      <span className="font-merge-mono text-primary">{(realDeploymentCandidate ? 0 : managerBuyTaxPct).toFixed(2)}%</span>
                     </Label>
-                    <Slider 
-                      value={[managerBuyTaxPct]} 
-                      max={2} 
-                      step={0.05}
-                      onValueChange={(v) => setManagerBuyTaxPct(v[0])}
-                    />
-                    <p className="text-xs text-muted-foreground">Optional additional tax charged on buys. Default is 0%.</p>
+                    {realDeploymentCandidate ? (
+                      <p className="text-xs text-muted-foreground">SSR.fun does not charge a tax on buys -- this is always 0% for a real Reserve.</p>
+                    ) : (
+                      <>
+                        <Slider
+                          value={[managerBuyTaxPct]}
+                          max={2}
+                          step={0.05}
+                          onValueChange={(v) => setManagerBuyTaxPct(v[0])}
+                        />
+                        <p className="text-xs text-muted-foreground">Optional additional tax charged on buys. Default is 0%.</p>
+                      </>
+                    )}
                   </div>
 
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Sell Tax</span>
-                      <span className="font-merge-mono text-primary">{managerSellTaxPct.toFixed(2)}%</span>
+                      <span className="font-merge-mono text-primary">{(realDeploymentCandidate ? 0 : managerSellTaxPct).toFixed(2)}%</span>
                     </Label>
-                    <Slider 
-                      value={[managerSellTaxPct]} 
-                      max={2} 
-                      step={0.05}
-                      onValueChange={(v) => setManagerSellTaxPct(v[0])}
-                    />
-                    <p className="text-xs text-muted-foreground">Optional additional tax charged on sells. Default is 0%.</p>
+                    {realDeploymentCandidate ? (
+                      <p className="text-xs text-muted-foreground">SSR.fun does not charge a tax on sells -- this is always 0% for a real Reserve.</p>
+                    ) : (
+                      <>
+                        <Slider
+                          value={[managerSellTaxPct]}
+                          max={2}
+                          step={0.05}
+                          onValueChange={(v) => setManagerSellTaxPct(v[0])}
+                        />
+                        <p className="text-xs text-muted-foreground">Optional additional tax charged on sells. Default is 0%.</p>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1092,39 +1142,29 @@ export function CreateDTR() {
                 <h3 className="font-semibold text-lg pb-2">Fee Routing</h3>
                 <div className="space-y-2">
                   <Label htmlFor="dest">Primary Fee Destination Wallet</Label>
-                  <Input 
-                    id="dest" 
+                  <Input
+                    id="dest"
                     value={feeDestination}
                     onChange={(e) => setFeeDestination(e.target.value)}
                     className="font-merge-mono text-sm"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Address that receives 100% of the Manager's fee share on-chain. Defaults to your connected wallet ({wallet.address ? `${wallet.address.slice(0, 4)}...${wallet.address.slice(-4)}` : "—"})
+                    Address that receives the Manager's fee share on-chain (100%, unless you add more recipients below). Defaults to your connected wallet ({wallet.address ? `${wallet.address.slice(0, 4)}...${wallet.address.slice(-4)}` : "—"})
                     until you change it -- this is the exact wallet the Review step below will show as Primary.
                   </p>
                 </div>
 
                 <div className="space-y-3 pt-2">
                   <Label className="flex justify-between items-center">
-                    <span>Additional Fee Recipients</span>
-                    {!realDeploymentCandidate && (
-                      <span className={`font-merge-mono text-xs ${feeRecipientTotalPct > 100 ? 'text-destructive' : 'text-muted-foreground'}`}>
-                        {feeRecipientTotalPct.toFixed(1)}% of total fees
-                      </span>
-                    )}
+                    <span>Additional Fee Recipients ({feeRecipients.length + 1}/10)</span>
+                    <span className={`font-merge-mono text-xs ${feeRecipientTotalPct > 100 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                      {feeRecipientTotalPct.toFixed(1)}% of the Manager's share
+                    </span>
                   </Label>
-                  {realDeploymentCandidate ? (
-                    <div className="flex items-start gap-2 p-3 bg-muted/40 border border-dashed border-border rounded-lg text-sm text-muted-foreground">
-                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                      <p>
-                        Not yet supported on-chain for a real Reserve -- the deployed protocol has exactly one manager fee destination
-                        (<code className="font-merge-mono text-xs">fee_config.fee_destination</code>), never a multi-wallet split. The
-                        Primary Fee Destination above is the only wallet that will actually receive the Manager's fee share.
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Split off a percentage of total fee revenue to other wallets. Whatever's left goes to the primary destination above.</p>
-                  )}
+                  <p className="text-xs text-muted-foreground">
+                    These percentages divide the <strong>Manager's fee share</strong> -- not the total fee charged to depositors. Whatever's left after
+                    the recipients below goes to the Primary Fee Destination above. Up to 10 recipients total, including the Primary.
+                  </p>
 
                   {feeRecipients.length > 0 && (
                     <div className="space-y-2">
@@ -1132,47 +1172,45 @@ export function CreateDTR() {
                         <div key={r.address} className="flex items-center justify-between gap-3 p-2 rounded-lg border border-border bg-muted/20">
                           <span className="font-merge-mono text-xs truncate">{r.address}</span>
                           <div className="flex items-center gap-2 shrink-0">
-                            <Badge variant="secondary" className="font-merge-mono">{r.pct}%</Badge>
-                            {!realDeploymentCandidate && (
-                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeFeeRecipient(r.address)}>
-                                <X className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
+                            <Badge variant="secondary" className="font-merge-mono">{r.pct}% of Manager share</Badge>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeFeeRecipient(r.address)}>
+                              <X className="w-3.5 h-3.5" />
+                            </Button>
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {!realDeploymentCandidate && (
-                    <>
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="Recipient wallet address"
-                          className="font-merge-mono text-sm"
-                          value={newRecipientAddress}
-                          onChange={(e) => setNewRecipientAddress(e.target.value)}
-                        />
-                        <Input
-                          type="number"
-                          placeholder="%"
-                          className="w-24 font-merge-mono"
-                          min="0"
-                          max="100"
-                          value={newRecipientPct}
-                          onChange={(e) => setNewRecipientPct(e.target.value)}
-                        />
-                        <Button variant="outline" onClick={addFeeRecipient} className="shrink-0 gap-1.5">
-                          <Plus className="w-4 h-4" /> Add
-                        </Button>
-                      </div>
-                      {feeRecipientTotalPct > 100 && (
-                        <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
-                          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                          <p>Recipient percentages exceed 100% of total fees. Please adjust.</p>
-                        </div>
-                      )}
-                    </>
+                  {feeRecipients.length + 1 < 10 ? (
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Recipient wallet address"
+                        className="font-merge-mono text-sm"
+                        value={newRecipientAddress}
+                        onChange={(e) => setNewRecipientAddress(e.target.value)}
+                      />
+                      <Input
+                        type="number"
+                        placeholder="%"
+                        className="w-24 font-merge-mono"
+                        min="0"
+                        max="100"
+                        value={newRecipientPct}
+                        onChange={(e) => setNewRecipientPct(e.target.value)}
+                      />
+                      <Button variant="outline" onClick={addFeeRecipient} className="shrink-0 gap-1.5">
+                        <Plus className="w-4 h-4" /> Add
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Maximum of 10 recipients reached, including the Primary Fee Destination.</p>
+                  )}
+                  {feeRecipientTotalPct > 100 && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>Recipient percentages exceed 100% of the Manager's fee share. Please adjust.</p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1265,20 +1303,38 @@ export function CreateDTR() {
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Mint Fee</span>
+                      <span className="text-muted-foreground">Mint Fee (configured)</span>
                       <span className="font-merge-mono font-medium">{mintFeePct.toFixed(2)}%</span>
                     </div>
+                    {realDeploymentCandidate && (() => {
+                      const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                      return (
+                        <div className="flex justify-between text-xs pl-3">
+                          <span className="text-muted-foreground">↳ Protocol / Manager (effective)</span>
+                          <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>
+                        </div>
+                      );
+                    })()}
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">TVL Fee</span>
+                      <span className="text-muted-foreground">TVL Fee (configured, annualized)</span>
                       <span className="font-merge-mono font-medium">{tvlFeePct.toFixed(2)}%</span>
                     </div>
+                    {realDeploymentCandidate && (() => {
+                      const split = computeEffectiveFeeSplit(BigInt(Math.round(tvlFeePct * 100)), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
+                      return (
+                        <div className="flex justify-between text-xs pl-3">
+                          <span className="text-muted-foreground">↳ Protocol / Manager (effective)</span>
+                          <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>
+                        </div>
+                      );
+                    })()}
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Buy Tax</span>
-                      <span className="font-merge-mono font-medium">{managerBuyTaxPct.toFixed(2)}%</span>
+                      <span className="font-merge-mono font-medium">{(realDeploymentCandidate ? 0 : managerBuyTaxPct).toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Sell Tax</span>
-                      <span className="font-merge-mono font-medium">{managerSellTaxPct.toFixed(2)}%</span>
+                      <span className="font-merge-mono font-medium">{(realDeploymentCandidate ? 0 : managerSellTaxPct).toFixed(2)}%</span>
                     </div>
                   </div>
                 </div>
@@ -1369,24 +1425,34 @@ export function CreateDTR() {
               </div>
 
               <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-3">Fee Routing</p>
+                <p className="text-sm font-semibold text-muted-foreground mb-1">Manager Fee Routing</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  This is the exact on-chain configuration that will be submitted. Percentages divide the Manager's fee share, not the total fee.
+                </p>
                 <div className="space-y-2">
-                  <div className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
-                    <span className="font-merge-mono text-xs truncate">{feeDestination || wallet.address}</span>
-                    <Badge variant="outline" className="bg-background shrink-0">{realDeploymentCandidate ? "Only fee destination on-chain" : "Primary"}</Badge>
-                  </div>
-                  {feeRecipients.map((r) => (
-                    <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm opacity-60">
-                      <span className="font-merge-mono text-xs truncate">{r.address}</span>
-                      <span className="font-merge-mono font-bold shrink-0">{realDeploymentCandidate ? "Not routed" : `${r.pct}%`}</span>
-                    </div>
-                  ))}
-                  {realDeploymentCandidate && feeRecipients.length > 0 && (
-                    <p className="text-xs text-muted-foreground italic">
-                      These wallets will NOT receive any fee share on-chain -- only the single destination above will. See the note on
-                      the Fee Configuration step.
-                    </p>
-                  )}
+                  {(() => {
+                    const additional = feeRecipients.reduce((sum, r) => sum + r.pct, 0);
+                    const primaryPct = Math.max(0, 100 - additional);
+                    return (
+                      <>
+                        {primaryPct > 0 && (
+                          <div className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                            <span className="font-merge-mono text-xs truncate">{feeDestination || wallet.address}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge variant="outline" className="bg-background">Primary</Badge>
+                              <span className="font-merge-mono font-bold">{primaryPct.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                        )}
+                        {feeRecipients.map((r) => (
+                          <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                            <span className="font-merge-mono text-xs truncate">{r.address}</span>
+                            <span className="font-merge-mono font-bold shrink-0">{r.pct}%</span>
+                          </div>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 

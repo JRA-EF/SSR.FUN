@@ -35,13 +35,14 @@
 ## `create_reserve`
 - **Signer:** `manager` (becomes `Reserve.manager`, root Reserve Manager).
 - **Accounts:** `protocol_config` (mut), `reserve` (init, PDA seeded by `reserve_count`), `mint_authority` (PDA, unchecked), `reserve_token_mint` (init, PDA), `manager`, `token_program`, `system_program`.
-- **Args:** `metadata_uri: String`, `mint_fee_bps`, `redemption_fee_bps`, `annual_tvl_fee_bps`, `manager_fee_share_bps`, `protocol_fee_share_bps: u16` each, `fee_destination: Pubkey`.
-- **Validation:** protocol not paused; `metadata_uri` length; all fee values against their absolute caps; `manager_fee_share_bps + protocol_fee_share_bps <= 10000`.
-- **State transition:** `ProtocolConfig.reserve_count += 1`; new `Reserve` at `status = Created`, `asset_count = 0`.
+- **Args (DEC-0094: `manager_fee_share_bps`/`protocol_fee_share_bps` REMOVED -- no longer caller-supplied):** `metadata_uri: String`, `mint_fee_bps`, `redemption_fee_bps`, `annual_tvl_fee_bps: u16` each, `fee_destination: Pubkey` (the "Primary Fee Destination").
+- **Validation:** protocol not paused; `metadata_uri` length; all fee values against their absolute caps.
+- **State transition:** `ProtocolConfig.reserve_count += 1`; new `Reserve` at `status = Created`, `asset_count = 0`; `fee_config.manager_fee_share_bps`/`protocol_fee_share_bps` initialized to 0 (repurposed as program-maintained "last effective mint-fee split" telemetry, populated by the first real mint -- see `mint_reserve_tokens_in_kind` below).
 - **Token movement:** none (Reserve Token mint is created with zero supply).
 - **Event:** `ReserveCreated`.
-- **Errors:** `ProtocolPaused`, `MetadataUriTooLong`, `FeeExceedsMaximum`, `InvalidFeeShareSplit`, `MathOverflow`.
-- **Frontend use:** Create-a-Reserve flow, step "Review & Deploy" → "Launch Reserve" (first of the multi-instruction creation sequence -- see SSR_ARCHITECTURE.md section 4).
+- **Errors:** `ProtocolPaused`, `MetadataUriTooLong`, `FeeExceedsMaximum`, `MathOverflow`.
+- **Frontend use:** Create-a-Reserve flow, step "Review & Deploy" → "Launch Reserve" (first of the multi-instruction creation sequence -- see SSR_ARCHITECTURE.md section 4). For >1 Manager fee recipient, `initialize_manager_fee_recipients` (see below) is bundled into the SAME transaction.
+- **DEC-0094 note:** the Protocol/Manager split is no longer a caller-chosen ratio -- see `mint_reserve_tokens_in_kind`/`accrue_fees` below for the formula now applied fresh at every accrual.
 
 ## `initialize_reserve_asset`
 - **Signer:** `manager` (root manager only -- not delegable in v1, see ACCOUNT_MODEL.md).
@@ -67,21 +68,22 @@
 
 ## `mint_reserve_tokens_in_kind`
 - **Signer:** `depositor` (any wallet -- permissionless).
-- **Accounts:** `protocol_config` (read), `reserve` (mut), `reserve_token_mint` (mut), `mint_authority` (PDA), `depositor_reserve_token_account` (init_if_needed ATA), `depositor`, `token_program`, `associated_token_program`, `system_program`. **Remaining accounts:** `asset_count` groups of `[reserve_asset, vault, depositor_asset_token_account, mint, token_program]`.
+- **Accounts:** `protocol_config` (read), `reserve` (mut), `reserve_token_mint` (mut), `mint_authority` (PDA), `depositor_reserve_token_account` (init_if_needed ATA), `depositor`, `manager_fee_recipients` (DEC-0094, **optional** -- `Option<Account<ManagerFeeRecipients>>`; client passes the program ID itself as the `None` sentinel for a not-yet-migrated Reserve), `token_program`, `associated_token_program`, `system_program`. **Remaining accounts:** `asset_count` groups of `[reserve_asset, vault, depositor_asset_token_account, mint, token_program]`.
 - **Args:** `reserve_tokens_requested: u64` (gross, pre-fee), `min_reserve_tokens_out: u64`, `max_asset_amounts: Vec<u64>`.
 - **Validation:** protocol not paused; `status == Active`; `reserve_tokens_requested > 0`; `total_supply_before > 0`; per-asset `required_amount <= max_asset_amounts[i]`; `net_shares_out >= min_reserve_tokens_out` and `> 0`.
-- **State transition:** `FeeConfig.pending_manager_fee_shares`/`pending_protocol_fee_shares` increase by the fee split (deferred mint, not paid out yet).
-- **Token movement:** required amount per asset transferred depositor → vault (ceil-rounded on pre-transaction ratio); `net_shares_out` (= requested − mint fee) minted to depositor.
-- **Event:** `ReserveTokensMinted`.
-- **Errors:** `ProtocolPaused`, `UnexpectedReserveStatus`, `ZeroValue`, `ZeroSupply`, `SlippageMaxInputExceeded`, `ZeroAmountAfterFeesOrRounding`, `SlippageMinOutputNotMet`, `RemainingAccountsMismatch`.
+- **DEC-0094 fee formula (mint fee):** `protocol_bps = max(50, mint_fee_bps / 2)`, `manager_bps = max(mint_fee_bps - protocol_bps, 0)` (`fee_math::split_configured_bps`), computed FRESH every call -- never a stored ratio. The effective total (`protocol_bps + manager_bps`) can exceed the configured `mint_fee_bps` when it's below the 0.5% floor. `fee_config.manager_fee_share_bps`/`protocol_fee_share_bps` are overwritten each call as informational "last effective split" telemetry only.
+- **State transition:** piggybacks a TVL-fee checkpoint on pre-mint supply (`accrue_fees::checkpoint_tvl_fee`, safe no-op if <1 day elapsed) before its own logic. `FeeConfig.pending_protocol_fee_shares` increases by the protocol's share. The manager's share is credited via `common::credit_manager_fee_shares`: if `manager_fee_recipients` is `Some` (migrated Reserve), apportioned across up to 10 recipients (largest-remainder) into `ManagerFeeRecipients.recipients[i].pending_fee_shares`; if `None`, credited to the legacy `FeeConfig.pending_manager_fee_shares` aggregate exactly as before this pass.
+- **Token movement:** required amount per asset transferred depositor → vault (ceil-rounded on pre-transaction ratio); `net_shares_out` (= requested − effective total fee) minted to depositor.
+- **Event:** `ReserveTokensMinted`, plus `FeesAccrued` (TVL piggyback, if any elapsed) and `ManagerFeeShareAccrued` (if migrated and manager total > 0).
+- **Errors:** `ProtocolPaused`, `UnexpectedReserveStatus`, `ZeroValue`, `ZeroSupply`, `SlippageMaxInputExceeded`, `ZeroAmountAfterFeesOrRounding`, `SlippageMinOutputNotMet`, `RemainingAccountsMismatch`, `ManagerFeeRecipientsMismatch`, `InvalidFeeRecipientCount`.
 - **Frontend use:** the Reserve-detail page's "Buy" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described.
 
 ## `redeem_reserve_tokens_in_kind`
 - **Signer:** `redeemer` (any holder -- permissionless; deliberately has no `ProtocolConfig` account at all, see DEC-0016).
-- **Accounts:** `reserve` (mut), `reserve_token_mint` (mut), `vault_authority` (PDA), `redeemer_reserve_token_account` (mut), `redeemer`, `token_program`. **Remaining accounts:** `asset_count` groups of `[reserve_asset, vault, redeemer_asset_token_account, mint, token_program]`.
+- **Accounts:** `reserve` (mut), `reserve_token_mint` (mut), `vault_authority` (PDA), `redeemer_reserve_token_account` (mut), `redeemer`, `manager_fee_recipients` (DEC-0094, optional -- used only for the TVL-fee piggyback below, unrelated to the redemption fee), `token_program`. **Remaining accounts:** `asset_count` groups of `[reserve_asset, vault, redeemer_asset_token_account, mint, token_program]`.
 - **Args:** `reserve_tokens_to_redeem: u64`, `min_asset_amounts_out: Vec<u64>`.
-- **Validation:** `status ∈ {Active, Paused}`; `reserve_tokens_to_redeem > 0` and `<=` redeemer's balance; `total_supply_before > 0`; per-asset `entitlement >= min_asset_amounts_out[i]`.
-- **State transition:** none beyond the burn (no fee-share accounting change -- see below).
+- **Validation:** `status ∈ {Active, Paused, WindDown}`; `reserve_tokens_to_redeem > 0` and `<=` redeemer's balance; `total_supply_before > 0`; per-asset `entitlement >= min_asset_amounts_out[i]`.
+- **State transition:** DEC-0094: piggybacks a TVL-fee checkpoint on pre-burn supply (`accrue_fees::checkpoint_tvl_fee`, same as `mint_reserve_tokens_in_kind` -- safe no-op if <1 day elapsed) before its own logic; unrelated to and does not affect the redemption fee below.
 - **Token movement:** full `reserve_tokens_to_redeem` burned from redeemer; proportional entitlement (computed on the *net*, post-redemption-fee portion) transferred vault → redeemer per asset. The fee portion's backing assets are deliberately left in the vaults (accretion to remaining holders, not a mint to any fee recipient).
 - **Event:** `ReserveTokensRedeemed`.
 - **Errors:** `UnexpectedReserveStatus`, `ZeroValue`, `RedemptionExceedsEntitlement`, `ZeroSupply`, `ZeroAmountAfterFeesOrRounding`, `SlippageMinOutputNotMet`, `RemainingAccountsMismatch`.
@@ -155,13 +157,15 @@
 
 ## `accrue_fees`
 - **Signer:** none required -- permissionless, pure accounting (see reference protocol's `distributeFees` precedent).
-- **Accounts:** `reserve` (mut), `reserve_token_mint` (read).
+- **Accounts:** `reserve` (mut), `reserve_token_mint` (read), `manager_fee_recipients` (DEC-0094, **optional**, same `None`-sentinel convention as `mint_reserve_tokens_in_kind`).
 - **Args:** none.
 - **Validation:** none beyond arithmetic overflow checks; no-ops (returns `Ok(())` early) if less than one full day has elapsed since the last checkpoint.
-- **State transition:** `FeeConfig.pending_manager_fee_shares`/`pending_protocol_fee_shares` increase (ceil-rounded, linear/simple-interest approximation -- see accrue_fees.rs for why this differs from the reference protocol's true exponential compounding); `last_fee_accrual_ts` advances by whole elapsed days.
+- **DEC-0094 fee formula (TVL fee), computed fresh every call:** `protocol_bps = max(50, annual_tvl_fee_bps / 2)`, `manager_bps = max(annual_tvl_fee_bps - protocol_bps, 0)` -- same formula/floor as the mint fee, applied to the TVL fee independently.
+- **DEC-0094 cadence:** this core logic now lives in `checkpoint_tvl_fee` (shared), also called automatically from `mint_reserve_tokens_in_kind`/`redeem_reserve_tokens_in_kind` so a normal Buy/Sell checkpoints TVL fees for free -- this standalone instruction is now primarily the permissionless fallback for a dormant Reserve, triggered weekly by `api/devnet/accrue-fees-cron.ts` (Vercel Cron) with a ~25-day staleness threshold, well inside the 30-day requirement.
+- **State transition:** `FeeConfig.pending_protocol_fee_shares` increases; the manager's share is credited via `common::credit_manager_fee_shares` (per-recipient if migrated, else the legacy aggregate) -- see `mint_reserve_tokens_in_kind` above. `last_fee_accrual_ts` advances by whole elapsed days.
 - **Token movement:** none (accounting only).
-- **Event:** `FeesAccrued`.
-- **Errors:** `MathOverflow`/`MathUnderflow`.
+- **Event:** `FeesAccrued`, plus `ManagerFeeShareAccrued` if migrated and manager total > 0.
+- **Errors:** `MathOverflow`/`MathUnderflow`, `ManagerFeeRecipientsMismatch`, `InvalidFeeRecipientCount`.
 - **Frontend use:** background/cron-style call (could be triggered by anyone, including the frontend opportunistically before displaying fee state); no dedicated button needed.
 
 ## `collect_fees`
@@ -174,6 +178,40 @@
 - **Event:** `FeesCollected`.
 - **Errors:** `InvalidFeeShareSplit`, `NoPendingFees`.
 - **Frontend use:** Manage → Overview, "collect fees" (manager-triggered convenience; permissionless so it could also run unattended).
+- **DEC-0094 note:** left COMPLETELY UNTOUCHED by design -- for a Reserve that has opted into multi-recipient routing, `pending_manager_fee_shares` simply stays 0 forever (accrual now routes there instead -- see `mint_reserve_tokens_in_kind` above), so this instruction naturally degrades into a protocol-only collector with zero code change. Use the new `collect_manager_fee_share` below for a migrated Reserve's Manager-side payouts.
+
+## `initialize_manager_fee_recipients` (new, DEC-0094)
+- **Signer:** `signer` (root manager, or a delegate holding `MANAGE_FEES`); `payer` (any wallet, covers the new account's one-time rent).
+- **Accounts:** `reserve` (read), `manager_fee_recipients` (init, PDA `[b"manager_fee_recipients", reserve]`), `delegate` (unchecked, see `common::require_reserve_permission`), `signer`, `payer` (mut, signer), `system_program`.
+- **Args:** `recipients: Vec<FeeRecipientInput>` (`{ wallet: Pubkey, allocation_bps: u16 }`, 1-10 entries).
+- **Validation:** `MANAGE_FEES` permission; `Reserve.fee_config.pending_manager_fee_shares == 0` (collect the legacy aggregate first); recipient list: 1-10 entries, no zero/default wallet, no zero allocation, no duplicate wallet, allocations sum to exactly 10,000 bps.
+- **State transition:** new `ManagerFeeRecipients` account populated (fixed 10-slot array, `recipient_count` set), `routing_updated_at = now`.
+- **Token movement:** none.
+- **Event:** `ManagerFeeRecipientsConfigured`.
+- **Errors:** `PendingFeesBlockRoutingChange`, `InvalidFeeRecipientCount`, `FeeRecipientZeroAddress`, `ZeroFeeRecipientAllocation`, `DuplicateFeeRecipientWallet`, `FeeRecipientAllocationNotFull`, `DelegatePermissionDenied`.
+- **Frontend use:** Create Reserve's "Fee Routing" step (bundled into the create transaction for >1 recipient) and Manage Reserve's "Set Up Recipients" action (for a Reserve that hasn't opted in yet).
+
+## `update_fee_recipients` (new, DEC-0094)
+- **Signer:** `signer` (root manager, or a delegate holding `MANAGE_FEES`).
+- **Accounts:** `reserve` (read), `manager_fee_recipients` (mut, must already exist), `delegate` (unchecked), `signer`.
+- **Args:** `recipients: Vec<FeeRecipientInput>` (same shape/validation as above).
+- **Validation:** `MANAGE_FEES` permission; every CURRENT recipient's `pending_fee_shares == 0` (so a routing change can never reallocate already-accrued fees); same recipient-list validation as `initialize_manager_fee_recipients`.
+- **State transition:** overwrites `recipients`/`recipient_count`/`routing_updated_at`; carries forward each surviving wallet's lifetime `collected_fee_shares` by identity (not slot index).
+- **Token movement:** none.
+- **Event:** `ManagerFeeRecipientsConfigured`.
+- **Errors:** `PendingFeesBlockRoutingChange`, `InvalidFeeRecipientCount`, `FeeRecipientZeroAddress`, `ZeroFeeRecipientAllocation`, `DuplicateFeeRecipientWallet`, `FeeRecipientAllocationNotFull`, `DelegatePermissionDenied`, `ManagerFeeRecipientsMismatch`.
+- **Frontend use:** Manage Reserve's "Change Routing" action -- auto-bundles a `collect_manager_fee_share` per current recipient with a nonzero pending balance into the same transaction first (see `src/merge/lib/managementClient.ts`'s `executeUpdateFeeRecipients`).
+
+## `collect_manager_fee_share` (new, DEC-0094)
+- **Signer:** `payer` (permissionless trigger, pays destination-ATA rent if needed -- cannot redirect funds).
+- **Accounts:** `reserve` (mut), `reserve_token_mint` (mut), `mint_authority` (PDA), `manager_fee_recipients` (optional, `None` sentinel for the legacy fallback path), `recipient` (unchecked -- validated against the on-chain array or `fee_config.fee_destination` in the handler), `recipient_token_account` (init_if_needed ATA), `payer`, `token_program`, `associated_token_program`, `system_program`.
+- **Args:** none.
+- **Validation:** `recipient` must match a configured recipient (or the legacy `fee_destination`); that recipient's pending balance must be nonzero.
+- **State transition:** zeroes that ONE recipient's `pending_fee_shares`, increments its `collected_fee_shares` (or, legacy path, zeroes `FeeConfig.pending_manager_fee_shares`).
+- **Token movement:** mints the recipient's pending amount to their own ATA.
+- **Event:** `ManagerFeeShareCollected`.
+- **Errors:** `RecipientNotFound`, `NoPendingFees`, `ManagerFeeRecipientsMismatch`.
+- **Frontend use:** Manage Reserve's per-recipient "Collect" button.
 
 ## `record_rebalance`
 - **Signer:** delegate with `EXECUTE_REBALANCE` (or manager).
@@ -254,11 +292,11 @@
 
 ## `close_reserve`
 - **Signer:** `manager` (root-only, no delegate path).
-- **Accounts:** `reserve` (mut, closed), `reserve_token_mint` (mut), `vault_authority` (PDA), `manager`, `token_program`. **Remaining accounts:** `asset_count` pairs of `[reserve_asset, vault]`, in `order_index` order (lighter than `mint`/`redeem`'s per-leg groups -- no owner-token-account/mint/token-program needed per leg here).
+- **Accounts:** `reserve` (mut, closed), `reserve_token_mint` (mut), `vault_authority` (PDA), `manager_fee_recipients` (DEC-0094, optional, closed too when present -- rent reclaimed to `manager`), `manager`, `token_program`. **Remaining accounts:** `asset_count` pairs of `[reserve_asset, vault]`, in `order_index` order (lighter than `mint`/`redeem`'s per-leg groups -- no owner-token-account/mint/token-program needed per leg here).
 - **Args:** none.
-- **Validation:** `Reserve.status == WindDown`; Reserve Token supply must be exactly zero; every registered asset's vault balance must be exactly zero (i.e. every holder has already redeemed out -- redemption stays available during `WindDown`).
-- **State transition:** terminal `WindDown → Closed`, immediately followed by closing the `Reserve` account itself, every `ReserveAsset` account, and every vault token account -- rent reclaimed to `manager`. Deliberately does NOT attempt to close the `reserve_token_mint` account (SPL Token mint-account closing semantics are a live-program risk not worth taking for a small amount of permanently-locked rent).
+- **Validation:** `Reserve.status == WindDown`; Reserve Token supply must be exactly zero; every registered asset's vault balance must be exactly zero (i.e. every holder has already redeemed out -- redemption stays available during `WindDown`); the legacy aggregate `pending_manager_fee_shares`/`pending_protocol_fee_shares` must both be zero (`PendingFeesNotCollected`, DEC-0093); if `manager_fee_recipients` is present, every active recipient's `pending_fee_shares` must also be zero (`PendingManagerFeeSharesNotCollected`, DEC-0094 -- the legacy check alone can't catch this for a migrated Reserve, since its aggregate field stops accumulating once migrated).
+- **State transition:** terminal `WindDown → Closed`, immediately followed by closing the `Reserve` account itself, every `ReserveAsset` account, the `ManagerFeeRecipients` account if present, and every vault token account -- rent reclaimed to `manager`. Deliberately does NOT attempt to close the `reserve_token_mint` account (SPL Token mint-account closing semantics are a live-program risk not worth taking for a small amount of permanently-locked rent).
 - **Token movement:** none (all balances already zero by the validation above).
 - **Event:** `ReserveClosed`.
-- **Errors:** `NotReserveManager`, `UnexpectedReserveStatus`, `ReserveTokenSupplyNotZero`, `RemainingAccountsMismatch`, `ReserveAssetMismatch`, `InvalidReserveVault`, `VaultNotEmpty`.
+- **Errors:** `NotReserveManager`, `UnexpectedReserveStatus`, `ReserveTokenSupplyNotZero`, `PendingFeesNotCollected`, `PendingManagerFeeSharesNotCollected`, `ManagerFeeRecipientsMismatch`, `RemainingAccountsMismatch`, `ReserveAssetMismatch`, `InvalidReserveVault`, `VaultNotEmpty`.
 - **Frontend use:** Manage → Overview, "Close Reserve" (`executeCloseReserve` in `managementClient.ts`).

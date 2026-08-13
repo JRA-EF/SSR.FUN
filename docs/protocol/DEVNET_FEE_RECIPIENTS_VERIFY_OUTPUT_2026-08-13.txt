@@ -1,0 +1,109 @@
+bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
+Deployer/payer: 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk
+RPC: https://devnet.helius-rpc.com/?api-key=12f1afb9-dab5-4768-80f5-a06323782572
+Program: 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW
+
+=========================================================
+PART 1.A (0%): configured mintFeeBps=0 (0.00%)
+=========================================================
+  [fund creator] signature: 5xXehkkyB4FYoS4TXaqZTuA24c3ckPCZeQ5qN6SfzvaxcdWuNLT6GmsoF5mKKmzuxjFJ1cpxm2nwYWiTi229wmj6
+  [fund creator] explorer: https://explorer.solana.com/tx/5xXehkkyB4FYoS4TXaqZTuA24c3ckPCZeQ5qN6SfzvaxcdWuNLT6GmsoF5mKKmzuxjFJ1cpxm2nwYWiTi229wmj6?cluster=devnet
+  Reserve: 7bGxm5hbBSCgBAR9aZ2SP2NXSZhDMqfqDYFSVXBW6WZf (reserveId 48)
+  [create_reserve + initialize_reserve_asset] signature: 65cn9LefArAY4KWthptxz7GRmRWjFSYm2W3Av4nLZM43Qfn1VFQGUPzsy4WnEjxxQFmjSMVYnzr2nv8GGLZJLhzp
+  [create_reserve + initialize_reserve_asset] explorer: https://explorer.solana.com/tx/65cn9LefArAY4KWthptxz7GRmRWjFSYm2W3Av4nLZM43Qfn1VFQGUPzsy4WnEjxxQFmjSMVYnzr2nv8GGLZJLhzp?cluster=devnet
+  [seed_reserve] signature: 4CEHjWBY3zoM7yx4kgduCszff2UCc9Ktm2MbDmt8sxo7DVChHF8PZajujnQc5z34DQ2zTKhRyMiMagYZas7UWM24
+  [seed_reserve] explorer: https://explorer.solana.com/tx/4CEHjWBY3zoM7yx4kgduCszff2UCc9Ktm2MbDmt8sxo7DVChHF8PZajujnQc5z34DQ2zTKhRyMiMagYZas7UWM24?cluster=devnet
+  [mint_reserve_tokens_in_kind (Buy)] signature: 2M2i8DSYzxCEY8oB9GTK2suQB62VeJ4D9p6jwZafgCxFXCcuGYU7SfQsyZojpjfTixkKBWBuVYkDesGr1NAe8sb7
+  [mint_reserve_tokens_in_kind (Buy)] explorer: https://explorer.solana.com/tx/2M2i8DSYzxCEY8oB9GTK2suQB62VeJ4D9p6jwZafgCxFXCcuGYU7SfQsyZojpjfTixkKBWBuVYkDesGr1NAe8sb7?cluster=devnet
+  Effective split: protocol=50bps manager=0bps total=50bps
+  On-chain pending: manager=0 protocol=500000 (total 500000)
+  Expected (client mirror): manager=0 protocol=500000 (total 500000)
+  CONFIRMED: on-chain split for mintFeeBps=0 matches the SSR.fun formula exactly.
+
+=========================================================
+PART 1.B (1%): configured mintFeeBps=100 (1.00%)
+=========================================================
+  [fund creator] signature: 3AZoN8666XGkSwTWxs6erYRakYZV1AjXbKC5zGYQsyuDsPSKTJnWXwsTCy1i1gqHmoZEiwTo8eiqUt6GDMYDn4Bq
+  [fund creator] explorer: https://explorer.solana.com/tx/3AZoN8666XGkSwTWxs6erYRakYZV1AjXbKC5zGYQsyuDsPSKTJnWXwsTCy1i1gqHmoZEiwTo8eiqUt6GDMYDn4Bq?cluster=devnet
+  Reserve: HV98kcsCtfzdHcudZ578eLGg1VHLe3AZwCYvY8gbqX1Z (reserveId 49)
+  [create_reserve + initialize_reserve_asset] signature: 639KNy6521sZ3npdCF6D5jPqtSE8nLvYViVndwP2eZopmf2WMx2AYTYLQczWrfguQzk21x7Rf6PsDh1ZJvaCNW7y
+  [create_reserve + initialize_reserve_asset] explorer: https://explorer.solana.com/tx/639KNy6521sZ3npdCF6D5jPqtSE8nLvYViVndwP2eZopmf2WMx2AYTYLQczWrfguQzk21x7Rf6PsDh1ZJvaCNW7y?cluster=devnet
+  [seed_reserve] signature: KjbumcL6mPxqGeBwpTQ7Azi4JZJGkP25xsfoLnT9PajpWdcxv4aH87mFX6aChVdzBRSdgwVDqt69odDQVNfY2gt
+  [seed_reserve] explorer: https://explorer.solana.com/tx/KjbumcL6mPxqGeBwpTQ7Azi4JZJGkP25xsfoLnT9PajpWdcxv4aH87mFX6aChVdzBRSdgwVDqt69odDQVNfY2gt?cluster=devnet
+  [mint_reserve_tokens_in_kind (Buy)] signature: 3ewkiJAhfH5YhzrqubrENnUgyoMbreuYXQeJ5FqgLqTb47sA7q8Ls8fRRQPhQG6WihhB4UiexdYpYLxoCMgeqtPs
+  [mint_reserve_tokens_in_kind (Buy)] explorer: https://explorer.solana.com/tx/3ewkiJAhfH5YhzrqubrENnUgyoMbreuYXQeJ5FqgLqTb47sA7q8Ls8fRRQPhQG6WihhB4UiexdYpYLxoCMgeqtPs?cluster=devnet
+  Effective split: protocol=50bps manager=50bps total=100bps
+  On-chain pending: manager=500000 protocol=500000 (total 1000000)
+  Expected (client mirror): manager=500000 protocol=500000 (total 1000000)
+  CONFIRMED: on-chain split for mintFeeBps=100 matches the SSR.fun formula exactly.
+
+=========================================================
+PART 1.C (5%): configured mintFeeBps=500 (5.00%)
+=========================================================
+  [fund creator] signature: 4bUmHBT3vKXuT1SD261CET183CgZSyeWdFuEr4JXx9kdf5jVGg5hyMtzqXrWsVTCegLB1GErFJq8aLjD9T7yPD6D
+  [fund creator] explorer: https://explorer.solana.com/tx/4bUmHBT3vKXuT1SD261CET183CgZSyeWdFuEr4JXx9kdf5jVGg5hyMtzqXrWsVTCegLB1GErFJq8aLjD9T7yPD6D?cluster=devnet
+  Reserve: 3xPn7ZoZtA1V5wA5XwNfwFnK7kbCYH7pLpFgfZaY5uKm (reserveId 50)
+  [create_reserve + initialize_reserve_asset] signature: 2ETa3Ke7n3CA4FWPki5BimbZ6cjEL7FE7EcTPWhC4YdNPiReKzkKShPpq65b19frLWJpbrmeqs8ydaUhXccJJ8yC
+  [create_reserve + initialize_reserve_asset] explorer: https://explorer.solana.com/tx/2ETa3Ke7n3CA4FWPki5BimbZ6cjEL7FE7EcTPWhC4YdNPiReKzkKShPpq65b19frLWJpbrmeqs8ydaUhXccJJ8yC?cluster=devnet
+  [seed_reserve] signature: 3VnbtoEhiyakRC9Aai4c3MjMxp8sHdmQLCjrcgL9VhvKxhrK95Eg9SJRuBEWg1ZXn8icrrWXcxohM4MC7WE4qhBN
+  [seed_reserve] explorer: https://explorer.solana.com/tx/3VnbtoEhiyakRC9Aai4c3MjMxp8sHdmQLCjrcgL9VhvKxhrK95Eg9SJRuBEWg1ZXn8icrrWXcxohM4MC7WE4qhBN?cluster=devnet
+  [mint_reserve_tokens_in_kind (Buy)] signature: 5sBZrm2rKkhMyrKFJKwCJ8hZbZJ11m8Vgwj67MhytNWEQXr6Pu4zoaywqjVhRrTyhUvoCon9RXLwCtwkwyXmVFQ1
+  [mint_reserve_tokens_in_kind (Buy)] explorer: https://explorer.solana.com/tx/5sBZrm2rKkhMyrKFJKwCJ8hZbZJ11m8Vgwj67MhytNWEQXr6Pu4zoaywqjVhRrTyhUvoCon9RXLwCtwkwyXmVFQ1?cluster=devnet
+  Effective split: protocol=250bps manager=250bps total=500bps
+  On-chain pending: manager=2500000 protocol=2500000 (total 5000000)
+  Expected (client mirror): manager=2500000 protocol=2500000 (total 5000000)
+  CONFIRMED: on-chain split for mintFeeBps=500 matches the SSR.fun formula exactly.
+
+=========================================================
+PART 2: multi-recipient Manager fee split (3 recipients, 50/30/20) + independent collection
+=========================================================
+  [fund creator] signature: 3Hyghx2Vn5NfBfFYTc9FwVMdnbv6frkxrGwvGfatErSJY1uanEJLY6XACWrL9kMuNHHH3HncVc7VtHTu1pm9ed7L
+  [fund creator] explorer: https://explorer.solana.com/tx/3Hyghx2Vn5NfBfFYTc9FwVMdnbv6frkxrGwvGfatErSJY1uanEJLY6XACWrL9kMuNHHH3HncVc7VtHTu1pm9ed7L?cluster=devnet
+  Recipient A (50%): 8BQZDQaXuLutvmCKUCGumLtT9N8THSAefEAorJsK4qWF
+  Recipient B (30%): oqYVS1JzLMn9zdTBwGKMF7AxtW5bTbJ1C3ZoGjHQ1UY
+  Recipient C (20%): ECGSUkdJUVa7WYsm4StKnmPZiQmhhD769KFqKFSkun4v
+  Reserve: HLHTKXoYMBvNeKtdXZiW9fm5TNG6cxgPxXMJyGGHiWd2 (reserveId 51)
+  [create_reserve + initialize_reserve_asset + initialize_manager_fee_recipients (bundled)] signature: 3zoFLbuiJmFMjG2CYCpwnaRSvjeEaZevfvpgtk2vJqiqkwHb7YCK8WcZewXSgjE1aFbHL4imRzawYHQPjCAGYqzq
+  [create_reserve + initialize_reserve_asset + initialize_manager_fee_recipients (bundled)] explorer: https://explorer.solana.com/tx/3zoFLbuiJmFMjG2CYCpwnaRSvjeEaZevfvpgtk2vJqiqkwHb7YCK8WcZewXSgjE1aFbHL4imRzawYHQPjCAGYqzq?cluster=devnet
+  [seed_reserve] signature: 2cu7PgX2zkPxFGo4HoW6No3jfnxx1HoKsVzL2FBkJKh4DyVcSjB2s4hPgA57G436v6xixuVE4R3eo1MCrNnHJeQW
+  [seed_reserve] explorer: https://explorer.solana.com/tx/2cu7PgX2zkPxFGo4HoW6No3jfnxx1HoKsVzL2FBkJKh4DyVcSjB2s4hPgA57G436v6xixuVE4R3eo1MCrNnHJeQW?cluster=devnet
+  ManagerFeeRecipients recipientCount: 3 (expect 3)
+  [mint_reserve_tokens_in_kind (Buy, migrated Reserve)] signature: 2v3wUs5mwM8N5GSoNxK9pVoxasBgtH3aaika5CVqxoo81CHDLraU8PkJR3Yf45yjH9F3mvjUctrPmzEcSv2RZFUM
+  [mint_reserve_tokens_in_kind (Buy, migrated Reserve)] explorer: https://explorer.solana.com/tx/2v3wUs5mwM8N5GSoNxK9pVoxasBgtH3aaika5CVqxoo81CHDLraU8PkJR3Yf45yjH9F3mvjUctrPmzEcSv2RZFUM?cluster=devnet
+  On-chain per-recipient pending: A=500000 B=300000 C=200000
+  Expected per-recipient (client mirror): A=500000 B=300000 C=200000
+  managerTotal=1000000 protocolTotal=1000000 totalFeeShares=2000000
+  protocol_total (on-chain pending_protocol_fee_shares)=1000000, sum(recipients)=1000000, total assessed=2000000
+  CONFIRMED: 3-way largest-remainder apportionment matches exactly, and protocol+manager credits sum to the total fee assessed.
+
+--- Independent collection: each recipient collects only their own balance ---
+  [fund recipient A for its own collect tx fee] signature: 5ZHnhgZ3t94Q7NeXZJSwo9i1XeVT7UozAkpsntsaAikWZP3vBSQKHgdLpiPdgMCzcCGxfbEEM3qKXzbexUms4ZrJ
+  [fund recipient A for its own collect tx fee] explorer: https://explorer.solana.com/tx/5ZHnhgZ3t94Q7NeXZJSwo9i1XeVT7UozAkpsntsaAikWZP3vBSQKHgdLpiPdgMCzcCGxfbEEM3qKXzbexUms4ZrJ?cluster=devnet
+  [collect_manager_fee_share (recipient A collects its own)] signature: 4329yskCTJoeGePzZNQe9o8kpds6JFCyMcuqxtxUYeuGhdVgPVYxzAL5yRPUbsWdK33JpWnTfkrmNe4TifKdPtXg
+  [collect_manager_fee_share (recipient A collects its own)] explorer: https://explorer.solana.com/tx/4329yskCTJoeGePzZNQe9o8kpds6JFCyMcuqxtxUYeuGhdVgPVYxzAL5yRPUbsWdK33JpWnTfkrmNe4TifKdPtXg?cluster=devnet
+  Pending after A collects: A=0 (expect 0) B=300000 (expect unchanged 300000) C=200000 (expect unchanged 200000)
+  Recipient A's ATA balance: 500000 (expect 500000)
+  CONFIRMED: recipient A collected exactly (and only) its own accrued balance -- B and C were unaffected.
+  [collect_manager_fee_share (deployer pays gas, collects for recipient B -- permissionless)] signature: 64abyG32uy5KQkyjiTYSsyb5siAoV2Pha2WLwLj59y6CR2QBYxTb4Vx2zTcatWxEtAgmQNMGcNkktThMHk6Hrd7F
+  [collect_manager_fee_share (deployer pays gas, collects for recipient B -- permissionless)] explorer: https://explorer.solana.com/tx/64abyG32uy5KQkyjiTYSsyb5siAoV2Pha2WLwLj59y6CR2QBYxTb4Vx2zTcatWxEtAgmQNMGcNkktThMHk6Hrd7F?cluster=devnet
+  Recipient B's ATA balance: 300000 (expect 300000)
+  CONFIRMED: a third-party wallet (deployer) permissionlessly triggered recipient B's payout -- exact amount, no funds redirected.
+
+=========================================================
+PART 3: backward compatibility + genuine TVL accrual on a PRE-EXISTING, pre-upgrade Reserve
+=========================================================
+  Target: reserveId 28 (89RrhEebGPUKhcrAaMdJ1APZjR7DPUX47Mt9CVQECg6G)
+  status=active annualTvlFeeBps=100
+  last_fee_accrual_ts=1785940849 (2026-08-05T14:40:49.000Z)
+  elapsed since last accrual: ~8.02 days
+  pending BEFORE: manager=79982 protocol=19995
+  [accrue_fees (permissionless, pre-existing pre-upgrade Reserve)] signature: 4AzU8E3V8G8qCpCjL8s2B1rDBgHMPpBTAkZSVppQBaDom15WgRLCuFUNbWTYmSZ97nTo1F18AuU4tHjC98jd3wyq
+  [accrue_fees (permissionless, pre-existing pre-upgrade Reserve)] explorer: https://explorer.solana.com/tx/4AzU8E3V8G8qCpCjL8s2B1rDBgHMPpBTAkZSVppQBaDom15WgRLCuFUNbWTYmSZ97nTo1F18AuU4tHjC98jd3wyq?cluster=devnet
+  pending AFTER: manager=92031 protocol=32045
+  delta: manager +12049, protocol +12050
+  effective TVL split this accrual: protocol=50bps manager=50bps
+  CONFIRMED: a genuinely pre-existing, pre-upgrade Reserve accrued a real, nonzero TVL fee post-upgrade via the NEW formula, with ZERO migration step required -- proving backward compatibility.
+
+=========================================================
+ALL PARTS PASSED
+=========================================================

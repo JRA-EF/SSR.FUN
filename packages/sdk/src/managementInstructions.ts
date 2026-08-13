@@ -17,7 +17,8 @@ import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddres
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority, findMintAuthority } from "./pda";
+import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority, findMintAuthority, findManagerFeeRecipients } from "./pda";
+import type { RecipientInput } from "./feeMath";
 
 /** reserve.asset_count ReserveAsset PDAs, in order_index order -- see common.rs::load_reserve_asset_configs. */
 export async function buildUpdateTargetsInstruction(
@@ -246,9 +247,73 @@ export async function buildCloseReserveInstruction(
     { pubkey: findReserveAsset(reserve, mint, programId)[0], isWritable: true, isSigner: false },
     { pubkey: findReserveVault(reserve, mint, programId)[0], isWritable: true, isSigner: false },
   ]);
+  const [managerFeeRecipients] = findManagerFeeRecipients(reserve, programId);
   return program.methods
     .closeReserve()
-    .accounts({ reserve, reserveTokenMint, vaultAuthority, manager, tokenProgram: TOKEN_PROGRAM_ID })
+    .accounts({ reserve, reserveTokenMint, vaultAuthority, managerFeeRecipients, manager, tokenProgram: TOKEN_PROGRAM_ID } as any)
     .remainingAccounts(remainingAccounts)
+    .instruction();
+}
+
+// --- DEC-0094: multi-recipient Manager fees ---
+
+/**
+ * Replaces an already-migrated Reserve's Manager fee routing atomically.
+ * Blocked on-chain while any CURRENT recipient still has an uncollected
+ * pending balance -- callers should bundle a `collect_manager_fee_share`
+ * call per current recipient with a nonzero pending balance into the SAME
+ * transaction ahead of this one when needed (see
+ * src/merge/lib/managementClient.ts's executeUpdateFeeRecipients).
+ */
+export async function buildUpdateFeeRecipientsInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  signer: PublicKey,
+  delegate: PublicKey,
+  recipients: RecipientInput[],
+): Promise<TransactionInstruction> {
+  const [managerFeeRecipients] = findManagerFeeRecipients(reserve, programId);
+  return program.methods
+    .updateFeeRecipients(recipients.map((r) => ({ wallet: new PublicKey(r.wallet), allocationBps: r.allocationBps })))
+    .accounts({ reserve, managerFeeRecipients, delegate, signer } as any)
+    .instruction();
+}
+
+/**
+ * Permissionless (mirrors collect_fees.rs's "any wallet may trigger the
+ * payout" design) -- pays out ONE named recipient's own accrued balance to
+ * their own ATA. Falls back to the legacy `feeDestination`/
+ * `pendingManagerFeeShares` path when the Reserve hasn't opted into
+ * multi-recipient routing yet (pass `managerFeeRecipientsExists = false` in
+ * that case so the optional account is omitted -- the client library
+ * substitutes the program ID sentinel automatically).
+ */
+export async function buildCollectManagerFeeShareInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  reserveTokenMint: PublicKey,
+  recipient: PublicKey,
+  payer: PublicKey,
+  managerFeeRecipientsExists: boolean,
+): Promise<TransactionInstruction> {
+  const [mintAuthority] = findMintAuthority(reserve, programId);
+  const [managerFeeRecipients] = findManagerFeeRecipients(reserve, programId);
+  const recipientTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, recipient);
+  return program.methods
+    .collectManagerFeeShare()
+    .accounts({
+      reserve,
+      reserveTokenMint,
+      mintAuthority,
+      managerFeeRecipients: managerFeeRecipientsExists ? managerFeeRecipients : null,
+      recipient,
+      recipientTokenAccount,
+      payer,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    } as any)
     .instruction();
 }

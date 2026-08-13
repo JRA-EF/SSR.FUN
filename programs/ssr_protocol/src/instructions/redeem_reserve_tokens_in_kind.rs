@@ -1,13 +1,15 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint as SplMint, Token, TokenAccount as SplTokenAccount};
 
+use super::accrue_fees::checkpoint_tvl_fee;
 use super::common::{load_asset_legs, mul_div_ceil, mul_div_floor, transfer_out_of_vault};
 use crate::constants::{
-    BPS_DENOMINATOR, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, VAULT_AUTHORITY_SEED,
+    BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
+    VAULT_AUTHORITY_SEED,
 };
 use crate::errors::SsrError;
 use crate::events::ReserveTokensRedeemed;
-use crate::state::Reserve;
+use crate::state::{ManagerFeeRecipients, Reserve};
 
 /// Deliberately does NOT accept a `ProtocolConfig` account: redemption is
 /// exempt from both the Reserve-level pause AND the protocol-wide emergency
@@ -48,6 +50,18 @@ pub struct RedeemReserveTokensInKind<'info> {
 
     pub redeemer: Signer<'info>,
 
+    /// Optional (DEC-0094): pass the program ID itself as a "None" sentinel
+    /// for a Reserve that hasn't opted into multi-recipient routing. Used
+    /// only to credit the TVL-fee piggyback checkpoint this call triggers
+    /// (see `accrue_fees::checkpoint_tvl_fee`) -- redemption fee itself is
+    /// unrelated and untouched (still burned, never distributed).
+    #[account(
+        mut,
+        seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
+        bump = manager_fee_recipients.bump,
+    )]
+    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
+
     pub token_program: Program<'info, Token>,
     // Remaining accounts: reserve.asset_count groups of
     // [reserve_asset, vault, redeemer_asset_token_account, mint, token_program]
@@ -73,6 +87,16 @@ pub fn handler<'info>(
         reserve_tokens_to_redeem <= ctx.accounts.redeemer_reserve_token_account.amount,
         SsrError::RedemptionExceedsEntitlement
     );
+
+    // DEC-0094: piggyback the TVL-fee checkpoint onto this redeem too, same
+    // as mint -- "settle during normal Reserve transactions." Safe no-op if
+    // <1 day has elapsed. Unrelated to, and does not affect, the redemption
+    // fee computed below.
+    checkpoint_tvl_fee(
+        &mut ctx.accounts.reserve,
+        &mut ctx.accounts.manager_fee_recipients,
+        total_supply_before,
+    )?;
 
     let fee_config = ctx.accounts.reserve.fee_config;
     let redemption_fee_shares = mul_div_ceil(

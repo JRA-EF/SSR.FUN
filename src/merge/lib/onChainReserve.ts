@@ -196,6 +196,14 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
     protocolFeeShareBps: onChain.protocolFeeShareBps,
     pendingManagerFeeShares: onChain.pendingManagerFeeShares,
     pendingProtocolFeeShares: onChain.pendingProtocolFeeShares,
+    mintFeeBps: onChain.mintFeeBps,
+    tvlFeeBps: onChain.tvlFeeBps,
+    effectiveMintFeeProtocolBps: onChain.effectiveMintFeeProtocolBps,
+    effectiveMintFeeManagerBps: onChain.effectiveMintFeeManagerBps,
+    effectiveMintFeeTotalBps: onChain.effectiveMintFeeTotalBps,
+    effectiveTvlFeeProtocolBps: onChain.effectiveTvlFeeProtocolBps,
+    effectiveTvlFeeManagerBps: onChain.effectiveTvlFeeManagerBps,
+    effectiveTvlFeeTotalBps: onChain.effectiveTvlFeeTotalBps,
   };
 
   return {
@@ -312,6 +320,14 @@ export function buildDtrFromDiscoveredReserve(
     protocolFeeShareBps: discovered.protocolFeeShareBps,
     pendingManagerFeeShares: discovered.pendingManagerFeeShares,
     pendingProtocolFeeShares: discovered.pendingProtocolFeeShares,
+    mintFeeBps: discovered.mintFeeBps,
+    tvlFeeBps: discovered.annualTvlFeeBps,
+    effectiveMintFeeProtocolBps: discovered.effectiveMintFeeProtocolBps,
+    effectiveMintFeeManagerBps: discovered.effectiveMintFeeManagerBps,
+    effectiveMintFeeTotalBps: discovered.effectiveMintFeeTotalBps,
+    effectiveTvlFeeProtocolBps: discovered.effectiveTvlFeeProtocolBps,
+    effectiveTvlFeeManagerBps: discovered.effectiveTvlFeeManagerBps,
+    effectiveTvlFeeTotalBps: discovered.effectiveTvlFeeTotalBps,
   };
 
   return {

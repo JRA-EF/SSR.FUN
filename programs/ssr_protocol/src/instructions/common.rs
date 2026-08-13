@@ -15,9 +15,11 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, Mint, TokenAccount};
 
-use crate::constants::{RESERVE_ASSET_SEED, RESERVE_VAULT_SEED};
+use crate::constants::{BPS_DENOMINATOR, MAX_FEE_RECIPIENTS, RESERVE_ASSET_SEED, RESERVE_VAULT_SEED};
 use crate::errors::SsrError;
-use crate::state::{Delegate, Reserve, ReserveAsset};
+use crate::events::{ManagerFeeAccrualSource, ManagerFeeShareAccrued};
+use crate::fee_math::apportion_to_recipients;
+use crate::state::{Delegate, FeeRecipientInput, ManagerFeeRecipients, Reserve, ReserveAsset};
 
 /// Returns Ok(()) iff `signer` is either the Reserve's root manager, or a
 /// registered `Delegate` for this Reserve holding `flag`. The root manager
@@ -308,6 +310,120 @@ pub fn transfer_out_of_vault<'info>(
     let signer_seeds: &[&[&[u8]]] = &[vault_authority_seeds];
     let cpi_ctx = CpiContext::new_with_signer(leg.token_program, cpi_accounts, signer_seeds);
     token_interface::transfer_checked(cpi_ctx, amount, leg.mint.decimals)
+}
+
+/// Credits `manager_total` (the Manager's already-split share of some fee --
+/// see `fee_math::split_total_fee`) either to a Reserve's per-recipient
+/// `ManagerFeeRecipients` (if `Some`, i.e. this Reserve has opted into
+/// multi-recipient routing) or the legacy aggregate
+/// `reserve.fee_config.pending_manager_fee_shares` (if `None`).
+///
+/// Deliberately does NOT touch `pending_manager_fee_shares` at all once a
+/// Reserve has opted in -- it stays permanently 0 from that point on, which
+/// is what lets the existing `collect_fees` instruction (left completely
+/// untouched by DEC-0094) degrade gracefully into "protocol-only, in
+/// practice" for a migrated Reserve, and what lets `close_reserve`'s
+/// original `pending_manager_fee_shares == 0` check keep meaning something
+/// for a not-yet-migrated Reserve while the NEW `all_pending_collected()`
+/// check (see close_reserve.rs) covers the migrated case.
+pub fn credit_manager_fee_shares<'info>(
+    reserve: &mut Account<'info, Reserve>,
+    manager_fee_recipients: &mut Option<Account<'info, ManagerFeeRecipients>>,
+    manager_total: u64,
+    source: ManagerFeeAccrualSource,
+) -> Result<()> {
+    match manager_fee_recipients.as_mut() {
+        Some(recipients_account) => {
+            require_keys_eq!(
+                recipients_account.reserve,
+                reserve.key(),
+                SsrError::ManagerFeeRecipientsMismatch
+            );
+            require!(
+                recipients_account.recipient_count > 0,
+                SsrError::InvalidFeeRecipientCount
+            );
+
+            if manager_total > 0 {
+                let increments = apportion_to_recipients(
+                    manager_total,
+                    &recipients_account.recipients,
+                    recipients_account.recipient_count,
+                )?;
+
+                let mut credited_wallets = Vec::new();
+                let mut credited_amounts = Vec::new();
+                for i in 0..recipients_account.recipient_count as usize {
+                    if increments[i] == 0 {
+                        continue;
+                    }
+                    recipients_account.recipients[i].pending_fee_shares = recipients_account
+                        .recipients[i]
+                        .pending_fee_shares
+                        .checked_add(increments[i])
+                        .ok_or(error!(SsrError::MathOverflow))?;
+                    credited_wallets.push(recipients_account.recipients[i].wallet);
+                    credited_amounts.push(increments[i]);
+                }
+
+                if !credited_wallets.is_empty() {
+                    emit!(ManagerFeeShareAccrued {
+                        reserve: reserve.key(),
+                        recipients: credited_wallets,
+                        amounts: credited_amounts,
+                        source,
+                        ts: Clock::get()?.unix_timestamp,
+                    });
+                }
+            }
+        }
+        None => {
+            reserve.fee_config.pending_manager_fee_shares = reserve
+                .fee_config
+                .pending_manager_fee_shares
+                .checked_add(manager_total)
+                .ok_or(error!(SsrError::MathOverflow))?;
+        }
+    }
+    Ok(())
+}
+
+/// Validates a caller-supplied Manager fee recipient list before it's ever
+/// written into a `ManagerFeeRecipients` account -- shared by
+/// `initialize_manager_fee_recipients` and `update_fee_recipients`.
+/// Rejects: empty or >MAX_FEE_RECIPIENTS lists, the default/zero address,
+/// a zero allocation, a duplicate wallet, and a total that isn't exactly
+/// 10,000 basis points (100% of the Manager's share -- never a percentage
+/// of the total assessed fee).
+pub fn validate_fee_recipient_inputs(recipients: &[FeeRecipientInput]) -> Result<()> {
+    require!(
+        !recipients.is_empty() && recipients.len() <= MAX_FEE_RECIPIENTS as usize,
+        SsrError::InvalidFeeRecipientCount
+    );
+
+    let mut sum: u32 = 0;
+    for (i, r) in recipients.iter().enumerate() {
+        require!(
+            r.wallet != Pubkey::default(),
+            SsrError::FeeRecipientZeroAddress
+        );
+        require!(r.allocation_bps > 0, SsrError::ZeroFeeRecipientAllocation);
+        for other in recipients.iter().skip(i + 1) {
+            require!(
+                other.wallet != r.wallet,
+                SsrError::DuplicateFeeRecipientWallet
+            );
+        }
+        sum = sum
+            .checked_add(r.allocation_bps as u32)
+            .ok_or(error!(SsrError::MathOverflow))?;
+    }
+    require!(
+        sum == BPS_DENOMINATOR as u32,
+        SsrError::FeeRecipientAllocationNotFull
+    );
+
+    Ok(())
 }
 
 /// Ceiling-division `a * b / c`, widened to u128 to avoid overflow, per the

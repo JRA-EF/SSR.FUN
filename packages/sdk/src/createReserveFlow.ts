@@ -12,7 +12,8 @@ import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddres
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig } from "./pda";
+import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients } from "./pda";
+import type { RecipientInput } from "./feeMath";
 
 export interface NewReserveAddresses {
   reserveId: bigint;
@@ -35,13 +36,21 @@ export async function deriveNewReserveAddresses(program: Program<anchor.Idl>, pr
   return { reserveId, reserve, reserveTokenMint, mintAuthority, vaultAuthority, protocolConfig };
 }
 
+/**
+ * DEC-0094: `managerFeeShareBps`/`protocolFeeShareBps` are no longer
+ * caller-supplied -- the Protocol/Manager split is always derived on-chain,
+ * fresh at every mint/accrual, from `mintFeeBps`/`tvlFeeBps` alone via the
+ * SSR.fun fee formula (see packages/sdk/src/feeMath.ts). `feeDestination`
+ * is the "Primary Fee Destination": the sole implicit Manager fee recipient
+ * (100% of the Manager's share) unless the creator ALSO bundles
+ * `buildInitializeManagerFeeRecipientsInstruction` into the same
+ * transaction for >1 recipient.
+ */
 export interface CreateReserveParams {
   metadataUri: string;
   mintFeeBps: number;
   redemptionFeeBps: number;
   tvlFeeBps: number;
-  managerFeeShareBps: number;
-  protocolFeeShareBps: number;
   feeDestination: PublicKey;
 }
 
@@ -52,7 +61,7 @@ export async function buildCreateReserveInstruction(
   params: CreateReserveParams,
 ): Promise<TransactionInstruction> {
   return program.methods
-    .createReserve(params.metadataUri, params.mintFeeBps, params.redemptionFeeBps, params.tvlFeeBps, params.managerFeeShareBps, params.protocolFeeShareBps, params.feeDestination)
+    .createReserve(params.metadataUri, params.mintFeeBps, params.redemptionFeeBps, params.tvlFeeBps, params.feeDestination)
     .accounts({
       protocolConfig: addresses.protocolConfig,
       reserve: addresses.reserve,
@@ -60,6 +69,39 @@ export async function buildCreateReserveInstruction(
       reserveTokenMint: addresses.reserveTokenMint,
       manager,
       tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    } as any)
+    .instruction();
+}
+
+/**
+ * DEC-0094: opts a freshly-created (or already-existing) Reserve into
+ * multi-recipient Manager fee routing for the first time. When creating a
+ * Reserve with >1 recipient, bundle this in the SAME transaction as
+ * `buildCreateReserveInstruction` (the `reserve` PDA it seeds/derives from
+ * was just created earlier in that same transaction -- Solana executes
+ * instructions sequentially against shared account state, the same pattern
+ * `executeSubmitRebalance` already relies on in managementClient.ts).
+ * `payer` covers this new account's one-time rent.
+ */
+export async function buildInitializeManagerFeeRecipientsInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  signer: PublicKey,
+  delegate: PublicKey,
+  payer: PublicKey,
+  recipients: RecipientInput[],
+): Promise<TransactionInstruction> {
+  const [managerFeeRecipients] = findManagerFeeRecipients(reserve, programId);
+  return program.methods
+    .initializeManagerFeeRecipients(recipients.map((r) => ({ wallet: new PublicKey(r.wallet), allocationBps: r.allocationBps })))
+    .accounts({
+      reserve,
+      managerFeeRecipients,
+      delegate,
+      signer,
+      payer,
       systemProgram: SystemProgram.programId,
     } as any)
     .instruction();

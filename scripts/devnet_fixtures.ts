@@ -192,7 +192,9 @@ async function main() {
 
     await withRetry("createReserve", () =>
       program.methods
-        .createReserve(uri, 50, 0, 100, 8000, 2000, manager.publicKey)
+        // DEC-0094: manager_fee_share_bps/protocol_fee_share_bps removed --
+        // the split is now always derived on-chain from mint/tvl fee bps alone.
+        .createReserve(uri, 50, 0, 100, manager.publicKey)
         .accounts({
           protocolConfig,
           reserve,

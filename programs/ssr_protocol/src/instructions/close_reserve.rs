@@ -20,12 +20,12 @@ use anchor_spl::token::Mint as SplMint;
 use anchor_spl::token_interface::{self, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    RESERVE_ASSET_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, RESERVE_VAULT_SEED,
-    VAULT_AUTHORITY_SEED,
+    MANAGER_FEE_RECIPIENTS_SEED, RESERVE_ASSET_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
+    RESERVE_VAULT_SEED, VAULT_AUTHORITY_SEED,
 };
 use crate::errors::SsrError;
 use crate::events::ReserveClosed;
-use crate::state::{Reserve, ReserveAsset, ReserveStatus};
+use crate::state::{ManagerFeeRecipients, Reserve, ReserveAsset, ReserveStatus};
 
 #[derive(Accounts)]
 pub struct CloseReserve<'info> {
@@ -51,6 +51,21 @@ pub struct CloseReserve<'info> {
         bump = reserve.vault_authority_bump,
     )]
     pub vault_authority: UncheckedAccount<'info>,
+
+    /// Optional (DEC-0094): pass the program ID itself as a "None" sentinel
+    /// for a Reserve that never opted into multi-recipient routing. When
+    /// `Some`, every active recipient's `pending_fee_shares` must be zero
+    /// (see the handler) -- without this, a manager could close a Reserve
+    /// with real, uncollected per-recipient balances still outstanding,
+    /// permanently stranding them (the exact failure mode
+    /// `PendingFeesNotCollected` below already prevents for the legacy
+    /// aggregate, which this account's existence structurally bypasses).
+    #[account(
+        mut,
+        seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
+        bump = manager_fee_recipients.bump,
+    )]
+    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
 
     #[account(mut)]
     pub manager: Signer<'info>,
@@ -85,6 +100,22 @@ pub fn handler<'info>(ctx: Context<'info, CloseReserve<'info>>) -> Result<()> {
             && ctx.accounts.reserve.fee_config.pending_protocol_fee_shares == 0,
         SsrError::PendingFeesNotCollected
     );
+    // DEC-0094: for a Reserve that opted into multi-recipient routing, the
+    // legacy aggregate check above always trivially passes (that field
+    // stops accumulating once migrated -- see common::credit_manager_fee_shares)
+    // so it can no longer catch a real outstanding balance. This is the
+    // check that actually protects a migrated Reserve.
+    if let Some(recipients_account) = ctx.accounts.manager_fee_recipients.as_ref() {
+        require_keys_eq!(
+            recipients_account.reserve,
+            reserve_key,
+            SsrError::ManagerFeeRecipientsMismatch
+        );
+        require!(
+            recipients_account.all_pending_collected(),
+            SsrError::PendingManagerFeeSharesNotCollected
+        );
+    }
     require_eq!(
         ctx.remaining_accounts.len(),
         asset_count * 2,
@@ -163,6 +194,12 @@ pub fn handler<'info>(ctx: Context<'info, CloseReserve<'info>>) -> Result<()> {
         token_interface::close_account(cpi_ctx)?;
 
         config.close(manager_info.clone())?;
+    }
+
+    // Reclaim the ManagerFeeRecipients account's rent too, same as every
+    // ReserveAsset above -- checked and zero-balance-verified already.
+    if let Some(recipients_account) = ctx.accounts.manager_fee_recipients.take() {
+        recipients_account.close(manager_info.clone())?;
     }
 
     // `reserve` carries `close = manager` (see the Accounts struct): Anchor

@@ -226,3 +226,49 @@ pub struct ProtocolConfigUpdated {
     pub new_default_protocol_fee_bps: u16,
     pub ts: i64,
 }
+
+// --- Manager fee recipients (DEC-0094) ---
+
+/// Emitted by both `initialize_manager_fee_recipients` (first-ever routing
+/// for this Reserve) and `update_fee_recipients` (a subsequent change).
+/// `recipients`/`allocations_bps` are parallel arrays, in slot order.
+#[event]
+pub struct ManagerFeeRecipientsConfigured {
+    pub reserve: Pubkey,
+    pub recipients: Vec<Pubkey>,
+    pub allocations_bps: Vec<u16>,
+    pub configured_by: Pubkey,
+    pub routing_updated_at: i64,
+    pub ts: i64,
+}
+
+/// Emitted once per mint/accrue call that credits a migrated Reserve's
+/// per-recipient balances (largest-remainder apportionment of the
+/// Manager's total fee shares that accrual). `recipients`/`amounts` are
+/// parallel arrays, active slots only. `source` distinguishes which fee
+/// generated this accrual so it's never conflated with the other.
+#[event]
+pub struct ManagerFeeShareAccrued {
+    pub reserve: Pubkey,
+    pub recipients: Vec<Pubkey>,
+    pub amounts: Vec<u64>,
+    pub source: ManagerFeeAccrualSource,
+    pub ts: i64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ManagerFeeAccrualSource {
+    MintFee,
+    AnnualTvlFee,
+}
+
+/// Emitted by `collect_manager_fee_share` -- one recipient's own pending
+/// balance paid out and zeroed.
+#[event]
+pub struct ManagerFeeShareCollected {
+    pub reserve: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub collected_by: Pubkey,
+    pub ts: i64,
+}

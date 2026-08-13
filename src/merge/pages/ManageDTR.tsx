@@ -21,11 +21,24 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Slider } from "@/components/ui/slider";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
 import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLAGS, PERMISSION_FLAGS } from "@/lib/onChainPermissions";
-import { fetchReserveOnChain, DEVNET_FIXTURES, DEVUSDC, findReserve, type ActivityLogEntry } from "@ssr/sdk";
+import {
+  fetchReserveOnChain,
+  fetchManagerFeeRecipients,
+  DEVNET_FIXTURES,
+  DEVUSDC,
+  findReserve,
+  validateFeeRecipientInputs,
+  type ActivityLogEntry,
+  type ManagerFeeRecipientsOnChain,
+  type RecipientInput,
+} from "@ssr/sdk";
 import {
   executeAddDelegate,
   executeCloseReserve,
   executeCollectFees,
+  executeCollectManagerFeeShare,
+  executeInitializeManagerFeeRecipients,
+  executeUpdateFeeRecipients,
   executeFundReserveAsset,
   executeInitiateWindDown,
   executeRemoveDelegate,
@@ -288,6 +301,99 @@ export function ManageDTR() {
   const [rebalanceAssetSearch, setRebalanceAssetSearch] = useState("");
   const [onChainTxPending, setOnChainTxPending] = useState<string | null>(null); // which action is in flight, for button disabling
 
+  // DEC-0094: multi-recipient Manager fees. `feeRecipientsData` is refetched
+  // independently of the main Reserve poll (it lives in a separate
+  // ManagerFeeRecipients account) -- `initialized: false` with a single
+  // synthesized entry means this Reserve hasn't opted into multi-recipient
+  // routing yet, see fetchManagerFeeRecipients's doc comment.
+  const [feeRecipientsData, setFeeRecipientsData] = useState<ManagerFeeRecipientsOnChain | null>(null);
+  const [routingEditorOpen, setRoutingEditorOpen] = useState(false);
+  const [routingRecipients, setRoutingRecipients] = useState<{ address: string; pct: number }[]>([]);
+  const [newRoutingAddress, setNewRoutingAddress] = useState("");
+  const [newRoutingPct, setNewRoutingPct] = useState("");
+
+  async function refreshFeeRecipients() {
+    if (!dtr?.onChain) return;
+    try {
+      const programId = new PublicKey(dtr.onChain.programId);
+      const data = await fetchManagerFeeRecipients(
+        connection,
+        programId,
+        new PublicKey(dtr.onChain.reserve),
+        dtr.onChain.feeDestination ?? dtr.managerAddress,
+        dtr.onChain.pendingManagerFeeShares ?? "0",
+      );
+      setFeeRecipientsData(data);
+    } catch {
+      // Transient RPC failure -- leave the last-known data in place rather
+      // than flashing an empty state; the next poll will retry.
+    }
+  }
+
+  useEffect(() => {
+    void refreshFeeRecipients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dtr?.onChain?.reserve]);
+
+  function openRoutingEditor() {
+    setRoutingRecipients(
+      (feeRecipientsData?.recipients ?? []).map((r) => ({ address: r.wallet, pct: r.allocationBps / 100 })),
+    );
+    setRoutingEditorOpen(true);
+  }
+
+  function addRoutingRecipient() {
+    const pct = parseFloat(newRoutingPct);
+    if (!newRoutingAddress.trim() || !pct || pct <= 0) return;
+    if (routingRecipients.length >= 10) return;
+    if (routingRecipients.some((r) => r.address === newRoutingAddress.trim())) return;
+    setRoutingRecipients([...routingRecipients, { address: newRoutingAddress.trim(), pct }]);
+    setNewRoutingAddress("");
+    setNewRoutingPct("");
+  }
+
+  function removeRoutingRecipient(address: string) {
+    setRoutingRecipients(routingRecipients.filter((r) => r.address !== address));
+  }
+
+  const routingTotalPct = routingRecipients.reduce((sum, r) => sum + r.pct, 0);
+
+  async function submitRoutingChange() {
+    if (!dtr?.onChain) return;
+    const recipients: RecipientInput[] = routingRecipients.map((r) => ({ wallet: r.address, allocationBps: Math.round(r.pct * 100) }));
+    try {
+      validateFeeRecipientInputs(recipients);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Invalid routing", description: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    setOnChainTxPending("Update Fee Routing");
+    try {
+      let signature: string;
+      if (feeRecipientsData?.initialized) {
+        const currentRecipients = feeRecipientsData.recipients.map((r) => ({ wallet: r.wallet, pendingFeeShares: r.pendingFeeShares }));
+        signature = await executeUpdateFeeRecipients(connection, walletCtx, dtr.onChain.reserve, dtr.onChain.reserveTokenMint, currentRecipients, recipients);
+      } else {
+        signature = await executeInitializeManagerFeeRecipients(connection, walletCtx, dtr.onChain.reserve, recipients);
+      }
+      toast(transactionConfirmedToast(signature, "Fee routing updated"));
+      setRoutingEditorOpen(false);
+      await refreshFeeRecipients();
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      console.error("Update Fee Routing failed:", raw);
+      toast({
+        variant: "destructive",
+        title: "Could not update fee routing",
+        description: /PendingFeesBlockRoutingChange/.test(raw)
+          ? "One or more current recipients still had an uncollected balance that couldn't be paid out automatically. Try again, or collect fees individually first."
+          : raw,
+      });
+    } finally {
+      setOnChainTxPending(null);
+    }
+  }
+
   // Composition management (Phase F) state -- on-chain Reserves only.
   const [fundAmounts, setFundAmounts] = useState<Record<string, string>>({});
 
@@ -467,6 +573,7 @@ export function ManageDTR() {
   const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
   const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
   const canRemoveRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.REMOVE_RESTRICTED_DELEGATE);
+  const canManageFeesOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_FEES);
   // Unified gate for the rebalance-edit table, shared by both the on-chain
   // (real permission) and simulated (local permission) branches.
   const canEditRebalance = dtr.onChain ? canUpdateTargetsOnChain : hasRebalance;
@@ -840,60 +947,133 @@ export function ManageDTR() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                     <div>
-                      <p className="text-sm font-semibold text-muted-foreground mb-1">Mint Fee</p>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Mint Fee (configured)</p>
                       <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.mintFeePct)}</p>
+                      {dtr.onChain?.effectiveMintFeeProtocolBps != null && (
+                        <p className="text-xs font-merge-mono text-muted-foreground mt-1">
+                          {(dtr.onChain.effectiveMintFeeProtocolBps / 100).toFixed(2)}% Protocol + {(dtr.onChain.effectiveMintFeeManagerBps! / 100).toFixed(2)}% Manager
+                        </p>
+                      )}
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-muted-foreground mb-1">Annualized TVL Fee</p>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Annualized TVL Fee (configured)</p>
                       <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.tvlFeePct)}</p>
+                      {dtr.onChain?.effectiveTvlFeeProtocolBps != null && (
+                        <p className="text-xs font-merge-mono text-muted-foreground mt-1">
+                          {(dtr.onChain.effectiveTvlFeeProtocolBps / 100).toFixed(2)}% Protocol + {(dtr.onChain.effectiveTvlFeeManagerBps! / 100).toFixed(2)}% Manager
+                        </p>
+                      )}
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Buy Tax</p>
-                      <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.managerBuyTaxPct)}</p>
+                      <p className="font-merge-mono font-medium">{formatPct(dtr.onChain ? 0 : dtr.feeConfig.managerBuyTaxPct)}</p>
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Sell Tax</p>
-                      <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.managerSellTaxPct)}</p>
+                      <p className="font-merge-mono font-medium">{formatPct(dtr.onChain ? 0 : dtr.feeConfig.managerSellTaxPct)}</p>
                     </div>
                   </div>
-                  <div className="pt-4 border-t border-border/50">
-                    <p className="text-sm font-semibold text-muted-foreground mb-1">Primary Fee Destination</p>
-                    <p className="font-merge-mono text-sm break-all">{dtr.feeConfig.creatorFeeDestination}</p>
-                  </div>
-                  {dtr.feeConfig.feeRecipients.length > 0 && (
+
+                  {dtr.onChain && (
                     <div className="pt-4 border-t border-border/50">
-                      <p className="text-sm font-semibold text-muted-foreground mb-2">Additional Fee Recipients</p>
-                      <div className="space-y-2">
-                        {dtr.feeConfig.feeRecipients.map((r) => (
-                          <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
-                            <span className="font-merge-mono text-xs break-all">{r.address}</span>
-                            <span className="font-merge-mono font-bold shrink-0 ml-3">{r.pct}%</span>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                          <Coins className="w-4 h-4" /> Manager Fee Recipients
+                        </p>
+                        {canManageFeesOnChain && (
+                          <Button variant="outline" size="sm" onClick={openRoutingEditor} disabled={onChainTxPending !== null}>
+                            {feeRecipientsData?.initialized ? "Change Routing" : "Set Up Recipients"}
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Fees accrue in-kind as pending Reserve Token shares and only pay out once collected -- any wallet may trigger a recipient's
+                        payout below, not only that recipient itself.
+                        {feeRecipientsData && (
+                          <>
+                            {" "}
+                            {feeRecipientsData.initialized
+                              ? `Routing last set ${new Date(feeRecipientsData.routingUpdatedAt * 1000).toLocaleString()}.`
+                              : "This Reserve is still using its original single Primary Fee Destination -- it has never had multi-recipient routing configured."}
+                          </>
+                        )}
+                      </p>
+                      <div className="space-y-2 mb-3">
+                        {(feeRecipientsData?.recipients ?? []).map((r) => (
+                          <div key={r.wallet} className="p-3 bg-muted/30 rounded-lg border border-border/50 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-merge-mono text-xs truncate">{r.wallet}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(r.allocationBps / 100).toFixed(1)}% of Manager share &middot; claimable {(Number(r.pendingFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                {" "}&middot; collected {(Number(r.collectedFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                              </p>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0 gap-1.5"
+                              disabled={onChainTxPending !== null || r.pendingFeeShares === "0"}
+                              onClick={() =>
+                                void runOnChainAction("Collect Manager Fee Share", () =>
+                                  executeCollectManagerFeeShare(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, r.wallet, feeRecipientsData!.initialized),
+                                )
+                              }
+                            >
+                              <Coins className="w-3.5 h-3.5" /> {onChainTxPending === "Collect Manager Fee Share" ? "Confirming..." : "Collect"}
+                            </Button>
                           </div>
                         ))}
                       </div>
+
+                      {routingEditorOpen && (
+                        <div className="p-4 rounded-lg border border-border bg-muted/20 space-y-3 mb-3">
+                          <p className="text-sm font-semibold">Configure Manager Fee Recipients</p>
+                          <p className="text-xs text-muted-foreground">
+                            Up to 10 recipients total. Percentages divide the Manager's fee share and must sum to exactly 100%. If any current
+                            recipient has an uncollected balance, this transaction will collect it first automatically.
+                          </p>
+                          <div className="space-y-2">
+                            {routingRecipients.map((r) => (
+                              <div key={r.address} className="flex items-center justify-between gap-2 p-2 rounded border border-border bg-background text-sm">
+                                <span className="font-merge-mono text-xs truncate">{r.address}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <Badge variant="secondary" className="font-merge-mono">{r.pct}%</Badge>
+                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => removeRoutingRecipient(r.address)}>
+                                    <X className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {routingRecipients.length < 10 && (
+                            <div className="flex gap-2">
+                              <Input placeholder="Recipient wallet address" className="font-merge-mono text-sm" value={newRoutingAddress} onChange={(e) => setNewRoutingAddress(e.target.value)} />
+                              <Input type="number" placeholder="%" className="w-24 font-merge-mono" value={newRoutingPct} onChange={(e) => setNewRoutingPct(e.target.value)} />
+                              <Button variant="outline" onClick={addRoutingRecipient} className="shrink-0 gap-1.5">
+                                <Plus className="w-4 h-4" /> Add
+                              </Button>
+                            </div>
+                          )}
+                          <p className={`text-xs font-merge-mono ${routingTotalPct !== 100 ? "text-destructive" : "text-muted-foreground"}`}>Total: {routingTotalPct.toFixed(1)}% (must be exactly 100%)</p>
+                          <div className="flex gap-2">
+                            <Button size="sm" disabled={onChainTxPending !== null || routingTotalPct !== 100 || routingRecipients.length === 0} onClick={() => void submitRoutingChange()}>
+                              {onChainTxPending === "Update Fee Routing" ? "Confirming..." : "Submit Routing"}
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setRoutingEditorOpen(false)}>Cancel</Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
+
                   {dtr.onChain && (
                     <div className="pt-4 border-t border-border/50">
                       <p className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                        <Coins className="w-4 h-4" /> Pending Fees (uncollected)
+                        <Coins className="w-4 h-4" /> Protocol Fees (uncollected)
                       </p>
-                      <p className="text-xs text-muted-foreground mb-3">
-                        Fees accrue in-kind as pending Reserve Token shares (minted to the destinations below, never a USDC transfer) and
-                        only pay out once collected. Any wallet may trigger the payout below, not only the Root Manager.
-                        {dtr.onChain.managerFeeShareBps != null && dtr.onChain.protocolFeeShareBps != null && (
-                          <> Configured split: <span className="font-merge-mono text-foreground">{dtr.onChain.managerFeeShareBps / 100}% Manager / {dtr.onChain.protocolFeeShareBps / 100}% Protocol</span>, fixed at Reserve creation.</>
-                        )}
-                      </p>
-                      <div className="grid grid-cols-2 gap-3 mb-3">
-                        <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
-                          <p className="text-xs text-muted-foreground mb-1">Manager share{dtr.onChain.managerFeeShareBps != null ? ` (${dtr.onChain.managerFeeShareBps / 100}%)` : ""}</p>
-                          <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingManagerFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
-                        </div>
-                        <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
-                          <p className="text-xs text-muted-foreground mb-1">Protocol share{dtr.onChain.protocolFeeShareBps != null ? ` (${dtr.onChain.protocolFeeShareBps / 100}%)` : ""}</p>
-                          <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingProtocolFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
-                        </div>
+                      <div className="p-3 bg-muted/30 rounded-lg border border-border/50 mb-3 max-w-xs">
+                        <p className="text-xs text-muted-foreground mb-1">Protocol share (accrued, claimable)</p>
+                        <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingProtocolFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
                       </div>
                       <Button
                         variant="outline"
@@ -909,7 +1089,7 @@ export function ManageDTR() {
                         }
                         className="gap-2"
                       >
-                        <Coins className="w-4 h-4" /> {onChainTxPending === "Collect Fees" ? "Confirming..." : "Collect Fees"}
+                        <Coins className="w-4 h-4" /> {onChainTxPending === "Collect Fees" ? "Confirming..." : "Collect Protocol Fees"}
                       </Button>
                     </div>
                   )}

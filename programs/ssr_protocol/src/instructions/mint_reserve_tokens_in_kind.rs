@@ -2,14 +2,16 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
-use super::common::{load_asset_legs, mul_div_ceil, mul_div_floor, transfer_into_vault};
+use super::accrue_fees::checkpoint_tvl_fee;
+use super::common::{credit_manager_fee_shares, load_asset_legs, mul_div_ceil, transfer_into_vault};
 use crate::constants::{
-    BPS_DENOMINATOR, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED, RESERVE_SEED,
-    RESERVE_TOKEN_MINT_SEED,
+    BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED,
+    PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
 };
 use crate::errors::SsrError;
-use crate::events::ReserveTokensMinted;
-use crate::state::{ProtocolConfig, Reserve, ReserveStatus};
+use crate::events::{ManagerFeeAccrualSource, ReserveTokensMinted};
+use crate::fee_math::{split_configured_bps, split_total_fee};
+use crate::state::{ManagerFeeRecipients, ProtocolConfig, Reserve, ReserveStatus};
 
 #[derive(Accounts)]
 pub struct MintReserveTokensInKind<'info> {
@@ -49,6 +51,18 @@ pub struct MintReserveTokensInKind<'info> {
     #[account(mut)]
     pub depositor: Signer<'info>,
 
+    /// Optional (DEC-0094): pass the program ID itself as a "None" sentinel
+    /// for a Reserve that hasn't opted into multi-recipient routing. See
+    /// `state/manager_fee_recipients.rs` and `common::credit_manager_fee_shares`.
+    /// Also used to credit the TVL-fee piggyback checkpoint this call
+    /// triggers (see `accrue_fees::checkpoint_tvl_fee`).
+    #[account(
+        mut,
+        seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
+        bump = manager_fee_recipients.bump,
+    )]
+    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
+
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -85,6 +99,16 @@ pub fn handler<'info>(
     let total_supply_before = ctx.accounts.reserve_token_mint.supply;
     require!(total_supply_before > 0, SsrError::ZeroSupply);
 
+    // DEC-0094: piggyback the TVL-fee checkpoint onto this mint, on the
+    // pre-mint supply -- "settle during normal Reserve transactions" so an
+    // active Reserve accrues TVL fees for free, with no separate
+    // `accrue_fees` transaction needed. Safe no-op if <1 day has elapsed.
+    checkpoint_tvl_fee(
+        &mut ctx.accounts.reserve,
+        &mut ctx.accounts.manager_fee_recipients,
+        total_supply_before,
+    )?;
+
     let reserve_key = ctx.accounts.reserve.key();
     let legs = load_asset_legs(
         &ctx.accounts.reserve,
@@ -118,10 +142,19 @@ pub fn handler<'info>(
         asset_amounts_in.push(required_amount);
     }
 
-    let fee_config = &ctx.accounts.reserve.fee_config;
+    // DEC-0094: `mint_fee_bps` is the configured (manager-set) gross rate;
+    // the EFFECTIVE total actually charged is derived fresh here via the
+    // SSR.fun fee formula, and can exceed `mint_fee_bps` when it's below
+    // the Protocol's 0.5% floor -- see fee_math::split_configured_bps.
+    let configured_mint_fee_bps = ctx.accounts.reserve.fee_config.mint_fee_bps;
+    let (protocol_bps, manager_bps) =
+        split_configured_bps(configured_mint_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
+    let effective_total_bps = (protocol_bps as u64)
+        .checked_add(manager_bps as u64)
+        .ok_or(error!(SsrError::MathOverflow))?;
     let mint_fee_shares = mul_div_ceil(
         reserve_tokens_requested,
-        fee_config.mint_fee_bps as u64,
+        effective_total_bps,
         BPS_DENOMINATOR as u64,
     )?;
     let net_shares_out = reserve_tokens_requested
@@ -133,39 +166,38 @@ pub fn handler<'info>(
         SsrError::SlippageMinOutputNotMet
     );
 
-    // manager_fee_shares floor-rounded, protocol_fee_shares is the EXACT
-    // remainder (not independently floor-rounded) -- guarantees
-    // manager_fee_shares + protocol_fee_shares == mint_fee_shares exactly,
-    // every time, with zero rounding dust ever silently unallocated. Valid
-    // specifically because create_reserve now requires
-    // manager_fee_share_bps + protocol_fee_share_bps == BPS_DENOMINATOR
-    // exactly (see create_reserve.rs) -- the two shares are always a
-    // complete partition of the fee, never a partial one, so "give the
-    // second party whatever the first didn't take" is exact by
-    // construction, not an approximation.
-    let manager_fee_shares = mul_div_floor(
-        mint_fee_shares,
-        fee_config.manager_fee_share_bps as u64,
-        BPS_DENOMINATOR as u64,
-    )?;
-    let protocol_fee_shares = mint_fee_shares
-        .checked_sub(manager_fee_shares)
-        .ok_or(error!(SsrError::MathUnderflow))?;
+    // protocol_fee_shares floor+exact-remainder split from manager_fee_shares
+    // (DEC-0094: divides by effective_total_bps, NOT BPS_DENOMINATOR -- see
+    // fee_math::split_total_fee's doc comment for why the pre-DEC-0094
+    // divisor would be wrong here). manager_fee_shares is then apportioned
+    // across up to MAX_FEE_RECIPIENTS recipients (or credited to the legacy
+    // aggregate) by credit_manager_fee_shares -- the full chain
+    // `protocol_fee_shares + sum(recipient credits) == mint_fee_shares`
+    // holds exactly at every step.
+    let (protocol_fee_shares, manager_fee_shares) =
+        split_total_fee(mint_fee_shares, protocol_bps, manager_bps)?;
 
     let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
     {
         let reserve = &mut ctx.accounts.reserve;
-        reserve.fee_config.pending_manager_fee_shares = reserve
-            .fee_config
-            .pending_manager_fee_shares
-            .checked_add(manager_fee_shares)
-            .ok_or(error!(SsrError::MathOverflow))?;
         reserve.fee_config.pending_protocol_fee_shares = reserve
             .fee_config
             .pending_protocol_fee_shares
             .checked_add(protocol_fee_shares)
             .ok_or(error!(SsrError::MathOverflow))?;
+        // Informational telemetry only (DEC-0094) -- see the doc comment on
+        // these two fields in state/reserve.rs. Reflects the mint fee's
+        // effective split specifically (not the TVL fee's, which can
+        // differ); never read for control flow.
+        reserve.fee_config.manager_fee_share_bps = manager_bps;
+        reserve.fee_config.protocol_fee_share_bps = protocol_bps;
     }
+    credit_manager_fee_shares(
+        &mut ctx.accounts.reserve,
+        &mut ctx.accounts.manager_fee_recipients,
+        manager_fee_shares,
+        ManagerFeeAccrualSource::MintFee,
+    )?;
 
     let mint_authority_seeds: &[&[u8]] = &[
         MINT_AUTHORITY_SEED,

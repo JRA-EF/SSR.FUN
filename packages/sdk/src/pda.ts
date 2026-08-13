@@ -11,6 +11,7 @@ export const VAULT_AUTHORITY_SEED = Buffer.from("vault_authority");
 export const RESERVE_TOKEN_MINT_SEED = Buffer.from("reserve_token_mint");
 export const MINT_AUTHORITY_SEED = Buffer.from("mint_authority");
 export const DELEGATE_SEED = Buffer.from("delegate");
+export const MANAGER_FEE_RECIPIENTS_SEED = Buffer.from("manager_fee_recipients");
 
 export function findProtocolConfig(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([PROTOCOL_CONFIG_SEED], programId);
@@ -44,4 +45,9 @@ export function findMintAuthority(reserve: PublicKey, programId: PublicKey): [Pu
 
 export function findDelegate(reserve: PublicKey, wallet: PublicKey, programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([DELEGATE_SEED, reserve.toBuffer(), wallet.toBuffer()], programId);
+}
+
+/** DEC-0094: the up-to-10-recipient Manager fee routing account for a Reserve, if it has opted in. */
+export function findManagerFeeRecipients(reserve: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([MANAGER_FEE_RECIPIENTS_SEED, reserve.toBuffer()], programId);
 }
