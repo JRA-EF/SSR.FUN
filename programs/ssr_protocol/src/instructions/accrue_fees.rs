@@ -67,12 +67,18 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
     let total_fee_shares =
         u64::try_from(total_fee_shares_u128).map_err(|_| error!(SsrError::MathOverflow))?;
 
+    // manager_fee_shares floor-rounded, protocol_fee_shares is the EXACT
+    // remainder -- see the identical fix + rationale in
+    // mint_reserve_tokens_in_kind.rs: guarantees
+    // manager_fee_shares + protocol_fee_shares == total_fee_shares exactly,
+    // valid because create_reserve now requires the two share bps to sum to
+    // exactly BPS_DENOMINATOR.
     let manager_fee_shares = ((total_fee_shares as u128)
         * (reserve.fee_config.manager_fee_share_bps as u128)
         / (BPS_DENOMINATOR as u128)) as u64;
-    let protocol_fee_shares = ((total_fee_shares as u128)
-        * (reserve.fee_config.protocol_fee_share_bps as u128)
-        / (BPS_DENOMINATOR as u128)) as u64;
+    let protocol_fee_shares = total_fee_shares
+        .checked_sub(manager_fee_shares)
+        .ok_or(error!(SsrError::MathUnderflow))?;
 
     let accrued_until_ts = reserve
         .fee_config

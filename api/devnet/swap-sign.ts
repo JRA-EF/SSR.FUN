@@ -63,6 +63,7 @@ import {
   findMintAuthority,
   findVaultAuthority,
   isReserveTradable,
+  isRedemptionAllowedForStatus,
   SUPPORTED_ASSET_MINTS,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
@@ -276,8 +277,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       });
       return;
     }
-    if (onChain.status !== "active") {
-      res.status(409).json({ error: `Reserve is not Active (status: ${onChain.status}) -- Buy/Sell unavailable.` });
+    // Buy/mint requires the Reserve to be exactly Active -- mirrors
+    // mint_reserve_tokens_in_kind's own on-chain `status == Active` check.
+    // Sell/redemption is deliberately wider: it's allowed in Active, Paused
+    // (DEC-0016 -- redemption is exempt from pause), AND WindDown (a Reserve
+    // winding down must let holders redeem out, since close_reserve requires
+    // the Reserve Token supply to reach zero) -- this mirrors
+    // Reserve::require_redemption_allowed in
+    // programs/ssr_protocol/src/state/reserve.rs exactly. This endpoint's
+    // status gate previously used one Active-only check for every action,
+    // which incorrectly rejected a WindDown Sell here even though the
+    // on-chain instruction itself would have allowed it -- see
+    // docs/project/DECISION_LOG.md for the corrective entry. Uses the same
+    // canonical set as reserveEligibility.ts's public visibility gate (see
+    // isRedemptionAllowedForStatus's own header for why the two coincide) --
+    // one definition, not a second copy that could drift from it.
+    if (action === "sell") {
+      if (!isRedemptionAllowedForStatus(onChain.status)) {
+        res.status(409).json({ error: `This Reserve is not open for redemption right now (status: ${onChain.status}) -- Sell is unavailable.` });
+        return;
+      }
+    } else if (onChain.status !== "active") {
+      res.status(409).json({ error: `This Reserve is not active right now (status: ${onChain.status}) -- Buy is unavailable.` });
       return;
     }
 

@@ -109,4 +109,14 @@ pub enum SsrError {
     RebalanceLegExceedsCircuitBreaker,
     #[msg("The two rebalance legs must reference different asset mints.")]
     RebalanceLegSameAsset,
+
+    // --- Closure safeguards (2026-08-13 corrective pass) ---
+    // Appended at the end of the enum deliberately -- Anchor assigns each
+    // variant's on-chain error code sequentially from its declaration
+    // order, starting at 6000; inserting a new variant anywhere earlier
+    // would silently renumber every variant declared after it, breaking
+    // every already-deployed client's decoded-error-code mapping for
+    // errors that were never touched by this change.
+    #[msg("close_reserve requires every pending fee share (manager and protocol) to be collected first -- call collect_fees, then retry.")]
+    PendingFeesNotCollected,
 }

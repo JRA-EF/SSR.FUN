@@ -3376,6 +3376,21 @@
       "code": 6040,
       "name": "NoPendingRebalance",
       "msg": "No rebalance intent is currently pending for this Reserve."
+    },
+    {
+      "code": 6041,
+      "name": "RebalanceLegExceedsCircuitBreaker",
+      "msg": "Requested leg amount exceeds the per-call circuit-breaker bound (half the sell asset's current vault balance)."
+    },
+    {
+      "code": 6042,
+      "name": "RebalanceLegSameAsset",
+      "msg": "The two rebalance legs must reference different asset mints."
+    },
+    {
+      "code": 6043,
+      "name": "PendingFeesNotCollected",
+      "msg": "close_reserve requires every pending fee share (manager and protocol) to be collected first -- call collect_fees, then retry."
     }
   ],
   "types": [

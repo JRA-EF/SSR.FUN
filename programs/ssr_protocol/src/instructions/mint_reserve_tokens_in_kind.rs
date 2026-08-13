@@ -133,16 +133,24 @@ pub fn handler<'info>(
         SsrError::SlippageMinOutputNotMet
     );
 
+    // manager_fee_shares floor-rounded, protocol_fee_shares is the EXACT
+    // remainder (not independently floor-rounded) -- guarantees
+    // manager_fee_shares + protocol_fee_shares == mint_fee_shares exactly,
+    // every time, with zero rounding dust ever silently unallocated. Valid
+    // specifically because create_reserve now requires
+    // manager_fee_share_bps + protocol_fee_share_bps == BPS_DENOMINATOR
+    // exactly (see create_reserve.rs) -- the two shares are always a
+    // complete partition of the fee, never a partial one, so "give the
+    // second party whatever the first didn't take" is exact by
+    // construction, not an approximation.
     let manager_fee_shares = mul_div_floor(
         mint_fee_shares,
         fee_config.manager_fee_share_bps as u64,
         BPS_DENOMINATOR as u64,
     )?;
-    let protocol_fee_shares = mul_div_floor(
-        mint_fee_shares,
-        fee_config.protocol_fee_share_bps as u64,
-        BPS_DENOMINATOR as u64,
-    )?;
+    let protocol_fee_shares = mint_fee_shares
+        .checked_sub(manager_fee_shares)
+        .ok_or(error!(SsrError::MathUnderflow))?;
 
     let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
     {

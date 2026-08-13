@@ -40,22 +40,43 @@ pub struct CollectFees<'info> {
     )]
     pub mint_authority: UncheckedAccount<'info>,
 
+    // `dup`: a Reserve's manager_fee_destination is caller-configured at
+    // create_reserve time and CAN legitimately equal
+    // ProtocolConfig.default_protocol_fee_destination (e.g. the same wallet
+    // manages both) -- when it does, this account and
+    // protocol_fee_destination_token_account below resolve to the exact
+    // same ATA. Anchor's default `#[account(mut)]` codegen treats any two
+    // same-type mutable accounts colliding as a hard error
+    // (ConstraintDuplicateMutableAccount, code 2040) to guard against
+    // double-serialization silently dropping one write -- that guard does
+    // not apply here: both mutations are separate `token::mint_to` CPIs
+    // into the SPL Token program, which writes the account's on-chain
+    // balance directly on each call, so two CPIs against the same account
+    // compose correctly regardless of how many aliased in-memory Anchor
+    // handles exist. `dup` opts this field out of that check so a
+    // legitimately-colliding Reserve can still collect fees (2026-08-13
+    // corrective pass -- see docs/project/DECISION_LOG.md for the
+    // live-reproduced error 2040 this fixes).
     #[account(
         init_if_needed,
         payer = payer,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = manager_fee_destination,
+        dup,
     )]
     pub manager_fee_destination_token_account: Account<'info, SplTokenAccount>,
     /// CHECK: only used as the associated-token-account authority above;
     /// must equal `reserve.fee_config.fee_destination`, checked in the handler.
     pub manager_fee_destination: UncheckedAccount<'info>,
 
+    /// `dup`: see manager_fee_destination_token_account's comment above --
+    /// this is the other half of the same legitimate-collision pair.
     #[account(
         init_if_needed,
         payer = payer,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = protocol_fee_destination,
+        dup,
     )]
     pub protocol_fee_destination_token_account: Account<'info, SplTokenAccount>,
     /// CHECK: only used as the associated-token-account authority above;

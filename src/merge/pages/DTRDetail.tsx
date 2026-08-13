@@ -553,7 +553,12 @@ export function DTRDetail() {
           toast({ variant: "destructive", title: "Buy not available", description: e.message });
         } else {
           const raw = e instanceof Error ? e.message : "The DevNet swap failed.";
-          toast({ variant: "destructive", title: "Buy Failed", description: describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()) });
+          // Full technical detail (server-side status text, decoded on-chain
+          // error name, etc) always goes to the console -- the toast itself
+          // shows only the plain-language required copy, never a raw
+          // instruction name or internal phase.
+          console.error("Buy failed:", describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()));
+          toast({ variant: "destructive", title: "Buy Failed", description: "Your purchase could not be completed. No funds were moved." });
         }
       }
     } finally {
@@ -665,7 +670,10 @@ export function DTRDetail() {
           toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
         } else {
           const raw = e instanceof Error ? e.message : "The DevNet swap failed.";
-          toast({ variant: "destructive", title: "Sell Failed", description: describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()) });
+          // Same reasoning as handleBuy's fallback above: full detail to the
+          // console, only the required plain-language copy in the toast.
+          console.error("Sell failed:", describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()));
+          toast({ variant: "destructive", title: "Sell Failed", description: "Your redemption could not be completed. No funds were moved." });
         }
       }
     } finally {
@@ -852,8 +860,8 @@ export function DTRDetail() {
           )}
           {isWindingDown && (
             <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn, #d9a13c)" }}>
-              This Reserve's manager has initiated wind-down. New Buys are disabled -- if you already hold this Reserve Token, you can
-              still Sell/redeem your full proportional share at any time before it closes; there is no deadline forced by this UI.
+              New purchases are disabled. Existing holders can continue to redeem their Reserve Tokens -- your full proportional share,
+              at any time before this Reserve closes; there is no deadline forced by this UI.
             </div>
           )}
 

@@ -162,9 +162,9 @@ describe("Reserve deploy resumability -- 7. Wallet rejection and expired-transac
     expect(decoded?.name).to.equal("UnexpectedReserveStatus");
   });
 
-  it("confirms 6400 is NOT a real ssr_protocol error -- this program's entire custom-error range is 6000-6040", () => {
+  it("confirms 6400 is NOT a real ssr_protocol error -- this program's entire custom-error range is 6000-6043 (grew from 6000-6040 in the 2026-08-13 corrective pass, which added PendingFeesNotCollected plus 2 previously-undocumented entries -- see DEC-0093)", () => {
     expect(decodeSsrProtocolError(6400)).to.equal(null);
-    expect(ssrProtocolErrorCodeRange()).to.equal("6000-6040");
+    expect(ssrProtocolErrorCodeRange()).to.equal("6000-6043");
   });
 
   it("extracts a Custom(N) code from a raw InstructionError object (e.g. status.err from getSignatureStatuses)", () => {
@@ -197,7 +197,7 @@ describe("Reserve deploy resumability -- 7. Wallet rejection and expired-transac
     const described = describeOnChainError(new Error(`Transaction failed on-chain (${stringified}).`));
     expect(described).to.include("6400");
     expect(described).to.include("not defined anywhere in the deployed SSR Protocol IDL");
-    expect(described).to.include("6000-6040");
+    expect(described).to.include("6000-6043");
   });
 
   it("describeOnChainError passes through a message unchanged when it carries no error code at all", () => {

@@ -87,11 +87,27 @@ pub fn handler<'info>(
         manager_fee_share_bps <= BPS_DENOMINATOR && protocol_fee_share_bps <= BPS_DENOMINATOR,
         SsrError::InvalidFeeShareSplit
     );
+    // Tightened from `<= BPS_DENOMINATOR` to exactly `== BPS_DENOMINATOR`
+    // (2026-08-13 corrective pass): manager_fee_share_bps/protocol_fee_share_bps
+    // are presented everywhere (UI, docs, this reference) as splitting a single
+    // fee between exactly two parties, with no third destination. Under the
+    // old `<=` rule a Reserve could theoretically be created with a split that
+    // summed to less than 100% (e.g. 4000+4000), and mint_reserve_tokens_in_kind
+    // / accrue_fees would then have no principled way to allocate the
+    // resulting per-recipient rounding remainder without either (a) crediting
+    // it to one recipient regardless of that recipient's own share possibly
+    // already being 0, or (b) letting it silently evaporate (never credited
+    // to anyone) -- see mul_div_floor/exact-remainder split below. Requiring
+    // the two shares to sum to exactly 100% removes that ambiguity entirely:
+    // this is a strictly more conservative constraint than every real Reserve
+    // already satisfies (confirmed live: every existing DevNet Reserve uses
+    // either 8000/2000 or 5000/5000, both already exactly 10000), so no
+    // already-created Reserve's immutable FeeConfig is affected.
     require!(
         manager_fee_share_bps
             .checked_add(protocol_fee_share_bps)
             .ok_or(error!(SsrError::MathOverflow))?
-            <= BPS_DENOMINATOR,
+            == BPS_DENOMINATOR,
         SsrError::InvalidFeeShareSplit
     );
 

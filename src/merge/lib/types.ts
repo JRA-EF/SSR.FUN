@@ -250,6 +250,10 @@ export interface OnChainReserveMeta {
   redemptionFeeBps?: number;
   /** The Manager's configured fee-payout wallet, read live from Reserve.feeConfig.feeDestination -- required (not derivable) for a real collect_fees call. */
   feeDestination?: string;
+  /** Manager's share of every collected fee, in bps of the fee itself -- read live from Reserve.feeConfig.managerFeeShareBps. Sums with protocolFeeShareBps to exactly 10000. */
+  managerFeeShareBps?: number;
+  /** Protocol's share of every collected fee, in bps of the fee itself -- read live from Reserve.feeConfig.protocolFeeShareBps. */
+  protocolFeeShareBps?: number;
   /** Pending Manager-share Reserve Token units accrued but not yet paid out -- read live from Reserve.feeConfig.pendingManagerFeeShares. Raw base units (RESERVE_TOKEN_DECIMALS), not human-formatted. */
   pendingManagerFeeShares?: string;
   /** Pending protocol-share Reserve Token units accrued but not yet paid out -- read live from Reserve.feeConfig.pendingProtocolFeeShares. Raw base units. */

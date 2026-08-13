@@ -192,6 +192,8 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
     delegatesOnChain: prev.onChain?.delegatesOnChain,
     delegateCountOnChain: prev.onChain?.delegateCountOnChain,
     feeDestination: onChain.feeDestination,
+    managerFeeShareBps: onChain.managerFeeShareBps,
+    protocolFeeShareBps: onChain.protocolFeeShareBps,
     pendingManagerFeeShares: onChain.pendingManagerFeeShares,
     pendingProtocolFeeShares: onChain.pendingProtocolFeeShares,
   };
@@ -306,6 +308,8 @@ export function buildDtrFromDiscoveredReserve(
     delegateCountOnChain: discovered.delegateCount,
     delegatesOnChain: delegates.map(onChainDelegateFromDiscovered),
     feeDestination: discovered.feeDestination,
+    managerFeeShareBps: discovered.managerFeeShareBps,
+    protocolFeeShareBps: discovered.protocolFeeShareBps,
     pendingManagerFeeShares: discovered.pendingManagerFeeShares,
     pendingProtocolFeeShares: discovered.pendingProtocolFeeShares,
   };

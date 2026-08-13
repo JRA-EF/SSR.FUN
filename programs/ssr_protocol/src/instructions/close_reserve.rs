@@ -72,6 +72,19 @@ pub fn handler<'info>(ctx: Context<'info, CloseReserve<'info>>) -> Result<()> {
         ctx.accounts.reserve_token_mint.supply == 0,
         SsrError::ReserveTokenSupplyNotZero
     );
+    // Every accrued fee share must be collected (via collect_fees) before
+    // this Reserve account -- which is the only place pending_manager_fee_shares
+    // / pending_protocol_fee_shares live -- is closed. Without this check, a
+    // manager could close a Reserve with real, unclaimed fee shares still
+    // outstanding, permanently stranding them: closing removes the Reserve
+    // account entirely, and collect_fees has no way to run against an
+    // account that no longer exists. See docs/project/DECISION_LOG.md for
+    // the corrective entry this closes.
+    require!(
+        ctx.accounts.reserve.fee_config.pending_manager_fee_shares == 0
+            && ctx.accounts.reserve.fee_config.pending_protocol_fee_shares == 0,
+        SsrError::PendingFeesNotCollected
+    );
     require_eq!(
         ctx.remaining_accounts.len(),
         asset_count * 2,

@@ -113,3 +113,31 @@ export function validateSeedPlan(seedAmounts: bigint[], initialReserveTokens: bi
     }
   }
 }
+
+export interface FeeShareSplit {
+  managerFeeShares: bigint;
+  protocolFeeShares: bigint;
+}
+
+/**
+ * Splits a total assessed fee (already in Reserve Token base units, e.g.
+ * `computeNetMintOutput`'s `feeShares`) between Manager and Protocol per the
+ * Reserve's own configured bps split. Mirrors the exact floor+exact-remainder
+ * pattern in mint_reserve_tokens_in_kind.rs/accrue_fees.rs (2026-08-13
+ * corrective pass, DEC-0093): managerFeeShares is floor-rounded,
+ * protocolFeeShares is whatever's left -- never independently rounded --
+ * so `managerFeeShares + protocolFeeShares === totalFeeShares` always holds
+ * exactly, with zero dust ever silently unallocated. Only valid when
+ * `managerFeeShareBps + protocolFeeShareBps === BPS_DENOMINATOR`, which
+ * create_reserve.rs now enforces for every Reserve at creation time.
+ */
+export function computeFeeShareSplit(totalFeeShares: bigint, managerFeeShareBps: bigint, protocolFeeShareBps: bigint): FeeShareSplit {
+  if (managerFeeShareBps + protocolFeeShareBps !== BPS_DENOMINATOR) {
+    throw new Error(
+      `computeFeeShareSplit: managerFeeShareBps (${managerFeeShareBps}) + protocolFeeShareBps (${protocolFeeShareBps}) must equal BPS_DENOMINATOR (${BPS_DENOMINATOR}) -- every real Reserve's FeeConfig satisfies this by construction`,
+    );
+  }
+  const managerFeeShares = mulDivFloor(totalFeeShares, managerFeeShareBps, BPS_DENOMINATOR);
+  const protocolFeeShares = totalFeeShares - managerFeeShares;
+  return { managerFeeShares, protocolFeeShares };
+}

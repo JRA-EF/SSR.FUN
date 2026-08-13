@@ -70,6 +70,22 @@ export interface ReserveEligibilityResult {
 const LIFECYCLE_STATUSES_PERMITTING_NORMAL_USE = new Set(["active", "paused", "windDown"]);
 
 /**
+ * Exported alias of the same set, named for its OTHER real use site:
+ * api/devnet/swap-sign.ts's Sell-vs-Buy status gate (2026-08-13 corrective
+ * pass, DEC-0093). Before this pass that endpoint used one Active-only check
+ * for every action, which incorrectly rejected a WindDown Sell even though
+ * `Reserve::require_redemption_allowed` (programs/ssr_protocol/src/state/reserve.rs)
+ * already permitted it on-chain. Deliberately the SAME set as
+ * LIFECYCLE_STATUSES_PERMITTING_NORMAL_USE above -- "may this Reserve be
+ * shown/traded at all" and "is redemption specifically allowed" happen to
+ * coincide exactly for every current lifecycle status, since Buy is the only
+ * action gated more narrowly (Active only, checked separately by callers).
+ */
+export function isRedemptionAllowedForStatus(status: string): boolean {
+  return LIFECYCLE_STATUSES_PERMITTING_NORMAL_USE.has(status);
+}
+
+/**
  * Fail-closed: any check this function can't affirmatively confirm results
  * in `eligible: false`, never a default-true. This is deliberately stricter
  * than the old per-page filters it replaces -- see the pass's Decision Log

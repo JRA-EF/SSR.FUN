@@ -399,7 +399,22 @@ export function ManageDTR() {
       toast(transactionConfirmedToast(signature, `${label} confirmed`));
       await refreshRealReserveNow(extraCandidateMints);
     } catch (e) {
-      toast({ variant: "destructive", title: `${label} failed`, description: e instanceof Error ? e.message : String(e) });
+      const raw = e instanceof Error ? e.message : String(e);
+      // Full technical detail (decoded ssr_protocol/Anchor error name + raw
+      // message, via describeOnChainError inside managementClient.ts's own
+      // throw) always goes to the console -- only a plain-language summary
+      // reaches the toast, per the specific required copy for these two
+      // failure modes. Every other action here keeps the decoded-but-still-
+      // technical message as-is; it's already honest (see errors.ts), just
+      // not one of the two the product spec calls out with fixed wording.
+      console.error(`${label} failed:`, raw);
+      const description =
+        label === "Collect Fees"
+          ? "Fees could not be collected. No funds were moved."
+          : label === "Close Reserve" && /PendingFeesNotCollected|ReserveTokenSupplyNotZero/.test(raw)
+            ? "This Reserve cannot close until all holder claims and outstanding fees are settled."
+            : raw;
+      toast({ variant: "destructive", title: `${label} failed`, description });
     } finally {
       setOnChainTxPending(null);
     }
@@ -866,14 +881,17 @@ export function ManageDTR() {
                       <p className="text-xs text-muted-foreground mb-3">
                         Fees accrue in-kind as pending Reserve Token shares (minted to the destinations below, never a USDC transfer) and
                         only pay out once collected. Any wallet may trigger the payout below, not only the Root Manager.
+                        {dtr.onChain.managerFeeShareBps != null && dtr.onChain.protocolFeeShareBps != null && (
+                          <> Configured split: <span className="font-merge-mono text-foreground">{dtr.onChain.managerFeeShareBps / 100}% Manager / {dtr.onChain.protocolFeeShareBps / 100}% Protocol</span>, fixed at Reserve creation.</>
+                        )}
                       </p>
                       <div className="grid grid-cols-2 gap-3 mb-3">
                         <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
-                          <p className="text-xs text-muted-foreground mb-1">Manager share</p>
+                          <p className="text-xs text-muted-foreground mb-1">Manager share{dtr.onChain.managerFeeShareBps != null ? ` (${dtr.onChain.managerFeeShareBps / 100}%)` : ""}</p>
                           <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingManagerFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
                         </div>
                         <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
-                          <p className="text-xs text-muted-foreground mb-1">Protocol share</p>
+                          <p className="text-xs text-muted-foreground mb-1">Protocol share{dtr.onChain.protocolFeeShareBps != null ? ` (${dtr.onChain.protocolFeeShareBps / 100}%)` : ""}</p>
                           <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingProtocolFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
                         </div>
                       </div>
@@ -932,18 +950,37 @@ export function ManageDTR() {
                     {dtr.onChain.status === "windDown" && (() => {
                       const supplyRemaining = dtr.onChain!.reserveTokenSupplyRaw;
                       const allVaultsEmpty = Object.values(dtr.onChain!.vaultBalancesRaw).every((v) => v === "0");
-                      const canClose = supplyRemaining === "0" && allVaultsEmpty;
+                      // Mirrors close_reserve.rs's on-chain PendingFeesNotCollected check
+                      // (2026-08-13 corrective pass): a Reserve cannot close while either
+                      // fee recipient still has an uncollected share, since closing removes
+                      // the Reserve account collect_fees would otherwise pay out from.
+                      const feesPending =
+                        (dtr.onChain!.pendingManagerFeeShares ?? "0") !== "0" || (dtr.onChain!.pendingProtocolFeeShares ?? "0") !== "0";
+                      const canClose = supplyRemaining === "0" && allVaultsEmpty && !feesPending;
                       return (
                         <div className="space-y-3">
                           <p className="text-sm text-muted-foreground">
                             Reserve Token supply remaining: <span className="font-merge-mono font-medium text-foreground">{supplyRemaining}</span>.
-                            Closing requires this to reach zero (every holder must redeem out first -- redemption remains open during Wind Down)
-                            and every asset vault balance to be zero.
+                            Closing requires this to reach zero (every holder must redeem out first -- redemption remains open during Wind Down),
+                            every asset vault balance to be zero, and every pending fee share collected.
                           </p>
+                          {feesPending && (
+                            <p className="text-sm text-amber-600 dark:text-amber-500">
+                              This Reserve cannot close until all holder claims and outstanding fees are settled. Collect the pending fees above first.
+                            </p>
+                          )}
                           <Button
                             variant="destructive"
                             disabled={!isRoot || !canClose || onChainTxPending !== null}
-                            title={!isRoot ? "Only the Root Manager may close this Reserve." : !canClose ? "Supply and every vault balance must be zero first." : undefined}
+                            title={
+                              !isRoot
+                                ? "Only the Root Manager may close this Reserve."
+                                : feesPending
+                                  ? "This Reserve cannot close until all holder claims and outstanding fees are settled."
+                                  : !canClose
+                                    ? "Supply and every vault balance must be zero first."
+                                    : undefined
+                            }
                             onClick={() => {
                               const assetMintsInOrder = [...dtr.onChain!.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((a) => a.mint);
                               void runOnChainAction("Close Reserve", () => executeCloseReserve(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, assetMintsInOrder));
