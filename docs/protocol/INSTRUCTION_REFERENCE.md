@@ -3,6 +3,20 @@
   ACCOUNT_MODEL.md (nouns) and SECURITY_INVARIANTS.md (why). Source of truth
   is programs/ssr_protocol/src/instructions/*.rs -- this document summarizes
   it for readability; if the two ever disagree, the Rust source wins.
+
+  Refreshed 2026-08-13 (see docs/project/DECISION_LOG.md DEC-0092): brought
+  up to date with the 6 instructions added since this doc was last edited
+  (update_protocol_config, add_reserve_asset_active, fund_new_reserve_asset,
+  remove_reserve_asset, initiate_wind_down, close_reserve -- Phase F/G and
+  DEC-0033), and corrected several "Frontend use" lines that had drifted
+  stale (mint/redeem were described as "not yet built" -- they are the live
+  Buy/Sell tabs; pause/unpause were described as "not yet built" -- they
+  WERE built and have since been deliberately removed again, DEC-0086;
+  record_rebalance's described UI step does not actually exist in the
+  current frontend). See docs/protocol/DEVNET_INSTRUCTION_AUDIT_2026-08-13.md
+  for the full naming/Solscan-identifiability audit this refresh was part
+  of -- every one of the 23 currently-deployed instruction names below was
+  confirmed already clear and consistent; none were renamed.
 -->
 
 # Instruction Reference
@@ -60,7 +74,7 @@
 - **Token movement:** required amount per asset transferred depositor → vault (ceil-rounded on pre-transaction ratio); `net_shares_out` (= requested − mint fee) minted to depositor.
 - **Event:** `ReserveTokensMinted`.
 - **Errors:** `ProtocolPaused`, `UnexpectedReserveStatus`, `ZeroValue`, `ZeroSupply`, `SlippageMaxInputExceeded`, `ZeroAmountAfterFeesOrRounding`, `SlippageMinOutputNotMet`, `RemainingAccountsMismatch`.
-- **Frontend use:** the NEW proportional-mint UI surface (not yet built -- see FRONTEND_INTEGRATION.md; distinct from the existing AMM "Buy" tab).
+- **Frontend use:** the Reserve-detail page's "Buy" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described.
 
 ## `redeem_reserve_tokens_in_kind`
 - **Signer:** `redeemer` (any holder -- permissionless; deliberately has no `ProtocolConfig` account at all, see DEC-0016).
@@ -71,7 +85,7 @@
 - **Token movement:** full `reserve_tokens_to_redeem` burned from redeemer; proportional entitlement (computed on the *net*, post-redemption-fee portion) transferred vault → redeemer per asset. The fee portion's backing assets are deliberately left in the vaults (accretion to remaining holders, not a mint to any fee recipient).
 - **Event:** `ReserveTokensRedeemed`.
 - **Errors:** `UnexpectedReserveStatus`, `ZeroValue`, `RedemptionExceedsEntitlement`, `ZeroSupply`, `ZeroAmountAfterFeesOrRounding`, `SlippageMinOutputNotMet`, `RemainingAccountsMismatch`.
-- **Frontend use:** the NEW proportional-redeem UI surface (not yet built); also the canonical "redeem via SDK with no website" path for the frontend-independence test requirement.
+- **Frontend use:** the Reserve-detail page's "Sell" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described. Also the canonical "redeem via SDK with no website" path for the frontend-independence test requirement.
 
 ## `update_targets`
 - **Signer:** manager, or delegate with `UPDATE_TARGETS`.
@@ -82,7 +96,7 @@
 - **Token movement:** none.
 - **Event:** `TargetsUpdated`.
 - **Errors:** `ReservePaused`, `DelegatePermissionDenied`/`NotReserveManager` (via `require_reserve_permission`), `ReserveAssetDisabled`, `TargetWeightExceedsTotal`, `RemainingAccountsMismatch`.
-- **Frontend use:** Manage → Rebalance tab, "set new targets" step (before any actual trade).
+- **Frontend use:** Manage → Rebalance tab, "Submit Rebalance" button (`src/merge/pages/ManageDTR.tsx`, via `executeSubmitRebalance`/`executeUpdateTargets` in `managementClient.ts`) -- changes intent only, no trade; also batched with `add_reserve_asset_active` calls in the same transaction when the proposed composition includes a not-yet-registered asset.
 
 ## `add_delegate`
 - **Signer:** manager (unrestricted delegate) or delegate with `ADD_RESTRICTED_DELEGATE` (restricted delegate only).
@@ -137,7 +151,7 @@
 - **Token movement:** none.
 - **Events:** `ReservePaused` / `ReserveUnpaused`.
 - **Errors:** `UnexpectedReserveStatus`, `ReserveNotPaused`, `DelegatePermissionDenied`.
-- **Frontend use:** Manage → Overview, emergency pause control (not yet built in the frontend -- see FRONTEND_INTEGRATION.md item 11).
+- **Frontend use:** none currently -- a Pause/Unpause control WAS built into Manage → Overview, then deliberately removed per explicit product decision (2026-08-12, DEC-0086; see `docs/project/DECISION_LOG.md`). The on-chain instructions and the `PAUSE_RESERVE`/`UNPAUSE_RESERVE` permission-flag bits were left untouched (no program change), so the on-chain capability is unaffected, only its UI exposure. Currently only reachable via `scripts/devnet_fixtures.ts`'s fixture demo and this doc's own audit script.
 
 ## `accrue_fees`
 - **Signer:** none required -- permissionless, pure accounting (see reference protocol's `distributeFees` precedent).
@@ -170,7 +184,7 @@
 - **Token movement:** none -- **v1 has no on-chain trade-execution instruction at all**; the actual asset-swapping trade happens outside this program (deferred per DEC-0017), and this instruction only records the outcome for indexing.
 - **Event:** `RebalanceRecorded`.
 - **Errors:** `DelegatePermissionDenied`, `RemainingAccountsMismatch`, `ReserveAssetMismatch`, `InvalidReserveVault`.
-- **Frontend use:** Manage → Rebalance tab, "record outcome" (after a manager has manually executed a trade through some other means).
+- **Frontend use:** none currently wired -- the live Rebalance tab's "Submit Rebalance" flow (2026-08-12, DEC-0084) only calls `update_targets`/`add_reserve_asset_active` (a pure config-intent change), not this attestation instruction; `record_rebalance` belongs to an earlier/parallel "manager manually trades externally, then attests the outcome" design that the current UI doesn't expose a step for. Still a real, deployed, callable instruction -- exercised directly for this doc's audit (see `docs/protocol/DEVNET_INSTRUCTION_AUDIT_2026-08-13.md`).
 
 ## `update_metadata`
 - **Signer:** manager, or delegate with `UPDATE_METADATA`.
@@ -181,4 +195,70 @@
 - **Token movement:** none.
 - **Event:** `MetadataUpdated`.
 - **Errors:** `MetadataUriTooLong`, `DelegatePermissionDenied`.
-- **Frontend use:** Manage → Overview, "edit description/logo reference" (metadata itself lives off-chain at the referenced URI, matching the mission's "metadata reference" field guidance).
+- **Frontend use:** none currently wired -- no "edit Reserve description/logo" UI feature exists yet. Metadata itself lives off-chain at the referenced URI, matching the mission's "metadata reference" field guidance.
+
+## `update_protocol_config`
+- **Signer:** `authority` (`ProtocolConfig.authority`, admin-only).
+- **Accounts:** `protocol_config` (mut, `has_one = authority`), `authority`.
+- **Args:** `new_default_protocol_fee_destination: Pubkey`, `new_default_protocol_fee_bps: u16`.
+- **Validation:** signer must equal `ProtocolConfig.authority` (enforced by `has_one`); no cap check on the new fee bps value itself -- the caller is trusted admin input.
+- **State transition:** `ProtocolConfig.default_protocol_fee_destination`/`default_protocol_fee_bps` overwritten.
+- **Token movement:** none.
+- **Event:** `ProtocolConfigUpdated`.
+- **Errors:** `NotProtocolAuthority`.
+- **Frontend use:** none currently wired -- admin-only, invoked historically to set the real DevNet treasury address (2026-07-28, DEC-0033/DEC-0035) but not exposed in the product UI. `initialize_protocol` only ever runs once, so this is the only way to correct the treasury address after genesis.
+
+## `add_reserve_asset_active`
+- **Signer:** manager, or delegate with `MANAGE_LIQUIDITY_CONFIG`.
+- **Accounts:** `protocol_config` (read), `reserve` (mut), `reserve_asset` (init, PDA), `asset_mint`, `vault` (init, PDA token account), `vault_authority` (PDA, unchecked), `delegate` (unchecked), `signer`, `token_program`, `system_program`.
+- **Args:** `target_weight_bps: u16`.
+- **Validation:** `Reserve.status == Active` (deliberately separate from `initialize_reserve_asset`, which only runs pre-Active -- see the module doc comment for why splitting these two keeps the pre-Active creation flow's account interface unchanged); permission check; same weight/limit/token-program checks as `initialize_reserve_asset`.
+- **State transition:** `asset_count += 1`; registers the asset at `order_index = asset_count` (pre-increment).
+- **Token movement:** none (vault created empty -- registration only, funding is a separate step).
+- **Event:** `ReserveAssetAdded` (distinct from `initialize_reserve_asset`'s `ReserveAssetInitialized`, despite both being "a new asset slot was registered").
+- **Errors:** `UnexpectedReserveStatus`, `ReserveAssetLimitReached`, `TargetWeightExceedsTotal`, `MathOverflow`, `DelegatePermissionDenied`.
+- **Frontend use:** Manage → Rebalance tab, "Submit Rebalance" (`executeSubmitRebalance` registers each not-yet-on-chain asset at 0 bps in the same transaction, immediately followed by one `update_targets` call covering every asset's real final weight -- see DEC-0084 for why: registering directly at a nonzero weight could blow the 10,000bps cap before `update_targets` has a chance to rebalance the total).
+
+## `fund_new_reserve_asset`
+- **Signer:** `manager` (root-only, no delegate path; `reserve` is read-only here, `has_one = manager` enforces it).
+- **Accounts:** `reserve` (read, `has_one = manager`), `reserve_asset` (read), `asset_mint`, `vault` (mut), `manager_token_account` (mut), `manager`, `token_program` (Interface, SPL Token or Token-2022).
+- **Args:** `amount: u64`.
+- **Validation:** `Reserve.status == Active`; `amount > 0`; the target vault's balance must be exactly zero (a one-time bootstrap, not a general top-up -- see the module doc comment: `mint_reserve_tokens_in_kind`'s deposit math is purely balance-ratio-based, so a vault stuck at 0 could never be funded through ordinary Buy activity).
+- **State transition:** none beyond the transfer (additive-only -- no Reserve Token minted; a pure backing increase that benefits every existing holder and dilutes nobody).
+- **Token movement:** `amount` transferred manager → vault (CPI, manager's own signature).
+- **Event:** `ReserveAssetFunded`.
+- **Errors:** `NotReserveManager`, `ReserveAssetMismatch`, `InvalidReserveVault`, `UnexpectedReserveStatus`, `ZeroValue`, `VaultNotEmpty`.
+- **Frontend use:** Manage → Rebalance tab, "Fund {symbol}" (`executeFundReserveAsset` in `managementClient.ts`) -- a separate, individually-approved maintenance action, distinct from "Submit Rebalance".
+
+## `remove_reserve_asset`
+- **Signer:** manager, or delegate with `MANAGE_LIQUIDITY_CONFIG`.
+- **Accounts:** `reserve` (mut), `reserve_asset` (mut, `close = manager`), `asset_mint`, `vault` (mut, closed), `vault_authority` (PDA, unchecked), `manager` (unchecked, rent destination -- always the Reserve's root manager, never the calling delegate), `delegate` (unchecked), `signer`, `token_program` (Interface).
+- **Args:** none.
+- **Validation:** `Reserve.status ∈ {AssetsInitializing, Active, Paused}`; permission check; target must be the LAST-registered asset (`order_index == asset_count - 1`, so no other asset's `order_index` needs to shift); its vault balance must be exactly zero (removal can never strand value attributable to existing holders).
+- **State transition:** `asset_count -= 1`; `ReserveAsset` and vault accounts closed, rent reclaimed to `manager`.
+- **Token movement:** none (vault is already empty by the validation above).
+- **Event:** `ReserveAssetRemoved`.
+- **Errors:** `UnexpectedReserveStatus`, `DelegatePermissionDenied`, `MathUnderflow`, `AssetNotLastRegistered`, `VaultNotEmpty`, `ReserveAssetMismatch`, `InvalidReserveVault`, `NotReserveManager`.
+- **Frontend use:** Manage → Rebalance tab, "Remove {symbol}" (`executeRemoveReserveAsset` in `managementClient.ts`) -- only enabled for an asset that is both last-registered and currently zero-balance.
+
+## `initiate_wind_down`
+- **Signer:** `manager` (root-only, no delegate path -- matches the "root-exclusive unless explicitly defined otherwise" authority model, same as `transfer_reserve_manager`).
+- **Accounts:** `reserve` (mut), `manager`.
+- **Args:** none.
+- **Validation:** `Reserve.status == Active`.
+- **State transition:** one-way `Active → WindDown`. Deliberately does NOT revoke the Reserve Token mint authority (`collect_fees` still needs it during WindDown); new issuance is already blocked with zero extra code since `mint_reserve_tokens_in_kind` requires `status == Active` exactly.
+- **Token movement:** none.
+- **Event:** `WindDownInitiated`.
+- **Errors:** `UnexpectedReserveStatus`.
+- **Frontend use:** Manage → Overview, "Initiate Wind Down" (`executeInitiateWindDown` in `managementClient.ts`).
+
+## `close_reserve`
+- **Signer:** `manager` (root-only, no delegate path).
+- **Accounts:** `reserve` (mut, closed), `reserve_token_mint` (mut), `vault_authority` (PDA), `manager`, `token_program`. **Remaining accounts:** `asset_count` pairs of `[reserve_asset, vault]`, in `order_index` order (lighter than `mint`/`redeem`'s per-leg groups -- no owner-token-account/mint/token-program needed per leg here).
+- **Args:** none.
+- **Validation:** `Reserve.status == WindDown`; Reserve Token supply must be exactly zero; every registered asset's vault balance must be exactly zero (i.e. every holder has already redeemed out -- redemption stays available during `WindDown`).
+- **State transition:** terminal `WindDown → Closed`, immediately followed by closing the `Reserve` account itself, every `ReserveAsset` account, and every vault token account -- rent reclaimed to `manager`. Deliberately does NOT attempt to close the `reserve_token_mint` account (SPL Token mint-account closing semantics are a live-program risk not worth taking for a small amount of permanently-locked rent).
+- **Token movement:** none (all balances already zero by the validation above).
+- **Event:** `ReserveClosed`.
+- **Errors:** `NotReserveManager`, `UnexpectedReserveStatus`, `ReserveTokenSupplyNotZero`, `RemainingAccountsMismatch`, `ReserveAssetMismatch`, `InvalidReserveVault`, `VaultNotEmpty`.
+- **Frontend use:** Manage → Overview, "Close Reserve" (`executeCloseReserve` in `managementClient.ts`).

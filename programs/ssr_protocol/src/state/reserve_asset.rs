@@ -1,14 +1,16 @@
 use anchor_lang::prelude::*;
 
-// NOTE (2026-07-29 terminology decision, see CLAUDE.md "Mandatory
-// terminology" and docs/project/DECISION_LOG.md): product copy now uses
-// "Reserve" for an underlying holding and "Decentralized Token Reserve" for
-// the whole basket -- the inverse of this struct's name. `ReserveAsset` is
-// intentionally NOT renamed: Anchor derives each account's on-chain
-// discriminator from its struct name at compile time, so renaming it would
-// break deserialization of every already-initialized `ReserveAsset` account
-// on live DevNet. Treat this as a legacy technical identifier, not current
-// product terminology.
+// NOTE (final terminology, 2026-08-04, DEC-0074, see CLAUDE.md "Mandatory
+// terminology" and docs/project/DECISION_LOG.md): "Reserve" is the whole
+// basket/product and "reserve assets" are its underlying holdings -- this
+// struct's name already matches that sense, so no meaning mismatch is
+// carried forward. Documented here only because `ReserveAsset` is a
+// deployed Anchor account struct: Anchor derives its on-chain discriminator
+// from the struct name at compile time, so renaming it (even to something
+// that would read identically today) would break deserialization of every
+// already-initialized `ReserveAsset` account on live DevNet. Treat the name
+// as a legacy technical identifier that happens to already be correct, not
+// something to casually touch.
 
 /// Which token program owns this asset's mint/vault. SSR supports both,
 /// validating Token-2022 extensions at registration time -- see

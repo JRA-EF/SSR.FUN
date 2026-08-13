@@ -2078,11 +2078,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssr_devnet_amm"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+]
+
+[[package]]
 name = "ssr_protocol"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
+ "ssr_devnet_amm",
 ]
 
 [[package]]
