@@ -400,6 +400,16 @@ export interface ParsedReserveMetadata {
   ticker: string;
   description: string;
   category: string;
+  /**
+   * Manager-configured secondary-market Buy/Sell tax, as a percent (e.g. 0.5
+   * = 0.5%). Forward-looking configuration only -- there is no secondary
+   * market (DEX/AMM) for the Reserve Token today, and neither
+   * mint_reserve_tokens_in_kind nor redeem_reserve_tokens_in_kind enforces
+   * this value; it is not a mint or redemption fee. Defaults to 0 when
+   * absent (every Reserve created before this field existed).
+   */
+  buyTaxPct: number;
+  sellTaxPct: number;
 }
 
 /**
@@ -425,6 +435,8 @@ export function parseReserveMetadataUri(metadataUri: string): ParsedReserveMetad
       ticker,
       description: typeof json.description === "string" ? json.description : "",
       category: typeof json.category === "string" ? json.category : "",
+      buyTaxPct: typeof json.buyTaxPct === "number" && Number.isFinite(json.buyTaxPct) ? json.buyTaxPct : 0,
+      sellTaxPct: typeof json.sellTaxPct === "number" && Number.isFinite(json.sellTaxPct) ? json.sellTaxPct : 0,
     };
   } catch {
     return null;

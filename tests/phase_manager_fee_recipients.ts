@@ -18,8 +18,10 @@ import {
 import { mulDivCeil, BPS_DENOMINATOR } from "../packages/sdk/src/calculations";
 
 // The task's own table, applied independently to Mint and TVL (both floors are 0.5% today).
+// A genuinely configured 0% is a real 0% effective fee -- no forced minimum
+// (the 0.5% floor only governs how a NONZERO configured fee splits).
 const TASK_TABLE: { configuredPct: number; protocolPct: number; managerPct: number; effectiveTotalPct: number }[] = [
-  { configuredPct: 0, protocolPct: 0.5, managerPct: 0, effectiveTotalPct: 0.5 },
+  { configuredPct: 0, protocolPct: 0, managerPct: 0, effectiveTotalPct: 0 },
   { configuredPct: 0.5, protocolPct: 0.5, managerPct: 0, effectiveTotalPct: 0.5 },
   { configuredPct: 1, protocolPct: 0.5, managerPct: 0.5, effectiveTotalPct: 1 },
   { configuredPct: 2, protocolPct: 1, managerPct: 1, effectiveTotalPct: 2 },
@@ -44,11 +46,16 @@ describe("computeEffectiveFeeSplit (packages/sdk/src/feeMath.ts) -- DEC-0094 for
         });
       }
 
-      it("effective total never falls below the Protocol minimum, for any configured rate from 0 to 10%", () => {
+      it("effective total never falls below the Protocol minimum for any NONZERO configured rate up to 10% -- a genuine 0% stays 0%, no forced minimum fee", () => {
         for (let bps = 0n; bps <= 1000n; bps += 7n) {
           const split = computeEffectiveFeeSplit(bps, floorBps);
-          expect(split.effectiveTotalBps).to.be.at.least(floorBps);
-          expect(split.protocolBps).to.be.at.least(floorBps);
+          if (bps === 0n) {
+            expect(split.effectiveTotalBps).to.equal(0n);
+            expect(split.protocolBps).to.equal(0n);
+          } else {
+            expect(split.effectiveTotalBps).to.be.at.least(floorBps);
+            expect(split.protocolBps).to.be.at.least(floorBps);
+          }
           expect(split.protocolBps + split.managerBps).to.equal(split.effectiveTotalBps);
         }
       });
@@ -85,7 +92,12 @@ describe("splitTotalFee (packages/sdk/src/feeMath.ts) -- exact protocol/manager 
   it("is exact across a sweep of totals and configured rates", () => {
     for (const configuredPct of [0, 0.25, 0.5, 1, 1.5, 2, 3.33, 5]) {
       const split = computeEffectiveFeeSplit(pctToBps(configuredPct), PROTOCOL_MIN_MINT_FEE_BPS);
-      for (const total of [0n, 1n, 7n, 999n, 1_000_000n, 123_456_789n]) {
+      // When configuredPct is genuinely 0, effectiveTotalBps is 0 too, so the
+      // only total a real caller would ever pass in is 0 (mulDivCeil(x, 0,
+      // DENOM) === 0) -- an arbitrary nonzero "total" paired with a real 0/0
+      // split is not a combination the real call chain ever produces.
+      const totals = configuredPct === 0 ? [0n] : [0n, 1n, 7n, 999n, 1_000_000n, 123_456_789n];
+      for (const total of totals) {
         const { protocolTotal, managerTotal } = splitTotalFee(total, split.protocolBps, split.managerBps);
         expect(protocolTotal + managerTotal).to.equal(total);
         expect(protocolTotal).to.be.at.least(0n);

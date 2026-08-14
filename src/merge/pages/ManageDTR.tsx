@@ -966,13 +966,18 @@ export function ManageDTR() {
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Buy Tax</p>
-                      <p className="font-merge-mono font-medium">{formatPct(dtr.onChain ? 0 : dtr.feeConfig.managerBuyTaxPct)}</p>
+                      <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.managerBuyTaxPct)}</p>
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Sell Tax</p>
-                      <p className="font-merge-mono font-medium">{formatPct(dtr.onChain ? 0 : dtr.feeConfig.managerSellTaxPct)}</p>
+                      <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.managerSellTaxPct)}</p>
                     </div>
                   </div>
+                  {dtr.onChain && (dtr.feeConfig.managerBuyTaxPct > 0 || dtr.feeConfig.managerSellTaxPct > 0) && (
+                    <p className="text-xs text-muted-foreground italic -mt-2">
+                      Buy Tax and Sell Tax are configuration for a future secondary market (e.g. a DEX listing) -- not enforced by minting or redeeming directly from this Reserve.
+                    </p>
+                  )}
 
                   {dtr.onChain && (
                     <div className="pt-4 border-t border-border/50">

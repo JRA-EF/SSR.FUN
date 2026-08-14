@@ -349,8 +349,12 @@ export function buildDtrFromDiscoveredReserve(
     feeConfig: {
       mintFeePct: discovered.mintFeeBps / 100,
       tvlFeePct: discovered.annualTvlFeeBps / 100,
-      managerBuyTaxPct: 0,
-      managerSellTaxPct: 0,
+      // Forward-looking secondary-market configuration, read from the
+      // Reserve's on-chain metadataUri JSON -- NOT enforced by mint/redeem
+      // today (no secondary market/DEX exists yet for the Reserve Token).
+      // Defaults to 0 for any Reserve created before this field existed.
+      managerBuyTaxPct: parsed?.buyTaxPct ?? 0,
+      managerSellTaxPct: parsed?.sellTaxPct ?? 0,
       creatorFeeDestination: discovered.feeDestination,
       feeRecipients: [],
     },

@@ -561,7 +561,7 @@ export function CreateDTR() {
       const result = await createReserveOnChain({
         connection,
         wallet: walletCtx,
-        metadataUri: `data:application/json,${encodeURIComponent(JSON.stringify({ name, ticker, description, category }))}`,
+        metadataUri: `data:application/json,${encodeURIComponent(JSON.stringify({ name, ticker, description, category, buyTaxPct: managerBuyTaxPct, sellTaxPct: managerSellTaxPct }))}`,
         mintFeeBps: Math.round(mintFeePct * 100),
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,
@@ -628,8 +628,11 @@ export function CreateDTR() {
         feeConfig: {
           mintFeePct,
           tvlFeePct,
-          managerBuyTaxPct: 0,
-          managerSellTaxPct: 0,
+          // Forward-looking secondary-market configuration -- stored on-chain
+          // in metadataUri, not enforced by mint/redeem (see the Fee
+          // Configuration step's copy).
+          managerBuyTaxPct,
+          managerSellTaxPct,
           creatorFeeDestination: feeDestinationKey.toBase58(),
           // Safe to store here (not []): this write only runs after
           // createReserveOnChain resolved successfully, which means
@@ -1046,9 +1049,9 @@ export function CreateDTR() {
               <div className="space-y-6">
                 <h3 className="font-semibold text-lg pb-2">Fee Configuration</h3>
                 <p className="text-xs text-muted-foreground -mt-4">
-                  SSR.fun always keeps at least 0.5% of the Mint Fee and 0.5% annualized of the TVL Fee for the protocol -- if you set a fee below that,
-                  the effective fee charged still floors at 0.5% (the Manager receives nothing extra in that case). Above the minimum, the Protocol and
-                  Manager split the configured fee 50/50.
+                  Setting the Mint Fee or TVL Fee to 0% means neither the Protocol nor the Manager collects anything -- there is no forced minimum fee.
+                  For any fee you set above 0%, SSR.fun always keeps at least 0.5% for the protocol; above that 0.5% floor, the Protocol and Manager
+                  split the configured fee 50/50.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -1099,43 +1102,38 @@ export function CreateDTR() {
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Buy Tax</span>
-                      <span className="font-merge-mono text-primary">{(realDeploymentCandidate ? 0 : managerBuyTaxPct).toFixed(2)}%</span>
+                      <span className="font-merge-mono text-primary">{managerBuyTaxPct.toFixed(2)}%</span>
                     </Label>
-                    {realDeploymentCandidate ? (
-                      <p className="text-xs text-muted-foreground">SSR.fun does not charge a tax on buys -- this is always 0% for a real Reserve.</p>
-                    ) : (
-                      <>
-                        <Slider
-                          value={[managerBuyTaxPct]}
-                          max={2}
-                          step={0.05}
-                          onValueChange={(v) => setManagerBuyTaxPct(v[0])}
-                        />
-                        <p className="text-xs text-muted-foreground">Optional additional tax charged on buys. Default is 0%.</p>
-                      </>
-                    )}
+                    <Slider
+                      value={[managerBuyTaxPct]}
+                      max={2}
+                      step={0.05}
+                      onValueChange={(v) => setManagerBuyTaxPct(v[0])}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      For future secondary-market trading (e.g. a DEX listing) -- not applied when minting directly from the Reserve. Default is 0%.
+                    </p>
                   </div>
 
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Sell Tax</span>
-                      <span className="font-merge-mono text-primary">{(realDeploymentCandidate ? 0 : managerSellTaxPct).toFixed(2)}%</span>
+                      <span className="font-merge-mono text-primary">{managerSellTaxPct.toFixed(2)}%</span>
                     </Label>
-                    {realDeploymentCandidate ? (
-                      <p className="text-xs text-muted-foreground">SSR.fun does not charge a tax on sells -- this is always 0% for a real Reserve.</p>
-                    ) : (
-                      <>
-                        <Slider
-                          value={[managerSellTaxPct]}
-                          max={2}
-                          step={0.05}
-                          onValueChange={(v) => setManagerSellTaxPct(v[0])}
-                        />
-                        <p className="text-xs text-muted-foreground">Optional additional tax charged on sells. Default is 0%.</p>
-                      </>
-                    )}
+                    <Slider
+                      value={[managerSellTaxPct]}
+                      max={2}
+                      step={0.05}
+                      onValueChange={(v) => setManagerSellTaxPct(v[0])}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      For future secondary-market trading (e.g. a DEX listing) -- not applied when redeeming directly from the Reserve. Default is 0%.
+                    </p>
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground italic">
+                  Buy Tax and Sell Tax are saved with this Reserve for when a secondary market exists, but are not enforced by any on-chain instruction today -- minting and redeeming directly from the Reserve are never taxed.
+                </p>
               </div>
 
               <div className="space-y-4">
@@ -1329,12 +1327,12 @@ export function CreateDTR() {
                       );
                     })()}
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Buy Tax</span>
-                      <span className="font-merge-mono font-medium">{(realDeploymentCandidate ? 0 : managerBuyTaxPct).toFixed(2)}%</span>
+                      <span className="text-muted-foreground">Buy Tax (future secondary market)</span>
+                      <span className="font-merge-mono font-medium">{managerBuyTaxPct.toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Sell Tax</span>
-                      <span className="font-merge-mono font-medium">{(realDeploymentCandidate ? 0 : managerSellTaxPct).toFixed(2)}%</span>
+                      <span className="text-muted-foreground">Sell Tax (future secondary market)</span>
+                      <span className="font-merge-mono font-medium">{managerSellTaxPct.toFixed(2)}%</span>
                     </div>
                   </div>
                 </div>
