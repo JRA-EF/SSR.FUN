@@ -923,6 +923,60 @@
       "args": []
     },
     {
+      "name": "collect_protocol_fee",
+      "discriminator": [
+        136,
+        136,
+        252,
+        221,
+        194,
+        66,
+        126,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config"
+        },
+        {
+          "name": "reserve",
+          "writable": true
+        },
+        {
+          "name": "reserve_token_mint",
+          "writable": true
+        },
+        {
+          "name": "mint_authority"
+        },
+        {
+          "name": "protocol_fee_destination_token_account",
+          "writable": true
+        },
+        {
+          "name": "protocol_fee_destination"
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "create_reserve",
       "discriminator": [
         26,
@@ -2581,6 +2635,46 @@
           ]
         },
         {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
@@ -3413,6 +3507,19 @@
         178,
         254,
         8
+      ]
+    },
+    {
+      "name": "ProtocolFeeCollected",
+      "discriminator": [
+        149,
+        0,
+        167,
+        154,
+        105,
+        146,
+        209,
+        134
       ]
     },
     {
@@ -4376,6 +4483,34 @@
       }
     },
     {
+      "name": "ProtocolFeeCollected",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "collected_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "MetadataUpdated",
       "type": {
         "kind": "struct",
@@ -4910,6 +5045,10 @@
           },
           {
             "name": "initial_reserve_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "mint_fee_reserve_tokens",
             "type": "u64"
           },
           {

@@ -37,7 +37,7 @@ import {
 import {
   executeAddDelegate,
   executeCloseReserve,
-  executeCollectFees,
+  executeCollectProtocolFee,
   executeCollectManagerFeeShare,
   executeInitializeManagerFeeRecipients,
   executeUpdateFeeRecipients,
@@ -1092,27 +1092,28 @@ export function ManageDTR() {
                   {dtr.onChain && (
                     <div className="pt-4 border-t border-border/50">
                       <p className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                        <Coins className="w-4 h-4" /> Protocol Fees (uncollected)
+                        <Coins className="w-4 h-4" /> Protocol Fees
+                      </p>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        The Protocol's fee share is sent to the Protocol treasury automatically every Monday -- nobody has to claim it manually. Every
+                        mint (including a Reserve's initial seed) and the annualized holding fee contribute to this balance between automatic runs.
                       </p>
                       <div className="p-3 bg-muted/30 rounded-lg border border-border/50 mb-3 max-w-xs">
-                        <p className="text-xs text-muted-foreground mb-1">Protocol share (accrued, claimable)</p>
+                        <p className="text-xs text-muted-foreground mb-1">Protocol share (awaiting the next automatic transfer)</p>
                         <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingProtocolFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={
-                          onChainTxPending !== null ||
-                          ((dtr.onChain.pendingManagerFeeShares ?? "0") === "0" && (dtr.onChain.pendingProtocolFeeShares ?? "0") === "0")
-                        }
+                        disabled={onChainTxPending !== null || (dtr.onChain.pendingProtocolFeeShares ?? "0") === "0"}
                         onClick={() =>
-                          void runOnChainAction("Collect Fees", () =>
-                            executeCollectFees(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, dtr.onChain!.feeDestination ?? dtr.managerAddress),
+                          void runOnChainAction("Collect Protocol Fee", () =>
+                            executeCollectProtocolFee(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint),
                           )
                         }
                         className="gap-2"
                       >
-                        <Coins className="w-4 h-4" /> {onChainTxPending === "Collect Fees" ? "Confirming..." : "Collect Protocol Fees"}
+                        <Coins className="w-4 h-4" /> {onChainTxPending === "Collect Protocol Fee" ? "Confirming..." : "Send to Treasury Now"}
                       </Button>
                     </div>
                   )}

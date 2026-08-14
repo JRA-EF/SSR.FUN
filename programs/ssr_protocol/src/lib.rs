@@ -174,6 +174,15 @@ pub mod ssr_protocol {
         instructions::collect_fees::handler(ctx)
     }
 
+    /// Collects ONLY the Protocol's pending fee share -- see
+    /// instructions/collect_protocol_fee.rs's header. Fully additive;
+    /// collect_fees above is unchanged and still collects both sides.
+    pub fn collect_protocol_fee<'info>(
+        ctx: Context<'info, CollectProtocolFee<'info>>,
+    ) -> Result<()> {
+        instructions::collect_protocol_fee::handler(ctx)
+    }
+
     // --- DEC-0094: multi-recipient Manager fees ---
 
     pub fn initialize_manager_fee_recipients<'info>(

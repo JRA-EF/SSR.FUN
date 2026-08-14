@@ -17,7 +17,7 @@
   "crons": [
     {
       "path": "/api/devnet/accrue-fees-cron",
-      "schedule": "0 6 * * 1"
+      "schedule": "0 0 * * 1"
     }
   ],
   "rewrites": [

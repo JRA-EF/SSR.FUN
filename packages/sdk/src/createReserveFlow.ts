@@ -151,6 +151,21 @@ export async function buildSeedReserveInstruction(
   initialReserveTokens: bigint,
 ): Promise<TransactionInstruction> {
   const managerReserveTokenAta = getAssociatedTokenAddressSync(addresses.reserveTokenMint, manager);
+  // The initial seed mint is fee-charged like any other mint (see
+  // seed_reserve.rs) and so, like mint/redeem/accrue, needs to resolve
+  // whether this Reserve has opted into multi-recipient Manager fee routing
+  // -- the DEC-0094 sentinel pattern (see credit_manager_fee_shares's own
+  // doc comment): pass the REAL ManagerFeeRecipients PDA if it already
+  // exists (e.g. bundled into the same create-and-register transaction), or
+  // the program ID itself as the explicit "None" sentinel otherwise. Anchor
+  // does NOT treat an arbitrary non-existent account as an automatic None
+  // for an `Option<Account<T>>` field -- only this exact sentinel -- so
+  // this can't be left to client-side PDA auto-resolution (confirmed live:
+  // auto-resolving the real PDA address for a not-yet-initialized account
+  // fails on-chain with AccountNotInitialized).
+  const [managerFeeRecipientsPda] = findManagerFeeRecipients(addresses.reserve, program.programId);
+  const recipientsAccount = await (program.account as any).managerFeeRecipients.fetchNullable(managerFeeRecipientsPda);
+  const managerFeeRecipients = recipientsAccount ? managerFeeRecipientsPda : program.programId;
   const remainingAccounts = assets.flatMap((a) => {
     const managerAssetAta = getAssociatedTokenAddressSync(a.mint, manager);
     return [
@@ -174,6 +189,7 @@ export async function buildSeedReserveInstruction(
       mintAuthority: addresses.mintAuthority,
       managerReserveTokenAccount: managerReserveTokenAta,
       manager,
+      managerFeeRecipients,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,

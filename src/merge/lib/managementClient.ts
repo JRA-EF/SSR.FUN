@@ -21,6 +21,7 @@ import {
   buildAddReserveAssetActiveInstruction,
   buildCloseReserveInstruction,
   buildCollectFeesInstruction,
+  buildCollectProtocolFeeInstruction,
   buildCollectManagerFeeShareInstruction,
   buildInitializeManagerFeeRecipientsInstruction,
   buildUpdateFeeRecipientsInstruction,
@@ -304,6 +305,35 @@ export async function executeCollectFees(
     new PublicKey(reserve),
     new PublicKey(reserveTokenMint),
     new PublicKey(managerFeeDestination),
+    new PublicKey(protocolConfig.defaultProtocolFeeDestination),
+    wallet.publicKey,
+  );
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+/**
+ * Collects ONLY the Protocol's pending fee share, leaving the Manager's
+ * pending balance untouched -- see collect_protocol_fee.rs's header.
+ * Permissionless, same as executeCollectFees above. This is the manual
+ * fallback for a Reserve whose Protocol balance hasn't been swept yet by
+ * api/devnet/accrue-fees-cron.ts's weekly keeper (the actual mechanism
+ * behind "the Protocol never has to manually claim its fees").
+ */
+export async function executeCollectProtocolFee(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  reserveTokenMint: string,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const protocolConfig = await fetchProtocolConfig(connection, programId);
+  if (!protocolConfig) throw new Error("SSR Protocol is not initialized on this DevNet endpoint.");
+  const ix = await buildCollectProtocolFeeInstruction(
+    program,
+    programId,
+    new PublicKey(reserve),
+    new PublicKey(reserveTokenMint),
     new PublicKey(protocolConfig.defaultProtocolFeeDestination),
     wallet.publicKey,
   );

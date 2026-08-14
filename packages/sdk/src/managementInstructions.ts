@@ -233,6 +233,47 @@ export async function buildCollectFeesInstruction(
     .instruction();
 }
 
+/**
+ * Collects ONLY the Protocol's pending fee share -- see
+ * collect_protocol_fee.rs's header. Permissionless, same rationale as
+ * buildCollectFeesInstruction above: funds can only ever go to the fixed
+ * ProtocolConfig.defaultProtocolFeeDestination, never wherever the caller
+ * chooses, so any wallet may call this (and front the destination-ATA rent
+ * as `payer`). This is what api/devnet/accrue-fees-cron.ts's weekly keeper
+ * calls for every Reserve with a nonzero pending Protocol balance -- the
+ * mechanism behind "the Protocol never has to manually claim its fees."
+ * `protocolFeeDestination` must be read live from chain immediately before
+ * calling (ProtocolConfig.defaultProtocolFeeDestination) -- not a derivable
+ * PDA, and the program itself validates it against that exact field.
+ */
+export async function buildCollectProtocolFeeInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  reserveTokenMint: PublicKey,
+  protocolFeeDestination: PublicKey,
+  payer: PublicKey,
+): Promise<TransactionInstruction> {
+  const [protocolConfig] = findProtocolConfig(programId);
+  const [mintAuthority] = findMintAuthority(reserve, programId);
+  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  return program.methods
+    .collectProtocolFee()
+    .accounts({
+      protocolConfig,
+      reserve,
+      reserveTokenMint,
+      mintAuthority,
+      protocolFeeDestinationTokenAccount,
+      protocolFeeDestination,
+      payer,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+}
+
 /** remaining_accounts: reserve.asset_count pairs of [reserveAsset, vault], in order_index order -- see close_reserve.rs. */
 export async function buildCloseReserveInstruction(
   program: Program<anchor.Idl>,

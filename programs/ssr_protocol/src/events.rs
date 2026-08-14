@@ -80,7 +80,14 @@ pub struct ReserveClosed {
 #[event]
 pub struct ReserveSeeded {
     pub reserve: Pubkey,
+    /// NET Reserve Token units minted to the creator -- the seed mint fee
+    /// (see `mint_fee_reserve_tokens` below) has already been deducted, same
+    /// convention as `ReserveTokensMinted.reserve_tokens_out`.
     pub initial_reserve_tokens: u64,
+    /// Protocol + Manager fee, in Reserve Token units, taken from the gross
+    /// seed request. The initial seed mint is fee-charged like any other
+    /// mint -- previously fee-free, a confirmed bug.
+    pub mint_fee_reserve_tokens: u64,
     pub asset_mints: Vec<Pubkey>,
     pub asset_amounts: Vec<u64>,
     pub ts: i64,
@@ -179,6 +186,15 @@ pub struct FeesCollected {
     pub protocol_fee_shares_minted: u64,
     pub manager_destination: Pubkey,
     pub protocol_destination: Pubkey,
+    pub ts: i64,
+}
+
+#[event]
+pub struct ProtocolFeeCollected {
+    pub reserve: Pubkey,
+    pub amount: u64,
+    pub destination: Pubkey,
+    pub collected_by: Pubkey,
     pub ts: i64,
 }
 

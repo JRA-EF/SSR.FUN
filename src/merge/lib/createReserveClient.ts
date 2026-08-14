@@ -47,8 +47,10 @@ import {
   findDelegate,
   validateFeeRecipientInputs,
   validateMetadataUri,
+  computeEffectiveFeeSplit,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
+  PROTOCOL_MIN_MINT_FEE_BPS,
   usdToSolLamports,
   isSupportedAssetMint,
   type NewReserveAddresses,
@@ -172,6 +174,31 @@ export function validateAdditionalManagers(addresses: string[], manager: PublicK
     result.push(pk);
   }
   return result;
+}
+
+/**
+ * Estimates the NET Reserve Token amount a creator will actually receive
+ * from seeding, given a gross seed target and the Reserve's configured Mint
+ * Fee percent -- mirrors seed_reserve.rs's own on-chain fee formula exactly
+ * (the initial seed is a mint like any other; previously fee-free, a
+ * confirmed bug -- see docs/project/DECISION_LOG.md's entry for this fix).
+ * Used by CreateDTR.tsx's Review step so "you'll receive X tokens" is
+ * accurate instead of overstating by the fee percentage.
+ */
+export function estimateNetSeedReserveTokens(grossSeedTokens: number, mintFeePct: number): number {
+  // Computed in RAW base units (6 decimals, matching handleSubmitReal's own
+  // `initialReserveTokens = grossSeedTokens * 1_000_000` and seed_reserve.rs's
+  // on-chain math exactly) -- NOT whole-token units. At whole-token
+  // granularity, ceil-rounding a small percentage of a small token count
+  // (e.g. 2% of 10) rounds the fee up to an entire extra token, understating
+  // the real net amount by as much as a full token; raw-unit precision
+  // matches what the chain will actually do.
+  const RESERVE_TOKEN_RAW_PER_UNIT = 1_000_000n;
+  const grossRaw = BigInt(Math.round(grossSeedTokens * Number(RESERVE_TOKEN_RAW_PER_UNIT)));
+  const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+  const feeRaw = (grossRaw * split.effectiveTotalBps + 9_999n) / 10_000n; // ceiling division, matching mul_div_ceil
+  const netRaw = grossRaw - feeRaw;
+  return Number(netRaw) / Number(RESERVE_TOKEN_RAW_PER_UNIT);
 }
 
 export interface ReserveMetadataInput {

@@ -73,7 +73,12 @@ export function summarizeActivityEvent(name: string, data: Record<string, unknow
     case "reserveManagerTransferred":
       return { actor: pk(data.oldManager), summary: `Manager transferred: ${pk(data.oldManager)} -> ${pk(data.newManager)}` };
     case "reserveSeeded":
-      return { actor: null, summary: `Reserve seeded with ${String(data.initialReserveTokens)} initial Reserve Token units` };
+      return {
+        actor: null,
+        summary: `Reserve seeded with ${String(data.initialReserveTokens)} initial Reserve Token units (${String(data.mintFeeReserveTokens ?? 0)} minted as Protocol/Manager fee)`,
+      };
+    case "protocolFeeCollected":
+      return { actor: pk(data.collectedBy), summary: `Protocol fee collected: ${String(data.amount)} Reserve Token units` };
     default:
       return null; // Not a governance-relevant event (e.g. mint/redeem -- already covered by Trade history) -- deliberately not surfaced here.
   }

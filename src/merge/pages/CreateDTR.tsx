@@ -15,6 +15,7 @@ import {
   determineDeploymentResumePoint,
   isWalletRejectionError,
   uploadReserveMetadata,
+  estimateNetSeedReserveTokens,
   CreateReserveStepError,
   type CreateReserveStep,
   type CreateReserveCostEstimate,
@@ -1500,7 +1501,23 @@ export function CreateDTR() {
                       <p>1. Create the Reserve + register {assets.length} reserve asset{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
                       {assets.some((a) => a.symbol === "SOL") && <p>2. Wrap your SOL for the seed deposit</p>}
                       <p>{assets.some((a) => a.symbol === "SOL") ? "3" : "2"}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>
-                      <p className="pt-1">Expected result: you'll spend the SOL above and receive <span className="font-merge-mono text-foreground">{Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10)).toLocaleString()} {ticker || "Reserve"}</span> tokens. Any test-asset amounts appearing and disappearing from your wallet mid-flow (e.g. minted then immediately deposited) are expected intermediate steps, not final balances -- deployment isn't complete until the last step confirms.</p>
+                      {(() => {
+                        const grossSeedTokens = Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10));
+                        const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                        const netSeedTokens = estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
+                        return (
+                          <p className="pt-1">
+                            Expected result: you'll spend the SOL above and receive{" "}
+                            <span className="font-merge-mono text-foreground">
+                              ~{netSeedTokens.toLocaleString(undefined, { maximumFractionDigits: 6 })} {ticker || "Reserve"}
+                            </span>{" "}
+                            tokens
+                            -- the initial seed is a mint like any other, so the {(Number(split.effectiveTotalBps) / 100).toFixed(2)}% Protocol + Manager mint fee applies to it too. Any test-asset
+                            amounts appearing and disappearing from your wallet mid-flow (e.g. minted then immediately deposited) are expected intermediate steps, not final balances -- deployment
+                            isn't complete until the last step confirms.
+                          </p>
+                        );
+                      })()}
                       <p>Newly created tokens can take a few minutes to show a name/symbol in Phantom instead of "Unknown" -- this is a DevNet metadata-indexing delay, not an error.</p>
                     </div>
                   </div>
