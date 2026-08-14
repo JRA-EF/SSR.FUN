@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVUSDC, DEVUSDC_MINT, DEVNET_FIXTURES, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, computeRedemptionEntitlements, findReserve } from "@ssr/sdk";
+import { DEVUSDC, DEVUSDC_MINT, DEVNET_FIXTURES, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, discoverDelegatesForReserve, computeRedemptionEntitlements, findReserve } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
-import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD } from "@/lib/onChainReserve";
+import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
+import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { explorerUrl } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
@@ -76,7 +77,7 @@ function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
@@ -210,6 +211,15 @@ export function DTRDetail() {
           },
           onChain,
         );
+        // Re-verify delegates directly too (mergeOnChainReserve never
+        // touches delegatesOnChain -- see onChainReserve.ts's
+        // mergeOnChainIntoDTR) so isManagerOrDelegate's "Manage Reserve"
+        // gating on this page stays correct right after a manual refresh,
+        // not just after RealReserveSync's next background poll tick.
+        const delegates = await withReadConcurrencyLimit(() =>
+          discoverDelegatesForReserve(connection, programId, reserveAddress, buildDelegateCandidateWallets(dtr.onChain!.reserve, onChain.manager, wallet.address)),
+        );
+        setOnChainDelegates(dtr.id, delegates.map(onChainDelegateFromDiscovered), onChain.delegateCount);
       }
       if (walletCtx.publicKey) {
         const owner = walletCtx.publicKey;

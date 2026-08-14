@@ -186,9 +186,14 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
     assetCount: onChain.assetCount,
     assetsResolvedFully: assets.length >= onChain.assetCount,
     redemptionFeeBps: onChain.redemptionFeeBps,
-    // Delegate discovery runs on a separate cadence (see ManageDTR.tsx) --
-    // preserve whatever was last resolved rather than clobbering it with
-    // "unknown" on every routine balance/composition poll.
+    // This function has no fresh delegate data to merge (ReserveOnChain, the
+    // targeted single-Reserve fetch this call is built from, is deliberately
+    // lighter than a full discovery pass) -- preserve whatever was last
+    // resolved rather than clobbering it with "unknown". Every caller of
+    // mergeOnChainReserve (ManageDTR.tsx/DTRDetail.tsx's refreshRealReserveNow)
+    // separately re-verifies delegates right after this merge, via
+    // discoverDelegatesForReserve + useAppStore's setOnChainDelegates, so
+    // this is never the last word on delegatesOnChain in practice.
     delegatesOnChain: prev.onChain?.delegatesOnChain,
     delegateCountOnChain: prev.onChain?.delegateCountOnChain,
     feeDestination: onChain.feeDestination,
@@ -219,7 +224,8 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
   };
 }
 
-function onChainDelegateFromDiscovered(d: DiscoveredDelegate): OnChainDelegateMeta {
+/** Shared by RealReserveSync.tsx's full discovery pass and ManageDTR.tsx's/DTRDetail.tsx's targeted post-refresh delegate re-check -- one conversion, never duplicated. */
+export function onChainDelegateFromDiscovered(d: DiscoveredDelegate): OnChainDelegateMeta {
   return { wallet: d.wallet, delegateAccount: d.delegateAccount, permissions: d.permissions, restricted: d.restricted, addedAt: d.addedAt };
 }
 

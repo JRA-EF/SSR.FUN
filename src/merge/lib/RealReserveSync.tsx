@@ -33,6 +33,7 @@ import { PublicKey } from "@solana/web3.js";
 import { discoverAllReserves, discoverDelegatesForReserve, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
+import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
 
 const BASE_POLL_MS = 15_000;
@@ -41,13 +42,6 @@ const MAX_POLL_MS = 120_000;
 const DISCOVERY_CACHE_TTL_MS = 5_000;
 
 const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
-
-/** Wallets worth checking for a delegate grant on any given Reserve -- see discoverDelegatesForReserve's documented limitation (full enumeration needs a scan, not available on the public DevNet RPC). Always followed by a real on-chain verification; never trusted on its own. */
-function candidateDelegateWallets(managerBase58: string, connectedWallet: string | null): PublicKey[] {
-  const candidates = new Set([managerBase58, DEVNET_FIXTURES.delegates.updateTargets.wallet, DEVNET_FIXTURES.delegates.pauseUnpause.wallet]);
-  if (connectedWallet) candidates.add(connectedWallet);
-  return Array.from(candidates).map((c) => new PublicKey(c));
-}
 
 export function RealReserveSync() {
   const { connection } = useConnection();
@@ -119,7 +113,7 @@ export function RealReserveSync() {
         const dtrs = await Promise.all(
           reserves.map(async (reserve) => {
             const delegates = await withReadConcurrencyLimit(() =>
-              discoverDelegatesForReserve(connection, programId, new PublicKey(reserve.reserve), candidateDelegateWallets(reserve.manager, walletKey)),
+              discoverDelegatesForReserve(connection, programId, new PublicKey(reserve.reserve), buildDelegateCandidateWallets(reserve.reserve, reserve.manager, walletKey)),
             ).catch(() => []); // Delegate resolution is best-effort/supplementary -- a failure here shouldn't fail the whole Reserve's discovery.
             return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey);
           }),

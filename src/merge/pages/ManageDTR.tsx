@@ -3,7 +3,8 @@ import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
-import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD } from "@/lib/onChainReserve";
+import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
+import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
 import { explorerUrl } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLA
 import {
   fetchReserveOnChain,
   fetchManagerFeeRecipients,
+  discoverDelegatesForReserve,
   DEVNET_FIXTURES,
   DEVUSDC,
   findReserve,
@@ -200,7 +202,7 @@ function OnChainDelegateRow({
 
 export function ManageDTR() {
   const { dtrId } = useParams();
-  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve } = useAppStore();
+  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const { toast } = useToast();
@@ -491,6 +493,22 @@ export function ManageDTR() {
           },
           onChain,
         );
+        // mergeOnChainReserve/mergeOnChainIntoDTR deliberately never touches
+        // delegatesOnChain (it has no fresh delegate data to merge) -- it
+        // used to be left entirely to RealReserveSync's next background poll
+        // tick, up to 120s away under backoff. That's what made Grant/Update/
+        // Remove Delegate's own "immediate refresh" never actually show the
+        // change it just made. Re-verify delegates directly here too, right
+        // after every refresh, using the SAME shared candidate list
+        // (buildDelegateCandidateWallets) RealReserveSync uses -- authoritative
+        // on-chain reads, never trusted from local state alone.
+        const delegates = await discoverDelegatesForReserve(
+          connection,
+          programId,
+          reserveAddress,
+          buildDelegateCandidateWallets(dtr.onChain.reserve, onChain.manager, wallet.address),
+        );
+        setOnChainDelegates(dtr.id, delegates.map(onChainDelegateFromDiscovered), onChain.delegateCount);
       }
     } catch {
       // Best-effort immediate refresh; RealReserveSync's regular poll will catch up regardless.
@@ -1238,9 +1256,11 @@ export function ManageDTR() {
                               )
                             }
                             onRemove={() =>
-                              void runOnChainAction(`Remove delegate ${shortenAddress(del.wallet)}`, () =>
-                                executeRemoveDelegate(connection, walletCtx, dtr.onChain!.reserve, del.wallet),
-                              )
+                              void runOnChainAction(`Remove delegate ${shortenAddress(del.wallet)}`, async () => {
+                                const sig = await executeRemoveDelegate(connection, walletCtx, dtr.onChain!.reserve, del.wallet);
+                                forgetDelegateWallet(dtr.onChain!.reserve, del.wallet);
+                                return sig;
+                              })
                             }
                           />
                         );
@@ -1305,15 +1325,27 @@ export function ManageDTR() {
                       (!isRoot && !onChainNewDelegateRestricted)
                     }
                     onClick={() =>
-                      void runOnChainAction("Grant Delegate", () =>
-                        executeAddDelegate(
+                      void runOnChainAction("Grant Delegate", async () => {
+                        const grantedWallet = onChainNewDelegateWallet.trim();
+                        const sig = await executeAddDelegate(
                           connection,
                           walletCtx,
                           dtr.onChain!.reserve,
-                          onChainNewDelegateWallet.trim(),
+                          grantedWallet,
                           onChainNewDelegatePermBits,
                           isRoot ? onChainNewDelegateRestricted : true,
-                        ),
+                        );
+                        // The app knows this exact wallet address right now
+                        // (the user just typed it and the grant just
+                        // confirmed) -- record it as a discovery candidate
+                        // before runOnChainAction's own immediate refresh
+                        // runs, so this same refresh cycle picks it up
+                        // instead of leaving the Delegates tab to show "N
+                        // reported on-chain, but none matched" until some
+                        // future lucky poll. See delegateDiscoveryCandidates.ts.
+                        rememberDelegateWallet(dtr.onChain!.reserve, grantedWallet);
+                        return sig;
+                      }
                       ).then(() => {
                         setOnChainNewDelegateWallet("");
                         setOnChainNewDelegatePermBits(0);

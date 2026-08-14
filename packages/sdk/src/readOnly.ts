@@ -139,6 +139,8 @@ export interface ReserveOnChain {
   effectiveTvlFeeTotalBps: number;
   metadataUri: string;
   reserveTokenSupplyRaw: string;
+  /** Verified on-chain count of granted delegates -- see packages/sdk/src/discovery.ts's discoverDelegatesForReserve for resolving actual wallets. Added alongside a targeted-refresh delegate re-check (see ManageDTR.tsx's refreshRealReserveNow) -- previously absent from this lighter single-Reserve fetch, which is why a manual refresh used to be unable to update delegateCountOnChain at all and had to silently preserve whatever the last full discovery pass had resolved. */
+  delegateCount: number;
   assets: ReserveAssetOnChain[];
 }
 
@@ -213,6 +215,7 @@ export async function fetchReserveOnChain(
     effectiveTvlFeeTotalBps: Number(tvlSplit.effectiveTotalBps),
     metadataUri: reserveAccount.metadataUri,
     reserveTokenSupplyRaw: supply ? supply.value.amount : "0",
+    delegateCount: reserveAccount.delegateCount,
     assets,
   };
 }
