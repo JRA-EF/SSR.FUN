@@ -21,10 +21,12 @@
   },
   "include": ["vite.config.ts", "middleware.ts", "lib/**/*.ts", "api/**/*.ts"],
   /* api/devnet has its own commonjs/node-resolution tsconfig (api/devnet/tsconfig.json).
-     lib/reserve-activity has its own CommonJS-scoping package.json (like src/merge/lib's)
-     so ts-mocha can require() its pure logic directly in tests -- which conflicts with
-     this project's nodenext module detection if checked here directly. Both are still
-     fully typechecked transitively via api/devnet/tsconfig.json's import of
-     api/devnet/reserve-activity.ts, which pulls in indexer.ts/db.ts/cursorLogic.ts. */
-  "exclude": ["api/devnet", "lib/reserve-activity"]
+     lib/reserve-activity and lib/reserve-metadata each have their own CommonJS-scoping
+     package.json (like src/merge/lib's) so ts-mocha can require() their pure logic
+     directly in tests -- which conflicts with this project's nodenext module detection
+     if checked here directly. All three are still fully typechecked transitively via
+     api/devnet/tsconfig.json's imports of api/devnet/reserve-activity.ts (pulls in
+     indexer.ts/db.ts/cursorLogic.ts) and api/devnet/reserve-metadata.ts (pulls in
+     payload.ts/db.ts). */
+  "exclude": ["api/devnet", "lib/reserve-activity", "lib/reserve-metadata"]
 }

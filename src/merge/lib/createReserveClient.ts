@@ -45,6 +45,7 @@ import {
   findProtocolConfig,
   findDelegate,
   validateFeeRecipientInputs,
+  validateMetadataUri,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   usdToSolLamports,
@@ -125,6 +126,57 @@ export function validateCreateReserveAssets(assets: CreateReserveAssetInput[]): 
   if (totalWeightBps <= 0 || totalWeightBps > 10_000) {
     throw new Error(`Invalid allocation total (${(totalWeightBps / 100).toFixed(2)}%) -- allocations must sum to more than 0% and no more than 100%.`);
   }
+}
+
+export interface ReserveMetadataInput {
+  name: string;
+  ticker: string;
+  description: string;
+  category: string;
+  buyTaxPct: number;
+  sellTaxPct: number;
+}
+
+/**
+ * Uploads a Reserve's off-chain metadata (name/ticker/description/category/
+ * buyTaxPct/sellTaxPct) to this app's own permanent store
+ * (api/devnet/reserve-metadata.ts) and returns the resulting short,
+ * permanent HTTPS URL -- what CreateDTR.tsx submits on-chain as
+ * Reserve.metadata_uri, NEVER the JSON payload itself. This is the fix for
+ * the confirmed root cause of SsrError::MetadataUriTooLong: the previous
+ * flow built `data:application/json,${encodeURIComponent(JSON.stringify({
+ * name, ticker, description, category, buyTaxPct, sellTaxPct }))}` and
+ * submitted THAT directly on-chain -- routinely 300-600+ bytes for any real
+ * name/description, against a 200-byte on-chain limit. See
+ * packages/sdk/src/metadataUri.ts's header for the full writeup.
+ *
+ * The upload itself is idempotent server-side (content-hashed id, `on
+ * conflict do nothing` insert -- see lib/reserve-metadata/payload.ts) so
+ * calling this again with identical input (e.g. a debounced re-upload after
+ * an edit, or a genuine retry after a transient network failure) can never
+ * create a duplicate row or a different URL for the same content.
+ *
+ * Validates the resulting URL against the exact on-chain byte limit before
+ * returning it -- defense in depth; by construction (this app's own short,
+ * fixed-format URL scheme) this should always be far under the limit, but a
+ * caller must never trust that without checking.
+ */
+export async function uploadReserveMetadata(origin: string, input: ReserveMetadataInput): Promise<string> {
+  const response = await fetch(`${origin}/api/devnet/reserve-metadata`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error((body && typeof body.error === "string" && body.error) || `Failed to upload Reserve metadata (HTTP ${response.status}).`);
+  }
+  if (!body || typeof body.id !== "string" || !body.id) {
+    throw new Error("Reserve metadata upload did not return a valid id.");
+  }
+  const uri = `${origin}/api/devnet/reserve-metadata?id=${body.id}`;
+  validateMetadataUri(uri);
+  return uri;
 }
 
 /**
@@ -458,6 +510,15 @@ export async function createReserveOnChain(params: {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   validateCreateReserveAssets(params.assets);
+  // The ONE choke point every caller of createReserveOnChain goes through
+  // for metadataUri, same rationale as validateCreateReserveAssets above --
+  // this is what makes "blocked before Phantom opens" true even if a future
+  // caller (a script, a different UI path) somehow skips CreateDTR.tsx's own
+  // upload-then-validate flow. See packages/sdk/src/metadataUri.ts's header
+  // for the full MetadataUriTooLong root-cause writeup this guards against:
+  // a data:/blob: URI, an unsupported scheme, or anything over the on-chain
+  // byte limit throws HERE, before deriveNewReserveAddresses or any signing.
+  validateMetadataUri(params.metadataUri);
   const programId = new PublicKey(DEVNET_FIXTURES.programId);
   const program = buildReadOnlyProgram(connection) as any;
 

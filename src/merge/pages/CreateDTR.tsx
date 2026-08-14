@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, type RecipientInput } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
@@ -14,6 +14,7 @@ import {
   clearPendingReserveDeploy,
   determineDeploymentResumePoint,
   isWalletRejectionError,
+  uploadReserveMetadata,
   CreateReserveStepError,
   type CreateReserveStep,
   type CreateReserveCostEstimate,
@@ -129,6 +130,14 @@ export function CreateDTR() {
   const [newManagerAddress, setNewManagerAddress] = useState("");
   const [costEstimate, setCostEstimate] = useState<CreateReserveCostEstimate | null>(null);
   const [costEstimateError, setCostEstimateError] = useState<string | null>(null);
+  // The permanent metadata URL Review will display and Launch will submit
+  // on-chain -- see uploadReserveMetadata's header for the full
+  // MetadataUriTooLong root-cause writeup this replaces (the old flow
+  // submitted the entire JSON payload inline instead of a short link to it).
+  // null while not yet uploaded/uploading/failed; a real https:// URL once ready.
+  const [metadataUri, setMetadataUri] = useState<string | null>(null);
+  const [metadataUriError, setMetadataUriError] = useState<string | null>(null);
+  const [metadataUploading, setMetadataUploading] = useState(false);
 
   // Computed here (not after the early wallet-connected return below) so
   // this effect's dependency array stays valid across every render --
@@ -184,6 +193,55 @@ export function CreateDTR() {
       clearTimeout(debounceHandle);
     };
   }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection]);
+
+  // Uploads this Reserve's off-chain metadata (name/ticker/description/
+  // category/buyTaxPct/sellTaxPct) and resolves the resulting permanent URL
+  // BEFORE the user ever reaches Launch -- Review below displays it, and
+  // Launch is disabled until it's ready, so an oversized/failed URI is
+  // caught long before Phantom would ever open. Debounced the same way as
+  // the cost-estimate effect above (typing in Name/Description changes
+  // these on every keystroke); re-runs (and re-uploads) whenever the
+  // identity fields change, so going back from Review to edit them and
+  // returning always reflects the latest content. Content-hashed server-side
+  // (see uploadReserveMetadata), so a debounced re-upload of unchanged
+  // content is a safe no-op, never a duplicate.
+  useEffect(() => {
+    if (!realDeploymentCandidate || !name.trim() || !ticker.trim()) {
+      setMetadataUri(null);
+      setMetadataUriError(null);
+      setMetadataUploading(false);
+      return;
+    }
+    let cancelled = false;
+    setMetadataUploading(true);
+    const debounceHandle = setTimeout(() => {
+      uploadReserveMetadata(window.location.origin, {
+        name,
+        ticker,
+        description,
+        category,
+        buyTaxPct: managerBuyTaxPct,
+        sellTaxPct: managerSellTaxPct,
+      })
+        .then((uri) => {
+          if (cancelled) return;
+          setMetadataUri(uri);
+          setMetadataUriError(null);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setMetadataUri(null);
+          setMetadataUriError(e instanceof Error ? e.message : "Failed to upload Reserve metadata.");
+        })
+        .finally(() => {
+          if (!cancelled) setMetadataUploading(false);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(debounceHandle);
+    };
+  }, [realDeploymentCandidate, name, ticker, description, category, managerBuyTaxPct, managerSellTaxPct]);
 
   // Recovers from a page reload (or a return visit, hours or days later --
   // see PendingReserveDeploy's no-expiry note) that happened mid-deployment:
@@ -534,6 +592,24 @@ export function CreateDTR() {
       });
       return;
     }
+    // Blocks before Phantom ever opens -- never a wallet popup followed by a
+    // failed/declined on-chain rejection for something checkable up front.
+    // Mirrors the Launch button's own disabled condition below; re-checked
+    // here too since this handler is the actual point of no return.
+    if (metadataUploading || !metadataUri) {
+      toast({
+        variant: "destructive",
+        title: "Metadata not ready",
+        description: metadataUriError ?? "Reserve metadata is still uploading -- please wait a moment and try again.",
+      });
+      return;
+    }
+    try {
+      validateMetadataUri(metadataUri);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Metadata URL rejected", description: e instanceof Error ? e.message : "Invalid metadata URL." });
+      return;
+    }
     submittingRef.current = true;
     setIsSubmitting(true);
     setCreateStep("create-and-register");
@@ -561,7 +637,7 @@ export function CreateDTR() {
       const result = await createReserveOnChain({
         connection,
         wallet: walletCtx,
-        metadataUri: `data:application/json,${encodeURIComponent(JSON.stringify({ name, ticker, description, category, buyTaxPct: managerBuyTaxPct, sellTaxPct: managerSellTaxPct }))}`,
+        metadataUri,
         mintFeeBps: Math.round(mintFeePct * 100),
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,
@@ -1339,6 +1415,35 @@ export function CreateDTR() {
               </div>
 
               {isRealDeployment && (
+                <div className={`bg-card border rounded-xl overflow-hidden ${metadataUriError ? "border-destructive/50" : "border-border"}`}>
+                  <div className="bg-muted/50 p-4 border-b border-border">
+                    <h3 className="font-semibold flex items-center gap-2">
+                      Reserve Metadata URL
+                      <InfoTip label="More information about the Reserve metadata URL">
+                        Your Reserve's name, ticker, description, and category are stored at this permanent URL -- only this short link (never the text itself) is submitted on-chain, since Solana account space is limited.
+                      </InfoTip>
+                    </h3>
+                  </div>
+                  <div className="p-4">
+                    {metadataUploading && (
+                      <p className="text-sm text-muted-foreground flex items-center gap-2">
+                        <div className="w-3.5 h-3.5 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" /> Uploading metadata...
+                      </p>
+                    )}
+                    {!metadataUploading && metadataUriError && (
+                      <p className="text-sm text-destructive">{metadataUriError}</p>
+                    )}
+                    {!metadataUploading && !metadataUriError && metadataUri && (
+                      <p className="text-sm font-merge-mono break-all">{metadataUri}</p>
+                    )}
+                    {!metadataUploading && !metadataUriError && !metadataUri && (
+                      <p className="text-sm text-muted-foreground">Enter a Name and Ticker to generate a metadata URL.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {isRealDeployment && (
                 <div className="bg-card border border-primary/30 rounded-xl overflow-hidden">
                   <div className="bg-primary/5 p-4 border-b border-border">
                     <h3 className="font-semibold flex items-center gap-2">
@@ -1475,14 +1580,26 @@ export function CreateDTR() {
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={isSubmitting || !isRealDeployment || (!costEstimate && !costEstimateError)}
-                title={!isRealDeployment ? "Every selected asset must be a supported real DevNet asset." : (!costEstimate && !costEstimateError) ? "Calculating launch cost..." : undefined}
+                disabled={isSubmitting || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri}
+                title={
+                  !isRealDeployment
+                    ? "Every selected asset must be a supported real DevNet asset."
+                    : !costEstimate && !costEstimateError
+                      ? "Calculating launch cost..."
+                      : metadataUploading
+                        ? "Uploading Reserve metadata..."
+                        : !metadataUri
+                          ? (metadataUriError ?? "Enter a Name and Ticker so Reserve metadata can be uploaded.")
+                          : undefined
+                }
                 className="font-bold gap-2 min-w-[150px]"
               >
                 {isSubmitting ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Deploying..."}</>
                 ) : !costEstimate && !costEstimateError ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Calculating cost...</>
+                ) : metadataUploading ? (
+                  <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Uploading metadata...</>
                 ) : (
                   <><Rocket className="w-4 h-4" /> Launch Reserve</>
                 )}

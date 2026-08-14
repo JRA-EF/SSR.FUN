@@ -23,3 +23,4 @@ export * from "./ammCalculations";
 export * from "./ammInstructions";
 export * from "./rebalanceExecutionInstructions";
 export * from "./activityLog";
+export * from "./metadataUri";
