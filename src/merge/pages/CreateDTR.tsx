@@ -642,6 +642,7 @@ export function CreateDTR() {
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,
         feeRecipients: recipientsForChain,
+        additionalManagers,
         assets: realAssets,
         seedTotalUsd,
         onProgress: setCreateStep,

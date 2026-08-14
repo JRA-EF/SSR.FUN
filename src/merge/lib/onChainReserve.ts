@@ -13,13 +13,12 @@
 // a real, oracle-free Reserve.
 import { PublicKey } from "@solana/web3.js";
 import type { DTR, OnChainAssetMeta, OnChainDelegateMeta, OnChainReserveMeta, QuarantinedReserveInfo } from "./types";
-import type { DiscoveredDelegate, DiscoveredReserve, ReserveOnChain } from "@ssr/sdk";
+import type { DiscoveredDelegate, DiscoveredReserve, ReserveOnChain, ParsedReserveMetadata } from "@ssr/sdk";
 import {
   DEVNET_FIXTURES,
   SOL_TEST_PRICE_USD,
   WRAPPED_SOL_MINT,
   DEVUSDC,
-  parseReserveMetadataUri,
   findMintAuthority,
   findVaultAuthority,
   evaluateReserveEligibility,
@@ -255,9 +254,13 @@ const KNOWN_FIXTURE_META: Record<string, { name: string; ticker: string; descrip
  * here special-cases any specific Reserve id, address, or name.
  *
  * Name/ticker/description/category are recovered from the Reserve's own
- * on-chain `metadataUri` when possible (see parseReserveMetadataUri) --
+ * on-chain `metadataUri`, already resolved by the caller into `parsedMetadata`
+ * (see packages/sdk/src/discovery.ts's resolveReserveMetadata, which handles
+ * both the original inline data: URI convention and the permanent-URL
+ * convention that superseded it -- this function stays synchronous/pure by
+ * taking the already-resolved result rather than doing that I/O itself) --
  * falls back to the known committed-fixture description for the 2 fixtures
- * (seeded before this metadata convention existed), or an honest
+ * (seeded before either metadata convention existed), or an honest
  * "unresolved metadata" placeholder for anything else. Never fabricates a
  * plausible-looking name.
  */
@@ -265,10 +268,10 @@ export function buildDtrFromDiscoveredReserve(
   discovered: DiscoveredReserve,
   delegates: DiscoveredDelegate[],
   connectedWallet: string | null,
+  parsedMetadata: ParsedReserveMetadata | null,
 ): DTR {
-  const parsed = parseReserveMetadataUri(discovered.metadataUri);
   const meta =
-    parsed ??
+    parsedMetadata ??
     KNOWN_FIXTURE_META[discovered.reserve] ?? {
       name: `Unnamed Reserve (#${discovered.reserveId})`,
       ticker: `RSV${discovered.reserveId}`,
@@ -359,8 +362,8 @@ export function buildDtrFromDiscoveredReserve(
       // Reserve's on-chain metadataUri JSON -- NOT enforced by mint/redeem
       // today (no secondary market/DEX exists yet for the Reserve Token).
       // Defaults to 0 for any Reserve created before this field existed.
-      managerBuyTaxPct: parsed?.buyTaxPct ?? 0,
-      managerSellTaxPct: parsed?.sellTaxPct ?? 0,
+      managerBuyTaxPct: parsedMetadata?.buyTaxPct ?? 0,
+      managerSellTaxPct: parsedMetadata?.sellTaxPct ?? 0,
       creatorFeeDestination: discovered.feeDestination,
       feeRecipients: [],
     },

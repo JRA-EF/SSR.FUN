@@ -412,33 +412,77 @@ export interface ParsedReserveMetadata {
   sellTaxPct: number;
 }
 
+/** Shared by parseReserveMetadataUri (inline data: URI) and resolveReserveMetadata (a fetched HTTPS payload) -- the ONE place a raw JSON value becomes a ParsedReserveMetadata, so the two never drift. Returns null -- never a fabricated guess -- when neither name nor ticker is present. */
+function metadataFromJson(json: unknown): ParsedReserveMetadata | null {
+  if (!json || typeof json !== "object") return null;
+  const j = json as Record<string, unknown>;
+  const name = typeof j.name === "string" ? j.name : "";
+  const ticker = typeof j.ticker === "string" ? j.ticker : "";
+  if (!name && !ticker) return null;
+  return {
+    name,
+    ticker,
+    description: typeof j.description === "string" ? j.description : "",
+    category: typeof j.category === "string" ? j.category : "",
+    buyTaxPct: typeof j.buyTaxPct === "number" && Number.isFinite(j.buyTaxPct) ? j.buyTaxPct : 0,
+    sellTaxPct: typeof j.sellTaxPct === "number" && Number.isFinite(j.sellTaxPct) ? j.sellTaxPct : 0,
+  };
+}
+
 /**
- * Recovers a Decentralized Token Reserve's name/ticker/description/category
- * directly from its on-chain `metadataUri` field, when that field was
- * populated as a `data:application/json,...` URI (the real-deployment path
- * in src/merge/pages/CreateDTR.tsx does this). Returns null -- never a
- * fabricated guess -- for any Reserve whose metadataUri isn't in this exact
- * shape (e.g. the committed fixtures, seeded before this convention
- * existed), so callers can fall back to an honest "Unnamed Reserve" state
- * instead of inventing a name.
+ * Recovers a Reserve's name/ticker/description/category directly from its
+ * on-chain `metadataUri` field, when that field was populated as a
+ * `data:application/json,...` URI (the ORIGINAL real-deployment convention
+ * -- superseded by resolveReserveMetadata below once metadataUri became a
+ * short permanent URL instead, see docs/project/DECISION_LOG.md's
+ * MetadataUriTooLong fix, but still the correct/only way to read a Reserve
+ * created before that fix, and the 2 committed fixtures never used either
+ * scheme). Returns null -- never a fabricated guess -- for any Reserve whose
+ * metadataUri isn't in this exact shape, so callers can fall back to an
+ * honest "Unnamed Reserve" state instead of inventing a name. Purely
+ * synchronous, no network I/O -- kept this way so every existing caller
+ * that doesn't need the URL case keeps working unchanged.
  */
 export function parseReserveMetadataUri(metadataUri: string): ParsedReserveMetadata | null {
   const prefix = "data:application/json,";
   if (!metadataUri.startsWith(prefix)) return null;
   try {
-    const json = JSON.parse(decodeURIComponent(metadataUri.slice(prefix.length))) as Record<string, unknown>;
-    const name = typeof json.name === "string" ? json.name : "";
-    const ticker = typeof json.ticker === "string" ? json.ticker : "";
-    if (!name && !ticker) return null;
-    return {
-      name,
-      ticker,
-      description: typeof json.description === "string" ? json.description : "",
-      category: typeof json.category === "string" ? json.category : "",
-      buyTaxPct: typeof json.buyTaxPct === "number" && Number.isFinite(json.buyTaxPct) ? json.buyTaxPct : 0,
-      sellTaxPct: typeof json.sellTaxPct === "number" && Number.isFinite(json.sellTaxPct) ? json.sellTaxPct : 0,
-    };
+    return metadataFromJson(JSON.parse(decodeURIComponent(metadataUri.slice(prefix.length))));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Async superset of parseReserveMetadataUri: additionally resolves a real
+ * permanent HTTPS URL by fetching it -- this app's own
+ * api/devnet/reserve-metadata.ts (what CreateDTR.tsx's uploadReserveMetadata
+ * actually produces since the MetadataUriTooLong fix), or any other
+ * JSON-serving HTTPS URL (a gateway-fronted IPFS/Arweave link is still
+ * https://, so it's covered the same way -- see metadataUri.ts's header for
+ * why raw ipfs://ar:// URIs are accepted on-chain but this app's own
+ * pipeline never produces them). Tries the synchronous data: URI case
+ * FIRST (no network round trip needed for a Reserve created before this
+ * fix, or a committed fixture) -- only attempts a fetch when that returns
+ * null AND the URI is genuinely http(s). Bounded by `timeoutMs` so one slow
+ * or hanging Reserve's metadata host can never stall an entire discovery
+ * pass. Returns null -- never throws, never a fabricated guess -- for
+ * anything unresolvable (network failure, 404, non-JSON body, timeout,
+ * unsupported scheme).
+ */
+export async function resolveReserveMetadata(metadataUri: string, timeoutMs = 5000): Promise<ParsedReserveMetadata | null> {
+  const inline = parseReserveMetadataUri(metadataUri);
+  if (inline) return inline;
+  if (!/^https?:\/\//i.test(metadataUri)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(metadataUri, { signal: controller.signal });
+    if (!response.ok) return null;
+    return metadataFromJson(await response.json());
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }

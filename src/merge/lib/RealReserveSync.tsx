@@ -30,7 +30,7 @@
 import { useEffect } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { discoverAllReserves, discoverDelegatesForReserve, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
+import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
@@ -40,6 +40,8 @@ const BASE_POLL_MS = 15_000;
 const MAX_POLL_MS = 120_000;
 /** Bounded so a manual "refresh now" moments after a poll tick reuses that tick's result instead of re-asking the RPC -- see refreshRealReserveNow in DTRDetail.tsx, which reads through the same cache key space for the balance half of this. */
 const DISCOVERY_CACHE_TTL_MS = 5_000;
+/** A Reserve's off-chain metadata (name/ticker/description/category) is immutable in practice -- nothing in this app resubmits update_metadata today -- so a long TTL just avoids re-fetching it on every poll tick within the same browser session, never staleness risk. */
+const METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
 const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
 
@@ -115,7 +117,16 @@ export function RealReserveSync() {
             const delegates = await withReadConcurrencyLimit(() =>
               discoverDelegatesForReserve(connection, programId, new PublicKey(reserve.reserve), buildDelegateCandidateWallets(reserve.reserve, reserve.manager, walletKey)),
             ).catch(() => []); // Delegate resolution is best-effort/supplementary -- a failure here shouldn't fail the whole Reserve's discovery.
-            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey);
+            // Resolves BOTH the original inline data: URI convention and the
+            // permanent-URL convention that superseded it (see
+            // resolveReserveMetadata's header) -- best-effort/supplementary,
+            // same as delegates above: a metadata-host hiccup must never fail
+            // the whole Reserve's discovery, it just falls back to the
+            // honest "Unnamed Reserve (#N)" placeholder for this pass.
+            const parsedMetadata = await getCached(`reserve-metadata:${reserve.metadataUri}`, METADATA_CACHE_TTL_MS, () => resolveReserveMetadata(reserve.metadataUri)).catch(
+              () => null,
+            );
+            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata);
           }),
         );
         if (cancelled) return;

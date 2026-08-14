@@ -36,6 +36,7 @@ import {
   buildCreateReserveInstruction,
   buildInitializeReserveAssetInstruction,
   buildInitializeManagerFeeRecipientsInstruction,
+  buildAddDelegateInstruction,
   deriveReserveAssetAddresses,
   buildSeedReserveInstruction,
   fetchReserveOnChain,
@@ -57,6 +58,27 @@ import {
 } from "@ssr/sdk";
 import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 import { computeFundingShortfall, determineDeploymentResumePoint, type ReserveOnChainStatus } from "./createReserveResume";
+import { PERMISSION_FLAGS } from "./onChainPermissions";
+
+/**
+ * Exactly the capability set CreateDTR.tsx's "Additional Managers" copy
+ * promises them at creation time ("They'll be able to rebalance, manage
+ * fees, and pause the reserve, but won't be able to manage other
+ * delegates -- only the root Manager (you) can do that.") -- granted as a
+ * RESTRICTED delegate (never unrestricted; add_delegate.rs only allows the
+ * root Manager to grant unrestricted, and the whole point here is "won't be
+ * able to manage other delegates," which an unrestricted delegate could).
+ * Deliberately excludes UPDATE_METADATA, MANAGE_LIQUIDITY_CONFIG, and both
+ * *_RESTRICTED_DELEGATE flags -- none of those are promised by the copy
+ * above, so none are granted.
+ */
+export const ADDITIONAL_MANAGER_PERMISSIONS =
+  PERMISSION_FLAGS.UPDATE_TARGETS |
+  PERMISSION_FLAGS.INITIATE_REBALANCE |
+  PERMISSION_FLAGS.EXECUTE_REBALANCE |
+  PERMISSION_FLAGS.MANAGE_FEES |
+  PERMISSION_FLAGS.PAUSE_RESERVE |
+  PERMISSION_FLAGS.UNPAUSE_RESERVE;
 
 export {
   computeFundingShortfall,
@@ -126,6 +148,30 @@ export function validateCreateReserveAssets(assets: CreateReserveAssetInput[]): 
   if (totalWeightBps <= 0 || totalWeightBps > 10_000) {
     throw new Error(`Invalid allocation total (${(totalWeightBps / 100).toFixed(2)}%) -- allocations must sum to more than 0% and no more than 100%.`);
   }
+}
+
+/** Validates and de-duplicates the "Additional Managers" list before it's turned into real add_delegate instructions -- never trusts caller-side UI state alone. Returns unique, valid wallet addresses excluding `manager` (which is always the root Manager already, and add_delegate.rs has no "grant yourself a delegate" concept). */
+export function validateAdditionalManagers(addresses: string[], manager: PublicKey): PublicKey[] {
+  const seen = new Set<string>();
+  const result: PublicKey[] = [];
+  for (const raw of addresses) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    let pk: PublicKey;
+    try {
+      pk = new PublicKey(trimmed);
+    } catch {
+      throw new Error(`"${trimmed}" is not a valid Solana wallet address.`);
+    }
+    if (pk.equals(manager)) {
+      throw new Error("The connected wallet is already the Reserve's root Manager -- it can't also be added as an additional manager.");
+    }
+    const key = pk.toBase58();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(pk);
+  }
+  return result;
 }
 
 export interface ReserveMetadataInput {
@@ -501,6 +547,19 @@ export async function createReserveOnChain(params: {
    * exactly 100%.
    */
   feeRecipients?: RecipientInput[];
+  /**
+   * Wallets to grant as restricted delegates (see ADDITIONAL_MANAGER_PERMISSIONS
+   * above) in the SAME create-and-register transaction -- CreateDTR.tsx's
+   * "Additional Managers" step. Bundled here, not as separate post-creation
+   * transactions, for the same reason feeRecipients is (DEC-0031): it shares
+   * the reserve/signer/systemProgram accounts already in this transaction,
+   * so no extra wallet approval is needed. Was previously collected by the
+   * UI and silently discarded -- confirmed root cause of "add delegate on
+   * reserve creation doesn't do anything" (a delegate added via ManageDTR.tsx
+   * after creation worked correctly; one entered during CreateDTR.tsx never
+   * reached the chain at all).
+   */
+  additionalManagers?: string[];
   assets: CreateReserveAssetInput[];
   seedTotalUsd: number;
   onProgress: (step: CreateReserveStep) => void;
@@ -519,6 +578,9 @@ export async function createReserveOnChain(params: {
   // a data:/blob: URI, an unsupported scheme, or anything over the on-chain
   // byte limit throws HERE, before deriveNewReserveAddresses or any signing.
   validateMetadataUri(params.metadataUri);
+  // Same single-choke-point rationale as above -- validated here regardless
+  // of whether CreateDTR.tsx already validated its own input.
+  const additionalManagerWallets = validateAdditionalManagers(params.additionalManagers ?? [], wallet.publicKey);
   const programId = new PublicKey(DEVNET_FIXTURES.programId);
   const program = buildReadOnlyProgram(connection) as any;
 
@@ -561,6 +623,23 @@ export async function createReserveOnChain(params: {
         recipients,
       );
       ixs.push(initRecipientsIx);
+    }
+
+    if (additionalManagerWallets.length > 0) {
+      // The signer IS reserve.manager at this point in the SAME transaction
+      // (createIx above just set it), so add_delegate.rs's permission check
+      // short-circuits on require_root_manager/require_reserve_permission
+      // without ever reading actingDelegate -- this self-referential PDA
+      // (which doesn't exist on-chain yet either) is never actually
+      // deserialized. Restricted=true always, matching
+      // ADDITIONAL_MANAGER_PERMISSIONS's "can't manage other delegates" promise.
+      const [actingDelegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
+      const addDelegateIxs = await Promise.all(
+        additionalManagerWallets.map((delegateWallet) =>
+          buildAddDelegateInstruction(program, programId, addresses.reserve, wallet.publicKey!, actingDelegate, delegateWallet, ADDITIONAL_MANAGER_PERMISSIONS, true),
+        ),
+      );
+      ixs.push(...addDelegateIxs);
     }
 
     createAndRegisterSig = await signAndSend(connection, wallet, ixs);
