@@ -1,8 +1,14 @@
 //! DEC-0094: lets ONE named Manager fee recipient collect only their own
-//! accrued balance -- permissionless, mirroring `collect_fees`'s existing
-//! "any wallet may trigger the payout" design (accrual is pre-accounted;
-//! the caller can never redirect funds anywhere but the recipient's own
-//! ATA). Fully additive -- `collect_fees.rs` is left completely untouched.
+//! accrued balance. CLAIMANT-ONLY (see docs/project/DECISION_LOG.md's entry
+//! for this pass): `recipient` must itself sign -- no other wallet, not even
+//! the root Manager or another recipient, may trigger a payout on this
+//! recipient's behalf. This is a deliberate tightening from the original
+//! DEC-0094 "any wallet may trigger the payout" design (which was already
+//! fund-safe -- money could never be redirected anywhere but the recipient's
+//! own ATA -- but is no longer the desired access-control model). Fully
+//! additive -- `collect_fees.rs` is left largely untouched (see its own
+//! header for the matching claimant-only restriction added to its Manager
+//! side in this same pass).
 //!
 //! Falls back to the legacy `fee_config.fee_destination` /
 //! `pending_manager_fee_shares` path when a Reserve hasn't opted into
@@ -53,22 +59,24 @@ pub struct CollectManagerFeeShare<'info> {
     )]
     pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
 
-    /// CHECK: the recipient being paid out -- validated in the handler
-    /// against either the `ManagerFeeRecipients` array or (fallback)
-    /// `reserve.fee_config.fee_destination`. Only used as the ATA
-    /// authority below; never a signer, since this is permissionless.
-    pub recipient: UncheckedAccount<'info>,
+    /// CLAIMANT-ONLY: this recipient must sign for itself -- Anchor's
+    /// `Signer` type proves the transaction was genuinely authorized by this
+    /// exact wallet, which is then looked up in `ManagerFeeRecipients` (or
+    /// checked against the legacy `fee_config.fee_destination`) below. No
+    /// other wallet -- root Manager, delegate, or another recipient -- can
+    /// ever satisfy this constraint on this recipient's behalf. Also pays
+    /// its own ATA rent (see `recipient_token_account` below), so no
+    /// separate `payer` account is needed.
+    #[account(mut)]
+    pub recipient: Signer<'info>,
 
     #[account(
         init_if_needed,
-        payer = payer,
+        payer = recipient,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = recipient,
     )]
     pub recipient_token_account: Account<'info, SplTokenAccount>,
-
-    #[account(mut)]
-    pub payer: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -132,7 +140,7 @@ pub fn handler<'info>(ctx: Context<'info, CollectManagerFeeShare<'info>>) -> Res
         reserve: reserve_key,
         recipient: recipient_key,
         amount,
-        collected_by: ctx.accounts.payer.key(),
+        collected_by: recipient_key,
         ts: Clock::get()?.unix_timestamp,
     });
 

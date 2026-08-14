@@ -189,6 +189,52 @@ pub struct FeesCollected {
     pub ts: i64,
 }
 
+/// Emitted whenever a mint's (Buy or seed) Protocol fee share is minted
+/// directly to the Protocol treasury in the SAME transaction as the mint --
+/// see docs/project/DECISION_LOG.md's entry for this pass. Distinct from
+/// `ProtocolFeeCollected` (a separate, later-triggered weekly-settlement
+/// transfer for the TVL fee, or a legacy drain of a pre-this-pass pending
+/// balance) so the Activity Log can show "instant mint-fee transfer" as its
+/// own category, per the explicit requirement to record amount, asset
+/// (the Reserve Token mint), treasury wallet, and signature for this exact
+/// event.
+#[event]
+pub struct ProtocolMintFeeTransferred {
+    pub reserve: Pubkey,
+    pub reserve_token_mint: Pubkey,
+    pub amount: u64,
+    pub destination: Pubkey,
+    pub ts: i64,
+}
+
+/// Emitted by the standalone `accrue_fees` instruction whenever it actually
+/// settles a TVL-fee period (2026-08-14 pass, see
+/// docs/project/DECISION_LOG.md) -- a no-op call (nothing accumulated since
+/// `last_settled_ts`) emits nothing. `period_start_ts`/`period_end_ts` are
+/// `TvlAccrual.last_settled_ts` before/after this settlement; the Protocol's
+/// share is minted directly to `protocol_destination` in this SAME
+/// transaction (never left pending), matching `ProtocolMintFeeTransferred`'s
+/// instant-transfer semantics. The Manager's share accrues to its
+/// recipient(s) exactly like a mint-fee accrual (see
+/// `ManagerFeeShareAccrued`, source = `AnnualTvlFee`).
+#[event]
+pub struct TvlFeeSettled {
+    pub reserve: Pubkey,
+    pub reserve_token_mint: Pubkey,
+    pub period_start_ts: i64,
+    pub period_end_ts: i64,
+    /// `period_supply_seconds / (period_end_ts - period_start_ts)` -- the
+    /// time-weighted average Reserve Token supply over the settled period,
+    /// surfaced for transparency (Activity Log / audit), never used for
+    /// control flow.
+    pub time_weighted_avg_supply: u64,
+    pub protocol_fee_shares: u64,
+    pub manager_fee_shares: u64,
+    pub protocol_destination: Pubkey,
+    pub settled_by: Pubkey,
+    pub ts: i64,
+}
+
 #[event]
 pub struct ProtocolFeeCollected {
     pub reserve: Pubkey,

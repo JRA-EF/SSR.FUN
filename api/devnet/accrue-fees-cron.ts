@@ -1,17 +1,27 @@
-// GET /api/devnet/accrue-fees-cron -- DEC-0094's permissionless weekly
-// keeper for the Annualized TVL fee's cadence requirement ("settled weekly
-// where practical, and at least once every 30 days"). Real mint/redeem
-// transactions already checkpoint the TVL fee for free (see
-// programs/ssr_protocol/src/instructions/accrue_fees.rs's checkpoint_tvl_fee,
-// called from mint_reserve_tokens_in_kind/redeem_reserve_tokens_in_kind) --
-// this is only the fallback for a Reserve with no organic activity to
-// piggyback on.
+// GET /api/devnet/accrue-fees-cron -- the production keeper behind the
+// Annualized TVL fee's weekly settlement requirement (2026-08-14 pass, see
+// docs/project/DECISION_LOG.md). `accrue_fees` is the ONLY instruction that
+// ever actually SETTLES a TVL-fee period (mints the Protocol's share
+// straight to treasury, credits the Manager's share) -- see
+// programs/ssr_protocol/src/instructions/accrue_fees.rs's header comment. A
+// real mint/redeem/seed only ever cheaply CHECKPOINTS the time-weighted
+// accumulator for free; it never settles. That means THIS keeper is the
+// weekly fallback for EVERY Reserve, not just dormant ones with no organic
+// activity -- an active Reserve's fees would otherwise accrue in the
+// accumulator forever without ever actually being paid out. Every
+// non-dry-run invocation therefore calls `accrue_fees` for every discovered
+// Reserve unconditionally; the instruction itself is a safe, cheap no-op
+// (no mint, no event) for a Reserve with nothing new to settle, so calling
+// it weekly for a Reserve that settled five minutes ago via another trigger
+// costs a transaction fee and nothing else -- never a double charge (see
+// TvlAccrual's persisted `last_settled_ts`, which only a successful
+// settlement ever advances).
 //
-// Also sweeps every Reserve's Protocol pending fee share to the Protocol
-// treasury (see the collect_protocol_fee step below) -- the mechanism that
-// makes the Protocol a genuinely passive claimant: nobody ever manually
-// collects its fees, this keeper does it on a fixed schedule. See
-// docs/project/DECISION_LOG.md's entry for this pass.
+// Also sweeps any Reserve's LEGACY `pending_protocol_fee_shares` balance
+// (accrued before this pass, when the Protocol's TVL-fee share was still
+// left pending rather than settled instantly) to the Protocol treasury via
+// `collect_protocol_fee` -- purely a one-time drain of pre-existing
+// balances; new activity never adds to this figure anymore.
 //
 // Triggered by vercel.json's `crons` entry -- scheduled `0 0 * * 1` (00:00
 // UTC every Monday), the closest fixed-UTC approximation to "00:00 UK time
@@ -21,16 +31,18 @@
 // midnight during BST months. Using Vercel's own documented cron-security
 // pattern: a real request from Vercel's scheduler carries `Authorization:
 // Bearer $CRON_SECRET`. `?dryRun=true` skips that check entirely and NEVER
-// sends a transaction -- it only reports which Reserves are stale, safe for
-// anyone to call for manual inspection (the underlying data is all public
-// on-chain state anyway).
+// sends a transaction -- it only reports which Reserves look overdue, safe
+// for anyone to call for manual inspection (the underlying data is all
+// public on-chain state anyway).
 //
 // accrue_fees and collect_protocol_fee are both genuinely permissionless,
 // zero-discretion instructions (see their own header comments) -- this
 // endpoint pays the transaction fee via the same shared DevNet-only
 // authority keypair already reused by swap-sign.ts/faucet-devusdc.ts
 // (api/devnet/_lib/authority.ts), not because privilege is required, but
-// because SOMEONE has to be the payer.
+// because SOMEONE has to be the payer (also fronts the one-time rent for a
+// Reserve's very first `TvlAccrual`/protocol-fee-ATA, if either doesn't
+// exist yet).
 import { Connection, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
@@ -41,6 +53,7 @@ import {
   findManagerFeeRecipients,
   findMintAuthority,
   findProtocolConfig,
+  findTvlAccrual,
   fetchProtocolConfig,
   buildReadOnlyProgram,
 } from "@ssr/sdk";
@@ -54,10 +67,13 @@ import { resolveRpcUrl } from "./_lib/rpc";
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey(DEVNET_FIXTURES.programId);
 
-// Trigger threshold intentionally well inside the 30-day hard requirement --
-// this endpoint is scheduled weekly, so a ~25-day threshold gives multiple
-// scheduled runs of margin even if one run is skipped/fails.
-const STALE_THRESHOLD_SECONDS = 25 * 24 * 60 * 60;
+// Purely informational for `?dryRun=true` reporting (which Reserves "look
+// overdue") -- the real (non-dry-run) run always attempts settlement for
+// EVERY discovered Reserve regardless of this threshold, since an ACTIVE
+// Reserve's fees are never actually paid out except by this keeper (see this
+// file's header comment). One week's worth of margin below the weekly
+// schedule.
+const OVERDUE_THRESHOLD_SECONDS = 8 * 24 * 60 * 60;
 
 function getHeader(req: ApiRequest, name: string): string | undefined {
   const value = req.headers[name] ?? req.headers[name.toLowerCase()];
@@ -104,14 +120,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const stale = reserves.filter((r) => now - Number(r.lastFeeAccrualTs) >= STALE_THRESHOLD_SECONDS);
+  const overdue = reserves.filter((r) => now - Number(r.lastFeeAccrualTs) >= OVERDUE_THRESHOLD_SECONDS);
 
   if (dryRun) {
     res.status(200).json({
       dryRun: true,
       checkedAt: new Date(now * 1000).toISOString(),
       totalReserves: reserves.length,
-      staleReserves: stale.map((r) => ({
+      note: "The real run settles every Reserve below, not just these -- this list is only a visibility aid for which ones look overdue.",
+      overdueReserves: overdue.map((r) => ({
         reserveId: r.reserveId,
         reserve: r.reserve,
         lastFeeAccrualTs: r.lastFeeAccrualTs,
@@ -129,22 +146,46 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
+  const protocolConfigForSettlement = await fetchProtocolConfig(connection, PROGRAM_ID);
+  if (!protocolConfigForSettlement) {
+    res.status(500).json({ error: "ProtocolConfig not found -- cannot settle without a configured treasury destination." });
+    return;
+  }
+  const protocolFeeDestination = new PublicKey(protocolConfigForSettlement.defaultProtocolFeeDestination);
+
   const program = buildReadOnlyProgram(connection) as any;
+  const protocolConfigAddress = findProtocolConfig(PROGRAM_ID)[0];
   const results: { reserveId: string; reserve: string; signature?: string; error?: string }[] = [];
-  for (const r of stale) {
+  // Every discovered Reserve, unconditionally -- see this file's header
+  // comment for why this keeper cannot limit itself to "stale/dormant"
+  // Reserves the way it used to (checkpointing != settlement anymore).
+  for (const r of reserves) {
     try {
       const reservePk = new PublicKey(r.reserve);
+      const reserveTokenMintPk = new PublicKey(r.reserveTokenMint);
       const [managerFeeRecipients] = findManagerFeeRecipients(reservePk, PROGRAM_ID);
       // Detect migration: an uninitialized ManagerFeeRecipients account
       // means the legacy fallback sentinel (the program ID itself) must be
       // passed instead -- see state/manager_fee_recipients.rs.
       const recipientsAccount = await program.account.managerFeeRecipients.fetchNullable(managerFeeRecipients);
+      const [mintAuthority] = findMintAuthority(reservePk, PROGRAM_ID);
+      const [tvlAccrual] = findTvlAccrual(reservePk, PROGRAM_ID);
+      const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMintPk, protocolFeeDestination);
       const ix = await program.methods
         .accrueFees()
         .accounts({
+          protocolConfig: protocolConfigAddress,
           reserve: reservePk,
-          reserveTokenMint: new PublicKey(r.reserveTokenMint),
+          reserveTokenMint: reserveTokenMintPk,
+          mintAuthority,
+          tvlAccrual,
+          protocolFeeDestinationTokenAccount,
+          protocolFeeDestination,
           managerFeeRecipients: recipientsAccount ? managerFeeRecipients : PROGRAM_ID,
+          payer: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
         })
         .instruction();
       const tx = new Transaction().add(ix);
@@ -156,54 +197,49 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
 
-  // Sweeps every Reserve's Protocol pending fee share to the Protocol
-  // treasury -- the actual mechanism behind "the Protocol never has to
-  // manually claim its fees" (see collect_protocol_fee.rs's header and
-  // docs/project/DECISION_LOG.md's entry for this pass). Manager's pending
-  // balance is deliberately left untouched (collect_protocol_fee only ever
-  // moves the Protocol's share) -- the Manager keeps choosing when to
-  // collect their own, exactly as before. Re-fetches discovery fresh
-  // (rather than reusing `reserves` from above, which would be stale for
-  // any Reserve whose TVL fee was just checkpointed in the accrual loop
-  // above) so this only ever attempts a collection where one is genuinely
-  // owed.
+  // Sweeps any Reserve's LEGACY `pending_protocol_fee_shares` balance
+  // (accrued before this pass, when the Protocol's TVL-fee share was still
+  // left pending rather than settled instantly by `accrue_fees` itself --
+  // see this file's header comment) to the Protocol treasury via
+  // `collect_protocol_fee`. New activity never adds to this figure anymore,
+  // so this naturally becomes a permanent no-op once every legacy balance
+  // has been drained once. Manager's pending balance is deliberately left
+  // untouched (collect_protocol_fee only ever moves the Protocol's share) --
+  // the Manager keeps choosing when to collect their own. Re-fetches
+  // discovery fresh (rather than reusing `reserves` from above, which would
+  // be stale for any Reserve just settled in the accrual loop above) so this
+  // only ever attempts a collection where one is genuinely owed.
   let protocolFeeResults: { reserveId: string; reserve: string; amount?: string; signature?: string; error?: string }[] = [];
   try {
     const { reserves: freshReserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints);
     const owed = freshReserves.filter((r) => BigInt(r.pendingProtocolFeeShares) > 0n);
-    const protocolConfig = await fetchProtocolConfig(connection, PROGRAM_ID);
-    if (protocolConfig) {
-      const protocolFeeDestination = new PublicKey(protocolConfig.defaultProtocolFeeDestination);
-      for (const r of owed) {
-        try {
-          const reservePk = new PublicKey(r.reserve);
-          const reserveTokenMint = new PublicKey(r.reserveTokenMint);
-          const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
-          const ix = await program.methods
-            .collectProtocolFee()
-            .accounts({
-              protocolConfig: findProtocolConfig(PROGRAM_ID)[0],
-              reserve: reservePk,
-              reserveTokenMint,
-              mintAuthority: findMintAuthority(reservePk, PROGRAM_ID)[0],
-              protocolFeeDestinationTokenAccount,
-              protocolFeeDestination,
-              payer: authority.publicKey,
-              tokenProgram: TOKEN_PROGRAM_ID,
-              associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-              systemProgram: SystemProgram.programId,
-            })
-            .instruction();
-          const tx = new Transaction().add(ix);
-          tx.feePayer = authority.publicKey;
-          const signature = await sendAndConfirmTransaction(connection, tx, [authority], { commitment: "confirmed" });
-          protocolFeeResults.push({ reserveId: r.reserveId, reserve: r.reserve, amount: r.pendingProtocolFeeShares, signature });
-        } catch (e) {
-          protocolFeeResults.push({ reserveId: r.reserveId, reserve: r.reserve, error: e instanceof Error ? e.message : String(e) });
-        }
+    for (const r of owed) {
+      try {
+        const reservePk = new PublicKey(r.reserve);
+        const reserveTokenMint = new PublicKey(r.reserveTokenMint);
+        const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+        const ix = await program.methods
+          .collectProtocolFee()
+          .accounts({
+            protocolConfig: protocolConfigAddress,
+            reserve: reservePk,
+            reserveTokenMint,
+            mintAuthority: findMintAuthority(reservePk, PROGRAM_ID)[0],
+            protocolFeeDestinationTokenAccount,
+            protocolFeeDestination,
+            payer: authority.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .instruction();
+        const tx = new Transaction().add(ix);
+        tx.feePayer = authority.publicKey;
+        const signature = await sendAndConfirmTransaction(connection, tx, [authority], { commitment: "confirmed" });
+        protocolFeeResults.push({ reserveId: r.reserveId, reserve: r.reserve, amount: r.pendingProtocolFeeShares, signature });
+      } catch (e) {
+        protocolFeeResults.push({ reserveId: r.reserveId, reserve: r.reserve, error: e instanceof Error ? e.message : String(e) });
       }
-    } else {
-      protocolFeeResults = [{ reserveId: "-", reserve: "-", error: "ProtocolConfig not found -- skipped Protocol fee sweep." }];
     }
   } catch (e) {
     // Best-effort: a failure re-discovering Reserves for the sweep must
@@ -216,7 +252,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     dryRun: false,
     checkedAt: new Date(now * 1000).toISOString(),
     totalReserves: reserves.length,
-    staleReserveCount: stale.length,
+    overdueReserveCountBeforeThisRun: overdue.length,
     results,
     protocolFeeSweepCount: protocolFeeResults.length,
     protocolFeeResults,

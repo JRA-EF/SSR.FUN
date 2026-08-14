@@ -358,39 +358,56 @@ export async function executeInitializeManagerFeeRecipients(
 }
 
 /**
- * Replaces an already-migrated Reserve's Manager fee routing. On-chain, this
- * is blocked while any CURRENT recipient still has an uncollected pending
- * balance -- so this auto-bundles one `collect_manager_fee_share` per
- * current recipient with a nonzero `pendingFeeShares` into the SAME signed
- * transaction ahead of the routing change, so the safety gate is invisible
- * friction for the caller rather than a dead end requiring a separate step.
+ * Replaces an already-migrated Reserve's Manager fee routing.
+ *
+ * CLAIMANT-ONLY (2026-08-14 corrective pass, see docs/project/DECISION_LOG.md
+ * and update_fee_recipients.rs's own header comment): this used to
+ * auto-bundle a `collect_manager_fee_share` per current recipient into the
+ * same transaction to satisfy an on-chain "every recipient's pending balance
+ * must be zero" gate -- that only ever worked because collection was
+ * permissionless. Now that only a recipient's own wallet can collect its own
+ * balance, this Manager-signed transaction can no longer collect on anyone
+ * else's behalf. The on-chain gate changed to match: a recipient who STAYS
+ * on the list keeps its pending balance carried forward (never blocked); only
+ * a recipient being REMOVED from the list must already have zero pending
+ * (their own wallet has to collect it first). This function pre-flights that
+ * exact check client-side so the caller gets a clear, specific error before
+ * ever prompting a wallet signature, instead of a generic on-chain revert.
  */
 export async function executeUpdateFeeRecipients(
   connection: Connection,
   wallet: WalletContextState,
   reserve: string,
-  reserveTokenMint: string,
   currentRecipients: { wallet: string; pendingFeeShares: string }[],
   newRecipients: RecipientInput[],
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
   const reservePk = new PublicKey(reserve);
-  const reserveTokenMintPk = new PublicKey(reserveTokenMint);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
 
-  const tx = new Transaction();
-  for (const r of currentRecipients) {
-    if (BigInt(r.pendingFeeShares) <= 0n) continue;
-    const collectIx = await buildCollectManagerFeeShareInstruction(program, programId, reservePk, reserveTokenMintPk, new PublicKey(r.wallet), wallet.publicKey, true);
-    tx.add(collectIx);
+  const newWallets = new Set(newRecipients.map((r) => r.wallet));
+  const removedWithPending = currentRecipients.filter((r) => !newWallets.has(r.wallet) && BigInt(r.pendingFeeShares) > 0n);
+  if (removedWithPending.length > 0) {
+    throw new Error(
+      `Cannot remove ${removedWithPending.map((r) => r.wallet).join(", ")} from fee routing: this wallet still has an uncollected pending balance -- only that wallet's own connected session can collect it (Collect button) before it can be removed.`,
+    );
   }
+
   const updateIx = await buildUpdateFeeRecipientsInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, newRecipients);
-  tx.add(updateIx);
-  return signAndSend(connection, wallet, tx);
+  return signAndSend(connection, wallet, new Transaction().add(updateIx));
 }
 
 /** Permissionless -- pays out ONE named recipient's own accrued balance. `managerFeeRecipientsExists` should reflect whether this Reserve has opted into multi-recipient routing (fetchManagerFeeRecipients's `initialized` flag); the legacy fallback path is used when it hasn't. */
+/**
+ * CLAIMANT-ONLY: `recipient` must equal the connected wallet -- enforced
+ * here client-side (fails fast, before ever asking the wallet to sign) AND,
+ * authoritatively, on-chain via collect_manager_fee_share.rs's `Signer`
+ * constraint on `recipient` itself. The frontend never even calls this for
+ * a non-matching connected wallet (see ManageDTR.tsx's per-row Collect
+ * button, which is only rendered/enabled for the row matching the
+ * connected wallet) -- this check is defense in depth, not the only guard.
+ */
 export async function executeCollectManagerFeeShare(
   connection: Connection,
   wallet: WalletContextState,
@@ -400,13 +417,15 @@ export async function executeCollectManagerFeeShare(
   managerFeeRecipientsExists: boolean,
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  if (wallet.publicKey.toBase58() !== recipient) {
+    throw new Error("Only this recipient's own connected wallet can collect its accrued fees.");
+  }
   const program = buildReadOnlyProgram(connection) as any;
   const ix = await buildCollectManagerFeeShareInstruction(
     program,
     programId,
     new PublicKey(reserve),
     new PublicKey(reserveTokenMint),
-    new PublicKey(recipient),
     wallet.publicKey,
     managerFeeRecipientsExists,
   );

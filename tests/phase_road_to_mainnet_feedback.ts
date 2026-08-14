@@ -196,8 +196,58 @@ describe("DL-01b -- summarizeActivityEvent decodes governance events into a disp
     expect(result!.summary).to.include("5000bps");
   });
 
-  it("returns null for an event this log deliberately doesn't surface (e.g. mint/redeem, already covered by Trade history)", () => {
-    expect(summarizeActivityEvent("reserveTokensMinted", {})).to.equal(null);
+  it("returns null only for a genuinely unknown/unhandled event name", () => {
     expect(summarizeActivityEvent("someUnknownFutureEvent", {})).to.equal(null);
+  });
+
+  it("decodes reserveTokensMinted/reserveTokensRedeemed (2026-08-14 pass: mint/redeem are now surfaced in the Activity Log)", () => {
+    const minted = summarizeActivityEvent("reserveTokensMinted", {
+      depositor: fakePubkey(PK),
+      reserveTokensOut: { toString: () => "1000000" } as unknown,
+      mintFeeReserveTokens: { toString: () => "5000" } as unknown,
+    });
+    expect(minted).to.not.equal(null);
+    expect(minted!.actor).to.equal(PK);
+    expect(minted!.summary).to.include(PK).and.to.include("1000000").and.to.include("5000");
+
+    const redeemed = summarizeActivityEvent("reserveTokensRedeemed", {
+      redeemer: fakePubkey(PK),
+      reserveTokensBurned: { toString: () => "2000000" } as unknown,
+      redemptionFeeReserveTokens: { toString: () => "0" } as unknown,
+    });
+    expect(redeemed).to.not.equal(null);
+    expect(redeemed!.actor).to.equal(PK);
+    expect(redeemed!.summary).to.include(PK).and.to.include("2000000");
+  });
+
+  it("decodes protocolMintFeeTransferred and tvlFeeSettled (instant Protocol treasury transfers)", () => {
+    const mintFee = summarizeActivityEvent("protocolMintFeeTransferred", {
+      amount: { toString: () => "1234" } as unknown,
+      destination: fakePubkey(PK),
+    });
+    expect(mintFee).to.not.equal(null);
+    expect(mintFee!.summary).to.include("1234");
+
+    const tvlSettled = summarizeActivityEvent("tvlFeeSettled", {
+      settledBy: fakePubkey(PK),
+      periodStartTs: 1_700_000_000,
+      periodEndTs: 1_700_604_800,
+      protocolFeeShares: { toString: () => "500" } as unknown,
+      managerFeeShares: { toString: () => "500" } as unknown,
+    });
+    expect(tvlSettled).to.not.equal(null);
+    expect(tvlSettled!.actor).to.equal(PK);
+    expect(tvlSettled!.summary).to.include("500").and.to.include("Protocol-share").and.to.include("Manager-share");
+  });
+
+  it("decodes managerFeeShareCollected with the recipient's own wallet as the collector (claimant-only)", () => {
+    const result = summarizeActivityEvent("managerFeeShareCollected", {
+      recipient: fakePubkey(PK),
+      collectedBy: fakePubkey(PK),
+      amount: { toString: () => "42" } as unknown,
+    });
+    expect(result).to.not.equal(null);
+    expect(result!.actor).to.equal(PK);
+    expect(result!.summary).to.include(PK).and.to.include("42");
   });
 });

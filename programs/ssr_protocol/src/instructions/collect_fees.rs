@@ -9,10 +9,24 @@ use crate::errors::SsrError;
 use crate::events::FeesCollected;
 use crate::state::{ProtocolConfig, Reserve};
 
-/// Permissionless -- like `accrue_fees`, this only mints already-accounted
-/// pending shares to fixed, Reserve-configured destinations; the caller
-/// cannot redirect funds anywhere. `payer` covers destination-ATA rent if
-/// either destination doesn't have one yet.
+/// LEGACY, largely superseded by DEC-0094's `collect_manager_fee_share`
+/// (Manager side) and this pass's `collect_protocol_fee` +
+/// `api/devnet/accrue-fees-cron.ts` keeper (Protocol side, now fully
+/// automatic -- see docs/project/DECISION_LOG.md's entry for this pass).
+/// Left in place, unremoved, purely to drain any Manager/Protocol balance
+/// that had already accrued here BEFORE that pass, for a Reserve that never
+/// calls the newer instructions. No longer surfaced anywhere in the
+/// frontend UI.
+///
+/// CLAIMANT-ONLY for the Manager side (this pass): when `manager_shares >
+/// 0`, `payer` must equal `manager_fee_destination` -- the same
+/// restriction `collect_manager_fee_share` now enforces via a genuine
+/// `Signer` constraint. The Protocol side remains permissionless (it was
+/// never a claimable-by-a-person balance in the same sense, and funds can
+/// only ever land in the fixed, on-chain-configured Protocol treasury
+/// regardless of caller) -- `payer` still just covers destination-ATA rent
+/// if either destination doesn't have one yet, and may collect a
+/// Manager-side-zero, Protocol-side-only balance without being the Manager.
 #[derive(Accounts)]
 pub struct CollectFees<'info> {
     #[account(seeds = [PROTOCOL_CONFIG_SEED], bump = protocol_config.bump)]
@@ -115,6 +129,13 @@ pub fn handler<'info>(ctx: Context<'info, CollectFees<'info>>) -> Result<()> {
         manager_shares > 0 || protocol_shares > 0,
         SsrError::NoPendingFees
     );
+    if manager_shares > 0 {
+        require_keys_eq!(
+            ctx.accounts.payer.key(),
+            ctx.accounts.manager_fee_destination.key(),
+            SsrError::NotFeeRecipient
+        );
+    }
 
     let reserve_key = ctx.accounts.reserve.key();
     let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;

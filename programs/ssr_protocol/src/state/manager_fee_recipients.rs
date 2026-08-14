@@ -79,10 +79,13 @@ impl ManagerFeeRecipients {
             .position(|r| r.wallet == *wallet)
     }
 
-    /// True iff every active recipient's `pending_fee_shares` is zero --
-    /// the invariant that must hold before routing can be changed, so a
-    /// routing change can never reallocate fees already accrued to the old
-    /// configuration.
+    /// True iff every active recipient's `pending_fee_shares` is zero.
+    /// Used by `close_reserve` (a Reserve may only close once every
+    /// recipient has collected its own final balance). NOT used by
+    /// `update_fee_recipients` anymore as of the 2026-08-14 corrective pass
+    /// (see that instruction's own header comment) -- a routing change now
+    /// only requires this for a recipient being REMOVED from the list, not
+    /// for every current recipient.
     pub fn all_pending_collected(&self) -> bool {
         self.recipients[..self.recipient_count as usize]
             .iter()

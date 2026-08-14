@@ -12,7 +12,7 @@ import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddres
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients } from "./pda";
+import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients, findTvlAccrual } from "./pda";
 import type { RecipientInput } from "./feeMath";
 
 export interface NewReserveAddresses {
@@ -166,6 +166,20 @@ export async function buildSeedReserveInstruction(
   const [managerFeeRecipientsPda] = findManagerFeeRecipients(addresses.reserve, program.programId);
   const recipientsAccount = await (program.account as any).managerFeeRecipients.fetchNullable(managerFeeRecipientsPda);
   const managerFeeRecipients = recipientsAccount ? managerFeeRecipientsPda : program.programId;
+
+  // Instant Protocol mint-fee transfer (see docs/project/DECISION_LOG.md):
+  // the initial seed mint is a mint like any other -- its Protocol fee
+  // share must be minted straight to the live treasury wallet in this same
+  // transaction, so the current `defaultProtocolFeeDestination` is read
+  // fresh here rather than assumed.
+  const protocolConfigAccount: any = await (program.account as any).protocolConfig.fetch(addresses.protocolConfig);
+  const protocolFeeDestination = new PublicKey(protocolConfigAccount.defaultProtocolFeeDestination);
+  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(addresses.reserveTokenMint, protocolFeeDestination);
+
+  // Time-weighted average TVL accumulator (see docs/project/DECISION_LOG.md):
+  // the initial seed mint checkpoints it too, same as every other mint.
+  const [tvlAccrual] = findTvlAccrual(addresses.reserve, program.programId);
+
   const remainingAccounts = assets.flatMap((a) => {
     const managerAssetAta = getAssociatedTokenAddressSync(a.mint, manager);
     return [
@@ -189,6 +203,9 @@ export async function buildSeedReserveInstruction(
       mintAuthority: addresses.mintAuthority,
       managerReserveTokenAccount: managerReserveTokenAta,
       manager,
+      protocolFeeDestinationTokenAccount,
+      protocolFeeDestination,
+      tvlAccrual,
       managerFeeRecipients,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,

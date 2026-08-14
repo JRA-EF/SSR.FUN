@@ -1,0 +1,85 @@
+bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
+Deployer/payer: 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk
+RPC: https://api.devnet.solana.com
+Program: 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW
+Protocol treasury: EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq
+
+=========================================================
+PART 1: fresh Reserve, 2 recipients (Manager 60% / recipientB 40%), max TVL fee rate -- initial seed mint
+=========================================================
+  [fund manager] signature: 4Hd9QPVCtgxgkiWDMPQq77Gn5r5zY1cTcvEyrx4Q7x9b5M8ABdeJxsp43weVb784e6gw3vPUMMT78Yp3f1YGhQFQ
+  [fund manager] explorer: https://explorer.solana.com/tx/4Hd9QPVCtgxgkiWDMPQq77Gn5r5zY1cTcvEyrx4Q7x9b5M8ABdeJxsp43weVb784e6gw3vPUMMT78Yp3f1YGhQFQ?cluster=devnet
+  [fund recipientB] signature: 4JceJFoNshAXmXw7sRj7mcTwVKRwKWF2wNWG94EW984bZn1WizEGB4fBPQrC6PPCMyiaVEMf2M4oHFtWnszZBCrw
+  [fund recipientB] explorer: https://explorer.solana.com/tx/4JceJFoNshAXmXw7sRj7mcTwVKRwKWF2wNWG94EW984bZn1WizEGB4fBPQrC6PPCMyiaVEMf2M4oHFtWnszZBCrw?cluster=devnet
+  Manager (root, 60%): 2xuBBwSGZKEsLT2brCg6u6NRHCXu5rQTBnLKCjcRp5WX
+  recipientB (40%): 3eamKNDQkNJVUZEx15jdo58xJ3tWDNxSoYxxsh5vqMZc
+  Reserve: 76XnH3FYcjQSDC6YSp6R1dUifcX1ypNS4jjfTshZsPiX (reserveId 65)
+  [create_reserve + initialize_reserve_asset + initialize_manager_fee_recipients (bundled)] signature: 2g4xzNKavfJDLd9nmXbVYtJWTWtLrqztYks8NvMuu4U1qABvgqip3CvkMGzPLavFEqJrwJpsY2zo4rSM7JtjjUNj
+  [create_reserve + initialize_reserve_asset + initialize_manager_fee_recipients (bundled)] explorer: https://explorer.solana.com/tx/2g4xzNKavfJDLd9nmXbVYtJWTWtLrqztYks8NvMuu4U1qABvgqip3CvkMGzPLavFEqJrwJpsY2zo4rSM7JtjjUNj?cluster=devnet
+  Treasury Reserve Token balance BEFORE seed: 0
+  [seed_reserve (initial mint, fee-charged, instant Protocol transfer)] signature: 5VJWu1gCpkqXWJSFRC81sKpt163GWes1FYmheCHrj2qS9hp2bksn12hrsm9y6dwM9H6eJDSKHMZWstDqHkgpuqTq
+  [seed_reserve (initial mint, fee-charged, instant Protocol transfer)] explorer: https://explorer.solana.com/tx/5VJWu1gCpkqXWJSFRC81sKpt163GWes1FYmheCHrj2qS9hp2bksn12hrsm9y6dwM9H6eJDSKHMZWstDqHkgpuqTq?cluster=devnet
+  Treasury Reserve Token balance AFTER seed:  100000 (delta +100000, expected +100000)
+  pending_protocol_fee_shares (must stay 0 -- instant transfer, never left pending): 0
+  Manager pending: manager=60000 (expect 60000) recipientB=40000 (expect 40000)
+  CONFIRMED: initial seed mint is fee-charged, Protocol's share landed in treasury in the SAME transaction, Manager shares accrued correctly.
+  TvlAccrual after seed: periodSupplySeconds=0 lastCheckpointTs=1786722095 lastSettledTs=1786722095
+
+=========================================================
+PART 2: real elapsed wait, then a SUBSEQUENT mint -- instant Protocol transfer again + TVL checkpoint
+=========================================================
+  Waiting 25s for real elapsed time...
+  [mint_reserve_tokens_in_kind (subsequent Buy)] signature: 2gQMKkU5mKGug4wB4saPFbc2Qrux92KhuUdi1aTqTTrksSp6hXA6xrRNLRzEHVuUfgcV6vjGvJoUbGTMAcWK1J1Z
+  [mint_reserve_tokens_in_kind (subsequent Buy)] explorer: https://explorer.solana.com/tx/2gQMKkU5mKGug4wB4saPFbc2Qrux92KhuUdi1aTqTTrksSp6hXA6xrRNLRzEHVuUfgcV6vjGvJoUbGTMAcWK1J1Z?cluster=devnet
+  Treasury delta: +40000 (expected +40000)
+  CONFIRMED: subsequent mint's Protocol fee also transferred instantly; no Protocol fee ever left claimable.
+  TvlAccrual after mint 2: periodSupplySeconds=267300000 (expect > 0)
+  CONFIRMED: the TVL accumulator genuinely checkpointed real elapsed time x pre-mint supply (time-weighted, not a snapshot).
+
+=========================================================
+PART 3: claimant-only enforcement -- Manager cannot collect recipientB's share; each collects only its own; duplicate claim rejected
+=========================================================
+  [Manager attempts to collect recipientB's share (wrong signer)] CONFIRMED rejected as expected (Signature verification failed).
+  [Manager collects its OWN share (claimant-only, self-signed)] signature: 3aFHiEPW7HPxHMb1DDS35fonGpNG5TzGLyxAJyVapFnn8khoJo5Ry1EAhdcLnTjXQcS48NUxPm77trfAhEhAqUTA
+  [Manager collects its OWN share (claimant-only, self-signed)] explorer: https://explorer.solana.com/tx/3aFHiEPW7HPxHMb1DDS35fonGpNG5TzGLyxAJyVapFnn8khoJo5Ry1EAhdcLnTjXQcS48NUxPm77trfAhEhAqUTA?cluster=devnet
+  Manager RT balance delta: +84000
+  Pending after Manager's claim: manager=0 (expect 0) recipientB=56000 (expect unchanged)
+  CONFIRMED: Manager collected exactly its own accrued balance; recipientB's balance was completely unaffected.
+  [Manager attempts a DUPLICATE claim (pending now 0)] CONFIRMED rejected as expected (NoPendingFees).
+  [recipientB collects its OWN share (independent, self-signed)] signature: 53RxdvoZu26rn48CxXBg65ACe6LcZnqQYKB6SMBq57k84b9EdbfvZAD9pND7mrmaovemCTLaoXeyyWhDFj6Hs2o2
+  [recipientB collects its OWN share (independent, self-signed)] explorer: https://explorer.solana.com/tx/53RxdvoZu26rn48CxXBg65ACe6LcZnqQYKB6SMBq57k84b9EdbfvZAD9pND7mrmaovemCTLaoXeyyWhDFj6Hs2o2?cluster=devnet
+  recipientB RT balance delta: +56000 (expect 56000)
+  CONFIRMED: recipientB independently collected exactly its own balance -- claimant-only enforcement holds both directions.
+
+=========================================================
+PART 4: another real elapsed wait + a THIRD mint (TVL changes mid-period), then accrue_fees settles -- verified against an independent expected calculation; a second immediate call must be a genuine no-op
+=========================================================
+  Waiting 25s for real elapsed time...
+  [mint_reserve_tokens_in_kind (third Buy, mid-period TVL change)] signature: eZbGgUGhefnjHksFxQK8Yn4jq2CZ5Zc1r6CYpK7FAz68uDAZZCyw962ydF3uYvq57TGhz1QdtgqYLFNmk17xRDw
+  [mint_reserve_tokens_in_kind (third Buy, mid-period TVL change)] explorer: https://explorer.solana.com/tx/eZbGgUGhefnjHksFxQK8Yn4jq2CZ5Zc1r6CYpK7FAz68uDAZZCyw962ydF3uYvq57TGhz1QdtgqYLFNmk17xRDw?cluster=devnet
+  TvlAccrual before settle: periodSupplySeconds=701300000 lastSettledTs=1786722095
+  [accrue_fees (weekly TVL settlement, permissionless -- paid by deployer, not the Manager)] signature: 4UhY2HpMJZyWMMomKbZaMZPaQsKNtjorA1m5Fw3GkBAhpEicWBiLkwWnQr4MwASqwXbuFLgzeUWCN35K7bX2gG3F
+  [accrue_fees (weekly TVL settlement, permissionless -- paid by deployer, not the Manager)] explorer: https://explorer.solana.com/tx/4UhY2HpMJZyWMMomKbZaMZPaQsKNtjorA1m5Fw3GkBAhpEicWBiLkwWnQr4MwASqwXbuFLgzeUWCN35K7bX2gG3F?cluster=devnet
+  periodSupplySeconds settled: 701300000
+  Effective TVL split: protocol=500bps manager=500bps -> expected total fee=3 (protocol=2, manager=1)
+  Treasury delta: +2 (expected +2)
+  Recipient pending deltas: manager +1 (expected +1), recipientB +0 (expected +0)
+  TvlAccrual after settle: periodSupplySeconds=0 (expect 0) lastSettledTs=1786722155 (advanced)
+  CONFIRMED: weekly TVL settlement (tx 4UhY2HpMJZyWMMomKbZaMZPaQsKNtjorA1m5Fw3GkBAhpEicWBiLkwWnQr4MwASqwXbuFLgzeUWCN35K7bX2gG3F) matches the independently-computed time-weighted-average formula exactly -- real elapsed seconds, real mid-period supply change, both correctly reflected.
+
+  --- Retry-safety: an immediate second accrue_fees call must NEVER re-bill the just-settled period ---
+  [accrue_fees (immediate retry -- must only bill the new sliver of elapsed time, never the already-settled period)] signature: 47iCxa7GGoEbLHpk46zTL23SVvmJ6x4d3nnnsU87ACMVztguSPAv82NYeHH4w3tYu56CNtWRpaE656N88nt86Huo
+  [accrue_fees (immediate retry -- must only bill the new sliver of elapsed time, never the already-settled period)] explorer: https://explorer.solana.com/tx/47iCxa7GGoEbLHpk46zTL23SVvmJ6x4d3nnnsU87ACMVztguSPAv82NYeHH4w3tYu56CNtWRpaE656N88nt86Huo?cluster=devnet
+  Retry elapsed window: 2s (real network round-trip time, not a fabricated zero) x supply 15980002 = 31960004 supply-seconds
+  Treasury delta on retry: +1 (expected +1, from the NEW window only -- the original 701300000 supply-seconds settled above is NOT re-included)
+  Recipient pending deltas on retry: manager +0 (expected +0) recipientB +0 (expected +0)
+  CONFIRMED: the retry billed EXACTLY the new sliver of real elapsed time, matching the formula precisely -- the already-settled period was never re-included, proving a failed/retried keeper run cannot double-charge.
+
+=========================================================
+ALL PARTS PASSED
+=========================================================
+
+Reserve created for this verification: 76XnH3FYcjQSDC6YSp6R1dUifcX1ypNS4jjfTshZsPiX
+Manager (root, recipient 60%): 2xuBBwSGZKEsLT2brCg6u6NRHCXu5rQTBnLKCjcRp5WX
+recipientB (recipient 40%): 3eamKNDQkNJVUZEx15jdo58xJ3tWDNxSoYxxsh5vqMZc
+Protocol treasury: EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq

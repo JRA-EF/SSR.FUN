@@ -41,6 +41,7 @@ import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil, type AssetBalance } from "./calculations";
 import { solLamportsToUsd, SOL_TEST_PRICE_USD, WRAPPED_SOL_MINT } from "./zapPricing";
+import { findTvlAccrual } from "./pda";
 
 function isWrappedSol(mint: PublicKey): boolean {
   return mint.equals(WRAPPED_SOL_MINT);
@@ -57,6 +58,13 @@ export interface ZapAssetLeg {
 export interface BuildBuyZapParams {
   program: Program<anchor.Idl>;
   protocolConfig: PublicKey;
+  /**
+   * Instant Protocol mint-fee transfer (see docs/project/DECISION_LOG.md):
+   * `ProtocolConfig.defaultProtocolFeeDestination`, read live -- the
+   * Protocol's mint-fee share is minted directly to this wallet's Reserve
+   * Token ATA in the SAME transaction, never left pending.
+   */
+  protocolFeeDestination: PublicKey;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
   mintAuthority: PublicKey;
@@ -98,7 +106,7 @@ export function solToReserveTokensRequested(
 }
 
 export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promise<BuildZapResult> {
-  const { program, protocolConfig, reserve, reserveTokenMint, mintAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw } = params;
+  const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw } = params;
 
   const reserveTokensRequested = solToReserveTokensRequested(params.solLamports, reserveTokenSupplyRaw, assets, params.assetTestPricesUsd);
 
@@ -111,6 +119,8 @@ export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promis
 
   const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (let i = 0; i < assets.length; i++) {
@@ -158,6 +168,9 @@ export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promis
       mintAuthority,
       depositorReserveTokenAccount: depositorReserveTokenAta,
       depositor: user,
+      protocolFeeDestinationTokenAccount,
+      protocolFeeDestination,
+      tvlAccrual,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -192,6 +205,8 @@ export function devUsdcToReserveTokensRequested(
 export interface BuildBuyZapDevUsdcParams {
   program: Program<anchor.Idl>;
   protocolConfig: PublicKey;
+  /** See BuildBuyZapParams.protocolFeeDestination -- same instant mint-fee transfer, same source. */
+  protocolFeeDestination: PublicKey;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
   mintAuthority: PublicKey;
@@ -229,7 +244,7 @@ export interface BuildBuyZapDevUsdcResult extends BuildZapResult {
  * paid anything real -- see DTRDetail.tsx's composition preview.
  */
 export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcParams): Promise<BuildBuyZapDevUsdcResult> {
-  const { program, protocolConfig, reserve, reserveTokenMint, mintAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw, devUsdcMint } = params;
+  const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw, devUsdcMint } = params;
 
   const reserveTokensRequested = devUsdcToReserveTokensRequested(
     params.devUsdcAmountRaw,
@@ -249,6 +264,8 @@ export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcP
 
   const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (let i = 0; i < assets.length; i++) {
@@ -299,6 +316,9 @@ export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcP
       mintAuthority,
       depositorReserveTokenAccount: depositorReserveTokenAta,
       depositor: user,
+      protocolFeeDestinationTokenAccount,
+      protocolFeeDestination,
+      tvlAccrual,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -331,6 +351,7 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
   const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
 
   const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   const instructions: TransactionInstruction[] = [];
@@ -360,7 +381,9 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
       vaultAuthority,
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
+      tvlAccrual,
       tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(remainingAccounts)
     .instruction();
@@ -438,6 +461,7 @@ export async function buildSellZapInstructionsDevUsdc(
   const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
 
   const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   const instructions: TransactionInstruction[] = [];
@@ -468,7 +492,9 @@ export async function buildSellZapInstructionsDevUsdc(
       vaultAuthority,
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
+      tvlAccrual,
       tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(remainingAccounts)
     .instruction();
@@ -540,6 +566,7 @@ export async function buildRedeemToDevUsdcInstructions(
   const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
 
   const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (const leg of assets) {
     const mint = new PublicKey(leg.mint);
@@ -564,7 +591,9 @@ export async function buildRedeemToDevUsdcInstructions(
       vaultAuthority,
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
+      tvlAccrual,
       tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(remainingAccounts)
     .instruction();

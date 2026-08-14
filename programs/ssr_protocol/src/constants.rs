@@ -22,6 +22,11 @@ pub const DELEGATE_SEED: &[u8] = b"delegate";
 /// PDA seed prefix for a `ManagerFeeRecipients` account (combined with `reserve`).
 /// See DEC-0094 (multi-recipient Manager fees) and state/manager_fee_recipients.rs.
 pub const MANAGER_FEE_RECIPIENTS_SEED: &[u8] = b"manager_fee_recipients";
+/// PDA seed prefix for a `TvlAccrual` account (combined with `reserve`). See
+/// state/tvl_accrual.rs -- the time-weighted average TVL accumulator behind
+/// the Annualized TVL fee's weekly settlement (2026-08-14 pass, see
+/// docs/project/DECISION_LOG.md).
+pub const TVL_ACCRUAL_SEED: &[u8] = b"tvl_accrual";
 
 /// Reserve Token decimals. See docs/protocol/SSR_ARCHITECTURE.md section 2.
 pub const RESERVE_TOKEN_DECIMALS: u8 = 6;

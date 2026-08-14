@@ -132,7 +132,7 @@ pub enum SsrError {
     FeeRecipientZeroAddress,
     #[msg("Manager fee recipient allocations must sum to exactly 10,000 basis points (100% of the Manager's share).")]
     FeeRecipientAllocationNotFull,
-    #[msg("This routing change is blocked because at least one current recipient still has an uncollected pending fee share -- collect it first so the change can never reallocate already-accrued fees.")]
+    #[msg("This routing change is blocked because a recipient being removed from routing still has an uncollected pending fee share -- only that wallet's own signature can collect it (see collect_manager_fee_share), so it must do so before it can be removed. A recipient who stays on the list keeps its pending balance carried forward and is never blocked.")]
     PendingFeesBlockRoutingChange,
     #[msg("This wallet is not a configured Manager fee recipient for this Reserve.")]
     RecipientNotFound,
@@ -142,4 +142,9 @@ pub enum SsrError {
     ManagerFeeRecipientsAlreadyInitialized,
     #[msg("close_reserve requires every Manager fee recipient's pending fee share to be collected first.")]
     PendingManagerFeeSharesNotCollected,
+
+    // --- Claimant-only fee collection (2026-08-14 corrective pass) ---
+    // Appended at the end deliberately -- same append-only rule as above.
+    #[msg("Only the fee recipient's own wallet may collect its accrued balance -- no other wallet, including the root Manager or another recipient, can claim on its behalf.")]
+    NotFeeRecipient,
 }

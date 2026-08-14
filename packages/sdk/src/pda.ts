@@ -12,6 +12,7 @@ export const RESERVE_TOKEN_MINT_SEED = Buffer.from("reserve_token_mint");
 export const MINT_AUTHORITY_SEED = Buffer.from("mint_authority");
 export const DELEGATE_SEED = Buffer.from("delegate");
 export const MANAGER_FEE_RECIPIENTS_SEED = Buffer.from("manager_fee_recipients");
+export const TVL_ACCRUAL_SEED = Buffer.from("tvl_accrual");
 
 export function findProtocolConfig(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([PROTOCOL_CONFIG_SEED], programId);
@@ -50,4 +51,9 @@ export function findDelegate(reserve: PublicKey, wallet: PublicKey, programId: P
 /** DEC-0094: the up-to-10-recipient Manager fee routing account for a Reserve, if it has opted in. */
 export function findManagerFeeRecipients(reserve: PublicKey, programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([MANAGER_FEE_RECIPIENTS_SEED, reserve.toBuffer()], programId);
+}
+
+/** The time-weighted average TVL accumulator for a Reserve -- see programs/ssr_protocol/src/state/tvl_accrual.rs. */
+export function findTvlAccrual(reserve: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([TVL_ACCRUAL_SEED, reserve.toBuffer()], programId);
 }

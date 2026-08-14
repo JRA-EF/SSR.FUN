@@ -143,3 +143,131 @@ describe("packages/sdk/idl/ssr_protocol.json -- hand-added collect_protocol_fee 
     }
   });
 });
+
+describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entries (claimant-only collection, instant Protocol transfers, TVL time-weighted settlement)", () => {
+  function discriminator(namespace: string, name: string): number[] {
+    return Array.from(crypto.createHash("sha256").update(`${namespace}:${name}`).digest().subarray(0, 8));
+  }
+
+  it("collect_manager_fee_share's recipient is a writable signer, with no separate payer account (claimant-only)", () => {
+    const ix = (idl as any).instructions.find((i: any) => i.name === "collect_manager_fee_share");
+    const names = ix.accounts.map((a: any) => a.name);
+    expect(names).to.not.include("payer");
+    expect(names).to.include("recipient");
+    const recipient = ix.accounts.find((a: any) => a.name === "recipient");
+    expect(recipient.writable, "recipient must be writable").to.equal(true);
+    expect(recipient.signer, "recipient must be a signer -- the on-chain claimant-only enforcement").to.equal(true);
+  });
+
+  it("mint_reserve_tokens_in_kind gained protocol_fee_destination_token_account/protocol_fee_destination/tvl_accrual, in Rust struct order", () => {
+    const ix = (idl as any).instructions.find((i: any) => i.name === "mint_reserve_tokens_in_kind");
+    const names = ix.accounts.map((a: any) => a.name);
+    expect(names).to.deep.equal([
+      "protocol_config",
+      "reserve",
+      "reserve_token_mint",
+      "mint_authority",
+      "depositor_reserve_token_account",
+      "depositor",
+      "protocol_fee_destination_token_account",
+      "protocol_fee_destination",
+      "tvl_accrual",
+      "manager_fee_recipients",
+      "token_program",
+      "associated_token_program",
+      "system_program",
+    ]);
+  });
+
+  it("seed_reserve gained the identical protocol_fee_destination_token_account/protocol_fee_destination/tvl_accrual accounts, in Rust struct order", () => {
+    const ix = (idl as any).instructions.find((i: any) => i.name === "seed_reserve");
+    const names = ix.accounts.map((a: any) => a.name);
+    expect(names).to.deep.equal([
+      "protocol_config",
+      "reserve",
+      "reserve_token_mint",
+      "mint_authority",
+      "manager_reserve_token_account",
+      "manager",
+      "protocol_fee_destination_token_account",
+      "protocol_fee_destination",
+      "tvl_accrual",
+      "manager_fee_recipients",
+      "token_program",
+      "associated_token_program",
+      "system_program",
+    ]);
+  });
+
+  it("redeem_reserve_tokens_in_kind gained tvl_accrual + system_program, and redeemer is now writable (fronts tvl_accrual's rent)", () => {
+    const ix = (idl as any).instructions.find((i: any) => i.name === "redeem_reserve_tokens_in_kind");
+    const names = ix.accounts.map((a: any) => a.name);
+    expect(names).to.deep.equal([
+      "reserve",
+      "reserve_token_mint",
+      "vault_authority",
+      "redeemer_reserve_token_account",
+      "redeemer",
+      "manager_fee_recipients",
+      "tvl_accrual",
+      "token_program",
+      "system_program",
+    ]);
+    const redeemer = ix.accounts.find((a: any) => a.name === "redeemer");
+    expect(redeemer.writable).to.equal(true);
+  });
+
+  it("accrue_fees gained protocol_config/mint_authority/tvl_accrual/protocol_fee_destination_token_account/protocol_fee_destination/payer/associated_token_program/system_program -- it now SETTLES (mints to treasury), not just checkpoints", () => {
+    const ix = (idl as any).instructions.find((i: any) => i.name === "accrue_fees");
+    const names = ix.accounts.map((a: any) => a.name);
+    expect(names).to.deep.equal([
+      "protocol_config",
+      "reserve",
+      "reserve_token_mint",
+      "mint_authority",
+      "tvl_accrual",
+      "protocol_fee_destination_token_account",
+      "protocol_fee_destination",
+      "manager_fee_recipients",
+      "payer",
+      "token_program",
+      "associated_token_program",
+      "system_program",
+    ]);
+  });
+
+  it("TvlAccrual account discriminator matches sha256('account:TvlAccrual') and its type fields match the Rust struct", () => {
+    const acc = (idl as any).accounts.find((a: any) => a.name === "TvlAccrual");
+    expect(acc, "TvlAccrual account must be present in the IDL").to.not.equal(undefined);
+    expect(acc.discriminator).to.deep.equal(discriminator("account", "TvlAccrual"));
+    const ty = (idl as any).types.find((t: any) => t.name === "TvlAccrual");
+    const fieldNames = ty.type.fields.map((f: any) => f.name);
+    expect(fieldNames).to.deep.equal(["schema_version", "reserve", "period_supply_seconds", "last_checkpoint_ts", "last_settled_ts", "bump"]);
+  });
+
+  it("ProtocolMintFeeTransferred event discriminator matches sha256('event:ProtocolMintFeeTransferred')", () => {
+    const ev = (idl as any).events.find((e: any) => e.name === "ProtocolMintFeeTransferred");
+    expect(ev, "ProtocolMintFeeTransferred event must be present in the IDL").to.not.equal(undefined);
+    expect(ev.discriminator).to.deep.equal(discriminator("event", "ProtocolMintFeeTransferred"));
+  });
+
+  it("TvlFeeSettled event discriminator matches sha256('event:TvlFeeSettled') and its type fields match the Rust struct", () => {
+    const ev = (idl as any).events.find((e: any) => e.name === "TvlFeeSettled");
+    expect(ev, "TvlFeeSettled event must be present in the IDL").to.not.equal(undefined);
+    expect(ev.discriminator).to.deep.equal(discriminator("event", "TvlFeeSettled"));
+    const ty = (idl as any).types.find((t: any) => t.name === "TvlFeeSettled");
+    const fieldNames = ty.type.fields.map((f: any) => f.name);
+    expect(fieldNames).to.deep.equal([
+      "reserve",
+      "reserve_token_mint",
+      "period_start_ts",
+      "period_end_ts",
+      "time_weighted_avg_supply",
+      "protocol_fee_shares",
+      "manager_fee_shares",
+      "protocol_destination",
+      "settled_by",
+      "ts",
+    ]);
+  });
+});

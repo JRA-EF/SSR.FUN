@@ -330,13 +330,19 @@ export async function buildUpdateFeeRecipientsInstruction(
  * that case so the optional account is omitted -- the client library
  * substitutes the program ID sentinel automatically).
  */
+/**
+ * CLAIMANT-ONLY (see collect_manager_fee_share.rs's header): `recipient`
+ * must be the wallet actually signing this transaction -- the on-chain
+ * `Signer` constraint makes it structurally impossible for any other
+ * wallet, including the root Manager, to collect on this recipient's
+ * behalf. `recipient` also pays its own ATA rent now (no separate `payer`).
+ */
 export async function buildCollectManagerFeeShareInstruction(
   program: Program<anchor.Idl>,
   programId: PublicKey,
   reserve: PublicKey,
   reserveTokenMint: PublicKey,
   recipient: PublicKey,
-  payer: PublicKey,
   managerFeeRecipientsExists: boolean,
 ): Promise<TransactionInstruction> {
   const [mintAuthority] = findMintAuthority(reserve, programId);
@@ -351,7 +357,6 @@ export async function buildCollectManagerFeeShareInstruction(
       managerFeeRecipients: managerFeeRecipientsExists ? managerFeeRecipients : null,
       recipient,
       recipientTokenAccount,
-      payer,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,

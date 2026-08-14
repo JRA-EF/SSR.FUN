@@ -2,16 +2,16 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
-use super::accrue_fees::checkpoint_tvl_fee;
+use super::accrue_fees::checkpoint_tvl_accrual;
 use super::common::{credit_manager_fee_shares, load_asset_legs, mul_div_ceil, transfer_into_vault};
 use crate::constants::{
     BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED,
-    PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
+    PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, TVL_ACCRUAL_SEED,
 };
 use crate::errors::SsrError;
-use crate::events::{ManagerFeeAccrualSource, ReserveTokensMinted};
+use crate::events::{ManagerFeeAccrualSource, ProtocolMintFeeTransferred, ReserveTokensMinted};
 use crate::fee_math::{split_configured_bps, split_total_fee};
-use crate::state::{ManagerFeeRecipients, ProtocolConfig, Reserve, ReserveStatus};
+use crate::state::{ManagerFeeRecipients, ProtocolConfig, Reserve, ReserveStatus, TvlAccrual};
 
 #[derive(Accounts)]
 pub struct MintReserveTokensInKind<'info> {
@@ -50,6 +50,37 @@ pub struct MintReserveTokensInKind<'info> {
 
     #[account(mut)]
     pub depositor: Signer<'info>,
+
+    /// Instant Protocol mint-fee transfer (this pass, see
+    /// docs/project/DECISION_LOG.md): the Protocol's share of THIS mint's
+    /// fee is minted directly here, in the same atomic transaction --
+    /// Protocol fees never accrue as a pending/claimable balance for mint
+    /// events anymore. `depositor` fronts this ATA's rent if it doesn't
+    /// exist yet, same as its own `depositor_reserve_token_account` above.
+    #[account(
+        init_if_needed,
+        payer = depositor,
+        associated_token::mint = reserve_token_mint,
+        associated_token::authority = protocol_fee_destination,
+    )]
+    pub protocol_fee_destination_token_account: Account<'info, SplTokenAccount>,
+    /// CHECK: only used as the associated-token-account authority above;
+    /// must equal `protocol_config.default_protocol_fee_destination`,
+    /// checked in the handler.
+    pub protocol_fee_destination: UncheckedAccount<'info>,
+
+    /// Time-weighted average TVL accumulator (2026-08-14 pass) -- checkpointed
+    /// here for free (cheap arithmetic, no CPI), never settled here. See
+    /// `accrue_fees::checkpoint_tvl_accrual`'s doc comment. Lazily created on
+    /// this Reserve's first-ever checkpoint call.
+    #[account(
+        init_if_needed,
+        payer = depositor,
+        space = TvlAccrual::SPACE,
+        seeds = [TVL_ACCRUAL_SEED, reserve.key().as_ref()],
+        bump,
+    )]
+    pub tvl_accrual: Account<'info, TvlAccrual>,
 
     /// Optional (DEC-0094): pass the program ID itself as a "None" sentinel
     /// for a Reserve that hasn't opted into multi-recipient routing. See
@@ -91,6 +122,13 @@ pub fn handler<'info>(
         ctx.accounts.reserve.asset_count as usize,
         SsrError::RemainingAccountsMismatch
     );
+    require_keys_eq!(
+        ctx.accounts.protocol_fee_destination.key(),
+        ctx.accounts
+            .protocol_config
+            .default_protocol_fee_destination,
+        SsrError::InvalidFeeShareSplit
+    );
 
     // Snapshot supply/balances BEFORE any transfer -- the entire mint
     // requirement is computed on the pre-transaction ratio, matching the
@@ -99,14 +137,17 @@ pub fn handler<'info>(
     let total_supply_before = ctx.accounts.reserve_token_mint.supply;
     require!(total_supply_before > 0, SsrError::ZeroSupply);
 
-    // DEC-0094: piggyback the TVL-fee checkpoint onto this mint, on the
-    // pre-mint supply -- "settle during normal Reserve transactions" so an
-    // active Reserve accrues TVL fees for free, with no separate
-    // `accrue_fees` transaction needed. Safe no-op if <1 day has elapsed.
-    checkpoint_tvl_fee(
-        &mut ctx.accounts.reserve,
-        &mut ctx.accounts.manager_fee_recipients,
+    // 2026-08-14 pass: piggyback the TVL accumulator CHECKPOINT (not
+    // settlement -- see checkpoint_tvl_accrual's doc comment) onto this
+    // mint, on the pre-mint supply, so the weekly settlement always has an
+    // accurate time-weighted history even between keeper runs.
+    let reserve_key_for_tvl = ctx.accounts.reserve.key();
+    checkpoint_tvl_accrual(
+        &mut ctx.accounts.tvl_accrual,
+        reserve_key_for_tvl,
+        ctx.bumps.tvl_accrual,
         total_supply_before,
+        Clock::get()?.unix_timestamp,
     )?;
 
     let reserve_key = ctx.accounts.reserve.key();
@@ -180,11 +221,6 @@ pub fn handler<'info>(
     let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
     {
         let reserve = &mut ctx.accounts.reserve;
-        reserve.fee_config.pending_protocol_fee_shares = reserve
-            .fee_config
-            .pending_protocol_fee_shares
-            .checked_add(protocol_fee_shares)
-            .ok_or(error!(SsrError::MathOverflow))?;
         // Informational telemetry only (DEC-0094) -- see the doc comment on
         // these two fields in state/reserve.rs. Reflects the mint fee's
         // effective split specifically (not the TVL fee's, which can
@@ -205,6 +241,28 @@ pub fn handler<'info>(
         &[mint_authority_bump],
     ];
     let signer_seeds: &[&[&[u8]]] = &[mint_authority_seeds];
+
+    // Instant Protocol mint-fee transfer (this pass): mints the Protocol's
+    // share directly to its treasury ATA in this SAME transaction -- never
+    // accrued as pending/claimable for a mint event. See
+    // docs/project/DECISION_LOG.md's entry for this pass.
+    if protocol_fee_shares > 0 {
+        let protocol_cpi_accounts = MintTo {
+            mint: ctx.accounts.reserve_token_mint.to_account_info(),
+            to: ctx
+                .accounts
+                .protocol_fee_destination_token_account
+                .to_account_info(),
+            authority: ctx.accounts.mint_authority.to_account_info(),
+        };
+        let protocol_cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.key(),
+            protocol_cpi_accounts,
+            signer_seeds,
+        );
+        token::mint_to(protocol_cpi_ctx, protocol_fee_shares)?;
+    }
+
     let cpi_accounts = MintTo {
         mint: ctx.accounts.reserve_token_mint.to_account_info(),
         to: ctx
@@ -217,6 +275,7 @@ pub fn handler<'info>(
         CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
     token::mint_to(cpi_ctx, net_shares_out)?;
 
+    let now = Clock::get()?.unix_timestamp;
     emit!(ReserveTokensMinted {
         reserve: reserve_key,
         depositor: ctx.accounts.depositor.key(),
@@ -224,8 +283,17 @@ pub fn handler<'info>(
         mint_fee_reserve_tokens: mint_fee_shares,
         asset_mints,
         asset_amounts_in,
-        ts: Clock::get()?.unix_timestamp,
+        ts: now,
     });
+    if protocol_fee_shares > 0 {
+        emit!(ProtocolMintFeeTransferred {
+            reserve: reserve_key,
+            reserve_token_mint: ctx.accounts.reserve_token_mint.key(),
+            amount: protocol_fee_shares,
+            destination: ctx.accounts.protocol_fee_destination.key(),
+            ts: now,
+        });
+    }
 
     Ok(())
 }

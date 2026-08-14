@@ -37,7 +37,6 @@ import {
 import {
   executeAddDelegate,
   executeCloseReserve,
-  executeCollectProtocolFee,
   executeCollectManagerFeeShare,
   executeInitializeManagerFeeRecipients,
   executeUpdateFeeRecipients,
@@ -309,6 +308,15 @@ export function ManageDTR() {
   // synthesized entry means this Reserve hasn't opted into multi-recipient
   // routing yet, see fetchManagerFeeRecipients's doc comment.
   const [feeRecipientsData, setFeeRecipientsData] = useState<ManagerFeeRecipientsOnChain | null>(null);
+  // CLAIMANT-ONLY UI (2026-08-14 pass, see docs/project/DECISION_LOG.md):
+  // keyed by recipient wallet, independent of `onChainTxPending` -- clicking
+  // one recipient's Collect button must never show another recipient's row
+  // as "collecting" or disable it. Also records this session's own last
+  // successful collection per wallet (signature + confirmed time) for
+  // immediate feedback; the Activity Log tab is the durable, cross-session
+  // source of truth for collection history.
+  const [collectingRecipient, setCollectingRecipient] = useState<string | null>(null);
+  const [lastRecipientCollection, setLastRecipientCollection] = useState<Record<string, { signature: string; ts: number }>>({});
   const [routingEditorOpen, setRoutingEditorOpen] = useState(false);
   const [routingRecipients, setRoutingRecipients] = useState<{ address: string; pct: number }[]>([]);
   const [newRoutingAddress, setNewRoutingAddress] = useState("");
@@ -336,6 +344,42 @@ export function ManageDTR() {
     void refreshFeeRecipients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dtr?.onChain?.reserve]);
+
+  /**
+   * CLAIMANT-ONLY collect for exactly ONE recipient row (2026-08-14 pass,
+   * see docs/project/DECISION_LOG.md). Deliberately does NOT use the shared
+   * `onChainTxPending`/`runOnChainAction` machinery every other action on
+   * this page uses -- that flag is page-wide, and reusing it here would put
+   * every OTHER recipient's Collect button into a disabled "in flight" state
+   * the moment any one of them is clicked, which the product spec explicitly
+   * forbids. `collectingRecipient` tracks only the one wallet actually being
+   * collected. Refreshes via `refreshFeeRecipients` (this section's own
+   * authoritative on-chain source), not the full-page `refreshRealReserveNow`
+   * -- a Manager fee collection never changes anything else on the page.
+   */
+  async function collectRecipientFee(recipientWallet: string) {
+    if (!dtr?.onChain || collectingRecipient) return;
+    setCollectingRecipient(recipientWallet);
+    try {
+      const signature = await executeCollectManagerFeeShare(
+        connection,
+        walletCtx,
+        dtr.onChain.reserve,
+        dtr.onChain.reserveTokenMint,
+        recipientWallet,
+        feeRecipientsData!.initialized,
+      );
+      toast(transactionConfirmedToast(signature, "Fee collected"));
+      setLastRecipientCollection((prev) => ({ ...prev, [recipientWallet]: { signature, ts: Math.floor(Date.now() / 1000) } }));
+      await refreshFeeRecipients();
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      console.error("Collect Manager Fee Share failed:", raw);
+      toast({ variant: "destructive", title: "Collect failed", description: raw });
+    } finally {
+      setCollectingRecipient(null);
+    }
+  }
 
   function openRoutingEditor() {
     setRoutingRecipients(
@@ -374,7 +418,7 @@ export function ManageDTR() {
       let signature: string;
       if (feeRecipientsData?.initialized) {
         const currentRecipients = feeRecipientsData.recipients.map((r) => ({ wallet: r.wallet, pendingFeeShares: r.pendingFeeShares }));
-        signature = await executeUpdateFeeRecipients(connection, walletCtx, dtr.onChain.reserve, dtr.onChain.reserveTokenMint, currentRecipients, recipients);
+        signature = await executeUpdateFeeRecipients(connection, walletCtx, dtr.onChain.reserve, currentRecipients, recipients);
       } else {
         signature = await executeInitializeManagerFeeRecipients(connection, walletCtx, dtr.onChain.reserve, recipients);
       }
@@ -1004,14 +1048,14 @@ export function ManageDTR() {
                           <Coins className="w-4 h-4" /> Manager Fee Recipients
                         </p>
                         {canManageFeesOnChain && (
-                          <Button variant="outline" size="sm" onClick={openRoutingEditor} disabled={onChainTxPending !== null}>
+                          <Button variant="outline" size="sm" onClick={openRoutingEditor} disabled={onChainTxPending !== null || collectingRecipient !== null}>
                             {feeRecipientsData?.initialized ? "Change Routing" : "Set Up Recipients"}
                           </Button>
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground mb-3">
-                        Fees accrue in-kind as pending Reserve Token shares and only pay out once collected -- any wallet may trigger a recipient's
-                        payout below, not only that recipient itself.
+                        Fees accrue in-kind as pending Reserve Token shares. Only a recipient's own connected wallet can collect its balance --
+                        the root Manager cannot collect on a recipient's behalf, and recipients cannot collect for each other.
                         {feeRecipientsData && (
                           <>
                             {" "}
@@ -1022,38 +1066,53 @@ export function ManageDTR() {
                         )}
                       </p>
                       <div className="space-y-2 mb-3">
-                        {(feeRecipientsData?.recipients ?? []).map((r) => (
-                          <div key={r.wallet} className="p-3 bg-muted/30 rounded-lg border border-border/50 flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="font-merge-mono text-xs truncate">{r.wallet}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {(r.allocationBps / 100).toFixed(1)}% of Manager share &middot; claimable {(Number(r.pendingFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
-                                {" "}&middot; collected {(Number(r.collectedFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
-                              </p>
+                        {(feeRecipientsData?.recipients ?? []).map((r) => {
+                          const isConnectedWallet = wallet.connected && wallet.address === r.wallet;
+                          const isCollectingThisRow = collectingRecipient === r.wallet;
+                          const lastCollection = lastRecipientCollection[r.wallet];
+                          return (
+                            <div key={r.wallet} className="p-3 bg-muted/30 rounded-lg border border-border/50 flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-merge-mono text-xs truncate">{r.wallet}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {(r.allocationBps / 100).toFixed(1)}% of Manager share &middot; total accrued / currently claimable{" "}
+                                  {(Number(r.pendingFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                  {" "}&middot; total collected {(Number(r.collectedFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                </p>
+                                {lastCollection && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Last collection: {new Date(lastCollection.ts * 1000).toLocaleString()} &middot;{" "}
+                                    <a href={explorerUrl("tx", lastCollection.signature)} target="_blank" rel="noreferrer" className="underline hover:text-foreground">
+                                      {lastCollection.signature.slice(0, 8)}...
+                                    </a>
+                                  </p>
+                                )}
+                              </div>
+                              {isConnectedWallet ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="shrink-0 gap-1.5"
+                                  disabled={collectingRecipient !== null || r.pendingFeeShares === "0"}
+                                  onClick={() => void collectRecipientFee(r.wallet)}
+                                >
+                                  <Coins className="w-3.5 h-3.5" /> {isCollectingThisRow ? "Confirming..." : "Collect"}
+                                </Button>
+                              ) : (
+                                <Badge variant="secondary" className="shrink-0 text-xs">Claimable by this wallet</Badge>
+                              )}
                             </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="shrink-0 gap-1.5"
-                              disabled={onChainTxPending !== null || r.pendingFeeShares === "0"}
-                              onClick={() =>
-                                void runOnChainAction("Collect Manager Fee Share", () =>
-                                  executeCollectManagerFeeShare(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint, r.wallet, feeRecipientsData!.initialized),
-                                )
-                              }
-                            >
-                              <Coins className="w-3.5 h-3.5" /> {onChainTxPending === "Collect Manager Fee Share" ? "Confirming..." : "Collect"}
-                            </Button>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
 
                       {routingEditorOpen && (
                         <div className="p-4 rounded-lg border border-border bg-muted/20 space-y-3 mb-3">
                           <p className="text-sm font-semibold">Configure Manager Fee Recipients</p>
                           <p className="text-xs text-muted-foreground">
-                            Up to 10 recipients total. Percentages divide the Manager's fee share and must sum to exactly 100%. If any current
-                            recipient has an uncollected balance, this transaction will collect it first automatically.
+                            Up to 10 recipients total. Percentages divide the Manager's fee share and must sum to exactly 100%. A recipient who
+                            stays on the list keeps their accrued balance -- only removing a recipient with an uncollected balance is blocked
+                            until that wallet's own connected session collects it first.
                           </p>
                           <div className="space-y-2">
                             {routingRecipients.map((r) => (
@@ -1089,34 +1148,6 @@ export function ManageDTR() {
                     </div>
                   )}
 
-                  {dtr.onChain && (
-                    <div className="pt-4 border-t border-border/50">
-                      <p className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                        <Coins className="w-4 h-4" /> Protocol Fees
-                      </p>
-                      <p className="text-xs text-muted-foreground mb-3">
-                        The Protocol's fee share is sent to the Protocol treasury automatically every Monday -- nobody has to claim it manually. Every
-                        mint (including a Reserve's initial seed) and the annualized holding fee contribute to this balance between automatic runs.
-                      </p>
-                      <div className="p-3 bg-muted/30 rounded-lg border border-border/50 mb-3 max-w-xs">
-                        <p className="text-xs text-muted-foreground mb-1">Protocol share (awaiting the next automatic transfer)</p>
-                        <p className="font-merge-mono font-bold">{(Number(dtr.onChain.pendingProtocolFeeShares ?? "0") / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}</p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={onChainTxPending !== null || (dtr.onChain.pendingProtocolFeeShares ?? "0") === "0"}
-                        onClick={() =>
-                          void runOnChainAction("Collect Protocol Fee", () =>
-                            executeCollectProtocolFee(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.reserveTokenMint),
-                          )
-                        }
-                        className="gap-2"
-                      >
-                        <Coins className="w-4 h-4" /> {onChainTxPending === "Collect Protocol Fee" ? "Confirming..." : "Send to Treasury Now"}
-                      </Button>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
 
@@ -1845,10 +1876,11 @@ export function ManageDTR() {
                     <History className="w-5 h-5" /> Activity Log
                   </CardTitle>
                   <CardDescription>
-                    Every governance/management action ever taken on this Reserve -- delegate grants, target-weight changes,
-                    composition edits, pause/unpause, wind-down, fee collection -- decoded from its real on-chain transaction
-                    history and kept here so it loads instantly and reliably, without depending on a live network call every
-                    time you open this tab.
+                    Every action ever taken on this Reserve -- creation and initial funding, mints and redemptions, instant
+                    Protocol fee transfers, weekly TVL fee settlements, Manager fee accrual and claims, fee-routing changes,
+                    delegate grants, target-weight changes, composition edits, pause/unpause, wind-down and closure -- decoded
+                    from its real on-chain transaction history and kept here so it loads instantly and reliably, without
+                    depending on a live network call every time you open this tab.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1881,6 +1913,8 @@ export function ManageDTR() {
                             <p className="text-xs text-muted-foreground font-merge-mono mt-0.5">
                               {entry.ts > 0 ? new Date(entry.ts * 1000).toLocaleString() : "unknown time"}
                               {entry.actor && <> &middot; {shortenAddress(entry.actor)}</>}
+                              {" "}&middot; <span className="text-emerald-600 dark:text-emerald-500">Confirmed</span>
+                              {" "}&middot; <span className="font-merge-mono">{entry.signature.slice(0, 8)}...{entry.signature.slice(-4)}</span>
                             </p>
                           </div>
                           <a

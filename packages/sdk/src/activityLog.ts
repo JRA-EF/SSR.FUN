@@ -34,6 +34,51 @@ export function summarizeActivityEvent(name: string, data: Record<string, unknow
   const pkList = (v: unknown): string[] => (Array.isArray(v) ? v.map(pk) : []);
 
   switch (name) {
+    case "reserveCreated":
+      return { actor: pk(data.manager), summary: `Reserve created by ${pk(data.manager)}` };
+    case "reserveAssetInitialized":
+      return { actor: null, summary: `Reserve asset ${pk(data.assetMint)} initialized at ${String(data.targetWeightBps)}bps` };
+    case "reserveTokensMinted":
+      return {
+        actor: pk(data.depositor),
+        summary: `${pk(data.depositor)} minted ${String(data.reserveTokensOut)} Reserve Token unit(s) (${String(data.mintFeeReserveTokens)} fee)`,
+      };
+    case "reserveTokensRedeemed":
+      return {
+        actor: pk(data.redeemer),
+        summary: `${pk(data.redeemer)} redeemed ${String(data.reserveTokensBurned)} Reserve Token unit(s) (${String(data.redemptionFeeReserveTokens)} fee)`,
+      };
+    case "protocolMintFeeTransferred":
+      return { actor: null, summary: `Protocol mint fee transferred: ${String(data.amount)} Reserve Token unit(s) to treasury ${pk(data.destination)}` };
+    case "tvlFeeSettled":
+      return {
+        actor: pk(data.settledBy),
+        summary: `Weekly TVL fee settled for period ${new Date(Number(data.periodStartTs) * 1000).toLocaleDateString()}-${new Date(Number(data.periodEndTs) * 1000).toLocaleDateString()}: ${String(data.protocolFeeShares)} Protocol-share (sent to treasury) + ${String(data.managerFeeShares)} Manager-share Reserve Token unit(s)`,
+      };
+    case "managerFeeRecipientsConfigured": {
+      const recipients = pkList(data.recipients);
+      const allocations = Array.isArray(data.allocationsBps) ? (data.allocationsBps as unknown[]).map(String) : [];
+      return {
+        actor: pk(data.configuredBy),
+        summary: `Manager fee routing configured: ${recipients.map((r, i) => `${r.slice(0, 4)}...=${allocations[i] ?? "?"}bps`).join(", ")}`,
+      };
+    }
+    case "managerFeeShareAccrued": {
+      const recipients = pkList(data.recipients);
+      const amounts = Array.isArray(data.amounts) ? (data.amounts as unknown[]).map(String) : [];
+      const source = typeof data.source === "object" && data.source ? Object.keys(data.source as object)[0] : String(data.source);
+      return {
+        actor: null,
+        summary: `Manager fee accrued (${source === "annualTvlFee" ? "TVL fee" : "mint fee"}): ${recipients.map((r, i) => `${r.slice(0, 4)}...+=${amounts[i] ?? "?"}`).join(", ")}`,
+      };
+    }
+    case "managerFeeShareCollected":
+      return { actor: pk(data.collectedBy), summary: `${pk(data.recipient)} collected ${String(data.amount)} Reserve Token unit(s) of its own accrued Manager fee` };
+    case "feesAccrued":
+      return {
+        actor: null,
+        summary: `Fees accrued (legacy): ${String(data.managerFeeSharesAccrued)} manager-share + ${String(data.protocolFeeSharesAccrued)} protocol-share Reserve Token units`,
+      };
     case "delegateAdded":
       return { actor: pk(data.delegate), summary: `Delegate ${pk(data.delegate)} added (${data.restricted ? "restricted" : "unrestricted"})` };
     case "delegatePermissionsUpdated":
@@ -80,7 +125,12 @@ export function summarizeActivityEvent(name: string, data: Record<string, unknow
     case "protocolFeeCollected":
       return { actor: pk(data.collectedBy), summary: `Protocol fee collected: ${String(data.amount)} Reserve Token units` };
     default:
-      return null; // Not a governance-relevant event (e.g. mint/redeem -- already covered by Trade history) -- deliberately not surfaced here.
+      // ProtocolInitialized/ProtocolConfigUpdated are Protocol-wide (not tied
+      // to any one Reserve account) and never appear in a per-Reserve
+      // getSignaturesForAddress walk in the first place -- not handled here
+      // because they're structurally unreachable, not because they're
+      // filtered out.
+      return null;
   }
 }
 

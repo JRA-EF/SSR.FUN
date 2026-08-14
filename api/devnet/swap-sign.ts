@@ -54,6 +54,7 @@ import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import {
   buildReadOnlyProgram,
   fetchReserveOnChain,
+  fetchProtocolConfig,
   buildBuyZapInstructions,
   buildBuyZapInstructionsDevUsdc,
   buildSellZapInstructionsDevUsdc,
@@ -241,6 +242,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const [vaultAuthority] = findVaultAuthority(reserve, PROGRAM_ID);
 
   try {
+    // Instant Protocol mint-fee transfer (this pass, see
+    // docs/project/DECISION_LOG.md): every Buy mints the Protocol's fee
+    // share directly to its treasury ATA in the same transaction now, so
+    // this handler needs the LIVE `defaultProtocolFeeDestination` (not just
+    // the ProtocolConfig PDA address computed above) to pass through to the
+    // zap builders below.
+    const liveProtocolConfig = await withRateLimitRetry(() => fetchProtocolConfig(connection, PROGRAM_ID), 3, 500);
+    if (!liveProtocolConfig) {
+      res.status(503).json({ error: "Protocol has not been initialized on-chain yet." });
+      return;
+    }
+    const protocolFeeDestination = new PublicKey(liveProtocolConfig.defaultProtocolFeeDestination);
+
     // Every genuine RPC read in this handler (this one included) is wrapped
     // in the same bounded rate-limit retry the frontend already uses --
     // AND, critically, now lives inside this try block, so a 429 that
@@ -323,6 +337,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const result = await buildBuyZapInstructions({
         program,
         protocolConfig,
+        protocolFeeDestination,
         reserve,
         reserveTokenMint,
         mintAuthority,
@@ -379,6 +394,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const result = await buildBuyZapInstructionsDevUsdc({
         program,
         protocolConfig,
+        protocolFeeDestination,
         reserve,
         reserveTokenMint,
         mintAuthority,

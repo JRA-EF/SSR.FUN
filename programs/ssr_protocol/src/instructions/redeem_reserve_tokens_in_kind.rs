@@ -1,15 +1,15 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint as SplMint, Token, TokenAccount as SplTokenAccount};
 
-use super::accrue_fees::checkpoint_tvl_fee;
+use super::accrue_fees::checkpoint_tvl_accrual;
 use super::common::{load_asset_legs, mul_div_ceil, mul_div_floor, transfer_out_of_vault};
 use crate::constants::{
     BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
-    VAULT_AUTHORITY_SEED,
+    TVL_ACCRUAL_SEED, VAULT_AUTHORITY_SEED,
 };
 use crate::errors::SsrError;
 use crate::events::ReserveTokensRedeemed;
-use crate::state::{ManagerFeeRecipients, Reserve};
+use crate::state::{ManagerFeeRecipients, Reserve, TvlAccrual};
 
 /// Deliberately does NOT accept a `ProtocolConfig` account: redemption is
 /// exempt from both the Reserve-level pause AND the protocol-wide emergency
@@ -48,12 +48,15 @@ pub struct RedeemReserveTokensInKind<'info> {
     )]
     pub redeemer_reserve_token_account: Account<'info, SplTokenAccount>,
 
+    #[account(mut)]
     pub redeemer: Signer<'info>,
 
     /// Optional (DEC-0094): pass the program ID itself as a "None" sentinel
-    /// for a Reserve that hasn't opted into multi-recipient routing. Used
-    /// only to credit the TVL-fee piggyback checkpoint this call triggers
-    /// (see `accrue_fees::checkpoint_tvl_fee`) -- redemption fee itself is
+    /// for a Reserve that hasn't opted into multi-recipient routing. Not
+    /// actually used to credit anything on THIS instruction anymore (the
+    /// TVL fee is only ever settled by `accrue_fees` now) but kept in the
+    /// account list for forward-compatibility with an opportunistic
+    /// same-transaction settlement bundle -- redemption fee itself is
     /// unrelated and untouched (still burned, never distributed).
     #[account(
         mut,
@@ -62,7 +65,20 @@ pub struct RedeemReserveTokensInKind<'info> {
     )]
     pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
 
+    /// Time-weighted average TVL accumulator (2026-08-14 pass) -- checkpointed
+    /// here for free, never settled here. See
+    /// `accrue_fees::checkpoint_tvl_accrual`'s doc comment.
+    #[account(
+        init_if_needed,
+        payer = redeemer,
+        space = TvlAccrual::SPACE,
+        seeds = [TVL_ACCRUAL_SEED, reserve.key().as_ref()],
+        bump,
+    )]
+    pub tvl_accrual: Account<'info, TvlAccrual>,
+
     pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
     // Remaining accounts: reserve.asset_count groups of
     // [reserve_asset, vault, redeemer_asset_token_account, mint, token_program]
     // in ReserveAsset.order_index order. See instructions/common.rs::load_asset_legs.
@@ -88,14 +104,17 @@ pub fn handler<'info>(
         SsrError::RedemptionExceedsEntitlement
     );
 
-    // DEC-0094: piggyback the TVL-fee checkpoint onto this redeem too, same
-    // as mint -- "settle during normal Reserve transactions." Safe no-op if
-    // <1 day has elapsed. Unrelated to, and does not affect, the redemption
-    // fee computed below.
-    checkpoint_tvl_fee(
-        &mut ctx.accounts.reserve,
-        &mut ctx.accounts.manager_fee_recipients,
+    // 2026-08-14 pass: piggyback the TVL accumulator CHECKPOINT (never
+    // settlement -- see accrue_fees::checkpoint_tvl_accrual's doc comment)
+    // onto this redeem too, same as mint/seed. Unrelated to, and does not
+    // affect, the redemption fee computed below.
+    let reserve_key_for_tvl = ctx.accounts.reserve.key();
+    checkpoint_tvl_accrual(
+        &mut ctx.accounts.tvl_accrual,
+        reserve_key_for_tvl,
+        ctx.bumps.tvl_accrual,
         total_supply_before,
+        Clock::get()?.unix_timestamp,
     )?;
 
     let fee_config = ctx.accounts.reserve.fee_config;
