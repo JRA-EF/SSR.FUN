@@ -23,7 +23,6 @@ import {
 } from "@/lib/rpcResilience";
 import {
   buildLineSeries,
-  buildSimulatedOrderBook,
   calcTokensReceived,
   calcUsdcReceived,
   buyAvailableFromDevUsdcBalance,
@@ -305,11 +304,6 @@ export function DTRDetail() {
   const chartData = useMemo(
     () => sampleLinePoints(lineSeries.points, 300).map((p) => ({ ...p, dateStr: timeframeTickFormat(p.t, timeframe) })),
     [lineSeries, timeframe],
-  );
-
-  const orderBook = useMemo(
-    () => buildSimulatedOrderBook(dtr?.tokenPrice ?? 0, dtr?.liquidityUsdc ?? 0),
-    [dtr?.tokenPrice, dtr?.liquidityUsdc],
   );
 
   const recentTrades = useMemo(() => [...trades].reverse(), [trades]);
@@ -1530,63 +1524,13 @@ export function DTRDetail() {
         </div>
       </div>
 
-      {/* Market Section: Simulated Order Book + Recent Trades */}
+      {/* Market Section: Recent Trades */}
       <div className="mt-12 space-y-4">
         <div className="flex items-center gap-2">
           <BarChart3 className="w-5 h-5 text-primary" />
           <h2 className="text-2xl font-merge-display font-bold">Market</h2>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="bg-card border-card-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-merge-display flex items-center gap-2">
-                <Layers className="w-4 h-4 text-primary" /> Simulated Order Book
-              </CardTitle>
-              <CardDescription>
-                Price levels derived mathematically from the current liquidity curve -- not live external orders.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-3 gap-2 text-[10px] uppercase tracking-wider text-muted-foreground pb-2 border-b border-border">
-                <span>Price (USDC)</span>
-                <span className="text-right">Amount ({dtr.ticker})</span>
-                <span className="text-right">Total (USDC)</span>
-              </div>
-              <div className="pt-1 space-y-0.5">
-                {[...orderBook.asks].reverse().map((level, i) => {
-                  const maxCum = orderBook.asks[0]?.cumulativeUsdc || 1;
-                  const depthPct = Math.min((level.cumulativeUsdc / maxCum) * 100, 100);
-                  return (
-                    <div key={`ask-${i}`} className="relative grid grid-cols-3 gap-2 text-xs font-merge-mono py-1 rounded">
-                      <div className="absolute inset-y-0 right-0 bg-destructive/[0.08]" style={{ width: `${depthPct}%` }} />
-                      <span className="relative text-destructive">{formatUsdc(level.price)}</span>
-                      <span className="relative text-right text-muted-foreground">{formatTokenAmount(level.tokenAmount)}</span>
-                      <span className="relative text-right text-muted-foreground">{formatUsdc(level.usdcTotal, { compact: true })}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex items-center justify-center gap-2 py-2.5 my-1 border-y border-border">
-                <span className="text-sm font-merge-mono font-semibold">{formatUsdc(orderBook.midPrice)}</span>
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Mid Price</span>
-              </div>
-              <div className="pb-1 space-y-0.5">
-                {orderBook.bids.map((level, i) => {
-                  const maxCum = orderBook.bids[orderBook.bids.length - 1]?.cumulativeUsdc || 1;
-                  const depthPct = Math.min((level.cumulativeUsdc / maxCum) * 100, 100);
-                  return (
-                    <div key={`bid-${i}`} className="relative grid grid-cols-3 gap-2 text-xs font-merge-mono py-1 rounded">
-                      <div className="absolute inset-y-0 right-0 bg-positive/[0.08]" style={{ width: `${depthPct}%` }} />
-                      <span className="relative text-positive">{formatUsdc(level.price)}</span>
-                      <span className="relative text-right text-muted-foreground">{formatTokenAmount(level.tokenAmount)}</span>
-                      <span className="relative text-right text-muted-foreground">{formatUsdc(level.usdcTotal, { compact: true })}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-
+        <div className="grid grid-cols-1 gap-6">
           <Card className="bg-card border-card-border">
             <CardHeader className="pb-3">
               <CardTitle className="text-base font-merge-display flex items-center gap-2">
