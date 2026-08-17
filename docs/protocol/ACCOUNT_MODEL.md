@@ -103,6 +103,8 @@ graph LR
 
 Narrow by design: this account cannot name itself as a vault owner, cannot appear in any `ReserveVault`'s owner chain, and no instruction lets `ProtocolConfig.authority` move tokens out of any Reserve Vault. Compromise of this authority can pause creation of new Reserves and change defaults for future Reserves -- it cannot touch a single token in any already-created Reserve.
 
+**Current real-world holder (2026-08-17, DEC-0105):** `authority` above is Creator (Claude User)'s wallet -- "Creator (Claude User)" meaning the individual who currently controls and develops the protocol, distinct from a "Reserve creator" (the generic "creator" used in this Reserve section below refers to whichever wallet calls `create_reserve` for a given Reserve, an unrelated, per-Reserve role with no ProtocolConfig-level authority). A separate treasury multisig (Creator (Claude User) + the boss) is being formed for company treasury assets only, is not `ProtocolConfig.authority`, and per the "no on-chain authority at all" TREAS node in the Authority-boundary diagram above, must not gain any control over `ProtocolConfig` or any Reserve Vault. See `docs/project/DECISION_LOG.md` DEC-0105.
+
 ## Reserve
 
 **Seeds:** `["reserve", reserve_id.to_le_bytes()]` where `reserve_id` is the `u64` value of `ProtocolConfig.reserve_count` *at creation time* (then incremented). 

@@ -1195,7 +1195,10 @@ export function ManageDTR() {
                       return (
                         <div className="space-y-3">
                           <p className="text-sm text-muted-foreground">
-                            Reserve Token supply remaining: <span className="font-merge-mono font-medium text-foreground">{supplyRemaining}</span>.
+                            Reserve Token supply remaining:{" "}
+                            <span className="font-merge-mono font-medium text-foreground">
+                              {(Number(supplyRemaining) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                            </span>.
                             Closing requires this to reach zero (every holder must redeem out first -- redemption remains open during Wind Down),
                             every asset vault balance to be zero, and every pending fee share collected.
                           </p>
