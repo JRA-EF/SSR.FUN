@@ -1,0 +1,652 @@
+{
+  "$schemaVersion": "1.0.0",
+  "generatedAt": "2026-08-03",
+  "generatedFor": "future coding agents and human engineers working in SSR.FUN",
+  "howToUseThisFile": "Read `layers` for the column taxonomy, `nodes` for individual architecture units (each has files/inputs/outputs/dependsOn/consumedBy/status), `edges` for directed relationships between nodes, `flows` for end-to-end user/system journeys with numbered steps and file citations, `repository` for a responsibility-grouped file tree, `environments` for how Local/DevNet/Production/Vercel/GitHub relate, `dataAndState` for where every piece of data actually originates, `protocolArchitecture` for the Anchor program's instructions/accounts/authorities, and `risksAndGaps` for known incompleteness. Every node and flow carries an explicit `status` field (`real`, `simulated`, `hybrid`, `planned`, `not_started`, `abandoned`) -- never assume a flow works end-to-end just because it exists in code.",
+  "project": {
+    "name": "SSR.fun",
+    "codenameInternal": "FABLE",
+    "packageName": "ssr-fun-fable",
+    "oneLiner": "A launchpad and trading interface for Decentralized Token Reserves on Solana, backed by a real deployed-to-DevNet Anchor program.",
+    "repoRoot": "C:\\Users\\JRA DEVNET\\Projects\\SSR.FUN",
+    "stack": ["Vite 8", "React 19", "TypeScript ~6.0", "Tailwind CSS 4 (merge pages only)", "Zustand 5 (merge store)", "Anchor 1.1.2 / Solana (Rust)", "Vercel Functions + Routing Middleware"],
+    "terminology": {
+      "lockedAsOf": "2026-07-29 (DEC-0037, see docs/project/DECISION_LOG.md)",
+      "DecentralizedTokenReserve": "The complete basket/product a user creates and trades. User-facing CTA is always 'Launch a Decentralized Token Reserve'.",
+      "Reserve": "One underlying asset held inside a Decentralized Token Reserve. Never use alone to mean the whole basket in new copy.",
+      "ReserveToken": "The fungible token representing ownership of a complete Decentralized Token Reserve.",
+      "onChainIdentifierException": "The deployed Anchor account structs `Reserve`, `ReserveAsset`, `Delegate`, `ProtocolConfig` (programs/ssr_protocol/src/state/*.rs) keep their PRE-rename sense (Reserve = whole basket account) permanently, because Anchor derives each account's on-chain discriminator from its struct name at compile time -- renaming would break deserialization of every already-initialized DevNet account. This document reports those Rust struct/field names verbatim; do not reinterpret them.",
+      "bannedPhrases": ["Create Your Reserve", "Create Reserve", "Deploy Your Reserve", "Deploy Reserve", "Launch Your Reserve", "Launch Reserve (unqualified)", "BYOR", "BOR", "DTR Asset", "Reserve asset"]
+    }
+  },
+
+  "executiveOverview": {
+    "whatSsrIs": "SSR.fun lets a user create a 'Decentralized Token Reserve' -- a basket of Solana SPL assets held in program-owned vaults -- and issue a fungible 'Reserve Token' representing proportional ownership. Holders mint/redeem in-kind against live vault balances (no oracle, no bonding curve). A real 23-instruction Anchor program is deployed and live on Solana DevNet and the frontend is wired directly to it for discovery, creation, buy/sell, and management -- this is materially more built-out than a pure UI mock, though it is still pre-mainnet, pre-audit, and single-key-controlled.",
+    "currentProductState": "Two coexisting design systems in one SPA: a small 'Native' system (Home page, global Shell/nav, toasts) and a larger 'Merge' system (Discover, Create, Portfolio, Manage, Reserve-detail) ported from a separate prototype and Tailwind/shadcn-styled. The Merge pages carry almost all real product functionality; the Native system is mostly the entry shell plus a fully self-contained, unused simulation sandbox (src/state/store.tsx) that no routed page currently reads from.",
+    "frontendState": "Hash-routed (no history-API router; a hand-rolled router at src/lib/router.tsx, with a wouter-API-compatible shim so the ported Merge pages needed no rewrite). Real Solana wallet connectivity via @solana/wallet-adapter-react (Wallet Standard, no bundled wallet packages). Real on-chain Reserve discovery (adaptive-polled, no getProgramAccounts -- blocked on public DevNet RPC). Real Buy/Sell, Create, and management transactions signed by the connected wallet. A simulated order book and a hardcoded DevNet test-price table sit underneath otherwise-real trading UI.",
+    "protocolState": "Deployed and live on Solana DevNet at program ID 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW. 23 instructions covering protocol init, Reserve creation/seeding, in-kind mint/redeem, delegate permissioning, fee accrual/collection, target-weight updates, composition management (add/fund/remove asset), and staged wind-down/close. 14/14 integration tests pass live against DevNet (tests/ssr_protocol.ts), including a cross-Reserve vault-isolation test the project's own docs call 'the single most important test in this suite'. No mainnet deployment, no external audit, single dev-controlled upgrade authority (flagged for multisig migration before any restricted beta).",
+    "environmentState": "Local dev works fully for the frontend (`npm run dev`) but the Solana localnet validator (`solana-test-validator`/`anchor test`) cannot run on the current Windows machine without Developer Mode enabled (symlink privilege error) -- Rust/cargo-build-sbf compiles fine, so localnet testing is a documented, currently-open gap. DevNet is the sole live chain environment and is the source of truth for all 'real' data in this app. Production is a deployed Vercel app at a custom domain, reading/writing the same DevNet program (there is no separate mainnet or staging protocol deployment).",
+    "architectureMaturity": "Post-MVP, pre-beta. Roadmap Phases 1-3 (Frontend Foundation, Protocol Research, Solana Architecture) are complete; Phase 4 (Core Solana Program) is 96% and Phase 5 (Client/Frontend Integration) is 99%; Phase 6 (DevNet Testing & Security Validation) is 89%; Phases 7-8 (Restricted Beta, Production Readiness) have not started (0%). See docs/project/PROJECT_STATUS.md for the authoritative, weighted roadmap this summary is derived from -- recompute from that file, do not hand-edit percentages here.",
+    "majorArchitecturalBoundaries": [
+      "Native design system vs. Merge design system (CSS-token-scoped via `.merge-scope`, two parallel global stores, two parallel toast systems, both mounted for the whole app lifetime).",
+      "Simulated-only surfaces (native src/state/store.tsx sandbox, local delegate CRUD in useAppStore, the DTRDetail simulated order book, hardcoded DevNet test asset prices) vs. real on-chain surfaces (wallet connectivity, Reserve discovery, Create/Buy/Sell/Manage transactions).",
+      "Public unauthenticated app surface vs. the single password-gated internal surface (/internal/status, /internal/feedback) behind Vercel Routing Middleware.",
+      "Client-exposed config (VITE_* env vars: RPC URL, program ID, cluster) vs. server-only secrets (DEVNET_SWAP_AUTHORITY_SECRET_KEY, HELIUS_RPC_URL, SSR_DASHBOARD_PASSWORD) -- enforced by Vite's VITE_ prefix convention plus a same-origin RPC proxy that never forwards the real Helius URL/API key to the browser.",
+      "On-chain program state (Rust/Anchor, authoritative) vs. off-chain descriptive metadata (Reserve name/ticker/logo, resolved from a `metadata_uri` string field the program stores but does not validate)."
+    ]
+  },
+
+  "layers": [
+    { "id": "actors", "label": "User Actors", "description": "Human roles that interact with the system." },
+    { "id": "client-surfaces", "label": "Client Surfaces", "description": "Distinct built artifacts served to a browser (separate Vite entry points)." },
+    { "id": "routes-pages", "label": "Routes & Pages", "description": "Hash-routed pages within the main SPA surface." },
+    { "id": "components", "label": "Components", "description": "Reusable UI building blocks, native and merge." },
+    { "id": "state-domain", "label": "State & Domain Layer", "description": "Stores, sync bridges, domain types, and mock/seed data modules." },
+    { "id": "server-api", "label": "Server / API Layer", "description": "Vercel Functions and shared server-side libraries." },
+    { "id": "protocol-solana", "label": "Protocol & Solana Layer", "description": "The Anchor program and its TypeScript SDK." },
+    { "id": "data-sources", "label": "Data Sources", "description": "Where facts ultimately come from: Markdown, generated JSON, DevNet fixtures, live chain state." },
+    { "id": "infrastructure", "label": "Infrastructure", "description": "Build tooling and hosting platform configuration." },
+    { "id": "external-services", "label": "External Services", "description": "Third-party systems outside this repository's control." }
+  ],
+
+  "nodes": [
+    { "id": "actor.visitor", "layer": "actors", "label": "Anonymous Visitor", "kind": "actor", "status": "real", "purpose": "Browses the public app with no wallet connected: Home, Discover, read-only Reserve detail.", "files": [], "consumedBy": ["route.home", "route.discover", "route.dtr-detail"] },
+    { "id": "actor.wallet-holder", "layer": "actors", "label": "Wallet-Connected User", "kind": "actor", "status": "real", "purpose": "Connects a real Solana wallet (Phantom/Solflare/Backpack via Wallet Standard) to buy/sell/create/hold Reserve Tokens on DevNet.", "files": ["src/components/WalletModal.tsx"], "consumedBy": ["flow.buy-mint-reserve-token", "flow.redeem-sell", "flow.create-reserve", "flow.portfolio-flow"] },
+    { "id": "actor.reserve-manager", "layer": "actors", "label": "Reserve Manager", "kind": "actor", "status": "real", "purpose": "The wallet recorded as Reserve.manager on-chain; root authority for that one Reserve (composition, delegates, wind-down, fee destination).", "files": ["programs/ssr_protocol/src/instructions/transfer_reserve_manager.rs"], "consumedBy": ["flow.manage-reserve-flow"] },
+    { "id": "actor.delegate", "layer": "actors", "label": "Delegate", "kind": "actor", "status": "real", "purpose": "A wallet granted a scoped permission bitmask (e.g. UPDATE_TARGETS, PAUSE_RESERVE) by a Reserve's manager; enforced on-chain via the Delegate PDA.", "files": ["programs/ssr_protocol/src/state/delegate.rs"], "consumedBy": ["flow.manage-reserve-flow"] },
+    { "id": "actor.internal-team", "layer": "actors", "label": "Internal Team Member", "kind": "actor", "status": "real", "purpose": "Holds the single shared SSR_DASHBOARD_PASSWORD; views /internal/status and /internal/feedback.", "files": ["middleware.ts"], "consumedBy": ["flow.internal-status-login", "flow.internal-dashboard-data-loading"] },
+
+    { "id": "surface.main-app", "layer": "client-surfaces", "label": "Main SPA", "kind": "build-entry", "status": "real", "purpose": "The public product: Home + all Merge pages, one JS/CSS bundle.", "files": ["index.html", "src/main.tsx", "src/App.tsx"], "environment": "public, unauthenticated", "consumedBy": ["route.home", "route.discover", "route.create", "route.portfolio", "route.manage", "route.manage-dtr", "route.dtr-detail"] },
+    { "id": "surface.internal-status", "layer": "client-surfaces", "label": "Internal Status Dashboard", "kind": "build-entry", "status": "real", "purpose": "Separate Vite entry rendering project status/roadmap/decision log/repo metrics for the team.", "files": ["internal-status.html", "src/internal-status/main.tsx", "src/internal-status/Dashboard.tsx", "src/internal-status/dashboard.css"], "environment": "password-gated", "dependsOn": ["api.dashboard-content", "middleware.gate"] },
+    { "id": "surface.internal-feedback", "layer": "client-surfaces", "label": "Internal Feedback Link-Through", "kind": "build-entry", "status": "real", "purpose": "Static, backend-free page that links out to a manually-maintained Google Sheet.", "files": ["internal-feedback.html", "src/internal-feedback/main.tsx", "src/internal-feedback/Feedback.tsx", "src/internal-feedback/feedback.css"], "environment": "password-gated", "dependsOn": ["middleware.gate"], "limitations": ["An earlier automated Google Drive/Sheets-API version (DEC-0068) was abandoned before shipping due to org policy blockers on service-account keys; no dead code from that attempt remains (DEC-0069)."] },
+
+    { "id": "route.home", "layer": "routes-pages", "label": "Home (/)", "kind": "page", "status": "hybrid", "purpose": "Native landing page: hero, Featured Reserves grid built from real on-chain data, and a real landing-stats KPI fetch.", "files": ["src/pages/Home.tsx"], "dependsOn": ["state.app-store", "comp.reserve-card", "comp.hero-platforms", "api.devnet-landing-stats"], "relatedFlows": ["flow.browse-reserves"] },
+    { "id": "route.discover", "layer": "routes-pages", "label": "Discover (/discover)", "kind": "page", "status": "real", "purpose": "Searchable/filterable/sortable grid of every discovered on-chain Decentralized Token Reserve.", "files": ["src/merge/pages/Discover.tsx"], "dependsOn": ["state.app-store", "comp.reserve-card"], "relatedFlows": ["flow.browse-reserves"] },
+    { "id": "route.create", "layer": "routes-pages", "label": "Create (/create)", "kind": "page", "status": "real", "purpose": "Multi-step 'Launch a Decentralized Token Reserve' wizard; submits real DevNet transactions.", "files": ["src/merge/pages/CreateDTR.tsx"], "dependsOn": ["lib.create-reserve-client", "sdk.ssr-sdk", "api.devnet-mint-test-assets"], "relatedFlows": ["flow.create-reserve"] },
+    { "id": "route.portfolio", "layer": "routes-pages", "label": "Portfolio (/portfolio)", "kind": "page", "status": "real", "purpose": "Connected wallet's real holdings + P&L, plus the DevNet onboarding faucet panel.", "files": ["src/merge/pages/Portfolio.tsx"], "dependsOn": ["state.app-store", "comp.devnet-onboarding"], "relatedFlows": ["flow.portfolio-flow"] },
+    { "id": "route.manage", "layer": "routes-pages", "label": "Manage (/manage)", "kind": "page", "status": "real", "purpose": "Hub listing every Reserve the connected wallet manages or delegates for.", "files": ["src/merge/pages/Manage.tsx"], "dependsOn": ["state.app-store"], "relatedFlows": ["flow.manage-reserve-flow"] },
+    { "id": "route.manage-dtr", "layer": "routes-pages", "label": "Manage Reserve (/dtr/:dtrId/manage)", "kind": "page", "status": "real", "purpose": "Real manager dashboard: overview, on-chain-verified delegates, composition rebalance/add/remove/fund, wind-down/close.", "files": ["src/merge/pages/ManageDTR.tsx"], "dependsOn": ["lib.management-client", "lib.onchain-permissions"], "relatedFlows": ["flow.manage-reserve-flow"] },
+    { "id": "route.dtr-detail", "layer": "routes-pages", "label": "Reserve Detail (/dtr/:dtrId)", "kind": "page", "status": "hybrid", "purpose": "Per-Reserve trading page: real price/composition data, a simulated order book, and real Buy/Sell execution.", "files": ["src/merge/pages/DTRDetail.tsx"], "dependsOn": ["lib.zap-client", "sdk.ssr-sdk"], "relatedFlows": ["flow.view-reserve-details", "flow.buy-mint-reserve-token", "flow.redeem-sell"], "limitations": ["Order book is `SimulatedOrderBook` -- no real order book exists on-chain.", "USD pricing uses a hardcoded DevNet test-price table, not an oracle."] },
+    { "id": "route.internal-status-page", "layer": "routes-pages", "label": "/internal/status", "kind": "page", "status": "real", "purpose": "Vercel rewrite target for the internal status dashboard.", "files": ["vercel.json"], "dependsOn": ["surface.internal-status", "middleware.gate"] },
+    { "id": "route.internal-feedback-page", "layer": "routes-pages", "label": "/internal/feedback", "kind": "page", "status": "real", "purpose": "Vercel rewrite target for the feedback link-through.", "files": ["vercel.json"], "dependsOn": ["surface.internal-feedback", "middleware.gate"] },
+
+    { "id": "comp.shell", "layer": "components", "label": "Shell", "kind": "layout", "status": "real", "purpose": "Global app chrome mounted around every route: nav, DevNet/Testing badges, search, theme toggle, wallet chip, footer disclosure, native toast tray.", "files": ["src/components/Shell.tsx"], "dependsOn": ["state.app-store", "state.native-store", "comp.wallet-modal", "comp.wallet-panel"], "consumedBy": ["surface.main-app"] },
+    { "id": "comp.merge-layout", "layer": "components", "label": "MergeLayout", "kind": "layout", "status": "real", "purpose": "Wraps every Merge page in the `.merge-scope` CSS boundary, a Radix TooltipProvider, and the shadcn Toaster.", "files": ["src/merge/MergeLayout.tsx", "src/merge/merge.css"], "consumedBy": ["route.discover", "route.create", "route.portfolio", "route.manage", "route.manage-dtr", "route.dtr-detail"] },
+    { "id": "comp.reserve-card", "layer": "components", "label": "ReserveCard", "kind": "shared-component", "status": "real", "purpose": "The one Reserve card component, shared across the native and merge systems via an adapter (buildReserveCardProps).", "files": ["src/components/ReserveCard.tsx", "src/merge/lib/reserveCardProps.ts"], "consumedBy": ["route.home", "route.discover"] },
+    { "id": "comp.wallet-modal", "layer": "components", "label": "WalletModal", "kind": "component", "status": "hybrid", "purpose": "Wallet-picker offering Phantom/Solflare/Backpack (real connect) and MetaMask (deliberately never connects -- exercises a deterministic failure path since MetaMask has no Solana support).", "files": ["src/components/WalletModal.tsx"] },
+    { "id": "comp.wallet-panel", "layer": "components", "label": "WalletPanel", "kind": "component", "status": "real", "purpose": "Dropdown under the connected wallet chip showing a real, cached devUSDC balance read.", "files": ["src/components/WalletPanel.tsx"] },
+    { "id": "comp.charts", "layer": "components", "label": "Chart primitives", "kind": "component", "status": "real", "purpose": "Sparkline and categorical color/series primitives used across Home, Discover, DTRDetail.", "files": ["src/components/charts.tsx", "src/components/composition.ts"] },
+    { "id": "comp.ui-native", "layer": "components", "label": "Native UI primitives", "kind": "component", "status": "real", "purpose": "Modal, token-icon rendering, address-shortening display component, etc.", "files": ["src/components/ui.tsx"] },
+    { "id": "comp.hero-platforms", "layer": "components", "label": "HeroPlatforms", "kind": "component", "status": "simulated", "purpose": "Purely decorative animated hero graphic; no data dependency.", "files": ["src/components/HeroPlatforms.tsx"] },
+    { "id": "comp.devnet-onboarding", "layer": "components", "label": "DevnetOnboarding", "kind": "component", "status": "real", "purpose": "Real devUSDC faucet claim + SOL sponsor grant panel with live balances and real Explorer links.", "files": ["src/merge/components/DevnetOnboarding.tsx"], "dependsOn": ["api.devnet-faucet-devusdc", "api.devnet-sponsor-sol"], "relatedFlows": ["flow.devnet-interaction"] },
+    { "id": "comp.shadcn-ui", "layer": "components", "label": "shadcn/Radix UI kit", "kind": "component-library", "status": "real", "purpose": "avatar/badge/button/card/checkbox/input/label/slider/table/tabs/textarea/toast/tooltip primitives used throughout Merge pages.", "files": ["src/merge/components/ui/*"] },
+
+    { "id": "state.native-store", "layer": "state-domain", "label": "Native store (useReducer + Context)", "kind": "store", "status": "simulated", "purpose": "In-memory-only reducer store seeded from mock data; backs mint/redeem/rebalance/create-reserve/toast actions with pure client-side arithmetic.", "files": ["src/state/store.tsx"], "dependsOn": ["data.reserves-seed", "domain.native-types"], "consumedBy": ["comp.shell"], "limitations": ["No currently-routed page reads its `reserves`/`holdings` for real product data -- Home now reads from state.app-store instead. Still mounted app-wide; its toasts still render in Shell."] },
+    { "id": "state.app-store", "layer": "state-domain", "label": "useAppStore (Zustand + persist)", "kind": "store", "status": "hybrid", "purpose": "The real global store: wallet state, holdings, and the `dtrs` catalog (seeded from real Reserve fixtures, merged live with on-chain discovery), plus a fully local/simulated delegate-CRUD and rebalance sandbox layer.", "files": ["src/merge/store/useAppStore.ts"], "dependsOn": ["domain.merge-types", "lib.onchain-reserve"], "consumedBy": ["comp.shell", "route.home", "route.discover", "route.portfolio", "route.manage"], "limitations": ["`addDelegate`/`removeDelegate`/`rebalanceDTR` actions are local-only and never touch chain -- real on-chain delegates/rebalances go through lib.management-client instead.", "localStorage key `ssrfun-simulation`, schema v5 with a migration that explicitly strips legacy fully-fictional seed Reserves."] },
+    { "id": "state.solana-providers", "layer": "state-domain", "label": "SolanaProviders", "kind": "provider", "status": "real", "purpose": "Wraps the app in wallet-adapter-react's ConnectionProvider/WalletProvider (wallets=[] -- Wallet Standard self-registration), autoConnect on.", "files": ["src/merge/lib/SolanaProviders.tsx"], "consumedBy": ["surface.main-app"] },
+    { "id": "state.wallet-sync", "layer": "state-domain", "label": "WalletSync", "kind": "sync-bridge", "status": "real", "purpose": "Bridges real wallet-adapter connection state into useAppStore; polls real SOL balance every 20s.", "files": ["src/merge/lib/WalletSync.tsx"], "dependsOn": ["state.solana-providers"], "consumedBy": ["state.app-store"] },
+    { "id": "state.reserve-sync", "layer": "state-domain", "label": "RealReserveSync", "kind": "sync-bridge", "status": "real", "purpose": "Adaptive-polled (15s-120s backoff) on-chain Reserve + delegate discovery merged into useAppStore; defers while a transaction is in flight.", "files": ["src/merge/lib/RealReserveSync.tsx"], "dependsOn": ["sdk.ssr-sdk"], "consumedBy": ["state.app-store"] },
+    { "id": "domain.native-types", "layer": "state-domain", "label": "Native domain types", "kind": "types", "status": "simulated", "purpose": "Asset/Allocation/FeeConfig/Delegate/Reserve/ActivityEvent types backing the native simulated store.", "files": ["src/domain/types.ts"] },
+    { "id": "domain.merge-types", "layer": "state-domain", "label": "Merge domain types", "kind": "types", "status": "hybrid", "purpose": "DTR/DTRAsset/FeeConfig/Trade/OnChainReserveMeta/OnChainDelegateMeta/CreateDTRInput types; OnChainReserveMeta is the real on-chain mirror, distinct from the local-only Delegate/SimulatedOrderBook types in the same file.", "files": ["src/merge/lib/types.ts"] },
+    { "id": "data.assets-seed", "layer": "state-domain", "label": "Mock asset catalog", "kind": "seed-data", "status": "simulated", "purpose": "~24 hardcoded illustrative Solana tokens with fictional prices/24h-change, used only by the native simulated store.", "files": ["src/data/assets.ts"] },
+    { "id": "data.reserves-seed", "layer": "state-domain", "label": "Mock Reserve/holdings seed", "kind": "seed-data", "status": "simulated", "purpose": "Fictional seeded Reserves and holdings with deterministic random-walk NAV series, used only by the native simulated store.", "files": ["src/data/reserves.ts", "src/data/mock.ts"] },
+    { "id": "data.logo-pool", "layer": "state-domain", "label": "Reserve logo art pool", "kind": "seed-data", "status": "real", "purpose": "A deterministic logo-image pool assigned to every real on-chain Reserve (the old fictional demo catalog it once held was removed).", "files": ["src/merge/lib/seed-data.ts", "src/assets/dtr-logos/*"] },
+
+    { "id": "lib.solana-config", "layer": "state-domain", "label": "solana-config", "kind": "config", "status": "real", "purpose": "Resolves cluster/RPC URL/program ID from VITE_* env vars with safe DevNet defaults; documents that real RPC secrets never live here.", "files": ["src/merge/lib/solana-config.ts"] },
+    { "id": "lib.onchain-reserve", "layer": "state-domain", "label": "onChainReserve mapping", "kind": "lib", "status": "real", "purpose": "Pure read-side mapping from discovered on-chain accounts into the DTR shape; fail-closed (drops a Reserve if a later discovery pass no longer confirms it).", "files": ["src/merge/lib/onChainReserve.ts"] },
+    { "id": "lib.create-reserve-client", "layer": "state-domain", "label": "createReserveClient", "kind": "lib", "status": "real", "purpose": "Real multi-transaction Create-Reserve flow: createReserve+initializeReserveAsset(s), asset funding (server faucet or self-signed wrap-SOL), seedReserve; localStorage-based mid-flight recovery.", "files": ["src/merge/lib/createReserveClient.ts"], "dependsOn": ["sdk.ssr-sdk", "api.devnet-mint-test-assets"] },
+    { "id": "lib.management-client", "layer": "state-domain", "label": "managementClient", "kind": "lib", "status": "real", "purpose": "Real single-transaction wrappers for update-targets, add/fund/remove Reserve asset, initiate wind-down, close Reserve.", "files": ["src/merge/lib/managementClient.ts"], "dependsOn": ["sdk.ssr-sdk"] },
+    { "id": "lib.zap-client", "layer": "state-domain", "label": "zapClient", "kind": "lib", "status": "real", "purpose": "Buy/Sell execution: requests a server-cosigned transaction from api.devnet-swap-sign, completes it with the wallet's signature, submits and confirms.", "files": ["src/merge/lib/zapClient.ts"], "dependsOn": ["api.devnet-swap-sign"] },
+    { "id": "lib.onchain-permissions", "layer": "state-domain", "label": "onChainPermissions", "kind": "lib", "status": "real", "purpose": "Decodes the on-chain Delegate permission bitmask into human-readable labels, mirroring programs/ssr_protocol/src/state/delegate.rs.", "files": ["src/merge/lib/onChainPermissions.ts"] },
+    { "id": "lib.rpc-resilience", "layer": "state-domain", "label": "rpcResilience", "kind": "lib", "status": "real", "purpose": "Shared retry/backoff/caching/concurrency-limit/bounded-confirmation primitives used by every real on-chain read/write path.", "files": ["src/merge/lib/rpcResilience.ts"] },
+
+    { "id": "middleware.gate", "layer": "server-api", "label": "Vercel Routing Middleware gate", "kind": "middleware", "status": "real", "purpose": "The only auth gate in the app; scoped via config.matcher to /internal/status, /internal-status.html, /api/dashboard/content, /internal/feedback, /internal-feedback.html. Every other route is untouched.", "files": ["middleware.ts"], "dependsOn": ["lib.dashboard-session"] },
+    { "id": "api.dashboard-login", "layer": "server-api", "label": "POST /api/dashboard/login", "kind": "api-route", "status": "real", "purpose": "Validates SSR_DASHBOARD_PASSWORD (constant-time compare), applies in-memory rate-limit/lockout, issues the signed session cookie.", "files": ["api/dashboard/login.ts"], "dependsOn": ["lib.dashboard-session"] },
+    { "id": "api.dashboard-content", "layer": "server-api", "label": "GET /api/dashboard/content", "kind": "api-route", "status": "real", "purpose": "Re-verifies the session cookie independently of middleware, then reads and parses PROJECT_STATUS.md, DECISION_LOG.md, ENGINEERING_TIMELINE.md, REPO_METRICS.json fresh on every request (no cache).", "files": ["api/dashboard/content.ts"], "dependsOn": ["lib.dashboard-session", "lib.dashboard-parse-markdown", "source.docs-project-status", "source.decision-log", "source.engineering-timeline", "source.repo-metrics"], "consumedBy": ["surface.internal-status"] },
+    { "id": "api.dashboard-logout", "layer": "server-api", "label": "POST /api/dashboard/logout", "kind": "api-route", "status": "real", "purpose": "Clears the session cookie (Max-Age=0).", "files": ["api/dashboard/logout.ts"] },
+    { "id": "lib.dashboard-session", "layer": "server-api", "label": "Dashboard session scheme", "kind": "lib", "status": "real", "purpose": "Stateless HMAC-SHA256 signed cookie (`ssr_dash_session`, 12h TTL). The HMAC key IS the dashboard password itself -- no separate signing secret, no server-side session store, no revocation mechanism besides rotating the password.", "files": ["lib/dashboard/session.ts"], "limitations": ["A leaked cookie is valid up to 12h with no server-side revocation.", "Not IP/UA-bound -- a captured cookie is fully replayable."] },
+    { "id": "lib.dashboard-parse-markdown", "layer": "server-api", "label": "parseMarkdown", "kind": "lib", "status": "real", "purpose": "Splits PROJECT_STATUS.md/DECISION_LOG.md into sections, extracts fenced ```json blocks, computes the weighted completion percentage, renders Markdown bodies to HTML via `marked` with zero sanitization.", "files": ["lib/dashboard/parseMarkdown.ts"], "limitations": ["dangerouslySetInnerHTML of unsanitized marked() output -- safe only because docs/project/*.md is maintainer-authored, not user-submitted; would become an XSS vector if that trust assumption ever changes."] },
+    { "id": "api.devnet-faucet-devusdc", "layer": "server-api", "label": "POST /api/devnet/faucet-devusdc", "kind": "api-route", "status": "real", "purpose": "Mints 500 test devUSDC to a user wallet (500 claim / 2000 balance ceiling / 60s cooldown), signed entirely by the shared DevNet authority -- no user signature needed since funds only flow in.", "files": ["api/devnet/faucet-devusdc.ts"], "dependsOn": ["lib.devnet-authority", "lib.devnet-network", "lib.devnet-ratelimit"], "relatedFlows": ["flow.devnet-interaction"] },
+    { "id": "api.devnet-sponsor-sol", "layer": "server-api", "label": "POST /api/devnet/sponsor-sol", "kind": "api-route", "status": "real", "purpose": "Transfers up to 1 SOL to a user wallet (2 SOL balance ceiling / 24h cooldown / 0.05 SOL authority reserve floor), fails honestly with sponsorExhausted rather than fabricating success.", "files": ["api/devnet/sponsor-sol.ts"], "dependsOn": ["lib.devnet-authority", "lib.devnet-network", "lib.devnet-ratelimit"], "relatedFlows": ["flow.devnet-interaction"] },
+    { "id": "api.devnet-mint-test-assets", "layer": "server-api", "label": "POST /api/devnet/mint-test-assets", "kind": "api-route", "status": "real", "purpose": "Mints allowlisted DevNet fixture/devUSDC test assets to a user wallet for Create-Reserve funding (1000-token per-mint cap, no cooldown).", "files": ["api/devnet/mint-test-assets.ts"], "dependsOn": ["lib.devnet-authority"], "relatedFlows": ["flow.create-reserve"], "limitations": ["Does not call assertDevnetCluster (no live genesis-hash check), unlike faucet-devusdc/sponsor-sol -- relies solely on the resolved RPC URL and the authority's DevNet-only mint control."] },
+    { "id": "api.devnet-swap-sign", "layer": "server-api", "label": "POST /api/devnet/swap-sign", "kind": "api-route", "status": "real", "purpose": "The Buy/Sell zap co-signer. Independently re-derives every PDA and re-fetches live on-chain Reserve state (never trusts client-claimed amounts/mints), partially signs with the shared authority, returns the transaction for the user's wallet to complete.", "files": ["api/devnet/swap-sign.ts"], "dependsOn": ["lib.devnet-authority", "sdk.ssr-sdk"], "relatedFlows": ["flow.buy-mint-reserve-token", "flow.redeem-sell"], "limitations": ["Also does not call assertDevnetCluster.", "buy-devusdc explicitly rejects non-100%-devUSDC Reserves (no real devUSDC-conversion instruction exists on-chain yet).", "No temporal rate limit at all on this endpoint -- relies entirely on the protocol's atomic accounting plus a SOL-sufficiency pre-check."] },
+    { "id": "api.devnet-landing-stats", "layer": "server-api", "label": "GET /api/devnet/landing-stats", "kind": "api-route", "status": "real", "purpose": "Public, unauthenticated, read-only real KPI aggregation (holder counts, 24h volume from decoded mint/redeem events) across every discovered Reserve, 60s in-memory cache.", "files": ["api/devnet/landing-stats.ts"], "consumedBy": ["route.home"] },
+    { "id": "api.devnet-rpc-proxy", "layer": "server-api", "label": "POST /api/devnet/rpc-proxy", "kind": "api-route", "status": "real", "purpose": "The only RPC path the production browser ever calls -- allowlists 9 JSON-RPC methods, caps batch size/body bytes, per-IP throttles, falls back to the public DevNet RPC on transport failure (never retries sendTransaction).", "files": ["api/devnet/rpc-proxy.ts"], "dependsOn": ["lib.devnet-rpc", "lib.devnet-ratelimit"], "consumedBy": ["lib.solana-config"] },
+    { "id": "lib.devnet-authority", "layer": "server-api", "label": "loadDevnetAuthority", "kind": "lib", "status": "real", "purpose": "Loads the single shared DevNet authority Keypair from DEVNET_SWAP_AUTHORITY_SECRET_KEY, reused across 4 roles (swap co-signer, devUSDC mint/freeze authority, SOL sponsor, test-asset mint authority) -- a deliberate, documented tradeoff.", "files": ["api/devnet/_lib/authority.ts"] },
+    { "id": "lib.devnet-network", "layer": "server-api", "label": "assertDevnetCluster", "kind": "lib", "status": "real", "purpose": "Live genesis-hash check that fails closed if the connected RPC isn't actually DevNet.", "files": ["api/devnet/_lib/network.ts"], "limitations": ["Only called by faucet-devusdc.ts and sponsor-sol.ts -- swap-sign.ts and mint-test-assets.ts skip this check, an asymmetric defense-in-depth gap."] },
+    { "id": "lib.devnet-ratelimit", "layer": "server-api", "label": "In-memory rate limiting", "kind": "lib", "status": "real", "purpose": "Module-scope Map-based cooldowns/sliding windows for login lockout, faucet/sponsor cooldowns, and rpc-proxy throttling.", "files": ["api/devnet/_lib/rateLimit.ts", "api/dashboard/login.ts"], "limitations": ["Not durable/shared across concurrent Vercel Fluid Compute instances -- resets on cold start. Every fund-touching endpoint's real defense is a live on-chain balance ceiling or atomic program accounting, not these counters."] },
+    { "id": "lib.devnet-rpc", "layer": "server-api", "label": "resolveRpcUrl", "kind": "lib", "status": "real", "purpose": "HELIUS_RPC_URL || SOLANA_RPC_URL || public DevNet RPC fallback; documents that the Helius URL must never be echoed to the browser.", "files": ["api/devnet/_lib/rpc.ts"], "limitations": ["HELIUS_RPC_URL and SOLANA_RPC_URL are read by this code but undocumented in .env.example -- a real gap between code and env documentation."] },
+
+    { "id": "program.ssr-protocol", "layer": "protocol-solana", "label": "ssr_protocol program", "kind": "solana-program", "status": "real", "purpose": "23-instruction Anchor program deployed live on Solana DevNet, program ID 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW.", "files": ["programs/ssr_protocol/src/lib.rs", "programs/ssr_protocol/src/instructions/*.rs"], "environment": "devnet" },
+    { "id": "state.protocol-config", "layer": "protocol-solana", "label": "ProtocolConfig account", "kind": "solana-account", "status": "real", "purpose": "Singleton PDA (seeds: protocol_config): authority, paused flag, max_reserve_assets cap, default protocol fee bps/destination, monotonic reserve_count used as the next reserve_id.", "files": ["programs/ssr_protocol/src/state/protocol_config.rs"] },
+    { "id": "state.reserve", "layer": "protocol-solana", "label": "Reserve account", "kind": "solana-account", "status": "real", "purpose": "Per-basket PDA (seeds: reserve + reserve_id LE bytes): manager, reserve_token_mint, status enum (Created/AssetsInitializing/Active/Paused/WindDown/Closed), asset_count, fee_config, metadata_uri, delegate_count.", "files": ["programs/ssr_protocol/src/state/reserve.rs"] },
+    { "id": "state.reserve-asset", "layer": "protocol-solana", "label": "ReserveAsset account", "kind": "solana-account", "status": "real", "purpose": "One basket constituent's config PDA (seeds: reserve_asset + reserve + asset_mint), plus its vault PDA (seeds: reserve_vault + reserve + asset_mint): token_program kind, decimals, target_weight_bps, enabled, order_index.", "files": ["programs/ssr_protocol/src/state/reserve_asset.rs"] },
+    { "id": "state.delegate", "layer": "protocol-solana", "label": "Delegate account", "kind": "solana-account", "status": "real", "purpose": "Per-(reserve,wallet) PDA (seeds: delegate + reserve + wallet): 16-bit permission bitmask (10 v1 flags, 6 reserved), restricted flag.", "files": ["programs/ssr_protocol/src/state/delegate.rs"] },
+    { "id": "sdk.ssr-sdk", "layer": "protocol-solana", "label": "@ssr/sdk", "kind": "sdk", "status": "real", "purpose": "Workspace TypeScript package (packages/sdk) consumed by the frontend: PDA derivation, in-kind mint/redeem math, an SsrClient skeleton, DevNet fixture/devUSDC registries, discovery, zap/create/management instruction builders, a hidden-Reserve allowlist.", "files": ["packages/sdk/src/*"], "consumedBy": ["route.create", "route.manage-dtr", "route.dtr-detail", "api.devnet-swap-sign", "api.devnet-landing-stats"] },
+
+    { "id": "source.docs-project-status", "layer": "data-sources", "label": "PROJECT_STATUS.md", "kind": "markdown-doc", "status": "real", "purpose": "Hand-maintained source of truth for overall status, weighted roadmap (2 views: Engineering Areas and 8-phase Roadmap), blockers, risks, and the Local/Development/DevNet/Production environment table.", "files": ["docs/project/PROJECT_STATUS.md"] },
+    { "id": "source.decision-log", "layer": "data-sources", "label": "DECISION_LOG.md", "kind": "markdown-doc", "status": "real", "purpose": "Append-only material-decision log (69 entries as of 2026-07-31), each with rationale/alternatives/impact/supersession/evidence.", "files": ["docs/project/DECISION_LOG.md"] },
+    { "id": "source.engineering-timeline", "layer": "data-sources", "label": "ENGINEERING_TIMELINE.md", "kind": "markdown-doc", "status": "real", "purpose": "Chronological engineering milestones/timeline/infrastructure entries shown on the internal dashboard.", "files": ["docs/project/ENGINEERING_TIMELINE.md"] },
+    { "id": "source.repo-metrics", "layer": "data-sources", "label": "REPO_METRICS.json", "kind": "generated-json", "status": "real", "purpose": "Machine-generated repo metrics (commits, contributors incl. AI-assisted flag, branches, LOC, protocol instruction count, verify-script count, commit-activity sparkline) -- regenerated by a script, never hand-edited.", "files": ["docs/project/REPO_METRICS.json"], "dependsOn": ["script.generate-repo-metrics"] },
+    { "id": "source.devnet-fixtures", "layer": "data-sources", "label": "DevNet fixture registry", "kind": "generated-json", "status": "real", "purpose": "checkpoint.json + gitignored keypairs recording two persistent live-DevNet Reserves (IDs 9 and 10), their PDAs, and fixture holder balances; feeds packages/sdk/fixtures/devnet-fixtures.json.", "files": ["devnet-fixtures/checkpoint.json", "packages/sdk/fixtures/devnet-fixtures.json"] },
+    { "id": "source.chain-state", "layer": "data-sources", "label": "Live Solana DevNet account state", "kind": "live-chain-state", "status": "real", "purpose": "The actual authoritative source for every Reserve's composition, supply, vault balances, delegates, and status -- read via direct account fetches, never getProgramAccounts (blocked on public DevNet RPC).", "files": [] },
+
+    { "id": "infra.vite-build", "layer": "infrastructure", "label": "Vite multi-entry build", "kind": "build-config", "status": "real", "purpose": "Three independent Rollup entries (main, internalStatus, internalFeedback); Tailwind v4 plugin; global polyfill for Solana web3.js's Node-like assumptions; the @/wouter alias shim for ported Merge pages.", "files": ["vite.config.ts"] },
+    { "id": "infra.vercel-functions", "layer": "infrastructure", "label": "Vercel Functions config", "kind": "deploy-config", "status": "real", "purpose": "includeFiles wiring so api/dashboard/content.ts can read docs/project/*.{md,json} at runtime; SPA catch-all + internal-page rewrites.", "files": ["vercel.json"] },
+    { "id": "infra.vercel-project", "layer": "infrastructure", "label": "Linked Vercel project", "kind": "deploy-config", "status": "real", "purpose": "Confirmed linked project marker (projectId/orgId/projectName 'ssr-fun'); git.deploymentEnabled is false, meaning deploys are manual (`vercel --prod`), not auto-triggered by pushes.", "files": [".vercel/project.json"] },
+    { "id": "infra.anchor-toolchain", "layer": "infrastructure", "label": "Anchor/Solana toolchain config", "kind": "build-config", "status": "real", "purpose": "Anchor 1.1.2, program ID registered for both localnet and devnet, provider defaults to localnet wallet -- a native (non-WSL) Windows Rust/MinGW/MSVC toolchain was built up specifically to work around localnet-validator limitations.", "files": ["Anchor.toml", "Cargo.toml"] },
+
+    { "id": "ext.solana-devnet", "layer": "external-services", "label": "Solana DevNet", "kind": "blockchain-network", "status": "real", "purpose": "The one live chain environment this app actually talks to; hosts the deployed ssr_protocol program and all real Reserve/token accounts.", "files": [] },
+    { "id": "ext.helius-rpc", "layer": "external-services", "label": "Helius RPC", "kind": "rpc-provider", "status": "real", "purpose": "Preferred server-side DevNet RPC provider (supports getProgramAccounts, unlike the public endpoint); URL/key never exposed to the browser.", "files": [] },
+    { "id": "ext.wallet-providers", "layer": "external-services", "label": "Wallet Standard providers", "kind": "wallet", "status": "real", "purpose": "Phantom/Solflare/Backpack, self-registering via the Wallet Standard (no bundled adapter packages needed).", "files": [] },
+    { "id": "ext.google-sheet", "layer": "external-services", "label": "Manually-maintained Google Sheet", "kind": "external-doc", "status": "real", "purpose": "Destination of the /internal/feedback link-through; no API integration, purely a hyperlink.", "files": [] },
+
+    { "id": "script.generate-repo-metrics", "layer": "infrastructure", "label": "generate-repo-metrics.ts", "kind": "script", "status": "real", "purpose": "Runs real `git` shell commands to regenerate docs/project/REPO_METRICS.json; must be run from a dev/CI shell since the Vercel function has no git binary at request time.", "files": ["scripts/generate-repo-metrics.ts"], "relatedFlows": ["flow.repo-metrics-generation"] }
+  ],
+
+  "edges": [
+    { "from": "actor.visitor", "to": "route.home", "kind": "navigates" },
+    { "from": "actor.wallet-holder", "to": "comp.wallet-modal", "kind": "interacts" },
+    { "from": "actor.internal-team", "to": "middleware.gate", "kind": "authenticates-through" },
+    { "from": "surface.main-app", "to": "comp.shell", "kind": "renders" },
+    { "from": "comp.shell", "to": "state.app-store", "kind": "reads" },
+    { "from": "comp.shell", "to": "state.native-store", "kind": "reads" },
+    { "from": "route.home", "to": "comp.reserve-card", "kind": "renders" },
+    { "from": "route.discover", "to": "comp.reserve-card", "kind": "renders" },
+    { "from": "route.create", "to": "lib.create-reserve-client", "kind": "calls" },
+    { "from": "lib.create-reserve-client", "to": "sdk.ssr-sdk", "kind": "calls" },
+    { "from": "lib.create-reserve-client", "to": "api.devnet-mint-test-assets", "kind": "calls" },
+    { "from": "sdk.ssr-sdk", "to": "program.ssr-protocol", "kind": "submits-instructions-to" },
+    { "from": "route.dtr-detail", "to": "lib.zap-client", "kind": "calls" },
+    { "from": "lib.zap-client", "to": "api.devnet-swap-sign", "kind": "calls" },
+    { "from": "api.devnet-swap-sign", "to": "lib.devnet-authority", "kind": "uses" },
+    { "from": "api.devnet-swap-sign", "to": "source.chain-state", "kind": "reads-and-verifies-against" },
+    { "from": "route.manage-dtr", "to": "lib.management-client", "kind": "calls" },
+    { "from": "lib.management-client", "to": "sdk.ssr-sdk", "kind": "calls" },
+    { "from": "state.reserve-sync", "to": "sdk.ssr-sdk", "kind": "calls" },
+    { "from": "state.reserve-sync", "to": "state.app-store", "kind": "writes" },
+    { "from": "state.wallet-sync", "to": "state.app-store", "kind": "writes" },
+    { "from": "sdk.ssr-sdk", "to": "source.chain-state", "kind": "reads" },
+    { "from": "lib.solana-config", "to": "api.devnet-rpc-proxy", "kind": "routes-through-in-production" },
+    { "from": "api.devnet-rpc-proxy", "to": "lib.devnet-rpc", "kind": "uses" },
+    { "from": "lib.devnet-rpc", "to": "ext.helius-rpc", "kind": "calls" },
+    { "from": "lib.devnet-rpc", "to": "ext.solana-devnet", "kind": "calls (fallback)" },
+    { "from": "state.solana-providers", "to": "ext.wallet-providers", "kind": "integrates" },
+    { "from": "middleware.gate", "to": "lib.dashboard-session", "kind": "verifies-via" },
+    { "from": "api.dashboard-login", "to": "lib.dashboard-session", "kind": "issues-cookie-via" },
+    { "from": "api.dashboard-content", "to": "lib.dashboard-parse-markdown", "kind": "calls" },
+    { "from": "lib.dashboard-parse-markdown", "to": "source.docs-project-status", "kind": "parses" },
+    { "from": "lib.dashboard-parse-markdown", "to": "source.decision-log", "kind": "parses" },
+    { "from": "lib.dashboard-parse-markdown", "to": "source.engineering-timeline", "kind": "parses" },
+    { "from": "api.dashboard-content", "to": "source.repo-metrics", "kind": "reads-raw" },
+    { "from": "surface.internal-status", "to": "api.dashboard-content", "kind": "fetches" },
+    { "from": "surface.internal-feedback", "to": "ext.google-sheet", "kind": "links-to" },
+    { "from": "script.generate-repo-metrics", "to": "source.repo-metrics", "kind": "generates" },
+    { "from": "comp.devnet-onboarding", "to": "api.devnet-faucet-devusdc", "kind": "calls" },
+    { "from": "comp.devnet-onboarding", "to": "api.devnet-sponsor-sol", "kind": "calls" },
+    { "from": "program.ssr-protocol", "to": "state.protocol-config", "kind": "owns" },
+    { "from": "program.ssr-protocol", "to": "state.reserve", "kind": "owns" },
+    { "from": "program.ssr-protocol", "to": "state.reserve-asset", "kind": "owns" },
+    { "from": "program.ssr-protocol", "to": "state.delegate", "kind": "owns" }
+  ],
+
+  "flows": [
+    {
+      "id": "flow.browse-reserves",
+      "name": "Browse Reserves",
+      "category": "discovery",
+      "status": "real",
+      "summary": "A visitor sees every genuinely-deployed on-chain Decentralized Token Reserve on Home and Discover, discovered live from Solana DevNet, not from a fixed list.",
+      "nodeIds": ["actor.visitor", "route.home", "route.discover", "state.reserve-sync", "state.app-store", "comp.reserve-card", "sdk.ssr-sdk", "source.chain-state"],
+      "steps": [
+        { "n": 1, "description": "App mounts; RealReserveSync starts an adaptive poll (15s base, backs off to 120s under rate limiting).", "files": ["src/merge/lib/RealReserveSync.tsx"] },
+        { "n": 2, "description": "discoverAllReserves walks reserve_id 0..ProtocolConfig.reserveCount-1 via direct account fetches (getProgramAccounts is blocked on the public DevNet RPC).", "files": ["packages/sdk/src/discovery.ts"] },
+        { "n": 3, "description": "Discovered accounts are merged into useAppStore.dtrs (fail-closed: a Reserve no longer confirmed on a later pass is dropped).", "files": ["src/merge/lib/onChainReserve.ts", "src/merge/store/useAppStore.ts"] },
+        { "n": 4, "description": "Home selects a Featured subset; Discover renders the full, searchable/filterable/sortable catalog. Both use the shared ReserveCard via an adapter.", "files": ["src/pages/Home.tsx", "src/merge/pages/Discover.tsx", "src/merge/lib/reserveCardProps.ts", "src/components/ReserveCard.tsx"] },
+        { "n": 5, "description": "Home also fetches a real KPI summary (holder count, 24h volume) from the landing-stats endpoint, showing 'unavailable' rather than a fabricated number on failure.", "files": ["src/pages/Home.tsx", "api/devnet/landing-stats.ts"] }
+      ],
+      "limitations": ["Two known-abandoned/zero-asset Reserves (IDs 6, 12, 18) are explicitly hidden via a hardcoded address registry, not a structural rule -- see DEC-0058/DEC-0064."]
+    },
+    {
+      "id": "flow.view-reserve-details",
+      "name": "View Reserve Details",
+      "category": "discovery",
+      "status": "hybrid",
+      "summary": "A visitor opens a Reserve's detail page and sees real composition/price data plus a simulated order book.",
+      "nodeIds": ["actor.visitor", "route.dtr-detail", "sdk.ssr-sdk", "source.chain-state"],
+      "steps": [
+        { "n": 1, "description": "Route matches /dtr/:dtrId; DTRDetail looks up the Reserve from useAppStore's already-discovered catalog.", "files": ["src/App.tsx", "src/merge/pages/DTRDetail.tsx"] },
+        { "n": 2, "description": "Composition pie and NAV/AUM figures come from real vault balances, valued using a hardcoded DevNet test-price table (no oracle exists on-chain).", "files": ["src/merge/pages/DTRDetail.tsx", "src/merge/lib/onChainReserve.ts"] },
+        { "n": 3, "description": "Price chart is built from real recorded trades (recordConfirmedTrade) once any Buy/Sell has occurred; the order book shown alongside it is entirely client-generated (SimulatedOrderBook).", "files": ["src/merge/pages/DTRDetail.tsx", "src/merge/lib/types.ts"] }
+      ],
+      "limitations": ["Order book has no on-chain counterpart -- do not present it as real market depth."]
+    },
+    {
+      "id": "flow.create-reserve",
+      "name": "Create a Decentralized Token Reserve",
+      "category": "creation",
+      "status": "real",
+      "summary": "A connected wallet launches a brand-new Reserve via a multi-step wizard that submits real, signed Solana DevNet transactions.",
+      "nodeIds": ["actor.wallet-holder", "route.create", "lib.create-reserve-client", "sdk.ssr-sdk", "api.devnet-mint-test-assets", "program.ssr-protocol", "state.reserve"],
+      "steps": [
+        { "n": 1, "description": "User fills name/ticker/description/category, asset composition (weights), fee config, and delegates across the CreateDTR wizard.", "files": ["src/merge/pages/CreateDTR.tsx"] },
+        { "n": 2, "description": "Transaction 1: one combined transaction bundling createReserve + initializeReserveAsset (one per asset), wallet-signed.", "files": ["packages/sdk/src/createReserveFlow.ts", "programs/ssr_protocol/src/instructions/create_reserve.rs", "programs/ssr_protocol/src/instructions/initialize_reserve_asset.rs"] },
+        { "n": 3, "description": "Funding step: SPL test assets are minted to the user via the server faucet (api/devnet/mint-test-assets), OR wrapped SOL is self-wrapped client-side (ATA create + SystemProgram.transfer + syncNative).", "files": ["src/merge/lib/createReserveClient.ts", "api/devnet/mint-test-assets.ts"] },
+        { "n": 4, "description": "Transaction 2: seedReserve -- first in-kind deposit, transitions Reserve.status Created/AssetsInitializing -> Active, mints initial Reserve Tokens to the manager.", "files": ["programs/ssr_protocol/src/instructions/seed_reserve.rs"] },
+        { "n": 5, "description": "Mid-flight progress is checkpointed to localStorage so a page refresh can resume/reconcile rather than silently re-submitting.", "files": ["src/merge/lib/createReserveClient.ts"] },
+        { "n": 6, "description": "RealReserveSync's next poll picks up the new Reserve and it appears in Discover/Home like any other.", "files": ["src/merge/lib/RealReserveSync.tsx"] }
+      ],
+      "limitations": ["A stale-closure bug that produced misleading '(setup)' failures and blocked duplicate-prevention was fixed 2026-07-31 (DEC-0063); skipPreflight + a re-entrancy guard were added as part of that fix."]
+    },
+    {
+      "id": "flow.simulated-wallet-connection",
+      "name": "Wallet Connection",
+      "category": "wallet",
+      "status": "real",
+      "summary": "Requested under the name 'simulated wallet connection', but wallet connectivity in this app is REAL, not simulated: genuine Wallet Standard connections via @solana/wallet-adapter-react. The only simulated element is the MetaMask option, kept solely to exercise a deterministic failure path (MetaMask has no Solana support).",
+      "nodeIds": ["actor.wallet-holder", "comp.wallet-modal", "state.solana-providers", "state.wallet-sync", "ext.wallet-providers"],
+      "steps": [
+        { "n": 1, "description": "User opens WalletModal and picks Phantom, Solflare, or Backpack (detected via WalletReadyState).", "files": ["src/components/WalletModal.tsx"] },
+        { "n": 2, "description": "wallet-adapter-react performs the real browser-extension connection handshake.", "files": ["src/merge/lib/SolanaProviders.tsx"] },
+        { "n": 3, "description": "WalletSync bridges the connected publicKey into useAppStore and starts a real 20s SOL-balance poll.", "files": ["src/merge/lib/WalletSync.tsx"] },
+        { "n": 4, "description": "Selecting MetaMask deliberately never completes a connection -- this path exists to verify the app's failure-state UI, not as a real integration.", "files": ["src/components/WalletModal.tsx"] }
+      ],
+      "limitations": []
+    },
+    {
+      "id": "flow.portfolio-flow",
+      "name": "Portfolio Flow",
+      "category": "holdings",
+      "status": "real",
+      "summary": "A connected wallet views its real Reserve Token holdings, P&L, and can onboard with DevNet test funds.",
+      "nodeIds": ["actor.wallet-holder", "route.portfolio", "comp.devnet-onboarding", "state.app-store", "sdk.ssr-sdk"],
+      "steps": [
+        { "n": 1, "description": "Portfolio reads real holdings synced by RealReserveSync (per-Reserve Token balance reads via fetchTokenBalanceRaw).", "files": ["src/merge/pages/Portfolio.tsx", "src/merge/lib/RealReserveSync.tsx"] },
+        { "n": 2, "description": "P&L math (calculations.ts) computes cost-basis/unrealized figures from recorded real trades.", "files": ["packages/sdk/src/calculations.ts"] },
+        { "n": 3, "description": "DevnetOnboarding panel offers real devUSDC faucet claims and SOL sponsorship for wallets that need DevNet funds to participate.", "files": ["src/merge/components/DevnetOnboarding.tsx", "api/devnet/faucet-devusdc.ts", "api/devnet/sponsor-sol.ts"] }
+      ]
+    },
+    {
+      "id": "flow.manage-reserve-flow",
+      "name": "Manage Reserve Flow",
+      "category": "management",
+      "status": "real",
+      "summary": "A Reserve's manager (or a permitted delegate) administers composition, delegates, and lifecycle state via real on-chain instructions.",
+      "nodeIds": ["actor.reserve-manager", "actor.delegate", "route.manage", "route.manage-dtr", "lib.management-client", "lib.onchain-permissions", "state.delegate", "state.reserve"],
+      "steps": [
+        { "n": 1, "description": "Manage lists Reserves where the connected wallet is manager or an on-chain-verified delegate (isManagerOrDelegate).", "files": ["src/merge/pages/Manage.tsx"] },
+        { "n": 2, "description": "ManageDTR decodes each delegate's real permission bitmask via decodeOnChainPermissions for display -- this is read-only decoding of genuine chain state, not a local list.", "files": ["src/merge/pages/ManageDTR.tsx", "src/merge/lib/onChainPermissions.ts", "programs/ssr_protocol/src/state/delegate.rs"] },
+        { "n": 3, "description": "Composition actions (update targets, add/fund/remove asset) call managementClient, each a single wallet-signed transaction enforcing the manager/delegate permission flag on-chain.", "files": ["src/merge/lib/managementClient.ts", "programs/ssr_protocol/src/instructions/update_targets.rs", "programs/ssr_protocol/src/instructions/add_reserve_asset_active.rs", "programs/ssr_protocol/src/instructions/fund_new_reserve_asset.rs", "programs/ssr_protocol/src/instructions/remove_reserve_asset.rs"] },
+        { "n": 4, "description": "Wind-down/close (root-manager-only, no delegate path) transitions Active -> WindDown -> Closed once supply and vault balances are zero.", "files": ["programs/ssr_protocol/src/instructions/initiate_wind_down.rs", "programs/ssr_protocol/src/instructions/close_reserve.rs"] }
+      ],
+      "limitations": ["Delegate ADD/REMOVE/rebalance actions exposed via useAppStore's local sandbox actions are NOT part of this real flow -- those are simulation-only and never touch chain; real delegate management goes only through managementClient's on-chain instructions."]
+    },
+    {
+      "id": "flow.buy-mint-reserve-token",
+      "name": "Buy / Mint Reserve Token",
+      "category": "trading",
+      "status": "real",
+      "summary": "A connected wallet buys into a Reserve; SOL or devUSDC is converted (server-cosigned) into the underlying assets, which are then deposited via a real in-kind mint instruction.",
+      "nodeIds": ["actor.wallet-holder", "route.dtr-detail", "lib.zap-client", "api.devnet-swap-sign", "program.ssr-protocol", "state.reserve"],
+      "steps": [
+        { "n": 1, "description": "User enters a buy amount on DTRDetail; client requests a quote/transaction from the server.", "files": ["src/merge/pages/DTRDetail.tsx", "src/merge/lib/zapClient.ts"] },
+        { "n": 2, "description": "swap-sign.ts re-derives the Reserve's PDAs from only the Reserve address, fetches live on-chain state, verifies every asset mint is allowlisted and the Reserve is Active, then builds the zap instructions and partially signs with the shared swap authority.", "files": ["api/devnet/swap-sign.ts", "packages/sdk/src/zapInstructions.ts"] },
+        { "n": 3, "description": "The connected wallet completes the signature; the transaction (fee-payer = user) is submitted with skipPreflight and confirmed via bounded polling.", "files": ["src/merge/lib/zapClient.ts", "src/merge/lib/rpcResilience.ts"] },
+        { "n": 4, "description": "mint_reserve_tokens_in_kind computes the proportional required per-asset amounts against live vault/supply ratios, charges the mint fee, and mints net Reserve Tokens to the buyer.", "files": ["programs/ssr_protocol/src/instructions/mint_reserve_tokens_in_kind.rs"] },
+        { "n": 5, "description": "A confirmed trade is recorded into the Reserve's price history in useAppStore.", "files": ["src/merge/store/useAppStore.ts"] }
+      ],
+      "limitations": ["'buy-devusdc' is explicitly rejected server-side for Reserves that are not 100% devUSDC-backed (no real devUSDC-conversion instruction exists on-chain) -- the endpoint returns a distinguishable error rather than silently substituting a different path.", "USD-denominated amounts still rely on the hardcoded DevNet test-price table."]
+    },
+    {
+      "id": "flow.redeem-sell",
+      "name": "Redeem / Sell Reserve Token",
+      "category": "trading",
+      "status": "real",
+      "summary": "A connected wallet sells/redeems Reserve Tokens; for pure-devUSDC Reserves this pays the user directly from the protocol's own redemption instruction with no swap-authority co-signature at all.",
+      "nodeIds": ["actor.wallet-holder", "route.dtr-detail", "lib.zap-client", "api.devnet-swap-sign", "program.ssr-protocol"],
+      "steps": [
+        { "n": 1, "description": "User enters a sell amount; client requests a transaction from the server.", "files": ["src/merge/pages/DTRDetail.tsx", "src/merge/lib/zapClient.ts"] },
+        { "n": 2, "description": "If the Reserve is 100% devUSDC-backed, swap-sign.ts builds buildRedeemToDevUsdcInstructions -- pure protocol redemption, no swap-authority signature needed at all.", "files": ["api/devnet/swap-sign.ts", "packages/sdk/src/zapInstructions.ts"] },
+        { "n": 3, "description": "Otherwise, buildSellZapInstructions pays the user the full sale proceeds out of the swap authority's own real SOL balance (pre-checked for sufficiency before signing).", "files": ["api/devnet/swap-sign.ts"] },
+        { "n": 4, "description": "redeem_reserve_tokens_in_kind burns the full redeemed amount, computes net-of-fee payout, and transfers proportional assets out of the vaults; redemption is allowed even while a Reserve is Paused or in WindDown.", "files": ["programs/ssr_protocol/src/instructions/redeem_reserve_tokens_in_kind.rs"] },
+        { "n": 5, "description": "Wallet completes/submits/confirms the transaction; a confirmed trade is recorded.", "files": ["src/merge/lib/zapClient.ts", "src/merge/store/useAppStore.ts"] }
+      ],
+      "limitations": ["Non-devUSDC-backed Sell still depends on the shared authority wallet's own SOL balance, documented as an elevated operational risk (0.2345 SOL observed at last status update, funding 4 separate duties)."]
+    },
+    {
+      "id": "flow.internal-status-login",
+      "name": "Internal Status Login",
+      "category": "internal-tooling",
+      "status": "real",
+      "summary": "A team member authenticates to the single password-gated internal surface.",
+      "nodeIds": ["actor.internal-team", "middleware.gate", "api.dashboard-login", "lib.dashboard-session"],
+      "steps": [
+        { "n": 1, "description": "Middleware intercepts /internal/status (and its data endpoint) before the cache; an unauthenticated request only ever receives the login page HTML embedded in middleware.ts itself.", "files": ["middleware.ts"] },
+        { "n": 2, "description": "Submitting the password posts to /api/dashboard/login, which checks SSR_DASHBOARD_PASSWORD with a constant-time comparison and applies in-memory lockout (10 attempts / 10 min window / 15 min lockout, production-only by default).", "files": ["api/dashboard/login.ts"] },
+        { "n": 3, "description": "On success, a stateless HMAC-signed session cookie (ssr_dash_session, 12h TTL, HMAC key = the password itself) is set and the page reloads.", "files": ["lib/dashboard/session.ts"] },
+        { "n": 4, "description": "The same cookie/session also gates /internal/feedback -- one login covers both pages.", "files": ["middleware.ts"] }
+      ],
+      "limitations": ["No revocation mechanism for a leaked cookie short of rotating the password.", "Rate-limit lockout state is in-memory only, reset on cold start -- best-effort, not durable."]
+    },
+    {
+      "id": "flow.internal-dashboard-data-loading",
+      "name": "Internal Dashboard Data Loading",
+      "category": "internal-tooling",
+      "status": "real",
+      "summary": "The authenticated internal dashboard renders project status straight from Markdown/JSON files, computed fresh on every request.",
+      "nodeIds": ["surface.internal-status", "api.dashboard-content", "lib.dashboard-parse-markdown", "source.docs-project-status", "source.decision-log", "source.engineering-timeline", "source.repo-metrics"],
+      "steps": [
+        { "n": 1, "description": "Dashboard.tsx fetches GET /api/dashboard/content with credentials on mount.", "files": ["src/internal-status/Dashboard.tsx"] },
+        { "n": 2, "description": "content.ts independently re-verifies the session cookie (never trusts middleware alone), then reads all 4 source files fresh via fs.readFileSync, no caching.", "files": ["api/dashboard/content.ts"] },
+        { "n": 3, "description": "parseMarkdown.ts splits sections, extracts fenced JSON blocks, computes the weighted overall completion percentage from the Engineering Areas (falling back to the Roadmap) block, and renders remaining Markdown bodies to raw HTML.", "files": ["lib/dashboard/parseMarkdown.ts"] },
+        { "n": 4, "description": "Dashboard.tsx renders the roadmap, current mission/blockers, engineering areas, milestones, repo metrics panel, engineering timeline, full decision log, and a collapsed 'Operational Detail' section.", "files": ["src/internal-status/Dashboard.tsx"] }
+      ],
+      "limitations": ["Rendered Markdown bodies use dangerouslySetInnerHTML with zero sanitization -- acceptable only while docs/project/*.md remains maintainer-only content."]
+    },
+    {
+      "id": "flow.protocol-instruction-submission",
+      "name": "Protocol Instruction Submission (generic)",
+      "category": "protocol",
+      "status": "real",
+      "summary": "The general path any real on-chain action in this app takes, from a wallet click to a confirmed DevNet transaction.",
+      "nodeIds": ["actor.wallet-holder", "sdk.ssr-sdk", "program.ssr-protocol", "lib.rpc-resilience", "source.chain-state"],
+      "steps": [
+        { "n": 1, "description": "A client lib (createReserveClient, managementClient, or zapClient) builds one or more instructions via an SDK builder function.", "files": ["packages/sdk/src/createReserveFlow.ts", "packages/sdk/src/managementInstructions.ts", "packages/sdk/src/zapInstructions.ts"] },
+        { "n": 2, "description": "Any needed server-side co-signature (only for Buy/Sell) is obtained from api/devnet/swap-sign.ts; otherwise the transaction is single-signer.", "files": ["api/devnet/swap-sign.ts"] },
+        { "n": 3, "description": "The connected wallet signs; the transaction is submitted with skipPreflight:true through the RPC proxy.", "files": ["src/merge/lib/rpcResilience.ts", "api/devnet/rpc-proxy.ts"] },
+        { "n": 4, "description": "Confirmation is polled with a bounded retry loop (confirmSignatureBounded) rather than a websocket subscription, since the latter was observed itself throwing 429s.", "files": ["src/merge/lib/rpcResilience.ts"] },
+        { "n": 5, "description": "The Anchor program validates all `has_one`/`constraint`/PDA-seed checks and mutates the relevant account(s) atomically; an event is emitted.", "files": ["programs/ssr_protocol/src/lib.rs", "programs/ssr_protocol/src/events.rs"] },
+        { "n": 6, "description": "The frontend's next discovery/sync poll (or an immediate balance re-read) reflects the new chain state -- this refresh-from-chain step is a documented, binding invariant for every state-changing action in this app.", "files": ["src/merge/lib/RealReserveSync.tsx"] }
+      ]
+    },
+    {
+      "id": "flow.devnet-interaction",
+      "name": "DevNet Onboarding Interaction",
+      "category": "devnet",
+      "status": "real",
+      "summary": "A wallet with no DevNet funds gets a small amount of real test SOL and devUSDC to begin participating.",
+      "nodeIds": ["actor.wallet-holder", "comp.devnet-onboarding", "api.devnet-faucet-devusdc", "api.devnet-sponsor-sol", "lib.devnet-authority", "lib.devnet-network"],
+      "steps": [
+        { "n": 1, "description": "User clicks Claim devUSDC / Request SOL in the Portfolio onboarding panel.", "files": ["src/merge/components/DevnetOnboarding.tsx"] },
+        { "n": 2, "description": "Server verifies the connected RPC is genuinely DevNet via a live genesis-hash check before touching any funds.", "files": ["api/devnet/_lib/network.ts"] },
+        { "n": 3, "description": "Cooldown + durable balance-ceiling checks run (500 devUSDC claim / 2000 ceiling / 60s cooldown; 1 SOL grant / 2 SOL ceiling / 24h cooldown, and the authority itself must keep a 0.05 SOL reserve).", "files": ["api/devnet/faucet-devusdc.ts", "api/devnet/sponsor-sol.ts", "api/devnet/_lib/rateLimit.ts"] },
+        { "n": 4, "description": "The shared authority signs and submits the mint/transfer; the endpoint returns a real signature and Explorer link, or an honest failure (e.g. sponsorExhausted) if the authority itself is too low.", "files": ["src/merge/components/DevnetOnboarding.tsx"] }
+      ]
+    },
+    {
+      "id": "flow.deployment-flow",
+      "name": "Deployment Flow",
+      "category": "infrastructure",
+      "status": "real",
+      "summary": "How a change reaches Production -- confirmed manual, not CI/CD-automated.",
+      "nodeIds": ["infra.vercel-project", "infra.vite-build", "infra.vercel-functions", "ext.solana-devnet"],
+      "steps": [
+        { "n": 1, "description": "Frontend changes are built locally/in CI via `tsc -b && vite build`, producing 3 separate bundles (main, internalStatus, internalFeedback).", "files": ["package.json", "vite.config.ts"] },
+        { "n": 2, "description": "Deployment to Vercel is manual (`vercel --prod`) -- vercel.json sets git.deploymentEnabled: false, so pushing to GitHub does NOT auto-deploy.", "files": ["vercel.json"] },
+        { "n": 3, "description": "vercel.json's functions.includeFiles wiring ensures api/dashboard/content.ts can read docs/project/*.{md,json} at runtime in the deployed function.", "files": ["vercel.json"] },
+        { "n": 4, "description": "Protocol changes follow a separate manual path: `anchor build`/`cargo-build-sbf` (native Windows toolchain, anchor test does not run locally) then a manual `solana program deploy`/upgrade against DevNet, recorded by hand in docs/protocol/DEVNET_RUNBOOK.md and DECISION_LOG.md.", "files": ["Anchor.toml", "docs/protocol/DEVNET_RUNBOOK.md"] }
+      ],
+      "limitations": ["No CI/CD pipeline automates either the frontend or protocol deploy path -- both are manual, human-run commands, tracked only in documentation, not in a pipeline config."]
+    },
+    {
+      "id": "flow.repository-metrics-generation",
+      "name": "Repository Metrics Generation",
+      "category": "internal-tooling",
+      "status": "real",
+      "summary": "Repo metrics shown on the internal dashboard are generated by a real git-inspecting script, not hand-maintained.",
+      "nodeIds": ["script.generate-repo-metrics", "source.repo-metrics", "api.dashboard-content"],
+      "steps": [
+        { "n": 1, "description": "A developer runs `npx ts-node -P scripts/tsconfig.json scripts/generate-repo-metrics.ts` from a shell with git available.", "files": ["scripts/generate-repo-metrics.ts"] },
+        { "n": 2, "description": "The script shells out to git for commit counts, per-contributor counts (flagging AI-assisted commits via a Co-Authored-By: Claude trailer), branches, LOC, and a per-day commit-activity series.", "files": ["scripts/generate-repo-metrics.ts"] },
+        { "n": 3, "description": "It also regex-scans docs/project/DECISION_LOG.md for decision count and programs/ssr_protocol/src/instructions/mod.rs for instruction count.", "files": ["scripts/generate-repo-metrics.ts"] },
+        { "n": 4, "description": "Output is written directly to docs/project/REPO_METRICS.json, committed like any other doc file, and later served verbatim by api/dashboard/content.ts.", "files": ["docs/project/REPO_METRICS.json", "api/dashboard/content.ts"] }
+      ],
+      "limitations": ["This cannot run inside the deployed Vercel function itself (no git binary at request time) -- it is an out-of-band, manually-triggered step, not part of the request path."]
+    },
+    {
+      "id": "flow.project-status-doc-parsing",
+      "name": "Project-Status Documentation Parsing",
+      "category": "internal-tooling",
+      "status": "real",
+      "summary": "How the hand-written PROJECT_STATUS.md/DECISION_LOG.md Markdown becomes the structured data the dashboard renders.",
+      "nodeIds": ["source.docs-project-status", "source.decision-log", "lib.dashboard-parse-markdown", "api.dashboard-content"],
+      "steps": [
+        { "n": 1, "description": "splitSections() splits each file on '\\n## ' headers into a title->body map.", "files": ["lib/dashboard/parseMarkdown.ts"] },
+        { "n": 2, "description": "extractFencedJson() pulls out ```json fenced blocks per section (Roadmap, Engineering Areas, Milestones, Timeline, Infrastructure) and JSON.parses them -- these are the only machine-readable parts of otherwise free-form Markdown.", "files": ["lib/dashboard/parseMarkdown.ts"] },
+        { "n": 3, "description": "parseProjectStatus() computes weightedCompletionPercent() from the Engineering Areas array (falling back to the Roadmap array if that section is absent) -- this is the ONLY place the overall completion percentage is computed; it is never hand-typed.", "files": ["lib/dashboard/parseMarkdown.ts"] },
+        { "n": 4, "description": "parseDecisionLog() splits on '\\n## DEC-', extracts each entry's fenced JSON, and sorts descending by ID.", "files": ["lib/dashboard/parseMarkdown.ts"] },
+        { "n": 5, "description": "Remaining prose sections (Executive Summary, Risks, Blockers, etc.) are rendered to HTML via `marked` and returned as *Html fields, unsanitized.", "files": ["lib/dashboard/parseMarkdown.ts"] }
+      ]
+    }
+  ],
+
+  "repository": {
+    "groups": [
+      { "id": "repo.native-frontend", "label": "Native frontend (approved homepage/nav)", "classification": "active-product-code", "description": "Home page, global Shell, native domain types/store/mock data.", "paths": ["src/pages/", "src/components/", "src/state/", "src/domain/", "src/data/", "src/App.tsx", "src/App.css", "src/index.css", "src/main.tsx"] },
+      { "id": "repo.merge-frontend", "label": "Merge frontend (Discover/Create/Portfolio/Manage/Detail)", "classification": "active-product-code", "description": "The bulk of real product functionality: Tailwind/shadcn-styled pages ported from a separate prototype, plus all real Solana client-integration code.", "paths": ["src/merge/"] },
+      { "id": "repo.internal-tools-frontend", "label": "Internal tooling frontends", "classification": "active-product-code", "description": "Two separate Vite entries, password-gated.", "paths": ["src/internal-status/", "src/internal-feedback/", "internal-status.html", "internal-feedback.html"] },
+      { "id": "repo.server-api", "label": "Server / API layer", "classification": "active-product-code", "description": "Vercel Functions: dashboard auth+content, DevNet faucet/sponsor/mint/swap-sign/landing-stats/rpc-proxy, plus the routing middleware gate.", "paths": ["api/", "lib/", "middleware.ts"] },
+      { "id": "repo.protocol", "label": "Solana protocol (Anchor program)", "classification": "protocol-code", "description": "The deployed ssr_protocol Rust program: instructions, state, errors, events.", "paths": ["programs/ssr_protocol/", "Anchor.toml", "Cargo.toml", "Cargo.lock"] },
+      { "id": "repo.sdk", "label": "TypeScript SDK", "classification": "protocol-code", "description": "@ssr/sdk workspace package: PDA derivation, calculations, discovery, instruction builders, fixtures -- consumed by both the frontend and the server API layer.", "paths": ["packages/sdk/"] },
+      { "id": "repo.devnet-fixtures", "label": "DevNet fixtures", "classification": "protocol-code", "description": "Persistent live-DevNet fixture registry and (gitignored) keypairs backing the 2 committed sample Reserves used throughout tests/scripts/UI defaults.", "paths": ["devnet-fixtures/"] },
+      { "id": "repo.scripts", "label": "Operational / verification scripts", "classification": "scripts", "description": "One-time setup scripts (mint creation, fixture provisioning) and ~18 live-DevNet verify_*.ts scripts that exercise real production code paths end-to-end since no browser-automation tool is available in this environment.", "paths": ["scripts/"] },
+      { "id": "repo.tests", "label": "Tests", "classification": "tests", "description": "tests/ssr_protocol.ts is the real Anchor/mocha/chai program integration suite (14/14 passing live on DevNet); tests/phase_*.ts are offline pure-logic unit tests for frontend/SDK helper functions, explicitly NOT DevNet integration tests.", "paths": ["tests/"] },
+      { "id": "repo.docs-project", "label": "Project status documentation", "classification": "documentation", "description": "Hand-maintained source-of-truth docs plus one generated JSON file, all served live by the internal dashboard.", "paths": ["docs/project/"] },
+      { "id": "repo.docs-protocol", "label": "Protocol documentation", "classification": "documentation", "description": "Architecture, account model, instruction reference, security invariants, test plan, DevNet runbook, frontend-integration notes, comparative analysis vs. Reserve Protocol's Folio.", "paths": ["docs/protocol/"] },
+      { "id": "repo.docs-journey-map", "label": "Journey map", "classification": "documentation", "description": "A single-file, third-party (Apache-2.0) customer-journey-mapping tool populated with this app's real routes/components/instructions; not built into or routed by the app itself.", "paths": ["docs/journey-map/"] },
+      { "id": "repo.docs-architecture", "label": "This architecture documentation", "classification": "documentation", "description": "The two files this task produced.", "paths": ["docs/architecture/"] },
+      { "id": "repo.generated", "label": "Generated / build output", "classification": "generated-assets", "description": "Build artifacts and Anchor-generated IDL/type files -- never hand-edit.", "paths": ["dist/", "target/idl/", "target/types/", "target/deploy/", "target/debug/", "target/release/", "target/sbpf-solana-solana/"] },
+      { "id": "repo.infra-config", "label": "Build / deploy configuration", "classification": "infrastructure", "description": "TypeScript project references, linting, Vite, Vercel, Anchor toolchain config.", "paths": ["package.json", "vite.config.ts", "vercel.json", "tsconfig*.json", ".oxlintrc.json", ".vercel/"] },
+      { "id": "repo.inactive-scaffolding", "label": "Inactive scaffolding / uncertain code", "classification": "inactive-or-legacy", "description": "Empty Anchor migrations scaffold (unused); README.md is unmodified generic Vite template boilerplate; target/idl also contains an IDL for a second, separate program (ssr_devnet_amm) not part of programs/ssr_protocol and whose resume-or-defer status is an open decision per PROJECT_STATUS.md.", "paths": ["migrations/", "README.md"] },
+      { "id": "repo.local-only-state", "label": "Local-only / gitignored state", "classification": "generated-assets", "description": "Never committed: node_modules, local validator ledger, build caches.", "paths": ["node_modules/", "test-ledger/", "*.tsbuildinfo"] }
+    ],
+    "notableFindings": [
+      "src/state/store.tsx and src/data/{assets,reserves,mock}.ts (native simulated system) are fully self-contained and currently unread by any routed page -- the app runs entirely on the merge system's real+hybrid data instead. This is 'inactive scaffolding' in effect, though not formally deprecated in docs.",
+      "src/merge/lib/seed-data.ts previously held a fictional demo Reserve catalog; that catalog was removed and only a logo-art pool remains -- a good example of legacy content being cleanly excised rather than left as dead code.",
+      "migrations/ is a truly empty directory -- not even Anchor's default deploy.ts scaffold is present.",
+      "target/idl contains an IDL for a second program, ssr_devnet_amm, that is not part of programs/ssr_protocol/ and is not otherwise documented in this pass -- its status (resume vs. defer) is listed as an open decision in PROJECT_STATUS.md."
+    ]
+  },
+
+  "environments": {
+    "local": {
+      "status": "real, partially working",
+      "description": "`npm run dev` runs the full frontend against DevNet. Rust/cargo-build-sbf toolchain builds locally (native Windows Rust 1.97.1 GNU + MinGW + MSVC Build Tools). solana-test-validator/anchor test cannot run on this machine without Windows Developer Mode enabled (symlink privilege error) -- an open, documented gap.",
+      "requiredEnv": ["DEVNET_SWAP_AUTHORITY_SECRET_KEY (for Buy/Sell/seeding/faucet endpoints locally)", "SSR_DASHBOARD_PASSWORD (for the internal dashboard)"],
+      "provenance": "manually-maintained (PROJECT_STATUS.md environment table)"
+    },
+    "claudeCodeWorkflow": {
+      "status": "real",
+      "description": "This repo's CLAUDE.md instructs any AI coding session to update PROJECT_STATUS.md and append to DECISION_LOG.md in the same session whenever meaningful progress, roadmap changes, blockers, or material decisions occur -- the internal dashboard is therefore expected to reflect same-session AI-assisted work, and REPO_METRICS.json's contributor list explicitly flags AI-assisted commits (Co-Authored-By: Claude trailer).",
+      "provenance": "confirmed from CLAUDE.md and scripts/generate-repo-metrics.ts"
+    },
+    "github": {
+      "status": "real",
+      "description": "Git-derived facts (commit count, contributors, branches, first/latest commit) are computed live by scripts/generate-repo-metrics.ts and written to REPO_METRICS.json -- these are the only environment facts in this document that are directly, automatically Git-derived rather than hand-maintained.",
+      "provenance": "git-derived (via scripts/generate-repo-metrics.ts)"
+    },
+    "branches": {
+      "status": "manually-maintained fact",
+      "description": "Current branch and latest commit hash are surfaced on the internal dashboard (Current Mission section) and linked to the remote's commit URL when repoMetrics.repository.remoteUrl is present.",
+      "provenance": "git-derived (branch/commit) combined with manually-maintained narrative (objective, blockers)"
+    },
+    "vercel": {
+      "status": "real",
+      "description": "A single linked Vercel project ('ssr-fun'). git.deploymentEnabled is FALSE in vercel.json -- pushing to GitHub does NOT trigger a deploy; deploys are manual (`vercel --prod` for production, implicit preview otherwise). Vercel Functions host api/dashboard/** and api/devnet/**; Vercel Routing Middleware hosts middleware.ts.",
+      "provenance": "confirmed from vercel.json and .vercel/project.json (git-derived config, manually-triggered deploys)"
+    },
+    "productionDomain": {
+      "status": "real",
+      "description": "Live production deployment at a custom domain (strategic-super-reserve.fun per the last recorded status update) plus the default *.vercel.app alias, serving the same DevNet-connected app -- there is no separate mainnet or staging protocol deployment; Production and DevNet share the identical on-chain program.",
+      "provenance": "manually-maintained (PROJECT_STATUS.md environment table), last confirmed 2026-07-31"
+    },
+    "solanaLocalValidation": {
+      "status": "not_started / blocked",
+      "description": "solana-test-validator and `anchor test` are currently non-functional on the development machine (Windows Developer Mode required for ledger symlinks) -- this is an open, tracked blocker, not a design choice; the project's own DEC-0034 favors localnet-by-default but cannot yet fully adopt it as a result.",
+      "provenance": "manually-maintained (PROJECT_STATUS.md blockers, docs/protocol/DEVNET_RUNBOOK.md)"
+    },
+    "solanaDevnet": {
+      "status": "real, live",
+      "description": "The sole live chain environment. Program ID 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW, deployed via a documented deployment signature, upgrade authority a single dev-controlled keypair (flagged for multisig migration before beta). Two persistent fixture Reserves (IDs 9, 10) plus organically-created real Reserves (including one abandoned stuck-in-AssetsInitializing fixture, ID 6, used to test that failure mode) live here.",
+      "provenance": "manually-maintained deployment record (docs/protocol/DEVNET_RUNBOOK.md) cross-checked against live on-chain reads"
+    },
+    "simulationMode": {
+      "status": "hybrid, terminology in transition",
+      "description": "The Shell UI still displays a 'Testing Environment'/'Solana DevNet' disclosure badge and the footer still describes the app as illustrative in places, but the underlying reality (per the four research passes behind this document) is that most core flows -- discovery, create, buy/sell, manage -- are genuinely wired to DevNet. The clearly-still-simulated elements are: the native src/state/store.tsx sandbox (unused by any route), useAppStore's local delegate CRUD/rebalance actions, DTRDetail's order book, and the fixed DevNet test-price table used for USD conversion.",
+      "provenance": "cross-referenced from src/components/Shell.tsx disclosure copy and the frontend research pass's real-vs-simulated table"
+    },
+    "internalStatusDashboard": {
+      "status": "real",
+      "description": "Password-gated (single shared secret), served from the same Vercel deployment, reading the same repo's Markdown/JSON docs at request time -- it is not a separate service or database.",
+      "provenance": "confirmed from api/dashboard/content.ts and middleware.ts"
+    },
+    "relationships": [
+      "Local dev -> manual `git push` -> GitHub (no auto-deploy)",
+      "GitHub state -> manually triggered `vercel --prod` / preview deploy -> Vercel project 'ssr-fun'",
+      "Vercel Functions (api/**) and the Vite-built SPA -> both read/write the SAME Solana DevNet program as local dev (no environment-specific program deployment)",
+      "Vercel Routing Middleware -> gates only /internal/status + /internal/feedback + their data endpoint -> everything else on Production is fully public",
+      "docs/project/*.md + REPO_METRICS.json (committed to Git) -> read live by api/dashboard/content.ts on every authenticated request -> rendered by the Internal Status Dashboard -- there is no database in this loop at all"
+    ]
+  },
+
+  "dataAndState": {
+    "originsSummary": "Data in this app comes from five genuinely distinct places, and conflating them is the most common way a future change could misrepresent what's real: (1) hardcoded mock/seed modules under src/data/** and src/merge/lib/seed-data.ts's old catalog (now removed), (2) Zustand-persisted localStorage state in useAppStore, (3) hand-written Markdown/JSON documentation files parsed server-side, (4) a script-generated JSON metrics file, and (5) live Solana DevNet account state read directly at request/render time.",
+    "categories": {
+      "mockedOrSeeded": {
+        "description": "Entirely fictional, hardcoded data with no chain or file backing.",
+        "sources": ["src/data/assets.ts (mock asset catalog, illustrative prices)", "src/data/reserves.ts (seeded fictional Reserves/holdings, deterministic random-walk NAV series)", "src/data/mock.ts (shared PRNG/series utilities)"],
+        "consumedBy": ["state.native-store only -- not read by any currently-routed page"]
+      },
+      "persistedClientSide": {
+        "description": "Zustand `persist` middleware writing to browser localStorage.",
+        "sources": ["src/merge/store/useAppStore.ts, key 'ssrfun-simulation', schema v5 with a v1->v5 migration"],
+        "notes": "Persists wallet/holdings/dtrs/profiles/discovery-status across page reloads; a partialize() strips in-flight transaction state before persisting so a refresh mid-transaction doesn't resurrect a stale 'submitting' UI."
+      },
+      "calculatedClientSide": {
+        "description": "Derived purely from other in-memory values, no I/O.",
+        "sources": ["packages/sdk/src/calculations.ts (mint/redeem/entitlement math, mulDivCeil/Floor)", "src/merge/lib/composition.ts / composition bar building", "src/merge/lib/reserveCardProps.ts (adapts native/merge shapes into one card prop shape)"]
+      },
+      "fetchedServerSide": {
+        "description": "Computed or read by a Vercel Function at request time.",
+        "sources": ["api/dashboard/content.ts (reads + parses Markdown/JSON docs fresh, no cache)", "api/devnet/landing-stats.ts (aggregates live chain reads, 60s in-memory cache)", "api/devnet/swap-sign.ts (re-derives PDAs and re-fetches live Reserve state before signing)"]
+      },
+      "fromMarkdown": {
+        "description": "Hand-authored prose plus embedded fenced-JSON blocks, parsed into structured data server-side.",
+        "sources": ["docs/project/PROJECT_STATUS.md", "docs/project/DECISION_LOG.md", "docs/project/ENGINEERING_TIMELINE.md"]
+      },
+      "fromGeneratedJson": {
+        "description": "Machine-produced by a script, committed like a doc, never hand-edited.",
+        "sources": ["docs/project/REPO_METRICS.json (via scripts/generate-repo-metrics.ts)", "packages/sdk/fixtures/devnet-fixtures.json (via devnet-fixtures/checkpoint.json)"]
+      },
+      "expectedFromSolana": {
+        "description": "Data whose authoritative value is always the live chain, fetched directly at read time -- never cached in a database.",
+        "sources": ["Every Reserve's composition/supply/vault balances/status (state.reserve, state.reserve-asset)", "Delegate permission bitmasks (state.delegate)", "Wallet SOL/token balances", "Protocol-wide config (state.protocol-config)"]
+      },
+      "currentlySimulated": {
+        "description": "Presented in the UI but with no chain or persisted-real-data backing.",
+        "sources": ["DTRDetail's SimulatedOrderBook (no on-chain order book exists)", "useAppStore's local delegate CRUD/rebalance actions (never submitted on-chain)", "TEST_ASSET_PRICES_USD / SOL_TEST_PRICE_USD fixed USD conversion table (no oracle exists on-chain)", "src/state/store.tsx's entire mint/redeem/rebalance/create-reserve action set (unused by any routed page)"]
+      }
+    }
+  },
+
+  "protocolArchitecture": {
+    "programId": "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW",
+    "cluster": "Solana DevNet (also registered for localnet in Anchor.toml, but localnet validator cannot run on the current dev machine)",
+    "framework": "Anchor 1.1.2",
+    "entryPoint": "programs/ssr_protocol/src/lib.rs (#[program] mod ssr_protocol)",
+    "instructionCount": 23,
+    "instructions": [
+      { "name": "initialize_protocol", "purpose": "Creates the singleton ProtocolConfig PDA; sets authority/caps/default fee destination.", "authority": "First-run signer becomes ProtocolConfig.authority (no prior-authority check possible)." },
+      { "name": "create_reserve", "purpose": "Creates a new Reserve PDA + its Reserve Token mint with an embedded fee config.", "authority": "Signer `manager` becomes Reserve.manager; requires ProtocolConfig.paused == false." },
+      { "name": "initialize_reserve_asset", "purpose": "Registers a ReserveAsset + its vault during pre-Active creation.", "authority": "has_one = manager. Validates Token-2022 extensions, rejecting TransferFeeConfig/TransferHook/PermanentDelegate/NonTransferable/ConfidentialTransferMint." },
+      { "name": "seed_reserve", "purpose": "First in-kind deposit; transitions Reserve to Active and mints initial Reserve Tokens.", "authority": "has_one = manager. Each asset's seed amount must be >= 1000 (MIN_SEED_AMOUNT_PER_ASSET)." },
+      { "name": "mint_reserve_tokens_in_kind", "purpose": "Permissionless proportional in-kind mint against live vault/supply ratio; charges mint fee split into pending manager/protocol shares.", "authority": "No delegate/manager gate -- any depositor, subject to caller-supplied slippage caps." },
+      { "name": "redeem_reserve_tokens_in_kind", "purpose": "Burns Reserve Tokens for a proportional net-of-fee payout.", "authority": "Owner of the redeemer's token account only. Deliberately allowed while Paused or in WindDown (never blocked by protocol-wide pause either)." },
+      { "name": "update_targets", "purpose": "Updates each ReserveAsset.target_weight_bps (intent only, no transfer).", "authority": "Manager or a delegate with UPDATE_TARGETS." },
+      { "name": "add_delegate", "purpose": "Creates a Delegate PDA with a permission bitmask.", "authority": "Restricted delegate: needs ADD_RESTRICTED_DELEGATE. Unrestricted delegate: root manager only." },
+      { "name": "update_delegate_permissions", "purpose": "Changes an existing delegate's permission bitmask.", "authority": "Same restricted/unrestricted branching as add_delegate." },
+      { "name": "remove_delegate", "purpose": "Closes a Delegate PDA.", "authority": "Same restricted/unrestricted branching (REMOVE_RESTRICTED_DELEGATE or root manager)." },
+      { "name": "transfer_reserve_manager", "purpose": "Reassigns Reserve.manager.", "authority": "Root-exclusive -- no delegate permission flag ever grants this." },
+      { "name": "pause_reserve", "purpose": "Active -> Paused.", "authority": "Manager or a delegate with PAUSE_RESERVE." },
+      { "name": "unpause_reserve", "purpose": "Paused -> Active.", "authority": "Manager or a delegate with UNPAUSE_RESERVE." },
+      { "name": "accrue_fees", "purpose": "Permissionless linear daily TVL-fee checkpoint into pending manager/protocol fee shares.", "authority": "None -- callable by anyone, no-op unless a full day has elapsed." },
+      { "name": "collect_fees", "purpose": "Mints pending fee shares to fixed, on-chain-validated destinations.", "authority": "Caller is permissionless (pays ATA rent only); destinations are hard-checked against Reserve.fee_config.fee_destination and ProtocolConfig.default_protocol_fee_destination." },
+      { "name": "record_rebalance", "purpose": "Audit-trail event only -- records caller-supplied before/after balances; does NOT execute any trade.", "authority": "Delegate/manager with EXECUTE_REBALANCE.", "limitation": "balances_before is caller-supplied and not independently verified on-chain -- a documented limitation." },
+      { "name": "update_metadata", "purpose": "Updates Reserve.metadata_uri.", "authority": "Manager or a delegate with UPDATE_METADATA." },
+      { "name": "update_protocol_config", "purpose": "Updates the protocol-wide default fee destination/bps.", "authority": "has_one = authority (protocol authority only)." },
+      { "name": "add_reserve_asset_active", "purpose": "Adds a new zero-balance ReserveAsset to an already-Active Reserve.", "authority": "Manager or a delegate with MANAGE_LIQUIDITY_CONFIG." },
+      { "name": "fund_new_reserve_asset", "purpose": "One-time manager-only bootstrap transfer into a zero-balance vault (no Reserve Tokens minted).", "authority": "has_one = manager, no delegate path." },
+      { "name": "remove_reserve_asset", "purpose": "Removes the last-registered, zero-balance ReserveAsset and closes its vault.", "authority": "Manager or a delegate with MANAGE_LIQUIDITY_CONFIG." },
+      { "name": "initiate_wind_down", "purpose": "Active -> WindDown (one-way). Mint authority deliberately left intact so collect_fees still works.", "authority": "has_one = manager, root-exclusive, no delegate path." },
+      { "name": "close_reserve", "purpose": "WindDown -> Closed; closes every ReserveAsset/vault account. Requires zero supply and zero vault balances.", "authority": "has_one = manager, root-exclusive, no delegate path." }
+    ],
+    "accounts": [
+      { "name": "ProtocolConfig", "kind": "singleton PDA", "seeds": "[\"protocol_config\"]", "fields": ["schema_version", "authority", "paused", "max_reserve_assets", "default_protocol_fee_bps", "default_protocol_fee_destination", "reserve_count", "bump"], "note": "Can pause protocol-wide creation/seeding/minting, but per its own code comment can never move a token out of any already-created Reserve's vaults." },
+      { "name": "Reserve", "kind": "per-basket PDA", "seeds": "[\"reserve\", reserve_id_le_bytes]", "fields": ["schema_version", "reserve_id", "manager", "reserve_token_mint", "status", "asset_count", "total_target_weight_bps", "created_at", "configured_at", "fee_config (embedded FeeConfig)", "metadata_uri", "delegate_count", "bump", "vault_authority_bump", "mint_authority_bump"], "statusEnum": ["Created", "AssetsInitializing", "Active", "Paused", "WindDown", "Closed"], "note": "This is the 'whole basket' account, using the pre-terminology-rename sense of 'Reserve' -- see project.terminology.onChainIdentifierException." },
+      { "name": "ReserveAsset", "kind": "per-constituent PDA + vault", "seeds": "config: [\"reserve_asset\", reserve, asset_mint]; vault: [\"reserve_vault\", reserve, asset_mint]", "fields": ["reserve", "asset_mint", "vault", "token_program (SplToken|Token2022)", "decimals", "target_weight_bps", "enabled", "order_index", "bump"] },
+      { "name": "Delegate", "kind": "per-(reserve,wallet) PDA", "seeds": "[\"delegate\", reserve, delegate_wallet]", "fields": ["reserve", "wallet", "permissions (u16 bitmask)", "restricted", "added_at", "bump"], "permissionFlags": ["UPDATE_METADATA", "UPDATE_TARGETS", "INITIATE_REBALANCE", "EXECUTE_REBALANCE", "MANAGE_FEES", "MANAGE_LIQUIDITY_CONFIG", "PAUSE_RESERVE", "UNPAUSE_RESERVE", "ADD_RESTRICTED_DELEGATE", "REMOVE_RESTRICTED_DELEGATE"], "note": "Bits 10-15 reserved and must be zero." },
+      { "name": "reserve_token_mint (unnamed struct, real SPL Mint)", "kind": "PDA-seeded SPL mint", "seeds": "[\"reserve_token_mint\", reserve]", "fields": ["standard SPL Mint fields; decimals fixed at 6; mint authority = mint_authority PDA; no freeze authority (DEC-0011)"] }
+    ],
+    "authoritiesAndAccessControl": {
+      "rootManagerOnlyInstructions": ["transfer_reserve_manager", "fund_new_reserve_asset", "initiate_wind_down", "close_reserve", "unrestricted delegate grant/revoke branch of add_delegate/update_delegate_permissions/remove_delegate"],
+      "delegatablePermissionFlags": ["UPDATE_METADATA", "UPDATE_TARGETS", "INITIATE_REBALANCE", "EXECUTE_REBALANCE", "MANAGE_FEES", "MANAGE_LIQUIDITY_CONFIG", "PAUSE_RESERVE", "UNPAUSE_RESERVE", "ADD_RESTRICTED_DELEGATE", "REMOVE_RESTRICTED_DELEGATE"],
+      "permissionlessInstructions": ["mint_reserve_tokens_in_kind (any depositor)", "redeem_reserve_tokens_in_kind (token-account owner only, no delegate gate)", "accrue_fees (anyone)", "collect_fees (anyone can trigger; destinations are hard-validated, not caller-supplied)"],
+      "protocolWidePause": "ProtocolConfig.paused gates ONLY create_reserve and seed_reserve/mint_reserve_tokens_in_kind. There is no dedicated pause/unpause-protocol instruction -- only per-Reserve pause/unpause exist as callable instructions.",
+      "reserveLevelPause": "Reserve.require_not_paused() gates update_targets/add_delegate/update_delegate_permissions. Reserve.require_redemption_allowed() (Active/Paused/WindDown all allowed) gates only redemption -- redemption is never blockable.",
+      "crossReserveIsolation": "Structural, not just a convention: every asset-leg helper (load_asset_legs, load_reserve_asset_configs, close_reserve's closing loop) re-derives the expected ReserveAsset/vault PDA from (reserve_key, asset_mint) and require_keys_eq!-checks it against the supplied account -- a substituted account from a different Reserve fails this check before any token transfer runs. Verified live by the 'cross-Reserve isolation' test in tests/ssr_protocol.ts, which the test suite's own comments call the single most important test in the file."
+    },
+    "tokenCustody": "Each ReserveAsset's vault is a standard SPL token account owned by a PDA-derived vault_authority (seeds: [\"vault_authority\", reserve]) -- no human keypair ever custodies vault funds directly; only the program itself can sign for vault authority via seeds.",
+    "mintRedeemMechanics": "Oracle-free, proportional, in-kind only. Mint: required per-asset deposit = ceil(tokensRequested * vaultBalanceBefore / totalSupplyBefore), fee charged in Reserve Tokens (ceil), depositor receives net shares, fee shares accrue as pending (not minted yet). Redeem: burns the full requested Reserve Token amount, payout computed net of redemption fee (fee-backing stays in vault, accretive to remaining holders).",
+    "managementControls": "update_targets (intent-only reweighting), add_reserve_asset_active / fund_new_reserve_asset / remove_reserve_asset (composition changes -- add/remove are permission-gated, funding is manager-only and one-time), record_rebalance (audit-log only, no trade execution on-chain).",
+    "pauseControls": "Per-Reserve pause_reserve/unpause_reserve (permission-gated); no protocol-wide pause instruction exists despite ProtocolConfig having a `paused` field checked elsewhere.",
+    "delegates": "Two-tier: 'unrestricted' delegates can only be granted/revoked by the root manager; 'restricted' delegates can be granted/revoked by anyone holding ADD_RESTRICTED_DELEGATE/REMOVE_RESTRICTED_DELEGATE (which unrestricted delegates may hold). Every permission is a single bit in a u16 mask, checked per-instruction via require_reserve_permission.",
+    "fees": "Per-Reserve FeeConfig: mint_fee_bps, redemption_fee_bps, annual_tvl_fee_bps (linear, not compounding, accrued daily via accrue_fees), manager_fee_share_bps/protocol_fee_share_bps splitting every fee event, fee_destination (manager-side) plus ProtocolConfig.default_protocol_fee_destination (protocol-side). All current bps values are documented as provisional DevNet placeholders (DEC-0013), not production-final economics.",
+    "sdkAndClient": {
+      "package": "@ssr/sdk (packages/sdk), workspace dependency of the root app (package.json `\"@ssr/sdk\": \"*\"`)",
+      "shape": "No single heavyweight client class -- SsrClient (client.ts) is a deliberately minimal v1 skeleton (one method, fetchReserveAssets, throws 'not implemented' by design). Real functionality is a set of free functions: pda.ts (address derivation mirroring the Rust seeds exactly), calculations.ts (pure BigInt mint/redeem/entitlement math), discovery.ts (enumerative on-chain discovery, never getProgramAccounts), readOnly.ts (account fetchers + KPI helpers), createReserveFlow.ts / managementInstructions.ts / zapInstructions.ts (instruction builders consumed directly by frontend lib files and by api/devnet/swap-sign.ts), fixtures.ts / devUsdc.ts (typed views over generated fixture JSON), hiddenReserves.ts (the abandoned/hidden Reserve address registry)."
+    },
+    "testCoverage": {
+      "programIntegrationTests": "tests/ssr_protocol.ts -- Anchor/mocha/chai, run live against DevNet via `npm run test:program`. 14/14 passing as of the last recorded run (2026-07-28, per docs/protocol/TEST_PLAN.md). Covers: protocol init idempotency and re-init rejection, a full two-asset Reserve lifecycle (create/register/seed/mint/redeem/pause/unpause), a delegate privilege-boundary check (a delegate scoped to only UPDATE_TARGETS cannot call pause_reserve), and the cross-Reserve vault-substitution isolation test.",
+      "offlineUnitTests": "tests/phase_*.ts (9 files) -- pure-logic mocha/chai tests over frontend (src/merge/lib/*) and SDK helper functions, explicitly documented as NOT hitting the network; the counterpart live-DevNet verification for each phase is a separate scripts/verify_*.ts run.",
+      "liveDevnetVerificationScripts": "scripts/verify_*.ts (~18 scripts) -- each calls real, unmodified production code paths against live DevNet using a disposable funded keypair, standing in for a real browser+wallet click-through that no browser-automation tool in this environment can currently perform. This is explicitly documented as the project's actual substitute for end-to-end browser testing.",
+      "knownGap": "No automated browser+wallet (e.g. Playwright+Phantom) end-to-end test exists; PROJECT_STATUS.md lists a real browser+Phantom click-through as never having been performed."
+    },
+    "devnetFixtures": {
+      "persistentFixtures": [
+        { "reserveId": 9, "address": "GFP9nJQyFWurTkJCEYYkBxjksUQUXLt9i3ZoUDncTy5C", "composition": "2-asset (mintX, mintY)", "status": "Active/seeded" },
+        { "reserveId": 10, "address": "H1U22fK3fMfsmz1WirJ4H63xBDcTEHgXjtSzw73tEfcJ", "composition": "3-asset (mintX, mintY, mintZ)", "status": "Active/seeded" },
+        { "reserveId": 6, "note": "A genuine abandoned Reserve stuck in AssetsInitializing -- kept deliberately as a real fixture demonstrating that failure mode, not deleted." }
+      ],
+      "fixtureWallets": ["manager-keypair.json (root manager)", "holderA-keypair.json / holderB-keypair.json (test holders, ~99,500 Reserve Tokens each recorded in checkpoint.json)", "delegatePause-keypair.json / delegateTargets-keypair.json (restricted delegates for testing specific permission flags)"],
+      "checkpointFile": "devnet-fixtures/checkpoint.json -- a resumable progress record (not just a static config) for the scripted fixture-provisioning run; feeds packages/sdk/fixtures/devnet-fixtures.json used by both the frontend and api/devnet/swap-sign.ts's allowlist.",
+      "gitStatus": ".gitignore lists devnet-fixtures/ under its Solana/Anchor section, yet checkpoint.json and the keypair files were present and readable in this working tree -- worth confirming whether they are actually tracked (force-added) or merely present locally; see risksAndGaps."
+    }
+  },
+
+  "risksAndGaps": [
+    { "id": "risk.single-upgrade-authority", "category": "security", "title": "Single dev-controlled program upgrade authority", "description": "The Anchor program's upgrade authority is one keypair (6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk), not a multisig. Documented as a required migration before any restricted beta (DEC-0015) but not yet done.", "affectedAreas": ["programs/ssr_protocol", "docs/protocol/DEVNET_RUNBOOK.md"] },
+    { "id": "risk.shared-devnet-authority-keypair", "category": "security", "title": "One DevNet authority keypair serves four distinct fund-touching roles", "description": "DEVNET_SWAP_AUTHORITY_SECRET_KEY is reused as the swap co-signer, devUSDC mint/freeze authority, SOL sponsor, and test-asset mint authority. Deliberate and documented (Phase B security model), but concentrates risk in one secret, and its SOL balance was recorded at only 0.2345 SOL against 4 duties at last status update.", "affectedAreas": ["api/devnet/_lib/authority.ts", "api/devnet/swap-sign.ts", "api/devnet/sponsor-sol.ts", "api/devnet/faucet-devusdc.ts", "api/devnet/mint-test-assets.ts"] },
+    { "id": "risk.asymmetric-cluster-verification", "category": "correctness", "title": "Inconsistent live-DevNet self-verification across fund-touching endpoints", "description": "faucet-devusdc.ts and sponsor-sol.ts call assertDevnetCluster (live genesis-hash check) before touching funds; swap-sign.ts and mint-test-assets.ts do not, despite both being documented as DevNet-only.", "affectedAreas": ["api/devnet/swap-sign.ts", "api/devnet/mint-test-assets.ts", "api/devnet/_lib/network.ts"] },
+    { "id": "risk.in-memory-rate-limiting", "category": "security", "title": "All rate limiting/cooldowns are in-memory, non-durable across serverless instances", "description": "Login lockout, faucet/sponsor cooldowns, and rpc-proxy throttling all use module-scope Maps that reset on cold start and are not shared across concurrent Vercel Fluid Compute instances. The project's real defense in every fund-touching case is a live on-chain balance ceiling or atomic program accounting, not these counters -- but this should not be mistaken for a durable rate limit.", "affectedAreas": ["api/dashboard/login.ts", "api/devnet/_lib/rateLimit.ts", "api/devnet/landing-stats.ts"] },
+    { "id": "risk.unsanitized-markdown-render", "category": "security", "title": "Dashboard renders maintainer Markdown to HTML with zero sanitization", "description": "lib/dashboard/parseMarkdown.ts pipes `marked` output straight into dangerouslySetInnerHTML. Safe only while docs/project/*.md remains maintainer-only content; would become an XSS vector the moment that trust assumption changes (e.g. accepting docs from external contributors).", "affectedAreas": ["lib/dashboard/parseMarkdown.ts", "src/internal-status/Dashboard.tsx"] },
+    { "id": "risk.non-revocable-session-cookie", "category": "security", "title": "Dashboard session cookie has no server-side revocation", "description": "The stateless HMAC-signed session cookie (12h TTL, signing key = the dashboard password itself) cannot be individually revoked; the only way to invalidate a leaked cookie is rotating the shared password, which also breaks login for everyone using the old password.", "affectedAreas": ["lib/dashboard/session.ts"] },
+    { "id": "risk.undocumented-env-vars", "category": "documentation-drift", "title": "HELIUS_RPC_URL and SOLANA_RPC_URL are read by server code but absent from .env.example", "description": "api/devnet/_lib/rpc.ts reads both directly; HELIUS_RPC_URL in particular determines whether getProgramAccounts-dependent features (landing-stats holder counts) work in production at all, yet neither variable is documented for a new contributor.", "affectedAreas": [".env.example", "api/devnet/_lib/rpc.ts"] },
+    { "id": "risk.simulated-order-book", "category": "simulated-functionality", "title": "Reserve detail page's order book is entirely client-generated", "description": "SimulatedOrderBook has no on-chain counterpart -- there is no real order book for any Reserve. Must not be presented to users or stakeholders as genuine market depth.", "affectedAreas": ["src/merge/pages/DTRDetail.tsx", "src/merge/lib/types.ts"] },
+    { "id": "risk.no-oracle-pricing", "category": "simulated-functionality", "title": "USD/NAV/AUM figures depend on a hardcoded DevNet test-price table, not an oracle", "description": "TEST_ASSET_PRICES_USD / SOL_TEST_PRICE_USD are fixed constants (e.g. SOL=$20). Vault balances themselves are real, but any USD-denominated figure derived from them is only as good as this static table -- there is no price oracle integration anywhere in the deployed program or SDK.", "affectedAreas": ["src/merge/lib/onChainReserve.ts", "packages/sdk/src/zapPricing.ts"] },
+    { "id": "risk.devusdc-conversion-gap", "category": "incomplete-integration", "title": "No real devUSDC-to-Reserve-Asset conversion instruction exists on-chain", "description": "api/devnet/swap-sign.ts explicitly rejects a 'buy-devusdc' request for any Reserve that isn't 100% devUSDC-backed, specifically to avoid the swap authority silently funding non-devUSDC legs for free -- a real integration gap, not a UI-only limitation, and unresolved as of the last decision log entry (DEC-0065).", "affectedAreas": ["api/devnet/swap-sign.ts", "docs/project/DECISION_LOG.md (DEC-0054, DEC-0065, DEC-0067)"] },
+    { "id": "risk.jupiter-swap-infeasible", "category": "incomplete-integration", "title": "Genuine on-chain 'redeem and swap' via Jupiter proven infeasible on DevNet", "description": "Phase E of the DevNet implementation plan concluded a real Jupiter-routed swap is not feasible on DevNet (DEC-0045); resolved into a deferred, separate experimental ssr_devnet_amm program (DEC-0051) whose resume-or-defer status is still an open decision.", "affectedAreas": ["docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md", "target/idl/ssr_devnet_amm.json"] },
+    { "id": "risk.unused-native-simulation-layer", "category": "duplication", "title": "The entire native src/state/store.tsx simulation system is unused by any routed page", "description": "Its mint/redeem/rebalance/create-reserve actions and src/data/{assets,reserves,mock}.ts seed data are fully self-contained, in-memory, and not read by Home or any Merge page -- yet still mounted app-wide (its toasts still render in Shell). Represents real duplication/dead-weight risk versus the real useAppStore.", "affectedAreas": ["src/state/store.tsx", "src/data/assets.ts", "src/data/reserves.ts", "src/data/mock.ts"] },
+    { "id": "risk.two-parallel-stores-and-toasts", "category": "duplication", "title": "Two global stores and two toast systems run simultaneously for the app's whole lifetime", "description": "Native useStore()/Shell's own toast tray coexist with merge useAppStore()/useToast()+Toaster, mounted at the same time in App.tsx. Increases the chance a future change updates the wrong store or toast system.", "affectedAreas": ["src/App.tsx", "src/state/store.tsx", "src/merge/store/useAppStore.ts", "src/components/Shell.tsx", "src/merge/hooks/use-toast.ts"] },
+    { "id": "risk.record-rebalance-unverified-input", "category": "correctness", "title": "record_rebalance trusts caller-supplied 'before' balances", "description": "The on-chain rebalance audit-trail instruction takes balances_before from the caller without independent on-chain verification; only balances_after is read live. Documented as a known limitation, not yet hardened.", "affectedAreas": ["programs/ssr_protocol/src/instructions/record_rebalance.rs"] },
+    { "id": "risk.no-real-trade-execution-onchain", "category": "incomplete-integration", "title": "No on-chain rebalance trade execution exists", "description": "record_rebalance only logs a before/after snapshot; there is no program instruction that itself executes a swap/trade as part of rebalancing a Reserve's composition. Any actual rebalancing trade happens off-chain/manually before the log entry is recorded.", "affectedAreas": ["programs/ssr_protocol/src/instructions/record_rebalance.rs", "docs/protocol/RESERVE_REFERENCE_ANALYSIS.md"] },
+    { "id": "risk.localnet-validator-blocked", "category": "environment-coupling", "title": "Local Solana validator testing is blocked on the current dev machine", "description": "solana-test-validator/anchor test fail with ERROR_PRIVILEGE_NOT_HELD (symlink creation needs Windows Developer Mode). All protocol testing currently happens against live DevNet instead of localnet, which is slower and consumes real (if free) DevNet resources/rate limits.", "affectedAreas": ["Anchor.toml", "docs/protocol/DEVNET_RUNBOOK.md", "test-ledger/"] },
+    { "id": "risk.manual-deployment-no-cicd", "category": "manual-deployment-steps", "title": "Both frontend and protocol deployment are entirely manual, with no CI/CD pipeline", "description": "vercel.json sets git.deploymentEnabled: false (pushes never auto-deploy); the Solana program is deployed/upgraded via manual `anchor build`/`solana program deploy` commands, recorded only in prose docs (DEVNET_RUNBOOK.md, DECISION_LOG.md), not in a pipeline config.", "affectedAreas": ["vercel.json", "docs/protocol/DEVNET_RUNBOOK.md"] },
+    { "id": "risk.no-browser-e2e-tests", "category": "missing-tests", "title": "No automated browser+wallet end-to-end test exists", "description": "A real browser+Phantom click-through has never been performed per PROJECT_STATUS.md; ~18 scripts/verify_*.ts scripts substitute for this using disposable keypairs and direct code calls, which validate the logic but not actual browser/extension interaction.", "affectedAreas": ["scripts/verify_*.ts", "docs/project/PROJECT_STATUS.md"] },
+    { "id": "risk.large-main-bundle", "category": "unresolved-architecture-decision", "title": "Main JS bundle exceeds 500kB", "description": "Flagged as a risk in PROJECT_STATUS.md; no code-splitting/lazy-loading strategy has been recorded as decided or implemented for the Merge pages.", "affectedAreas": ["vite.config.ts", "src/merge/pages/"] },
+    { "id": "risk.general-site-relies-on-obscurity", "category": "unclear-ownership", "title": "Broader testing site has no authentication, relying on obscurity by design (DEC-0004/0005)", "description": "Only /internal/status and /internal/feedback are password-gated; the rest of the app (including real fund-touching Buy/Sell/Create flows against a real deployed program) is fully public. This is a recorded, deliberate decision for this testing phase, not an oversight -- but PROJECT_STATUS.md lists whether to move to real auth as an open decision required before further stages.", "affectedAreas": ["middleware.ts", "docs/project/DECISION_LOG.md (DEC-0004, DEC-0005)"] },
+    { "id": "risk.devnet-fixtures-gitignore-mismatch", "category": "documentation-drift", "title": "devnet-fixtures/ is listed in .gitignore yet its files were present and readable in the working tree", "description": "Worth confirming whether checkpoint.json/keypair files under devnet-fixtures/ are actually tracked in Git (force-added, ignoring the rule) or merely present locally and not distributed with a fresh clone -- if the latter, a fresh clone would be missing files that scripts/tests/the SDK's fixtures.ts depend on.", "affectedAreas": [".gitignore", "devnet-fixtures/", "packages/sdk/src/fixtures.ts"] },
+    { "id": "risk.second-undocumented-program", "category": "unclear-ownership", "title": "A second program (ssr_devnet_amm) has a generated IDL but no corresponding source directory was found under programs/", "description": "target/idl/ssr_devnet_amm.json exists alongside ssr_protocol's IDL, referenced by the Jupiter-infeasibility decision (DEC-0051) as a deferred experimental AMM, but its resume-or-defer status and current source location are unresolved per PROJECT_STATUS.md's own 'Decisions Required' section.", "affectedAreas": ["target/idl/ssr_devnet_amm.json", "docs/project/PROJECT_STATUS.md"] },
+    { "id": "risk.tsconfig-test-script-mismatch", "category": "documentation-drift", "title": "Anchor.toml's test script and package.json's test:program script reference different tsconfig paths", "description": "Anchor.toml's [scripts] test references root ./tsconfig.json while package.json's test:program script (and the one actually documented as in use) references ./tests/tsconfig.json -- a real discrepancy between the two configs, not resolved during this pass.", "affectedAreas": ["Anchor.toml", "package.json", "tests/tsconfig.json", "tsconfig.json"] },
+    { "id": "risk.readme-generic-boilerplate", "category": "stale-documentation", "title": "Root README.md is unmodified generic Vite template boilerplate", "description": "Contains no project-specific information about SSR.fun at all -- a new contributor reading only README.md would learn nothing about this project; CLAUDE.md and docs/project/docs/protocol are the real onboarding sources.", "affectedAreas": ["README.md"] }
+  ]
+}
