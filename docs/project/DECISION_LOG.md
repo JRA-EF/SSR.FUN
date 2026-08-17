@@ -3044,3 +3044,42 @@
   ]
 }
 ```
+
+## DEC-0104
+
+```json
+{
+  "id": "DEC-0104",
+  "date": "2026-08-17",
+  "status": "confirmed",
+  "decision": "Created a preservation-only DevNet stable checkpoint of `main` at commit `f443346c26d8b99381cfb08274901e24c48d1a4e`: committed the only outstanding uncommitted work (pre-existing untracked files -- `.agents/skills/{neon,neon-postgres}/SKILL.md`, `.claude/skills/{neon,neon-postgres}/SKILL.md`, `docs/architecture/SSR_APP_ARCHITECTURE.{html,json}`, `docs/journey-map/{README.md,index.html}`, `skills-lock.json` -- none of it product code), ran and passed the full validation suite (typecheck, lint, offline tests, production build), pushed `main` to `origin/main`, then created and pushed both a backup branch `main-devnet-checkpoint-2026-08-17` and an annotated tag `main-devnet-checkpoint-2026-08-17`, both verified to point at the exact same commit as `main`. No product code (`src/`, `api/`, `programs/`, `packages/`), UI, protocol, IDL, deployment authority, or DevNet program state was touched or redeployed. Production (`https://strategic-super-reserve.fun`, deployment `dpl_6tEEB3UA5G1V7D2QeViK1AEiu4r7`, commit `6222eac67501cfe832ef3333204ab1fdf2c50fe5`) was left as-is per explicit user instruction after confirming the 2-commit gap between it and the checkpoint commit is docs/tooling-only (this checkpoint commit itself, plus the already-pushed prior commit `a0ef392` recording that same deployment in `PROJECT_STATUS.md`) -- no redeploy performed.",
+  "context": "User-requested DevNet stable checkpoint: 'the entire current system is working extremely well and must be preserved exactly before making further changes,' explicitly preservation-only (no fixes, no UI/protocol/IDL/config/deployment-authority/DevNet-state changes, no program redeploy, no new program ID, no Reserve changes), requiring inspection of branch/working-tree/remote/production state, preservation of every uncommitted change, a full validation suite, a secrets/generated-file/unrelated-change diff review, a non-destructive commit+push to `main`, and a backup branch + annotated tag both pinned to the exact verified commit -- plus confirmation of whether production already matches that commit.",
+  "rationale": "Committing the untracked files was necessary to satisfy 'preserve every current relevant change; do not discard, overwrite, or omit uncommitted work' -- all of it was reviewed line-by-line (grepped for private-key/API-key/seed-phrase/token patterns; none found) and confirmed to be documentation/tooling (Neon skill references, architecture/journey-map docs, a skills lockfile), not product code, so it did not conflict with the 'do not modify product code' constraint. Using explicit `refs/heads/...:refs/heads/...` and `refs/tags/...:refs/tags/...` push refspecs (rather than a bare branch/tag name) avoided the local ambiguity between the same-named branch and tag and guaranteed each landed on the intended remote ref. Skipping the production redeploy followed the user's explicit instruction after they judged the 2-commit, docs-only gap between the checkpoint commit and the already-live deployment as not warranting a new deploy -- consistent with the task's own 'if production already runs the same commit, do not create a needless code change' guidance, applied to a diff that carries no product-code delta.",
+  "alternativesConsidered": [
+    "Redeploy `f443346` to Vercel production via `vercel --prod` so the live deployment's `githubCommitSha` literally matches the checkpoint commit -- rejected per explicit user instruction ('it's already the one deployed... skip this part'), given the only delta versus the currently-live commit is two docs-only commits with zero product-code diff.",
+    "Leave the untracked documentation/skill files uncommitted and tag only the pre-existing tip (`a0ef392`) -- rejected: the task explicitly required preserving all outstanding uncommitted work, and those files were genuine, reviewed, secret-free repo content, not scratch/generated output."
+  ],
+  "impact": "New backup branch `main-devnet-checkpoint-2026-08-17` and annotated tag `main-devnet-checkpoint-2026-08-17`, both at `f443346c26d8b99381cfb08274901e24c48d1a4e`, now exist on `origin` alongside `main` at the same commit -- a clean, independently restorable snapshot of this stable DevNet state. No functional/runtime impact: no product code, UI, protocol, IDL, deployment authority, or DevNet program/Reserve state changed.",
+  "affectedAreas": [
+    ".agents/skills/neon/SKILL.md",
+    ".agents/skills/neon-postgres/SKILL.md",
+    ".claude/skills/neon/SKILL.md",
+    ".claude/skills/neon-postgres/SKILL.md",
+    "docs/architecture/SSR_APP_ARCHITECTURE.html",
+    "docs/architecture/SSR_APP_ARCHITECTURE.json",
+    "docs/journey-map/README.md",
+    "docs/journey-map/index.html",
+    "skills-lock.json",
+    "docs/project/PROJECT_STATUS.md",
+    "docs/project/DECISION_LOG.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Validation suite, all clean against commit `f443346`: `npx tsc -b` (0 errors), `npx oxlint` (exit 0, only pre-existing warnings), `npx ts-mocha -p ./tests/tsconfig.json -t 60000 tests/phase_*.ts` (516/516 passing -- the on-chain `tests/ssr_protocol.ts` Anchor integration suite was not run, as it requires a local `solana-test-validator`, already documented as non-functional on this Windows machine per DEC-0034), `npm run build` (SDK build + `tsc -b` + `vite build` all succeeded, `dist/` produced).",
+    "Git verification: `git ls-remote origin main refs/heads/main-devnet-checkpoint-2026-08-17 refs/tags/main-devnet-checkpoint-2026-08-17 refs/tags/main-devnet-checkpoint-2026-08-17^{}` -- all three resolve to commit `f443346c26d8b99381cfb08274901e24c48d1a4e`.",
+    "Secrets scan: `grep -rIlE` for private-key/AWS-key/OpenAI-style-key/Slack-token patterns across every newly-committed file found zero matches; `.env*`, `.vercel`, keypair files remain gitignored and were never staged.",
+    "Vercel `list_deployments`/`get_project` (project `prj_cbTf3idEypjW1ccQA90NEEVbUUxQ`) confirmed the live production deployment is `dpl_6tEEB3UA5G1V7D2QeViK1AEiu4r7`, commit `6222eac67501cfe832ef3333204ab1fdf2c50fe5`, target `production`, state `READY` -- matching `PROJECT_STATUS.md`'s existing 2026-08-14 deployment record exactly."
+  ]
+}
+```
