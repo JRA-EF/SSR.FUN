@@ -57,13 +57,27 @@ pub struct MintReserveTokensInKind<'info> {
     /// Protocol fees never accrue as a pending/claimable balance for mint
     /// events anymore. `depositor` fronts this ATA's rent if it doesn't
     /// exist yet, same as its own `depositor_reserve_token_account` above.
+    ///
+    /// Option (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
+    /// when `protocol_fee_destination` IS the depositor's own wallet, this
+    /// account's associated_token derivation would resolve to the exact
+    /// same address as `depositor_reserve_token_account` above -- two
+    /// separate mutable `Account<'info, TokenAccount>` slots resolving to
+    /// one underlying account, which Anchor's own
+    /// ConstraintDuplicateMutableAccount safety check rejects unconditionally
+    /// (the same failure mode confirmed live for seed_reserve, DevNet error
+    /// 2040). The client detects this ahead of time and passes this
+    /// program's own ID as the explicit "None" sentinel instead -- see
+    /// seed_reserve.rs's identical treatment. The handler verifies the
+    /// omission actually matches reality rather than trusting it blindly
+    /// (SsrError::ProtocolFeeDestinationTokenAccountRequired).
     #[account(
         init_if_needed,
         payer = depositor,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = protocol_fee_destination,
     )]
-    pub protocol_fee_destination_token_account: Account<'info, SplTokenAccount>,
+    pub protocol_fee_destination_token_account: Option<Account<'info, SplTokenAccount>>,
     /// CHECK: only used as the associated-token-account authority above;
     /// must equal `protocol_config.default_protocol_fee_destination`,
     /// checked in the handler.
@@ -129,6 +143,20 @@ pub fn handler<'info>(
             .default_protocol_fee_destination,
         SsrError::InvalidFeeShareSplit
     );
+    // See the doc comment on `protocol_fee_destination_token_account` above:
+    // an omitted account is only ever valid when the Protocol fee-destination
+    // wallet genuinely IS the depositor's own -- verified here, never trusted
+    // blindly, so a caller can never dodge paying the Protocol's genuine fee
+    // share by mis-omitting this account for some OTHER wallet.
+    let collapse_protocol_fee_into_depositor =
+        ctx.accounts.protocol_fee_destination_token_account.is_none();
+    if collapse_protocol_fee_into_depositor {
+        require_keys_eq!(
+            ctx.accounts.protocol_fee_destination.key(),
+            ctx.accounts.depositor.key(),
+            SsrError::ProtocolFeeDestinationTokenAccountRequired
+        );
+    }
 
     // Snapshot supply/balances BEFORE any transfer -- the entire mint
     // requirement is computed on the pre-transaction ratio, matching the
@@ -246,34 +274,68 @@ pub fn handler<'info>(
     // share directly to its treasury ATA in this SAME transaction -- never
     // accrued as pending/claimable for a mint event. See
     // docs/project/DECISION_LOG.md's entry for this pass.
-    if protocol_fee_shares > 0 {
-        let protocol_cpi_accounts = MintTo {
+    //
+    // 2026-08-17 pass: when the Protocol fee-destination wallet IS the
+    // depositor's own (collapse_protocol_fee_into_depositor, checked above),
+    // a SEPARATE mint CPI into protocol_fee_destination_token_account isn't
+    // possible -- that account was omitted precisely because it would
+    // resolve to the exact same ATA as depositor_reserve_token_account. The
+    // Protocol's share is not dropped or redirected: it's minted in the
+    // SAME single CPI as the depositor's own net share, to that one shared
+    // account, preserving the exact combined total.
+    if collapse_protocol_fee_into_depositor {
+        let combined_amount = protocol_fee_shares
+            .checked_add(net_shares_out)
+            .ok_or(error!(SsrError::MathOverflow))?;
+        let cpi_accounts = MintTo {
             mint: ctx.accounts.reserve_token_mint.to_account_info(),
             to: ctx
                 .accounts
-                .protocol_fee_destination_token_account
+                .depositor_reserve_token_account
                 .to_account_info(),
             authority: ctx.accounts.mint_authority.to_account_info(),
         };
-        let protocol_cpi_ctx = CpiContext::new_with_signer(
+        let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.key(),
-            protocol_cpi_accounts,
+            cpi_accounts,
             signer_seeds,
         );
-        token::mint_to(protocol_cpi_ctx, protocol_fee_shares)?;
-    }
+        token::mint_to(cpi_ctx, combined_amount)?;
+    } else {
+        if protocol_fee_shares > 0 {
+            let protocol_fee_destination_token_account = ctx
+                .accounts
+                .protocol_fee_destination_token_account
+                .as_ref()
+                .ok_or(error!(SsrError::ProtocolFeeDestinationTokenAccountRequired))?;
+            let protocol_cpi_accounts = MintTo {
+                mint: ctx.accounts.reserve_token_mint.to_account_info(),
+                to: protocol_fee_destination_token_account.to_account_info(),
+                authority: ctx.accounts.mint_authority.to_account_info(),
+            };
+            let protocol_cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.key(),
+                protocol_cpi_accounts,
+                signer_seeds,
+            );
+            token::mint_to(protocol_cpi_ctx, protocol_fee_shares)?;
+        }
 
-    let cpi_accounts = MintTo {
-        mint: ctx.accounts.reserve_token_mint.to_account_info(),
-        to: ctx
-            .accounts
-            .depositor_reserve_token_account
-            .to_account_info(),
-        authority: ctx.accounts.mint_authority.to_account_info(),
-    };
-    let cpi_ctx =
-        CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
-    token::mint_to(cpi_ctx, net_shares_out)?;
+        let cpi_accounts = MintTo {
+            mint: ctx.accounts.reserve_token_mint.to_account_info(),
+            to: ctx
+                .accounts
+                .depositor_reserve_token_account
+                .to_account_info(),
+            authority: ctx.accounts.mint_authority.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.key(),
+            cpi_accounts,
+            signer_seeds,
+        );
+        token::mint_to(cpi_ctx, net_shares_out)?;
+    }
 
     let now = Clock::get()?.unix_timestamp;
     emit!(ReserveTokensMinted {

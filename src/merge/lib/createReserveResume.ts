@@ -16,6 +16,24 @@
 // reserve_id, since ProtocolConfig.reserve_count had already incremented).
 // This module is what makes "read on-chain state, resume from the first
 // incomplete step, never touch what's already done" possible.
+//
+// 2026-08-17 pass (see docs/project/DECISION_LOG.md): a SECOND reported
+// failure class -- Step 2/2 seeding repeatedly failing with a DETERMINISTIC
+// on-chain validation error (ConstraintDuplicateMutableAccount / Custom
+// 2040, root-caused to seed_reserve.rs's protocol_fee_destination_token_account
+// colliding with the manager's own ATA -- see pda.ts's
+// resolveProtocolFeeDestinationTokenAccount and the program-side fix in
+// seed_reserve.rs/mint_reserve_tokens_in_kind.rs) -- kept presenting "Resume
+// Deployment" as if a plain retry might succeed, silently resubmitting the
+// exact same doomed transaction every click. classifyCreateReserveError
+// below is what makes "never repeatedly retry a deterministic failure"
+// possible: it distinguishes a transient/retryable condition (RPC rate
+// limiting, network hiccups, an ambiguous-but-possibly-landed confirmation)
+// from a deterministic one (an Anchor account-constraint violation or an
+// ssr_protocol custom error) that will fail identically on every retry until
+// the underlying configuration or program issue is actually fixed.
+import { extractCustomErrorCode, describeOnChainError, decodeAnchorFrameworkError, decodeSsrProtocolError } from "@ssr/sdk";
+import { isRateLimitError, AmbiguousConfirmationError } from "./rpcResilience";
 
 /** Mirrors the on-chain `ReserveStatus` enum's camelCase Anchor/Borsh JSON encoding (see packages/sdk/src/readOnly.ts's fetchReserveOnChain, which derives this the same way). */
 export type ReserveOnChainStatus = "created" | "assetsInitializing" | "active" | "paused" | "windDown" | "closed";
@@ -89,3 +107,57 @@ export function isWalletRejectionError(e: unknown): boolean {
   const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
   return msg.includes("user rejected") || msg.includes("rejected the request") || msg.includes("user declined") || msg.includes("transaction cancelled") || msg.includes("approval denied");
 }
+
+/**
+ * How CreateDTR.tsx's Resume panel should treat a failure, so a Reserve
+ * stuck on a genuinely deterministic on-chain condition (e.g. the manager
+ * wallet colliding with the Protocol fee-destination wallet -- see
+ * isFeeDestinationCollisionError below) is never presented with a plain
+ * "Resume Deployment" retry button that will just resubmit the identical
+ * doomed transaction forever.
+ */
+export type CreateReserveErrorClass =
+  /** The wallet popup was closed/declined -- nothing was ever submitted. Always safe to retry immediately, whenever the user is ready. */
+  | "wallet-rejected"
+  /** A transaction WAS submitted but its outcome couldn't be confirmed within the polling window -- it may still land. The caller must re-read on-chain state (never blindly resubmit) before deciding what, if anything, still needs to happen. */
+  | "ambiguous"
+  /** RPC rate-limiting or a similar transient network condition -- the identical request is expected to succeed on a later attempt with no other change needed. */
+  | "retryable"
+  /** A real Anchor account-constraint violation or ssr_protocol custom error -- the exact same transaction will fail identically every time until the underlying configuration/program issue is fixed. Never auto-retry; show the decoded reason and block further submission attempts. */
+  | "deterministic";
+
+/**
+ * Classifies an error from any step of createReserveOnChain/
+ * resumeReserveDeploymentOnChain into one of CreateReserveErrorClass's four
+ * buckets, purely from the error's own shape/message -- never guesses, never
+ * defaults to "retryable" for an error it can't positively identify as
+ * transient (an unrecognized error is treated as deterministic, the safer
+ * failure mode: it stops a blind retry loop rather than risking one).
+ */
+export function classifyCreateReserveError(e: unknown): CreateReserveErrorClass {
+  if (isWalletRejectionError(e)) return "wallet-rejected";
+  if (e instanceof AmbiguousConfirmationError) return "ambiguous";
+  if (isRateLimitError(e)) return "retryable";
+  if (extractCustomErrorCode(e) !== null) return "deterministic";
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  if (msg.includes("failed to fetch") || msg.includes("network error") || msg.includes("timed out") || msg.includes("timeout")) return "retryable";
+  return "deterministic";
+}
+
+/**
+ * True specifically for the manager/protocol (or depositor/protocol)
+ * fee-destination-wallet collision -- Anchor's own ConstraintDuplicateMutableAccount
+ * (framework error 2040) or ssr_protocol's own defense-in-depth
+ * ProtocolFeeDestinationTokenAccountRequired (custom error 6055, see
+ * errors.rs) -- so the UI can show the specific, actionable explanation
+ * (docs/project/DECISION_LOG.md's 2026-08-17 entry) instead of a generic
+ * "deterministic failure" message.
+ */
+export function isFeeDestinationCollisionError(e: unknown): boolean {
+  const code = extractCustomErrorCode(e);
+  if (code === null) return false;
+  return code === 2040 || decodeSsrProtocolError(code)?.name === "ProtocolFeeDestinationTokenAccountRequired";
+}
+
+/** Re-exported so callers needing the fully-decoded, human-readable message never need a second import path for it. */
+export { describeOnChainError, decodeAnchorFrameworkError };

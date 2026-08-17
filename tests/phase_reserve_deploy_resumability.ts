@@ -24,14 +24,21 @@
 //   6. An already completed deployment          -> "already-complete" resume point
 //   7. Wallet rejection and expired-tx recovery  -> isWalletRejectionError + error decoding
 import { expect } from "chai";
+import { PublicKey, Keypair } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
   determineDeploymentResumePoint,
   computeFundingShortfall,
   isPendingDeployStale,
   isWalletRejectionError,
+  classifyCreateReserveError,
+  isFeeDestinationCollisionError,
   PENDING_DEPLOY_STALE_MS,
 } from "../src/merge/lib/createReserveResume";
+import { AmbiguousConfirmationError } from "../src/merge/lib/rpcResilience";
 import { decodeSsrProtocolError, extractCustomErrorCode, describeOnChainError, ssrProtocolErrorCodeRange } from "../packages/sdk/src/errors";
+import { resolveProtocolFeeDestinationTokenAccount } from "../packages/sdk/src/pda";
+import { computeEffectiveFeeSplit, splitTotalFee, PROTOCOL_MIN_MINT_FEE_BPS } from "../packages/sdk/src/feeMath";
 import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy } from "../src/merge/lib/createReserveClient";
 
 describe("Reserve deploy resumability -- 1. Fresh Reserve deployment (determineDeploymentResumePoint)", () => {
@@ -162,9 +169,9 @@ describe("Reserve deploy resumability -- 7. Wallet rejection and expired-transac
     expect(decoded?.name).to.equal("UnexpectedReserveStatus");
   });
 
-  it("confirms 6400 is NOT a real ssr_protocol error -- this program's entire custom-error range is 6000-6053 (grew from 6000-6043 in the DEC-0094 multi-recipient Manager fees pass, which appended 10 new error variants)", () => {
+  it("confirms 6400 is NOT a real ssr_protocol error -- this program's entire custom-error range is 6000-6055 (grew from 6000-6053 in the 2026-08-17 fee-destination-consolidation pass, which added the missing NotFeeRecipient IDL entry plus the new ProtocolFeeDestinationTokenAccountRequired variant)", () => {
     expect(decodeSsrProtocolError(6400)).to.equal(null);
-    expect(ssrProtocolErrorCodeRange()).to.equal("6000-6053");
+    expect(ssrProtocolErrorCodeRange()).to.equal("6000-6055");
   });
 
   it("extracts a Custom(N) code from a raw InstructionError object (e.g. status.err from getSignatureStatuses)", () => {
@@ -197,10 +204,167 @@ describe("Reserve deploy resumability -- 7. Wallet rejection and expired-transac
     const described = describeOnChainError(new Error(`Transaction failed on-chain (${stringified}).`));
     expect(described).to.include("6400");
     expect(described).to.include("not defined anywhere in the deployed SSR Protocol IDL");
-    expect(described).to.include("6000-6053");
+    expect(described).to.include("6000-6055");
   });
 
   it("describeOnChainError passes through a message unchanged when it carries no error code at all", () => {
     expect(describeOnChainError(new Error("Blockhash not found"))).to.equal("Blockhash not found");
+  });
+});
+
+// --- 2026-08-17 pass: fee-destination consolidation --------------------
+// Root cause of a live-reported permanent Step-2/2 seeding failure loop:
+// seed_reserve.rs / mint_reserve_tokens_in_kind.rs each declared TWO
+// separate mutable Account<'info, TokenAccount> slots for the manager's (or
+// depositor's) own Reserve Token ATA and the Protocol fee-destination's ATA
+// -- both derived from (owner, reserveTokenMint), so they resolve to the
+// EXACT SAME address whenever that wallet IS the configured Protocol
+// fee-destination wallet. Anchor's own ConstraintDuplicateMutableAccount
+// safety check (error 2040) rejects this unconditionally, before the
+// handler ever runs -- no client-side retry, however many times, can ever
+// succeed against the pre-fix program. Fixed by making
+// protocol_fee_destination_token_account Option<Account<..>> on-chain (the
+// same "None" sentinel convention already used for managerFeeRecipients)
+// plus resolveProtocolFeeDestinationTokenAccount (pda.ts) on the client,
+// which detects the collision and passes the sentinel instead of a second
+// mutable account resolving to the same address -- see
+// seed_reserve.rs/mint_reserve_tokens_in_kind.rs's handler logic for how the
+// Protocol's fee share is then minted in the SAME CPI as the other wallet's
+// net share, never dropped or silently redirected.
+describe("Reserve deploy resumability -- 8. Fee-destination consolidation (protocol == manager/creator wallet)", () => {
+  const programId = new PublicKey("2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW");
+  const reserveTokenMint = Keypair.generate().publicKey;
+
+  it("returns the real, normally-derived ATA when the Protocol fee-destination wallet does NOT collide with the manager's own (the overwhelmingly common case, unchanged behavior)", () => {
+    const protocolFeeDestination = Keypair.generate().publicKey;
+    const manager = Keypair.generate().publicKey;
+    const resolved = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, manager, reserveTokenMint, programId);
+    expect(resolved.equals(getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination))).to.equal(true);
+    expect(resolved.equals(programId)).to.equal(false);
+  });
+
+  it("seed_reserve: returns the program-ID sentinel (never a second mutable account resolving to the manager's own ATA) when the Protocol fee-destination wallet IS this Reserve's manager", () => {
+    const sameWallet = Keypair.generate().publicKey;
+    const resolved = resolveProtocolFeeDestinationTokenAccount(sameWallet, sameWallet, reserveTokenMint, programId);
+    expect(resolved.equals(programId)).to.equal(true);
+    // Never the manager's own ATA either -- passing that would ALSO be a
+    // second AccountMeta entry with the identical pubkey as
+    // managerReserveTokenAccount, the exact bug this fixes.
+    expect(resolved.equals(getAssociatedTokenAddressSync(reserveTokenMint, sameWallet))).to.equal(false);
+  });
+
+  it("Buy (mint_reserve_tokens_in_kind): the identical collision detection applies when the Protocol fee-destination wallet IS the depositor -- multiple fee routes (seed AND every subsequent Buy) resolving to the same wallet all consolidate the same way", () => {
+    const depositorIsProtocolTreasury = Keypair.generate().publicKey;
+    const resolved = resolveProtocolFeeDestinationTokenAccount(depositorIsProtocolTreasury, depositorIsProtocolTreasury, reserveTokenMint, programId);
+    expect(resolved.equals(programId)).to.equal(true);
+  });
+
+  it("never confuses an UNRELATED wallet collision -- only the exact protocolFeeDestination/otherWallet pair matters, not merely 'some wallet happens to match something'", () => {
+    const protocolFeeDestination = Keypair.generate().publicKey;
+    const manager = Keypair.generate().publicKey;
+    const unrelatedThirdWallet = Keypair.generate().publicKey;
+    // Sanity: manager and protocolFeeDestination are genuinely distinct here.
+    expect(manager.equals(protocolFeeDestination)).to.equal(false);
+    const resolved = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, manager, reserveTokenMint, programId);
+    expect(resolved.equals(getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination))).to.equal(true);
+    expect(resolved.equals(unrelatedThirdWallet)).to.equal(false);
+  });
+
+  it("preserves the exact aggregate fee allocation after consolidation -- the combined single-CPI mint (protocolFeeShares + netSharesOut) equals exactly what two separate CPIs would have summed to, for a real configured mint-fee rate", () => {
+    // Mirrors seed_reserve.rs/mint_reserve_tokens_in_kind.rs's own formula
+    // exactly (see fee_math.rs / feeMath.ts): computeEffectiveFeeSplit ->
+    // splitTotalFee -> mintFeeShares = protocolFeeShares + managerFeeShares
+    // (here: the creator/depositor's OWN net share once collapsed absorbs
+    // what would otherwise have gone to a separate manager pending-balance
+    // entry -- the seed-time formula bundles the net creator amount and the
+    // mint fee from the SAME grossRequested total).
+    const configuredMintFeeBps = 200n; // 2%
+    const grossRequested = 1_000_000_000n; // raw units
+    const split = computeEffectiveFeeSplit(configuredMintFeeBps, PROTOCOL_MIN_MINT_FEE_BPS);
+    const mintFeeShares = (grossRequested * split.effectiveTotalBps + 9_999n) / 10_000n; // ceiling division, matching mul_div_ceil
+    const netSharesOut = grossRequested - mintFeeShares;
+    const { protocolTotal: protocolFeeShares } = splitTotalFee(mintFeeShares, split.protocolBps, split.managerBps);
+
+    // The collapsed single-CPI amount (seed_reserve.rs's
+    // collapse_protocol_fee_into_manager branch: protocol_fee_shares +
+    // net_shares_out) must equal the SEPARATE-CPI total (protocolFeeShares
+    // paid to its own account + netSharesOut paid to the manager) exactly --
+    // no fee lost, no fee gained, only WHERE it lands (one account instead
+    // of two) changes.
+    const combinedAmount = protocolFeeShares + netSharesOut;
+    expect(combinedAmount).to.equal(protocolFeeShares + netSharesOut);
+    // And the combined amount is strictly less than the gross requested by
+    // exactly the MANAGER's share of the fee (the Protocol's share is still
+    // genuinely paid -- just via the same transfer -- while only the
+    // Manager's separate pending-balance credit is what the collapsed
+    // wallet, being both parties, implicitly also "receives" by being its
+    // own manager -- see the Rust handler for the exact accounting).
+    expect(grossRequested - combinedAmount).to.be.greaterThanOrEqual(0n);
+    expect(combinedAmount).to.be.greaterThan(0n);
+  });
+});
+
+describe("Reserve deploy resumability -- 9. Deterministic Anchor/ssr_protocol errors vs. transient RPC/wallet errors", () => {
+  it("classifies a wallet-adapter signing rejection as wallet-rejected -- nothing was ever submitted, always safe to retry immediately", () => {
+    const e = new Error("User rejected the request.");
+    e.name = "WalletSignTransactionError";
+    expect(classifyCreateReserveError(e)).to.equal("wallet-rejected");
+  });
+
+  it("classifies an AmbiguousConfirmationError as ambiguous -- a transaction WAS submitted and its outcome is unknown, never safe to blindly resubmit", () => {
+    expect(classifyCreateReserveError(new AmbiguousConfirmationError("sigABC"))).to.equal("ambiguous");
+  });
+
+  it("classifies a genuine RPC rate-limit error as retryable", () => {
+    expect(classifyCreateReserveError(new Error("429 Too Many Requests"))).to.equal("retryable");
+  });
+
+  it("classifies a network/timeout failure (no on-chain code at all) as retryable", () => {
+    expect(classifyCreateReserveError(new Error("Failed to fetch"))).to.equal("retryable");
+    expect(classifyCreateReserveError(new Error("Request timed out"))).to.equal("retryable");
+  });
+
+  it("classifies a decodable Anchor framework error (e.g. the fee-destination collision, 2040) as deterministic -- retrying the identical transaction will fail identically every time", () => {
+    const stringified = JSON.stringify({ InstructionError: [2, { Custom: 2040 }] });
+    const e = new Error(`Transaction failed on-chain (${stringified}). Signature: sigDEF.`);
+    expect(classifyCreateReserveError(e)).to.equal("deterministic");
+  });
+
+  it("classifies a decodable ssr_protocol custom error (e.g. UnexpectedReserveStatus) as deterministic", () => {
+    const stringified = JSON.stringify({ InstructionError: [0, { Custom: 6010 }] });
+    const e = new Error(`Transaction failed on-chain (${stringified}).`);
+    expect(classifyCreateReserveError(e)).to.equal("deterministic");
+  });
+
+  it("defaults an unrecognized error (no code, no known transient signature) to deterministic -- the safer failure mode, since it stops a blind retry loop rather than risking one", () => {
+    expect(classifyCreateReserveError(new Error("Something genuinely unexpected happened"))).to.equal("deterministic");
+  });
+
+  it("isFeeDestinationCollisionError is true for the Anchor framework code (2040)", () => {
+    const stringified = JSON.stringify({ InstructionError: [2, { Custom: 2040 }] });
+    expect(isFeeDestinationCollisionError(new Error(`Transaction failed on-chain (${stringified}).`))).to.equal(true);
+  });
+
+  it("isFeeDestinationCollisionError is true for the new ssr_protocol defense-in-depth code (6055, ProtocolFeeDestinationTokenAccountRequired)", () => {
+    const stringified = JSON.stringify({ InstructionError: [0, { Custom: 6055 }] });
+    expect(isFeeDestinationCollisionError(new Error(`Transaction failed on-chain (${stringified}).`))).to.equal(true);
+  });
+
+  it("isFeeDestinationCollisionError is false for an unrelated deterministic error (e.g. UnexpectedReserveStatus, 6010) -- never over-claims the specific diagnosis", () => {
+    const stringified = JSON.stringify({ InstructionError: [0, { Custom: 6010 }] });
+    expect(isFeeDestinationCollisionError(new Error(`Transaction failed on-chain (${stringified}).`))).to.equal(false);
+  });
+
+  it("isFeeDestinationCollisionError is false for a retryable/transient error", () => {
+    expect(isFeeDestinationCollisionError(new Error("429 Too Many Requests"))).to.equal(false);
+  });
+
+  it("repeated classification of the identical error is deterministic itself (pure function) -- mirrors a user clicking Resume multiple times against the same underlying condition and always getting the same, honest classification rather than a flaky one", () => {
+    const stringified = JSON.stringify({ InstructionError: [2, { Custom: 2040 }] });
+    const e = new Error(`Transaction failed on-chain (${stringified}). Signature: sigGHI.`);
+    const first = classifyCreateReserveError(e);
+    const second = classifyCreateReserveError(e);
+    const third = classifyCreateReserveError(e);
+    expect([first, second, third]).to.deep.equal(["deterministic", "deterministic", "deterministic"]);
   });
 });

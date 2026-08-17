@@ -147,4 +147,19 @@ pub enum SsrError {
     // Appended at the end deliberately -- same append-only rule as above.
     #[msg("Only the fee recipient's own wallet may collect its accrued balance -- no other wallet, including the root Manager or another recipient, can claim on its behalf.")]
     NotFeeRecipient,
+
+    // --- Fee-destination consolidation (2026-08-17 corrective pass) ---
+    // Appended at the end deliberately -- same append-only rule as above.
+    // seed_reserve/mint_reserve_tokens_in_kind's protocol_fee_destination_token_account
+    // is Option<Account<..>> specifically so a caller whose manager/depositor
+    // wallet IS the configured Protocol fee-destination wallet can omit it
+    // (Anchor's own ConstraintDuplicateMutableAccount would otherwise reject
+    // two separate mutable Account<'info, TokenAccount> slots resolving to
+    // the identical ATA) -- see docs/project/DECISION_LOG.md. This error
+    // fires only when that omission doesn't actually match reality (the
+    // signer omitted the account, but protocol_fee_destination is some OTHER
+    // wallet) -- it exists purely so a caller can never dodge paying the
+    // Protocol's genuine fee share by mis-omitting this account.
+    #[msg("protocol_fee_destination_token_account was omitted, but protocol_fee_destination does not match the signer receiving the combined mint -- the Protocol's fee share cannot be silently dropped or redirected.")]
+    ProtocolFeeDestinationTokenAccountRequired,
 }

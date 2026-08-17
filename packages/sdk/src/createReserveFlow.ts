@@ -12,7 +12,7 @@ import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddres
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients, findTvlAccrual } from "./pda";
+import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients, findTvlAccrual, resolveProtocolFeeDestinationTokenAccount } from "./pda";
 import type { RecipientInput } from "./feeMath";
 
 export interface NewReserveAddresses {
@@ -174,7 +174,18 @@ export async function buildSeedReserveInstruction(
   // fresh here rather than assumed.
   const protocolConfigAccount: any = await (program.account as any).protocolConfig.fetch(addresses.protocolConfig);
   const protocolFeeDestination = new PublicKey(protocolConfigAccount.defaultProtocolFeeDestination);
-  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(addresses.reserveTokenMint, protocolFeeDestination);
+  // Consolidation (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
+  // when the Protocol fee-destination wallet IS this Reserve's own manager,
+  // pass the Option<Account> "None" sentinel instead of a second mutable
+  // account that would resolve to the exact same ATA as
+  // managerReserveTokenAta below -- see resolveProtocolFeeDestinationTokenAccount's
+  // doc comment (pda.ts) for the full explanation.
+  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(
+    protocolFeeDestination,
+    manager,
+    addresses.reserveTokenMint,
+    program.programId,
+  );
 
   // Time-weighted average TVL accumulator (see docs/project/DECISION_LOG.md):
   // the initial seed mint checkpoints it too, same as every other mint.

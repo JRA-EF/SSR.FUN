@@ -1804,6 +1804,7 @@
         {
           "name": "protocol_fee_destination_token_account",
           "writable": true,
+          "optional": true,
           "pda": {
             "seeds": [
               {
@@ -2687,6 +2688,7 @@
         {
           "name": "protocol_fee_destination_token_account",
           "writable": true,
+          "optional": true,
           "pda": {
             "seeds": [
               {
@@ -4153,6 +4155,16 @@
       "code": 6053,
       "name": "PendingManagerFeeSharesNotCollected",
       "msg": "close_reserve requires every Manager fee recipient's pending fee share to be collected first."
+    },
+    {
+      "code": 6054,
+      "name": "NotFeeRecipient",
+      "msg": "Only the fee recipient's own wallet may collect its accrued balance -- no other wallet, including the root Manager or another recipient, can claim on its behalf."
+    },
+    {
+      "code": 6055,
+      "name": "ProtocolFeeDestinationTokenAccountRequired",
+      "msg": "protocol_fee_destination_token_account was omitted, but protocol_fee_destination does not match the signer receiving the combined mint -- the Protocol's fee share cannot be silently dropped or redirected."
     }
   ],
   "types": [

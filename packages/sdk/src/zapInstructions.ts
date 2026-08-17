@@ -41,7 +41,7 @@ import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil, type AssetBalance } from "./calculations";
 import { solLamportsToUsd, SOL_TEST_PRICE_USD, WRAPPED_SOL_MINT } from "./zapPricing";
-import { findTvlAccrual } from "./pda";
+import { findTvlAccrual, resolveProtocolFeeDestinationTokenAccount } from "./pda";
 
 function isWrappedSol(mint: PublicKey): boolean {
   return mint.equals(WRAPPED_SOL_MINT);
@@ -119,7 +119,12 @@ export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promis
 
   const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
-  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  // Consolidation (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
+  // when the Protocol fee-destination wallet IS this buyer's own, pass the
+  // Option<Account> "None" sentinel instead of a second mutable account that
+  // would resolve to the exact same ATA as depositorReserveTokenAta above --
+  // see resolveProtocolFeeDestinationTokenAccount's doc comment (pda.ts).
+  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
@@ -264,7 +269,12 @@ export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcP
 
   const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
-  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  // Consolidation (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
+  // when the Protocol fee-destination wallet IS this buyer's own, pass the
+  // Option<Account> "None" sentinel instead of a second mutable account that
+  // would resolve to the exact same ATA as depositorReserveTokenAta above --
+  // see resolveProtocolFeeDestinationTokenAccount's doc comment (pda.ts).
+  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];

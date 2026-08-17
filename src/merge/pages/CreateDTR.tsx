@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, type RecipientInput } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
@@ -14,11 +14,14 @@ import {
   clearPendingReserveDeploy,
   determineDeploymentResumePoint,
   isWalletRejectionError,
+  classifyCreateReserveError,
+  isFeeDestinationCollisionError,
   uploadReserveMetadata,
   estimateNetSeedReserveTokens,
   CreateReserveStepError,
   type CreateReserveStep,
   type CreateReserveCostEstimate,
+  type CreateReserveErrorClass,
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
@@ -103,6 +106,15 @@ export function CreateDTR() {
   // a SEPARATE Reserve (the confirmed root cause of the reported "tells the
   // user to create another Reserve" failure).
   const [resumePending, setResumePending] = useState<PendingReserveDeploy | null>(null);
+  // Set by handleResumeDeployment's catch block when a Resume attempt fails
+  // -- classified so the panel below can distinguish a genuinely transient
+  // condition (safe to just click Resume again) from a deterministic
+  // on-chain validation failure (the exact same transaction WILL fail again
+  // until the underlying configuration/program issue is fixed -- see
+  // createReserveResume.ts's classifyCreateReserveError). Cleared on every
+  // fresh mount-time reconciliation and right before a new Resume attempt,
+  // so it never displays stale information about a previous attempt.
+  const [resumeError, setResumeError] = useState<{ errorClass: CreateReserveErrorClass; step: CreateReserveStep; message: string; isFeeDestinationCollision: boolean } | null>(null);
   // Set when a pending deployment's real on-chain registered-asset count
   // doesn't match what it expected -- refuses to offer Resume (or a fresh
   // submission) automatically; this can only come from data corruption or an
@@ -256,6 +268,10 @@ export function CreateDTR() {
     const pending = readPendingReserveDeploy(wallet.address);
     if (!pending) return;
     setRecovering(true);
+    // A wallet reconnect/refresh always re-derives Resume state fresh from
+    // real on-chain data below -- any diagnostic from a PREVIOUS session's
+    // failed attempt is stale the moment that happens, never carried forward.
+    setResumeError(null);
     const programId = new PublicKey(DEVNET_FIXTURES.programId);
     const candidateMints = pending.assets.map((a) => new PublicKey(a.mint));
     fetchReserveOnChain(connection, programId, new PublicKey(pending.reserve), candidateMints)
@@ -302,6 +318,7 @@ export function CreateDTR() {
     if (!resumePending || submittingRef.current || !walletCtx.publicKey) return;
     submittingRef.current = true;
     setIsSubmitting(true);
+    setResumeError(null);
     setCreateStep("fund-seed-assets");
     useAppStore.getState().setTxInFlight(true);
     try {
@@ -417,10 +434,24 @@ export function CreateDTR() {
       if (isWalletRejectionError(e)) {
         toast({ title: "Cancelled in wallet", description: "Nothing was submitted -- safe to try Resume again whenever you're ready." });
       } else if (e instanceof CreateReserveStepError) {
+        // Classified so the Resume panel below can tell a genuinely
+        // transient failure (safe to just click Resume again) apart from a
+        // deterministic one (the exact same transaction will fail again
+        // until the underlying configuration/program issue is actually
+        // fixed) -- see createReserveResume.ts's classifyCreateReserveError.
+        // Never auto-retried either way; every Resume click remains an
+        // explicit user action (submittingRef's re-entrancy guard already
+        // prevents a duplicate submission while one is in flight).
+        const errorClass = classifyCreateReserveError(e);
+        const isFeeDestinationCollision = isFeeDestinationCollisionError(e);
+        setResumeError({ errorClass, step: e.step, message: describeOnChainError(e), isFeeDestinationCollision });
         toast({
           variant: "destructive",
           title: `Resume failed (${CREATE_STEP_LABELS[e.step]})`,
-          description: `${msg} -- your Reserve's on-chain identity is unchanged. Click Resume Deployment again once ready; nothing already confirmed will be resubmitted.`,
+          description:
+            errorClass === "deterministic"
+              ? `${msg} -- your Reserve's on-chain identity is unchanged, but this specific failure will not resolve itself on a plain retry. See the details below before trying again.`
+              : `${msg} -- your Reserve's on-chain identity is unchanged. Click Resume Deployment again once ready; nothing already confirmed will be resubmitted.`,
         });
       } else {
         toast({ variant: "destructive", title: "Resume failed", description: msg });
@@ -431,6 +462,68 @@ export function CreateDTR() {
       submittingRef.current = false;
       useAppStore.getState().setTxInFlight(false);
     }
+  };
+
+  /**
+   * Re-reads real on-chain state for the pending Reserve without submitting
+   * anything -- lets a user confirm whether a previously-deterministic
+   * blocking condition (e.g. the fee-destination collision) has since been
+   * resolved (a program upgrade, a ProtocolConfig change) before trying
+   * Resume again, rather than either blindly retrying or being permanently
+   * stuck behind a stale diagnostic.
+   */
+  const handleCheckResumeStatusAgain = async () => {
+    if (!resumePending || submittingRef.current) return;
+    setRecovering(true);
+    setResumeError(null);
+    try {
+      const programId = new PublicKey(DEVNET_FIXTURES.programId);
+      const candidateMints = resumePending.assets.map((a) => new PublicKey(a.mint));
+      const onChain = await fetchReserveOnChain(connection, programId, new PublicKey(resumePending.reserve), candidateMints);
+      const resumePoint = determineDeploymentResumePoint({
+        reserveExists: onChain !== null,
+        reserveStatus: (onChain?.status as ReserveOnChainStatus | undefined) ?? null,
+        onChainAssetCount: onChain?.assetCount ?? 0,
+        expectedAssetCount: resumePending.assets.length,
+      });
+      if (resumePoint.kind === "already-complete") {
+        clearPendingReserveDeploy();
+        toast({ title: "Deployment already completed", description: `Your Reserve "${resumePending.name}" already finished successfully on-chain.` });
+        setResumePending(null);
+        setLocation(`/dtr/devnet-${resumePending.reserveId}`);
+      } else if (resumePoint.kind === "asset-count-mismatch") {
+        setResumeMismatch(
+          `On-chain Reserve ${resumePending.reserve} has ${resumePoint.onChainAssetCount} registered asset(s), but this pending deployment expected ${resumePoint.expectedAssetCount}. This needs manual verification on Explorer before continuing.`,
+        );
+      } else {
+        toast({ title: "Still incomplete", description: "This Reserve's seeding still has not completed on-chain. Resume is available whenever you're ready to try again." });
+      }
+    } catch {
+      toast({ variant: "destructive", title: "Could not check status", description: "The on-chain status read itself failed (likely DevNet RPC congestion) -- this is unrelated to the earlier Resume failure. Try again in a moment." });
+    } finally {
+      setRecovering(false);
+    }
+  };
+
+  /**
+   * Explicit, user-initiated abandonment -- the only way this app ever
+   * clears a pending-deployment marker without either confirmed on-chain
+   * completion or a fresh on-chain read confirming create-and-register never
+   * landed at all. Never touches on-chain state and never the Reserve
+   * itself, which stays exactly as-is (still real, still discoverable by
+   * address, still resumable later by re-adding the marker manually if
+   * ever needed) -- this only stops THIS browser from tracking it locally,
+   * so the form can be used to start a genuinely separate Reserve instead of
+   * being stuck showing this Resume panel forever.
+   */
+  const handleAbandonPendingDeploy = () => {
+    clearPendingReserveDeploy();
+    setResumePending(null);
+    setResumeError(null);
+    toast({
+      title: "Stopped tracking this deployment",
+      description: `"${resumePending?.name}" (${resumePending?.reserve}) is still real on-chain, unchanged -- this only stops this browser from tracking it. You can now start a new Reserve.`,
+    });
   };
 
   if (recovering) {
@@ -481,19 +574,60 @@ export function CreateDTR() {
               <span className="text-muted-foreground">Assets</span>
               <span className="font-merge-mono text-xs">{resumePending.assets.length}</span>
             </div>
+            {resumeError && resumeError.errorClass === "deterministic" && (
+              <div className="p-3 rounded-lg border border-destructive/40 bg-destructive/10 text-sm space-y-2">
+                <div className="flex items-center gap-2 font-semibold text-destructive">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {resumeError.isFeeDestinationCollision ? "This Reserve cannot finish seeding yet" : `Resume failed (${CREATE_STEP_LABELS[resumeError.step]})`}
+                </div>
+                {resumeError.isFeeDestinationCollision ? (
+                  <p className="text-muted-foreground">
+                    This wallet is both this Reserve's manager and SSR.fun's configured Protocol fee-destination wallet. Completing seeding for this exact combination requires a Protocol
+                    program update that has not been deployed to DevNet yet -- retrying will fail the same way every time. Your Reserve's on-chain identity and every already-completed step
+                    are unchanged and safe. Contact the SSR.fun team, or check again below in case this has since been resolved.
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">
+                    {resumeError.message} Your Reserve's on-chain identity is unchanged, but this specific failure will not resolve itself on a plain retry.
+                  </p>
+                )}
+              </div>
+            )}
           </CardContent>
-          <CardFooter className="justify-end border-t border-border/40 pt-6">
-            <Button onClick={handleResumeDeployment} disabled={isSubmitting} className="font-bold gap-2 min-w-[180px]">
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Resuming..."}
-                </>
-              ) : (
-                <>
-                  <Rocket className="w-4 h-4" /> Resume Deployment
-                </>
-              )}
+          <CardFooter className="justify-between gap-2 border-t border-border/40 pt-6">
+            <Button variant="ghost" size="sm" onClick={handleAbandonPendingDeploy} disabled={isSubmitting} className="text-muted-foreground">
+              Cancel Deploy
             </Button>
+            <div className="flex items-center gap-2">
+            {resumeError && resumeError.errorClass === "deterministic" ? (
+              <>
+                <Button variant="outline" onClick={handleCheckResumeStatusAgain} disabled={isSubmitting} className="gap-2">
+                  Check status again
+                </Button>
+                <Button variant="secondary" onClick={handleResumeDeployment} disabled={isSubmitting} className="font-bold gap-2 min-w-[180px]">
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Resuming..."}
+                    </>
+                  ) : (
+                    "Try again anyway"
+                  )}
+                </Button>
+              </>
+            ) : (
+              <Button onClick={handleResumeDeployment} disabled={isSubmitting} className="font-bold gap-2 min-w-[180px]">
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Resuming..."}
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="w-4 h-4" /> Resume Deployment
+                  </>
+                )}
+              </Button>
+            )}
+            </div>
           </CardFooter>
         </Card>
       </div>

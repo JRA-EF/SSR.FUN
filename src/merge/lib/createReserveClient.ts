@@ -86,6 +86,9 @@ export {
   computeFundingShortfall,
   determineDeploymentResumePoint,
   isWalletRejectionError,
+  classifyCreateReserveError,
+  isFeeDestinationCollisionError,
+  type CreateReserveErrorClass,
   type DeploymentResumePoint,
   type ReserveOnChainStatus,
 } from "./createReserveResume";
