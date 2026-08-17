@@ -259,6 +259,8 @@ Security notes:
 - The treasury multisig must not be described as controlling Reserve Assets -- it does not, and per DEC-0105 point 7/8 must not automatically gain that control.
 - This is an interim, early-stage arrangement, not a final Mainnet governance design. The pre-existing `public/road-to-mainnet.html` checklist items MS-02 ("Multisig on the upgrade authority") and PM-08 ("Upgrade authority") remain open exactly as before -- this entry does not fulfill, schedule, or set a date/threshold for that eventual migration. Any future transfer of program upgrade authority, protocol-admin authority, deployment authority, or another protocol-wide authority requires a separate, later, explicit decision by Creator (Claude User), per DEC-0105 point 13.
 
+**(2026-08-17, DEC-0106):** every situation where real SOL/money is locked, at risk, or recoverable (rent-exemption deposits, deploy buffers, abandoned accounts) is now tracked permanently in `docs/project/FUNDS_LEDGER.md`. Tracking is automatic; actually moving funds is never automatic and always requires a fresh, explicit, same-time confirmation of source/amount/destination.
+
 ## Decisions Required
 - **(Resolved, 2026-08-04)** Promoted `main` to production now rather than batching further -- see Next Actions #0 and Environment Status.
 - Should the general testing site move from "unlisted" to real authentication before it's shared with anyone outside the immediate team? (pre-existing, unchanged)

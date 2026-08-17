@@ -3118,3 +3118,35 @@
   ]
 }
 ```
+
+## DEC-0106
+
+```json
+{
+  "id": "DEC-0106",
+  "date": "2026-08-17",
+  "status": "confirmed",
+  "decision": "Standing, permanent policy: every situation across this project (DevNet and Mainnet alike) where real money (SOL or other real value) is locked as a rent-exemption deposit, temporarily at risk during a deploy, abandoned, or recoverable is tracked in a new append-only ledger, `docs/project/FUNDS_LEDGER.md`. Tracking is automatic and standing ('forever,' per Creator (Claude User)'s instruction). Actually moving any real money is NOT automatic or pre-authorized by this policy -- a request to sweep/consolidate/push recoverable funds requires, at the time of the request, an explicit confirmation of source account, exact amount, and destination address; this policy alone never executes a transfer. The ledger records `6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen` as the default documented recovery-request destination, per Creator (Claude User)'s explicit instruction, not independently verified as belonging to Creator or the boss.",
+  "context": "Following up on the Mainnet SOL cost estimate given this session (~6.1 SOL / ~$460 program rent-exemption alone, ~10-12 SOL recommended working balance), Creator (Claude User) asked whether rent is redeemable on a redeploy (it is, in full, via a deliberate close -- redeploys/upgrades to the same program ID never re-charge already-locked rent) and explicitly requested a permanent, standing practice: 'any situations where there might be loss of money, you will track everything and will send upon my request push everything to 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen.'",
+  "rationale": "A dedicated, purpose-built, append-only ledger (matching this project's established pattern of DECISION_LOG.md/PROJECT_STATUS.md for its own concerns) gives a single, durable place to find every locked/at-risk/recoverable-SOL situation across sessions, rather than scattering the information across risk bullets that could be missed. Separating 'track everything' (standing, automatic, no confirmation needed) from 'push/move funds' (never automatic, always requires a fresh explicit confirmation of source/amount/destination at the time) is necessary because moving real money is an irreversible, consequential action -- treating a general instruction given today as blanket standing authorization to execute an unspecified future transfer would violate the project's own 'Executing actions with care' principle and could execute the wrong amount, from the wrong account, at the wrong time. Recording the destination address as instructed, while flagging it was not independently verified, keeps the documentation honest about what is confirmed (Creator's explicit instruction) versus what is assumed (that the address is Creator's/the boss's own wallet).",
+  "alternativesConsidered": [
+    "Treat 'send upon my request, push everything' as standing pre-authorization to execute a fund transfer whenever a future message merely references it -- rejected: no specific source, amount, or transaction was confirmed at the time of this decision; executing a real, irreversible SOL transfer from an inferred instruction rather than a fresh explicit confirmation is exactly the failure mode the project's risk-taking guidance warns against.",
+    "Fold this tracking into an existing file (PROJECT_STATUS.md's Risks section) rather than a new ledger -- rejected: Risks is a snapshot of current-state concerns, re-derived/rewritten over time, whereas this needs to be a permanent, append-only, cumulative record that survives every future session, matching DECISION_LOG.md's own rationale for being a separate append-only file rather than folded into PROJECT_STATUS.md.",
+    "Independently verify who controls `6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen` before recording it -- not possible from this environment (no way to confirm off-chain wallet ownership); recorded as explicitly instructed instead, with the verification gap stated plainly rather than silently assumed away."
+  ],
+  "impact": "New file `docs/project/FUNDS_LEDGER.md`: the rent-exemption/recoverability mechanics reference, the recovery-request policy, the default destination address, and two seeded entries (DevNet's already-real, already-locked reserve_id 6 rent -- no reclaim instruction exists for it in v1 -- and the pending, not-yet-incurred Mainnet program-deployment estimate). `docs/project/DECISION_LOG.md` gains this entry. Cross-references added to `docs/project/PROJECT_STATUS.md` and `docs/protocol/DEVNET_RUNBOOK.md` pointing at the new ledger. No money moved, no wallet funded, no program deployed, no on-chain action of any kind performed.",
+  "affectedAreas": [
+    "docs/project/FUNDS_LEDGER.md",
+    "docs/project/DECISION_LOG.md",
+    "docs/project/PROJECT_STATUS.md",
+    "docs/protocol/DEVNET_RUNBOOK.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Explicit instruction from Creator (Claude User) this session: track every money-loss-risk situation permanently, and record a specific destination address for a future sweep request.",
+    "Cross-referenced against `docs/protocol/SECURITY_INVARIANTS.md`'s 'Outstanding gaps' and `docs/protocol/DEVNET_RUNBOOK.md`'s 'Wallet / fixture safety' section for the reserve_id 6 precedent -- confirmed accurate against the existing documented record before citing it in the new ledger.",
+    "`git status`/`git diff` confirm only documentation files (the new ledger plus the cross-references above) were changed; no `src/`, `packages/sdk/`, `programs/`, or `public/` file touched; no transaction submitted, no `git commit`/`git push` performed as part of this decision."
+  ]
+}
+```
