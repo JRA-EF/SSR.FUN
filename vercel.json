@@ -15,6 +15,9 @@
     },
     "api/kpis/*.ts": {
       "includeFiles": "packages/sdk/**"
+    },
+    "api/ledger/*.ts": {
+      "includeFiles": "packages/sdk/**"
     }
   },
   "crons": [
@@ -25,6 +28,14 @@
     {
       "path": "/api/kpis/kpis-backfill-cron",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/ledger/ingest-cron",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/ledger/jupiter-snapshot-cron",
+      "schedule": "0 5 * * 1"
     }
   ],
   "rewrites": [

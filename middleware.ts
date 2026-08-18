@@ -119,7 +119,9 @@ export default async function middleware(request: Request): Promise<Response> {
     url.pathname === '/api/road-to-mainnet/history' ||
     url.pathname === '/api/kpis/kpis' ||
     url.pathname === '/api/kpis/kpis-export' ||
-    url.pathname === '/api/kpis/kpis-refresh'
+    url.pathname === '/api/kpis/kpis-refresh' ||
+    url.pathname === '/api/ledger/export' ||
+    url.pathname === '/api/ledger/reconciliation'
   ) {
     return authenticated ? next() : unauthorizedJson()
   }
@@ -149,5 +151,7 @@ export const config = {
     '/api/kpis/kpis',
     '/api/kpis/kpis-export',
     '/api/kpis/kpis-refresh',
+    '/api/ledger/export',
+    '/api/ledger/reconciliation',
   ],
 }

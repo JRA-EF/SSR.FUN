@@ -200,8 +200,11 @@ export function KpiDashboard() {
           <button className="dash-btn dash-btn-sm" onClick={handleRefresh} disabled={refreshing}>
             {refreshing ? 'Refreshing...' : 'Refresh data'}
           </button>
-          <a className="dash-btn dash-btn-sm" href="/api/kpis/kpis-export">
-            Download full CSV
+          <a className="dash-btn dash-btn-sm" href="/api/ledger/export?cluster=devnet" title="Full acquisition-grade export: slot, instruction index, actor role, raw+normalized+USD amounts, compute units, fee, confirmation status, and more -- see docs/protocol/LEDGER_ARCHITECTURE.md">
+            Download full CSV (Ledger)
+          </a>
+          <a className="dash-btn dash-btn-sm dash-btn-ghost" href="/api/kpis/kpis-export" title="The original, simpler per-Reserve summary export (kind/actor/summary/amount only)">
+            Download legacy CSV
           </a>
         </div>
       </div>
@@ -375,7 +378,7 @@ export function KpiDashboard() {
             </table>
           </div>
           <p className="dash-muted dash-small" style={{ marginTop: 10 }}>
-            Full row-level export (every event, every column, every Reserve) via "Download full CSV" above.
+            Full row-level export (every event, every column, every Reserve, including slot/instruction index/actor role/USD valuation) via "Download full CSV (Ledger)" above.
           </p>
         </div>
       </div>

@@ -3269,3 +3269,60 @@
   ]
 }
 ```
+
+## DEC-0110
+
+```json
+{
+  "id": "DEC-0110",
+  "date": "2026-08-18",
+  "status": "confirmed",
+  "decision": "Built the SSR Ledger (`lib/ledger/`, `api/ledger/`, `docs/protocol/LEDGER_ARCHITECTURE.md`) -- a normalized, acquisition-grade, cluster-aware business-data layer replacing the previous thin CSV export as the durable record of what happens through SSR.fun. A 12-table Postgres schema (`lib/ledger/schema.sql`) covers protocol deployments, Reserve/Reserve-Asset current state, weekly Jupiter-catalogue snapshots, the core `ledger_events` table (deterministic-ID, full structured event record -- slot, instruction index, actor role, raw+normalized+USD amounts, compute units, network fee, confirmation status, ingestion lineage), product-analytics events (privacy-allowlisted), daily rollups, operational incidents, ingestion cursors, and a reconciliation-run log. Deterministic event IDs (`lib/ledger/eventId.ts`) make ingestion naturally idempotent; a new program-wide (not per-Reserve) ingestion walker (`lib/ledger/ingest.ts`) records both successful AND failed transactions, unlike the existing per-Reserve indexer. Daily/date-range/complete CSV export (`api/ledger/export.ts`) streams a stable 44-column, one-row-per-event file with a dedicated `event_date_utc` field. Data-quality checks, a Jupiter Tokens API V2 weekly snapshot/diff system, and 32 new offline tests round out the build.",
+  "context": "Creator supplied `ssr-fun-activity-log-2026-08-18.csv` (the /internal/kpis CSV export, DEC-0107/DEC-0109) as a reference and specified it was insufficient for management/investor/due-diligence/acquisition reporting: only 56 rows, 100% of them with a NULL raw-amount field (confirmed live before building anything -- caused by `reserve_activity_log`'s `ON CONFLICT DO NOTHING` never re-decoding historical rows even after the decoder gained new fields, a real architectural gap this pass's finding informed), no structured USD/decimals/actor-role/instruction-index/compute-unit/fee data, no cluster separation, no daily partitioning. Creator's task specified 15 numbered requirement sections (protocol/deployment, Reserves, Reserve Assets, on-chain activity, lifecycle events, product funnel, treasury/financial, reliability/operations, daily export, reporting views, data quality, raw-evidence preservation, Jupiter catalogue tracking, storage architecture, backfill/cluster-separation) plus documentation, terminology, and test requirements, explicitly scoped as 'implement everything that can be completed safely within the repository' with instructions to report any storage/credential blocker rather than invent a workaround.",
+  "rationale": "Neon Postgres already exists in this repository, already provisioned (`DATABASE_URL`), and already serves two production features (`lib/road-to-mainnet/`, `lib/reserve-activity/`) -- per the task's own instruction ('if a suitable durable data store already exists, extend it'), this pass extends it via an additive migration rather than provisioning a second storage provider (explicitly restricted from doing so this pass regardless). `ledger_events` is a NEW table alongside (not a replacement for) `reserve_activity_log`, because the two serve genuinely different consumers (a per-Reserve UI tab needing a small field set vs. protocol-wide acquisition reporting needing the full normalized set) that decode the SAME underlying events via the SAME `summarizeActivityEvent`, so they can never disagree about meaning -- only about what else gets recorded. `api/ledger/` was built as its own fully isolated CommonJS directory with its own duplicated `_session.ts` from the very first commit of this pass, never touching `api/dashboard/` or reusing `lib/road-to-mainnet/auth.ts` even transiently -- applying DEC-0109's hard-won lesson (a directory-scoped tsconfig/package.json change silently affects every file in that directory; a CommonJS function synchronously requiring a genuine ESM module crashes invisibly before any try/catch) from the start rather than discovering it again the expensive way. USD valuation is deliberately never fabricated (`usd_price_source: 'unavailable'` with every numeric field null when no real price source exists) -- inventing a number that looks like data but isn't would actively harm the acquisition-reporting use case this whole system exists for. Given the genuine scale of the full 15-section requirement (protocol-wide product analytics instrumentation, live treasury reconciliation against on-chain balances, RPC-cost tracking, a Mainnet deployment that does not yet exist to backfill from, a real price oracle), this pass implements the complete schema/interfaces/ingestion/export/reconciliation/documentation for everything buildable without a live Mainnet deployment or a missing credential, and explicitly documents (LEDGER_ARCHITECTURE.md section 11) every remaining piece as either 'designed, not yet wired to a live data source' or 'blocked on a specific named Creator decision/credential' -- never silently claimed as done.",
+  "alternativesConsidered": [
+    "Retrofit `reserve_activity_log` in place with the full acquisition-grade field set instead of a new table -- rejected: would force ManageDTR.tsx's simple per-Reserve Activity tab to carry 30+ mostly-irrelevant columns, and would keep the walk scoped to one Reserve at a time, unable to answer protocol-wide questions (total revenue, all Reserves' daily volume) without N separate walks.",
+    "Provision a new storage service (a dedicated analytics warehouse, a separate Postgres instance) for the Ledger -- rejected: explicitly restricted this pass, and unnecessary given Neon Postgres already handles this repository's durability/scale needs comfortably at the realistic early-Mainnet volume this system will see (see LEDGER_ARCHITECTURE.md section 15's estimate).",
+    "Fabricate plausible-looking USD values using DevNet's fixed test prices even for a hypothetical future Mainnet event, or invent a migration/backfill timeline -- rejected outright per the task's own explicit instruction not to fabricate historical values that cannot be reconstructed; every field that cannot be honestly sourced is null with an explicit 'unavailable' source tag instead.",
+    "Wire up full frontend product-analytics instrumentation (session tracking, funnel-step events across every page) as part of this same pass -- rejected as out of realistic scope for one pass alongside the rest of this build; the schema, privacy allowlist, and ingestion contract are built and tested, but the actual client-side call sites are a separately-scoped follow-up, honestly documented as such rather than silently partial."
+  ],
+  "impact": "New: `lib/ledger/` (schema.sql, db.ts, eventId.ts, amounts.ts, privacy.ts, csv.ts, decodeEvent.ts, ingest.ts, jupiterCatalogue.ts, reconciliation.ts, query.ts, package.json), `api/ledger/` (export.ts, ingest-cron.ts, jupiter-snapshot-cron.ts, reconciliation.ts, _session.ts, package.json, tsconfig.json), `scripts/migrate-ledger.mjs`, `docs/protocol/LEDGER_ARCHITECTURE.md`, `tests/phase_ledger.ts` (32 new tests). Changed: `middleware.ts`/`vercel.json` (routing/cron wiring for the new endpoints), `tsconfig.json`/`tsconfig.node.json` (new project reference/exclusion, same pattern as api/kpis's), `.env.example` (JUPITER_API_KEY/LEDGER_CLUSTER documented, CRON_SECRET/DATABASE_URL noted as reused). The existing `/api/kpis/kpis-export` CSV export was NOT deleted or modified -- both exports coexist per explicit instruction, until the new one is validated. No migration was run against the real database this pass (schema prepared, not applied -- see evidence); nothing was committed, pushed, deployed, or provisioned.",
+  "affectedAreas": [
+    "lib/ledger/schema.sql",
+    "lib/ledger/db.ts",
+    "lib/ledger/eventId.ts",
+    "lib/ledger/amounts.ts",
+    "lib/ledger/privacy.ts",
+    "lib/ledger/csv.ts",
+    "lib/ledger/decodeEvent.ts",
+    "lib/ledger/ingest.ts",
+    "lib/ledger/jupiterCatalogue.ts",
+    "lib/ledger/reconciliation.ts",
+    "lib/ledger/query.ts",
+    "api/ledger/export.ts",
+    "api/ledger/ingest-cron.ts",
+    "api/ledger/jupiter-snapshot-cron.ts",
+    "api/ledger/reconciliation.ts",
+    "api/ledger/_session.ts",
+    "scripts/migrate-ledger.mjs",
+    "docs/protocol/LEDGER_ARCHITECTURE.md",
+    "tests/phase_ledger.ts",
+    "middleware.ts",
+    "vercel.json",
+    "tsconfig.json",
+    "tsconfig.node.json",
+    ".env.example"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b --force`: 0 errors, including the new `api/ledger/tsconfig.json` project reference.",
+    "`npx oxlint`: exit 0, identical warning count to the pre-existing baseline (36) -- zero new warnings.",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 60000 tests/phase_*.ts`: 584/584 passing (552 pre-existing + 32 new in `tests/phase_ledger.ts`), covering event-ID determinism, transaction-internal ordering, decimal conversion, raw/normalized/USD amounts (including the 'never fabricate' guarantee), missing timestamps/actors, failed-transaction handling, DevNet/Mainnet ID separation, Jupiter snapshot diffing, CSV escaping/stable headers, exact-date/date-range filtering, and privacy-field exclusion.",
+    "`npm run build`: SDK build + `tsc -b` + `vite build` all succeeded.",
+    "Live query against the real database confirmed the exact deficiency this pass addresses: `select count(*) from reserve_activity_log` = 56, `select count(*) filter (where amount_raw is null) from reserve_activity_log` = 56 -- 100% null, including event kinds (`reserveSeeded`, `feesCollected`, `protocolMintFeeTransferred`, etc.) the decoder has known how to populate since DEC-0107, confirming the ON CONFLICT DO NOTHING staleness gap described in LEDGER_ARCHITECTURE.md section 9.",
+    "Confirmed via live web search that Jupiter Tokens API V2 requires an `x-api-key` header (portal.jup.ag) -- `lib/ledger/jupiterCatalogue.ts` built accordingly (throws a clear, explicit error when `JUPITER_API_KEY` is unset, never silently returns an empty catalogue); documented as a required Creator credential, not worked around.",
+    "`git status` confirms nothing was committed or pushed; no `vercel --prod` or migration script was run against the real database; no paid service was provisioned; no production credential was created or exposed."
+  ]
+}
+```

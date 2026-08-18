@@ -1,0 +1,51 @@
+// GET /api/ledger/jupiter-snapshot-cron -- weekly keeper (vercel.json's
+// `crons`) for requirement 9's Jupiter catalogue tracking. Idempotent per
+// UTC calendar date (lib/ledger/jupiterCatalogue.ts's runWeeklyJupiterSnapshot
+// skips if today's snapshot already exists). Requires JUPITER_API_KEY --
+// returns a clear 503 (not a crash) if it's unset, since this cannot run
+// at all without it. See docs/protocol/LEDGER_ARCHITECTURE.md for the
+// exact Creator action needed to unblock this.
+import { runWeeklyJupiterSnapshot } from "../../lib/ledger/jupiterCatalogue";
+
+interface ApiRequest {
+  method?: string;
+  headers: Record<string, string | string[] | undefined>;
+  query?: Record<string, string | string[] | undefined>;
+}
+interface ApiResponse {
+  status(code: number): ApiResponse;
+  json(body: unknown): void;
+}
+
+function getHeader(req: ApiRequest, name: string): string | undefined {
+  const value = req.headers[name] ?? req.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (req.method !== "GET" && req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  const dryRun = req.query?.dryRun === "true" || req.query?.dryRun === "1";
+  if (!dryRun) {
+    const expected = process.env.CRON_SECRET;
+    const provided = getHeader(req, "authorization");
+    if (!expected) {
+      res.status(500).json({ error: "CRON_SECRET is not configured on this deployment." });
+      return;
+    }
+    if (provided !== `Bearer ${expected}`) {
+      res.status(401).json({ error: "Unauthorized." });
+      return;
+    }
+  }
+
+  try {
+    const result = await runWeeklyJupiterSnapshot();
+    res.status(200).json(result);
+  } catch (e) {
+    res.status(503).json({ error: e instanceof Error ? e.message : "Jupiter snapshot failed." });
+  }
+}

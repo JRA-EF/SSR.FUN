@@ -20,29 +20,33 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["vite.config.ts", "middleware.ts", "lib/**/*.ts", "api/**/*.ts"],
-  /* api/devnet and api/kpis each have their own commonjs/node-resolution
-     tsconfig (api/devnet/tsconfig.json, api/kpis/tsconfig.json) + CommonJS-scoping
-     package.json. lib/reserve-activity and lib/reserve-metadata each have their own
-     CommonJS-scoping package.json (like src/merge/lib's) so ts-mocha can require()
-     their pure logic directly in tests -- which conflicts with this project's
-     nodenext module detection if checked here directly. All four are still fully
-     typechecked transitively via api/devnet/tsconfig.json's imports of
-     api/devnet/reserve-activity.ts (pulls in indexer.ts/db.ts/cursorLogic.ts) and
-     api/devnet/reserve-metadata.ts (pulls in payload.ts/db.ts), plus
-     api/kpis/tsconfig.json's imports of kpis.ts/kpis-refresh.ts/
-     kpis-backfill-cron.ts (pull in lib/reserve-activity's
-     kpis.ts/backfillAll.ts/indexer.ts/db.ts the same way).
+  /* api/devnet, api/kpis, and api/ledger each have their own commonjs/
+     node-resolution tsconfig + CommonJS-scoping package.json.
+     lib/reserve-activity, lib/reserve-metadata, and lib/ledger each have
+     their own CommonJS-scoping package.json (like src/merge/lib's) so
+     ts-mocha can require() their pure logic directly in tests -- which
+     conflicts with this project's nodenext module detection if checked
+     here directly. All six are still fully typechecked transitively via
+     each isolated api directory's own tsconfig.json imports.
 
-     api/kpis is a DEDICATED directory (2026-08-18), deliberately separate from
-     api/dashboard (which stays governed by this project, unchanged -- its
-     login.ts/content.ts/logout.ts have no lib/reserve-activity dependency and
-     never needed a CommonJS override). Giving the KPI dashboard's DB-touching
-     endpoints their own tsconfig.json+package.json INSIDE api/dashboard itself
-     was tried first and caused a real production incident: Vercel's per-function
-     builder picked up that new config for the WHOLE directory, silently changing
-     how it compiled the pre-existing login.ts/content.ts/logout.ts and breaking
-     /internal/status's login entirely (see docs/project/DECISION_LOG.md's entry
-     for this pass). vercel.json's rewrites keep the public API paths at
-     /api/dashboard/kpis* even though the files now live under api/kpis/. */
-  "exclude": ["api/devnet", "api/kpis", "lib/reserve-activity", "lib/reserve-metadata"]
+     api/kpis and api/ledger are each DEDICATED, fully isolated directories
+     (2026-08-18), deliberately separate from api/dashboard (which stays
+     governed by this project, unchanged -- its login.ts/content.ts/
+     logout.ts have no lib/reserve-activity or lib/ledger dependency and
+     never needed a CommonJS override) and from EACH OTHER. Giving the KPI
+     dashboard's DB-touching endpoints their own tsconfig.json+package.json
+     INSIDE api/dashboard itself was tried first and caused a real
+     production incident: Vercel's per-function builder picked up that new
+     config for the WHOLE directory, silently changing how it compiled the
+     pre-existing login.ts/content.ts/logout.ts and breaking
+     /internal/status's login entirely (docs/project/DECISION_LOG.md's
+     DEC-0109). A second incident in the same pass (DEC-0109's later entry)
+     traced a raw, try/catch-invisible crash to api/kpis/kpis.ts
+     synchronously require()-ing lib/road-to-mainnet/auth.ts, a genuine ESM
+     module (ERR_REQUIRE_ESM) -- api/kpis/_session.ts and api/ledger/
+     _session.ts are each a small, deliberately duplicated, fully
+     CommonJS-native auth helper for exactly this reason: nothing under
+     api/kpis/ or api/ledger/ may EVER import from lib/dashboard/ or
+     lib/road-to-mainnet/, or from each other, or from api/dashboard/. */
+  "exclude": ["api/devnet", "api/kpis", "api/ledger", "lib/reserve-activity", "lib/reserve-metadata", "lib/ledger"]
 }
