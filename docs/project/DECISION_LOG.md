@@ -3228,3 +3228,44 @@
   ]
 }
 ```
+
+## DEC-0109
+
+```json
+{
+  "id": "DEC-0109",
+  "date": "2026-08-18",
+  "status": "confirmed",
+  "decision": "Fixed a real production incident: `/internal/status`'s login (`POST /api/dashboard/login`) crashed with `FUNCTION_INVOCATION_FAILED` for some period after DEC-0107's rollout, discovered when Creator (Claude User) tried to log into `/internal/kpis` and got 'Network error.' Root cause: giving `api/dashboard/` its own `tsconfig.json` + `package.json` (to satisfy local `tsc -b` for `kpis.ts`/`kpis-refresh.ts`/`kpis-backfill-cron.ts`'s `lib/reserve-activity` imports) made Vercel's per-function builder apply that new config to the ENTIRE directory, silently changing how it compiled the pre-existing, previously-untouched `login.ts`/`content.ts`/`logout.ts` too. Fixed by moving the 4 KPI-dashboard endpoints into a brand-new, fully isolated `api/kpis/` directory with their own `tsconfig.json`/`package.json` (mirroring `api/devnet/tsconfig.json`'s long-proven pattern exactly), leaving `api/dashboard/` completely untouched. Public URLs moved from `/api/dashboard/kpis*` to `/api/kpis/*` to match (updated in `middleware.ts`, `vercel.json`'s `crons`/`functions`, and the frontend's fetch calls).",
+  "context": "Creator (Claude User) reported the login failure directly after being asked to try `/internal/kpis`. Diagnosis took multiple wrong turns before landing on the real cause: an initial theory blamed `.js`-suffixed relative import extensions (partially reverted, redeployed, confirmed WRONG -- login was still broken), before `npx tsc -b`'s real (not pipe-masked) exit code proved `lib/dashboard/`/`lib/road-to-mainnet/` genuinely require `.js` extensions under the root project's `nodenext`/`verbatimModuleSyntax` settings, and that `.js`-suffixed cross-directory imports had never been the actual problem -- login.ts's original imports were correct all along. The real cause was only found by testing the login endpoint directly against production after each change, rather than assuming a fix worked from typecheck/build success alone.",
+  "rationale": "Isolating the 4 KPI endpoints into their own directory, rather than trying to make `api/dashboard/`'s shared config work for both the CommonJS-needing new files and the pre-existing ESM-native ones, removes the entire class of risk: Vercel's directory-level config application means ANY shared directory containing files with genuinely different module-format requirements is unsafe to special-case via a directory-scoped `tsconfig.json`/`package.json` -- the fix has to be at the directory-boundary level, matching exactly how `api/devnet/` already coexists safely alongside `api/dashboard/`, `api/road-to-mainnet/`, etc. (each a physically separate directory, never a shared one with mixed module-format needs). A `| tail -N` pipe silently swallowing `tsc`'s real exit code (masking a genuine failure as `TSC_EXIT=0` earlier in this incident's investigation) is now a known trap -- validation commands in this kind of investigation must capture the exit code before any pipe, not after.",
+  "alternativesConsidered": [
+    "Keep a single api/dashboard/tsconfig.json but scope its `include` narrowly to only the 4 new files (not `**/*.ts`) -- rejected: unresolved uncertainty about whether Vercel's per-function builder respects a tsconfig's `include` list when deciding which config governs a given file, or simply uses whichever tsconfig.json is nearest on disk regardless of its include patterns; given this exact uncertainty caused the live incident once already, a fully separate directory (provably safe, since Vercel's directory walk-up for 'nearest config' can never reach into a sibling directory) was preferred over re-testing an unproven theory against production again.",
+    "Use vercel.json rewrites to keep the public URLs at /api/dashboard/kpis* while the files live under api/kpis/ -- rejected: adds another moving part with no existing precedent in this codebase for API-route (as opposed to static-page) rewrites; changing the public path directly in the 3 call sites (middleware.ts, vercel.json, Dashboard.tsx) was simpler and more transparent, at the one-time cost of a path change with no other functional impact.",
+    "Duplicate the small amount of shared auth logic (isAuthenticated/isSameOriginRequest/unauthorized) into a new file rather than reusing lib/road-to-mainnet/auth.ts directly -- tried mid-incident, then reverted: unnecessary once the real fix (directory isolation) was found, and reusing the existing shared file is more maintainable than a parallel duplicate with no behavioral difference."
+  ],
+  "impact": "`/internal/status` login restored and live-verified (real `POST /api/dashboard/login` against production now returns a structured 401 for a wrong password instead of crashing). `/internal/kpis` login/data endpoints live-verified working at their new `/api/kpis/*` paths (`kpis-backfill-cron?dryRun=true` returned real progress: 30 sync calls, new Reserves reached beyond the previously backfilled set). All 5 production domains/paths re-confirmed `200` (`strategic-super-reserve.fun`, `www.strategic-super-reserve.fun`, `ssr-fun.vercel.app`, `/internal/status`, `/internal/kpis`). Vercel's runtime-error aggregation shows only one unrelated, pre-existing (first seen 2026-08-12) Node deprecation warning, nothing new. `api/dashboard/` (`login.ts`/`content.ts`/`logout.ts`) is now completely unmodified from its DEC-0106-era state -- zero net diff versus before DEC-0107 ever touched it.",
+  "affectedAreas": [
+    "api/kpis/kpis.ts",
+    "api/kpis/kpis-export.ts",
+    "api/kpis/kpis-refresh.ts",
+    "api/kpis/kpis-backfill-cron.ts",
+    "api/kpis/tsconfig.json",
+    "api/kpis/package.json",
+    "middleware.ts",
+    "vercel.json",
+    "tsconfig.json",
+    "tsconfig.node.json",
+    "src/internal-kpis/Dashboard.tsx"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Direct `curl -X POST /api/dashboard/login` against production before the fix: `FUNCTION_INVOCATION_FAILED` (500). After the fix, same request with a deliberately wrong password: `{\"error\":\"Incorrect password.\"}` (401) -- a real, structured application response, not a crash.",
+    "`curl /api/kpis/kpis-backfill-cron?dryRun=true` against production after the fix: real JSON progress report (66 Reserves discovered, 30 sync calls made this invocation, new Reserves reached beyond the set from DEC-0107's rollout), confirming both the directory move and the earlier sweep-ordering fix (DEC-0107) are both working together correctly.",
+    "`npx tsc -b --force`, `npx ts-mocha tests/phase_*.ts` (552/552), `npx oxlint`, and `npm run build` all re-verified clean with real (non-pipe-masked) exit-code capture.",
+    "`curl` against all 5 key production paths (apex, www, vercel.app alias, /internal/status, /internal/kpis) all returned `200` post-deploy.",
+    "Vercel `get_runtime_errors` (10-minute post-deploy window): only one pre-existing, unrelated deprecation warning (first seen 2026-08-12), no new error groups."
+  ]
+}
+```
