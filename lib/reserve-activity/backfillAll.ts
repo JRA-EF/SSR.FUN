@@ -53,8 +53,25 @@ export async function backfillAllReserveActivity(
   const { reserves } = await discoverAllReserves(connection, programId, candidateMints);
   const program = buildReadOnlyProgram(connection);
 
+  // Order by LEAST-RECENTLY-ATTEMPTED first (never-attempted = oldest of
+  // all, via COALESCE to the epoch), not discovery order. Without this, a
+  // Reserve near the front of discoverAllReserves's fixed ordering that is
+  // merely slow or permanently erroring (e.g. old history the event parser
+  // can't decode) would consume the entire time budget on every single
+  // sweep, forever starving every Reserve after it -- confirmed live: two
+  // consecutive real sweeps against production produced byte-identical
+  // results (same 6 fully backfilled, same 11 errors) because the loop
+  // never got past the same handful of Reserves. Ordering by attempt
+  // recency guarantees a Reserve that errors out still rotates to the back
+  // of the queue for the NEXT sweep, so genuinely untouched Reserves get a
+  // turn instead of the sweep spinning on the same failures indefinitely.
+  const sql = getSql();
+  const cursorRows = (await sql`select reserve, updated_at from reserve_activity_cursor`) as { reserve: string; updated_at: string }[];
+  const lastAttempted = new Map(cursorRows.map((c) => [c.reserve, new Date(c.updated_at).getTime()]));
+  const orderedReserves = [...reserves].sort((a, b) => (lastAttempted.get(a.reserve) ?? 0) - (lastAttempted.get(b.reserve) ?? 0));
+
   let fullyBackfilled = 0;
-  for (const r of reserves) {
+  for (const r of orderedReserves) {
     if (Date.now() - startedAt > budgetMs) break;
     const reserveAddress = new PublicKey(r.reserve);
     let complete = false;
@@ -71,7 +88,6 @@ export async function backfillAllReserveActivity(
     // actually reached backfill_complete -- syncReserveActivity doesn't
     // return that flag directly, so ask the same source of truth
     // getCursor() does, one row, indexed lookup.
-    const sql = getSql();
     const rows = await sql`select backfill_complete from reserve_activity_cursor where reserve = ${r.reserve}`;
     complete = Boolean((rows[0] as { backfill_complete?: boolean } | undefined)?.backfill_complete);
     if (complete) fullyBackfilled++;
