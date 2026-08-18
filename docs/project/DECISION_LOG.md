@@ -3202,3 +3202,29 @@
   ]
 }
 ```
+
+## DEC-0108
+
+```json
+{
+  "id": "DEC-0108",
+  "date": "2026-08-18",
+  "status": "confirmed",
+  "decision": "Mainnet-readiness requirement for internal tooling: `/internal/kpis` (the protocol usage-stats dashboard, DEC-0107) must exist and be operational at Mainnet launch. `/internal/status` (the project-status/decision-log dashboard) is DevNet-only tooling and is explicitly left behind -- it does not need to carry over to Mainnet.",
+  "context": "Following DEC-0107's rollout to DevNet production (migration applied, deployed, first backfill sweeps run -- see that entry's live-rollout evidence, including two real bugs found and fixed during rollout: a missing `api/dashboard/package.json` crashing the new cron, and a backfill-sweep ordering bug that silently starved progress), Creator (Claude User) confirmed the known residual gap (a pre-existing Borsh event-decode error affecting a subset of older DevNet Reserves' history, deliberately deferred, not fixed this pass) can stay deferred -- 'we can leave it' -- and explicitly scoped what matters going into Mainnet: `/internal/kpis` must be ready and working by launch; `/internal/status` does not need to be.",
+  "rationale": "`/internal/status` renders `PROJECT_STATUS.md`/`DECISION_LOG.md` -- this project's own engineering/decision history, which is inherently a DevNet-era, single-repo development artifact with no ongoing purpose once Mainnet is live and this phase of work is done. `/internal/kpis` reports real protocol usage (Reserves, volume, fees) -- exactly the kind of operational visibility a live Mainnet deployment needs from day one, so it is a genuine Mainnet launch requirement, not DevNet-only tooling. Deferring the Borsh decode-error root-cause is reasonable for now since it only affects backfilling OLD DevNet Reserve history that predates this dashboard -- it does not block the dashboard's core function, and a fresh Mainnet deployment starts with no such legacy history to backfill in the first place (though the underlying event-parser bug itself is still real and could in principle resurface on Mainnet once enough real transaction diversity accumulates -- see 'Outstanding' below).",
+  "alternativesConsidered": [
+    "Carry `/internal/status` forward to Mainnet as well, for continuity -- rejected: explicitly not required per Creator (Claude User)'s scoping; no work was requested or performed to prepare it for a Mainnet context.",
+    "Root-cause and fix the Borsh decode-error bug now, before considering this dashboard Mainnet-ready -- rejected for this pass: explicitly deferred ('we can leave it'); the bug affects only backfilling pre-existing DevNet history, not the dashboard's operation."
+  ],
+  "impact": "Documentation-only. No code changed by this decision. Establishes `/internal/kpis` as a tracked Mainnet-launch requirement (added to `docs/project/PROJECT_STATUS.md`'s Mainnet-Readiness Gaps) rather than leaving it as an undifferentiated DevNet-era feature alongside `/internal/status`. Outstanding, explicitly NOT closed by this decision: (1) the Borsh event-decode bug from DEC-0107's rollout remains unfixed and untracked beyond that entry's own note; (2) no explicit plan yet exists for standing up `/internal/kpis` against a Mainnet deployment (new program ID, likely a separate/parallel `reserve_activity_log` scope or a Mainnet-specific deployment of this same tooling) -- this decision states the requirement, not the implementation plan for meeting it.",
+  "affectedAreas": [
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Explicit instruction from Creator (Claude User) this session: 'we can leave it. what matters is that when we launch mainnet this is ready to go. we then can leave the internal/status behind on devnet, but the /kpis need to be there. please store this info.'"
+  ]
+}
+```
