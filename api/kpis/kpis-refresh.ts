@@ -5,7 +5,7 @@
 // pattern) since this is state-changing (writes to Postgres), unlike
 // kpis.ts's read-only GET.
 import { Connection } from "@solana/web3.js";
-import { type DashboardRequest, type DashboardResponse, isAuthenticated, isSameOriginRequest, unauthorized } from "../../lib/road-to-mainnet/auth.js";
+import { type DashboardRequest, type DashboardResponse, isAuthenticated, isSameOriginRequest, unauthorized } from "./_session";
 import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll.js";
 import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc.js";
 

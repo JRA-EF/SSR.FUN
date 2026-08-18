@@ -5,7 +5,7 @@
 // streamActivityLogCsv (paginated Postgres reads, never one giant query
 // result held in memory at once) rather than buffering the whole export
 // into a single string first.
-import { parseCookie, SESSION_COOKIE_NAME, verifySessionCookie } from "../../lib/dashboard/session.js";
+import { isAuthenticated } from "./_session";
 import { streamActivityLogCsv } from "../../lib/reserve-activity/kpis.js";
 
 interface ApiRequest {
@@ -29,11 +29,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // covers the auth/setup path, which is exactly where a crash would
   // otherwise be invisible (a raw platform 500 with no readable message).
   try {
-    const configuredPassword = process.env.SSR_DASHBOARD_PASSWORD ?? "";
-    const cookieHeader = Array.isArray(req.headers.cookie) ? req.headers.cookie[0] : req.headers.cookie;
-    const sessionValue = parseCookie(cookieHeader, SESSION_COOKIE_NAME);
-    const authenticated = await verifySessionCookie(sessionValue, configuredPassword);
-    if (!authenticated) {
+    if (!(await isAuthenticated(req))) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
