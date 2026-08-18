@@ -20,6 +20,8 @@ import { classifyActorRole, type ActorRole } from "./amounts";
 export interface ReserveContextEvent {
   slot: number;
   reserve: string;
+  /** ledger_reserves.program_id is NOT NULL -- required on every insert, even though only reserveCreated/reserveManagerTransferred write to that table (delegate events never touch program_id, ledger_reserve_delegates has no such column). */
+  programId: string;
   eventType: "reserveCreated" | "reserveManagerTransferred" | "delegateAdded" | "delegatePermissionsUpdated" | "delegateRemoved";
   manager?: string | null;
   delegate?: string | null;
@@ -43,15 +45,15 @@ export async function applyReserveContextEvents(sql: ReturnType<typeof getSql>, 
   for (const ev of sorted) {
     if (ev.eventType === "reserveCreated") {
       await sql`
-        insert into ledger_reserves (cluster, reserve, manager, creator_wallet, created_at_utc)
-        values (${cluster}, ${ev.reserve}, ${ev.manager ?? null}, ${ev.manager ?? null}, ${ev.eventTsUtc})
+        insert into ledger_reserves (cluster, reserve, program_id, manager, creator_wallet, created_at_utc)
+        values (${cluster}, ${ev.reserve}, ${ev.programId}, ${ev.manager ?? null}, ${ev.manager ?? null}, ${ev.eventTsUtc})
         on conflict (cluster, reserve) do update set
           manager = ${ev.manager ?? null}, creator_wallet = ${ev.manager ?? null}, created_at_utc = ${ev.eventTsUtc}
       `;
     } else if (ev.eventType === "reserveManagerTransferred") {
       await sql`
-        insert into ledger_reserves (cluster, reserve, manager)
-        values (${cluster}, ${ev.reserve}, ${ev.manager ?? null})
+        insert into ledger_reserves (cluster, reserve, program_id, manager)
+        values (${cluster}, ${ev.reserve}, ${ev.programId}, ${ev.manager ?? null})
         on conflict (cluster, reserve) do update set manager = ${ev.manager ?? null}
       `;
     } else if (ev.eventType === "delegateAdded" && ev.delegate) {

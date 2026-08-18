@@ -181,7 +181,7 @@ export async function ingestProgramEvents(
             },
           );
           if (record) records.push(record);
-          collectReserveContextEvent(contextEvents, event, ctx.reserve, tx.slot ?? 0, record?.event_ts_utc ?? new Date().toISOString());
+          collectReserveContextEvent(contextEvents, event, ctx.reserve, programId.toBase58(), tx.slot ?? 0, record?.event_ts_utc ?? new Date().toISOString());
           eventIndex++;
         }
       } catch (e) {
@@ -225,19 +225,19 @@ export async function ingestProgramEvents(
 }
 
 /** Recognizes the handful of event types that define a Reserve's current manager/creator/delegate set, and stages them for applyReserveContextEvents (called once at the end of the sweep, after being sorted into true chronological order). A no-op for every other event type. */
-function collectReserveContextEvent(out: ReserveContextEvent[], event: { name: string; data: Record<string, unknown> }, reserve: string | null, slot: number, eventTsUtc: string): void {
+function collectReserveContextEvent(out: ReserveContextEvent[], event: { name: string; data: Record<string, unknown> }, reserve: string | null, programId: string, slot: number, eventTsUtc: string): void {
   if (!reserve) return;
   const d = event.data;
   if (event.name === "reserveCreated") {
-    out.push({ slot, reserve, eventType: "reserveCreated", manager: pk(d.manager), eventTsUtc });
+    out.push({ slot, reserve, programId, eventType: "reserveCreated", manager: pk(d.manager), eventTsUtc });
   } else if (event.name === "reserveManagerTransferred") {
-    out.push({ slot, reserve, eventType: "reserveManagerTransferred", manager: pk(d.newManager), eventTsUtc });
+    out.push({ slot, reserve, programId, eventType: "reserveManagerTransferred", manager: pk(d.newManager), eventTsUtc });
   } else if (event.name === "delegateAdded") {
-    out.push({ slot, reserve, eventType: "delegateAdded", delegate: pk(d.delegate), permissionsBitmask: typeof d.permissions === "number" ? d.permissions : Number(d.permissions ?? 0), restricted: Boolean(d.restricted), eventTsUtc });
+    out.push({ slot, reserve, programId, eventType: "delegateAdded", delegate: pk(d.delegate), permissionsBitmask: typeof d.permissions === "number" ? d.permissions : Number(d.permissions ?? 0), restricted: Boolean(d.restricted), eventTsUtc });
   } else if (event.name === "delegatePermissionsUpdated") {
-    out.push({ slot, reserve, eventType: "delegatePermissionsUpdated", delegate: pk(d.delegate), permissionsBitmask: typeof d.newPermissions === "number" ? d.newPermissions : Number(d.newPermissions ?? 0), eventTsUtc });
+    out.push({ slot, reserve, programId, eventType: "delegatePermissionsUpdated", delegate: pk(d.delegate), permissionsBitmask: typeof d.newPermissions === "number" ? d.newPermissions : Number(d.newPermissions ?? 0), eventTsUtc });
   } else if (event.name === "delegateRemoved") {
-    out.push({ slot, reserve, eventType: "delegateRemoved", delegate: pk(d.delegate), eventTsUtc });
+    out.push({ slot, reserve, programId, eventType: "delegateRemoved", delegate: pk(d.delegate), eventTsUtc });
   }
 }
 
