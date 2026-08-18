@@ -105,23 +105,38 @@ export async function ingestProgramEvents(
       const logs = tx.meta.logMessages;
       if (!logs) continue;
 
-      let eventIndex = 0;
-      const records: LedgerEventRecord[] = [];
-      for (const event of eventParser.parseLogs(logs)) {
-        const ctx = extractReserveContext(event.data as Record<string, unknown>);
-        const isReserveTokenAmount = true; // every ssr_protocol event's primary amount is a Reserve Token amount (RESERVE_TOKEN_DECIMALS), never a raw asset-mint amount
-        const record = buildLedgerEventRecord(
-          { name: event.name, data: event.data as Record<string, unknown> },
-          { ...txContext, eventIndex },
-          {
-            reserve: ctx.reserve,
-            reserveTokenMint: ctx.reserveTokenMint,
-            reserveAssetMint: ctx.reserveAssetMint,
-            decimals: isReserveTokenAmount ? RESERVE_TOKEN_DECIMALS : null,
-          },
-        );
-        if (record) records.push(record);
-        eventIndex++;
+      // A single malformed/unparseable transaction's logs (a real,
+      // pre-existing decoding edge case -- see docs/protocol/
+      // LEDGER_ARCHITECTURE.md section 11 and DEC-0107's "Invalid vec for
+      // assetMints" note) must NEVER abort the whole multi-page walk --
+      // discovered live: without this try/catch, one bad transaction
+      // anywhere in the walked range crashed ingestProgramEvents entirely,
+      // losing every already-processed record from this call and
+      // returning nothing. Matches lib/reserve-activity/backfillAll.ts's
+      // established per-item resilience pattern, applied at the
+      // per-transaction level here since that is the unit that can fail.
+      let records: LedgerEventRecord[] = [];
+      try {
+        let eventIndex = 0;
+        for (const event of eventParser.parseLogs(logs)) {
+          const ctx = extractReserveContext(event.data as Record<string, unknown>);
+          const isReserveTokenAmount = true; // every ssr_protocol event's primary amount is a Reserve Token amount (RESERVE_TOKEN_DECIMALS), never a raw asset-mint amount
+          const record = buildLedgerEventRecord(
+            { name: event.name, data: event.data as Record<string, unknown> },
+            { ...txContext, eventIndex },
+            {
+              reserve: ctx.reserve,
+              reserveTokenMint: ctx.reserveTokenMint,
+              reserveAssetMint: ctx.reserveAssetMint,
+              decimals: isReserveTokenAmount ? RESERVE_TOKEN_DECIMALS : null,
+            },
+          );
+          if (record) records.push(record);
+          eventIndex++;
+        }
+      } catch (e) {
+        errors.push(`${sigInfo.signature}: ${e instanceof Error ? e.message : String(e)}`);
+        records = [];
       }
 
       for (const r of records) {
