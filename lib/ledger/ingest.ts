@@ -64,8 +64,35 @@ export async function ingestProgramEvents(
   let transactionsFetched = 0;
   let eventsUpserted = 0;
   let reachedRealEnd = false;
-  let before = options.before;
   let oldestSignatureWalked: string | undefined;
+
+  // Resume from where the LAST call left off -- without this, every
+  // separate invocation (a new cron tick, a new dryRun test call) walked
+  // the exact same newest ~300 signatures forever and NEVER made forward
+  // progress into older history. Discovered live: two consecutive real
+  // sweeps against production returned byte-identical results (same
+  // signaturesWalked/eventsUpserted/errors) before this fix -- the exact
+  // same starvation bug lib/reserve-activity/backfillAll.ts already hit
+  // and fixed earlier this same session, reproduced here because this is
+  // genuinely separate code, not a shared function. `options.before`
+  // still wins when explicitly passed (an intentional manual override).
+  let before = options.before;
+  if (before === undefined) {
+    const cursorRows = await sql`
+      select oldest_signature_indexed, backfill_complete from ledger_ingestion_cursors
+      where cluster = ${cluster} and program_id = ${programId.toBase58()} and source = ${source === "backfill" ? "backfill" : "rpc-poll"}
+    `;
+    const cursor = cursorRows[0] as { oldest_signature_indexed: string | null; backfill_complete: boolean } | undefined;
+    // Still backfilling (haven't reached the real end of history yet): continue
+    // from exactly where the last call stopped. Once backfill_complete is true,
+    // intentionally walk from the newest signature again each call (no `before`)
+    // -- a "top-up" pass; re-upserting already-known events is a cheap no-op
+    // (`on conflict (event_id) do nothing`), and this is the only way to pick up
+    // genuinely NEW activity since the last run.
+    if (cursor && !cursor.backfill_complete && cursor.oldest_signature_indexed) {
+      before = cursor.oldest_signature_indexed;
+    }
+  }
 
   for (let page = 0; page < maxPages && transactionsFetched < MAX_TX_FETCHES_PER_CALL; page++) {
     const sigInfos = await withRateLimitRetryGeneric(() => connection.getSignaturesForAddress(programId, { limit: SIGNATURES_PER_PAGE, before }));
