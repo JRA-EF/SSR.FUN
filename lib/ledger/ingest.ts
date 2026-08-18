@@ -12,10 +12,11 @@
 // activityLog.ts's fetchReserveActivityLog, which skips sigInfo.err
 // transactions entirely) -- a failed attempt is exactly what sections E/H
 // of the ledger requirement ask to be captured, not discarded.
-import { EventParser } from "@anchor-lang/core";
 import { withRateLimitRetryGeneric, buildReadOnlyProgram } from "@ssr/sdk";
 import { getSql } from "./db";
-import { buildLedgerEventRecord, type TransactionContext, type LedgerEventRecord } from "./decodeEvent";
+import { buildLedgerEventRecord, buildFailedTransactionRecord, type TransactionContext, type LedgerEventRecord } from "./decodeEvent";
+import { parseLogsWithInstructionContext } from "./logWalker";
+import { applyReserveContextEvents, loadReserveActorLookup, type ReserveContextEvent } from "./reserveContext";
 
 type ReadOnlyProgram = ReturnType<typeof buildReadOnlyProgram>;
 type Connection = Parameters<typeof buildReadOnlyProgram>[0];
@@ -56,8 +57,16 @@ export async function ingestProgramEvents(
   const programId = program.programId;
   const maxPages = options.maxPages ?? MAX_PAGES_PER_CALL;
   const source = options.source ?? "rpc-poll";
-  const eventParser = new EventParser(programId, program.coder);
   const sql = getSql();
+
+  // Loaded once per sweep (not re-queried per transaction) -- reflects
+  // whatever ledger_reserves/ledger_reserve_delegates already knew BEFORE
+  // this sweep started. Context DISCOVERED during this same sweep (e.g. a
+  // reserveCreated near the walk's older end) intentionally does not
+  // retroactively improve this sweep's own earlier classifications --
+  // reclassifyActorRoles (lib/ledger/reserveContext.ts) is the tool for
+  // that, run separately after ingestion moves forward.
+  const actorLookup = await loadReserveActorLookup(sql, cluster);
 
   const errors: string[] = [];
   let signaturesWalked = 0;
@@ -65,6 +74,12 @@ export async function ingestProgramEvents(
   let eventsUpserted = 0;
   let reachedRealEnd = false;
   let oldestSignatureWalked: string | undefined;
+  // Collected across the whole sweep, applied AFTER the walk completes in
+  // true chronological (ascending slot) order regardless of the order
+  // ingestion discovered the underlying transactions in -- see
+  // applyReserveContextEvents's own comment for why this matters
+  // (ingestion itself walks newest-to-oldest for resumability).
+  const contextEvents: ReserveContextEvent[] = [];
 
   // Resume from where the LAST call left off -- without this, every
   // separate invocation (a new cron tick, a new dryRun test call) walked
@@ -115,17 +130,23 @@ export async function ingestProgramEvents(
       transactionsFetched++;
       if (!tx?.meta) continue;
 
-      const txContext: Omit<TransactionContext, "instructionIndex" | "innerInstructionIndex" | "eventIndex"> = {
+      const txContext: Omit<TransactionContext, "instructionIndex" | "innerInstructionIndex" | "instructionName" | "eventIndex"> = {
         cluster,
         programId: programId.toBase58(),
         signature: sigInfo.signature,
         slot: tx.slot ?? null,
         blockTimeUnix: tx.blockTime ?? sigInfo.blockTime ?? null,
         transactionFailed: sigInfo.err !== null || tx.meta.err !== null,
-        errorMessage: sigInfo.err ? JSON.stringify(sigInfo.err) : undefined,
+        errorMessage: sigInfo.err ? JSON.stringify(sigInfo.err) : tx.meta.err ? JSON.stringify(tx.meta.err) : undefined,
         feePayer: tx.transaction.message.staticAccountKeys?.[0]?.toBase58(),
         computeUnitsConsumed: tx.meta.computeUnitsConsumed ?? undefined,
         networkFeeLamports: tx.meta.fee,
+        // Always "confirmed" -- every transaction reaching this point was
+        // fetched with `commitment: "confirmed"` above; this reports the
+        // commitment level actually observed, independent of whether the
+        // transaction itself succeeded or failed (those are orthogonal --
+        // see the `status` field for success/failure).
+        confirmationStatus: "confirmed",
         ingestionSource: source === "backfill" ? "backfill" : "rpc-poll",
       };
 
@@ -145,25 +166,36 @@ export async function ingestProgramEvents(
       let records: LedgerEventRecord[] = [];
       try {
         let eventIndex = 0;
-        for (const event of eventParser.parseLogs(logs)) {
-          const ctx = extractReserveContext(event.data as Record<string, unknown>);
-          const isReserveTokenAmount = true; // every ssr_protocol event's primary amount is a Reserve Token amount (RESERVE_TOKEN_DECIMALS), never a raw asset-mint amount
+        for (const { event, instructionIndex, innerInstructionIndex, instructionName } of parseLogsWithInstructionContext(logs, programId.toBase58(), program.coder.events)) {
+          const ctx = extractReserveContext(event.data);
+          const isReserveTokenAmount = true; // every ssr_protocol event's primary amount is a Reserve Token amount (RESERVE_TOKEN_DECIMALS), never a raw asset-mint amount -- reserveAssetFunded is the one exception, handled inside decodeEvent.ts's fieldExtraction layer, not here
           const record = buildLedgerEventRecord(
-            { name: event.name, data: event.data as Record<string, unknown> },
-            { ...txContext, eventIndex },
+            event,
+            { ...txContext, instructionIndex, innerInstructionIndex, instructionName, eventIndex },
             {
               reserve: ctx.reserve,
               reserveTokenMint: ctx.reserveTokenMint,
               reserveAssetMint: ctx.reserveAssetMint,
               decimals: isReserveTokenAmount ? RESERVE_TOKEN_DECIMALS : null,
+              actorRoleContext: actorLookup.getContext(ctx.reserve),
             },
           );
           if (record) records.push(record);
+          collectReserveContextEvent(contextEvents, event, ctx.reserve, tx.slot ?? 0, record?.event_ts_utc ?? new Date().toISOString());
           eventIndex++;
         }
       } catch (e) {
         errors.push(`${sigInfo.signature}: ${e instanceof Error ? e.message : String(e)}`);
         records = [];
+      }
+
+      // A failed transaction whose logs decoded to ZERO events (the common
+      // case -- most failures happen before the instruction body reaches
+      // an emit!() call) previously vanished entirely: no record, no row,
+      // no trace it was ever attempted. Flagged live as "no failed
+      // transactions or error history" in an acquisition-readiness review.
+      if (records.length === 0 && txContext.transactionFailed) {
+        records.push(buildFailedTransactionRecord({ ...txContext, instructionIndex: undefined, innerInstructionIndex: undefined, instructionName: undefined, eventIndex: undefined }));
       }
 
       for (const r of records) {
@@ -183,9 +215,30 @@ export async function ingestProgramEvents(
     before = sigInfos[sigInfos.length - 1].signature;
   }
 
+  if (contextEvents.length > 0) {
+    await applyReserveContextEvents(sql, cluster, contextEvents);
+  }
+
   await upsertCursor(sql, cluster, programId.toBase58(), source === "backfill" ? "backfill" : "rpc-poll", { oldestSignatureWalked, reachedRealEnd });
 
   return { cluster, signaturesWalked, transactionsFetched, eventsUpserted, reachedRealEnd, errors };
+}
+
+/** Recognizes the handful of event types that define a Reserve's current manager/creator/delegate set, and stages them for applyReserveContextEvents (called once at the end of the sweep, after being sorted into true chronological order). A no-op for every other event type. */
+function collectReserveContextEvent(out: ReserveContextEvent[], event: { name: string; data: Record<string, unknown> }, reserve: string | null, slot: number, eventTsUtc: string): void {
+  if (!reserve) return;
+  const d = event.data;
+  if (event.name === "reserveCreated") {
+    out.push({ slot, reserve, eventType: "reserveCreated", manager: pk(d.manager), eventTsUtc });
+  } else if (event.name === "reserveManagerTransferred") {
+    out.push({ slot, reserve, eventType: "reserveManagerTransferred", manager: pk(d.newManager), eventTsUtc });
+  } else if (event.name === "delegateAdded") {
+    out.push({ slot, reserve, eventType: "delegateAdded", delegate: pk(d.delegate), permissionsBitmask: typeof d.permissions === "number" ? d.permissions : Number(d.permissions ?? 0), restricted: Boolean(d.restricted), eventTsUtc });
+  } else if (event.name === "delegatePermissionsUpdated") {
+    out.push({ slot, reserve, eventType: "delegatePermissionsUpdated", delegate: pk(d.delegate), permissionsBitmask: typeof d.newPermissions === "number" ? d.newPermissions : Number(d.newPermissions ?? 0), eventTsUtc });
+  } else if (event.name === "delegateRemoved") {
+    out.push({ slot, reserve, eventType: "delegateRemoved", delegate: pk(d.delegate), eventTsUtc });
+  }
 }
 
 async function upsertLedgerEvent(sql: ReturnType<typeof getSql>, r: LedgerEventRecord): Promise<void> {
@@ -194,13 +247,17 @@ async function upsertLedgerEvent(sql: ReturnType<typeof getSql>, r: LedgerEventR
       event_id, cluster, program_id, signature, slot, block_time_unix, event_ts_utc, event_date_utc,
       instruction_index, inner_instruction_index, event_index, instruction_name, event_type, category, status,
       error_code, error_message, actor_wallet, actor_role, fee_payer, reserve, reserve_token_mint, reserve_asset_mint,
+      source_account, destination_account, vault,
       amount_raw, amount_decimals, amount_normalized, amount_kind, usd_price_at_event, usd_price_source, usd_value_at_event,
+      fee_amount_raw, fee_destination, protocol_revenue_raw, manager_revenue_raw,
       compute_units_consumed, network_fee_lamports, priority_fee_lamports, confirmation_status, summary, ingestion_source, decoder_version
     ) values (
       ${r.event_id}, ${r.cluster}, ${r.program_id}, ${r.signature}, ${r.slot}, ${r.block_time_unix}, ${r.event_ts_utc}, ${r.event_date_utc},
       ${r.instruction_index}, ${r.inner_instruction_index}, ${r.event_index}, ${r.instruction_name}, ${r.event_type}, ${r.category}, ${r.status},
       ${r.error_code}, ${r.error_message}, ${r.actor_wallet}, ${r.actor_role}, ${r.fee_payer}, ${r.reserve}, ${r.reserve_token_mint}, ${r.reserve_asset_mint},
+      ${r.source_account}, ${r.destination_account}, ${r.vault},
       ${r.amount_raw}, ${r.amount_decimals}, ${r.amount_normalized}, ${r.amount_kind}, ${r.usd_price_at_event}, ${r.usd_price_source}, ${r.usd_value_at_event},
+      ${r.fee_amount_raw}, ${r.fee_destination}, ${r.protocol_revenue_raw}, ${r.manager_revenue_raw},
       ${r.compute_units_consumed}, ${r.network_fee_lamports}, ${r.priority_fee_lamports}, ${r.confirmation_status}, ${r.summary}, ${r.ingestion_source}, ${r.decoder_version}
     )
     on conflict (event_id) do nothing

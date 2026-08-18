@@ -179,12 +179,18 @@ export function summarizeActivityEvent(
         amountRaw: addBig(data.amount),
         amountKind: "protocolFee",
       };
+    case "protocolInitialized":
+      // Protocol-wide (not tied to any one Reserve account) -- structurally
+      // unreachable from a per-Reserve getSignaturesForAddress walk
+      // (fetchReserveActivityLog below), but reachable from a program-wide
+      // walk (lib/ledger/ingest.ts), which is why this case exists here.
+      return { actor: pk(data.authority), summary: `Protocol initialized by ${pk(data.authority)} (max ${String(data.maxReserveAssets)} Reserve Assets)` };
+    case "protocolConfigUpdated":
+      return {
+        actor: pk(data.authority),
+        summary: `Protocol config updated by ${pk(data.authority)}: default fee destination ${pk(data.oldDefaultProtocolFeeDestination)} -> ${pk(data.newDefaultProtocolFeeDestination)}, default fee ${String(data.oldDefaultProtocolFeeBps)}bps -> ${String(data.newDefaultProtocolFeeBps)}bps`,
+      };
     default:
-      // ProtocolInitialized/ProtocolConfigUpdated are Protocol-wide (not tied
-      // to any one Reserve account) and never appear in a per-Reserve
-      // getSignaturesForAddress walk in the first place -- not handled here
-      // because they're structurally unreachable, not because they're
-      // filtered out.
       return null;
   }
 }

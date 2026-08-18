@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   ResponsiveContainer,
-  ComposedChart,
   BarChart,
   Bar,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Cell,
+  LabelList,
 } from 'recharts'
 
 // Dark-mode categorical/status slots from the dataviz skill's validated
@@ -242,37 +242,69 @@ export function KpiDashboard() {
       <div className="kpi-charts-grid">
         <div className="dash-card kpi-chart-card">
           <div className="dash-card-head">
-            <h2>Reserves created by month</h2>
+            <h2>New Reserves per month</h2>
           </div>
           <div className="kpi-chart-body">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={kpis.reservesCreatedByMonth} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={kpis.reservesCreatedByMonth} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke="var(--line)" strokeDasharray="0" vertical={false} />
+                <XAxis dataKey="month" stroke="var(--text-2)" fontSize={11} tickLine={false} />
+                <YAxis stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
+                <Bar dataKey="count" name="Created this month" fill={KPI_COLORS.blue} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="dash-card kpi-chart-card">
+          <div className="dash-card-head">
+            <h2>Cumulative Reserves over time</h2>
+          </div>
+          <div className="kpi-chart-body">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={kpis.reservesCreatedByMonth} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="cumulativeFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={KPI_COLORS.orange} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={KPI_COLORS.orange} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--text-2)" fontSize={11} tickLine={false} />
                 <YAxis stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
                 <Tooltip content={<ChartTooltip />} />
-                <Bar dataKey="count" name="Created this month" fill={KPI_COLORS.blue} radius={[3, 3, 0, 0]} />
-                <Line type="monotone" dataKey="cumulative" name="Cumulative total" stroke={KPI_COLORS.orange} strokeWidth={2} dot={false} />
-              </ComposedChart>
+                <Area type="monotone" dataKey="cumulative" name="Cumulative total" stroke={KPI_COLORS.orange} strokeWidth={2} fill="url(#cumulativeFill)" dot={false} />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
-          <Legend items={[{ label: 'Created this month', color: KPI_COLORS.blue }, { label: 'Cumulative total', color: KPI_COLORS.orange }]} />
         </div>
 
         <div className="dash-card kpi-chart-card">
           <div className="dash-card-head">
             <h2>Daily volume</h2>
+            <span className="dash-muted dash-small">Reserve Token units</span>
           </div>
           <div className="kpi-chart-body">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={kpis.dailyVolume.map((d) => ({ day: d.day, mint: humanAmount(d.mintVolumeRaw), redeem: humanAmount(d.redeemVolumeRaw) }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart data={kpis.dailyVolume.map((d) => ({ day: d.day, mint: humanAmount(d.mintVolumeRaw), redeem: humanAmount(d.redeemVolumeRaw) }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="mintFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={KPI_COLORS.blue} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={KPI_COLORS.blue} stopOpacity={0.02} />
+                  </linearGradient>
+                  <linearGradient id="redeemFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={KPI_COLORS.orange} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={KPI_COLORS.orange} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" vertical={false} />
                 <XAxis dataKey="day" stroke="var(--text-2)" fontSize={11} tickLine={false} />
                 <YAxis stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} />
-                <Line type="monotone" dataKey="mint" name="Mint volume" stroke={KPI_COLORS.blue} strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="redeem" name="Redeem volume" stroke={KPI_COLORS.orange} strokeWidth={2} dot={false} />
-              </LineChart>
+                <Area type="monotone" dataKey="mint" name="Mint volume" stroke={KPI_COLORS.blue} strokeWidth={2} fill="url(#mintFill)" dot={false} />
+                <Area type="monotone" dataKey="redeem" name="Redeem volume" stroke={KPI_COLORS.orange} strokeWidth={2} fill="url(#redeemFill)" dot={false} />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
           <Legend items={[{ label: 'Mint volume', color: KPI_COLORS.blue }, { label: 'Redeem volume', color: KPI_COLORS.orange }]} />
@@ -288,9 +320,9 @@ export function KpiDashboard() {
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--text-2)" fontSize={11} tickLine={false} />
                 <YAxis stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} />
-                <Bar dataKey="protocol" name="Protocol fee" fill={KPI_COLORS.blue} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="manager" name="Manager fee" fill={KPI_COLORS.orange} radius={[3, 3, 0, 0]} />
+                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
+                <Bar dataKey="protocol" name="Protocol fee" fill={KPI_COLORS.blue} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="manager" name="Manager fee" fill={KPI_COLORS.orange} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -307,11 +339,12 @@ export function KpiDashboard() {
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" horizontal={false} />
                 <XAxis type="number" stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
                 <YAxis type="category" dataKey="status" stroke="var(--text-2)" fontSize={11} tickLine={false} width={110} />
-                <Tooltip content={<ChartTooltip />} />
-                <Bar dataKey="count" name="Reserves" radius={[0, 3, 3, 0]}>
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
+                <Bar dataKey="count" name="Reserves" radius={[0, 4, 4, 0]}>
                   {kpis.lifecycleCounts.map((entry) => (
                     <Cell key={entry.status} fill={LIFECYCLE_COLORS[entry.status] ?? KPI_COLORS.violet} />
                   ))}
+                  <LabelList dataKey="count" position="right" fill="var(--text-1)" fontSize={11} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -328,8 +361,8 @@ export function KpiDashboard() {
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--text-2)" fontSize={11} tickLine={false} />
                 <YAxis stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} />
-                <Bar dataKey="avgAssetCount" name="Avg. asset count" fill={KPI_COLORS.aqua} radius={[3, 3, 0, 0]} />
+                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
+                <Bar dataKey="avgAssetCount" name="Avg. asset count" fill={KPI_COLORS.aqua} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -346,8 +379,10 @@ export function KpiDashboard() {
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" horizontal={false} />
                 <XAxis type="number" stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} />
                 <YAxis type="category" dataKey="reserve" stroke="var(--text-2)" fontSize={11} tickLine={false} width={90} />
-                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} />
-                <Bar dataKey="volume" name="Volume" fill={KPI_COLORS.blue} radius={[0, 3, 3, 0]} />
+                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
+                <Bar dataKey="volume" name="Volume" fill={KPI_COLORS.blue} radius={[0, 4, 4, 0]}>
+                  <LabelList dataKey="volume" position="right" fill="var(--text-1)" fontSize={11} formatter={(v: unknown) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '')} />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
