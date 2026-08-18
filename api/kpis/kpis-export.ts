@@ -1,4 +1,4 @@
-// GET /api/dashboard/kpis-export -- the full Reserve Activity Log, every
+// GET /api/kpis/kpis-export -- the full Reserve Activity Log, every
 // indexed event across every Reserve, as one downloadable CSV file (the
 // "logged as one big file that we can extract as .csv" requirement). Same
 // auth as kpis.ts. Streams via lib/reserve-activity/kpis.ts's
@@ -22,16 +22,27 @@ interface ApiResponse {
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
-  const configuredPassword = process.env.SSR_DASHBOARD_PASSWORD ?? "";
-  const cookieHeader = Array.isArray(req.headers.cookie) ? req.headers.cookie[0] : req.headers.cookie;
-  const sessionValue = parseCookie(cookieHeader, SESSION_COOKIE_NAME);
-  const authenticated = await verifySessionCookie(sessionValue, configuredPassword);
-  if (!authenticated) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  if (req.method !== "GET") {
-    res.status(405).json({ error: "Method not allowed" });
+  // Wraps everything up to (not including) the streaming loop below in a
+  // try/catch -- see kpis.ts's matching comment for why. Once headers are
+  // sent, a JSON error response is no longer possible (see the inner
+  // try/catch below for that separate, already-handled case), so this only
+  // covers the auth/setup path, which is exactly where a crash would
+  // otherwise be invisible (a raw platform 500 with no readable message).
+  try {
+    const configuredPassword = process.env.SSR_DASHBOARD_PASSWORD ?? "";
+    const cookieHeader = Array.isArray(req.headers.cookie) ? req.headers.cookie[0] : req.headers.cookie;
+    const sessionValue = parseCookie(cookieHeader, SESSION_COOKIE_NAME);
+    const authenticated = await verifySessionCookie(sessionValue, configuredPassword);
+    if (!authenticated) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
+    }
+  } catch (e) {
+    res.status(500).json({ stage: "handler", error: e instanceof Error ? `${e.name}: ${e.message}` : String(e), stack: e instanceof Error ? e.stack : undefined });
     return;
   }
 

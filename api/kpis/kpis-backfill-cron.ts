@@ -1,4 +1,4 @@
-// GET /api/dashboard/kpis-backfill-cron -- scheduled keeper (vercel.json's
+// GET /api/kpis/kpis-backfill-cron -- scheduled keeper (vercel.json's
 // `crons`) that keeps reserve_activity_log's backfill genuinely complete
 // across EVERY discovered Reserve, not just whichever ones happened to have
 // their own page viewed recently (indexer.ts's syncReserveActivity is
