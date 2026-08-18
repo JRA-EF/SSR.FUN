@@ -43,8 +43,8 @@ async function upsertEntries(reserve: string, entries: ActivityLogEntry[]): Prom
   const sql = getSql();
   for (const e of entries) {
     await sql`
-      insert into reserve_activity_log (reserve, signature, kind, ts, actor, summary)
-      values (${reserve}, ${e.signature}, ${e.kind}, ${e.ts}, ${e.actor}, ${e.summary})
+      insert into reserve_activity_log (reserve, signature, kind, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2)
+      values (${reserve}, ${e.signature}, ${e.kind}, ${e.ts}, ${e.actor}, ${e.summary}, ${e.amountRaw ?? null}, ${e.amountKind ?? null}, ${e.amountRaw2 ?? null}, ${e.amountKind2 ?? null})
       on conflict (reserve, signature, kind) do nothing
     `;
   }

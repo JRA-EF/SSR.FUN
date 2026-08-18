@@ -1,0 +1,54 @@
+/* Protocol KPI dashboard (/internal/kpis). Reuses ../internal-status/dashboard.css's
+   tokens/classes for chrome (cards, section titles, buttons, stat tiles) so
+   this page reads as the same tool family as /internal/status -- only
+   chart-specific rules live here. Fixed dark mode, same as its sibling. */
+
+.kpi-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .kpi-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.kpi-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 1100px) {
+  .kpi-charts-grid { grid-template-columns: 1fr; }
+}
+
+.kpi-chart-card { min-height: 320px; }
+.kpi-chart-body { width: 100%; height: 260px; }
+
+/* Recharts renders its own inline SVG text; only the axis/grid/tooltip
+   chrome needs token-driven color since series fills are passed as literal
+   validated hex (see Dashboard.tsx's KPI_COLORS -- recharts props don't
+   reliably resolve CSS custom properties across every renderer). */
+.kpi-tooltip {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+  box-shadow: var(--shadow-pop);
+}
+.kpi-tooltip-label { color: var(--text-2); margin: 0 0 4px; }
+.kpi-tooltip-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.kpi-tooltip-swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+.kpi-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
+.kpi-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.kpi-legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+.kpi-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kpi-table th, .kpi-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.kpi-table th { color: var(--text-2); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.kpi-table td.kpi-num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.kpi-table-scroll { max-height: 320px; overflow-y: auto; }
+
+.kpi-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.kpi-refresh-msg { font-size: 12px; }

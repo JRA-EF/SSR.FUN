@@ -1,12 +1,15 @@
 // Vercel Routing Middleware: the only gate in front of internal-team-only
 // pages. Scoped narrowly via config.matcher to /internal/status + its data
 // endpoint, /internal/feedback (a simple gated link-through to a
-// manually-maintained feedback Sheet -- no backend of its own), and
+// manually-maintained feedback Sheet -- no backend of its own),
 // /road-to-mainnet (the collaborative DevNet-acceptance checklist + its
-// state/history APIs) -- every other route on the site is completely
-// untouched, unauthenticated, and unaffected by this file. All three pages
-// share the exact same session cookie/password (SSR_DASHBOARD_PASSWORD) --
-// one login covers all of them.
+// state/history APIs), and /internal/kpis (the protocol usage-stats
+// dashboard + its kpis/kpis-export/kpis-refresh data endpoints --
+// kpis-backfill-cron is deliberately NOT here, since it's a scheduled
+// Vercel Cron invocation authenticated by CRON_SECRET, not this password)
+// -- every other route on the site is completely untouched, unauthenticated,
+// and unaffected by this file. All four pages share the exact same session
+// cookie/password (SSR_DASHBOARD_PASSWORD) -- one login covers all of them.
 //
 // Runs before the cache, so an unauthenticated request never reaches any
 // page's static bundle or data endpoint -- the login page below is the only
@@ -110,7 +113,14 @@ export default async function middleware(request: Request): Promise<Response> {
   const sessionValue = parseCookie(request.headers.get('cookie'), SESSION_COOKIE_NAME)
   const authenticated = await verifySessionCookie(sessionValue, password)
 
-  if (url.pathname === '/api/dashboard/content' || url.pathname === '/api/road-to-mainnet/state' || url.pathname === '/api/road-to-mainnet/history') {
+  if (
+    url.pathname === '/api/dashboard/content' ||
+    url.pathname === '/api/road-to-mainnet/state' ||
+    url.pathname === '/api/road-to-mainnet/history' ||
+    url.pathname === '/api/dashboard/kpis' ||
+    url.pathname === '/api/dashboard/kpis-export' ||
+    url.pathname === '/api/dashboard/kpis-refresh'
+  ) {
     return authenticated ? next() : unauthorizedJson()
   }
 
@@ -134,5 +144,10 @@ export const config = {
     '/road-to-mainnet.html',
     '/api/road-to-mainnet/state',
     '/api/road-to-mainnet/history',
+    '/internal/kpis',
+    '/internal-kpis.html',
+    '/api/dashboard/kpis',
+    '/api/dashboard/kpis-export',
+    '/api/dashboard/kpis-refresh',
   ],
 }

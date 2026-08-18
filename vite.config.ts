@@ -30,6 +30,7 @@ export default defineConfig({
         main: path.resolve(import.meta.dirname, './index.html'),
         internalStatus: path.resolve(import.meta.dirname, './internal-status.html'),
         internalFeedback: path.resolve(import.meta.dirname, './internal-feedback.html'),
+        internalKpis: path.resolve(import.meta.dirname, './internal-kpis.html'),
       },
     },
   },

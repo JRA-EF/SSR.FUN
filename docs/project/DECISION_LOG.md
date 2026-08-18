@@ -3150,3 +3150,55 @@
   ]
 }
 ```
+
+## DEC-0107
+
+```json
+{
+  "id": "DEC-0107",
+  "date": "2026-08-18",
+  "status": "confirmed",
+  "decision": "Built a new password-gated internal dashboard, `/internal/kpis`, showing protocol-wide usage stats (Reserves created over time, daily mint/redeem volume, monthly Protocol/Manager fee revenue, live lifecycle-status breakdown, monthly avg Reserve Asset count per Reserve, a Top-10-by-volume leaderboard, and a full event-kind-count table), plus a full raw-event CSV export and a manual/scheduled data-refresh mechanism. To make real volume/fee aggregation possible, `packages/sdk/src/activityLog.ts`'s `summarizeActivityEvent` was extended to also emit structured `amountRaw`/`amountKind` (and, for the two dual-amount events, `amountRaw2`/`amountKind2`) fields alongside its pre-existing free-text `summary`, and `reserve_activity_log` gained four new nullable columns to persist them. Since the existing per-Reserve lazy indexer (`syncReserveActivity`) only backfills a Reserve when its own page is viewed, a new `backfillAllReserveActivity` sweep (bounded, resumable) walks every discovered Reserve's full history, run by a new daily cron (`/api/dashboard/kpis-backfill-cron`, 03:00 UTC) and by a manual 'Refresh data' button on the page itself.",
+  "context": "Creator (Claude User) asked for 'a backend dashboard that will give me all the possible usage stats on the protocol,' specifying: same password gate as `/internal/status`; number of Reserves created, monthly avg assets per Reserve, daily volume, and 'everything under the sun'; logged as one big file exportable as CSV; also viewable as graphics on the same page; same architectural pattern as the existing internal pages, at route `/internal/kpis`. Pre-implementation research (a research pass, not a code change) found the pieces already in place -- the exact same password/session cookie (`SSR_DASHBOARD_PASSWORD`, `lib/dashboard/session.ts`), an event decoder already covering 28 of the protocol's 30 event kinds, and a Postgres-backed `reserve_activity_log` table -- but also found the real gap: that log only carries free-text summaries (no structured numeric amounts) and is only ever lazily, per-Reserve backfilled, never swept protocol-wide, so no genuine volume/fee/lifecycle aggregate could be computed from it as-is.",
+  "rationale": "Extending the existing event decoder/schema (rather than building a parallel data pipeline) keeps a single source of truth for 'what happened to a Reserve' -- the same rows now serve both ManageDTR.tsx's per-Reserve Activity tab (unaffected; the new columns are purely additive and nullable) and this protocol-wide dashboard. Structured amounts are stored as `numeric`/`text`, never a JS `number` or Postgres `bigint`, end to end (activityLog.ts's `addBig`, the schema's `text` columns, `kpis.ts`'s SQL casting to `numeric` and JS `sumBigStrings`) because real u64 Reserve Token amounts can exceed `Number.MAX_SAFE_INTEGER`, and silently losing precision in a stats dashboard would misreport real revenue/volume numbers. Classifying `managerFeeShareCollected` as `managerFeeClaimed` rather than folding it into `managerFee` prevents double-counting an already-accrued balance as new revenue twice (once on accrual, again on collection) -- the same reasoning applies to keeping `protocolMintFeeTransferred`/`tvlFeeSettled`/`protocolFeeCollected` all tagged `protocolFee` despite covering different code paths (new instant-transfer vs. legacy manual-collection), since a given Reserve is only ever on one of those paths at a time, so no double count is possible there. A protocol-wide backfill sweep had to be built as a genuinely new primitive (not a reuse of the existing lazy per-Reserve sync) because the dashboard's own correctness depends on seeing EVERY Reserve's full history, not just whichever ones happen to have been recently viewed in ManageDTR.tsx. `monthlyAvgAssetsPerReserve` deliberately reports CURRENT live `assetCount` per Reserve grouped by creation month (not a historical snapshot at creation time) -- the log has no way to reconstruct composition at an arbitrary past moment without also tracking every `reserveAssetAdded`/`reserveAssetRemoved` event's ordering precisely, which was out of scope for a first version; the chosen metric is honestly labeled as such in the UI rather than presented as something it isn't.",
+  "alternativesConsidered": [
+    "Parse the existing free-text `summary` strings with regex to extract amounts instead of extending the schema -- rejected: fragile (any future wording change to a summary string would silently break every aggregate), and the raw decoded event data was already sitting right there in `summarizeActivityEvent`'s `data` parameter, making a structured field the strictly better option at roughly the same implementation cost.",
+    "Compute daily volume / monthly fees live from RPC on every dashboard page load instead of via the Postgres log -- rejected: a genuine multi-month time series needs historical data no live RPC read can provide (current state only), and re-walking full transaction history for every Reserve on every page load would be far too slow/RPC-heavy for a page meant to load quickly.",
+    "Extend `syncReserveActivity`'s existing lazy per-Reserve call path to also serve the protocol-wide sweep, instead of a new `backfillAllReserveActivity` function -- rejected: the existing function's whole design (one bounded step per call, resumable via a per-Reserve cursor) is correct for 'top up whichever Reserve's page a user is looking at right now' but wrong for 'guarantee full history across every Reserve exists before computing an aggregate' -- these are different correctness requirements needing a dedicated driver, even though the new driver calls the existing function as its primitive.",
+    "Treat `managerFeeShareCollected`/`protocolFeeCollected` amounts as additional 'fee revenue' on top of the accrual events -- rejected: would double-count real revenue in the dashboard's headline totals, actively misleading anyone reading it."
+  ],
+  "impact": "New: `api/dashboard/kpis.ts` (GET, JSON aggregates), `api/dashboard/kpis-export.ts` (GET, streamed full CSV), `api/dashboard/kpis-refresh.ts` (POST, manual backfill trigger), `api/dashboard/kpis-backfill-cron.ts` (scheduled sweep, `CRON_SECRET`-gated like the existing `accrue-fees-cron.ts`), `api/dashboard/tsconfig.json` (new CommonJS/node-resolution TS project, mirroring `api/devnet/tsconfig.json`, needed because these new endpoints import `lib/reserve-activity`'s CommonJS-scoped modules -- the same reason that directory was already excluded from `tsconfig.node.json`), `lib/reserve-activity/kpis.ts` (pure bucketing/CSV helpers + the real SQL aggregates), `lib/reserve-activity/backfillAll.ts` (the protocol-wide sweep), `internal-kpis.html` + `src/internal-kpis/` (the page itself, React + recharts, dark-mode-only matching `/internal/status`'s own convention, chart colors taken verbatim from the dataviz skill's validated dark-mode reference palette), `tests/phase_kpis.ts` (19 new offline tests). Changed: `packages/sdk/src/activityLog.ts` (structured amount fields, additive), `lib/reserve-activity/schema.sql`/`indexer.ts` (4 new nullable columns, additive -- existing rows and the existing per-Reserve Activity Log reader are both unaffected), `middleware.ts`/`vercel.json`/`vite.config.ts` (routing/build wiring for the new page and its endpoints, plus the new daily cron entry), `tsconfig.json`/`tsconfig.node.json` (the new project reference/exclusion described above). No new secrets needed -- reuses the already-provisioned `SSR_DASHBOARD_PASSWORD`, `DATABASE_URL`, and `CRON_SECRET`. The new schema columns require running `node scripts/migrate-reserve-activity.mjs` against the real database before the new columns exist there (not yet run this pass -- see evidence). Nothing was committed, pushed, or deployed as part of this decision.",
+  "affectedAreas": [
+    "api/dashboard/kpis.ts",
+    "api/dashboard/kpis-export.ts",
+    "api/dashboard/kpis-refresh.ts",
+    "api/dashboard/kpis-backfill-cron.ts",
+    "api/dashboard/tsconfig.json",
+    "lib/reserve-activity/kpis.ts",
+    "lib/reserve-activity/backfillAll.ts",
+    "lib/reserve-activity/schema.sql",
+    "lib/reserve-activity/indexer.ts",
+    "packages/sdk/src/activityLog.ts",
+    "internal-kpis.html",
+    "src/internal-kpis/main.tsx",
+    "src/internal-kpis/Dashboard.tsx",
+    "src/internal-kpis/kpis.css",
+    "middleware.ts",
+    "vercel.json",
+    "vite.config.ts",
+    "tsconfig.json",
+    "tsconfig.node.json",
+    "tests/phase_kpis.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b --force`: 0 errors, including the two new project references (`api/dashboard/tsconfig.json` plus the pre-existing `api/devnet/tsconfig.json`).",
+    "`npx oxlint`: exit 0, zero NEW warnings -- confirmed by diffing against the pre-existing warning set (the same `only-export-components`/`exhaustive-deps`/etc. warnings already present before this pass, unrelated files, unchanged count).",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 60000 tests/phase_*.ts`: 552/552 passing (533 pre-existing + 19 new in `tests/phase_kpis.ts`), covering every new `summarizeActivityEvent` amount classification (including a u64::MAX precision round-trip proving no `Number` truncation) and every pure helper in `kpis.ts`.",
+    "`npm run build`: SDK build + `tsc -b` + `vite build` all succeeded; `dist/internal-kpis.html` and its bundle produced cleanly alongside the pre-existing `internal-status`/`internal-feedback`/`main` entries.",
+    "`npx tsc -p tsconfig.tests.json --noEmit` re-run to confirm no NEW errors: all reported errors are in files this pass never touched (`phase_chart_range_selector.ts`, `phase_data_integrity.ts`, `phase_devusdc_buy_architecture_fix.ts`, `phase_discovery_reliability.ts`, `phase_landing_wallet_corrections.ts`, `phase_manager_fee_recipients.ts`, `phase_reserve_deploy_resumability.ts`, `tests/util/aliases.ts`) -- pre-existing, not introduced by this pass.",
+    "NOT yet done, flagged transparently: the schema migration was not run against the real database this pass (no live DB access attempted); `?dryRun=true` live verification of the new cron/refresh endpoints against real DevNet data was not performed; no browser click-through of the new page was performed (no browser-automation tool available in this environment, the same documented gap as every prior pass). `git status` confirms nothing was committed or pushed."
+  ]
+}
+```

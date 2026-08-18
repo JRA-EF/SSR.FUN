@@ -10,6 +10,17 @@ import { EventParser, type Program } from "@anchor-lang/core";
 import type { SsrProtocol } from "../idl/ssr_protocol";
 import { withRateLimitRetryGeneric } from "./readOnly";
 
+/**
+ * How an event's structured amount(s) classify for KPI aggregation
+ * (see lib/reserve-activity/kpis.ts). "mintVolume"/"redeemVolume" are GROSS
+ * Reserve Token amounts (net + fee) -- the right number for a "volume"
+ * chart. "protocolFee"/"managerFee" are fee REVENUE realized (accrued or,
+ * for the legacy pre-DEC-0094 path, directly transferred) -- never double
+ * counted against "managerFeeClaimed", which is a claims-ACTIVITY metric
+ * (an already-accrued balance moving into a wallet), not new revenue.
+ */
+export type ActivityAmountKind = "mintVolume" | "redeemVolume" | "protocolFee" | "managerFee" | "managerFeeClaimed";
+
 export interface ActivityLogEntry {
   signature: string;
   /** Unix seconds, from the event's own `ts` field (chain-authoritative) -- falls back to the transaction's blockTime only if the event carried none. */
@@ -20,18 +31,31 @@ export interface ActivityLogEntry {
   actor: string | null;
   /** Short, human-readable one-line description of what happened -- never fabricated, built directly from the decoded event's own fields. */
   summary: string;
+  /** Primary Reserve Token amount this event moved, in raw base units as a decimal string (never a `number` -- real supplies can exceed JS's safe integer range). Undefined for events with no primary token amount (delegate/pause/metadata/lifecycle events). */
+  amountRaw?: string;
+  amountKind?: ActivityAmountKind;
+  /** A SECOND independent amount, only for events that report two separate totals in one record (currently just `tvlFeeSettled`'s protocol+manager split and legacy `feesAccrued`'s combined event). */
+  amountRaw2?: string;
+  amountKind2?: ActivityAmountKind;
 }
 
 /**
  * Pure, offline-testable: decodes one already-parsed Anchor event into a
- * display-ready summary. Split out from the network-touching fetch function
- * below so it's directly unit-tested (tests/phase_road_to_mainnet_feedback.ts)
- * without needing a live Connection -- same rationale as
- * createReserveResume.ts's split from createReserveClient.ts.
+ * display-ready summary plus (when the event carries one) a structured
+ * amount for KPI aggregation. Split out from the network-touching fetch
+ * function below so it's directly unit-tested
+ * (tests/phase_road_to_mainnet_feedback.ts) without needing a live
+ * Connection -- same rationale as createReserveResume.ts's split from
+ * createReserveClient.ts.
  */
-export function summarizeActivityEvent(name: string, data: Record<string, unknown>): { actor: string | null; summary: string } | null {
+export function summarizeActivityEvent(
+  name: string,
+  data: Record<string, unknown>,
+): { actor: string | null; summary: string; amountRaw?: string; amountKind?: ActivityAmountKind; amountRaw2?: string; amountKind2?: ActivityAmountKind } | null {
   const pk = (v: unknown): string => (v && typeof (v as { toBase58?: () => string }).toBase58 === "function" ? (v as { toBase58(): string }).toBase58() : String(v));
   const pkList = (v: unknown): string[] => (Array.isArray(v) ? v.map(pk) : []);
+  /** BigInt-safe sum of any number of BN/string/number-like u64 values -- never a JS `number` intermediate, since a summed supply can exceed Number.MAX_SAFE_INTEGER. */
+  const addBig = (...vals: unknown[]): string => vals.reduce((sum: bigint, v) => sum + BigInt(String(v ?? 0)), 0n).toString();
 
   switch (name) {
     case "reserveCreated":
@@ -42,18 +66,31 @@ export function summarizeActivityEvent(name: string, data: Record<string, unknow
       return {
         actor: pk(data.depositor),
         summary: `${pk(data.depositor)} minted ${String(data.reserveTokensOut)} Reserve Token unit(s) (${String(data.mintFeeReserveTokens)} fee)`,
+        amountRaw: addBig(data.reserveTokensOut, data.mintFeeReserveTokens),
+        amountKind: "mintVolume",
       };
     case "reserveTokensRedeemed":
       return {
         actor: pk(data.redeemer),
         summary: `${pk(data.redeemer)} redeemed ${String(data.reserveTokensBurned)} Reserve Token unit(s) (${String(data.redemptionFeeReserveTokens)} fee)`,
+        amountRaw: addBig(data.reserveTokensBurned, data.redemptionFeeReserveTokens),
+        amountKind: "redeemVolume",
       };
     case "protocolMintFeeTransferred":
-      return { actor: null, summary: `Protocol mint fee transferred: ${String(data.amount)} Reserve Token unit(s) to treasury ${pk(data.destination)}` };
+      return {
+        actor: null,
+        summary: `Protocol mint fee transferred: ${String(data.amount)} Reserve Token unit(s) to treasury ${pk(data.destination)}`,
+        amountRaw: addBig(data.amount),
+        amountKind: "protocolFee",
+      };
     case "tvlFeeSettled":
       return {
         actor: pk(data.settledBy),
         summary: `Weekly TVL fee settled for period ${new Date(Number(data.periodStartTs) * 1000).toLocaleDateString()}-${new Date(Number(data.periodEndTs) * 1000).toLocaleDateString()}: ${String(data.protocolFeeShares)} Protocol-share (sent to treasury) + ${String(data.managerFeeShares)} Manager-share Reserve Token unit(s)`,
+        amountRaw: addBig(data.protocolFeeShares),
+        amountKind: "protocolFee",
+        amountRaw2: addBig(data.managerFeeShares),
+        amountKind2: "managerFee",
       };
     case "managerFeeRecipientsConfigured": {
       const recipients = pkList(data.recipients);
@@ -70,14 +107,25 @@ export function summarizeActivityEvent(name: string, data: Record<string, unknow
       return {
         actor: null,
         summary: `Manager fee accrued (${source === "annualTvlFee" ? "TVL fee" : "mint fee"}): ${recipients.map((r, i) => `${r.slice(0, 4)}...+=${amounts[i] ?? "?"}`).join(", ")}`,
+        amountRaw: addBig(...(Array.isArray(data.amounts) ? data.amounts : [])),
+        amountKind: "managerFee",
       };
     }
     case "managerFeeShareCollected":
-      return { actor: pk(data.collectedBy), summary: `${pk(data.recipient)} collected ${String(data.amount)} Reserve Token unit(s) of its own accrued Manager fee` };
+      return {
+        actor: pk(data.collectedBy),
+        summary: `${pk(data.recipient)} collected ${String(data.amount)} Reserve Token unit(s) of its own accrued Manager fee`,
+        amountRaw: addBig(data.amount),
+        amountKind: "managerFeeClaimed",
+      };
     case "feesAccrued":
       return {
         actor: null,
         summary: `Fees accrued (legacy): ${String(data.managerFeeSharesAccrued)} manager-share + ${String(data.protocolFeeSharesAccrued)} protocol-share Reserve Token units`,
+        amountRaw: addBig(data.managerFeeSharesAccrued),
+        amountKind: "managerFee",
+        amountRaw2: addBig(data.protocolFeeSharesAccrued),
+        amountKind2: "protocolFee",
       };
     case "delegateAdded":
       return { actor: pk(data.delegate), summary: `Delegate ${pk(data.delegate)} added (${data.restricted ? "restricted" : "unrestricted"})` };
@@ -121,9 +169,16 @@ export function summarizeActivityEvent(name: string, data: Record<string, unknow
       return {
         actor: null,
         summary: `Reserve seeded with ${String(data.initialReserveTokens)} initial Reserve Token units (${String(data.mintFeeReserveTokens ?? 0)} minted as Protocol/Manager fee)`,
+        amountRaw: addBig(data.initialReserveTokens, data.mintFeeReserveTokens ?? 0),
+        amountKind: "mintVolume",
       };
     case "protocolFeeCollected":
-      return { actor: pk(data.collectedBy), summary: `Protocol fee collected: ${String(data.amount)} Reserve Token units` };
+      return {
+        actor: pk(data.collectedBy),
+        summary: `Protocol fee collected: ${String(data.amount)} Reserve Token units`,
+        amountRaw: addBig(data.amount),
+        amountKind: "protocolFee",
+      };
     default:
       // ProtocolInitialized/ProtocolConfigUpdated are Protocol-wide (not tied
       // to any one Reserve account) and never appear in a per-Reserve
@@ -195,7 +250,17 @@ export async function fetchReserveActivityLog(
         const ts = typeof (event.data as { ts?: { toNumber?: () => number } }).ts?.toNumber === "function"
           ? (event.data as { ts: { toNumber(): number } }).ts.toNumber()
           : (sigInfo.blockTime ?? 0);
-        entries.push({ signature: sigInfo.signature, ts, kind: event.name, actor: decoded.actor, summary: decoded.summary });
+        entries.push({
+          signature: sigInfo.signature,
+          ts,
+          kind: event.name,
+          actor: decoded.actor,
+          summary: decoded.summary,
+          amountRaw: decoded.amountRaw,
+          amountKind: decoded.amountKind,
+          amountRaw2: decoded.amountRaw2,
+          amountKind2: decoded.amountKind2,
+        });
         if (entries.length >= ACTIVITY_MAX_ENTRIES) break;
       }
       if (entries.length >= ACTIVITY_MAX_ENTRIES) break;

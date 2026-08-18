@@ -10,6 +10,15 @@
     "api/dashboard/content.ts": {
       "includeFiles": "docs/project/*.{md,json}"
     },
+    "api/dashboard/kpis.ts": {
+      "includeFiles": "packages/sdk/**"
+    },
+    "api/dashboard/kpis-refresh.ts": {
+      "includeFiles": "packages/sdk/**"
+    },
+    "api/dashboard/kpis-backfill-cron.ts": {
+      "includeFiles": "packages/sdk/**"
+    },
     "api/devnet/*.ts": {
       "includeFiles": "packages/sdk/**"
     }
@@ -18,11 +27,16 @@
     {
       "path": "/api/devnet/accrue-fees-cron",
       "schedule": "0 0 * * 1"
+    },
+    {
+      "path": "/api/dashboard/kpis-backfill-cron",
+      "schedule": "0 3 * * *"
     }
   ],
   "rewrites": [
     { "source": "/internal/status", "destination": "/internal-status.html" },
     { "source": "/internal/feedback", "destination": "/internal-feedback.html" },
+    { "source": "/internal/kpis", "destination": "/internal-kpis.html" },
     { "source": "/road-to-mainnet", "destination": "/road-to-mainnet.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
