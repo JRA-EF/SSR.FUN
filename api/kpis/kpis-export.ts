@@ -6,7 +6,7 @@
 // result held in memory at once) rather than buffering the whole export
 // into a single string first.
 import { parseCookie, SESSION_COOKIE_NAME, verifySessionCookie } from "../../lib/dashboard/session.js";
-import { streamActivityLogCsv } from "../../lib/reserve-activity/kpis";
+import { streamActivityLogCsv } from "../../lib/reserve-activity/kpis.js";
 
 interface ApiRequest {
   method?: string;

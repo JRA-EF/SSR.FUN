@@ -124,7 +124,7 @@ export function KpiDashboard() {
 
   const load = useCallback(() => {
     setState({ kind: 'loading' })
-    fetch('/api/dashboard/kpis', { credentials: 'same-origin' })
+    fetch('/api/kpis/kpis', { credentials: 'same-origin' })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
@@ -138,7 +138,7 @@ export function KpiDashboard() {
   const handleRefresh = useCallback(() => {
     setRefreshing(true)
     setRefreshMsg(null)
-    fetch('/api/dashboard/kpis-refresh', { method: 'POST', credentials: 'same-origin' })
+    fetch('/api/kpis/kpis-refresh', { method: 'POST', credentials: 'same-origin' })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
@@ -192,7 +192,7 @@ export function KpiDashboard() {
           <button className="dash-btn dash-btn-sm" onClick={handleRefresh} disabled={refreshing}>
             {refreshing ? 'Refreshing...' : 'Refresh data'}
           </button>
-          <a className="dash-btn dash-btn-sm" href="/api/dashboard/kpis-export">
+          <a className="dash-btn dash-btn-sm" href="/api/kpis/kpis-export">
             Download full CSV
           </a>
         </div>

@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "../../node_modules/.tmp/tsconfig.dashboard-api.tsbuildinfo",
+    "tsBuildInfoFile": "../../node_modules/.tmp/tsconfig.kpis-api.tsbuildinfo",
     "target": "ES2022",
     "module": "commonjs",
     "moduleResolution": "node",

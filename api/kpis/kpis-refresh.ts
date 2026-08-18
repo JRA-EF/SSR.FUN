@@ -6,8 +6,8 @@
 // kpis.ts's read-only GET.
 import { Connection } from "@solana/web3.js";
 import { type DashboardRequest, type DashboardResponse, isAuthenticated, isSameOriginRequest, unauthorized } from "../../lib/road-to-mainnet/auth.js";
-import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll";
-import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc";
+import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll.js";
+import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc.js";
 
 export default async function handler(req: DashboardRequest, res: DashboardResponse) {
   if (!(await isAuthenticated(req))) {

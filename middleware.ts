@@ -117,9 +117,9 @@ export default async function middleware(request: Request): Promise<Response> {
     url.pathname === '/api/dashboard/content' ||
     url.pathname === '/api/road-to-mainnet/state' ||
     url.pathname === '/api/road-to-mainnet/history' ||
-    url.pathname === '/api/dashboard/kpis' ||
-    url.pathname === '/api/dashboard/kpis-export' ||
-    url.pathname === '/api/dashboard/kpis-refresh'
+    url.pathname === '/api/kpis/kpis' ||
+    url.pathname === '/api/kpis/kpis-export' ||
+    url.pathname === '/api/kpis/kpis-refresh'
   ) {
     return authenticated ? next() : unauthorizedJson()
   }
@@ -146,8 +146,8 @@ export const config = {
     '/api/road-to-mainnet/history',
     '/internal/kpis',
     '/internal-kpis.html',
-    '/api/dashboard/kpis',
-    '/api/dashboard/kpis-export',
-    '/api/dashboard/kpis-refresh',
+    '/api/kpis/kpis',
+    '/api/kpis/kpis-export',
+    '/api/kpis/kpis-refresh',
   ],
 }

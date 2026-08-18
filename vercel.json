@@ -10,16 +10,10 @@
     "api/dashboard/content.ts": {
       "includeFiles": "docs/project/*.{md,json}"
     },
-    "api/dashboard/kpis.ts": {
-      "includeFiles": "packages/sdk/**"
-    },
-    "api/dashboard/kpis-refresh.ts": {
-      "includeFiles": "packages/sdk/**"
-    },
-    "api/dashboard/kpis-backfill-cron.ts": {
-      "includeFiles": "packages/sdk/**"
-    },
     "api/devnet/*.ts": {
+      "includeFiles": "packages/sdk/**"
+    },
+    "api/kpis/*.ts": {
       "includeFiles": "packages/sdk/**"
     }
   },
@@ -29,7 +23,7 @@
       "schedule": "0 0 * * 1"
     },
     {
-      "path": "/api/dashboard/kpis-backfill-cron",
+      "path": "/api/kpis/kpis-backfill-cron",
       "schedule": "0 3 * * *"
     }
   ],

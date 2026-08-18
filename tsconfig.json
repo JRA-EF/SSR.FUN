@@ -11,6 +11,6 @@
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" },
     { "path": "./api/devnet/tsconfig.json" },
-    { "path": "./api/dashboard/tsconfig.json" }
+    { "path": "./api/kpis/tsconfig.json" }
   ]
 }

@@ -14,9 +14,9 @@
 // skip here, unlike accrue-fees-cron's real-transaction dry-run split,
 // since this endpoint never submits a transaction in the first place.
 import { Connection } from "@solana/web3.js";
-import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc";
-import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll";
+import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes.js";
+import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc.js";
+import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll.js";
 
 function getHeader(req: ApiRequest, name: string): string | undefined {
   const value = req.headers[name] ?? req.headers[name.toLowerCase()];
