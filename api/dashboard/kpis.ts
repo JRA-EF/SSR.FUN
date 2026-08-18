@@ -15,8 +15,7 @@
 // underlying data currently is.
 import { Connection, PublicKey } from "@solana/web3.js";
 import { discoverAllReserves, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
-import type { DashboardRequest, DashboardResponse } from "../../lib/dashboard/http";
-import { isAuthenticated, unauthorized } from "../../lib/road-to-mainnet/auth";
+import { type DashboardRequest, type DashboardResponse, isAuthenticated, unauthorized } from "../../lib/road-to-mainnet/auth.js";
 import { computeProtocolKpis, type LiveReserveState } from "../../lib/reserve-activity/kpis";
 import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc";
 

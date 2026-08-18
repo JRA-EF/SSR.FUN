@@ -5,7 +5,7 @@
 // streamActivityLogCsv (paginated Postgres reads, never one giant query
 // result held in memory at once) rather than buffering the whole export
 // into a single string first.
-import { parseCookie, SESSION_COOKIE_NAME, verifySessionCookie } from "../../lib/dashboard/session";
+import { parseCookie, SESSION_COOKIE_NAME, verifySessionCookie } from "../../lib/dashboard/session.js";
 import { streamActivityLogCsv } from "../../lib/reserve-activity/kpis";
 
 interface ApiRequest {
