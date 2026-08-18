@@ -125,8 +125,16 @@ export function KpiDashboard() {
   const load = useCallback(() => {
     setState({ kind: 'loading' })
     fetch('/api/kpis/kpis', { credentials: 'same-origin' })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      .then(async (res) => {
+        if (!res.ok) {
+          // Surface the real backend error body (stage/error/stack -- see
+          // kpis.ts's outer try/catch) instead of just the status code, so
+          // a failure is diagnosable from the page itself, not just server
+          // logs. Falls back to the bare status if the body isn't JSON.
+          const body = await res.json().catch(() => null) as { stage?: string; error?: string } | null
+          const detail = body?.error ? `${body.stage ? `[${body.stage}] ` : ''}${body.error}` : `HTTP ${res.status}`
+          throw new Error(detail)
+        }
         return res.json()
       })
       .then((kpis: ProtocolKpis) => setState({ kind: 'ready', kpis }))
