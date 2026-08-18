@@ -9,7 +9,23 @@ import { LEDGER_EVENT_CSV_COLUMNS, ledgerEventCsvHeader, ledgerEventToCsvRow, ty
 
 const PAGE_SIZE = 5000;
 
-const SELECT_COLUMNS = LEDGER_EVENT_CSV_COLUMNS.join(", ");
+// The Neon driver auto-parses `timestamptz`/`date` columns into native JS
+// `Date` objects rather than returning raw text. Left alone, csvField()'s
+// String(value) then calls Date.prototype.toString(), which formats in the
+// SERVER's local timezone/locale (e.g. "Tue Jul 28 2026 10:42:12 GMT+0100
+// (Hora de verao...)") -- silently violating the documented "event_ts_utc
+// is UTC ISO-8601" contract (LEDGER_ARCHITECTURE.md's data dictionary) even
+// though the value was stored correctly. Discovered live via a direct
+// export test against production. Fixed by casting these three columns to
+// text in the query itself, using `at time zone 'utc'` so the output is
+// correct regardless of the DB session's timezone setting -- forcing the
+// driver to hand back a plain string, not a Date object, for exactly the
+// columns where that distinction matters.
+const SELECT_COLUMNS = LEDGER_EVENT_CSV_COLUMNS.map((col) => {
+  if (col === "event_ts_utc" || col === "ingestion_ts") return `to_char(${col} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as ${col}`;
+  if (col === "event_date_utc") return `to_char(event_date_utc, 'YYYY-MM-DD') as event_date_utc`;
+  return col;
+}).join(", ");
 const SORT_CLAUSE = "order by slot asc nulls last, signature asc nulls last, instruction_index asc nulls last, event_index asc nulls last, id asc";
 
 /** Streams every ledger_events row for one exact UTC calendar date, for one cluster, as CSV -- requirement 5's "filtering by exact UTC date" + "daily CSV export". */
