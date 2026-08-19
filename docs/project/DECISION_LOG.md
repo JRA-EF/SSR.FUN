@@ -3595,3 +3595,40 @@
   ]
 }
 ```
+
+## DEC-0118
+
+```json
+{
+  "id": "DEC-0118",
+  "date": "2026-08-19",
+  "status": "accepted",
+  "decision": "Made the live Mainnet product genuinely USDC-native end to end (Buy/Sell, Reserve creation, rebalance tooling), purged DevNet fixture Reserves and the devUSDC faucet panel from the Mainnet UI, and added an 11-item Mainnet function checklist to road-to-mainnet.html.",
+  "context": "Creator's post-launch review of strategic-super-reserve.fun found the still-devUSDC/DevNet-branded UI unacceptable now that real funds are involved: misleading copy ('preview your in-kind redemption' on a Reserve that only ever holds USDC), a DevNet faucet panel rendering unconditionally on Portfolio regardless of cluster, Reserve creation left entirely disabled rather than USDC-only as directed, and the two DevNet Gate-9 fixture Reserves still capable of appearing in a Mainnet visitor's persisted state. Creator's exact instructions: wipe devUSDC/mock-token references from the live product; make Buy/Sell purely USDC-in/USDC-out; enable Reserve creation but USDC-only; purge DevNet reserves from display, keep only Mainnet ones; and add a Mainnet function checklist mirroring the existing DevNet one.",
+  "rationale": "DTRDetail.tsx's balance-tracking, validation and every piece of Buy/Sell copy now resolve through a cluster-aware SETTLEMENT_MINT/SETTLEMENT_SYMBOL/CLUSTER_LABEL (real USDC + 'Mainnet' on this deployment, devUSDC + 'DevNet' unchanged elsewhere) instead of hardcoded devUSDC constants -- the flagged 'in-kind redemption' string and every devUSDC-branded label, toast, and disclaimer a Mainnet visitor could see is gone; DevNet's own zap-based Buy/Sell path is untouched. Portfolio.tsx's DevnetOnboarding faucet panel (which called DevNet-only api/devnet/faucet-devusdc and api/devnet/sponsor-sol unconditionally) is now gated behind !IS_MAINNET. CreateDTR.tsx gained a SELECTABLE_ASSETS split (MAINNET_REAL_ASSETS = USDC only vs the existing DEVNET_REAL_ASSETS), and createReserveClient.ts's createReserveOnChain/resumeReserveDeploymentOnChain now accept an explicit programId + allowFaucet (defaulting to the exact pre-existing DevNet behavior for every current caller/test) -- allowFaucet:false makes fundSeedAssetsIdempotent throw a plain 'fund your own wallet, there is no Mainnet faucet' error on a genuine shortfall instead of ever calling the DevNet-only mint endpoint. Fixed a real latent bug found while wiring this up: CreateDTR.tsx's dtrId was hardcoded to `devnet-${reserveId}`, which would have registered a freshly-created Mainnet Reserve under a different id than RealReserveSync's own `${SOLANA_CLUSTER}-${reserveId}` scheme derives for the exact same on-chain account on its next poll -- now both use SOLANA_CLUSTER, matching exactly. ManageDTR.tsx's rebalance-slider model had its hardcoded devUSDC 'permanent cash slot' generalized to CASH_SLOT_MINT (USDC on Mainnet) and its DevNet-only addable-asset list emptied on Mainnet. useAppStore.ts's REAL_PLACEHOLDER_DTRS (the two DevNet Gate-9 fixtures) are no longer seeded into initial/persisted state when IS_MAINNET, and a new v6 persisted-state migration strips any DTR whose onChain.programId doesn't match the program this exact deployment actually talks to -- protecting a returning visitor's localStorage from a stale DevNet Reserve left over from before strategic-super-reserve.fun's Mainnet cutover. road-to-mainnet.html gained an 11-item Mainnet function checklist (MCR/MMT/MRD/MAR/MRR/MRB/MDL/MPU/MFE/MWD/MSC), a near-exact mirror of the existing DevNet function checklist's coverage, re-scoped to demand real Mainnet transactions and a genuine wallet click-through rather than DevNet or script evidence; caught and fixed a real bug before it shipped -- the backend's CONTROL_ID_RE only allows 2-3 letter ID prefixes, so the initially-drafted 4-letter MNCR/MNMT/etc. IDs would have been silently rejected (400) by every sync attempt, fixed by shortening to 3-letter prefixes.",
+  "alternativesConsidered": [
+    "Physically delete the now-Mainnet-unreachable DevNet zap code (zapInstructions.ts, zapClient.ts, api/devnet/*, the DevNet asset-picker) instead of leaving it gated behind IS_MAINNET -- deferred, not decided unilaterally: DevNet remains a real, separate, still-used test environment (its own deployment, its own tests, its own runbook), and ~1000+ lines across multiple files still depend on some of these modules for that purpose. Flagged to Creator rather than deleted.",
+    "Rename the low-level generic utility function names in calculations.ts (buyAvailableFromDevUsdcBalance, isReservePureDevUsdc, etc.) for consistency -- rejected as unnecessary churn: these are internal helper names, never user-visible, and already accept a settlement-mint parameter rather than being hardcoded to devUSDC.",
+    "A full standalone Mainnet checklist page instead of a new section inside the existing road-to-mainnet.html -- rejected: Creator asked for 'the mainnet checklist... same items as the devnet list,' and the existing page already has proven Neon-backed sync/history/comments infrastructure keyed generically by control ID; reusing it is a smaller, lower-risk change than standing up a second synced document."
+  ],
+  "impact": "Deployed to production (dpl_E68tr5EYcEtKNZqAEM3goCe2LAzB) after the devUSDC-purge deployment (dpl_2Y5u5evnRKFrphzkqE9idGa9zuhT). Verified: full offline suite 602/602 passing after each step; `npm run build` and `npx tsc -b` clean throughout; the deployed bundle no longer contains the flagged 'preview your in-kind redemption' string; road-to-mainnet.html's inline script passes `node --check` and its Neon-sync entity IDs conform to the backend's CONTROL_ID_RE. Not yet verified: live browser click-through of the new USDC-only Create Reserve flow (no browser automation available in this environment, consistent with this project's established practice -- deferred to Creator, same as every prior UI change), and the Mainnet function checklist itself is a tracking tool whose items remain genuinely unchecked pending that same manual verification.",
+  "affectedAreas": [
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/pages/Portfolio.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/pages/ManageDTR.tsx",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/store/useAppStore.ts",
+    "public/road-to-mainnet.html"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Full offline suite: 602/602 passing after every edit in this pass.",
+    "`npx tsc -b` and `npm run build`: clean after every edit in this pass.",
+    "Deployed bundle (curl-fetched from strategic-super-reserve.fun after authenticating through the DEC-0117 site gate): 0 occurrences of 'preview your in-kind redemption'.",
+    "`node --check` on road-to-mainnet.html's extracted inline script: clean.",
+    "`vercel --prod` deployments dpl_2Y5u5evnRKFrphzkqE9idGa9zuhT and dpl_E68tr5EYcEtKNZqAEM3goCe2LAzB: both readyState READY, target production."
+  ]
+}
+```
