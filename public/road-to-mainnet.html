@@ -85,7 +85,7 @@
   <aside class="sidebar">
     <div class="brand">SSR.FUN<small>Protocol readiness</small></div>
     <nav class="nav">
-      <a href="#overview">Overview</a><a href="#speedrun">Speedrun checklist</a><a href="#critical-functions">Function checklist</a><a href="#architecture">Architecture</a><a href="#integrations" data-tab="integrations">Integrations &amp; to-do</a><a href="#archive">Full DevNet archive</a>
+      <a href="#overview">Overview</a><a href="#speedrun">Speedrun checklist</a><a href="#critical-functions">DevNet function checklist</a><a href="#mainnet-functions">Mainnet function checklist</a><a href="#architecture">Architecture</a><a href="#integrations" data-tab="integrations">Integrations &amp; to-do</a><a href="#archive">Full DevNet archive</a>
     </nav>
     <div class="side-note">Formal sign-off rule: a claim is not Passed until its evidence can be independently reproduced.</div>
     <div class="side-note">
@@ -136,6 +136,19 @@
         <button class="btn" id="cfExpandAll">Expand all</button><button class="btn" id="cfCollapseAll">Collapse all</button>
       </div>
       <div id="criticalFunctionsContainer" class="checklist"></div>
+    </section>
+
+    <section id="mainnet-functions">
+      <div class="section-head"><div><h2>Mainnet function checklist</h2><p>Same 11 checks as the DevNet function checklist above, one item per protocol function, now verified live against the deployed Mainnet program (<code>8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9</code>) with a real connected wallet and real USDC -- never a script, never a throwaway keypair, never DevNet evidence carried over. Reserve creation and Buy/Sell are already USDC-only for this launch (see the direct-USDC path); Add/Remove Reserve asset and Rebalance remain live protocol instructions but are out of scope for the initial single-asset launch and can stay Not applicable until a non-USDC Reserve asset is actually supported.</p></div><span class="badge"><span class="dot" style="background:var(--purple)"></span><span id="mfPassCount">0</span>/<span id="mfTotalCount">0</span> passed</span></div>
+      <div class="progress" style="margin-bottom:18px"><span id="mfBar"></span></div>
+      <div class="notice" style="margin-bottom:18px"><strong>Real funds.</strong> Every "Passed" here should mean a genuine Mainnet transaction moved real USDC and Reserve Tokens exactly as expected -- not a build, not a DevNet result, not a server-signed smoke-test script. Record the real transaction signature (Solana Explorer, Mainnet) as evidence for each item.</div>
+      <div class="toolbar">
+        <input id="mfSearch" class="control" placeholder="Search…">
+        <select id="mfCategoryFilter" class="control"><option value="">All functions</option></select>
+        <select id="mfStatusFilter" class="control"><option value="">All statuses</option></select>
+        <button class="btn" id="mfExpandAll">Expand all</button><button class="btn" id="mfCollapseAll">Collapse all</button>
+      </div>
+      <div id="mainnetFunctionsContainer" class="checklist"></div>
     </section>
 
     <section id="architecture">
@@ -349,6 +362,35 @@ const criticalFunctionItems=[
 ['SEC-01','Security','Checked by someone other than the builder','Every function above has been manually reviewed and exercised on DevNet by a team member who did not write that code — not just self-tested by the original implementer. Record who reviewed each function, and when, in the notes field below.'],
 ];
 
+// Mainnet function checklist: the exact same 11 checks as
+// criticalFunctionItems above, re-scoped to the live Mainnet deployment
+// (program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9, see
+// docs/project/DECISION_LOG.md's DEC-0115/DEC-0116/DEC-0117) with real
+// funds and a genuine browser + wallet click-through -- never a script,
+// never DevNet evidence carried over. Reserve creation and Buy/Sell are
+// USDC-only for this launch; the direct-USDC single-signer path
+// (packages/sdk/src/directInstructions.ts) replaces the DevNet zap
+// adapter entirely on Mainnet, so there is no "swap authority" leg to
+// verify here at all. Own ID namespace (MCR/MMT/MRD/MAR/MRR/MRB/MDL/MPU/
+// MFE/MWD/MSC) so nothing collides with the DevNet set, the archived 107,
+// or the MS-* speedrun items -- all share the same `state[id]`/`control`
+// entity storage, keyed by these IDs alone. IDs are capped at 3 letters
+// (see lib/road-to-mainnet/store.ts's CONTROL_ID_RE, ^[A-Z]{2,3}-\d{2}$) --
+// a longer prefix would be silently rejected by the sync API with a 400.
+const mainnetFunctionItems=[
+['MCR-01','Create Reserve','Reserve created correctly end-to-end on Mainnet','create_reserve, initialize_reserve_asset and seed_reserve, manually exercised via the live strategic-super-reserve.fun Create Reserve flow with a real connected wallet and real USDC (single-asset, USDC-only for this launch): an authorized wallet creates a Reserve with valid metadata, fees and authorities; invalid input is rejected with no partial state created; a non-authorized wallet cannot create one; initial balances, Reserve Token supply and starting NAV match exactly what was seeded, per the documented formula. Record the Mainnet Explorer link for the create-and-register and seed transactions.'],
+['MMT-01','Mint (Buy)','Mint correct end-to-end on Mainnet','mint_reserve_tokens_in_kind via the direct-USDC path (directInstructions.ts / DTRDetail.tsx handleBuyMainnet), manually exercised with a real connected wallet: depositor USDC and Reserve Token balances change by the exact expected amounts; total Reserve Token supply and AUM increase proportionately; NAV is unchanged by a fair mint; mint fee is charged at the configured rate and reaches the Squads Treasury vault; minimum amounts, zero amounts and dust cannot mint zero value or leak value.'],
+['MRD-01','Redeem (Sell)','Redeem correct end-to-end on Mainnet','redeem_reserve_tokens_in_kind via the direct-USDC path (executeDirectRedeem / DTRDetail.tsx handleSellMainnet), manually exercised: redeemer Reserve Token balance decreases and USDC pays out to the redeemer\'s own wallet by the exact expected pro-rata amount; total supply and AUM decrease proportionately; NAV is unchanged by a fair redemption; redemption fee reaches the Treasury; minimum redemptions, zero amounts and dust cannot strand funds or leak value.'],
+['MAR-01','Add Reserve asset','Adding a Reserve asset works and is guarded on Mainnet','add_reserve_asset_active and fund_new_reserve_asset. Not applicable for the initial USDC-only launch scope (every live Mainnet Reserve is single-asset USDC by design) -- mark Not applicable unless/until a non-USDC Mainnet Reserve asset is actually supported, at which point this becomes a real gate again.'],
+['MRR-01','Remove Reserve asset','Removing a Reserve asset works and is guarded on Mainnet','remove_reserve_asset. Same scope note as MAR-01 -- Not applicable while every Mainnet Reserve is single-asset USDC.'],
+['MRB-01','Rebalance','Rebalance changes holdings correctly and is guarded on Mainnet','update_targets, record_rebalance and execute_rebalance_leg. Same scope note as MAR-01 -- a single-asset USDC Reserve has nothing to rebalance into; Not applicable until a multi-asset Mainnet Reserve exists.'],
+['MDL-01','Delegates & authority','Delegate and manager-authority controls work and are guarded on Mainnet','add_delegate, update_delegate_permissions, remove_delegate and transfer_reserve_manager, manually exercised on a real Mainnet Reserve with the connected wallet: an authorized role can add a delegate only within documented permission bounds; a delegate cannot act outside its Reserve, role, limits or expiration; revocation takes effect immediately; Reserve-manager transfer cannot be performed by an unauthorized wallet. Also verify the Creator/Boss two-admin ProtocolConfig model itself (DEC-0113): both admins pass is_admin(), a third wallet does not.'],
+['MPU-01','Pause / Unpause','Pause and unpause work and are guarded on Mainnet','pause_reserve/unpause_reserve AND the protocol-wide set_protocol_paused (DEC-0113), manually exercised with the real Creator/Boss admin wallet(s): pausing blocks mint/redeem while paused; unpausing immediately resumes normal operation; a non-authorized wallet cannot pause or unpause either the Reserve or the whole protocol.'],
+['MFE-01','Fees & protocol config','Fee accrual/collection and config updates work and are guarded on Mainnet','accrue_fees, collect_fees, update_protocol_config and update_metadata, manually exercised: fees accrue and collect at the configured rate to the Squads Treasury vault (3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5) specifically, not just any wallet; protocol config and Reserve metadata can only be updated by the correct authority (Creator or Boss admin), with the resulting state change visible on-chain.'],
+['MWD-01','Wind-down / Closure','Wind-down and closure work correctly end-to-end on Mainnet','initiate_wind_down and close_reserve. Not yet exercised on Mainnet by design -- doing this test would actually wind down and close a real, seeded Mainnet Reserve. Leave Not tested (or Blocked, pending a dedicated disposable Reserve created solely to rehearse this) rather than executing it against a live production Reserve; the DevNet result (WD-01) already proves the code path.'],
+['MSC-01','Security','Checked by someone other than the builder, against the Mainnet deployment specifically','Every function above has been manually reviewed and exercised on Mainnet (not carried over from the DevNet review) by a team member who did not write that code. Record who reviewed each function, and when, in the notes field below -- distinct from SEC-01, which only covers the DevNet program.'],
+];
+
 const controls=[
 ['CP-01','Core protocol','Program deployment identity','Record program IDs, executable status, deployment slot and source/commit mapping.'],
 ['CP-02','Core protocol','Clean deployment reproducibility','A clean DevNet deployment from documented commands produces the expected program IDs and configuration.'],
@@ -528,6 +570,7 @@ function markAuthExpired(){
   document.getElementById('checklistContainer').classList.add('readonly-flag');
   document.getElementById('speedrunContainer')?.classList.add('readonly-flag');
   document.getElementById('criticalFunctionsContainer')?.classList.add('readonly-flag');
+  document.getElementById('mainnetFunctionsContainer')?.classList.add('readonly-flag');
   document.getElementById('gapTable')?.classList.add('readonly-flag');
   document.getElementById('gatesContainer')?.classList.add('readonly-flag');
   setBanner('auth','Your session expired — reload the page to sign in again.');
@@ -551,11 +594,13 @@ async function loadServerState(isRetry){
     document.getElementById('checklistContainer').classList.remove('readonly-flag');
     document.getElementById('speedrunContainer')?.classList.remove('readonly-flag');
     document.getElementById('criticalFunctionsContainer')?.classList.remove('readonly-flag');
+    document.getElementById('mainnetFunctionsContainer')?.classList.remove('readonly-flag');
     document.getElementById('gapTable')?.classList.remove('readonly-flag');
     document.getElementById('gatesContainer')?.classList.remove('readonly-flag');
     setBanner('synced','Synced • '+fmtTime(body.serverTime));
     renderSpeedrun();
     renderCriticalFunctions();
+    renderMainnetFunctions();
     render();
     renderGaps();
     renderGates();
@@ -608,7 +653,7 @@ function showConflict(itemId,current){
   box.querySelector('[data-act="reload"]').onclick=()=>{
     state[itemId]={status:current.values.status,evidence:current.values.evidence,environment:current.values.environment,tester:current.values.tester,notes:current.values.notes};
     versions.controls[itemId]={version:current.version,updatedAt:current.updatedAt,updatedBy:current.updatedBy};
-    delete conflicts[itemId];save();render();renderSpeedrun();
+    delete conflicts[itemId];save();render();renderSpeedrun();renderCriticalFunctions();renderMainnetFunctions();
   };
   box.querySelector('[data-act="overwrite"]').onclick=async()=>{
     const ok=await pushEntity('control',itemId,state[itemId],itemId);
@@ -632,7 +677,7 @@ async function loadHistory(id,container){
       row.innerHTML=`<div class="history-meta">${esc(e.changedBy||'Unknown')} • ${esc(fmtTime(e.changedAt))} • status: ${esc(e.afterValue.status||'')}</div><div>${esc((e.afterValue.notes||e.afterValue.evidence||'').slice(0,240))}</div><button class="btn" data-restore>Restore this version</button>`;
       row.querySelector('[data-restore]').onclick=()=>{
         state[id]={status:e.afterValue.status,evidence:e.afterValue.evidence,environment:e.afterValue.environment,tester:e.afterValue.tester,notes:e.afterValue.notes};
-        save();render();renderSpeedrun();
+        save();render();renderSpeedrun();renderCriticalFunctions();renderMainnetFunctions();
       };
       container.appendChild(row);
     });
@@ -787,6 +832,28 @@ function renderCriticalFunctions(){
 }
 function cfSummary(){const vals=criticalFunctionItems.map(x=>(state[x[0]]||{}).status||'Not tested');const applicable=vals.filter(x=>x!=='Not applicable').length;const passed=vals.filter(x=>x==='Passed').length;document.getElementById('cfTotalCount').textContent=criticalFunctionItems.length;document.getElementById('cfPassCount').textContent=passed;document.getElementById('cfBar').style.width=(applicable?passed/applicable*100:0)+'%'}
 
+// --- Mainnet function checklist (identical shape/behavior to the DevNet
+// one above, own container/filter ids and own mainnetFunctionItems array) ---
+function renderMainnetFunctions(){
+  const c=document.getElementById('mainnetFunctionsContainer'); if(!c)return; c.innerHTML='';
+  const q=document.getElementById('mfSearch').value.toLowerCase(), cf=document.getElementById('mfCategoryFilter').value, sf=document.getElementById('mfStatusFilter').value;
+  const grouped={}; mainnetFunctionItems.forEach(x=>{const d=state[x[0]]||{};const st=d.status||'Not tested';if((q&&!x.join(' ').toLowerCase().includes(q)&&!String(d.notes||'').toLowerCase().includes(q))||(cf&&x[1]!==cf)||(sf&&st!==sf))return;(grouped[x[1]]??=[]).push(x)});
+  Object.entries(grouped).forEach(([group,items])=>{
+    const gt=document.createElement('div');gt.className='group-title';gt.innerHTML=`<span>${esc(group)}</span><span class="badge">${items.length} checks</span>`;c.appendChild(gt);
+    items.forEach(x=>{const d=state[x[0]]||{},st=d.status||'Not tested';const v=versions.controls[x[0]];const el=document.createElement('article');el.className='item';el.dataset.id=x[0];el.innerHTML=`<div class="item-main"><div class="item-id">${x[0]}</div><div><div class="item-title">${esc(x[2])}</div><div class="item-criterion">${esc(x[3])}</div></div><select class="status" data-field="status" data-status="${st}">${STATUSES.map(s=>`<option ${s===st?'selected':''}>${s}</option>`).join('')}</select><button class="chev" aria-label="Expand">⌄</button></div><div class="item-details"><div class="field full"><label>Evidence — signatures, addresses, tests, paths, links</label><textarea data-field="evidence">${esc(d.evidence||'')}</textarea></div><div class="field"><label>Environment / deployment / commit</label><input data-field="environment" value="${esc(d.environment||'')}"></div><div class="field"><label>Tester / owner / date</label><input data-field="tester" value="${esc(d.tester||'')}"></div><div class="field full"><label>Notes, gap and exact next test</label><textarea data-field="notes">${esc(d.notes||'')}</textarea></div><div class="field full"><span class="sync-tag" data-sync-tag>${v?('Last saved '+fmtTime(v.updatedAt)+(v.updatedBy?' by '+esc(v.updatedBy):'')):'Not yet synced'}</span> <button class="btn" data-history style="margin-left:8px">History</button><button class="btn" data-comments style="margin-left:8px">Comments</button><div class="history-box hidden" data-history-box></div><div class="comments-box hidden" data-comments-box></div></div></div>`;
+      el.querySelector('.chev').onclick=()=>el.classList.toggle('open');
+      el.querySelectorAll('[data-field]').forEach(inp=>inp.onchange=()=>{state[x[0]]??={};state[x[0]][inp.dataset.field]=inp.value;if(inp.dataset.field==='status'){inp.dataset.status=inp.value;mfSummary()}save();syncControl(x[0])});
+      const hb=el.querySelector('[data-history-box]');
+      el.querySelector('[data-history]').onclick=()=>{hb.classList.toggle('hidden');if(!hb.classList.contains('hidden'))loadHistory(x[0],hb)};
+      const cb=el.querySelector('[data-comments-box]');
+      el.querySelector('[data-comments]').onclick=()=>{cb.classList.toggle('hidden');if(!cb.classList.contains('hidden'))loadComments(x[0],cb)};
+      if(conflicts[x[0]])showConflict(x[0],conflicts[x[0]]);
+      c.appendChild(el);
+    });
+  });mfSummary();
+}
+function mfSummary(){const vals=mainnetFunctionItems.map(x=>(state[x[0]]||{}).status||'Not tested');const applicable=vals.filter(x=>x!=='Not applicable').length;const passed=vals.filter(x=>x==='Passed').length;document.getElementById('mfTotalCount').textContent=mainnetFunctionItems.length;document.getElementById('mfPassCount').textContent=passed;document.getElementById('mfBar').style.width=(applicable?passed/applicable*100:0)+'%'}
+
 function renderGaps(){
   const gb=document.querySelector('#gapTable tbody');gb.innerHTML='';
   gapRows.forEach((r,ri)=>{const tr=document.createElement('tr');r.forEach((v,ci)=>{const td=document.createElement('td');td.contentEditable=true;td.innerHTML=esc(state.gaps?.[ri]?.[ci]??v);if(ci===4)td.className='priority '+(v==='P0'?'p0':v==='P1'?'p1':'p2');
@@ -819,9 +886,13 @@ function setup(){
   const cfCats=[...new Set(criticalFunctionItems.map(x=>x[1]))];cfCats.forEach(x=>document.getElementById('cfCategoryFilter').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));STATUSES.forEach(x=>document.getElementById('cfStatusFilter').insertAdjacentHTML('beforeend',`<option>${x}</option>`));
   ['cfSearch','cfCategoryFilter','cfStatusFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='cfSearch'?'input':'change',renderCriticalFunctions));
   document.getElementById('cfExpandAll').onclick=()=>document.querySelectorAll('#criticalFunctionsContainer .item').forEach(x=>x.classList.add('open'));document.getElementById('cfCollapseAll').onclick=()=>document.querySelectorAll('#criticalFunctionsContainer .item').forEach(x=>x.classList.remove('open'));
+  const mfCats=[...new Set(mainnetFunctionItems.map(x=>x[1]))];mfCats.forEach(x=>document.getElementById('mfCategoryFilter').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));STATUSES.forEach(x=>document.getElementById('mfStatusFilter').insertAdjacentHTML('beforeend',`<option>${x}</option>`));
+  ['mfSearch','mfCategoryFilter','mfStatusFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='mfSearch'?'input':'change',renderMainnetFunctions));
+  document.getElementById('mfExpandAll').onclick=()=>document.querySelectorAll('#mainnetFunctionsContainer .item').forEach(x=>x.classList.add('open'));document.getElementById('mfCollapseAll').onclick=()=>document.querySelectorAll('#mainnetFunctionsContainer .item').forEach(x=>x.classList.remove('open'));
   document.querySelectorAll('.persist-meta').forEach(x=>{x.value=state.meta?.[x.dataset.key]||x.value;x.onchange=()=>{state.meta??={};state.meta[x.dataset.key]=x.value;save();syncMeta(x.dataset.key)}});
   renderSpeedrun();
   renderCriticalFunctions();
+  renderMainnetFunctions();
   renderGaps();
   renderGates();
   document.getElementById('claudePrompt').value=prompt;document.getElementById('copyPrompt').onclick=async()=>{await navigator.clipboard.writeText(document.getElementById('claudePrompt').value);document.getElementById('copyPrompt').textContent='Copied';setTimeout(()=>document.getElementById('copyPrompt').textContent='Copy prompt',1300)};
@@ -833,7 +904,7 @@ function setup(){
     if(!confirm('Importing will push these values to the shared checklist for everyone with access. Continue?'))return;
     await loadServerState(true); // refresh versions immediately before writing, to minimize false conflicts
     let pushed=0,conflicted=0;
-    for(const id of [...controls.map(c=>c[0]),...speedrunItems.map(c=>c[0]),...criticalFunctionItems.map(c=>c[0])]){
+    for(const id of [...controls.map(c=>c[0]),...speedrunItems.map(c=>c[0]),...criticalFunctionItems.map(c=>c[0]),...mainnetFunctionItems.map(c=>c[0])]){
       if(!incoming[id])continue;
       state[id]=incoming[id];
       const ok=await pushEntity('control',id,{status:incoming[id].status||'Not tested',evidence:incoming[id].evidence||'',environment:incoming[id].environment||'',tester:incoming[id].tester||'',notes:incoming[id].notes||''},id);
