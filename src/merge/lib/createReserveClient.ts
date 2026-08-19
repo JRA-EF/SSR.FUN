@@ -475,6 +475,12 @@ async function fundSeedAssetsIdempotent(
   wallet: WalletContextState,
   assets: Pick<CreateReserveAssetInput, "mint" | "decimals">[],
   seedAmounts: bigint[],
+  // Mainnet has no faucet -- there is no such thing as a server-minted real
+  // USDC top-up. When false, any genuine shortfall throws a plain,
+  // actionable error (fund the wallet yourself first) instead of calling
+  // api/devnet/mint-test-assets, which only ever exists on DevNet. Defaults
+  // to true so every pre-existing DevNet caller/test behaves unchanged.
+  allowFaucet: boolean = true,
 ): Promise<string | null> {
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const owner = wallet.publicKey;
@@ -484,6 +490,13 @@ async function fundSeedAssetsIdempotent(
 
   const faucetAssets = shortfalls.filter(({ asset, amount }) => !isWrappedSol(asset.mint) && amount > 0n);
   const wrapAssets = shortfalls.filter(({ asset, amount }) => isWrappedSol(asset.mint) && amount > 0n);
+
+  if (!allowFaucet && faucetAssets.length > 0) {
+    const shortfallDescriptions = faucetAssets
+      .map(({ asset, amount }) => `${(Number(amount) / 10 ** asset.decimals).toLocaleString()} more of ${asset.mint}`)
+      .join(", ");
+    throw new Error(`This wallet doesn't hold enough of the seed asset yet -- send it ${shortfallDescriptions} and try again. There is no faucet on Mainnet.`);
+  }
 
   let sig: string | null = null;
   if (faucetAssets.length > 0) {
@@ -595,6 +608,10 @@ export async function createReserveOnChain(params: {
   onProgress: (step: CreateReserveStep) => void;
   /** Fired the instant the target Reserve's addresses are derived (one ProtocolConfig read) -- lets the caller track exactly which Reserve this attempt targets (for reconciliation) without a second, redundant ProtocolConfig fetch of its own. */
   onAddressesResolved?: (addresses: NewReserveAddresses) => void;
+  /** Cluster-aware program to deploy against -- defaults to the DevNet program (DEVNET_FIXTURES.programId) so every pre-existing caller/test is unaffected. CreateDTR.tsx passes SSR_PROGRAM_ID (cluster-aware) explicitly. */
+  programId?: PublicKey;
+  /** See fundSeedAssetsIdempotent's own header -- false on Mainnet (no faucet exists there). Defaults to true, matching every pre-existing DevNet caller. */
+  allowFaucet?: boolean;
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -611,7 +628,8 @@ export async function createReserveOnChain(params: {
   // Same single-choke-point rationale as above -- validated here regardless
   // of whether CreateDTR.tsx already validated its own input.
   const additionalManagerWallets = validateAdditionalManagers(params.additionalManagers ?? [], wallet.publicKey);
-  const programId = new PublicKey(DEVNET_FIXTURES.programId);
+  const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
+  const allowFaucet = params.allowFaucet ?? true;
   const program = buildReadOnlyProgram(connection) as any;
 
   params.onProgress("create-and-register");
@@ -682,7 +700,7 @@ export async function createReserveOnChain(params: {
 
   let fundSeedAssetsSig: string | null = null;
   try {
-    fundSeedAssetsSig = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts);
+    fundSeedAssetsSig = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet);
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses);
   }
@@ -737,10 +755,15 @@ export async function resumeReserveDeploymentOnChain(params: {
   wallet: WalletContextState;
   pending: PendingReserveDeploy;
   onProgress: (step: CreateReserveStep) => void;
+  /** Same meaning as createReserveOnChain's own `programId` -- must match whatever program the original create-and-register attempt actually targeted. */
+  programId?: PublicKey;
+  /** Same meaning as createReserveOnChain's own `allowFaucet`. */
+  allowFaucet?: boolean;
 }): Promise<CreateReserveResult> {
   const { connection, wallet, pending } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
-  const programId = new PublicKey(DEVNET_FIXTURES.programId);
+  const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
+  const allowFaucet = params.allowFaucet ?? true;
   const reserveAddress = new PublicKey(pending.reserve);
   const candidateMints = pending.assets.map((a) => new PublicKey(a.mint));
 
@@ -805,7 +828,7 @@ export async function resumeReserveDeploymentOnChain(params: {
   params.onProgress("fund-seed-assets");
   let fundSeedAssetsSig: string | null = null;
   try {
-    fundSeedAssetsSig = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts);
+    fundSeedAssetsSig = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts, allowFaucet);
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses);
   }

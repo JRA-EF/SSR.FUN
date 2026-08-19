@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVUSDC, DEVUSDC_MINT, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, discoverDelegatesForReserve, computeRedemptionEntitlements, findReserve, findProtocolConfig, type ZapAssetLeg } from "@ssr/sdk";
+import { DEVUSDC_MINT, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, discoverDelegatesForReserve, computeRedemptionEntitlements, findReserve, findProtocolConfig, type ZapAssetLeg } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
 import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates";
@@ -75,6 +75,17 @@ function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
   return format(new Date(t), "MMM d");
 }
 
+// Cluster-aware settlement asset: DevNet's zero-value devUSDC test token vs
+// Mainnet's real USDC -- both 6 decimals, so only the mint address and
+// display label actually differ. Mainnet Reserves are USDC-only for this
+// launch (see docs/project/DECISION_LOG.md DEC-0116/DEC-0117); every
+// devUSDC-branded label/balance in this file resolves through these three
+// constants so the live product never shows "devUSDC" or DevNet-only copy.
+const SETTLEMENT_MINT = IS_MAINNET ? new PublicKey(MAINNET_USDC_MINT) : DEVUSDC_MINT;
+const SETTLEMENT_DECIMALS = 6;
+const SETTLEMENT_SYMBOL = IS_MAINNET ? "USDC" : "devUSDC";
+const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
+
 export function DTRDetail() {
   const { dtrId } = useParams();
   const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
@@ -133,15 +144,15 @@ export function DTRDetail() {
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
-  // devUSDC is the default DevNet settlement asset for mint (Buy) -- a real
-  // balance read from chain, never simulated. See
-  // buildBuyZapInstructionsDevUsdc / DEC "devUSDC default settlement asset".
-  const [devUsdcBalanceRaw, setDevUsdcBalanceRaw] = useState<bigint>(0n);
-  // Tracks whether the real devUSDC balance read has actually resolved yet,
-  // so the percentage quick-select buttons can be disabled (and show a
-  // "Loading balance..."/"Balance unavailable" state) instead of computing
-  // off a default 0n that hasn't been confirmed against chain yet.
-  const [devUsdcBalanceStatus, setDevUsdcBalanceStatus] = useState<"loading" | "ready" | "unavailable">("loading");
+  // SETTLEMENT_MINT is the settlement asset for mint (Buy) -- a real
+  // balance read from chain, never simulated. See SETTLEMENT_MINT's own
+  // header comment above for the DevNet/Mainnet split.
+  const [settlementBalanceRaw, setSettlementBalanceRaw] = useState<bigint>(0n);
+  // Tracks whether the real settlement-asset balance read has actually
+  // resolved yet, so the percentage quick-select buttons can be disabled
+  // (and show a "Loading balance..."/"Balance unavailable" state) instead of
+  // computing off a default 0n that hasn't been confirmed against chain yet.
+  const [settlementBalanceStatus, setSettlementBalanceStatus] = useState<"loading" | "ready" | "unavailable">("loading");
 
   // RPC-resilience pass (see docs/project/PROJECT_STATUS.md): Buy/Sell each
   // track their own submission phase instead of one shared boolean, so the
@@ -154,7 +165,7 @@ export function DTRDetail() {
   // submission succeeds, before confirmation even starts.
   const [buyPhase, setBuyPhase] = useState<TxPhase>("idle");
   const [buyPendingSignature, setBuyPendingSignature] = useState<string | null>(null);
-  const buyPreDevUsdcRawRef = useRef<bigint>(0n);
+  const buyPreSettlementRawRef = useRef<bigint>(0n);
 
   const [sellPhase, setSellPhase] = useState<TxPhase>("idle");
   const [sellPendingSignature, setSellPendingSignature] = useState<string | null>(null);
@@ -184,7 +195,7 @@ export function DTRDetail() {
    * RealReserveSync's next poll -- deliberately scoped to the one Reserve
    * that just changed, never every Reserve (see the "targeted refresh"
    * requirement in docs/project/PROJECT_STATUS.md's RPC-resilience pass).
-   * Cache keys for this Reserve's mint/the wallet's devUSDC balance are
+   * Cache keys for this Reserve's mint/the wallet's settlement-asset balance are
    * invalidated first so this always reads genuinely fresh values, not a
    * few-seconds-stale cached one -- then re-populates the same cache via
    * getCached so RealReserveSync's next tick reuses this result instead of
@@ -224,18 +235,18 @@ export function DTRDetail() {
         const owner = walletCtx.publicKey;
         const rtMint = dtr.onChain.reserveTokenMint;
         const rtKey = tokenBalanceCacheKey(connection.rpcEndpoint, rtMint, owner.toBase58());
-        const devKey = tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58());
+        const settlementKey = tokenBalanceCacheKey(connection.rpcEndpoint, SETTLEMENT_MINT.toBase58(), owner.toBase58());
         invalidateCached(rtKey);
-        invalidateCached(devKey);
+        invalidateCached(settlementKey);
         const balanceRaw = await getCached(rtKey, BALANCE_CACHE_TTL_MS, () =>
           withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner)),
         );
         syncRealHolding(dtr.id, balanceRaw, dtr.nav);
         const solLamports = await connection.getBalance(owner, "confirmed");
         syncWalletFromChain({ connected: true, connecting: false, address: owner.toBase58(), provider: wallet.provider, solLamports });
-        const devUsdcRaw = await getCached(devKey, BALANCE_CACHE_TTL_MS, () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner)));
-        setDevUsdcBalanceRaw(BigInt(devUsdcRaw));
-        setDevUsdcBalanceStatus("ready");
+        const settlementRaw = await getCached(settlementKey, BALANCE_CACHE_TTL_MS, () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, SETTLEMENT_MINT, owner)));
+        setSettlementBalanceRaw(BigInt(settlementRaw));
+        setSettlementBalanceStatus("ready");
       }
     } catch {
       // Best-effort immediate refresh; RealReserveSync's regular poll will catch up regardless.
@@ -248,31 +259,31 @@ export function DTRDetail() {
     landingStats.refetch(true);
   }
 
-  // Initial devUSDC balance read (refreshRealReserveNow only runs after a
-  // confirmed tx) -- real, read live from chain, never simulated. Routed
-  // through the shared cache/dedupe helper so this mount effect and
+  // Initial settlement-asset balance read (refreshRealReserveNow only runs
+  // after a confirmed tx) -- real, read live from chain, never simulated.
+  // Routed through the shared cache/dedupe helper so this mount effect and
   // RealReserveSync's own per-Reserve balance loop collapse into one
   // request instead of each firing its own for the same (mint, owner).
   useEffect(() => {
     if (!walletCtx.publicKey) {
-      setDevUsdcBalanceRaw(0n);
-      setDevUsdcBalanceStatus("loading");
+      setSettlementBalanceRaw(0n);
+      setSettlementBalanceStatus("loading");
       return;
     }
     const owner = walletCtx.publicKey;
     let cancelled = false;
-    setDevUsdcBalanceStatus("loading");
-    getCached(tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58()), BALANCE_CACHE_TTL_MS, () =>
-      withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner)),
+    setSettlementBalanceStatus("loading");
+    getCached(tokenBalanceCacheKey(connection.rpcEndpoint, SETTLEMENT_MINT.toBase58(), owner.toBase58()), BALANCE_CACHE_TTL_MS, () =>
+      withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, SETTLEMENT_MINT, owner)),
     )
       .then((raw) => {
         if (!cancelled) {
-          setDevUsdcBalanceRaw(BigInt(raw));
-          setDevUsdcBalanceStatus("ready");
+          setSettlementBalanceRaw(BigInt(raw));
+          setSettlementBalanceStatus("ready");
         }
       })
       .catch(() => {
-        if (!cancelled) setDevUsdcBalanceStatus("unavailable");
+        if (!cancelled) setSettlementBalanceStatus("unavailable");
       });
     return () => {
       cancelled = true;
@@ -335,8 +346,8 @@ export function DTRDetail() {
     if (stillIndexing) {
       return (
         <div className="container mx-auto px-4 py-24 text-center">
-          <h1 className="text-3xl font-merge-display font-bold mb-4">Verifying on DevNet...</h1>
-          <p className="text-muted-foreground mb-8">This Reserve was just created or resumed and is still being confirmed on Solana DevNet. It will appear automatically in a moment.</p>
+          <h1 className="text-3xl font-merge-display font-bold mb-4">Verifying on {CLUSTER_LABEL}...</h1>
+          <p className="text-muted-foreground mb-8">This Reserve was just created or resumed and is still being confirmed on Solana {CLUSTER_LABEL}. It will appear automatically in a moment.</p>
         </div>
       );
     }
@@ -383,11 +394,11 @@ export function DTRDetail() {
   // Trading Calculations
   const numBuyAmount = parseFloat(buyAmount) || 0;
   const buyQuote = calcTokensReceived(numBuyAmount, dtr.tokenPrice, dtr.liquidityUsdc);
-  // DevNet-only test-priced estimate (see zapPricing.ts) -- the server
-  // independently recomputes the exact amounts from live chain state at
-  // execution time; this is a preview only.
-  // devUSDC is pegged $1 (Phase C) -- the settlement amount IS the USD
-  // amount directly, no SOL-style price conversion needed.
+  // Preview only -- the program independently recomputes the exact amounts
+  // from live chain state at execution time. The settlement asset
+  // (SETTLEMENT_MINT) is $1-pegged (devUSDC by design, USDC in reality on
+  // Mainnet) -- the settlement amount IS the USD amount directly, no
+  // SOL-style price conversion needed.
   const estReserveTokensOut = isOnChain && dtr.nav > 0 ? numBuyAmount / dtr.nav : 0;
 
   const numSellAmount = parseFloat(sellAmount) || 0;
@@ -421,31 +432,34 @@ export function DTRDetail() {
       return [];
     }
   })();
-  // For a mixed-composition Reserve, Sell redeems in-kind for real then
-  // converts every non-devUSDC leg's DevNet test-price USD value into
-  // freshly-minted devUSDC (see packages/sdk/src/zapInstructions.ts's
-  // buildSellZapInstructionsDevUsdc) -- since devUSDC is $1-pegged by
-  // design, the total devUSDC received is simply this redemption's total
-  // USD value. An estimate only (the real amount is computed server-side
-  // from live vault balances at execution time), shown as an explicitly
-  // secondary figure, never implied to be a real market quote.
-  const estDevUsdcOut = isOnChain ? numSellAmount * dtr.nav : 0;
+  // DevNet only: for a mixed-composition Reserve, Sell redeems in-kind for
+  // real then converts every non-settlement leg's DevNet test-price USD
+  // value into freshly-minted devUSDC (see
+  // packages/sdk/src/zapInstructions.ts's buildSellZapInstructionsDevUsdc)
+  // -- since the settlement asset is $1-pegged by design, the total received
+  // is simply this redemption's total USD value. Mainnet Reserves are
+  // USDC-only (see SETTLEMENT_MINT above), so this branch never actually
+  // renders there -- isPureSettlementReserve is always true for them. An
+  // estimate only (the real amount is computed server-side from live vault
+  // balances at execution time), shown as an explicitly secondary figure,
+  // never implied to be a real market quote.
+  const estSettlementOut = isOnChain ? numSellAmount * dtr.nav : 0;
 
-  /** One-shot reconciliation for an ambiguous ("unresolved") outcome: does the trader's REAL, freshly-read devUSDC balance actually show the spend this Buy would have made? If so, report success based on that observed on-chain state -- never based on an assumption. Used both automatically right after an AmbiguousConfirmationError and from the pending-verification banner's manual "Check status" button. */
+  /** One-shot reconciliation for an ambiguous ("unresolved") outcome: does the trader's REAL, freshly-read settlement-asset balance actually show the spend this Buy would have made? If so, report success based on that observed on-chain state -- never based on an assumption. Used both automatically right after an AmbiguousConfirmationError and from the pending-verification banner's manual "Check status" button. */
   async function reconcileBuy(signature: string) {
     if (!walletCtx.publicKey || !dtr) return;
     const owner = walletCtx.publicKey;
     try {
-      const key = tokenBalanceCacheKey(connection.rpcEndpoint, DEVUSDC_MINT.toBase58(), owner.toBase58());
+      const key = tokenBalanceCacheKey(connection.rpcEndpoint, SETTLEMENT_MINT.toBase58(), owner.toBase58());
       invalidateCached(key);
-      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, DEVUSDC_MINT, owner));
-      if (reconcileByBalanceChange(buyPreDevUsdcRawRef.current, BigInt(freshRaw), "decrease")) {
+      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, SETTLEMENT_MINT, owner));
+      if (reconcileByBalanceChange(buyPreSettlementRawRef.current, BigInt(freshRaw), "decrease")) {
         // The real spent amount is the observed balance delta itself -- the
         // most authoritative figure available here (this whole function
         // only runs because normal confirmation was inconclusive).
-        const spentRaw = buyPreDevUsdcRawRef.current - BigInt(freshRaw);
-        const spentUsdc = Number(spentRaw > 0n ? spentRaw : 0n) / 10 ** DEVUSDC.decimals;
-        setDevUsdcBalanceRaw(BigInt(freshRaw));
+        const spentRaw = buyPreSettlementRawRef.current - BigInt(freshRaw);
+        const spentUsdc = Number(spentRaw > 0n ? spentRaw : 0n) / 10 ** SETTLEMENT_DECIMALS;
+        setSettlementBalanceRaw(BigInt(freshRaw));
         setBuyPhase("confirmed");
         setBuyPendingSignature(null);
         await refreshRealReserveNow();
@@ -455,7 +469,7 @@ export function DTRDetail() {
       } else {
         toast({
           title: "Still verifying",
-          description: "Your devUSDC balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Buy.",
+          description: `Your ${SETTLEMENT_SYMBOL} balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Buy.`,
         });
       }
     } catch {
@@ -487,8 +501,8 @@ export function DTRDetail() {
     // Defensive -- the button is already disabled for this case (an
     // ineligible Reserve is filtered out of the catalogue before this page
     // could ever be opened for it), but never rely on that alone. See
-    // isGenuineDevUsdcBuySupported.
-    if (!isGenuineDevUsdcBuySupported) {
+    // isSettlementBuySupported.
+    if (!isSettlementBuySupported) {
       toast({
         variant: "destructive",
         title: "Buy not available",
@@ -501,22 +515,22 @@ export function DTRDetail() {
     // transfer_checked -- never a simulated conversion, never a
     // faucet/authority-funded leg (guaranteed by the check above: every
     // asset in this Reserve is devUSDC itself).
-    const devUsdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** DEVUSDC.decimals));
+    const devUsdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** SETTLEMENT_DECIMALS));
     // Checked against the trader's own real, already-fetched balance BEFORE
     // any network call -- an honest, immediate "insufficient devUSDC"
     // message, distinct from an RPC-congestion or swap-authority-SOL
     // failure, and cheaper than letting an on-chain transfer_checked fail.
-    if (devUsdcAmountRaw > devUsdcBalanceRaw) {
+    if (devUsdcAmountRaw > settlementBalanceRaw) {
       toast({
         variant: "destructive",
         title: "Insufficient devUSDC",
-        description: `This wallet holds ${(Number(devUsdcBalanceRaw) / 10 ** DEVUSDC.decimals).toLocaleString()} devUSDC, less than the ${numBuyAmount.toLocaleString()} devUSDC requested. Claim more from the faucet or reduce the amount.`,
+        description: `This wallet holds ${(Number(settlementBalanceRaw) / 10 ** SETTLEMENT_DECIMALS).toLocaleString()} devUSDC, less than the ${numBuyAmount.toLocaleString()} devUSDC requested. Claim more from the faucet or reduce the amount.`,
       });
       return;
     }
     setBuyPhase("preparing");
     setBuyPendingSignature(null);
-    buyPreDevUsdcRawRef.current = devUsdcBalanceRaw;
+    buyPreSettlementRawRef.current = settlementBalanceRaw;
     useAppStore.getState().setTxInFlight(true);
     try {
       const { signature } = await executeBuyZapDevUsdc({
@@ -530,7 +544,7 @@ export function DTRDetail() {
       });
       setBuyPhase("confirmed");
       await refreshRealReserveNow();
-      const spentUsdc = Number(devUsdcAmountRaw) / 10 ** DEVUSDC.decimals;
+      const spentUsdc = Number(devUsdcAmountRaw) / 10 ** SETTLEMENT_DECIMALS;
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
       setBuyAmount("");
       toast(transactionConfirmedToast(signature, "Buy confirmed"));
@@ -831,40 +845,43 @@ export function DTRDetail() {
   const onBuyClick = isOnChain ? (IS_MAINNET ? handleBuyMainnet : handleBuy) : handleBuyUnavailable;
   const onSellClick = isOnChain ? (IS_MAINNET ? handleSellMainnet : handleSell) : handleSellUnavailable;
 
-  // devUSDC is SSR.fun's universal purchasing/settlement currency -- it is
-  // NEVER required to be one of a Reserve's own underlying Reserve Assets.
-  // The wallet's full real devUSDC balance is what's available to spend on
-  // ANY purchasable Reserve, regardless of that Reserve's composition (see
+  // SETTLEMENT_MINT (devUSDC on DevNet, real USDC on Mainnet) is SSR.fun's
+  // universal purchasing/settlement currency -- it is NEVER required to be
+  // one of a Reserve's own underlying Reserve Assets. The wallet's full real
+  // settlement-asset balance is what's available to spend on ANY purchasable
+  // Reserve, regardless of that Reserve's composition (see
   // docs/project/DECISION_LOG.md's Buy architecture correction). What differs
   // per-Reserve is whether Buy can genuinely EXECUTE right now -- see
-  // isGenuineDevUsdcBuySupported below.
-  const devUsdcBalanceHuman = Number(devUsdcBalanceRaw) / 10 ** DEVUSDC.decimals;
+  // isSettlementBuySupported below.
+  const settlementBalanceHuman = Number(settlementBalanceRaw) / 10 ** SETTLEMENT_DECIMALS;
   // "Available" for the quick-select buttons: always the trader's real,
-  // chain-confirmed devUSDC balance -- never a hardcoded fallback, and never
-  // gated on this Reserve's asset composition.
-  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(devUsdcBalanceHuman) : 0;
-  const buyInsufficientBalance = isOnChain && numBuyAmount > devUsdcBalanceHuman;
-  // True when EVERY one of this Reserve's registered assets is devUSDC
-  // itself -- the only composition where Buy/Sell involve no swap-authority
-  // conversion at all: mint_reserve_tokens_in_kind's own transfer_checked
-  // moves the user's real devUSDC straight into the vault on Buy, and
-  // redeem_reserve_tokens_in_kind deposits real devUSDC straight back into
-  // the user's wallet on Sell. Used only for messaging nuance below (which
-  // disclosure to show), not for gating -- see isGenuineDevUsdcBuySupported.
-  const isPureDevUsdcReserve =
-    isOnChain && !!dtr.onChain && isReservePureDevUsdc(dtr.onChain.assets.map((a) => a.mint), DEVUSDC.mint);
-  // True for ANY Reserve composed entirely of the site-wide supported
-  // DevNet test assets (devUSDC, mockX, mockY, mockZ -- see
-  // packages/sdk/src/tradableAssets.ts, the same eligibility check that
-  // already determines whether a Reserve is discoverable/visible anywhere
-  // on the site at all). A non-devUSDC leg is funded by the swap authority
-  // minting that exact test asset to the buyer (Buy) or converting the
-  // redeemed amount into devUSDC for the seller (Sell) -- see
-  // api/devnet/swap-sign.ts. In practice this should always be true for any
+  // chain-confirmed settlement-asset balance -- never a hardcoded fallback,
+  // and never gated on this Reserve's asset composition.
+  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(settlementBalanceHuman) : 0;
+  const buyInsufficientBalance = isOnChain && numBuyAmount > settlementBalanceHuman;
+  // True when EVERY one of this Reserve's registered assets is the
+  // settlement asset itself -- the only composition where Buy/Sell involve
+  // no swap-authority conversion at all: mint_reserve_tokens_in_kind's own
+  // transfer_checked moves the user's real settlement-asset balance straight
+  // into the vault on Buy, and redeem_reserve_tokens_in_kind deposits it
+  // straight back into the user's wallet on Sell. Mainnet Reserves are
+  // USDC-only for this launch (see SETTLEMENT_MINT above), so this is always
+  // true for them. Used only for messaging nuance below (which disclosure to
+  // show), not for gating -- see isSettlementBuySupported.
+  const isPureSettlementReserve =
+    isOnChain && !!dtr.onChain && isReservePureDevUsdc(dtr.onChain.assets.map((a) => a.mint), SETTLEMENT_MINT.toBase58());
+  // True for ANY Reserve composed entirely of site-wide supported assets
+  // (see packages/sdk/src/tradableAssets.ts, the same eligibility check that
+  // already determines whether a Reserve is discoverable/visible anywhere on
+  // the site at all). On DevNet a non-settlement leg is funded by the swap
+  // authority minting that exact test asset to the buyer (Buy) or converting
+  // the redeemed amount into devUSDC for the seller (Sell) -- see
+  // api/devnet/swap-sign.ts. On Mainnet every Reserve is USDC-only, so this
+  // is always true there. In practice this should always be true for any
   // Reserve that reaches this page, since an ineligible Reserve is filtered
   // out of the app's catalogue entirely before it could ever be opened here;
   // kept as an explicit, independently-checked gate rather than assumed.
-  const isGenuineDevUsdcBuySupported = isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint));
+  const isSettlementBuySupported = isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint));
   // Reason the 25/50/75/Max quick-select buttons can't be used right now, if
   // any -- distinct from buyProcessing (mid-transaction) so the UI can show
   // an honest "why" instead of a plain disabled control. Deliberately NOT
@@ -873,14 +890,14 @@ export function DTRDetail() {
   // Buy execution is separately disabled below.
   const buyPctUnavailableReason: string | null = !wallet.connected
     ? null // handled by the existing !wallet.connected disabled check
-    : devUsdcBalanceStatus === "loading"
-      ? "Confirming your real devUSDC balance..."
-      : devUsdcBalanceStatus === "unavailable"
-        ? "Your devUSDC balance couldn't be read from DevNet right now."
+    : settlementBalanceStatus === "loading"
+      ? `Confirming your real ${SETTLEMENT_SYMBOL} balance...`
+      : settlementBalanceStatus === "unavailable"
+        ? `Your ${SETTLEMENT_SYMBOL} balance couldn't be read from ${CLUSTER_LABEL} right now.`
         : null;
 
   const setBuyPct = (pct: number) => {
-    if (wallet.connected && devUsdcBalanceStatus === "ready") {
+    if (wallet.connected && settlementBalanceStatus === "ready") {
       setBuyAmount((buyAvailable * pct).toString());
     }
   };
@@ -923,7 +940,7 @@ export function DTRDetail() {
                     </Badge>
                   )}
                   <Badge variant={isOnChain ? "default" : "secondary"} className="uppercase text-[10px] tracking-wide">
-                    {isOnChain ? "Live on Solana DevNet" : "Simulated Demo"}
+                    {isOnChain ? `Live on Solana ${CLUSTER_LABEL}` : "Simulated Demo"}
                   </Badge>
                   <span>
                     {isOnChain ? (
@@ -992,7 +1009,7 @@ export function DTRDetail() {
           )}
           {isOnChain && dtr.chainStatus === "error" && (
             <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--destructive, #e5484d)", color: "var(--destructive, #e5484d)" }}>
-              Live DevNet data could not be refreshed{dtr.chainError ? `: ${dtr.chainError}` : "."} Figures below are the last known
+              Live {CLUSTER_LABEL} data could not be refreshed{dtr.chainError ? `: ${dtr.chainError}` : "."} Figures below are the last known
               on-chain state, not necessarily current.
             </div>
           )}
@@ -1048,7 +1065,7 @@ export function DTRDetail() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   24h Volume
-                  <InfoTip label="More information about 24h Volume">Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours, valued at fixed DevNet test prices.</InfoTip>
+                  <InfoTip label="More information about 24h Volume">Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours{IS_MAINNET ? "." : ", valued at fixed DevNet test prices."}</InfoTip>
                 </div>
                 <p className="text-xl font-merge-mono font-semibold">
                   {isOnChain ? (
@@ -1277,23 +1294,23 @@ export function DTRDetail() {
                 <CardContent>
                   <TabsContent value="buy" className="mt-0 space-y-4">
                     <div className="flex justify-between items-center text-sm mb-2">
-                      <span className="text-muted-foreground">Your devUSDC balance</span>
+                      <span className="text-muted-foreground">Your {SETTLEMENT_SYMBOL} balance</span>
                       <span className="font-merge-mono font-medium">
                         {!wallet.connected
                           ? "—"
                           : !isOnChain
                             ? formatUsdc(buyAvailable)
-                            : devUsdcBalanceStatus === "loading"
+                            : settlementBalanceStatus === "loading"
                               ? "Loading..."
-                              : devUsdcBalanceStatus === "unavailable"
+                              : settlementBalanceStatus === "unavailable"
                                 ? "Unavailable"
-                                : `${devUsdcBalanceHuman.toFixed(2)} devUSDC`}
+                                : `${settlementBalanceHuman.toFixed(2)} ${SETTLEMENT_SYMBOL}`}
                       </span>
                     </div>
 
                     <div className="relative">
                       <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-muted-foreground font-medium text-sm">
-                        {isOnChain ? "devUSDC" : "USDC"}
+                        {isOnChain ? SETTLEMENT_SYMBOL : "USDC"}
                       </div>
                       <Input
                         type="number"
@@ -1330,19 +1347,22 @@ export function DTRDetail() {
                       <p className="text-[11px] text-muted-foreground/80 -mt-2">{buyPctUnavailableReason}</p>
                     )}
 
-                    {isOnChain && isGenuineDevUsdcBuySupported ? (
+                    {isOnChain && isSettlementBuySupported ? (
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Settlement asset
                             <InfoTip label="More information about the settlement asset">
-                              devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.
-                              {isPureDevUsdcReserve
-                                ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
-                                : " This Reserve holds other DevNet test assets too -- your devUSDC funds the devUSDC-denominated share directly, and the swap adapter mints the exact amount of each other asset this Reserve's allocation requires."}
+                              {IS_MAINNET
+                                ? "USDC is this Reserve's settlement asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
+                                : `devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.${
+                                    isPureSettlementReserve
+                                      ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
+                                      : " This Reserve holds other DevNet test assets too -- your devUSDC funds the devUSDC-denominated share directly, and the swap adapter mints the exact amount of each other asset this Reserve's allocation requires."
+                                  }`}
                             </InfoTip>
                           </span>
-                          <span className="font-merge-mono">devUSDC</span>
+                          <span className="font-merge-mono">{SETTLEMENT_SYMBOL}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Mint Fee</span>
@@ -1359,15 +1379,16 @@ export function DTRDetail() {
                       </div>
                     ) : isOnChain ? (
                       // Defensive fallback only -- a Reserve holding any asset outside the
-                      // supported set (devUSDC/mockX/mockY/mockZ) is excluded from discovery
-                      // entirely (see src/merge/lib/onChainReserve.ts's mergeDiscoveredReserves),
-                      // so this page should never actually be reachable for one. Kept as an
-                      // explicit, honest state rather than assumed unreachable.
+                      // supported set is excluded from discovery entirely (see
+                      // src/merge/lib/onChainReserve.ts's mergeDiscoveredReserves), so this
+                      // page should never actually be reachable for one. Kept as an explicit,
+                      // honest state rather than assumed unreachable.
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-destructive/30 mt-6">
                         <p className="text-sm font-semibold text-destructive">Buy not available for this Reserve</p>
                         <p className="text-xs text-muted-foreground">
-                          This Reserve holds an asset outside SSR.fun's currently supported DevNet test assets (devUSDC, mockX, mockY, mockZ),
-                          so no genuine Buy path exists for it.
+                          {IS_MAINNET
+                            ? "This Reserve holds an asset outside SSR.fun's currently supported Mainnet assets (USDC), so no genuine Buy path exists for it."
+                            : "This Reserve holds an asset outside SSR.fun's currently supported DevNet test assets (devUSDC, mockX, mockY, mockZ), so no genuine Buy path exists for it."}
                         </p>
                         <div className="pt-2 border-t border-border/50 space-y-1.5">
                           <p className="text-xs font-semibold text-muted-foreground">This Reserve's actual composition</p>
@@ -1417,9 +1438,9 @@ export function DTRDetail() {
 
                     {buyPendingSignature && (
                       <div className="rounded-lg border border-dashed p-3 text-sm space-y-2" style={{ borderColor: "var(--warn, #d9a13c)" }}>
-                        <p>DevNet RPC is temporarily busy -- your Buy transaction is still being verified. No new transaction has been submitted for it.</p>
+                        <p>{CLUSTER_LABEL} RPC is temporarily busy -- your Buy transaction is still being verified. No new transaction has been submitted for it.</p>
                         <a href={explorerUrl("tx", buyPendingSignature)} target="_blank" rel="noreferrer" className="underline">
-                          View signature on Solana Explorer (DevNet) &rarr;
+                          View signature on Solana Explorer ({CLUSTER_LABEL}) &rarr;
                         </a>
                         <div>
                           <Button size="sm" variant="outline" onClick={() => void reconcileBuy(buyPendingSignature)}>
@@ -1437,7 +1458,7 @@ export function DTRDetail() {
                         buyProcessing ||
                         numBuyAmount <= 0 ||
                         buyInsufficientBalance ||
-                        (isOnChain && !isGenuineDevUsdcBuySupported)
+                        (isOnChain && !isSettlementBuySupported)
                       }
                     >
                       {txPhaseLabel(buyPhase) ? (
@@ -1449,17 +1470,19 @@ export function DTRDetail() {
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
-                      ) : isOnChain && !isGenuineDevUsdcBuySupported ? (
+                      ) : isOnChain && !isSettlementBuySupported ? (
                         "Buy Not Yet Supported"
                       ) : buyInsufficientBalance ? (
-                        "Insufficient devUSDC Balance"
+                        `Insufficient ${SETTLEMENT_SYMBOL} Balance`
                       ) : (
                         `Buy ${dtr.ticker}`
                       )}
                     </Button>
                     {isOnChain && (
                       <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
-                        Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value.
+                        {IS_MAINNET
+                          ? "Submits a real Solana Mainnet transaction, signed by your wallet."
+                          : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
                       </p>
                     )}
                   </TabsContent>
@@ -1525,25 +1548,25 @@ export function DTRDetail() {
                             ))}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground">Enter an amount to preview your in-kind redemption.</p>
+                          <p className="text-sm text-muted-foreground">Enter an amount to preview what you'll receive.</p>
                         )}
-                        {isPureDevUsdcReserve ? (
+                        {isPureSettlementReserve ? (
                           <p className="text-[11px] text-muted-foreground/80 pt-1">
-                            This Reserve is backed 100% by devUSDC -- redemption deposits real devUSDC directly into your wallet. No
+                            This Reserve is backed 100% by {SETTLEMENT_SYMBOL} -- redemption deposits real {SETTLEMENT_SYMBOL} directly into your wallet. No
                             conversion or swap adapter is involved.
                           </p>
                         ) : (
                           <div className="pt-3 border-t border-border/50 space-y-1.5">
                             <div className="flex justify-between text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
-                                Settled in devUSDC
-                                <InfoTip label="More information about devUSDC settlement">
-                                  Redeems in-kind (above) first -- any devUSDC entitlement lands directly in your wallet, and every other
-                                  asset is converted into devUSDC at its DevNet test price and paid to you as well, so you always receive
-                                  100% of this redemption's value in devUSDC.
+                                Settled in {SETTLEMENT_SYMBOL}
+                                <InfoTip label={`More information about ${SETTLEMENT_SYMBOL} settlement`}>
+                                  Redeems in-kind (above) first -- any {SETTLEMENT_SYMBOL} entitlement lands directly in your wallet, and every other
+                                  asset is converted into {SETTLEMENT_SYMBOL} at its DevNet test price and paid to you as well, so you always receive
+                                  100% of this redemption's value in {SETTLEMENT_SYMBOL}.
                                 </InfoTip>
                               </span>
-                              <span className="font-merge-mono">~{estDevUsdcOut.toFixed(2)} devUSDC</span>
+                              <span className="font-merge-mono">~{estSettlementOut.toFixed(2)} {SETTLEMENT_SYMBOL}</span>
                             </div>
                           </div>
                         )}
@@ -1583,9 +1606,9 @@ export function DTRDetail() {
 
                     {sellPendingSignature && (
                       <div className="rounded-lg border border-dashed p-3 text-sm space-y-2" style={{ borderColor: "var(--warn, #d9a13c)" }}>
-                        <p>DevNet RPC is temporarily busy -- your Sell transaction is still being verified. No new transaction has been submitted for it.</p>
+                        <p>{CLUSTER_LABEL} RPC is temporarily busy -- your Sell transaction is still being verified. No new transaction has been submitted for it.</p>
                         <a href={explorerUrl("tx", sellPendingSignature)} target="_blank" rel="noreferrer" className="underline">
-                          View signature on Solana Explorer (DevNet) &rarr;
+                          View signature on Solana Explorer ({CLUSTER_LABEL}) &rarr;
                         </a>
                         <div>
                           <Button size="sm" variant="outline" onClick={() => void reconcileSell(sellPendingSignature)}>
@@ -1618,7 +1641,9 @@ export function DTRDetail() {
                     </Button>
                     {isOnChain && (
                       <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
-                        Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value.
+                        {IS_MAINNET
+                          ? "Submits a real Solana Mainnet transaction, signed by your wallet."
+                          : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
                       </p>
                     )}
                   </TabsContent>

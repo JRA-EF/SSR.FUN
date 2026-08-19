@@ -5,7 +5,7 @@ import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
-import { explorerUrl, SSR_PROGRAM_ID } from "@/lib/solana-config";
+import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,11 +50,28 @@ import {
 } from "@/lib/managementClient";
 import { applySliderWeightChange, type SliderAsset } from "@/lib/rebalanceSlider";
 
-/** Real DevNet SPL mints eligible to be added as a new Reserve Asset -- the same set CreateDTR.tsx offers at creation time, minus wrapped SOL (composition-management is meant for ordinary SPL test assets, not the native-SOL zap leg). */
-const ADDABLE_ASSETS = [
-  { symbol: DEVUSDC.symbol, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
-  ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({ symbol: m.symbol.toUpperCase(), mint: m.address, decimals: m.decimals })),
-];
+/**
+ * Real DevNet SPL mints eligible to be added as a new Reserve Asset -- the
+ * same set CreateDTR.tsx offers at creation time, minus wrapped SOL
+ * (composition-management is meant for ordinary SPL test assets, not the
+ * native-SOL zap leg). Empty on Mainnet: Mainnet Reserves are USDC-only for
+ * this launch (see docs/project/DECISION_LOG.md's Mainnet-launch entries) --
+ * DevNet's devUSDC/mock mints don't exist on Mainnet at all, so offering
+ * them here would just be a confusing dead option, never a genuine one.
+ */
+const ADDABLE_ASSETS = IS_MAINNET
+  ? []
+  : [
+      { symbol: DEVUSDC.symbol, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
+      ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({ symbol: m.symbol.toUpperCase(), mint: m.address, decimals: m.decimals })),
+    ];
+
+// The rebalance slider model's permanent cash slot -- real USDC on Mainnet,
+// devUSDC on DevNet (see the effect below that seeds proposedWeightsBps).
+const CASH_SLOT_MINT = IS_MAINNET ? MAINNET_USDC_MINT : DEVUSDC.mint;
+const CASH_SLOT_SYMBOL = IS_MAINNET ? "USDC" : DEVUSDC.symbol;
+const CASH_SLOT_DECIMALS = IS_MAINNET ? 6 : DEVUSDC.decimals;
+const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 /**
  * Verified-on-chain delegate row -- reused by both the Overview summary
@@ -193,7 +210,7 @@ function OnChainDelegateRow({
       )}
       <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/30">
         Delegate account: <span className="font-merge-mono break-all">{delegateAccount}</span>. Wallet address, capabilities, scope, and
-        status above are read live from Solana DevNet; the name is a local label stored only in this browser, never on-chain.
+        status above are read live from Solana {CLUSTER_LABEL}; the name is a local label stored only in this browser, never on-chain.
       </p>
     </div>
   );
@@ -456,38 +473,39 @@ export function ManageDTR() {
   // Seeds proposedWeightsBps from each on-chain asset's real weight
   // whenever a new mint appears (e.g. after Submit Rebalance's own
   // refresh) -- fills gaps only, never clobbers an in-progress edit. If the
-  // Reserve's on-chain assets don't already sum to 10,000bps and devUSDC
-  // isn't already registered, auto-seeds a devUSDC row (as a session-added
-  // asset) holding the slack -- this model has no separate "unallocated"
-  // concept, devUSDC absorbs it.
+  // Reserve's on-chain assets don't already sum to 10,000bps and the cash
+  // slot isn't already registered, auto-seeds a cash-slot row (as a
+  // session-added asset) holding the slack -- this model has no separate
+  // "unallocated" concept, the cash slot absorbs it.
   useEffect(() => {
     if (!dtr?.onChain) return;
     const onChainAssets = dtr.onChain.assets;
     const existingTotal = onChainAssets.reduce((s, a) => s + a.weightBps, 0);
     const slack = Math.max(0, 10_000 - existingTotal);
-    const hasOnChainDevUsdc = onChainAssets.some((a) => a.mint === DEVUSDC.mint);
-    // devUSDC is this model's permanent cash slot -- always present in the
-    // proposed composition (even at 0%) so every edit has somewhere to move
-    // weight to/from, and any currently-unallocated on-chain weight (slack)
-    // is folded into its seed value rather than left floating outside the
+    const hasOnChainCashSlot = onChainAssets.some((a) => a.mint === CASH_SLOT_MINT);
+    // The cash slot (devUSDC on DevNet, real USDC on Mainnet) is this
+    // model's permanent cash slot -- always present in the proposed
+    // composition (even at 0%) so every edit has somewhere to move weight
+    // to/from, and any currently-unallocated on-chain weight (slack) is
+    // folded into its seed value rather than left floating outside the
     // model, which would otherwise make 100% unreachable by any slider edit.
     setProposedWeightsBps((prev) => {
       const next = { ...prev };
       let changed = false;
       for (const a of onChainAssets) {
         if (!(a.mint in next)) {
-          next[a.mint] = a.mint === DEVUSDC.mint ? a.weightBps + slack : a.weightBps;
+          next[a.mint] = a.mint === CASH_SLOT_MINT ? a.weightBps + slack : a.weightBps;
           changed = true;
         }
       }
-      if (!hasOnChainDevUsdc && !(DEVUSDC.mint in next)) {
-        next[DEVUSDC.mint] = slack;
+      if (!hasOnChainCashSlot && !(CASH_SLOT_MINT in next)) {
+        next[CASH_SLOT_MINT] = slack;
         changed = true;
       }
       return changed ? next : prev;
     });
-    if (!hasOnChainDevUsdc) {
-      setSessionAddedAssets((prev) => (prev.some((a) => a.mint === DEVUSDC.mint) ? prev : [...prev, { mint: DEVUSDC.mint, symbol: DEVUSDC.symbol, decimals: DEVUSDC.decimals }]));
+    if (!hasOnChainCashSlot) {
+      setSessionAddedAssets((prev) => (prev.some((a) => a.mint === CASH_SLOT_MINT) ? prev : [...prev, { mint: CASH_SLOT_MINT, symbol: CASH_SLOT_SYMBOL, decimals: CASH_SLOT_DECIMALS }]));
     }
     // Drops a session-added asset once it's CONFIRMED to actually appear
     // on-chain (i.e., genuinely present in onChainAssets), never on the
@@ -592,8 +610,8 @@ export function ManageDTR() {
     if (stillIndexing) {
       return (
         <div className="container mx-auto px-4 py-24 text-center">
-          <h1 className="text-3xl font-merge-display font-bold mb-4">Verifying on DevNet...</h1>
-          <p className="text-muted-foreground mb-8">This Reserve was just created or resumed and is still being confirmed on Solana DevNet. It will appear automatically in a moment.</p>
+          <h1 className="text-3xl font-merge-display font-bold mb-4">Verifying on {CLUSTER_LABEL}...</h1>
+          <p className="text-muted-foreground mb-8">This Reserve was just created or resumed and is still being confirmed on Solana {CLUSTER_LABEL}. It will appear automatically in a moment.</p>
         </div>
       );
     }
@@ -782,7 +800,7 @@ export function ManageDTR() {
   function handleSliderChange(mint: string, newWeightBps: number) {
     setProposedWeightsBps((prev) => {
       const current: SliderAsset[] = proposedAssetRows.map((r) => ({ mint: r.mint, weightBps: prev[r.mint] ?? 0 }));
-      const updated = applySliderWeightChange(current, mint, newWeightBps, DEVUSDC.mint);
+      const updated = applySliderWeightChange(current, mint, newWeightBps, CASH_SLOT_MINT);
       const next = { ...prev };
       for (const a of updated) next[a.mint] = a.weightBps;
       return next;
@@ -1244,7 +1262,7 @@ export function ManageDTR() {
               <div className="bg-muted/30 border border-border/50 p-4 rounded-lg flex items-center gap-3">
                 <Shield className="w-5 h-5 shrink-0 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  Granting, editing, or removing a delegate below asks your wallet to approve a real change on Solana DevNet. An
+                  Granting, editing, or removing a delegate below asks your wallet to approve a real change on Solana {CLUSTER_LABEL}. An
                   unrestricted delegate can only be granted, edited, or removed by the Root Manager; a restricted delegate can also be
                   managed by another delegate holding the matching permission. This list may not show every delegate this Reserve
                   actually has -- an unresolved wallet still holds its real permissions even if it isn't listed here.
@@ -1255,7 +1273,7 @@ export function ManageDTR() {
                 <CardHeader>
                   <CardTitle className="text-xl font-merge-display">Active Delegates</CardTitle>
                   <CardDescription>
-                    Verified on Solana DevNet
+                    Verified on Solana {CLUSTER_LABEL}
                     {dtr.onChain.delegateCountOnChain !== undefined && ` -- ${dtr.onChain.delegateCountOnChain} reported on-chain`}.
                   </CardDescription>
                 </CardHeader>

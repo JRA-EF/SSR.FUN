@@ -24,6 +24,7 @@ import { pickLogoForId } from "@/lib/seed-data";
 import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS } from "@/lib/onChainReserve";
 import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
 import { applyRebalance, appendPricePoint, initialLiquidityForAum } from "@/lib/calculations";
+import { IS_MAINNET, SSR_PROGRAM_ID } from "@/lib/solana-config";
 
 /**
  * Migrates a persisted DTR's price history from the old shape (an object keyed by
@@ -150,7 +151,13 @@ interface AppState {
   updateProfile: (address: string, updates: { displayName: string; bio: string; avatarUrl?: string; socials: ProfileSocials }) => ActionResult;
 }
 
-const REAL_PLACEHOLDER_DTRS: DTR[] = REAL_RESERVE_DESCRIPTORS.map(buildPlaceholderRealDTR);
+// buildPlaceholderRealDTR/REAL_RESERVE_DESCRIPTORS are inherently DevNet-only
+// (the two named Gate-9 fixture Reserves, hardcoded to DEVNET_FIXTURES.programId
+// -- see onChainReserve.ts). Never seed or backfill them on Mainnet: the live
+// product must never show a DevNet placeholder, even transiently before
+// RealReserveSync's first discovery poll completes (see docs/project/DECISION_LOG.md's
+// Mainnet-reserve-purge entry).
+const REAL_PLACEHOLDER_DTRS: DTR[] = IS_MAINNET ? [] : REAL_RESERVE_DESCRIPTORS.map(buildPlaceholderRealDTR);
 
 const initialWallet: WalletState = {
   connected: false,
@@ -358,7 +365,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "ssrfun-simulation",
-      version: 5,
+      version: 6,
       // txInFlight is purely an in-session UI-coordination flag (RealReserveSync
       // pauses its poll while it's true) -- it must never survive a reload as
       // `true`, or a tab closed mid-transaction would permanently wedge
@@ -439,6 +446,27 @@ export const useAppStore = create<AppState>()(
         }
         if (state.wallet) {
           state.wallet = { ...state.wallet, usdc: 0, ssr: 0 };
+        }
+
+        // v6 (Mainnet launch, see docs/project/DECISION_LOG.md): strip any
+        // persisted DTR whose on-chain programId doesn't match the program
+        // this exact deployment actually talks to. strategic-super-reserve.fun
+        // served the DevNet build before Mainnet went live, so a returning
+        // visitor's localStorage can still hold genuine DevNet Reserves
+        // (including the two REAL_PLACEHOLDER_DTRS fixtures) from before this
+        // cutover -- those must never appear on the Mainnet site. Runs
+        // unconditionally (not just when IS_MAINNET) so the same rule also
+        // protects a DevNet deployment from ever showing a stray Mainnet
+        // Reserve, e.g. after a local env-var mistake. Any `holdings` entry
+        // pointing at a removed DTR is dropped too, matching v5's precedent.
+        if (state.dtrs) {
+          const currentProgramId = SSR_PROGRAM_ID.toBase58();
+          const keptDtrs = state.dtrs.filter((d) => !d.onChain || d.onChain.programId === currentProgramId);
+          const removedIds = new Set(state.dtrs.filter((d) => d.onChain && d.onChain.programId !== currentProgramId).map((d) => d.id));
+          state.dtrs = keptDtrs;
+          if (state.holdings) {
+            state.holdings = state.holdings.filter((h) => !removedIds.has(h.dtrId));
+          }
         }
 
         return state as AppState;

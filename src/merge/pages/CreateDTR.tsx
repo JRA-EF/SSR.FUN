@@ -25,7 +25,7 @@ import {
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
-import { solscanUrl, SSR_PROGRAM_ID } from "@/lib/solana-config";
+import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,11 +64,22 @@ const DEVNET_REAL_ASSETS = [
     decimals: m.decimals,
   })),
 ];
-const REAL_ASSET_BY_SYMBOL = new Map(DEVNET_REAL_ASSETS.map((a) => [a.symbol, a]));
+// Mainnet Reserves are USDC-only for this launch (see
+// docs/project/DECISION_LOG.md's Mainnet-launch entries) -- no multi-asset
+// picker, no in-kind minting of other assets. Exactly one selectable asset,
+// reusing the exact same picker/weight-slider UI below unchanged (it already
+// supports a single-asset basket; "unallocated" simply becomes 0% once USDC
+// is added at 100%).
+const MAINNET_REAL_ASSETS = [
+  { symbol: "USDC", name: "USD Coin", real: true as const, mint: MAINNET_USDC_MINT, decimals: 6 },
+];
+const SELECTABLE_ASSETS = IS_MAINNET ? MAINNET_REAL_ASSETS : DEVNET_REAL_ASSETS;
+const REAL_ASSET_BY_SYMBOL = new Map(SELECTABLE_ASSETS.map((a) => [a.symbol, a]));
+const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
   "create-and-register": "Step 1/2: Creating Reserve + registering assets...",
-  "fund-seed-assets": "Funding seed assets (DevNet)...",
+  "fund-seed-assets": `Funding seed assets (${CLUSTER_LABEL})...`,
   seed: "Step 2/2: Seeding Reserve...",
   done: "Done",
 };
@@ -196,8 +207,8 @@ export function CreateDTR() {
           const isRateLimited = msg.includes("429") || msg.toLowerCase().includes("too many requests");
           setCostEstimateError(
             isRateLimited
-              ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted. Please wait a moment and adjust an input to retry."
-              : msg || "Failed to estimate DevNet transaction costs.",
+              ? `The Solana ${CLUSTER_LABEL} RPC is temporarily rate-limited. No transaction has been submitted. Please wait a moment and adjust an input to retry.`
+              : msg || `Failed to estimate ${CLUSTER_LABEL} transaction costs.`,
           );
         });
     }, 400);
@@ -327,9 +338,12 @@ export function CreateDTR() {
         wallet: walletCtx,
         pending: resumePending,
         onProgress: setCreateStep,
+        programId: SSR_PROGRAM_ID,
+        allowFaucet: !IS_MAINNET,
       });
       clearPendingReserveDeploy();
-      const dtrId = `devnet-${result.reserveId}`;
+      // Same id-scheme requirement as handleSubmitReal's own dtrId -- see its comment above.
+      const dtrId = `${SOLANA_CLUSTER}-${result.reserveId}`;
       // Registers this Reserve into the store immediately, mirroring
       // handleSubmitReal's fresh-creation path below -- without this, a
       // successful Resume left `dtrs` without an entry for it until
@@ -355,7 +369,7 @@ export function CreateDTR() {
         manager: walletCtx.publicKey.toBase58(),
         assets: result.assets.map((a, i) => ({
           mint: a.mint,
-          symbol: DEVNET_REAL_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
+          symbol: SELECTABLE_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
           decimals: a.decimals,
           weightBps: a.weightBps,
           reserveAsset: a.reserveAsset,
@@ -373,7 +387,7 @@ export function CreateDTR() {
         ticker: resumePending.ticker,
         description: "",
         category: DEFAULT_RESERVE_CATEGORY,
-        tags: [DEFAULT_RESERVE_CATEGORY, "devnet", "real"],
+        tags: [DEFAULT_RESERVE_CATEGORY, SOLANA_CLUSTER, "real"],
         logoSeed: dtrId,
         dtrAddress: result.reserve,
         managerAddress: walletCtx.publicKey.toBase58(),
@@ -394,7 +408,7 @@ export function CreateDTR() {
         change7d: 0,
         holders: 1,
         composition: result.assets.map((a) => {
-          const meta = DEVNET_REAL_ASSETS.find((m) => m.mint === a.mint);
+          const meta = SELECTABLE_ASSETS.find((m) => m.mint === a.mint);
           return { symbol: meta?.symbol ?? "?", name: meta?.name ?? a.mint, weight: a.weightBps / 10_000 };
         }),
         unallocatedPct: 0,
@@ -499,7 +513,7 @@ export function CreateDTR() {
         toast({ title: "Still incomplete", description: "This Reserve's seeding still has not completed on-chain. Resume is available whenever you're ready to try again." });
       }
     } catch {
-      toast({ variant: "destructive", title: "Could not check status", description: "The on-chain status read itself failed (likely DevNet RPC congestion) -- this is unrelated to the earlier Resume failure. Try again in a moment." });
+      toast({ variant: "destructive", title: "Could not check status", description: `The on-chain status read itself failed (likely ${CLUSTER_LABEL} RPC congestion) -- this is unrelated to the earlier Resume failure. Try again in a moment.` });
     } finally {
       setRecovering(false);
     }
@@ -532,7 +546,7 @@ export function CreateDTR() {
         <div className="max-w-md mx-auto space-y-4">
           <Rocket className="w-16 h-16 text-primary mx-auto mb-4 animate-pulse" />
           <h1 className="text-2xl font-merge-display font-bold">Recovering...</h1>
-          <p className="text-muted-foreground">Checking Solana DevNet for a Reserve creation left in progress before this page reloaded.</p>
+          <p className="text-muted-foreground">Checking Solana {CLUSTER_LABEL} for a Reserve creation left in progress before this page reloaded.</p>
         </div>
       </div>
     );
@@ -558,7 +572,7 @@ export function CreateDTR() {
           <CardHeader>
             <CardTitle className="text-2xl font-merge-display flex items-center gap-2">
               Resume Deployment
-              <Badge className="font-merge-mono">Solana DevNet</Badge>
+              <Badge className="font-merge-mono">Solana {CLUSTER_LABEL}</Badge>
             </CardTitle>
             <CardDescription>
               Your Reserve "{resumePending.name}" ({resumePending.ticker}) was already created on-chain, but seeding didn't finish. Resuming continues from real on-chain state -- it will
@@ -583,7 +597,7 @@ export function CreateDTR() {
                 {resumeError.isFeeDestinationCollision ? (
                   <p className="text-muted-foreground">
                     This wallet is both this Reserve's manager and SSR.fun's configured Protocol fee-destination wallet. Completing seeding for this exact combination requires a Protocol
-                    program update that has not been deployed to DevNet yet -- retrying will fail the same way every time. Your Reserve's on-chain identity and every already-completed step
+                    program update that has not been deployed to {CLUSTER_LABEL} yet -- retrying will fail the same way every time. Your Reserve's on-chain identity and every already-completed step
                     are unchanged and safe. Contact the SSR.fun team, or check again below in case this has since been resolved.
                   </p>
                 ) : (
@@ -780,6 +794,8 @@ export function CreateDTR() {
         additionalManagers,
         assets: realAssets,
         seedTotalUsd,
+        programId: SSR_PROGRAM_ID,
+        allowFaucet: !IS_MAINNET,
         onProgress: setCreateStep,
         // Persisted immediately -- if the page reloads (or the user leaves
         // and comes back later) anywhere after this fires, the mount-time
@@ -803,7 +819,13 @@ export function CreateDTR() {
       });
       clearPendingReserveDeploy();
 
-      const dtrId = `devnet-${result.reserveId}`;
+      // Must match RealReserveSync.tsx's own `${SOLANA_CLUSTER}-${reserveId}`
+      // id scheme exactly (see onChainReserve.ts's buildDtrFromDiscoveredReserve)
+      // -- a mismatched prefix here would register this freshly-created
+      // Reserve under a DIFFERENT dtrId than the one the next discovery poll
+      // derives for the same on-chain account, producing two DTR entries for
+      // one real Reserve.
+      const dtrId = `${SOLANA_CLUSTER}-${result.reserveId}`;
       const onChain: OnChainReserveMeta = {
         programId: SSR_PROGRAM_ID.toBase58(),
         reserveId: result.reserveId,
@@ -814,7 +836,7 @@ export function CreateDTR() {
         manager: walletCtx.publicKey.toBase58(),
         assets: result.assets.map((a, i) => ({
           mint: a.mint,
-          symbol: DEVNET_REAL_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
+          symbol: SELECTABLE_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
           decimals: a.decimals,
           weightBps: a.weightBps,
           reserveAsset: a.reserveAsset,
@@ -832,7 +854,7 @@ export function CreateDTR() {
         ticker: ticker.toUpperCase(),
         description,
         category,
-        tags: [category, "devnet", "real"],
+        tags: [category, SOLANA_CLUSTER, "real"],
         logoSeed: dtrId,
         dtrAddress: result.reserve,
         managerAddress: walletCtx.publicKey.toBase58(),
@@ -877,7 +899,7 @@ export function CreateDTR() {
       syncRealHolding(dtrId, onChain.reserveTokenSupplyRaw, 1);
 
       toast({
-        title: "Reserve deployed on Solana DevNet",
+        title: `Reserve deployed on Solana ${IS_MAINNET ? "Mainnet" : "DevNet"}`,
         description: (
           <div className="space-y-1">
             <div>
@@ -945,7 +967,7 @@ export function CreateDTR() {
           toast({
             variant: "destructive",
             title: "Deployment status unclear",
-            description: `${msg} -- could not verify on-chain state right now (DevNet RPC congestion). Do not retry until you've confirmed via Discover or Explorer whether this Reserve was created.`,
+            description: `${msg} -- could not verify on-chain state right now (${CLUSTER_LABEL} RPC congestion). Do not retry until you've confirmed via Discover or Explorer whether this Reserve was created.`,
           });
         } else {
           clearPendingReserveDeploy();
@@ -954,7 +976,7 @@ export function CreateDTR() {
             variant: "destructive",
             title: `Deployment Failed (${CREATE_STEP_LABELS["create-and-register"]})`,
             description: isRateLimited
-              ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted -- safe to retry shortly."
+              ? `The Solana ${CLUSTER_LABEL} RPC is temporarily rate-limited. No transaction has been submitted -- safe to retry shortly.`
               : `${msg} -- confirmed nothing was created on-chain. Safe to retry.`,
           });
         }
@@ -968,8 +990,8 @@ export function CreateDTR() {
           variant: "destructive",
           title: "Deployment Failed (setup)",
           description: isRateLimited
-            ? "The Solana DevNet RPC is temporarily rate-limited. No transaction has been submitted. Please retry shortly."
-            : msg || "The DevNet Reserve creation failed.",
+            ? `The Solana ${CLUSTER_LABEL} RPC is temporarily rate-limited. No transaction has been submitted. Please retry shortly.`
+            : msg || `The ${CLUSTER_LABEL} Reserve creation failed.`,
         });
       }
     } finally {
@@ -986,7 +1008,7 @@ export function CreateDTR() {
   // interaction) was exactly the legacy/mock behavior removed in this
   // corrective pass (see docs/project/PROJECT_STATUS.md). `isRealDeployment`
   // is still checked below as a fail-closed guard, not a branch to a mock
-  // path: every selectable asset now comes from DEVNET_REAL_ASSETS, so it
+  // path: every selectable asset now comes from SELECTABLE_ASSETS, so it
   // should always be true once at least one asset is selected.
   const handleSubmit = handleSubmitReal;
 
@@ -994,7 +1016,7 @@ export function CreateDTR() {
     <div className="container max-w-4xl mx-auto px-4 py-12">
       <div className="mb-8">
         <h1 className="text-4xl font-merge-display font-bold mb-2">Launch a Reserve</h1>
-        <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN, live on Solana DevNet.</p>
+        <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN, live on Solana {CLUSTER_LABEL}.</p>
       </div>
 
       <div className="flex justify-between mb-8 relative">
@@ -1113,7 +1135,7 @@ export function CreateDTR() {
                   </div>
                   
                   <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
-                    {DEVNET_REAL_ASSETS
+                    {SELECTABLE_ASSETS
                       .filter(a => !assets.some(selected => selected.symbol === a.symbol))
                       .filter(a => a.name.toLowerCase().includes(assetSearch.toLowerCase()) || a.symbol.toLowerCase().includes(assetSearch.toLowerCase()))
                       .map(asset => (
@@ -1127,7 +1149,7 @@ export function CreateDTR() {
                           </Button>
                         </div>
                       ))}
-                      {DEVNET_REAL_ASSETS.filter(a => !assets.some(selected => selected.symbol === a.symbol)).length === 0 && (
+                      {SELECTABLE_ASSETS.filter(a => !assets.some(selected => selected.symbol === a.symbol)).length === 0 && (
                         <div className="p-4 text-center text-sm text-muted-foreground">All available assets added.</div>
                       )}
                   </div>
@@ -1229,7 +1251,9 @@ export function CreateDTR() {
                     {isRealDeployment ? "Initial Reserve Value (USD)" : "Seed Amount (USDC)"}
                     <InfoTip label="More information about the initial Reserve value">
                       {isRealDeployment
-                        ? "The USD value to seed the reserve with. You'll provide the equivalent DevNet SOL shown below -- it's converted into the selected reserve assets and deposited for you."
+                        ? IS_MAINNET
+                          ? "The USD value to seed the reserve with, funded directly from this wallet's real USDC balance."
+                          : "The USD value to seed the reserve with. You'll provide the equivalent DevNet SOL shown below -- it's converted into the selected reserve assets and deposited for you."
                         : "Initial capital to seed the reserve and set the starting AUM."}
                     </InfoTip>
                   </Label>
@@ -1244,11 +1268,15 @@ export function CreateDTR() {
                       onChange={(e) => setInitialSeedUsdc(e.target.value)}
                     />
                   </div>
-                  {isRealDeployment ? (
+                  {isRealDeployment && !IS_MAINNET ? (
                     <p className="text-xs text-muted-foreground flex justify-between">
                       <span>
                         &asymp; <span className="font-merge-mono">{((parseFloat(initialSeedUsdc) || 0) / SOL_TEST_PRICE_USD).toFixed(5)} SOL</span> at the DevNet test price of ${SOL_TEST_PRICE_USD.toFixed(2)}/SOL
                       </span>
+                    </p>
+                  ) : isRealDeployment ? (
+                    <p className="text-xs text-muted-foreground flex justify-between">
+                      <span>Funded directly in USDC from this wallet.</span>
                     </p>
                   ) : (
                     <p className="text-xs text-muted-foreground flex justify-between">
@@ -1476,11 +1504,11 @@ export function CreateDTR() {
             <CardHeader>
               <CardTitle className="text-2xl font-merge-display flex items-center gap-2">
                 Review & Deploy
-                {isRealDeployment && <Badge className="font-merge-mono">Solana DevNet</Badge>}
+                {isRealDeployment && <Badge className="font-merge-mono">Solana {CLUSTER_LABEL}</Badge>}
               </CardTitle>
               <CardDescription>
                 {isRealDeployment
-                  ? "This will submit real transactions to the deployed SSR Protocol program on Solana DevNet."
+                  ? `This will submit real transactions to the deployed SSR Protocol program on Solana ${CLUSTER_LABEL}.`
                   : "Confirm your reserve parameters before deploying to the protocol."}
               </CardDescription>
             </CardHeader>
@@ -1584,7 +1612,7 @@ export function CreateDTR() {
                   <div className="bg-primary/5 p-4 border-b border-border">
                     <h3 className="font-semibold flex items-center gap-2">
                       Wallet Cost Summary
-                      <InfoTip label="More information about the wallet cost summary">Every DevNet SOL this wallet will actually be asked to spend, shown before Phantom does.</InfoTip>
+                      <InfoTip label="More information about the wallet cost summary">Every SOL this wallet will actually be asked to spend, shown before Phantom does.</InfoTip>
                     </h3>
                   </div>
                   <div className="p-4 space-y-3">
@@ -1592,7 +1620,7 @@ export function CreateDTR() {
                       <p className="text-sm text-destructive">{costEstimateError}</p>
                     )}
                     {!costEstimateError && !costEstimate && (
-                      <p className="text-sm text-muted-foreground">Estimating costs from live DevNet rent rates...</p>
+                      <p className="text-sm text-muted-foreground">Estimating costs from live {CLUSTER_LABEL} rent rates...</p>
                     )}
                     {costEstimate && (
                       <>
@@ -1652,7 +1680,7 @@ export function CreateDTR() {
                           </p>
                         );
                       })()}
-                      <p>Newly created tokens can take a few minutes to show a name/symbol in Phantom instead of "Unknown" -- this is a DevNet metadata-indexing delay, not an error.</p>
+                      <p>Newly created tokens can take a few minutes to show a name/symbol in Phantom instead of "Unknown" -- this is a {CLUSTER_LABEL} metadata-indexing delay, not an error.</p>
                     </div>
                   </div>
                 </div>
@@ -1735,7 +1763,7 @@ export function CreateDTR() {
                 disabled={isSubmitting || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri}
                 title={
                   !isRealDeployment
-                    ? "Every selected asset must be a supported real DevNet asset."
+                    ? `Every selected asset must be a supported real ${CLUSTER_LABEL} asset.`
                     : !costEstimate && !costEstimateError
                       ? "Calculating launch cost..."
                       : metadataUploading
