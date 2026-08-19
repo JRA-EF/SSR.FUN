@@ -3566,3 +3566,32 @@
   ]
 }
 ```
+
+## DEC-0117
+
+```json
+{
+  "id": "DEC-0117",
+  "date": "2026-08-19",
+  "status": "accepted",
+  "decision": "Added a site-wide password gate in front of the entire public site (strategic-super-reserve.fun), stacked on top of the pre-existing internal-team dashboard gate, and deployed it to production.",
+  "context": "With Mainnet now live and real USDC flowing through the deployed program (DEC-0115/DEC-0116), Creator directed that the whole site be password-protected -- previously only /internal/* and /road-to-mainnet were gated, leaving Discover/DTRDetail/CreateDTR/ManageDTR (i.e. every page capable of moving real funds) reachable by any visitor during this controlled launch window.",
+  "rationale": "Added api/site/login.ts, a near-exact mirror of the pre-existing api/dashboard/login.ts (independent SSR_SITE_* rate-limit/lockout env vars, timing-safe password comparison, signed HttpOnly session cookie via the existing generic helpers in lib/dashboard/session.ts) so the two gates share proven, already-audited session logic rather than a new bespoke implementation. Rewrote middleware.ts to run two independent, stacked checks: Gate 1 (site-wide, ssr_site_session cookie against SSR_SITE_PASSWORD) applies to every route except the login endpoint itself and the 5 CRON_SECRET-authenticated cron paths (which carry no browser session and would otherwise be permanently locked out); Gate 2 (the pre-existing internal-team ssr_dash_session/SSR_DASHBOARD_PASSWORD check) runs only for the same INTERNAL_API_PATHS/INTERNAL_PAGE_PATHS as before, now additionally requiring Gate 1 to have already passed. The two passwords/cookies are fully independent -- entering one never grants the other. Set SSR_SITE_PASSWORD in Vercel's Production environment (Sensitive) and deployed via `vercel --prod`.",
+  "alternativesConsidered": [
+    "Reuse the existing SSR_DASHBOARD_PASSWORD/ssr_dash_session for the site-wide gate instead of a second independent pair -- rejected: Creator's internal team already knows and uses the dashboard password day-to-day for /internal/*; reusing it as the public-facing gate would mean anyone given the internal password (a lower-trust distribution than 'people allowed to use the live product') could also unlock fund-moving pages, and rotating one would force rotating both.",
+    "Gate only the fund-moving pages (DTRDetail Buy/Sell, CreateDTR) rather than the whole site -- rejected per Creator's explicit instruction to 'password gate the website,' not a subset."
+  ],
+  "impact": "Verified live end to end against production: an unauthenticated GET to strategic-super-reserve.fun/ returns the branded login page (200, HTML); an unauthenticated GET to an /api/* path returns 401 JSON; POSTing the correct password to /api/site/login returns 200 and a Set-Cookie; a subsequent authenticated GET to / returns the real app shell (200). Cron paths were left unaffected by design (still authenticated solely by CRON_SECRET inside each handler, never by a browser session).",
+  "affectedAreas": [
+    "middleware.ts",
+    "api/site/login.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -p tsconfig.node.json --noEmit`: clean.",
+    "Live curl verification against strategic-super-reserve.fun: unauthenticated page -> login HTML (200); unauthenticated /api/kpis/kpis -> 401 JSON; POST /api/site/login with the configured password -> 200 {\"ok\":true} + Set-Cookie; authenticated GET / -> 200 app shell.",
+    "`vercel --prod` deployment: readyState READY, target production, aliased to strategic-super-reserve.fun."
+  ]
+}
+```
