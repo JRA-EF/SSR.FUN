@@ -35,6 +35,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
+import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from "./solana-config";
 
 const BASE_POLL_MS = 15_000;
 const MAX_POLL_MS = 120_000;
@@ -43,7 +44,13 @@ const DISCOVERY_CACHE_TTL_MS = 5_000;
 /** A Reserve's off-chain metadata (name/ticker/description/category) is immutable in practice -- nothing in this app resubmits update_metadata today -- so a long TTL just avoids re-fetching it on every poll tick within the same browser session, never staleness risk. */
 const METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
-const CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
+// Mainnet is scoped to USDC-only Reserves for this launch (see
+// docs/project/DECISION_LOG.md's Mainnet-launch entries) -- the DevNet
+// fixture/wrapped-SOL/devUSDC candidates below are meaningless on Mainnet
+// and must never be used there.
+const CANDIDATE_ASSET_MINTS = IS_MAINNET
+  ? [new PublicKey(MAINNET_USDC_MINT)]
+  : [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
 
 export function RealReserveSync() {
   const { connection } = useConnection();
@@ -59,7 +66,7 @@ export function RealReserveSync() {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let running = false; // Overlap guard: a slow pass must never be joined by a second concurrent one.
     let currentDelay = BASE_POLL_MS;
-    const programId = new PublicKey(DEVNET_FIXTURES.programId);
+    const programId = SSR_PROGRAM_ID;
 
     function scheduleNext(delayMs: number) {
       if (cancelled) return;
@@ -126,7 +133,7 @@ export function RealReserveSync() {
             const parsedMetadata = await getCached(`reserve-metadata:${reserve.metadataUri}`, METADATA_CACHE_TTL_MS, () => resolveReserveMetadata(reserve.metadataUri)).catch(
               () => null,
             );
-            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata);
+            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER);
           }),
         );
         if (cancelled) return;

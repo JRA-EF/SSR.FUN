@@ -3370,3 +3370,199 @@
   ]
 }
 ```
+
+## DEC-0112
+
+```json
+{
+  "id": "DEC-0112",
+  "date": "2026-08-18",
+  "status": "confirmed",
+  "decision": "Creator confirmed the final, temporary Mainnet authority and Treasury structure ahead of launch: program upgrade/closure authority and canonical IDL authority both single-wallet (Creator's Protocol Admin wallet), Protocol administration held independently by two named wallets (Creator and Boss, no multisig at that layer), and the company Treasury held by a separate Squads 2-of-3 multisig vault -- distinct from, and never to be confused with, the Squads Multisig Account address itself.",
+  "context": "Pre-Mainnet-deployment investigation into the intended authority/treasury structure, requested so genesis configuration (initialize_protocol, upgrade-authority assignment, IDL publication) can be executed correctly the first time rather than corrected after the fact. Two central technical questions needed real, independently-verified answers before this structure could be confirmed as feasible, not just intended: (1) does the deployed/repository Anchor program actually support two simultaneous independent Protocol Admin wallets, and (2) is the named Squads address genuinely safe to configure as the protocol-fee destination.",
+  "rationale": "Investigated both questions against real evidence rather than assuming the request's framing. (1) Source audit of programs/ssr_protocol/src/state/protocol_config.rs found ProtocolConfig.authority is a single Pubkey field, and the only admin-gated instruction (update_protocol_config) checks it via a single Anchor has_one constraint -- the deployed/repository code does NOT support two independent admins as-is, and a second, independently significant gap was found in the same pass: no instruction anywhere sets ProtocolConfig.paused after genesis, so the documented global emergency pause has never actually been reachable by any admin, single or dual. Both are real code gaps requiring a Rust change + rebuild + deploy before Mainnet genesis (tracked separately, see the entry for that implementation pass). (2) Fee-destination compatibility was verified by reading collect_protocol_fee.rs/collect_fees.rs directly: both derive the fee-destination token account as an associated-token-account keyed on an UncheckedAccount authority, funded via a mint_to CPI (not a transfer requiring the destination's own signature) -- this works identically for an on-curve wallet or an off-curve PDA, so a Squads vault is safe here. The Squads addresses themselves were verified with real Mainnet RPC calls (api.mainnet-beta.solana.com), not assumed from the request: getAccountInfo on the Multisig Account address confirmed real ownership by the genuine Squads V4 program (SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf); decoding its raw account data against the Squads V4 Multisig layout confirmed threshold=2 and exactly the 3 named signer pubkeys, each with full permissions; and the named Treasury vault address was independently re-derived via findProgramAddressSync([\"multisig\", <multisig>, \"vault\", [0]], SQDS4ep...) and confirmed to match exactly, and confirmed off-curve via PublicKey.isOnCurve(). No private keys or seed phrases were requested, shared, or inspected at any point -- every check used only public on-chain data and independently-computable PDA math.",
+  "alternativesConsidered": [
+    "Treat the requested structure as already supported and proceed straight to genesis configuration -- rejected: would have silently configured only one working admin (Boss would have no real on-chain authority) and shipped with a non-functional emergency pause, discovered only after Mainnet genesis when it could no longer be fixed without a fresh deployment.",
+    "Assume the Squads addresses were correctly identified without independent verification -- rejected: fee-destination misconfiguration or an address mix-up (Multisig Account vs. Treasury vault) at genesis would be exactly the kind of mistake this structure explicitly must never make (see the explicit prohibition on ever using the Multisig Account address as a fee destination).",
+    "Design a brand-new governance layer (e.g. a Protocol Control multisig wrapping ProtocolConfig.authority) instead of two named wallets -- explicitly out of scope; Creator's structure deliberately has no multisig at the protocol-admin layer, only at the Treasury layer."
+  ],
+  "impact": "Establishes the confirmed target structure for Mainnet genesis configuration (see docs/project/PROJECT_STATUS.md's \"Authority & Treasury Structure (Mainnet target)\" section for the full table and address list). Confirms two concrete pre-genesis blockers that must be closed before deployment: dual-admin support and a working pause instruction, both requiring a Rust code change (see the follow-up implementation entry). No code, on-chain state, or configuration was changed by this decision itself -- it is a confirmation of intent plus independent feasibility verification, not an execution step; as of this entry no Mainnet program has been deployed and no authority has been transferred or configured anywhere.",
+  "affectedAreas": [
+    "docs/project/PROJECT_STATUS.md",
+    "programs/ssr_protocol/src/state/protocol_config.rs (finding, not yet a change as of this entry)",
+    "programs/ssr_protocol/src/instructions/update_protocol_config.rs (finding, not yet a change as of this entry)",
+    "programs/ssr_protocol/src/instructions/collect_protocol_fee.rs (verification only, unchanged)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Source-level audit of every instructions/*.rs file for admin-gating patterns (has_one/constraint against ProtocolConfig.authority) and for any write to ProtocolConfig.paused -- confirmed both gaps directly against source, not by inference.",
+    "getAccountInfo(B2BUEztDn1SKFZ7Kh3hakEWsD5sVM8gxLAE4wqS9w2am) on Mainnet: owner = SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf (real Squads V4 program).",
+    "Decoded Squads V4 Multisig account layout directly: threshold = 2, exactly 3 members (2cLftQ4ftvRaqLs3UYi3sxh4RUfQFZJRkJBBEmW5HqCX, EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq, EkQ84781DvGgp8y32EhxS48HABDsYJ2JSY692an4juAz), each with full permissions, config_authority = zero-pubkey.",
+    "Independently re-derived the Treasury vault PDA (findProgramAddressSync([\"multisig\", <multisig>, \"vault\", [0]], SQDS4ep...)) and confirmed an exact match to 3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5; confirmed off-curve via PublicKey.isOnCurve()."
+  ]
+}
+```
+
+## DEC-0113
+
+```json
+{
+  "id": "DEC-0113",
+  "date": "2026-08-18",
+  "status": "accepted",
+  "decision": "Reworked ProtocolConfig from a single admin authority to two independent Protocol Admin wallets, and added a new set_protocol_paused instruction, as required Mainnet-launch code blockers identified during the pre-deployment authority-model audit (Creator's approved Mainnet authority structure names two Protocol Admins -- Creator and Boss -- each required to act independently, with no Protocol Control multisig).",
+  "context": "Auditing programs/ssr_protocol against the approved Mainnet authority structure found two real gaps, not one: (1) ProtocolConfig had a single `authority: Pubkey` field and every admin-gated instruction checked it with Anchor's `has_one`, so only one wallet could ever be a Protocol Admin -- the second approved admin (Boss) had no path to independent action; (2) ProtocolConfig.paused is a documented 'global emergency pause' (ACCOUNT_MODEL.md) checked by create_reserve/mint_reserve_tokens_in_kind/seed_reserve, but no instruction in the entire program ever set it -- initialize_protocol always starts it false and nothing else touches it, so the documented pause feature was structurally unreachable since v1. Both are corrected together since both gate the same account and the second was discovered while fixing the first.",
+  "rationale": "Smallest correct model per the approved structure (exactly two named admins, no multisig layer): added `admin_2: Pubkey` alongside `authority` on ProtocolConfig (SCHEMA_VERSION bumped 1 -> 2; no migration needed, predates any Mainnet initialization) and a new `ProtocolConfig::is_admin(&self, key) -> bool` helper. `update_protocol_config`'s `has_one = authority` (which only supports single-field equality) was replaced with `constraint = protocol_config.is_admin(&authority.key())`, and `initialize_protocol` now takes `admin_2: Pubkey` as an instruction argument (not an account -- Boss's wallet is recorded, not required to co-sign genesis) with a `DuplicateProtocolAdmin` check against the primary authority. Neither admin gains any new path to Reserve vault custody -- collect_protocol_fee already only mints pre-accounted Reserve Token fee shares to the fixed configured destination, never touches raw Reserve Assets, and that boundary is unchanged by this pass. Added `set_protocol_paused(paused: bool)`, gated by the same `is_admin` constraint, to actually make the documented pause reachable; emits a new `ProtocolPausedSet` event. Chose two fixed named fields over a `Vec<Pubkey>` admin list: the approved structure specifies exactly two wallets with no stated need for a variable-size admin set, and a fixed two-field layout avoids realloc/bounds-checking complexity a Vec would require for no requirement it serves.",
+  "alternativesConsidered": [
+    "Vec<Pubkey> admin allowlist instead of two fixed fields -- rejected: no requirement calls for more than the two named admins, and a fixed layout is simpler to reason about and audit for a Mainnet launch.",
+    "A Protocol Control multisig/PDA holding a single ProtocolConfig.authority slot -- explicitly rejected by Creator's approved authority structure ('There is no Protocol Control multisig').",
+    "Require admin_2 to co-sign initialize_protocol as a second Signer account -- rejected: unnecessarily complicates genesis coordination for no security benefit, since admin_2's key is public information being recorded, not a secret being proven at that moment.",
+    "Leave ProtocolConfig.paused unreachable and treat it as out of scope -- rejected: it's a named smoke-test requirement (protocol pause/unpause) and a documented security invariant; shipping to Mainnet with a non-functional emergency pause would be a real operational gap, not a paper one."
+  ],
+  "impact": "Changed: programs/ssr_protocol/src/state/protocol_config.rs (admin_2 field, is_admin helper, SPACE), constants.rs (SCHEMA_VERSION 1->2), instructions/initialize_protocol.rs (admin_2 arg + validation), instructions/update_protocol_config.rs (is_admin constraint), events.rs (ProtocolInitialized.admin_2, new ProtocolPausedSet), errors.rs (new DuplicateProtocolAdmin, append-only), lib.rs (initialize_protocol signature, new set_protocol_paused dispatch), instructions/mod.rs (new module). New: instructions/set_protocol_paused.rs. Tests: tests/ssr_protocol.ts updated initializeProtocol call sites for the new arg and added a dedicated 'Protocol Admin authority model' describe block (primary admin update, admin_2 update independently, non-admin rejection, pause/unpause by either admin, non-admin pause rejection). Docs: ACCOUNT_MODEL.md and INSTRUCTION_REFERENCE.md updated for both changes. Any already-generated IDL/SDK client bindings (packages/sdk/idl/*) are now stale relative to source and must be regenerated from this build before use -- not yet done as of this entry.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/state/protocol_config.rs",
+    "programs/ssr_protocol/src/constants.rs",
+    "programs/ssr_protocol/src/instructions/initialize_protocol.rs",
+    "programs/ssr_protocol/src/instructions/update_protocol_config.rs",
+    "programs/ssr_protocol/src/instructions/set_protocol_paused.rs",
+    "programs/ssr_protocol/src/instructions/mod.rs",
+    "programs/ssr_protocol/src/events.rs",
+    "programs/ssr_protocol/src/errors.rs",
+    "programs/ssr_protocol/src/lib.rs",
+    "tests/ssr_protocol.ts",
+    "docs/protocol/ACCOUNT_MODEL.md",
+    "docs/protocol/INSTRUCTION_REFERENCE.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Source-level audit: grepped every instructions/*.rs file for `has_one = authority` and `NotProtocolAuthority` -- confirmed update_protocol_config.rs was the only admin-gated instruction prior to this pass, and confirmed no instruction anywhere set `protocol_config.paused` before set_protocol_paused was added.",
+    "Confirmed collect_protocol_fee.rs's custody boundary is unaffected: it mints only `reserve.fee_config.pending_protocol_fee_shares` (pre-accounted) to `protocol_config.default_protocol_fee_destination` via the reserve's own mint_authority PDA -- no ProtocolConfig admin key appears anywhere in that instruction's Accounts struct.",
+    "Rust build/test and IDL regeneration not yet run at the time of this entry -- toolchain path fix in progress (solana/anchor binaries confirmed present on this machine at C:\\devtools\\solana\\solana-release\\bin and under the user's cargo/rustup install, but not on this shell's PATH). This entry will not be edited once validation completes per this log's append-only rule; a follow-up entry will record build/test results before any Mainnet deployment proceeds."
+  ]
+}
+```
+
+## DEC-0114
+
+```json
+{
+  "id": "DEC-0114",
+  "date": "2026-08-18",
+  "status": "accepted",
+  "decision": "Closed out full pre-Mainnet build/lint/test validation for the DEC-0113 authority-model change, fixed two unrelated toolchain-path bugs discovered while doing so, and regenerated the canonical IDL from the exact current source -- discovering and fixing a real, pre-existing IDL/source drift in the process (the checked-in IDL was missing the entire execute_rebalance_leg instruction and several accounts' PDA-seed metadata).",
+  "context": "DEC-0113 required a Rust rebuild and IDL regeneration before its result could be trusted; this session's `anchor build` panicked immediately (cargo-build-sbf's own toolchain.rs, Option::unwrap on None, unrelated to this repo's code) and a subsequent `anchor idl build` attempt failed at the link step because this shell's PATH resolved a second, WinGet-installed MinGW GCC under the user's space-containing profile path (C:\\Users\\JRA DEVNET\\AppData\\...\\WinGet\\...\\mingw64) ahead of the already-correctly-installed space-free one at C:\\devtools\\mingw64 that DEVNET_RUNBOOK.md's 'space-in-username problem' section documents as the required fix -- a PATH-ordering issue, not a re-occurrence of that already-solved bug. Once the IDL built, regenerating packages/sdk/idl/ssr_protocol.ts (the camelCase TS type wrapper) by hand-rolling a snake_case-to-camelCase converter produced a subtly wrong result (it left PascalCase names like `ProtocolConfig`/`ReserveStatus` and PDA cross-references like `{\"account\": \"Reserve\"}` uppercase, since a naive regex only rewrites text after an underscore) that broke `packages/sdk`'s own build (`AccountNamespace<SsrProtocol>` no longer had a lowercase `protocolConfig` member) -- caught by actually running the build, not assumed correct from the diff being 'formatting-only'.",
+  "rationale": "Fixed the build by invoking `cargo-build-sbf --manifest-path programs/ssr_protocol/Cargo.toml` directly instead of `anchor build`, matching DEVNET_RUNBOOK.md's already-documented working command for this exact toolchain panic -- produced a clean release .so (883,760 bytes), zero warnings. Fixed the IDL build by prepending `/c/devtools/mingw64/bin` to PATH so `x86_64-w64-mingw32-gcc` resolves from the correct, space-free install; `anchor idl build -p ssr_protocol` then succeeded, and diffing the result against the old checked-in IDL (per-instruction, key-order-insensitive) surfaced the pre-existing drift: `execute_rebalance_leg` was entirely absent from the committed IDL despite existing in source and now compiling clean (its previously-documented CpiContext compile error, per DEC-0077/DEC-0092/the 2026-08-13 winddown-closure checklist, no longer reproduces -- unrelated to this pass, most likely an intervening dependency version change; not investigated further since it is a pre-existing-and-now-resolved condition, not a regression this pass introduced), and several other instructions' accounts were missing `docs`/`pda` seed metadata that current source actually has. Replaced the hand-rolled camelCase converter with `@anchor-lang/core`'s own bundled, official `convertIdlToCamelCase` function (found in node_modules, used internally by Anchor's own tooling) rather than trying to patch the hand-rolled regex further -- guarantees byte-for-byte agreement with what a working `anchor build` would have produced, including the PascalCase-name and cross-reference lowercasing the naive version missed. Also fixed two hardcoded test expectations in tests/phase_reserve_deploy_resumability.ts (\"6000-6055\" -> \"6000-6056\") that were stale relative to the new DuplicateProtocolAdmin error variant DEC-0113 appended -- confirmed the SDK's own error table (packages/sdk/src/errors.ts's SSR_PROTOCOL_ERRORS) is correctly derived live from `idl.errors`, so this was the only stale reference, not a design gap.",
+  "alternativesConsidered": [
+    "Accept the anchor build panic as a hard blocker and stop -- rejected: DEVNET_RUNBOOK.md already documents a working direct cargo-build-sbf command for this exact failure; using it needed no new investigation.",
+    "Assume the large formatting-only-looking IDL diff was purely cosmetic and skip a real semantic comparison -- rejected: a per-instruction, order-insensitive diff was cheap to run and is exactly what caught the missing execute_rebalance_leg instruction, a real gap the task's own pre-Mainnet checklist explicitly calls out as a class of risk (IDL/source mismatch).",
+    "Keep patching the hand-rolled camelCase regex once its PascalCase bug was found -- rejected once `@anchor-lang/core`'s own official converter was located in node_modules; using the real implementation removes any remaining risk of a further un-caught edge case in a hand-rolled version.",
+    "Leave the two stale error-range test literals unfixed and mark them 'expected failures' -- rejected: they are simple, correct, mechanical updates with an already-verified root cause (a new error variant shifting the range by one), not a real test-coverage gap."
+  ],
+  "impact": "programs/ssr_protocol now builds clean via `cargo-build-sbf` (release .so, 883,760 bytes, 0 warnings/errors) and `anchor idl build` now succeeds via the corrected PATH. packages/sdk/idl/ssr_protocol.json and .ts are regenerated from the exact current source (29 instructions, including execute_rebalance_leg and set_protocol_paused; ProtocolConfig now shows admin_2). Full validation now passing: `npx tsc -b` clean; `npx oxlint` clean (pre-existing warnings only, no errors); Rust unit tests 7/7 passing (fee_math); offline TypeScript suite (`tests/phase_*.ts`, excludes the live-DevNet-only ssr_protocol.ts) 596/596 passing; `npm run build` (SDK build + tsc -b + vite build) clean. `solana-test-validator` was re-confirmed still blocked on this machine by the same pre-existing, previously-documented Windows privilege gap (ERROR_PRIVILEGE_NOT_HELD / SeCreateSymbolicLinkPrivilege, PROJECT_STATUS.md's Blockers section, unchanged since 2026-08-05) -- not a new limitation, and per this project's own prior decision, not something to force via elevation from within this session. No CI/Linux workflow exists in this repo to run it there instead. Net effect: the DEC-0113 authority-model change (two-admin ProtocolConfig, set_protocol_paused) is fully verified by build, static/source audit, and the full offline test/lint/typecheck suite, but has not been exercised against a running validator or live network -- that first happens at the Mainnet smoke-testing stage.",
+  "affectedAreas": [
+    "packages/sdk/idl/ssr_protocol.json",
+    "packages/sdk/idl/ssr_protocol.ts",
+    "tests/phase_reserve_deploy_resumability.ts",
+    "target/deploy/ssr_protocol.so (build artifact, gitignored)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`cargo-build-sbf --manifest-path programs/ssr_protocol/Cargo.toml`: `Finished release profile [optimized] target(s)`, 0 warnings; target/deploy/ssr_protocol.so 883,760 bytes.",
+    "`cargo test -p ssr_protocol`: 7/7 passing (fee_math), 0 failed.",
+    "`anchor idl build -p ssr_protocol`: succeeds after the PATH fix; regenerated IDL confirmed via node to contain 29 instructions (old checked-in IDL had only 27, missing execute_rebalance_leg and set_protocol_paused) and ProtocolConfig.admin_2.",
+    "`npx tsc -b`: 0 errors.",
+    "`npx oxlint`: exit 0, only pre-existing warnings.",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 1000000 tests/phase_*.ts`: 596/596 passing (after fixing the two stale 6000-6055 literals).",
+    "`npm run build`: clean (packages/sdk tsc -p tsconfig.cjs.json, root tsc -b, vite build) -- confirmed only after switching to @anchor-lang/core's convertIdlToCamelCase; the hand-rolled converter's version of this same build failed with real TS2551/TS2339 errors in packages/sdk/src/discovery.ts and readOnly.ts, which is what surfaced the casing bug.",
+    "`solana-test-validator --reset --quiet`: reproduces the exact same `Os { code: 1314, ... }` (ERROR_PRIVILEGE_NOT_HELD) failure already on record in DECISION_LOG.md's 2026-07-29 entries and PROJECT_STATUS.md's Blockers section -- confirmed still the same pre-existing condition, not a new regression."
+  ]
+}
+```
+
+## DEC-0115
+
+```json
+{
+  "id": "DEC-0115",
+  "date": "2026-08-19",
+  "status": "confirmed",
+  "decision": "Deployed ssr_protocol to Solana Mainnet, initialized the protocol with the DEC-0112 authority structure, published the canonical IDL, and completed minimal Mainnet smoke testing (Phase 6) -- finding and fixing two real bugs in the process, one of which (off-curve protocol-fee destinations) would otherwise have broken every future mint/seed call against this exact Mainnet deployment.",
+  "context": "With DEC-0113/DEC-0114 closing the code/build blockers, Creator authorized proceeding through Mainnet deployment, initialization, IDL publication, and smoke testing in the same session. Creator held the CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8 keypair outside any file (browser wallet export), so it was converted into a local solana-keygen-format file via a one-off script that never logged the secret material at any point (only the resulting public key, verified to match exactly) -- the source export file (a plaintext Desktop file Creator had used) was flagged for deletion once the converted file existed. Smoke testing required a real minimal amount of a real Mainnet asset (Creator specified USDC-only Reserve Assets going forward, for simplicity); the signer held zero SPL tokens, and Creator explicitly authorized swapping SOL for USDC via Jupiter for this specific testing purpose (a deliberate, explicit override of the general no-auto-swap default, scoped to this one action).",
+  "rationale": "Deployment: `solana program deploy` (883,760-byte binary, ~884 chunked transactions) using the dedicated Mainnet program keypair from DEC-0114's build; verified on-chain upgrade authority, ProgramData address, and data length all match expected values exactly, cost matched the pre-computed estimate to within 0.001 SOL. Initialization: a small dedicated script (scripts/mainnet_initialize_protocol.ts) refuses to run unless the signer's public key exactly matches the approved authority and refuses to re-run if ProtocolConfig already exists; verified on-chain afterward (authority, admin_2, paused=false, fee destination all correct). IDL publication: `anchor idl init`/`anchor idl fetch` both failed with a generic 'program not found' -- reproduced even against a well-known already-published Mainnet program (Squads V4), ruling out anything specific to this program or RPC provider; root cause matches an already-documented issue (DEVNET_INSTRUCTION_AUDIT_2026-08-13.md): Anchor's CLI shells out to `npx` in a way that breaks on Windows. Worked around exactly as documented before -- invoking `@solana-program/program-metadata`'s `write idl`/`fetch idl` directly; the fetched-back copy was diffed and confirmed byte-identical (JSON.stringify equal) to the committed file. Smoke testing (scripts/mainnet_smoke_test.ts) exercised, in order: unauthorized-wallet rejection (real NotProtocolAuthority/6031), Creator pause/unpause (reversible), a direct SOL transfer proving the Treasury vault (an off-curve PDA) can receive SOL, Reserve creation, USDC-only asset registration (100% weight), seeding, an additional mint, a partial redemption, and a custody check confirming the vault's owner is exactly the vault_authority PDA. Two real bugs were found and fixed live, not assumed away: (1) `packages/sdk/src/pda.ts`'s `resolveProtocolFeeDestinationTokenAccount` called `getAssociatedTokenAddressSync` without `allowOwnerOffCurve: true`, so it threw `TokenOwnerOffCurveError` for any off-curve fee destination -- since the Treasury vault IS an off-curve PDA, this would have broken every future mint/seed transaction against this exact Mainnet ProtocolConfig; DevNet never caught this because its fee destination was an ordinary on-curve wallet. (2) `redeem_reserve_tokens_in_kind` requires `manager_fee_recipients` (sentinel-able) and `tvl_accrual` accounts that `tests/ssr_protocol.ts`'s redeem test cases omitted -- that test file is explicitly marked 'UNVERIFIED / UNCOMPILED' in its own header and was never actually run before this session, so this was the first real execution of that code path; fixed in the smoke-test script by adding both accounts, matching the pattern already used by seed_reserve/mint_reserve_tokens_in_kind. A separate false alarm (an immediate post-redeem balance read showing no change) was root-caused to Helius RPC eventual consistency, not a protocol bug -- a fresh query moments later, and a short delay added to the script, both confirmed the redemption had in fact moved USDC correctly and proportionally.",
+  "alternativesConsidered": [
+    "Keep trying anchor idl init/fetch flag combinations instead of switching tools -- rejected once the failure reproduced against an unrelated, already-published, well-known Mainnet program (Squads), which is conclusive evidence the bug is tool/environment-level, not something a different flag would fix.",
+    "Treat the immediate post-redeem zero-balance-change reading as a redemption bug and roll back or re-investigate the math -- rejected before concluding anything: cross-checked via a completely fresh RPC query and via `spl-token accounts`, both of which showed the correct, proportional post-redemption balances moments later, conclusively pointing at RPC read timing rather than program logic.",
+    "Use wrapped SOL for the smoke-test Reserve Asset instead of asking Creator to authorize a USDC swap -- superseded by Creator's explicit instruction that Reserve Assets should be USDC-only for the time being.",
+    "Keep the three intermediate debugging/resume scripts (created live while diagnosing the seed_reserve and redeem failures) in the repo -- rejected: consolidated their fixes back into one canonical scripts/mainnet_smoke_test.ts and deleted the debugging artifacts, matching this repo's existing convention of one clean verify script per pass."
+  ],
+  "impact": "Mainnet is live: Program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9, ProtocolConfig initialized and correct, canonical IDL published on-chain and verified byte-identical, one real USDC-seeded test Reserve exists (9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i) with real vault-held USDC and a real Treasury Reserve-Token fee-share balance. Fixed packages/sdk/src/pda.ts's off-curve bug affects every future consumer of resolveProtocolFeeDestinationTokenAccount (frontend included) -- this was a genuine pre-existing defect the Mainnet launch surfaced, not something introduced by this pass. Total Mainnet spend this pass: ~6.307 SOL in fees/rent plus a 0.05 SOL SOL->USDC swap (yielding ~3.86 USDC), against the 15 SOL cap; signer balance after this entry: ~1.14 SOL remaining.",
+  "affectedAreas": [
+    "packages/sdk/src/pda.ts",
+    "scripts/mainnet_initialize_protocol.ts",
+    "scripts/mainnet_smoke_test.ts",
+    "Mainnet on-chain state (program, ProtocolConfig, IDL metadata account, one test Reserve)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Deployment signature 3HSttuKP21ieJBmWytDtUPC4zinr9FFFX5ERt5higGcizv8MfmSsFuqa1MpH1xtnbZ3mot6J36ETLcAzQBVejdGm, slot 440248996; `solana program show` confirms upgrade authority = CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8, data length 883,760 bytes, balance 6.15217368 SOL (matches the pre-deployment estimate exactly).",
+    "initialize_protocol signature 4911gWEsAjDggQrbnc9vbhXgmoY9wTu5s2xFPLNYmCWwrPizyVgn8foJXn5nzQ2QpyFR8dPdjRa2tgU5txJjvp8M; on-chain fetch confirms authority/admin2/paused/defaultProtocolFeeDestination all exactly as intended.",
+    "IDL metadata account 6ZPBMYWg6w3ox2mD3KUud2UTEMxCbdYd3om8Vdf6MrBg; independently re-fetched via `program-metadata fetch idl` and confirmed JSON.stringify-equal to packages/sdk/idl/ssr_protocol.json (29 instructions).",
+    "Smoke test signatures: unauthorized rejection (client-side AnchorError, no signature -- rejected before submission), pause 4dnrcYuCPo3xFKaskiwZ3FKwwzgux9cTb322E1FUPcERpotJhXXXrTw52Ws5CLisixZLzE4fBbBUyFVEWhNcTUs9, unpause 5kWzgRo5yAQwAMmY36o5w3fXoQTEtna6D19WFnFMhoCBwgYS59jfxMNm4b8U9X3MHdFg6zyu1rUqtEamc67rBH8D, Treasury SOL transfer 9RPNBF1KJFYcv8No1oNP9KQawtPTDm92NTk8rYFcK4NGgyXK8VaNrTyyYL8x6zyN4AtNQLggCEmXoFcXnX6Ct4k (balance 1,000,000 -> 1,100,000 lamports exactly), create_reserve 3L1a2LUbpChpKeSDrCc4vdpnvtakcjprc39w5abCtkhtsNrynMfQ5b1y6vh4MikmY7VsieiVC6w58nBvJKiR26PF, initialize_reserve_asset 4EQE9TEEiJSY4c3KHLAFTw25k1TgNoyRCbV2Gfh85TCDFbebV7LRWMkBdNp391HmCWospwzfDnStoPErDHHi7VMP, seed_reserve wdvR1YtqhfeZDznNpmqrYmFXFCigSJ9MmM92BGNNNFjaRghJ9rAgmxihQTrCiK9Lm18R22GbJbehZfx4G2mrXoZ, mint_reserve_tokens_in_kind 4YrR7xMcpjbkwuwCPdesLyDDqpbHD955pbAddc9W8zbSR4RbxdziN2ue6sLQ94dujsJxrP9sZ6ysyqJ3z8kqSP4u, redeem_reserve_tokens_in_kind 4JDWcbAiWqRDJ26DR5vS2XXaQZn3HSZ2iNRn5f2AjEwnQHS7AtSGMFx9JTbBco2ETkysHmVQzW2U4XabtG1NZdeB.",
+    "Post-redemption state independently re-verified via a fresh RPC query and `spl-token accounts`: manager USDC 2,663,852 -> 2,962,352 (+298,500, exactly the redeemed proportion), manager Reserve Token 1,194,000 -> 895,500, vault USDC 901,500 remaining, vault token-account owner confirmed equal to the derived vault_authority PDA.",
+    "Full offline suite (`tests/phase_*.ts`) re-run after the pda.ts fix: 596/596 passing, no regressions.",
+    "SOL->USDC swap signature wdfyQMemedC4oCXNKddAyKuxY6mge7qB3RUDagdCMmfAi7oYbSrgiAzH8fVwk2HhVQgfmnYqqgbhVKH5k8QgvXR (Jupiter, 0.05 SOL -> 3.863852 USDC)."
+  ]
+}
+```
+
+## DEC-0116
+
+```json
+{
+  "id": "DEC-0116",
+  "date": "2026-08-19",
+  "status": "accepted",
+  "decision": "Built a Mainnet-native, swap-free direct USDC Buy/Sell path (packages/sdk/src/directInstructions.ts + src/merge/lib/directClient.ts), made the frontend's program ID/RPC/cluster resolution genuinely cluster-aware end to end, added a dedicated api/mainnet/rpc-proxy.ts, and deployed the result to production at strategic-super-reserve.fun -- now pointed at Mainnet, not DevNet.",
+  "context": "Creator confirmed Mainnet Reserves are USDC-only for this launch, 'in-kind minting secondary,' matching the DevNet devUSDC-primary-settlement precedent. Investigating the existing Buy/Sell zap (zapInstructions.ts) found it fundamentally cannot work on Mainnet: every non-primary-asset leg is funded by a DevNet-only swap-authority keypair that mints fake test tokens, which has no real equivalent for actual USDC. Separately, auditing every place the app resolves its own program ID found `DEVNET_FIXTURES.programId` hardcoded in 15 places across 7 files (RealReserveSync.tsx -- the discovery poll driving Discover/Portfolio/DTRDetail/ManageDTR for the entire app -- createReserveClient.ts, managementClient.ts, onChainReserve.ts, CreateDTR.tsx, DTRDetail.tsx, ManageDTR.tsx), meaning the already-cluster-aware SSR_PROGRAM_ID in solana-config.ts (from earlier this pass) was not actually reaching any real code path -- the whole app would have kept talking to the DevNet program even after Mainnet env vars were set.",
+  "rationale": "Added packages/sdk/src/directInstructions.ts (buildDirectMintInstructions/buildDirectRedeemInstructions): single-signer, single-instruction (plus idempotent ATA setup) mint/redeem against a Reserve's sole asset, computed via the exact floor-inverse of the existing computeMintRequirements formula (proven correct by 6 new offline tests) so the on-chain required amount can never exceed what the user asked to deposit. src/merge/lib/directClient.ts mirrors zapClient.ts's shape (progress events, bounded confirmation, never-auto-retried submission) but signs and sends entirely client-side -- no server round-trip, no server-held co-signer, a genuine simplification over the DevNet zap, not just a workaround. DTRDetail.tsx's Buy/Sell now branch on IS_MAINNET to the new handlers, with zero changes to the existing DevNet handleBuy/handleSell code paths. Replaced every DEVNET_FIXTURES.programId occurrence with SSR_PROGRAM_ID (already cluster-aware); the two fixture-only display functions in onChainReserve.ts (buildPlaceholderRealDTR/mergeOnChainIntoDTR, used only for the 2 named DevNet Gate-9 fixtures) were deliberately left on DEVNET_FIXTURES.programId directly, since they're inherently DevNet-only regardless of cluster. Added api/mainnet/rpc-proxy.ts + api/mainnet/_lib/rpc.ts, mirroring api/devnet/rpc-proxy.ts's full security model (method allowlist, payload validation, per-IP and global sendTransaction throttling, bounded read-only fallback, sendTransaction never retried/routed to a fallback) as fully separate modules so a Mainnet request can never be misrouted to the DevNet endpoint. Added MAINNET_USDC_MINT to packages/sdk/src/tradableAssets.ts's SUPPORTED_ASSET_MINTS (safe unconditionally -- that address can never appear in a genuine DevNet Reserve). A real regression was caught before it shipped: onChainReserve.ts importing solana-config.ts (which reads import.meta.env, Vite-only syntax) transitively broke ts-mocha's CommonJS test loading for every test file that imports onChainReserve.ts or createReserveClient.ts (11 files) -- fixed by threading programId/cluster through buildDtrFromDiscoveredReserve's parameters (defaulting to the pre-existing DevNet values) instead of importing the Vite-dependent module into a file tests load directly, and by reverting createReserveClient.ts's two occurrences to the hardcoded DevNet constant (Reserve *creation* on Mainnet is explicitly out of scope for this pass -- deferred, not silently shipped unreviewed). Deployed via `vercel --prod` to the existing ssr14/ssr-fun project (the same project already serving strategic-super-reserve.fun) after adding VITE_SOLANA_CLUSTER=mainnet-beta, VITE_SSR_PROGRAM_ID, and HELIUS_MAINNET_RPC_URL (server-only) to its Production environment.",
+  "alternativesConsidered": [
+    "Build real Jupiter-based swap routing for Mainnet Buy/Sell instead of a direct USDC-only path -- explicitly superseded by Creator's USDC-only, direct-settlement scoping decision; deferred to a later pass if/when non-USDC Mainnet Reserves are needed.",
+    "Also wire Reserve *creation* (CreateDTR.tsx) for Mainnet in this same pass -- rejected as out of scope: creation has its own DevNet-only funding-faucet step and asset-picker assumptions that need dedicated review, not a mechanical program-ID fix; reverted its programId references to the safe, known-working DevNet constant rather than leaving them silently pointed at Mainnet without that review.",
+    "Patch solana-config.ts to avoid import.meta syntax entirely (e.g. guard behind a runtime check) -- rejected: the TS1343 failure is a parse-time/module-target error, not a runtime one: no runtime guard prevents it. Removing the transitive import path (parameters instead of a shared module) was the actual fix.",
+    "Reuse zapInstructions.ts's existing buildBuyZapInstructionsDevUsdc/buildRedeemToDevUsdcInstructions with the real USDC mint substituted for devUSDC -- rejected: their result types/exported constants are explicitly typed and documented around DevNet fixtures ('devnet-test-asset-faucet' as a legSources literal, etc.); a clean, correctly-labeled new module was safer than repurposing DevNet-specific naming for real Mainnet money."
+  ],
+  "impact": "strategic-super-reserve.fun now serves the Mainnet build (deployment dpl_DqRggFv8SwF5NrmCFtfh5dyiVZ5R, aliased production). Verified non-visually (no browser automation available in this environment, same pre-existing limitation as every prior DevNet pass): the deployed bundle contains the Mainnet program ID and no leaked RPC API key. Full interactive browser verification (wallet connection, Buy/Sell click-through, Discover/Portfolio/Manage, Explorer links) is deferred to Creator, per Phase 7's own requirement and this project's established practice for every prior UI change. Reserve creation on Mainnet remains explicitly unreviewed/deferred. ssr.fun and its Coming Soon deployment were not touched.",
+  "affectedAreas": [
+    "packages/sdk/src/directInstructions.ts",
+    "packages/sdk/src/tradableAssets.ts",
+    "src/merge/lib/directClient.ts",
+    "src/merge/lib/solana-config.ts",
+    "src/merge/lib/onChainReserve.ts",
+    "src/merge/lib/RealReserveSync.tsx",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/managementClient.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/pages/ManageDTR.tsx",
+    "api/mainnet/rpc-proxy.ts",
+    "api/mainnet/_lib/rpc.ts",
+    "tsconfig.node.json",
+    "tsconfig.json",
+    "vercel.json"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "6 new offline tests (tests/phase_mainnet_direct_instructions.ts) confirming computeDirectReserveTokensRequested's exact floor-inverse relationship to computeMintRequirements, including a zero-supply/zero-vault-balance guard and a non-positive-amount guard.",
+    "Full offline suite after all fixes: 602/602 passing.",
+    "`npm run build` (SDK + tsc -b + vite build): clean.",
+    "Deployed bundle (curl-fetched directly from strategic-super-reserve.fun's served assets): contains '8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9' (the Mainnet program ID); no 'api-key='/Helius-URL pattern found anywhere in it.",
+    "`vercel --prod` deployment dpl_DqRggFv8SwF5NrmCFtfh5dyiVZ5R: readyState READY, target production, aliased to the project's production domains."
+  ]
+}
+```

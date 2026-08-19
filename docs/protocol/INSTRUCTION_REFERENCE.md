@@ -22,14 +22,14 @@
 # Instruction Reference
 
 ## `initialize_protocol`
-- **Signer:** `authority` (becomes `ProtocolConfig.authority`).
+- **Signer:** `authority` (becomes `ProtocolConfig.authority`, the first of two independent Protocol Admins).
 - **Accounts:** `protocol_config` (init, PDA), `authority`, `system_program`.
-- **Args:** `max_reserve_assets: u8`, `default_protocol_fee_bps: u16`, `default_protocol_fee_destination: Pubkey`.
-- **Validation:** `0 < max_reserve_assets <= ABSOLUTE_MAX_RESERVE_ASSETS (24)`.
+- **Args:** `admin_2: Pubkey` (the second Protocol Admin wallet -- need not sign; recorded only), `max_reserve_assets: u8`, `default_protocol_fee_bps: u16`, `default_protocol_fee_destination: Pubkey`.
+- **Validation:** `0 < max_reserve_assets <= ABSOLUTE_MAX_RESERVE_ASSETS (24)`; `admin_2 != authority` (`DuplicateProtocolAdmin`).
 - **State transition:** creates the singleton `ProtocolConfig`, `reserve_count = 0`, `paused = false`.
 - **Token movement:** none.
 - **Event:** `ProtocolInitialized`.
-- **Errors:** `MaxReserveAssetsTooHigh`.
+- **Errors:** `MaxReserveAssetsTooHigh`, `DuplicateProtocolAdmin`.
 - **Frontend use:** one-time deploy-time setup; not a user-facing action.
 
 ## `create_reserve`
@@ -236,15 +236,26 @@
 - **Frontend use:** none currently wired -- no "edit Reserve description/logo" UI feature exists yet. Metadata itself lives off-chain at the referenced URI, matching the mission's "metadata reference" field guidance.
 
 ## `update_protocol_config`
-- **Signer:** `authority` (`ProtocolConfig.authority`, admin-only).
-- **Accounts:** `protocol_config` (mut, `has_one = authority`), `authority`.
+- **Signer:** `authority` (either Protocol Admin -- `ProtocolConfig.authority` or `admin_2` -- act independently).
+- **Accounts:** `protocol_config` (mut, `constraint = protocol_config.is_admin(&authority.key())`), `authority`.
 - **Args:** `new_default_protocol_fee_destination: Pubkey`, `new_default_protocol_fee_bps: u16`.
-- **Validation:** signer must equal `ProtocolConfig.authority` (enforced by `has_one`); no cap check on the new fee bps value itself -- the caller is trusted admin input.
+- **Validation:** signer must be one of the two configured admins (`ProtocolConfig::is_admin`); no cap check on the new fee bps value itself -- the caller is trusted admin input.
 - **State transition:** `ProtocolConfig.default_protocol_fee_destination`/`default_protocol_fee_bps` overwritten.
 - **Token movement:** none.
 - **Event:** `ProtocolConfigUpdated`.
 - **Errors:** `NotProtocolAuthority`.
 - **Frontend use:** none currently wired -- admin-only, invoked historically to set the real DevNet treasury address (2026-07-28, DEC-0033/DEC-0035) but not exposed in the product UI. `initialize_protocol` only ever runs once, so this is the only way to correct the treasury address after genesis.
+
+## `set_protocol_paused`
+- **Signer:** `authority` (either Protocol Admin, same independent-admin model as `update_protocol_config`).
+- **Accounts:** `protocol_config` (mut, `constraint = protocol_config.is_admin(&authority.key())`), `authority`.
+- **Args:** `paused: bool`.
+- **Validation:** signer must be one of the two configured admins.
+- **State transition:** `ProtocolConfig.paused` set directly.
+- **Token movement:** none.
+- **Event:** `ProtocolPausedSet`.
+- **Errors:** `NotProtocolAuthority`.
+- **Frontend use:** none -- admin/ops-only, invoked via CLI/SDK script, not exposed in the product UI. Added in the Mainnet authority-model pass: `ProtocolConfig.paused` existed and was checked by `create_reserve`/`mint_reserve_tokens_in_kind`/`seed_reserve` since v1, but no instruction had ever set it -- this was the only way to actually engage the documented global emergency pause, and it did not previously exist.
 
 ## `add_reserve_asset_active`
 - **Signer:** manager, or delegate with `MANAGE_LIQUIDITY_CONFIG`.

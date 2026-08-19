@@ -13,6 +13,9 @@
     "api/devnet/*.ts": {
       "includeFiles": "packages/sdk/**"
     },
+    "api/mainnet/*.ts": {
+      "includeFiles": "packages/sdk/**"
+    },
     "api/kpis/*.ts": {
       "includeFiles": "packages/sdk/**"
     },

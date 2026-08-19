@@ -10,6 +10,7 @@ use anchor_lang::prelude::*;
 #[event]
 pub struct ProtocolInitialized {
     pub authority: Pubkey,
+    pub admin_2: Pubkey,
     pub max_reserve_assets: u8,
     pub ts: i64,
 }
@@ -294,6 +295,13 @@ pub struct ProtocolConfigUpdated {
 /// Emitted by both `initialize_manager_fee_recipients` (first-ever routing
 /// for this Reserve) and `update_fee_recipients` (a subsequent change).
 /// `recipients`/`allocations_bps` are parallel arrays, in slot order.
+#[event]
+pub struct ProtocolPausedSet {
+    pub authority: Pubkey,
+    pub paused: bool,
+    pub ts: i64,
+}
+
 #[event]
 pub struct ManagerFeeRecipientsConfigured {
     pub reserve: Pubkey,

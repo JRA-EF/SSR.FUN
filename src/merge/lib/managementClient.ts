@@ -31,13 +31,13 @@ import {
   buildRemoveReserveAssetInstruction,
   buildUpdateDelegatePermissionsInstruction,
   buildUpdateTargetsInstruction,
-  DEVNET_FIXTURES,
   describeOnChainError,
   findDelegate,
   fetchProtocolConfig,
   type RecipientInput,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
+import { SSR_PROGRAM_ID } from "./solana-config";
 
 /** Signs, submits (once -- never auto-retried), and confirms via bounded signature-status polling instead of `connection.confirmTransaction`'s websocket subscription -- see zapClient.ts's signSubmitAndConfirm, which this mirrors. Never resubmits on an ambiguous result; throws AmbiguousConfirmationError (carrying the real signature) instead. */
 async function signAndSend(connection: Connection, wallet: WalletContextState, tx: Transaction): Promise<string> {
@@ -58,7 +58,7 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, t
   throw new AmbiguousConfirmationError(signature);
 }
 
-const programId = new PublicKey(DEVNET_FIXTURES.programId);
+const programId = SSR_PROGRAM_ID;
 
 export async function executeUpdateTargets(
   connection: Connection,

@@ -5,7 +5,7 @@ import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
-import { explorerUrl } from "@/lib/solana-config";
+import { explorerUrl, SSR_PROGRAM_ID } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -221,9 +221,8 @@ export function ManageDTR() {
     if (reserveId === null) return;
     let cancelled = false;
     setDirectCheck("checking");
-    const programId = new PublicKey(DEVNET_FIXTURES.programId);
-    const [reserveAddress] = findReserve(reserveId, programId);
-    fetchReserveOnChain(connection, programId, reserveAddress, [])
+    const [reserveAddress] = findReserve(reserveId, SSR_PROGRAM_ID);
+    fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, [])
       .then((onChain) => {
         if (cancelled) return;
         if (!onChain) setDirectCheck("confirmed-absent");

@@ -16,10 +16,12 @@ pub struct UpdateProtocolConfig<'info> {
         mut,
         seeds = [PROTOCOL_CONFIG_SEED],
         bump = protocol_config.bump,
-        has_one = authority @ SsrError::NotProtocolAuthority,
+        constraint = protocol_config.is_admin(&authority.key()) @ SsrError::NotProtocolAuthority,
     )]
     pub protocol_config: Account<'info, ProtocolConfig>,
 
+    /// Either approved Protocol Admin (`protocol_config.authority` or
+    /// `protocol_config.admin_2`) may sign -- see `ProtocolConfig::is_admin`.
     pub authority: Signer<'info>,
 }
 

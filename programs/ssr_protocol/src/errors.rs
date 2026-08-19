@@ -162,4 +162,9 @@ pub enum SsrError {
     // Protocol's genuine fee share by mis-omitting this account.
     #[msg("protocol_fee_destination_token_account was omitted, but protocol_fee_destination does not match the signer receiving the combined mint -- the Protocol's fee share cannot be silently dropped or redirected.")]
     ProtocolFeeDestinationTokenAccountRequired,
+
+    // --- Mainnet two-admin authority model (2026-08-18 pass) ---
+    // Appended at the end deliberately -- same append-only rule as above.
+    #[msg("The two Protocol Admin wallets must be distinct.")]
+    DuplicateProtocolAdmin,
 }

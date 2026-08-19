@@ -41,11 +41,13 @@ pub mod state;
 
 pub use instructions::*;
 
-// Real generated dev keypair (target/deploy/ssr_protocol-keypair.json, NOT
-// committed -- gitignored), generated via solana-keygen once a native Rust
-// toolchain became available this session. DevNet-only development
-// authority -- see docs/protocol/DEVNET_RUNBOOK.md and DEC-0023/DEC-0015.
-declare_id!("2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW");
+// Dedicated Mainnet program keypair (~/.config/solana/mainnet-program-keypair.json,
+// generated outside this repo, never committed -- see the Mainnet deployment
+// manifest / DECISION_LOG.md for the pass that created it). Distinct from the
+// DevNet program ID (2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW, still live
+// and unchanged on DevNet, see docs/protocol/DEVNET_RUNBOOK.md) -- Mainnet
+// intentionally never reuses a DevNet program ID.
+declare_id!("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
 
 #[program]
 pub mod ssr_protocol {
@@ -53,12 +55,14 @@ pub mod ssr_protocol {
 
     pub fn initialize_protocol<'info>(
         ctx: Context<'info, InitializeProtocol<'info>>,
+        admin_2: Pubkey,
         max_reserve_assets: u8,
         default_protocol_fee_bps: u16,
         default_protocol_fee_destination: Pubkey,
     ) -> Result<()> {
         instructions::initialize_protocol::handler(
             ctx,
+            admin_2,
             max_reserve_assets,
             default_protocol_fee_bps,
             default_protocol_fee_destination,
@@ -242,6 +246,13 @@ pub mod ssr_protocol {
             new_default_protocol_fee_destination,
             new_default_protocol_fee_bps,
         )
+    }
+
+    pub fn set_protocol_paused<'info>(
+        ctx: Context<'info, SetProtocolPaused<'info>>,
+        paused: bool,
+    ) -> Result<()> {
+        instructions::set_protocol_paused::handler(ctx, paused)
     }
 
     // --- Phase F: composition management (config-only) ---

@@ -1,5 +1,5 @@
 {
-  "address": "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW",
+  "address": "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9",
   "metadata": {
     "name": "ssr_protocol",
     "version": "0.1.0",
@@ -24,7 +24,26 @@
           "name": "protocol_config",
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [112, 114, 111, 116, 111, 99, 111, 108, 95, 99, 111, 110, 102, 105, 103] }
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
             ]
           }
         },
@@ -33,18 +52,57 @@
           "writable": true,
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [114, 101, 115, 101, 114, 118, 101] },
-              { "kind": "account", "path": "reserve.reserve_id", "account": "Reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
             ]
           }
         },
         {
           "name": "reserve_token_mint",
-          "writable": true,
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [114, 101, 115, 101, 114, 118, 101, 95, 116, 111, 107, 101, 110, 95, 109, 105, 110, 116] },
-              { "kind": "account", "path": "reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
             ]
           }
         },
@@ -52,53 +110,222 @@
           "name": "mint_authority",
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [109, 105, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121] },
-              { "kind": "account", "path": "reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
             ]
           }
         },
         {
           "name": "tvl_accrual",
+          "docs": [
+            "Lazily created on this Reserve's very first `accrue_fees`/checkpoint",
+            "call (every Reserve that existed before this pass has none yet) --",
+            "see `checkpoint_tvl_accrual`'s doc comment for the exact",
+            "initialization semantics."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [116, 118, 108, 95, 97, 99, 99, 114, 117, 97, 108] },
-              { "kind": "account", "path": "reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  118,
+                  108,
+                  95,
+                  97,
+                  99,
+                  99,
+                  114,
+                  117,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
             ]
           }
         },
         {
           "name": "protocol_fee_destination_token_account",
+          "docs": [
+            "Instant Protocol TVL-fee transfer (this pass): the Protocol's settled",
+            "share is minted directly here, in this SAME transaction -- never",
+            "accrued as pending. `payer` fronts this ATA's rent if it doesn't",
+            "exist yet."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
-              { "kind": "account", "path": "protocol_fee_destination" },
-              { "kind": "const", "value": [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] },
-              { "kind": "account", "path": "reserve_token_mint" }
+              {
+                "kind": "account",
+                "path": "protocol_fee_destination"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve_token_mint"
+              }
             ],
             "program": {
               "kind": "const",
-              "value": [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
             }
           }
         },
         {
           "name": "protocol_fee_destination",
-          "docs": ["must equal protocol_config.default_protocol_fee_destination, checked in the handler."]
+          "docs": [
+            "must equal `protocol_config.default_protocol_fee_destination`,",
+            "checked in the handler."
+          ]
         },
         {
           "name": "manager_fee_recipients",
+          "docs": [
+            "Optional (DEC-0094 sentinel pattern, see common::credit_manager_fee_shares)."
+          ],
           "writable": true,
           "optional": true,
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [109, 97, 110, 97, 103, 101, 114, 95, 102, 101, 101, 95, 114, 101, 99, 105, 112, 105, 101, 110, 116, 115] },
-              { "kind": "account", "path": "reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
             ]
           }
         },
         {
           "name": "payer",
+          "docs": [
+            "Permissionless caller (typically the weekly keeper's own wallet, or",
+            "anyone else who chooses to poke a settlement early): fronts this",
+            "call's one-time rent for `tvl_accrual`/`protocol_fee_destination_token_account`",
+            "if either doesn't exist yet. Never a fund-custody role -- settlement",
+            "only ever moves the Reserve's OWN already-accrued fee, nothing of",
+            "this wallet's own."
+          ],
           "writable": true,
           "signer": true
         },
@@ -519,6 +746,16 @@
         },
         {
           "name": "manager_fee_recipients",
+          "docs": [
+            "Optional (DEC-0094): pass the program ID itself as a \"None\" sentinel",
+            "for a Reserve that never opted into multi-recipient routing. When",
+            "`Some`, every active recipient's `pending_fee_shares` must be zero",
+            "(see the handler) -- without this, a manager could close a Reserve",
+            "with real, uncollected per-recipient balances still outstanding,",
+            "permanently stranding them (the exact failure mode",
+            "`PendingFeesNotCollected` below already prevents for the legacy",
+            "aggregate, which this account's existence structurally bypasses)."
+          ],
           "writable": true,
           "optional": true,
           "pda": {
@@ -799,6 +1036,10 @@
         },
         {
           "name": "protocol_fee_destination_token_account",
+          "docs": [
+            "`dup`: see manager_fee_destination_token_account's comment above --",
+            "this is the other half of the same legitimate-collision pair."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -918,7 +1159,279 @@
       "args": []
     },
     {
+      "name": "collect_manager_fee_share",
+      "discriminator": [
+        74,
+        74,
+        66,
+        106,
+        104,
+        255,
+        88,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_token_mint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "docs": [
+            "Optional (DEC-0094): pass the program ID itself as a \"None\" sentinel",
+            "for a not-yet-migrated Reserve (legacy fallback path)."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recipient",
+          "docs": [
+            "CLAIMANT-ONLY: this recipient must sign for itself -- Anchor's",
+            "`Signer` type proves the transaction was genuinely authorized by this",
+            "exact wallet, which is then looked up in `ManagerFeeRecipients` (or",
+            "checked against the legacy `fee_config.fee_destination`) below. No",
+            "other wallet -- root Manager, delegate, or another recipient -- can",
+            "ever satisfy this constraint on this recipient's behalf. Also pays",
+            "its own ATA rent (see `recipient_token_account` below), so no",
+            "separate `payer` account is needed."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "recipient"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve_token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "collect_protocol_fee",
+      "docs": [
+        "Collects ONLY the Protocol's pending fee share -- see",
+        "instructions/collect_protocol_fee.rs's header. Fully additive;",
+        "collect_fees above is unchanged and still collects both sides."
+      ],
       "discriminator": [
         136,
         136,
@@ -931,25 +1444,218 @@
       ],
       "accounts": [
         {
-          "name": "protocol_config"
+          "name": "protocol_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "reserve",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
         },
         {
           "name": "reserve_token_mint",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
         },
         {
-          "name": "mint_authority"
+          "name": "mint_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
         },
         {
           "name": "protocol_fee_destination_token_account",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protocol_fee_destination"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve_token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
-          "name": "protocol_fee_destination"
+          "name": "protocol_fee_destination",
+          "docs": [
+            "must equal `protocol_config.default_protocol_fee_destination`,",
+            "checked in the handler."
+          ]
         },
         {
           "name": "payer",
@@ -1140,6 +1846,274 @@
       ]
     },
     {
+      "name": "execute_rebalance_leg",
+      "docs": [
+        "One CPI'd swap leg via ssr_devnet_amm, genuinely moving this",
+        "Reserve's own vault assets -- see instructions/execute_rebalance_leg.rs",
+        "for the full design and its documented limitations. Coexists with",
+        "record_rebalance above; does not replace it."
+      ],
+      "discriminator": [
+        187,
+        141,
+        52,
+        22,
+        179,
+        114,
+        17,
+        169
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delegate"
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "reserve_asset_sell",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mint_sell"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_vault_sell",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mint_sell"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_sell"
+        },
+        {
+          "name": "reserve_asset_buy",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mint_buy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve_vault_buy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mint_buy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_buy"
+        },
+        {
+          "name": "vault_authority",
+          "docs": [
+            "seeds against the cached bump -- becomes the CPI's signing \"trader\"",
+            "below via `CpiContext::new_with_signer`, reusing the identical seeds",
+            "`redeem_reserve_tokens_in_kind` already uses."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "amm_program",
+          "address": "AJbXGWSU1x9LtJW7uRKJCwS3JZYqXwqHXpX6erY7dS6c"
+        },
+        {
+          "name": "amm_config"
+        },
+        {
+          "name": "amm_pool",
+          "writable": true
+        },
+        {
+          "name": "amm_vault_a",
+          "writable": true
+        },
+        {
+          "name": "amm_vault_b",
+          "writable": true
+        },
+        {
+          "name": "amm_vault_authority",
+          "docs": [
+            "program ID, not ours) -- validated by that program's own `Swap`",
+            "account constraints when the CPI executes, and signed internally by",
+            "that program itself; this program never signs for it."
+          ]
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "minimum_amount_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "fund_new_reserve_asset",
       "discriminator": [
         251,
@@ -1269,6 +2243,112 @@
       ]
     },
     {
+      "name": "initialize_manager_fee_recipients",
+      "discriminator": [
+        50,
+        162,
+        159,
+        92,
+        109,
+        82,
+        125,
+        95
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delegate"
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "recipients",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "FeeRecipientInput"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "initialize_protocol",
       "discriminator": [
         188,
@@ -1320,6 +2400,10 @@
         }
       ],
       "args": [
+        {
+          "name": "admin_2",
+          "type": "pubkey"
+        },
         {
           "name": "max_reserve_assets",
           "type": "u8"
@@ -1803,6 +2887,28 @@
         },
         {
           "name": "protocol_fee_destination_token_account",
+          "docs": [
+            "Instant Protocol mint-fee transfer (this pass, see",
+            "docs/project/DECISION_LOG.md): the Protocol's share of THIS mint's",
+            "fee is minted directly here, in the same atomic transaction --",
+            "Protocol fees never accrue as a pending/claimable balance for mint",
+            "events anymore. `depositor` fronts this ATA's rent if it doesn't",
+            "exist yet, same as its own `depositor_reserve_token_account` above.",
+            "",
+            "Option (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):",
+            "when `protocol_fee_destination` IS the depositor's own wallet, this",
+            "account's associated_token derivation would resolve to the exact",
+            "same address as `depositor_reserve_token_account` above -- two",
+            "separate mutable `Account<'info, TokenAccount>` slots resolving to",
+            "one underlying account, which Anchor's own",
+            "ConstraintDuplicateMutableAccount safety check rejects unconditionally",
+            "(the same failure mode confirmed live for seed_reserve, DevNet error",
+            "2040). The client detects this ahead of time and passes this",
+            "program's own ID as the explicit \"None\" sentinel instead -- see",
+            "seed_reserve.rs's identical treatment. The handler verifies the",
+            "omission actually matches reality rather than trusting it blindly",
+            "(SsrError::ProtocolFeeDestinationTokenAccountRequired)."
+          ],
           "writable": true,
           "optional": true,
           "pda": {
@@ -1813,7 +2919,40 @@
               },
               {
                 "kind": "const",
-                "value": [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
               },
               {
                 "kind": "account",
@@ -1822,28 +2961,93 @@
             ],
             "program": {
               "kind": "const",
-              "value": [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
             }
           }
         },
         {
           "name": "protocol_fee_destination",
           "docs": [
-            "instant Protocol mint-fee transfer destination -- must equal protocol_config.default_protocol_fee_destination, checked in the handler."
+            "must equal `protocol_config.default_protocol_fee_destination`,",
+            "checked in the handler."
           ]
         },
         {
           "name": "tvl_accrual",
+          "docs": [
+            "Time-weighted average TVL accumulator (2026-08-14 pass) -- checkpointed",
+            "here for free (cheap arithmetic, no CPI), never settled here. See",
+            "`accrue_fees::checkpoint_tvl_accrual`'s doc comment. Lazily created on",
+            "this Reserve's first-ever checkpoint call."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [116, 118, 108, 95, 97, 99, 99, 114, 117, 97, 108] },
-              { "kind": "account", "path": "reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  118,
+                  108,
+                  95,
+                  97,
+                  99,
+                  99,
+                  114,
+                  117,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
             ]
           }
         },
         {
           "name": "manager_fee_recipients",
+          "docs": [
+            "Optional (DEC-0094): pass the program ID itself as a \"None\" sentinel",
+            "for a Reserve that hasn't opted into multi-recipient routing. See",
+            "`state/manager_fee_recipients.rs` and `common::credit_manager_fee_shares`.",
+            "Also used to credit the TVL-fee piggyback checkpoint this call",
+            "triggers (see `accrue_fees::checkpoint_tvl_fee`)."
+          ],
           "writable": true,
           "optional": true,
           "pda": {
@@ -2133,6 +3337,15 @@
         },
         {
           "name": "manager_fee_recipients",
+          "docs": [
+            "Optional (DEC-0094): pass the program ID itself as a \"None\" sentinel",
+            "for a Reserve that hasn't opted into multi-recipient routing. Not",
+            "actually used to credit anything on THIS instruction anymore (the",
+            "TVL fee is only ever settled by `accrue_fees` now) but kept in the",
+            "account list for forward-compatibility with an opportunistic",
+            "same-transaction settlement bundle -- redemption fee itself is",
+            "unrelated and untouched (still burned, never distributed)."
+          ],
           "writable": true,
           "optional": true,
           "pda": {
@@ -2173,11 +3386,34 @@
         },
         {
           "name": "tvl_accrual",
+          "docs": [
+            "Time-weighted average TVL accumulator (2026-08-14 pass) -- checkpointed",
+            "here for free, never settled here. See",
+            "`accrue_fees::checkpoint_tvl_accrual`'s doc comment."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [116, 118, 108, 95, 97, 99, 99, 114, 117, 97, 108] },
-              { "kind": "account", "path": "reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  118,
+                  108,
+                  95,
+                  97,
+                  99,
+                  99,
+                  114,
+                  117,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
             ]
           }
         },
@@ -2687,6 +3923,27 @@
         },
         {
           "name": "protocol_fee_destination_token_account",
+          "docs": [
+            "Instant Protocol mint-fee transfer (this pass, see",
+            "docs/project/DECISION_LOG.md): the initial seed mint is a mint like",
+            "any other -- the Protocol's share of ITS fee is minted directly",
+            "here, in the same atomic transaction, never accrued as pending.",
+            "`manager` fronts this ATA's rent if it doesn't exist yet.",
+            "",
+            "Option (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):",
+            "when `protocol_fee_destination` IS the manager's own wallet, this",
+            "account's associated_token derivation would resolve to the exact",
+            "same address as `manager_reserve_token_account` below -- two separate",
+            "mutable `Account<'info, TokenAccount>` slots resolving to one",
+            "underlying account, which Anchor's own ConstraintDuplicateMutableAccount",
+            "safety check rejects unconditionally, before this handler ever runs",
+            "(confirmed live: DevNet error 2040). The client detects this ahead of",
+            "time and passes this program's own ID as the explicit \"None\" sentinel",
+            "instead -- the same convention already used for `manager_fee_recipients`",
+            "below (see `common::credit_manager_fee_shares`'s doc comment). The",
+            "handler verifies the omission actually matches reality rather than",
+            "trusting it blindly (SsrError::ProtocolFeeDestinationTokenAccountRequired)."
+          ],
           "writable": true,
           "optional": true,
           "pda": {
@@ -2697,7 +3954,40 @@
               },
               {
                 "kind": "const",
-                "value": [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
               },
               {
                 "kind": "account",
@@ -2706,28 +3996,93 @@
             ],
             "program": {
               "kind": "const",
-              "value": [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
             }
           }
         },
         {
           "name": "protocol_fee_destination",
           "docs": [
-            "instant Protocol mint-fee transfer destination -- must equal protocol_config.default_protocol_fee_destination, checked in the handler."
+            "must equal `protocol_config.default_protocol_fee_destination`,",
+            "checked in the handler."
           ]
         },
         {
           "name": "tvl_accrual",
+          "docs": [
+            "Time-weighted average TVL accumulator (2026-08-14 pass) -- the",
+            "initial seed mint checkpoints it too, same as every other mint. See",
+            "`accrue_fees::checkpoint_tvl_accrual`'s doc comment."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
-              { "kind": "const", "value": [116, 118, 108, 95, 97, 99, 99, 114, 117, 97, 108] },
-              { "kind": "account", "path": "reserve" }
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  118,
+                  108,
+                  95,
+                  97,
+                  99,
+                  99,
+                  114,
+                  117,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
             ]
           }
         },
         {
           "name": "manager_fee_recipients",
+          "docs": [
+            "Optional (DEC-0094 sentinel pattern, see common::credit_manager_fee_shares):",
+            "pass the program ID itself for a Reserve that hasn't opted into",
+            "multi-recipient routing (the overwhelmingly common case at seed time,",
+            "since seeding is the FIRST mint -- but a creator can bundle",
+            "initializeManagerFeeRecipients into the same create-and-register",
+            "transaction, so this must still be handled here too)."
+          ],
           "writable": true,
           "optional": true,
           "pda": {
@@ -2789,6 +4144,59 @@
         {
           "name": "initial_reserve_tokens",
           "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_protocol_paused",
+      "discriminator": [
+        47,
+        62,
+        75,
+        69,
+        166,
+        0,
+        147,
+        157
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
         }
       ]
     },
@@ -2983,6 +4391,103 @@
       ]
     },
     {
+      "name": "update_fee_recipients",
+      "discriminator": [
+        24,
+        65,
+        38,
+        202,
+        8,
+        234,
+        8,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager_fee_recipients",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delegate"
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "recipients",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "FeeRecipientInput"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "update_metadata",
       "discriminator": [
         170,
@@ -3078,10 +4583,11 @@
         },
         {
           "name": "authority",
-          "signer": true,
-          "relations": [
-            "protocol_config"
-          ]
+          "docs": [
+            "Either approved Protocol Admin (`protocol_config.authority` or",
+            "`protocol_config.admin_2`) may sign -- see `ProtocolConfig::is_admin`."
+          ],
+          "signer": true
         }
       ],
       "args": [
@@ -3152,278 +4658,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "initialize_manager_fee_recipients",
-      "discriminator": [
-        50,
-        162,
-        159,
-        92,
-        109,
-        82,
-        125,
-        95
-      ],
-      "accounts": [
-        {
-          "name": "reserve",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [114, 101, 115, 101, 114, 118, 101]
-              },
-              {
-                "kind": "account",
-                "path": "reserve.reserve_id",
-                "account": "Reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "manager_fee_recipients",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [109, 97, 110, 97, 103, 101, 114, 95, 102, 101, 101, 95, 114, 101, 99, 105, 112, 105, 101, 110, 116, 115]
-              },
-              {
-                "kind": "account",
-                "path": "reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "delegate",
-          "docs": [
-            "see `common::require_reserve_permission`."
-          ]
-        },
-        {
-          "name": "signer",
-          "signer": true
-        },
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "recipients",
-          "type": {
-            "vec": {
-              "defined": {
-                "name": "FeeRecipientInput"
-              }
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "update_fee_recipients",
-      "discriminator": [
-        24,
-        65,
-        38,
-        202,
-        8,
-        234,
-        8,
-        20
-      ],
-      "accounts": [
-        {
-          "name": "reserve",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [114, 101, 115, 101, 114, 118, 101]
-              },
-              {
-                "kind": "account",
-                "path": "reserve.reserve_id",
-                "account": "Reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "manager_fee_recipients",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [109, 97, 110, 97, 103, 101, 114, 95, 102, 101, 101, 95, 114, 101, 99, 105, 112, 105, 101, 110, 116, 115]
-              },
-              {
-                "kind": "account",
-                "path": "reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "delegate",
-          "docs": [
-            "see `common::require_reserve_permission`."
-          ]
-        },
-        {
-          "name": "signer",
-          "signer": true
-        }
-      ],
-      "args": [
-        {
-          "name": "recipients",
-          "type": {
-            "vec": {
-              "defined": {
-                "name": "FeeRecipientInput"
-              }
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "collect_manager_fee_share",
-      "discriminator": [
-        74,
-        74,
-        66,
-        106,
-        104,
-        255,
-        88,
-        109
-      ],
-      "accounts": [
-        {
-          "name": "reserve",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [114, 101, 115, 101, 114, 118, 101]
-              },
-              {
-                "kind": "account",
-                "path": "reserve.reserve_id",
-                "account": "Reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "reserve_token_mint",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [114, 101, 115, 101, 114, 118, 101, 95, 116, 111, 107, 101, 110, 95, 109, 105, 110, 116]
-              },
-              {
-                "kind": "account",
-                "path": "reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "mint_authority",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [109, 105, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]
-              },
-              {
-                "kind": "account",
-                "path": "reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "manager_fee_recipients",
-          "writable": true,
-          "optional": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [109, 97, 110, 97, 103, 101, 114, 95, 102, 101, 101, 95, 114, 101, 99, 105, 112, 105, 101, 110, 116, 115]
-              },
-              {
-                "kind": "account",
-                "path": "reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "recipient",
-          "writable": true,
-          "signer": true,
-          "docs": [
-            "the recipient being paid out -- claimant-only: only this exact wallet's own signature can collect its accrued balance (2026-08-14 corrective pass, see docs/project/DECISION_LOG.md)."
-          ]
-        },
-        {
-          "name": "recipient_token_account",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "recipient"
-              },
-              {
-                "kind": "const",
-                "value": [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]
-              },
-              {
-                "kind": "account",
-                "path": "reserve_token_mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]
-            }
-          }
-        },
-        {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "associated_token_program",
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
     }
   ],
   "accounts": [
@@ -3451,19 +4685,6 @@
         220,
         15,
         116
-      ]
-    },
-    {
-      "name": "TvlAccrual",
-      "discriminator": [
-        107,
-        89,
-        30,
-        66,
-        108,
-        38,
-        33,
-        156
       ]
     },
     {
@@ -3503,6 +4724,19 @@
         15,
         64,
         34
+      ]
+    },
+    {
+      "name": "TvlAccrual",
+      "discriminator": [
+        107,
+        89,
+        30,
+        66,
+        108,
+        38,
+        33,
+        156
       ]
     }
   ],
@@ -3560,6 +4794,19 @@
       ]
     },
     {
+      "name": "FeesCollected",
+      "discriminator": [
+        233,
+        23,
+        117,
+        225,
+        107,
+        178,
+        254,
+        8
+      ]
+    },
+    {
       "name": "ManagerFeeRecipientsConfigured",
       "discriminator": [
         140,
@@ -3599,58 +4846,6 @@
       ]
     },
     {
-      "name": "FeesCollected",
-      "discriminator": [
-        233,
-        23,
-        117,
-        225,
-        107,
-        178,
-        254,
-        8
-      ]
-    },
-    {
-      "name": "ProtocolMintFeeTransferred",
-      "discriminator": [
-        228,
-        82,
-        102,
-        239,
-        136,
-        167,
-        31,
-        170
-      ]
-    },
-    {
-      "name": "TvlFeeSettled",
-      "discriminator": [
-        236,
-        238,
-        218,
-        97,
-        226,
-        145,
-        28,
-        108
-      ]
-    },
-    {
-      "name": "ProtocolFeeCollected",
-      "discriminator": [
-        149,
-        0,
-        167,
-        154,
-        105,
-        146,
-        209,
-        134
-      ]
-    },
-    {
       "name": "MetadataUpdated",
       "discriminator": [
         132,
@@ -3677,6 +4872,19 @@
       ]
     },
     {
+      "name": "ProtocolFeeCollected",
+      "discriminator": [
+        149,
+        0,
+        167,
+        154,
+        105,
+        146,
+        209,
+        134
+      ]
+    },
+    {
       "name": "ProtocolInitialized",
       "discriminator": [
         173,
@@ -3687,6 +4895,45 @@
         118,
         76,
         132
+      ]
+    },
+    {
+      "name": "ProtocolMintFeeTransferred",
+      "discriminator": [
+        228,
+        82,
+        102,
+        239,
+        136,
+        167,
+        31,
+        170
+      ]
+    },
+    {
+      "name": "ProtocolPausedSet",
+      "discriminator": [
+        26,
+        66,
+        32,
+        38,
+        45,
+        70,
+        187,
+        14
+      ]
+    },
+    {
+      "name": "RebalanceLegExecuted",
+      "discriminator": [
+        136,
+        61,
+        48,
+        248,
+        44,
+        126,
+        135,
+        252
       ]
     },
     {
@@ -3869,6 +5116,19 @@
         185,
         241,
         70
+      ]
+    },
+    {
+      "name": "TvlFeeSettled",
+      "discriminator": [
+        236,
+        238,
+        218,
+        97,
+        226,
+        145,
+        28,
+        108
       ]
     },
     {
@@ -4134,7 +5394,7 @@
     {
       "code": 6049,
       "name": "PendingFeesBlockRoutingChange",
-      "msg": "This routing change is blocked because at least one current recipient still has an uncollected pending fee share -- collect it first so the change can never reallocate already-accrued fees."
+      "msg": "This routing change is blocked because a recipient being removed from routing still has an uncollected pending fee share -- only that wallet's own signature can collect it (see collect_manager_fee_share), so it must do so before it can be removed. A recipient who stays on the list keeps its pending balance carried forward and is never blocked."
     },
     {
       "code": 6050,
@@ -4165,9 +5425,54 @@
       "code": 6055,
       "name": "ProtocolFeeDestinationTokenAccountRequired",
       "msg": "protocol_fee_destination_token_account was omitted, but protocol_fee_destination does not match the signer receiving the combined mint -- the Protocol's fee share cannot be silently dropped or redirected."
+    },
+    {
+      "code": 6056,
+      "name": "DuplicateProtocolAdmin",
+      "msg": "The two Protocol Admin wallets must be distinct."
     }
   ],
   "types": [
+    {
+      "name": "AmmConfig",
+      "docs": [
+        "Singleton config for the DevNet Test AMM. See DEC-0051 for why the",
+        "authority reuses the existing DevNet swap-authority/manager keypair",
+        "(deliberate zero-new-secrets reuse, same as devUSDC's mint authority)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "hub_mint",
+            "docs": [
+              "The hub asset every pool's `mint_a` must equal (see create_pool.rs).",
+              "Runtime-configured (set once at initialize_amm_config, immutable",
+              "afterward) rather than a compile-time constant, so this program",
+              "isn't permanently coupled to one specific mint address -- see",
+              "constants.rs's header comment for why."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "default_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "Delegate",
       "docs": [
@@ -4291,7 +5596,11 @@
       "name": "FeeConfig",
       "docs": [
         "All fee values here are explicit DevNet placeholders, not final economics.",
-        "See DEC-0013."
+        "See DEC-0013. `mint_fee_bps`/`annual_tvl_fee_bps` are each the",
+        "\"configured\" (manager-set) gross rate -- the actual EFFECTIVE rate",
+        "charged, and its Protocol/Manager split, is derived fresh at every",
+        "mint/accrual by `fee_math::split_configured_bps` (DEC-0094), never a",
+        "value stored or chosen here."
       ],
       "type": {
         "kind": "struct",
@@ -4311,18 +5620,22 @@
           {
             "name": "manager_fee_share_bps",
             "docs": [
-              "Manager's share of the collected fee pool, out of BPS_DENOMINATOR."
+              "DEC-0094: repurposed as program-maintained, informational telemetry",
+              "only -- \"the effective Manager mint-fee bps last applied,\" written by",
+              "`mint_reserve_tokens_in_kind` every time it runs. NEVER read for",
+              "control flow and NOT caller-configurable (pre-DEC-0094 Reserves may",
+              "still carry their original create-time value here until their next",
+              "mint recomputes it). The real, current split for any Reserve is",
+              "always `fee_math::split_configured_bps(mint_fee_bps, ..)`, evaluated",
+              "live, not this field."
             ],
             "type": "u16"
           },
           {
             "name": "protocol_fee_share_bps",
             "docs": [
-              "Protocol's share of the collected fee pool, out of BPS_DENOMINATOR.",
-              "`manager_fee_share_bps + protocol_fee_share_bps` need not equal",
-              "BPS_DENOMINATOR; any residual is intentionally left unminted (burned",
-              "in effect, mirroring the reference protocol's `folioFeeForSelf`",
-              "concept) rather than silently dropped or misattributed."
+              "DEC-0094: same repurposing as `manager_fee_share_bps` above, but for",
+              "the effective Protocol mint-fee bps."
             ],
             "type": "u16"
           },
@@ -4359,8 +5672,10 @@
     {
       "name": "FeeRecipientInput",
       "docs": [
-        "Caller-supplied instruction argument for initialize_manager_fee_recipients",
-        "and update_fee_recipients -- one entry per desired recipient."
+        "Caller-supplied instruction argument for `initialize_manager_fee_recipients`",
+        "and `update_fee_recipients` -- one entry per desired recipient. Validated",
+        "by `instructions::common::validate_fee_recipient_inputs` before ever",
+        "being written into a [`FeeRecipientSlot`]."
       ],
       "type": {
         "kind": "struct",
@@ -4379,8 +5694,11 @@
     {
       "name": "FeeRecipientSlot",
       "docs": [
-        "One Manager fee recipient slot. allocation_bps is the recipient's share",
-        "of the MANAGER's pool (never of the total assessed fee)."
+        "One Manager fee recipient slot. `allocation_bps` is the recipient's share",
+        "of the MANAGER's pool (never of the total assessed fee -- see DEC-0094).",
+        "`pending_fee_shares` is combined mint-fee + TVL-fee accrual, credited at",
+        "accrual time (not lazily computed at collection), so a later routing",
+        "change can never reallocate what's already accrued to this slot."
       ],
       "type": {
         "kind": "struct",
@@ -4400,203 +5718,6 @@
           {
             "name": "collected_fee_shares",
             "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ManagerFeeAccrualSource",
-      "type": {
-        "kind": "enum",
-        "variants": [
-          {
-            "name": "MintFee"
-          },
-          {
-            "name": "AnnualTvlFee"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ManagerFeeRecipients",
-      "docs": [
-        "Up to MAX_FEE_RECIPIENTS Manager fee recipients for one Reserve. A",
-        "separate, additive account (NOT a field grown onto Reserve/FeeConfig)",
-        "so no already-initialized Reserve account ever needs a realloc/migration."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "schema_version",
-            "type": "u8"
-          },
-          {
-            "name": "reserve",
-            "type": "pubkey"
-          },
-          {
-            "name": "recipient_count",
-            "type": "u8"
-          },
-          {
-            "name": "recipients",
-            "type": {
-              "array": [
-                {
-                  "defined": {
-                    "name": "FeeRecipientSlot"
-                  }
-                },
-                10
-              ]
-            }
-          },
-          {
-            "name": "routing_updated_at",
-            "type": "i64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "TvlAccrual",
-      "docs": [
-        "Time-weighted average TVL accumulator for one Reserve. A separate,",
-        "additive account (NOT a field grown onto Reserve/FeeConfig) so no",
-        "already-initialized Reserve account ever needs a realloc/migration."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "schema_version",
-            "type": "u8"
-          },
-          {
-            "name": "reserve",
-            "type": "pubkey"
-          },
-          {
-            "name": "period_supply_seconds",
-            "type": "u128"
-          },
-          {
-            "name": "last_checkpoint_ts",
-            "type": "i64"
-          },
-          {
-            "name": "last_settled_ts",
-            "type": "i64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ManagerFeeRecipientsConfigured",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "reserve",
-            "type": "pubkey"
-          },
-          {
-            "name": "recipients",
-            "type": {
-              "vec": "pubkey"
-            }
-          },
-          {
-            "name": "allocations_bps",
-            "type": {
-              "vec": "u16"
-            }
-          },
-          {
-            "name": "configured_by",
-            "type": "pubkey"
-          },
-          {
-            "name": "routing_updated_at",
-            "type": "i64"
-          },
-          {
-            "name": "ts",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ManagerFeeShareAccrued",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "reserve",
-            "type": "pubkey"
-          },
-          {
-            "name": "recipients",
-            "type": {
-              "vec": "pubkey"
-            }
-          },
-          {
-            "name": "amounts",
-            "type": {
-              "vec": "u64"
-            }
-          },
-          {
-            "name": "source",
-            "type": {
-              "defined": {
-                "name": "ManagerFeeAccrualSource"
-              }
-            }
-          },
-          {
-            "name": "ts",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ManagerFeeShareCollected",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "reserve",
-            "type": "pubkey"
-          },
-          {
-            "name": "recipient",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "collected_by",
-            "type": "pubkey"
-          },
-          {
-            "name": "ts",
-            "type": "i64"
           }
         ]
       }
@@ -4658,7 +5779,92 @@
       }
     },
     {
-      "name": "ProtocolFeeCollected",
+      "name": "ManagerFeeAccrualSource",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "MintFee"
+          },
+          {
+            "name": "AnnualTvlFee"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeRecipients",
+      "docs": [
+        "Up to `MAX_FEE_RECIPIENTS` Manager fee recipients for one Reserve. A",
+        "separate, additive account (NOT a field grown onto `Reserve`/`FeeConfig`)",
+        "specifically so no already-initialized `Reserve` account on live DevNet",
+        "ever needs a realloc/migration -- see DEC-0094. PDA:",
+        "`[MANAGER_FEE_RECIPIENTS_SEED, reserve.key()]`.",
+        "",
+        "Fixed-size regardless of `recipient_count`: the array is always allocated",
+        "at max capacity, so a future routing change (`update_fee_recipients`)",
+        "never needs to grow this account either. Slots at index >= recipient_count",
+        "are zeroed/unused.",
+        "",
+        "A Reserve with no `ManagerFeeRecipients` account at all (the common case",
+        "immediately after this program upgrade, for every pre-existing Reserve)",
+        "is NOT \"broken\" or \"not migrated\" in an error sense -- it simply keeps",
+        "using the legacy single-destination path (`fee_config.fee_destination` /",
+        "`fee_config.pending_manager_fee_shares`) indefinitely, exactly as before",
+        "this feature existed. This account only comes into being when a Reserve's",
+        "manager explicitly opts in via `initialize_manager_fee_recipients`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "schema_version",
+            "type": "u8"
+          },
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient_count",
+            "docs": [
+              "1..=MAX_FEE_RECIPIENTS. Slots `recipient_count..MAX_FEE_RECIPIENTS`",
+              "are inactive (`Default`-zeroed) and must never be read as live."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "FeeRecipientSlot"
+                  }
+                },
+                10
+              ]
+            }
+          },
+          {
+            "name": "routing_updated_at",
+            "docs": [
+              "Unix timestamp of the routing configuration currently in effect --",
+              "set at `initialize_manager_fee_recipients` and every",
+              "`update_fee_recipients`. Never affects already-accrued",
+              "`pending_fee_shares`."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeRecipientsConfigured",
       "type": {
         "kind": "struct",
         "fields": [
@@ -4667,91 +5873,98 @@
             "type": "pubkey"
           },
           {
-            "name": "amount",
-            "type": "u64"
+            "name": "recipients",
+            "type": {
+              "vec": "pubkey"
+            }
           },
           {
-            "name": "destination",
+            "name": "allocations_bps",
+            "type": {
+              "vec": "u16"
+            }
+          },
+          {
+            "name": "configured_by",
             "type": "pubkey"
+          },
+          {
+            "name": "routing_updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeShareAccrued",
+      "docs": [
+        "Emitted once per mint/accrue call that credits a migrated Reserve's",
+        "per-recipient balances (largest-remainder apportionment of the",
+        "Manager's total fee shares that accrual). `recipients`/`amounts` are",
+        "parallel arrays, active slots only. `source` distinguishes which fee",
+        "generated this accrual so it's never conflated with the other."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipients",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "amounts",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "source",
+            "type": {
+              "defined": {
+                "name": "ManagerFeeAccrualSource"
+              }
+            }
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerFeeShareCollected",
+      "docs": [
+        "Emitted by `collect_manager_fee_share` -- one recipient's own pending",
+        "balance paid out and zeroed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           },
           {
             "name": "collected_by",
-            "type": "pubkey"
-          },
-          {
-            "name": "ts",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ProtocolMintFeeTransferred",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "reserve",
-            "type": "pubkey"
-          },
-          {
-            "name": "reserve_token_mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "destination",
-            "type": "pubkey"
-          },
-          {
-            "name": "ts",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "TvlFeeSettled",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "reserve",
-            "type": "pubkey"
-          },
-          {
-            "name": "reserve_token_mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "period_start_ts",
-            "type": "i64"
-          },
-          {
-            "name": "period_end_ts",
-            "type": "i64"
-          },
-          {
-            "name": "time_weighted_avg_supply",
-            "type": "u64"
-          },
-          {
-            "name": "protocol_fee_shares",
-            "type": "u64"
-          },
-          {
-            "name": "manager_fee_shares",
-            "type": "u64"
-          },
-          {
-            "name": "protocol_destination",
-            "type": "pubkey"
-          },
-          {
-            "name": "settled_by",
             "type": "pubkey"
           },
           {
@@ -4786,13 +5999,70 @@
       }
     },
     {
+      "name": "Pool",
+      "docs": [
+        "One hub-and-spoke pool: `mint_a` is always the AMM's configured hub",
+        "asset (devUSDC on this deployment; enforced in `create_pool` against",
+        "`amm_config.hub_mint`), `mint_b` is the paired representative test",
+        "asset (mockX/Y/Z). No LP-token mint exists -- the sole",
+        "liquidity authority's position is read directly from live vault",
+        "balances, since there is exactly one depositor by construction (see",
+        "DEC-0051)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_authority_bump",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "ProtocolConfig",
       "docs": [
         "Singleton global configuration account. See docs/protocol/ACCOUNT_MODEL.md",
         "\"ProtocolConfig\" and docs/protocol/SSR_ARCHITECTURE.md section 7 for the",
         "narrow-authority rationale: this account can pause creation/mint",
         "protocol-wide and set defaults for *new* Reserves, but can never move a",
-        "single token out of any already-created Reserve's vaults."
+        "single token out of any already-created Reserve's vaults.",
+        "",
+        "Two independent Protocol Admins (`authority`, `admin_2`) rather than one --",
+        "both approved Mainnet admin wallets must be able to act independently, and",
+        "there is deliberately no multisig/threshold layer here (see the Mainnet",
+        "authority-model decision entry). Neither field grants any path to Reserve",
+        "vault custody; see `collect_protocol_fee.rs` for why fee collection can",
+        "only mint pre-accounted Reserve Token shares to the fixed configured",
+        "destination, never touch raw Reserve Assets."
       ],
       "type": {
         "kind": "struct",
@@ -4803,6 +6073,10 @@
           },
           {
             "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin_2",
             "type": "pubkey"
           },
           {
@@ -4869,6 +6143,34 @@
       }
     },
     {
+      "name": "ProtocolFeeCollected",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "collected_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "ProtocolInitialized",
       "type": {
         "kind": "struct",
@@ -4878,8 +6180,119 @@
             "type": "pubkey"
           },
           {
+            "name": "admin_2",
+            "type": "pubkey"
+          },
+          {
             "name": "max_reserve_assets",
             "type": "u8"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolMintFeeTransferred",
+      "docs": [
+        "Emitted whenever a mint's (Buy or seed) Protocol fee share is minted",
+        "directly to the Protocol treasury in the SAME transaction as the mint --",
+        "see docs/project/DECISION_LOG.md's entry for this pass. Distinct from",
+        "`ProtocolFeeCollected` (a separate, later-triggered weekly-settlement",
+        "transfer for the TVL fee, or a legacy drain of a pre-this-pass pending",
+        "balance) so the Activity Log can show \"instant mint-fee transfer\" as its",
+        "own category, per the explicit requirement to record amount, asset",
+        "(the Reserve Token mint), treasury wallet, and signature for this exact",
+        "event."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserve_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolPausedSet",
+      "docs": [
+        "Emitted by both `initialize_manager_fee_recipients` (first-ever routing",
+        "for this Reserve) and `update_fee_recipients` (a subsequent change).",
+        "`recipients`/`allocations_bps` are parallel arrays, in slot order."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RebalanceLegExecuted",
+      "docs": [
+        "Emitted by `execute_rebalance_leg` -- unlike `RebalanceRecorded`'s",
+        "caller-supplied `balances_before`, every field here is derived from the",
+        "real CPI'd swap itself (see instructions/execute_rebalance_leg.rs), so",
+        "this event is intrinsically trustworthy on its own; a client should NOT",
+        "also call `record_rebalance` after an AMM-routed leg."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint_sell",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint_buy",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "executed_by",
+            "type": "pubkey"
           },
           {
             "name": "ts",
@@ -5296,10 +6709,20 @@
           },
           {
             "name": "initial_reserve_tokens",
+            "docs": [
+              "NET Reserve Token units minted to the creator -- the seed mint fee",
+              "(see `mint_fee_reserve_tokens` below) has already been deducted, same",
+              "convention as `ReserveTokensMinted.reserve_tokens_out`."
+            ],
             "type": "u64"
           },
           {
             "name": "mint_fee_reserve_tokens",
+            "docs": [
+              "Protocol + Manager fee, in Reserve Token units, taken from the gross",
+              "seed request. The initial seed mint is fee-charged like any other",
+              "mint -- previously fee-free, a confirmed bug."
+            ],
             "type": "u64"
           },
           {
@@ -5508,6 +6931,143 @@
           },
           {
             "name": "Token2022"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TvlAccrual",
+      "docs": [
+        "Time-weighted average TVL accumulator (2026-08-14 pass, see",
+        "docs/project/DECISION_LOG.md) -- a Uniswap V2-style cumulative",
+        "accumulator, using Reserve Token SUPPLY as the TVL proxy (the deployed",
+        "protocol has no oracle; this mirrors the fee system's existing",
+        "convention of treating supply as the fee base). A separate, additive PDA",
+        "(NOT a field grown onto `Reserve`/`FeeConfig`) for the same reason as",
+        "`ManagerFeeRecipients` (DEC-0094): no already-initialized `Reserve`",
+        "account on live DevNet ever needs a realloc/migration. PDA:",
+        "`[TVL_ACCRUAL_SEED, reserve.key()]`.",
+        "",
+        "The math: `period_supply_seconds` is `supply` integrated over elapsed",
+        "time (sum of `supply * elapsed_seconds` since `last_settled_ts`).",
+        "Settling divides it by the fee's `SECONDS_PER_YEAR` denominator directly",
+        "(`period_supply_seconds * annualized_bps / (BPS_DENOMINATOR *",
+        "SECONDS_PER_YEAR)`), which is algebraically identical to \"time-weighted",
+        "average TVL during the period x annualized fee rate x elapsed seconds /",
+        "31,536,000\" -- the elapsed-seconds terms cancel, so no separate average",
+        "needs to be computed, and any elapsed period (a full week, a partial",
+        "week, or several overdue weeks at once) is billed exactly."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "schema_version",
+            "type": "u8"
+          },
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "period_supply_seconds",
+            "docs": [
+              "Sum of `supply * elapsed_seconds` accumulated since `last_settled_ts`",
+              "-- reset to 0 on every successful settlement."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "last_checkpoint_ts",
+            "docs": [
+              "Timestamp this account's `period_supply_seconds` reflects reality up",
+              "to. Advanced by every checkpoint (a mint/redeem/seed piggyback, or",
+              "the settlement instruction itself bringing it current before",
+              "billing)."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "last_settled_ts",
+            "docs": [
+              "Timestamp of the last successful fee settlement -- the start of the",
+              "currently-open accrual period. Persisted so settlement is safe to",
+              "retry after a failed keeper run: nothing is charged twice, since",
+              "`period_supply_seconds` only resets once settlement actually",
+              "succeeds, and a partial period is billed exactly rather than rounded",
+              "to a fixed weekly snapshot."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TvlFeeSettled",
+      "docs": [
+        "Emitted by the standalone `accrue_fees` instruction whenever it actually",
+        "settles a TVL-fee period (2026-08-14 pass, see",
+        "docs/project/DECISION_LOG.md) -- a no-op call (nothing accumulated since",
+        "`last_settled_ts`) emits nothing. `period_start_ts`/`period_end_ts` are",
+        "`TvlAccrual.last_settled_ts` before/after this settlement; the Protocol's",
+        "share is minted directly to `protocol_destination` in this SAME",
+        "transaction (never left pending), matching `ProtocolMintFeeTransferred`'s",
+        "instant-transfer semantics. The Manager's share accrues to its",
+        "recipient(s) exactly like a mint-fee accrual (see",
+        "`ManagerFeeShareAccrued`, source = `AnnualTvlFee`)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserve_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "period_start_ts",
+            "type": "i64"
+          },
+          {
+            "name": "period_end_ts",
+            "type": "i64"
+          },
+          {
+            "name": "time_weighted_avg_supply",
+            "docs": [
+              "`period_supply_seconds / (period_end_ts - period_start_ts)` -- the",
+              "time-weighted average Reserve Token supply over the settled period,",
+              "surfaced for transparency (Activity Log / audit), never used for",
+              "control flow."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee_shares",
+            "type": "u64"
+          },
+          {
+            "name": "manager_fee_shares",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "settled_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
           }
         ]
       }

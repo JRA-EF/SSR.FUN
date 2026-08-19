@@ -19,12 +19,25 @@
 import { DEVNET_FIXTURES } from "./fixtures";
 import { DEVUSDC } from "./devUsdc";
 
-/** Canonical DevNet test-asset mint addresses this app can genuinely Buy/Sell against. */
+/**
+ * Real Circle USDC on Solana Mainnet -- the sole supported Mainnet Reserve
+ * Asset for this launch (see docs/project/DECISION_LOG.md's Mainnet-launch
+ * entries: USDC-only, direct in-kind Buy/Sell via
+ * packages/sdk/src/directInstructions.ts, no swap/zap). Included here
+ * unconditionally rather than behind a cluster check: this address can
+ * never appear in a genuine DevNet Reserve's asset list (DevNet Reserves
+ * only ever use devUSDC/mockX/Y/Z below), so adding it doesn't change any
+ * existing DevNet behavior.
+ */
+export const MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/** Canonical DevNet test-asset mint addresses this app can genuinely Buy/Sell against, plus real Mainnet USDC (see MAINNET_USDC_MINT above). */
 export const SUPPORTED_ASSET_MINTS: ReadonlySet<string> = new Set([
   DEVUSDC.mint,
   DEVNET_FIXTURES.mints.mintX.address,
   DEVNET_FIXTURES.mints.mintY.address,
   DEVNET_FIXTURES.mints.mintZ.address,
+  MAINNET_USDC_MINT,
 ]);
 
 export function isSupportedAssetMint(mint: string): boolean {

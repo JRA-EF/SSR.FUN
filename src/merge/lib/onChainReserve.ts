@@ -12,6 +12,16 @@
 // UI (built for the old AMM simulation) has something coherent to render for
 // a real, oracle-free Reserve.
 import { PublicKey } from "@solana/web3.js";
+// Deliberately NOT importing from "./solana-config" here: that module reads
+// import.meta.env (Vite-only syntax), and this file is required directly by
+// several tests/phase_*.ts files via ts-mocha's CommonJS loader -- pulling
+// import.meta syntax in transitively crashes test loading entirely (confirmed
+// live: TS1343 on every reachable test file). programId/cluster/the Mainnet
+// USDC mint are accepted as optional parameters instead (see
+// buildDtrFromDiscoveredReserve below), defaulting to the pre-existing
+// DevNet-fixture values so every caller that doesn't pass them keeps
+// behaving exactly as before; RealReserveSync.tsx (browser-only, safe to
+// import solana-config.ts directly) passes the real cluster-aware values.
 import type { DTR, OnChainAssetMeta, OnChainDelegateMeta, OnChainReserveMeta, QuarantinedReserveInfo } from "./types";
 import type { DiscoveredDelegate, DiscoveredReserve, ReserveOnChain, ParsedReserveMetadata } from "@ssr/sdk";
 import {
@@ -19,6 +29,7 @@ import {
   SOL_TEST_PRICE_USD,
   WRAPPED_SOL_MINT,
   DEVUSDC,
+  MAINNET_USDC_MINT,
   findMintAuthority,
   findVaultAuthority,
   evaluateReserveEligibility,
@@ -32,6 +43,7 @@ export const TEST_ASSET_PRICES_USD: Record<string, number> = {
   [DEVNET_FIXTURES.mints.mintZ.address]: 1,
   [WRAPPED_SOL_MINT.toBase58()]: SOL_TEST_PRICE_USD,
   [DEVUSDC.mint]: 1, // devUSDC is pegged to $1 by design (Phase C)
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": 1, // real Circle USDC on Mainnet -- genuinely $1-pegged, not a test fabrication
 };
 
 const RESERVE_TOKEN_DECIMALS = 6;
@@ -269,6 +281,13 @@ export function buildDtrFromDiscoveredReserve(
   delegates: DiscoveredDelegate[],
   connectedWallet: string | null,
   parsedMetadata: ParsedReserveMetadata | null,
+  // Optional, cluster-aware overrides -- default to the pre-existing DevNet
+  // values so every existing caller (including tests, which never pass
+  // these) behaves exactly as before. RealReserveSync.tsx passes the real
+  // values it already has from solana-config.ts (browser-only, see this
+  // file's header comment for why that module isn't imported here directly).
+  programIdOverride: PublicKey = new PublicKey(DEVNET_FIXTURES.programId),
+  clusterOverride: string = "devnet",
 ): DTR {
   const meta =
     parsedMetadata ??
@@ -279,8 +298,8 @@ export function buildDtrFromDiscoveredReserve(
       category: "DevNet",
     };
 
-  const id = `devnet-${discovered.reserveId}`;
-  const programId = new PublicKey(DEVNET_FIXTURES.programId);
+  const id = `${clusterOverride}-${discovered.reserveId}`;
+  const programId = programIdOverride;
   const reserveAddress = new PublicKey(discovered.reserve);
   const [mintAuthority] = findMintAuthority(reserveAddress, programId);
   const [vaultAuthority] = findVaultAuthority(reserveAddress, programId);
@@ -292,7 +311,15 @@ export function buildDtrFromDiscoveredReserve(
     const price = TEST_ASSET_PRICES_USD[a.assetMint] ?? 0;
     aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * price;
     const fixtureSymbol = Object.values(DEVNET_FIXTURES.mints).find((m) => m.address === a.assetMint)?.symbol;
-    const symbol = fixtureSymbol ?? (a.assetMint === WRAPPED_SOL_MINT.toBase58() ? "SOL" : a.assetMint === DEVUSDC.mint ? DEVUSDC.symbol : `Asset${i + 1}`);
+    const symbol =
+      fixtureSymbol ??
+      (a.assetMint === WRAPPED_SOL_MINT.toBase58()
+        ? "SOL"
+        : a.assetMint === DEVUSDC.mint
+          ? DEVUSDC.symbol
+          : a.assetMint === MAINNET_USDC_MINT
+            ? "USDC"
+            : `Asset${i + 1}`);
     return {
       mint: a.assetMint,
       symbol,
@@ -307,7 +334,7 @@ export function buildDtrFromDiscoveredReserve(
   const nav = supply > 0 ? aumUsd / supply : 1;
 
   const onChain: OnChainReserveMeta = {
-    programId: DEVNET_FIXTURES.programId,
+    programId: programId.toBase58(),
     reserveId: discovered.reserveId,
     reserve: discovered.reserve,
     reserveTokenMint: discovered.reserveTokenMint,

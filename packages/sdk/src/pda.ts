@@ -91,5 +91,11 @@ export function resolveProtocolFeeDestinationTokenAccount(
   programId: PublicKey,
 ): PublicKey {
   if (protocolFeeDestination.equals(otherWallet)) return programId;
-  return getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  // allowOwnerOffCurve=true: the protocol-fee destination is explicitly
+  // permitted to be an off-curve PDA (e.g. a Squads Treasury vault, see the
+  // Mainnet authority-model decision entry) -- getAssociatedTokenAddressSync
+  // throws TokenOwnerOffCurveError by default, which would otherwise make
+  // every mint/seed call fail the moment the configured protocol-fee
+  // destination is a PDA instead of an ordinary wallet.
+  return getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination, true);
 }

@@ -7,10 +7,19 @@ use crate::constants::SCHEMA_VERSION;
 /// narrow-authority rationale: this account can pause creation/mint
 /// protocol-wide and set defaults for *new* Reserves, but can never move a
 /// single token out of any already-created Reserve's vaults.
+///
+/// Two independent Protocol Admins (`authority`, `admin_2`) rather than one --
+/// both approved Mainnet admin wallets must be able to act independently, and
+/// there is deliberately no multisig/threshold layer here (see the Mainnet
+/// authority-model decision entry). Neither field grants any path to Reserve
+/// vault custody; see `collect_protocol_fee.rs` for why fee collection can
+/// only mint pre-accounted Reserve Token shares to the fixed configured
+/// destination, never touch raw Reserve Assets.
 #[account]
 pub struct ProtocolConfig {
     pub schema_version: u8,
     pub authority: Pubkey,
+    pub admin_2: Pubkey,
     pub paused: bool,
     pub max_reserve_assets: u8,
     pub default_protocol_fee_bps: u16,
@@ -25,6 +34,7 @@ impl ProtocolConfig {
     pub const SPACE: usize = 8 // discriminator
         + 1 // schema_version
         + 32 // authority
+        + 32 // admin_2
         + 1 // paused
         + 1 // max_reserve_assets
         + 2 // default_protocol_fee_bps
@@ -34,6 +44,7 @@ impl ProtocolConfig {
 
     pub fn initial(
         authority: Pubkey,
+        admin_2: Pubkey,
         max_reserve_assets: u8,
         default_protocol_fee_bps: u16,
         default_protocol_fee_destination: Pubkey,
@@ -42,6 +53,7 @@ impl ProtocolConfig {
         Self {
             schema_version: SCHEMA_VERSION,
             authority,
+            admin_2,
             paused: false,
             max_reserve_assets,
             default_protocol_fee_bps,
@@ -49,5 +61,12 @@ impl ProtocolConfig {
             reserve_count: 0,
             bump,
         }
+    }
+
+    /// True if `key` is either approved Protocol Admin. Both admins are
+    /// equally authorized for every protocol-admin-gated instruction --
+    /// neither is a fallback/backup for the other.
+    pub fn is_admin(&self, key: &Pubkey) -> bool {
+        *key == self.authority || *key == self.admin_2
     }
 }

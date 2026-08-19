@@ -52,6 +52,7 @@ describe("ssr_protocol", () => {
   const connection = provider.connection;
 
   const protocolAuthority = provider.wallet as anchor.Wallet;
+  let secondProtocolAdmin: Keypair;
   let reserveManager: Keypair;
   let secondHolder: Keypair;
   let assetMintA: PublicKey; // e.g. "USDC"-like, 6 decimals
@@ -75,9 +76,10 @@ describe("ssr_protocol", () => {
   }
 
   before(async () => {
+    secondProtocolAdmin = Keypair.generate();
     reserveManager = Keypair.generate();
     secondHolder = Keypair.generate();
-    for (const kp of [reserveManager, secondHolder]) {
+    for (const kp of [secondProtocolAdmin, reserveManager, secondHolder]) {
       await fundWallet(kp.publicKey, 0.3 * LAMPORTS_PER_SOL);
     }
 
@@ -94,7 +96,7 @@ describe("ssr_protocol", () => {
     const existing = await (program.account as any).protocolConfig.fetchNullable(protocolConfig);
     if (existing === null) {
       await program.methods
-        .initializeProtocol(12, 0, protocolAuthority.publicKey)
+        .initializeProtocol(secondProtocolAdmin.publicKey, 12, 0, protocolAuthority.publicKey)
         .accounts({
           protocolConfig,
           authority: protocolAuthority.publicKey,
@@ -106,6 +108,8 @@ describe("ssr_protocol", () => {
     const config = await (program.account as any).protocolConfig.fetch(protocolConfig);
     expect(config.maxReserveAssets).to.equal(12);
     expect(config.paused).to.equal(false);
+    expect(config.authority.toBase58()).to.equal(protocolAuthority.publicKey.toBase58());
+    expect(config.admin2.toBase58()).to.equal(secondProtocolAdmin.publicKey.toBase58());
   });
 
   it("rejects re-initializing the protocol singleton", async () => {
@@ -115,7 +119,7 @@ describe("ssr_protocol", () => {
     let threw = false;
     try {
       await program.methods
-        .initializeProtocol(12, 0, protocolAuthority.publicKey)
+        .initializeProtocol(secondProtocolAdmin.publicKey, 12, 0, protocolAuthority.publicKey)
         .accounts({
           protocolConfig,
           authority: protocolAuthority.publicKey,
@@ -126,6 +130,80 @@ describe("ssr_protocol", () => {
       threw = true; // expected: Anchor's init constraint rejects an already-initialized account
     }
     expect(threw).to.equal(true);
+  });
+
+  describe("Protocol Admin authority model (two independent admins)", () => {
+    it("allows the primary admin (authority) to update the protocol config", async () => {
+      const before = await (program.account as any).protocolConfig.fetch(protocolConfig);
+      const newDestination = Keypair.generate().publicKey;
+      await program.methods
+        .updateProtocolConfig(newDestination, before.defaultProtocolFeeBps)
+        .accounts({ protocolConfig, authority: protocolAuthority.publicKey })
+        .rpc();
+      const after = await (program.account as any).protocolConfig.fetch(protocolConfig);
+      expect(after.defaultProtocolFeeDestination.toBase58()).to.equal(newDestination.toBase58());
+    });
+
+    it("allows the second admin (admin_2) to update the protocol config independently", async () => {
+      const before = await (program.account as any).protocolConfig.fetch(protocolConfig);
+      const newDestination = Keypair.generate().publicKey;
+      await program.methods
+        .updateProtocolConfig(newDestination, before.defaultProtocolFeeBps)
+        .accounts({ protocolConfig, authority: secondProtocolAdmin.publicKey })
+        .signers([secondProtocolAdmin])
+        .rpc();
+      const after = await (program.account as any).protocolConfig.fetch(protocolConfig);
+      expect(after.defaultProtocolFeeDestination.toBase58()).to.equal(newDestination.toBase58());
+    });
+
+    it("rejects update_protocol_config from a wallet that is neither admin", async () => {
+      const stranger = Keypair.generate();
+      await fundWallet(stranger.publicKey, 0.05 * LAMPORTS_PER_SOL);
+      const before = await (program.account as any).protocolConfig.fetch(protocolConfig);
+      let threw = false;
+      try {
+        await program.methods
+          .updateProtocolConfig(Keypair.generate().publicKey, before.defaultProtocolFeeBps)
+          .accounts({ protocolConfig, authority: stranger.publicKey })
+          .signers([stranger])
+          .rpc();
+      } catch (e) {
+        threw = true; // expected: NotProtocolAuthority
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it("allows either admin to independently toggle the global pause, and blocks a non-admin", async () => {
+      const stranger = Keypair.generate();
+      await fundWallet(stranger.publicKey, 0.05 * LAMPORTS_PER_SOL);
+
+      let threw = false;
+      try {
+        await program.methods
+          .setProtocolPaused(true)
+          .accounts({ protocolConfig, authority: stranger.publicKey })
+          .signers([stranger])
+          .rpc();
+      } catch (e) {
+        threw = true; // expected: NotProtocolAuthority
+      }
+      expect(threw).to.equal(true);
+
+      await program.methods
+        .setProtocolPaused(true)
+        .accounts({ protocolConfig, authority: secondProtocolAdmin.publicKey })
+        .signers([secondProtocolAdmin])
+        .rpc();
+      let config = await (program.account as any).protocolConfig.fetch(protocolConfig);
+      expect(config.paused).to.equal(true);
+
+      await program.methods
+        .setProtocolPaused(false)
+        .accounts({ protocolConfig, authority: protocolAuthority.publicKey })
+        .rpc();
+      config = await (program.account as any).protocolConfig.fetch(protocolConfig);
+      expect(config.paused).to.equal(false);
+    });
   });
 
   describe("a two-asset Reserve: create -> init assets -> seed -> mint -> redeem", () => {

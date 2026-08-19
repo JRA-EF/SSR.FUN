@@ -24,6 +24,7 @@ pub struct InitializeProtocol<'info> {
 
 pub fn handler<'info>(
     ctx: Context<'info, InitializeProtocol<'info>>,
+    admin_2: Pubkey,
     max_reserve_assets: u8,
     default_protocol_fee_bps: u16,
     default_protocol_fee_destination: Pubkey,
@@ -32,12 +33,17 @@ pub fn handler<'info>(
         max_reserve_assets > 0 && max_reserve_assets <= ABSOLUTE_MAX_RESERVE_ASSETS,
         SsrError::MaxReserveAssetsTooHigh
     );
+    require!(
+        admin_2 != ctx.accounts.authority.key(),
+        SsrError::DuplicateProtocolAdmin
+    );
 
     let bump = ctx.bumps.protocol_config;
     ctx.accounts
         .protocol_config
         .set_inner(ProtocolConfig::initial(
             ctx.accounts.authority.key(),
+            admin_2,
             max_reserve_assets,
             default_protocol_fee_bps,
             default_protocol_fee_destination,
@@ -46,6 +52,7 @@ pub fn handler<'info>(
 
     emit!(ProtocolInitialized {
         authority: ctx.accounts.authority.key(),
+        admin_2,
         max_reserve_assets,
         ts: Clock::get()?.unix_timestamp,
     });

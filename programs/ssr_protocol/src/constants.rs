@@ -52,7 +52,12 @@ pub const MAX_METADATA_URI_LEN: usize = 200;
 /// Current on-chain schema version for `ProtocolConfig` and `Reserve`.
 /// Bump when the account layout changes; see docs/protocol/SSR_ARCHITECTURE.md
 /// section on upgrade policy.
-pub const SCHEMA_VERSION: u8 = 1;
+///
+/// Bumped 1 -> 2 for the Mainnet two-admin `ProtocolConfig` change (adds
+/// `admin_2`; see DEC entry for the Mainnet authority-model pass) -- no
+/// pre-existing accounts to migrate since this predates any Mainnet
+/// initialization.
+pub const SCHEMA_VERSION: u8 = 2;
 
 /// Minimum seed value (in the seed asset's smallest unit, summed across all
 /// assets at their provisional 1:1 unit convention -- see `seed_reserve`)

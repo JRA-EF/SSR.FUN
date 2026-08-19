@@ -21,6 +21,14 @@ ssr_protocol = "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW"
 # above; never intended for Mainnet.
 ssr_devnet_amm = "AJbXGWSU1x9LtJW7uRKJCwS3JZYqXwqHXpX6erY7dS6c"
 
+# Dedicated Mainnet program ID -- deliberately distinct from the DevNet ID
+# above (DevNet remains live and unchanged at its own address). Deploy
+# keypair at ~/.config/solana/mainnet-program-keypair.json, generated
+# outside this repo, never committed. ssr_devnet_amm has no Mainnet entry --
+# DevNet-only by design (see comment above).
+[programs.mainnet]
+ssr_protocol = "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9"
+
 # Note: the [registry] section was removed in Anchor 1.0 (see
 # docs/protocol/DEVNET_RUNBOOK.md for the Anchor/Solana version this workspace
 # targets and why -- crates.io shows anchor-lang 1.1.2 as current stable at

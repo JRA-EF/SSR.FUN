@@ -25,7 +25,7 @@ import {
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
-import { solscanUrl } from "@/lib/solana-config";
+import { solscanUrl, SSR_PROGRAM_ID } from "@/lib/solana-config";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -272,7 +272,7 @@ export function CreateDTR() {
     // real on-chain data below -- any diagnostic from a PREVIOUS session's
     // failed attempt is stale the moment that happens, never carried forward.
     setResumeError(null);
-    const programId = new PublicKey(DEVNET_FIXTURES.programId);
+    const programId = SSR_PROGRAM_ID;
     const candidateMints = pending.assets.map((a) => new PublicKey(a.mint));
     fetchReserveOnChain(connection, programId, new PublicKey(pending.reserve), candidateMints)
       .then((onChain) => {
@@ -346,7 +346,7 @@ export function CreateDTR() {
       // state is the real safety net for every other path into this same
       // gap; this is belt-and-suspenders for the resume path specifically.
       const onChainResumed: OnChainReserveMeta = {
-        programId: DEVNET_FIXTURES.programId,
+        programId: SSR_PROGRAM_ID.toBase58(),
         reserveId: result.reserveId,
         reserve: result.reserve,
         reserveTokenMint: result.reserveTokenMint,
@@ -477,7 +477,7 @@ export function CreateDTR() {
     setRecovering(true);
     setResumeError(null);
     try {
-      const programId = new PublicKey(DEVNET_FIXTURES.programId);
+      const programId = SSR_PROGRAM_ID;
       const candidateMints = resumePending.assets.map((a) => new PublicKey(a.mint));
       const onChain = await fetchReserveOnChain(connection, programId, new PublicKey(resumePending.reserve), candidateMints);
       const resumePoint = determineDeploymentResumePoint({
@@ -748,7 +748,7 @@ export function CreateDTR() {
     submittingRef.current = true;
     setIsSubmitting(true);
     setCreateStep("create-and-register");
-    const programId = new PublicKey(DEVNET_FIXTURES.programId);
+    const programId = SSR_PROGRAM_ID;
     useAppStore.getState().setTxInFlight(true);
 
     const feeDestinationKey = new PublicKey(feeDestination || walletCtx.publicKey.toBase58());
@@ -805,7 +805,7 @@ export function CreateDTR() {
 
       const dtrId = `devnet-${result.reserveId}`;
       const onChain: OnChainReserveMeta = {
-        programId: DEVNET_FIXTURES.programId,
+        programId: SSR_PROGRAM_ID.toBase58(),
         reserveId: result.reserveId,
         reserve: result.reserve,
         reserveTokenMint: result.reserveTokenMint,

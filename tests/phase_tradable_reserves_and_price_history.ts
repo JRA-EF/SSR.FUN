@@ -24,12 +24,13 @@ const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
 const RANDOM_MINT = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
 
 describe("Reserve tradability -- isReserveTradable / isSupportedAssetMint (pure)", () => {
-  it("recognizes all 4 configured mints as supported", () => {
+  it("recognizes all 4 configured DevNet mints, plus real Mainnet USDC (see DEC-0115), as supported", () => {
     expect(isSupportedAssetMint(DEVUSDC_MINT)).to.equal(true);
     expect(isSupportedAssetMint(MOCK_X)).to.equal(true);
     expect(isSupportedAssetMint(MOCK_Y)).to.equal(true);
     expect(isSupportedAssetMint(MOCK_Z)).to.equal(true);
-    expect(SUPPORTED_ASSET_MINTS.size).to.equal(4);
+    expect(isSupportedAssetMint("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")).to.equal(true);
+    expect(SUPPORTED_ASSET_MINTS.size).to.equal(5);
   });
 
   it("does not recognize wrapped SOL or an arbitrary mint as supported", () => {

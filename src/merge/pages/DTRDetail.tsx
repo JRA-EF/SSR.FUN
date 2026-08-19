@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVUSDC, DEVUSDC_MINT, DEVNET_FIXTURES, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, discoverDelegatesForReserve, computeRedemptionEntitlements, findReserve } from "@ssr/sdk";
+import { DEVUSDC, DEVUSDC_MINT, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, discoverDelegatesForReserve, computeRedemptionEntitlements, findReserve, findProtocolConfig, type ZapAssetLeg } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
 import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
-import { explorerUrl } from "@/lib/solana-config";
+import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
+import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import {
   AmbiguousConfirmationError,
@@ -101,9 +102,8 @@ export function DTRDetail() {
     if (reserveId === null) return; // not a real on-chain id shape -- genuinely nothing to check.
     let cancelled = false;
     setDirectCheck("checking");
-    const programId = new PublicKey(DEVNET_FIXTURES.programId);
-    const [reserveAddress] = findReserve(reserveId, programId);
-    fetchReserveOnChain(connection, programId, reserveAddress, [])
+    const [reserveAddress] = findReserve(reserveId, SSR_PROGRAM_ID);
+    fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, [])
       .then((onChain) => {
         if (cancelled) return;
         // Found on-chain but not yet in the store: leave state as
@@ -570,6 +570,70 @@ export function DTRDetail() {
     }
   };
 
+  // Mainnet direct Buy: no swap, no server co-signer -- see
+  // packages/sdk/src/directInstructions.ts's header for why. Requires the
+  // wallet's real USDC balance to fund the entire deposit directly (this
+  // Reserve's sole asset for the current USDC-only launch scope, see
+  // docs/project/DECISION_LOG.md's Mainnet-launch entries).
+  const handleBuyMainnet = async () => {
+    if (!dtr.onChain) return;
+    if (!walletCtx.publicKey) {
+      toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
+      return;
+    }
+    if (!canSubmitNewTransaction(buyPhase)) return;
+    const usdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** 6));
+    setBuyPhase("preparing");
+    setBuyPendingSignature(null);
+    useAppStore.getState().setTxInFlight(true);
+    try {
+      const reserveAddress = new PublicKey(dtr.onChain.reserve);
+      const live = await fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, [new PublicKey(MAINNET_USDC_MINT)]);
+      if (!live) throw new Error("Could not read this Reserve's live on-chain state.");
+      const assets: ZapAssetLeg[] = live.assets.map((a) => ({
+        mint: a.assetMint,
+        decimals: a.decimals,
+        reserveAsset: a.reserveAsset,
+        vault: a.vault,
+        vaultBalanceRaw: a.vaultBalanceRaw,
+      }));
+      const [protocolConfig] = findProtocolConfig(SSR_PROGRAM_ID);
+      const { signature } = await executeDirectMint({
+        connection,
+        wallet: walletCtx,
+        protocolConfig,
+        protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
+        reserve: reserveAddress,
+        reserveTokenMint: new PublicKey(dtr.onChain.reserveTokenMint),
+        mintAuthority: new PublicKey(dtr.onChain.mintAuthority),
+        assets,
+        reserveTokenSupplyRaw: live.reserveTokenSupplyRaw,
+        amountIn: usdcAmountRaw,
+        onProgress: (e) => setBuyPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
+      });
+      setBuyPhase("confirmed");
+      await refreshRealReserveNow();
+      const spentUsdc = Number(usdcAmountRaw) / 10 ** 6;
+      recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
+      setBuyAmount("");
+      toast(transactionConfirmedToast(signature, "Buy confirmed"));
+    } catch (e) {
+      if (e instanceof AmbiguousConfirmationError) {
+        setBuyPhase("unresolved");
+        setBuyPendingSignature(e.signature);
+        toast({ title: "Mainnet RPC is temporarily busy", description: "No confirmation could be verified yet -- your transaction may still be confirming. Checking your real balance now." });
+        await reconcileBuy(e.signature);
+      } else {
+        setBuyPhase("failed");
+        const raw = e instanceof Error ? e.message : "The purchase failed.";
+        console.error("Buy failed:", raw);
+        toast({ variant: "destructive", title: "Buy Failed", description: "Your purchase could not be completed. No funds were moved." });
+      }
+    } finally {
+      useAppStore.getState().setTxInFlight(false);
+    }
+  };
+
   // Fail closed: this app only ever executes a real signed DevNet
   // transaction for mint/redeem (see handleBuy/handleSell above). A DTR
   // without verified on-chain state (dtr.onChain) has no genuine mechanism
@@ -685,6 +749,76 @@ export function DTRDetail() {
     }
   };
 
+  // Mainnet direct Sell: no swap, no server co-signer -- see
+  // packages/sdk/src/directInstructions.ts's header. redeem_reserve_tokens_in_kind
+  // pays the user's own USDC ATA directly.
+  const handleSellMainnet = async () => {
+    if (!dtr.onChain) return;
+    if (!walletCtx.publicKey) {
+      toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
+      return;
+    }
+    if (!canSubmitNewTransaction(sellPhase)) return;
+    if (numSellAmount > (holding?.tokenBalance ?? 0)) {
+      toast({
+        variant: "destructive",
+        title: "Insufficient Reserve Tokens",
+        description: `This wallet holds ${(holding?.tokenBalance ?? 0).toLocaleString()} ${dtr.ticker}, less than the ${numSellAmount.toLocaleString()} requested.`,
+      });
+      return;
+    }
+    setSellPhase("preparing");
+    setSellPendingSignature(null);
+    useAppStore.getState().setTxInFlight(true);
+    try {
+      sellPreRtRawRef.current = BigInt(
+        await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), walletCtx.publicKey!)),
+      );
+      const reserveAddress = new PublicKey(dtr.onChain.reserve);
+      const live = await fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, [new PublicKey(MAINNET_USDC_MINT)]);
+      if (!live) throw new Error("Could not read this Reserve's live on-chain state.");
+      const assets: ZapAssetLeg[] = live.assets.map((a) => ({
+        mint: a.assetMint,
+        decimals: a.decimals,
+        reserveAsset: a.reserveAsset,
+        vault: a.vault,
+        vaultBalanceRaw: a.vaultBalanceRaw,
+      }));
+      const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
+      const { signature } = await executeDirectRedeem({
+        connection,
+        wallet: walletCtx,
+        reserve: reserveAddress,
+        reserveTokenMint: new PublicKey(dtr.onChain.reserveTokenMint),
+        vaultAuthority: new PublicKey(dtr.onChain.vaultAuthority),
+        assets,
+        reserveTokenSupplyRaw: live.reserveTokenSupplyRaw,
+        redemptionFeeBps: BigInt(live.redemptionFeeBps),
+        reserveTokensToRedeem,
+        onProgress: (e) => setSellPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
+      });
+      setSellPhase("confirmed");
+      await refreshRealReserveNow();
+      recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
+      setSellAmount("");
+      toast(transactionConfirmedToast(signature, "Sell confirmed"));
+    } catch (e) {
+      if (e instanceof AmbiguousConfirmationError) {
+        setSellPhase("unresolved");
+        setSellPendingSignature(e.signature);
+        toast({ title: "Mainnet RPC is temporarily busy", description: "No confirmation could be verified yet -- your transaction may still be confirming. Checking your real balance now." });
+        await reconcileSell(e.signature);
+      } else {
+        setSellPhase("failed");
+        const raw = e instanceof Error ? e.message : "The redemption failed.";
+        console.error("Sell failed:", raw);
+        toast({ variant: "destructive", title: "Sell Failed", description: "Your redemption could not be completed. No funds were moved." });
+      }
+    } finally {
+      useAppStore.getState().setTxInFlight(false);
+    }
+  };
+
   // Same fail-closed reasoning as handleBuyUnavailable above.
   const handleSellUnavailable = async () => {
     toast({
@@ -694,8 +828,8 @@ export function DTRDetail() {
     });
   };
 
-  const onBuyClick = isOnChain ? handleBuy : handleBuyUnavailable;
-  const onSellClick = isOnChain ? handleSell : handleSellUnavailable;
+  const onBuyClick = isOnChain ? (IS_MAINNET ? handleBuyMainnet : handleBuy) : handleBuyUnavailable;
+  const onSellClick = isOnChain ? (IS_MAINNET ? handleSellMainnet : handleSell) : handleSellUnavailable;
 
   // devUSDC is SSR.fun's universal purchasing/settlement currency -- it is
   // NEVER required to be one of a Reserve's own underlying Reserve Assets.
