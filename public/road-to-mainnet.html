@@ -85,7 +85,7 @@
   <aside class="sidebar">
     <div class="brand">SSR.FUN<small>Protocol readiness</small></div>
     <nav class="nav">
-      <a href="#overview">Overview</a><a href="#speedrun">Speedrun checklist</a><a href="#critical-functions">DevNet function checklist</a><a href="#mainnet-functions">Mainnet function checklist</a><a href="#architecture">Architecture</a><a href="#integrations" data-tab="integrations">Integrations &amp; to-do</a><a href="#archive">Full DevNet archive</a>
+      <a href="#overview">Overview</a><a href="#speedrun">Speedrun checklist</a><a href="#critical-functions">DevNet function checklist</a><a href="#architecture">Architecture</a><a href="#integrations">Integrations &amp; to-do</a><a href="#archive">Full DevNet archive</a><a href="#mainnet-functions" data-tab="mainnet">Mainnet function checklist</a>
     </nav>
     <div class="side-note">Formal sign-off rule: a claim is not Passed until its evidence can be independently reproduced.</div>
     <div class="side-note">
@@ -107,11 +107,11 @@
     </header>
 
     <div class="tabbar" role="tablist">
-      <button class="tabbtn active" type="button" data-tab="checklist" role="tab" aria-selected="true">Checklist</button>
-      <button class="tabbtn" type="button" data-tab="integrations" role="tab" aria-selected="false">Integrations &amp; to-do</button>
+      <button class="tabbtn active" type="button" data-tab="devnet" role="tab" aria-selected="true">DevNet</button>
+      <button class="tabbtn" type="button" data-tab="mainnet" role="tab" aria-selected="false">Mainnet</button>
     </div>
 
-    <div id="panel-checklist" class="tabpanel active" role="tabpanel">
+    <div id="panel-devnet" class="tabpanel active" role="tabpanel">
     <section>
       <div class="toolbar" style="position:static">
         <div id="syncBanner" class="sync-banner state-loading"><span class="sdot"></span><span id="syncBannerText">Connecting…</span><button class="btn hidden" id="syncRetry">Retry</button></div>
@@ -136,19 +136,6 @@
         <button class="btn" id="cfExpandAll">Expand all</button><button class="btn" id="cfCollapseAll">Collapse all</button>
       </div>
       <div id="criticalFunctionsContainer" class="checklist"></div>
-    </section>
-
-    <section id="mainnet-functions">
-      <div class="section-head"><div><h2>Mainnet function checklist</h2><p>Same 11 checks as the DevNet function checklist above, one item per protocol function, now verified live against the deployed Mainnet program (<code>8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9</code>) with a real connected wallet and real USDC -- never a script, never a throwaway keypair, never DevNet evidence carried over. Reserve creation and Buy/Sell are already USDC-only for this launch (see the direct-USDC path); Add/Remove Reserve asset and Rebalance remain live protocol instructions but are out of scope for the initial single-asset launch and can stay Not applicable until a non-USDC Reserve asset is actually supported.</p></div><span class="badge"><span class="dot" style="background:var(--purple)"></span><span id="mfPassCount">0</span>/<span id="mfTotalCount">0</span> passed</span></div>
-      <div class="progress" style="margin-bottom:18px"><span id="mfBar"></span></div>
-      <div class="notice" style="margin-bottom:18px"><strong>Real funds.</strong> Every "Passed" here should mean a genuine Mainnet transaction moved real USDC and Reserve Tokens exactly as expected -- not a build, not a DevNet result, not a server-signed smoke-test script. Record the real transaction signature (Solana Explorer, Mainnet) as evidence for each item.</div>
-      <div class="toolbar">
-        <input id="mfSearch" class="control" placeholder="Search…">
-        <select id="mfCategoryFilter" class="control"><option value="">All functions</option></select>
-        <select id="mfStatusFilter" class="control"><option value="">All statuses</option></select>
-        <button class="btn" id="mfExpandAll">Expand all</button><button class="btn" id="mfCollapseAll">Collapse all</button>
-      </div>
-      <div id="mainnetFunctionsContainer" class="checklist"></div>
     </section>
 
     <section id="architecture">
@@ -274,9 +261,7 @@
       <div class="prompt-box"><button class="btn copy" id="copyPrompt">Copy prompt</button><textarea id="claudePrompt" spellcheck="false"></textarea></div>
     </section>
     </details>
-    </div><!-- /panel-checklist -->
 
-    <div id="panel-integrations" class="tabpanel" role="tabpanel">
     <section id="integrations">
       <div class="section-head"><div><h2>Integrations — what's needed for Mainnet</h2><p>Four things stand between the current DevNet setup and a real closed Mainnet. Alternatives are the 2-3 biggest players in each category as of mid-2026 — worth a quick compare before committing.</p></div></div>
       <div class="int-grid">
@@ -310,7 +295,22 @@
         </div>
       </div>
     </section>
-    </div><!-- /panel-integrations -->
+    </div><!-- /panel-devnet -->
+
+    <div id="panel-mainnet" class="tabpanel" role="tabpanel">
+    <section id="mainnet-functions">
+      <div class="section-head"><div><h2>Mainnet function checklist</h2><p>Same 11 checks as the DevNet function checklist (DevNet tab), one item per protocol function, verified live against the deployed Mainnet program (<code>8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9</code>) with a real connected wallet and real USDC -- never a script, never a throwaway keypair, never DevNet evidence carried over. Reserve creation and Buy/Sell are already USDC-only for this launch (see the direct-USDC path); Add/Remove Reserve asset and Rebalance remain live protocol instructions but are out of scope for the initial single-asset launch and can stay Not applicable until a non-USDC Reserve asset is actually supported.</p></div><span class="badge"><span class="dot" style="background:var(--purple)"></span><span id="mfPassCount">0</span>/<span id="mfTotalCount">0</span> passed</span></div>
+      <div class="progress" style="margin-bottom:18px"><span id="mfBar"></span></div>
+      <div class="notice" style="margin-bottom:18px"><strong>Real funds.</strong> Every "Passed" here should mean a genuine Mainnet transaction moved real USDC and Reserve Tokens exactly as expected -- not a build, not a DevNet result, not a server-signed smoke-test script. Record the real transaction signature (Solana Explorer, Mainnet) as evidence for each item.</div>
+      <div class="toolbar">
+        <input id="mfSearch" class="control" placeholder="Search…">
+        <select id="mfCategoryFilter" class="control"><option value="">All functions</option></select>
+        <select id="mfStatusFilter" class="control"><option value="">All statuses</option></select>
+        <button class="btn" id="mfExpandAll">Expand all</button><button class="btn" id="mfCollapseAll">Collapse all</button>
+      </div>
+      <div id="mainnetFunctionsContainer" class="checklist"></div>
+    </section>
+    </div><!-- /panel-mainnet -->
 
     <footer class="footer"><span>SSR.FUN · Road to Mainnet</span><span>Speedrunning a closed Mainnet, evidence-first where it still matters</span></footer>
   </div></main>
@@ -873,7 +873,7 @@ function activateTab(name){
 
 function setup(){
   document.querySelectorAll('.tabbtn').forEach(b=>b.onclick=()=>activateTab(b.dataset.tab));
-  document.querySelectorAll('.nav a[href^="#"]').forEach(a=>{a.addEventListener('click',()=>activateTab(a.dataset.tab==='integrations'?'integrations':'checklist'))});
+  document.querySelectorAll('.nav a[href^="#"]').forEach(a=>{a.addEventListener('click',()=>activateTab(a.dataset.tab==='mainnet'?'mainnet':'devnet'))});
   document.getElementById('updated').textContent=new Date().toLocaleString();
   setEditorLabel();
   document.getElementById('changeEditorName').onclick=()=>{localStorage.removeItem(EDITOR_KEY);setEditorLabel()};
