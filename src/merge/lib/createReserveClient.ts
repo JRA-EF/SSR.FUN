@@ -61,7 +61,7 @@ import {
 } from "@ssr/sdk";
 import { fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
 import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
-import { computeFundingShortfall, determineDeploymentResumePoint, type ReserveOnChainStatus } from "./createReserveResume";
+import { computeFundingShortfall, computeSwapShortfallPct, determineDeploymentResumePoint, type ReserveOnChainStatus } from "./createReserveResume";
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
 /**
@@ -485,7 +485,18 @@ export interface JupiterSwapFundingOptions {
   /** The Reserve's total USD seed value -- combined with each asset's own seedWeightFraction to size that asset's swap. */
   seedTotalUsd: number;
   onSwapStart?: (mint: string) => void;
+  /**
+   * Fired when a swap's real on-chain result came in meaningfully below the
+   * live quote's expected output (beyond ordinary slippage) -- the Reserve
+   * is still created/seeded with whatever the swap actually produced
+   * (`actualRaw`), never blocked on this; the caller decides whether/how to
+   * warn the user. Never fired for a shortfall within SHORTFALL_WARN_PCT.
+   */
+  onSwapShortfall?: (info: { mint: string; targetRaw: bigint; actualRaw: bigint; shortfallPct: number }) => void;
 }
+
+/** Below this fraction short of the live quote's expected output, a swap's result is treated as ordinary slippage and never warned about -- comfortably above the default/typical slippageBps (150 = 1.5%) so routine execution-price movement never trips it. */
+const SHORTFALL_WARN_PCT = 0.05;
 
 /** True for any asset this app would consider swapping USDC into via Jupiter -- real Circle USDC and wrapped SOL are both funded through their own existing, non-swap paths. */
 export function isJupiterSwapEligible(mint: string): boolean {
@@ -504,11 +515,17 @@ export function isJupiterSwapEligible(mint: string): boolean {
  *
  * Returns `finalSeedAmounts`, not just the input `seedAmounts` unchanged:
  * when `jupiterSwap.enabled`, a swap-eligible asset's target amount is
- * REPLACED with a live Jupiter quote's real output amount (the caller's own
- * `seedRawAmountForAsset` estimate assumes every asset is pegged to $1,
- * which is only true for USDC itself -- see docs/project/DECISION_LOG.md's
- * entry for this pass). The caller must pass `finalSeedAmounts`, not its
- * original `seedAmounts`, into buildSeedReserveInstruction.
+ * REPLACED -- with a live Jupiter quote's expected output amount if the
+ * wallet already held enough (the caller's own `seedRawAmountForAsset`
+ * estimate assumes every asset is pegged to $1, which is only true for
+ * USDC itself), or with the REAL resulting balance after actually
+ * executing a swap. That real amount is used whether it landed above,
+ * within, or below the quote's expectation -- the Reserve is always
+ * created with what the wallet genuinely ends up holding, never blocked on
+ * a shortfall (see SHORTFALL_WARN_PCT/onSwapShortfall for when a caller is
+ * merely notified instead). See docs/project/DECISION_LOG.md's entry for
+ * this pass. The caller must pass `finalSeedAmounts`, not its original
+ * `seedAmounts`, into buildSeedReserveInstruction.
  */
 async function fundSeedAssetsIdempotent(
   connection: Connection,
@@ -552,11 +569,18 @@ async function fundSeedAssetsIdempotent(
 
       jupiterSwap.onSwapStart?.(asset.mint);
       jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote);
+      // Use whatever the swap actually produced -- Jupiter's on-chain swap
+      // instruction already enforces its own worst-case slippage floor
+      // (otherAmountThreshold), so a real result below the quote's
+      // OPTIMISTIC outAmount is expected/routine, not a failure to block
+      // on. The Reserve is seeded with the real balance either way; only a
+      // shortfall beyond ordinary slippage gets reported (never thrown) via
+      // onSwapShortfall.
       const newBalance = await fetchOwnedBalanceRaw(connection, new PublicKey(asset.mint), owner);
-      if (newBalance < quote.outAmount) {
-        throw new Error(
-          `Swapped USDC for ${asset.mint} via Jupiter, but the resulting balance is still short of the target -- this can happen with a fast-moving or thin-liquidity token. Try again to top up the remainder (only the real shortfall will be swapped, not the full amount again).`,
-        );
+      finalSeedAmounts[i] = newBalance;
+      const shortfallPct = computeSwapShortfallPct(quote.outAmount, newBalance);
+      if (shortfallPct > SHORTFALL_WARN_PCT) {
+        jupiterSwap.onSwapShortfall?.({ mint: asset.mint, targetRaw: quote.outAmount, actualRaw: newBalance, shortfallPct });
       }
     }
   }

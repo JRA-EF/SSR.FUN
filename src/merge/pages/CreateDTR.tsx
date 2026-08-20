@@ -153,6 +153,24 @@ export function CreateDTR() {
     }
     return CREATE_STEP_LABELS[step];
   }
+  // jupiterSwap.onSwapShortfall (createReserveClient.ts): a swap's real
+  // on-chain result landed meaningfully below what was quoted -- the
+  // Reserve is still created with the real amount received (never
+  // blocked), this just makes sure the creator sees it happened rather
+  // than silently ending up with a lighter allocation than the weight
+  // slider implied.
+  function handleJupiterSwapShortfall(info: { mint: string; targetRaw: bigint; actualRaw: bigint; shortfallPct: number }) {
+    const meta = SELECTABLE_ASSETS.find((a) => a.mint === info.mint);
+    const symbol = meta?.symbol ?? `${info.mint.slice(0, 4)}...${info.mint.slice(-4)}`;
+    const decimals = meta?.decimals ?? 0;
+    const actual = (Number(info.actualRaw) / 10 ** decimals).toLocaleString();
+    const target = (Number(info.targetRaw) / 10 ** decimals).toLocaleString();
+    toast({
+      title: `Received less ${symbol} than quoted`,
+      description: `The Jupiter swap for ${symbol} delivered ${actual} instead of the ~${target} quoted (${(info.shortfallPct * 100).toFixed(1)}% short) -- likely price movement on a thin-liquidity token. Your Reserve was still created/seeded with the real amount received.`,
+      variant: "destructive",
+    });
+  }
   // Set by handleResumeDeployment's catch block when a Resume attempt fails
   // -- classified so the panel below can distinguish a genuinely transient
   // condition (safe to just click Resume again) from a deterministic
@@ -394,7 +412,7 @@ export function CreateDTR() {
         onProgress: setCreateStep,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
-        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: resumePending.seedTotalUsd, onSwapStart: setJupiterSwapMint } : undefined,
+        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: resumePending.seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
       });
       clearPendingReserveDeploy();
       // Same id-scheme requirement as handleSubmitReal's own dtrId -- see its comment above.
@@ -856,7 +874,7 @@ export function CreateDTR() {
         seedTotalUsd,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
-        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint } : undefined,
+        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
         onProgress: setCreateStep,
         // Persisted immediately -- if the page reloads (or the user leaves
         // and comes back later) anywhere after this fires, the mount-time

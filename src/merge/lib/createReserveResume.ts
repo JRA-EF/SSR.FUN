@@ -85,6 +85,12 @@ export function computeFundingShortfall(requiredRaw: bigint, currentBalanceRaw: 
   return requiredRaw > currentBalanceRaw ? requiredRaw - currentBalanceRaw : 0n;
 }
 
+/** How far a Jupiter swap's real result landed below its quote's expected output, as a fraction of that expectation -- 0 if it met or exceeded it (a surplus is never a "shortfall"). Used only to decide whether to WARN the creator (see createReserveClient.ts's SHORTFALL_WARN_PCT/onSwapShortfall) -- the Reserve is always created with the real actualRaw amount regardless of this value, never blocked on it. */
+export function computeSwapShortfallPct(targetRaw: bigint, actualRaw: bigint): number {
+  if (targetRaw <= 0n || actualRaw >= targetRaw) return 0;
+  return Number(targetRaw - actualRaw) / Number(targetRaw);
+}
+
 /** A persisted deployment marker older than this is treated as abandoned rather than held onto forever -- the reconciliation check against real on-chain state (never this staleness window alone) is still what actually decides whether a Reserve exists. */
 export const PENDING_DEPLOY_STALE_MS = 10 * 60 * 1000;
 

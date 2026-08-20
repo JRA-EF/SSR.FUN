@@ -22,6 +22,7 @@ import assetCatalogueHandler, { dedupeBySymbolPreferOrganicScore, type Catalogue
 import knownMintsHandler from "../api/ledger/known-asset-mints";
 import mainnetMetadataHandler from "../api/mainnet/reserve-metadata";
 import { uploadReserveMetadata, isJupiterSwapEligible } from "../src/merge/lib/createReserveClient";
+import { computeSwapShortfallPct } from "../src/merge/lib/createReserveResume";
 import { matchesAssetSearch } from "../src/merge/lib/assetSearch";
 import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
 
@@ -304,5 +305,25 @@ describe("api/mainnet/jupiter-swap.ts -- input validation (no network/API-key de
     } finally {
       if (previous !== undefined) process.env.JUPITER_API_KEY = previous;
     }
+  });
+});
+
+describe("src/merge/lib/createReserveResume.ts -- computeSwapShortfallPct (pure)", () => {
+  it("a swap that met or exceeded its quoted target is never a shortfall", () => {
+    expect(computeSwapShortfallPct(1_000_000n, 1_000_000n)).to.equal(0);
+    expect(computeSwapShortfallPct(1_000_000n, 1_200_000n)).to.equal(0);
+  });
+
+  it("computes the exact fraction short of target for a genuine shortfall", () => {
+    expect(computeSwapShortfallPct(1_000_000n, 900_000n)).to.equal(0.1);
+    expect(computeSwapShortfallPct(1_000_000n, 500_000n)).to.equal(0.5);
+  });
+
+  it("a zero actual result against a real target is a 100% shortfall", () => {
+    expect(computeSwapShortfallPct(1_000_000n, 0n)).to.equal(1);
+  });
+
+  it("a zero target is never a shortfall (nothing was expected)", () => {
+    expect(computeSwapShortfallPct(0n, 0n)).to.equal(0);
   });
 });
