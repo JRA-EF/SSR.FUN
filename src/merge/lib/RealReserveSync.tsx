@@ -37,6 +37,7 @@ import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
 import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from "./solana-config";
 import { useMainnetKnownAssetMints } from "../hooks/useMainnetKnownAssetMints";
+import { useMainnetAssetCatalogue } from "../hooks/useMainnetAssetCatalogue";
 
 const BASE_POLL_MS = 15_000;
 const MAX_POLL_MS = 120_000;
@@ -64,6 +65,17 @@ export function RealReserveSync() {
   const setChainDiscoveryStatus = useAppStore((s) => s.setChainDiscoveryStatus);
   const mainnetLocalKnownMints = useAppStore((s) => s.mainnetKnownAssetMints);
   const mainnetLedgerKnownMints = useMainnetKnownAssetMints(IS_MAINNET);
+  // Real symbol/name per mint (e.g. "SSR" for a Reserve composed of SSR
+  // itself) -- without this, discovery had no way to resolve a Mainnet
+  // asset's real symbol and every such composition entry silently fell back
+  // to a generic "AssetN" placeholder (see onChainReserve.ts's
+  // buildDtrFromDiscoveredReserve). Loading/unavailable states both degrade
+  // to the same honest "AssetN" fallback, never a fabricated symbol.
+  const mainnetCatalogue = useMainnetAssetCatalogue(IS_MAINNET);
+  const mainnetMintMeta = useMemo(
+    () => Object.fromEntries(mainnetCatalogue.tokens.map((t) => [t.mint, { symbol: t.symbol, name: t.name }])),
+    [mainnetCatalogue.tokens],
+  );
 
   const walletKey = connected && publicKey ? publicKey.toBase58() : null;
 
@@ -156,7 +168,7 @@ export function RealReserveSync() {
             const parsedMetadata = await getCached(`reserve-metadata:${reserve.metadataUri}`, METADATA_CACHE_TTL_MS, () => resolveReserveMetadata(reserve.metadataUri)).catch(
               () => null,
             );
-            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER);
+            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER, mainnetMintMeta);
           }),
         );
         if (cancelled) return;
@@ -195,7 +207,7 @@ export function RealReserveSync() {
       if (timeoutId) clearTimeout(timeoutId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection, walletKey, applyDiscoveredReserves, syncRealHolding, setChainDiscoveryStatus, publicKey, candidateAssetMints]);
+  }, [connection, walletKey, applyDiscoveredReserves, syncRealHolding, setChainDiscoveryStatus, publicKey, candidateAssetMints, mainnetMintMeta]);
 
   return null;
 }

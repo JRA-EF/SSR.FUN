@@ -203,8 +203,8 @@ export function Portfolio() {
               <h3 className="text-xl font-semibold mb-2">Syncing holdings...</h3>
               <p className="text-muted-foreground max-w-md mb-6">
                 {chainDiscoveryStatus === "error"
-                  ? "Solana DevNet couldn't be reached just now -- retrying. Your real holdings will appear as soon as the connection recovers."
-                  : "Reading your real Reserve Token balances from Solana DevNet -- this only takes a moment."}
+                  ? `Solana ${IS_MAINNET ? "Mainnet" : "DevNet"} couldn't be reached just now -- retrying. Your real holdings will appear as soon as the connection recovers.`
+                  : `Reading your real Reserve Token balances from Solana ${IS_MAINNET ? "Mainnet" : "DevNet"} -- this only takes a moment.`}
               </p>
             </CardContent>
           </Card>
@@ -308,7 +308,7 @@ export function Portfolio() {
                                   variant={dtr.onChain ? "default" : "outline"}
                                   className="text-[9px] px-1 py-0 h-4 uppercase tracking-wide"
                                 >
-                                  {dtr.onChain ? "DevNet" : "Simulated"}
+                                  {dtr.onChain ? (IS_MAINNET ? "Mainnet" : "DevNet") : "Simulated"}
                                 </Badge>
                               </div>
                             </div>

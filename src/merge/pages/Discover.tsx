@@ -9,12 +9,15 @@ import { Activity, SearchX } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
 import { RESERVE_CATEGORIES, normalizeReserveCategory, type DTR } from "@/lib/types";
 import { buildReserveCardProps } from "@/lib/reserveCardProps";
+import { IS_MAINNET } from "@/lib/solana-config";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { ReserveCard } from "../../components/ReserveCard";
 import { avatarStyle } from "../../lib/avatarStyle";
 
 type SortKey = "default" | "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
+
+const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "default", label: "Sort: Default" },
@@ -122,19 +125,19 @@ export function Discover() {
 
       {chainDiscoveryStatus === "error" && (
         <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn)", color: "var(--warn)" }}>
-          Could not refresh live Solana DevNet Reserves ({chainDiscoveryError ?? "unknown error"}). Showing the last known state --
+          Could not refresh live Solana {CLUSTER_LABEL} Reserves ({chainDiscoveryError ?? "unknown error"}). Showing the last known state --
           on-chain figures below may be stale until the connection recovers.
         </div>
       )}
       {chainDiscoveryStatus === "loading" && !dtrs.some((d) => d.onChain) && (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-          Checking Solana DevNet for live Reserves…
+          Checking Solana {CLUSTER_LABEL} for live Reserves…
         </div>
       )}
 
       <div className="fcards">
         {visibleDtrs.map((dtr) => {
-          const cardProps = buildReserveCardProps(dtr);
+          const cardProps = buildReserveCardProps(dtr, IS_MAINNET);
           return (
             <ReserveCard
               key={dtr.id}

@@ -207,8 +207,20 @@ export function canSubmitNewTransaction(phase: TxPhase): boolean {
   return phase === "idle" || phase === "confirmed" || phase === "failed" || phase === "expired" || phase === "unresolved";
 }
 
-/** User-facing label for the trade button's in-flight states -- returns null for "idle"/terminal phases, where the caller should show its own normal label ("Buy X", "Confirmed", etc.) instead. */
-export function txPhaseLabel(phase: TxPhase): string | null {
+/**
+ * User-facing label for the trade button's in-flight states -- returns null
+ * for "idle"/terminal phases, where the caller should show its own normal
+ * label ("Buy X", "Confirmed", etc.) instead.
+ *
+ * `clusterLabel` defaults to "DevNet" (every pre-existing caller/test
+ * unchanged) rather than importing IS_MAINNET from ./solana-config directly
+ * -- that module reads import.meta.env (Vite-only syntax) and this file is
+ * required directly by tests/phase_rpc_resilience.ts via ts-mocha's
+ * CommonJS loader, which crashes on that syntax (same constraint documented
+ * in onChainReserve.ts's/reserveCardProps.ts's own headers). DTRDetail.tsx
+ * passes its own real CLUSTER_LABEL.
+ */
+export function txPhaseLabel(phase: TxPhase, clusterLabel: string = "DevNet"): string | null {
   switch (phase) {
     case "preparing":
       return "Preparing transaction...";
@@ -216,9 +228,9 @@ export function txPhaseLabel(phase: TxPhase): string | null {
       return "Waiting for wallet approval...";
     case "submitted":
     case "confirming":
-      return "Submitted -- confirming on DevNet...";
+      return `Submitted -- confirming on ${clusterLabel}...`;
     case "unresolved":
-      return "DevNet RPC is temporarily busy -- your transaction is still being verified";
+      return `${clusterLabel} RPC is temporarily busy -- your transaction is still being verified`;
     default:
       return null;
   }

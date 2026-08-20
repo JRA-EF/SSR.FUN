@@ -5,6 +5,9 @@ import { Modal } from './ui'
 import { useAppStore } from '@/store/useAppStore'
 import type { WalletProviderId } from '@/lib/types'
 import { useStore } from '../state/store'
+import { IS_MAINNET } from '@/lib/solana-config'
+
+const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
 /** The four wallets offered in the picker. MetaMask is listed but never actually
  *  connects — it doesn't support Solana — so selecting it always surfaces the
@@ -64,7 +67,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
     if (connected && publicKey) {
       setStep({ kind: 'connected', wallet: pending })
       pendingRef.current = null
-      toast('Wallet connected', `Connected to ${pending.name} on Solana DevNet.`)
+      toast('Wallet connected', `Connected to ${pending.name} on Solana ${CLUSTER_LABEL}.`)
     }
   }, [connected, publicKey, toast])
 
@@ -135,7 +138,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
       {step.kind === 'select' && (
         <>
           <p className="wm-sub">
-            Choose a wallet to continue. Testing Environment — connects on Solana DevNet, not Mainnet.
+            {IS_MAINNET ? 'Choose a wallet to continue. Connects on Solana Mainnet — real funds.' : 'Choose a wallet to continue. Testing Environment — connects on Solana DevNet, not Mainnet.'}
           </p>
           <div className="wm-list">
             {WALLET_OPTIONS.map(opt => (
@@ -172,7 +175,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
           </span>
           <p className="wm-status-text">{step.wallet.name} connected.</p>
           <p className="wm-sub" style={{ textAlign: 'center' }}>
-            Connected on Solana DevNet — a test network with no real economic value.
+            {IS_MAINNET ? 'Connected on Solana Mainnet — real funds, real economic value.' : 'Connected on Solana DevNet — a test network with no real economic value.'}
           </p>
           <button type="button" className="btn btn-primary" onClick={onClose}>
             Done

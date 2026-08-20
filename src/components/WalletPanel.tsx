@@ -9,7 +9,10 @@ import {
   withReadConcurrencyLimit,
   BALANCE_CACHE_TTL_MS,
 } from '@/lib/rpcResilience'
+import { IS_MAINNET } from '@/lib/solana-config'
 import { Addr } from './ui'
+
+const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
 type BalanceStatus = 'loading' | 'ready' | 'unavailable' | 'rate-limited'
 
@@ -28,7 +31,11 @@ export function WalletPanel({ open, onClose }: { open: boolean; onClose: () => v
   const [devUsdcRaw, setDevUsdcRaw] = useState<bigint | null>(null)
 
   useEffect(() => {
-    if (!open || !publicKey) return
+    // devUSDC only ever exists on DevNet -- on Mainnet there is no such
+    // mint, so this read (and the row that displays it below) is skipped
+    // entirely rather than showing a meaningless "Unavailable" for a token
+    // that was never expected to exist there in the first place.
+    if (!open || !publicKey || IS_MAINNET) return
     let cancelled = false
     setDevUsdcStatus('loading')
     const owner = publicKey
@@ -80,8 +87,11 @@ export function WalletPanel({ open, onClose }: { open: boolean; onClose: () => v
   return (
     <div ref={panelRef} className="wallet-panel" aria-label="Wallet details">
       <div className="wallet-panel-head">
-        <span className="sim-badge" title="Connected to the SSR Protocol on Solana DevNet — a public test network, not Mainnet. No real economic value.">
-          Solana DevNet
+        <span
+          className="sim-badge"
+          title={IS_MAINNET ? 'Connected to the SSR Protocol on Solana Mainnet — real funds, real economic value.' : 'Connected to the SSR Protocol on Solana DevNet — a public test network, not Mainnet. No real economic value.'}
+        >
+          Solana {CLUSTER_LABEL}
         </span>
       </div>
 
@@ -96,15 +106,17 @@ export function WalletPanel({ open, onClose }: { open: boolean; onClose: () => v
           <span className="k">SOL</span>
           <span className="v">{wallet.sol.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
         </div>
-        <div className="wallet-panel-row">
-          <span className="k">devUSDC</span>
-          <span className="v">
-            {devUsdcStatus === 'loading' && 'Loading…'}
-            {devUsdcStatus === 'unavailable' && <span className="faint">Unavailable</span>}
-            {devUsdcStatus === 'rate-limited' && <span className="faint">Rate-limited</span>}
-            {devUsdcStatus === 'ready' && devUsdcHuman}
-          </span>
-        </div>
+        {!IS_MAINNET && (
+          <div className="wallet-panel-row">
+            <span className="k">devUSDC</span>
+            <span className="v">
+              {devUsdcStatus === 'loading' && 'Loading…'}
+              {devUsdcStatus === 'unavailable' && <span className="faint">Unavailable</span>}
+              {devUsdcStatus === 'rate-limited' && <span className="faint">Rate-limited</span>}
+              {devUsdcStatus === 'ready' && devUsdcHuman}
+            </span>
+          </div>
+        )}
         {reserveHoldings.map(({ holding, dtr }) => (
           <div className="wallet-panel-row" key={holding.dtrId}>
             <span className="k">{dtr.ticker}</span>

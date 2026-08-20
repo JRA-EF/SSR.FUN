@@ -5,6 +5,9 @@ import { useAppStore } from '@/store/useAppStore'
 import { WalletModal } from './WalletModal'
 import { WalletPanel } from './WalletPanel'
 import { ReserveSearch } from './ReserveSearch'
+import { IS_MAINNET } from '@/lib/solana-config'
+
+const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
 const LINKS = [
   { to: '/discover', label: 'Discover Reserves' },
@@ -84,12 +87,17 @@ export function Shell({ children }: { children: ReactNode }) {
               SSR<span className="fun">.FUN</span>
             </span>
           </Link>
-          <span className="sim-badge" title="Connected to the SSR Protocol on Solana DevNet — a public test network, not Mainnet. No real economic value.">
-            Solana DevNet
+          <span
+            className="sim-badge"
+            title={IS_MAINNET ? 'Connected to the SSR Protocol on Solana Mainnet — real funds, real economic value.' : 'Connected to the SSR Protocol on Solana DevNet — a public test network, not Mainnet. No real economic value.'}
+          >
+            Solana {CLUSTER_LABEL}
           </span>
-          <span className="testing-badge" title="Unlisted testing deployment — not indexed or linked publicly.">
-            Testing Environment
-          </span>
+          {!IS_MAINNET && (
+            <span className="testing-badge" title="Unlisted testing deployment — not indexed or linked publicly.">
+              Testing Environment
+            </span>
+          )}
           <nav className="nav-links" aria-label="Primary">
             {LINKS.map(l => (
               <Link key={l.to} to={l.to} className={`nav-link${path.startsWith(l.to) ? ' active' : ''}`}>
@@ -104,7 +112,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 className="wallet-chip"
-                title="Connected on Solana DevNet — click for wallet details"
+                title={`Connected on Solana ${CLUSTER_LABEL} — click for wallet details`}
                 aria-haspopup="true"
                 aria-expanded={walletPanelOpen}
                 onClick={() => setWalletPanelOpen(v => !v)}
@@ -137,9 +145,9 @@ export function Shell({ children }: { children: ReactNode }) {
               A launchpad for tokenized reserves. Create, launch, and trade decentralized tokenized reserves on Solana.
             </p>
             <p style={{ marginTop: 12 }}>
-              Testing interface connected to the SSR Protocol on Solana DevNet — a public test network with no real
-              economic value. Some Reserves and balances shown are still illustrative/mocked. Reserve Tokens do
-              not confer ownership of any company. Nothing here is a guarantee of value, liquidity, or performance.
+              {IS_MAINNET
+                ? 'Connected to the SSR Protocol on Solana Mainnet — real funds, real transactions. Reserve Tokens do not confer ownership of any company. Nothing here is a guarantee of value, liquidity, or performance.'
+                : 'Testing interface connected to the SSR Protocol on Solana DevNet — a public test network with no real economic value. Some Reserves and balances shown are still illustrative/mocked. Reserve Tokens do not confer ownership of any company. Nothing here is a guarantee of value, liquidity, or performance.'}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 40 }}>

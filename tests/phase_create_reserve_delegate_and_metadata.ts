@@ -199,3 +199,80 @@ describe("onChainReserve.ts -- buildDtrFromDiscoveredReserve (root-cause regress
     expect(dtr.ticker).to.equal("RSV57");
   });
 });
+
+// --- 2026-08-20 pass: composition labeled "AssetN" for a real Mainnet asset (e.g. SSR) ---
+// Live-reported bug: a Mainnet Reserve composed 100% of SSR (the app's own
+// token, mint BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump) showed its
+// composition entry generically labeled "Asset" instead of "SSR". Root
+// cause: buildDtrFromDiscoveredReserve's symbol-resolution chain only knew
+// about DevNet fixture mints, wrapped SOL, devUSDC, and the hardcoded
+// Mainnet USDC constant -- any other real Mainnet mint (any Jupiter-
+// catalogued token, including SSR itself) fell straight through to a
+// generic `Asset${i+1}` placeholder, regardless of cluster. Fixed by
+// threading the Jupiter asset catalogue's mint->symbol map (see
+// RealReserveSync.tsx's new mainnetMintMeta) through as an additional,
+// best-effort resolution source before that placeholder.
+describe("onChainReserve.ts -- buildDtrFromDiscoveredReserve mintMeta (root-cause regression: a real Mainnet asset's composition entry must show its real symbol, not a generic placeholder)", () => {
+  const SSR_MINT = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
+
+  it("resolves a real Mainnet asset's symbol from the passed-in mintMeta map (e.g. a 100%-SSR Reserve shows 'SSR', not 'Asset1')", () => {
+    const discovered = fixtureDiscoveredReserve({
+      assetCount: 1,
+      resolvedAssetCount: 1,
+      assets: [{ assetMint: SSR_MINT, reserveAsset: "irrelevant", vault: "irrelevant", decimals: 6, targetWeightBps: 10_000, enabled: true, orderIndex: 0, vaultBalanceRaw: "191598743106" }],
+    });
+    const dtr = buildDtrFromDiscoveredReserve(discovered, [], null, null, undefined, "mainnet-beta", { [SSR_MINT]: { symbol: "SSR", name: "SSR" } });
+    expect(dtr.composition).to.have.length(1);
+    expect(dtr.composition[0].symbol).to.equal("SSR");
+    expect(dtr.composition[0].symbol).to.not.equal("Asset1");
+  });
+
+  it("falls back to the honest 'AssetN' placeholder when the mint genuinely isn't in mintMeta yet (e.g. the catalogue hasn't loaded/indexed it) -- never fabricates a symbol", () => {
+    const discovered = fixtureDiscoveredReserve({
+      assetCount: 1,
+      resolvedAssetCount: 1,
+      assets: [{ assetMint: SSR_MINT, reserveAsset: "irrelevant", vault: "irrelevant", decimals: 6, targetWeightBps: 10_000, enabled: true, orderIndex: 0, vaultBalanceRaw: "191598743106" }],
+    });
+    const dtr = buildDtrFromDiscoveredReserve(discovered, [], null, null, undefined, "mainnet-beta", {});
+    expect(dtr.composition[0].symbol).to.equal("Asset1");
+  });
+
+  it("mintMeta defaults to {} when omitted entirely -- every pre-existing caller/test (DevNet, no 7th argument) behaves exactly as before", () => {
+    const discovered = fixtureDiscoveredReserve({
+      assetCount: 1,
+      resolvedAssetCount: 1,
+      assets: [{ assetMint: SSR_MINT, reserveAsset: "irrelevant", vault: "irrelevant", decimals: 6, targetWeightBps: 10_000, enabled: true, orderIndex: 0, vaultBalanceRaw: "191598743106" }],
+    });
+    const dtr = buildDtrFromDiscoveredReserve(discovered, [], null, null);
+    expect(dtr.composition[0].symbol).to.equal("Asset1");
+  });
+
+  it("a Mainnet USDC leg still resolves to 'USDC' via the pre-existing hardcoded constant, taking priority over mintMeta (never regresses the existing, already-correct path)", () => {
+    const usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const discovered = fixtureDiscoveredReserve({
+      assetCount: 1,
+      resolvedAssetCount: 1,
+      assets: [{ assetMint: usdc, reserveAsset: "irrelevant", vault: "irrelevant", decimals: 6, targetWeightBps: 10_000, enabled: true, orderIndex: 0, vaultBalanceRaw: "10000000" }],
+    });
+    const dtr = buildDtrFromDiscoveredReserve(discovered, [], null, null, undefined, "mainnet-beta", { [usdc]: { symbol: "WRONG", name: "WRONG" } });
+    expect(dtr.composition[0].symbol).to.equal("USDC");
+  });
+
+  it("a Reserve's tags carry the REAL cluster it was discovered on (clusterOverride), not a hardcoded 'devnet' regardless of cluster -- the same bug class, a second confirmed instance", () => {
+    const discovered = fixtureDiscoveredReserve();
+    const dtrMainnet = buildDtrFromDiscoveredReserve(discovered, [], null, null, undefined, "mainnet-beta");
+    const dtrDevnet = buildDtrFromDiscoveredReserve(discovered, [], null, null, undefined, "devnet");
+    expect(dtrMainnet.tags).to.include("mainnet-beta");
+    expect(dtrMainnet.tags).to.not.include("devnet");
+    expect(dtrDevnet.tags).to.include("devnet");
+  });
+
+  it("an unparsed Reserve's fallback category is also cluster-aware ('Mainnet' vs 'DevNet'), not hardcoded to 'DevNet' regardless of cluster", () => {
+    const discovered = fixtureDiscoveredReserve({ reserveId: "58", reserve: OTHER_2 });
+    const dtrMainnet = buildDtrFromDiscoveredReserve(discovered, [], null, null, undefined, "mainnet-beta");
+    expect(dtrMainnet.category).to.equal("Mainnet");
+    const discoveredDevnet = fixtureDiscoveredReserve({ reserveId: "59", reserve: OTHER_1 });
+    const dtrDevnet = buildDtrFromDiscoveredReserve(discoveredDevnet, [], null, null, undefined, "devnet");
+    expect(dtrDevnet.category).to.equal("DevNet");
+  });
+});

@@ -265,6 +265,16 @@ describe("RPC-resilience -- txPhaseLabel", () => {
     expect(txPhaseLabel("failed")).to.equal(null);
     expect(txPhaseLabel("expired")).to.equal(null);
   });
+
+  // 2026-08-20 pass: a Mainnet Buy/Sell's in-flight label said "confirming on
+  // DevNet" -- root cause was this function hardcoding "DevNet" regardless
+  // of cluster. clusterLabel defaults to "DevNet" (every pre-existing
+  // caller/test above unchanged) so this is additive, not a breaking change.
+  it("uses the caller-supplied cluster label instead of the DevNet default when provided (root-cause regression: a Mainnet trade must never say 'confirming on DevNet')", () => {
+    expect(txPhaseLabel("confirming", "Mainnet")).to.equal("Submitted -- confirming on Mainnet...");
+    expect(txPhaseLabel("submitted", "Mainnet")).to.equal("Submitted -- confirming on Mainnet...");
+    expect(txPhaseLabel("unresolved", "Mainnet")).to.equal("Mainnet RPC is temporarily busy -- your transaction is still being verified");
+  });
 });
 
 describe("RPC-resilience -- AmbiguousConfirmationError", () => {

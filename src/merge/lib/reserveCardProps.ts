@@ -26,8 +26,23 @@ export interface ReserveCardData {
   metrics: { key: string; label: string; value: string; tone?: "up" | "down" }[];
 }
 
-/** Derives every plain-data prop `ReserveCard` needs from a DTR -- identical for Discover's grid and the landing page's Featured Reserves. */
-export function buildReserveCardProps(dtr: DTR): ReserveCardData {
+/**
+ * Derives every plain-data prop `ReserveCard` needs from a DTR -- identical
+ * for Discover's grid and the landing page's Featured Reserves.
+ *
+ * `isMainnet` was previously hardcoded away entirely -- the on-chain source
+ * badge always read "Live on Solana DevNet", even for a Reserve genuinely
+ * deployed on Mainnet (see docs/project/DECISION_LOG.md's entry for this
+ * pass). Accepted as a plain parameter (default false/DevNet, matching every
+ * pre-existing test/caller unchanged) rather than importing IS_MAINNET from
+ * ./solana-config directly -- that module reads import.meta.env (Vite-only
+ * syntax) and this file is required directly by several tests/phase_*.ts
+ * files via ts-mocha's CommonJS loader, which crashes on that syntax (same
+ * constraint documented in onChainReserve.ts's own header). Real callers
+ * (Discover.tsx, the landing page) pass the real IS_MAINNET themselves.
+ */
+export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): ReserveCardData {
+  const clusterLabel = isMainnet ? "Mainnet" : "DevNet";
   // dtr.nav can be 0 when a Reserve's assets are under-resolved (AUM reads as
   // $0) even though it already has token supply -- guard against NaN rather
   // than computing 0/0 (same class of bug fixed in DTRDetail.tsx).
@@ -47,7 +62,7 @@ export function buildReserveCardProps(dtr: DTR): ReserveCardData {
     avatarImageUrl: dtr.logoUrl,
     categoryLabel: normalizeReserveCategory(dtr.category),
     sourceBadge: dtr.onChain
-      ? { label: "Live on Solana DevNet", tone: "onchain" }
+      ? { label: `Live on Solana ${clusterLabel}`, tone: "onchain" }
       : { label: "Simulated Demo", tone: "simulated" },
     priceFormatted: formatUsdc(dtr.tokenPrice),
     changePct: dtr.change24h,

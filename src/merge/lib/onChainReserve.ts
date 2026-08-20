@@ -288,6 +288,16 @@ export function buildDtrFromDiscoveredReserve(
   // file's header comment for why that module isn't imported here directly).
   programIdOverride: PublicKey = new PublicKey(DEVNET_FIXTURES.programId),
   clusterOverride: string = "devnet",
+  // Mainnet-only: mint -> real symbol/name, from the Jupiter asset catalogue
+  // (see useMainnetAssetCatalogue.ts) -- the DevNet-fixture lookup below has
+  // no way to know a real Mainnet token's symbol (e.g. a Reserve composed of
+  // SSR itself), so every such asset fell through to the generic "AssetN"
+  // placeholder. Defaults to {} so every existing caller (tests, DevNet)
+  // behaves exactly as before. Best-effort only -- a mint the catalogue
+  // hasn't (yet) indexed still falls back to "AssetN" honestly rather than
+  // fabricating a symbol, and self-corrects on RealReserveSync's next poll
+  // once the catalogue has loaded.
+  mintMeta: Record<string, { symbol: string; name: string }> = {},
 ): DTR {
   const meta =
     parsedMetadata ??
@@ -295,7 +305,7 @@ export function buildDtrFromDiscoveredReserve(
       name: `Unnamed Reserve (#${discovered.reserveId})`,
       ticker: `RSV${discovered.reserveId}`,
       description: "This Reserve's on-chain metadata could not be parsed -- name/ticker are placeholders, not fabricated data.",
-      category: "DevNet",
+      category: clusterOverride === "mainnet-beta" ? "Mainnet" : "DevNet",
     };
 
   const id = `${clusterOverride}-${discovered.reserveId}`;
@@ -319,7 +329,7 @@ export function buildDtrFromDiscoveredReserve(
           ? DEVUSDC.symbol
           : a.assetMint === MAINNET_USDC_MINT
             ? "USDC"
-            : `Asset${i + 1}`);
+            : (mintMeta[a.assetMint]?.symbol ?? `Asset${i + 1}`));
     return {
       mint: a.assetMint,
       symbol,
@@ -372,7 +382,7 @@ export function buildDtrFromDiscoveredReserve(
     ticker: meta.ticker,
     description: meta.description,
     category: meta.category,
-    tags: [meta.category, "devnet", "real"],
+    tags: [meta.category, clusterOverride, "real"],
     logoSeed: id,
     dtrAddress: discovered.reserve,
     managerAddress: discovered.manager,

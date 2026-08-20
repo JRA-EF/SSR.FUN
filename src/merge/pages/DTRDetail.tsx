@@ -564,7 +564,7 @@ export function DTRDetail() {
         // limits exceeded") as-is, and never let a swap-authority-side SOL
         // shortfall read as if the CONNECTED WALLET lacked SOL.
         if (e instanceof ZapBuildError && e.code === "rpc_congested") {
-          toast({ variant: "destructive", title: "DevNet RPC congested", description: "Solana DevNet's RPC endpoint is temporarily rate-limited. Please wait a few seconds and try again." });
+          toast({ variant: "destructive", title: `${CLUSTER_LABEL} RPC congested`, description: `Solana ${CLUSTER_LABEL}'s RPC endpoint is temporarily rate-limited. Please wait a few seconds and try again.` });
         } else if (e instanceof ZapBuildError && e.code === "swap_authority_low_sol") {
           toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
         } else if (e instanceof ZapBuildError && e.code === "conversion_unsupported") {
@@ -747,7 +747,7 @@ export function DTRDetail() {
       } else {
         setSellPhase("failed");
         if (e instanceof ZapBuildError && e.code === "rpc_congested") {
-          toast({ variant: "destructive", title: "DevNet RPC congested", description: "Solana DevNet's RPC endpoint is temporarily rate-limited. Please wait a few seconds and try again." });
+          toast({ variant: "destructive", title: `${CLUSTER_LABEL} RPC congested`, description: `Solana ${CLUSTER_LABEL}'s RPC endpoint is temporarily rate-limited. Please wait a few seconds and try again.` });
         } else if (e instanceof ZapBuildError && e.code === "swap_authority_low_sol") {
           toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
         } else {
@@ -1461,12 +1461,12 @@ export function DTRDetail() {
                         (isOnChain && !isSettlementBuySupported)
                       }
                     >
-                      {txPhaseLabel(buyPhase) ? (
+                      {txPhaseLabel(buyPhase, CLUSTER_LABEL) ? (
                         <div className="flex items-center gap-2">
                           {(buyPhase === "preparing" || buyPhase === "awaiting-wallet" || buyPhase === "confirming" || buyPhase === "submitted") && (
                             <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
                           )}
-                          {txPhaseLabel(buyPhase)}
+                          {txPhaseLabel(buyPhase, CLUSTER_LABEL)}
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
@@ -1624,12 +1624,12 @@ export function DTRDetail() {
                       onClick={onSellClick}
                       disabled={!wallet.connected || sellProcessing || numSellAmount <= 0 || numSellAmount > (holding?.tokenBalance || 0)}
                     >
-                      {txPhaseLabel(sellPhase) ? (
+                      {txPhaseLabel(sellPhase, CLUSTER_LABEL) ? (
                         <div className="flex items-center gap-2">
                           {(sellPhase === "preparing" || sellPhase === "awaiting-wallet" || sellPhase === "confirming" || sellPhase === "submitted") && (
                             <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
                           )}
-                          {txPhaseLabel(sellPhase)}
+                          {txPhaseLabel(sellPhase, CLUSTER_LABEL)}
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"

@@ -118,6 +118,32 @@ describe("buildReserveCardProps -- sparkline always uses the centralized fallbac
   });
 });
 
+// --- 2026-08-20 pass: Discover/Featured cards said "Live on Solana DevNet" for a genuinely Mainnet-deployed Reserve ---
+// Live-reported bug -- sourceBadge was hardcoded to the DevNet label
+// unconditionally. `isMainnet` is a plain parameter (default false) rather
+// than importing IS_MAINNET from ./solana-config directly, since this file
+// is required by ts-mocha tests and that module's import.meta.env syntax
+// isn't loadable there (see reserveCardProps.ts's own header comment).
+describe("buildReserveCardProps -- cluster-aware source badge (root-cause regression: must never say DevNet for a Mainnet Reserve)", () => {
+  it("defaults to the DevNet label when isMainnet is omitted -- every pre-existing caller/test unchanged", () => {
+    const dtr = makeDtr({ id: "a", onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    const props = buildReserveCardProps(dtr);
+    expect(props.sourceBadge).to.deep.equal({ label: "Live on Solana DevNet", tone: "onchain" });
+  });
+
+  it("shows the Mainnet label when isMainnet is true, for the exact same on-chain Reserve", () => {
+    const dtr = makeDtr({ id: "a", onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    const props = buildReserveCardProps(dtr, true);
+    expect(props.sourceBadge).to.deep.equal({ label: "Live on Solana Mainnet", tone: "onchain" });
+  });
+
+  it("a purely simulated (no onChain) Reserve never shows a cluster label at all, regardless of isMainnet", () => {
+    const dtr = makeDtr({ id: "a", onChain: undefined });
+    expect(buildReserveCardProps(dtr, true).sourceBadge).to.deep.equal({ label: "Simulated Demo", tone: "simulated" });
+    expect(buildReserveCardProps(dtr, false).sourceBadge).to.deep.equal({ label: "Simulated Demo", tone: "simulated" });
+  });
+});
+
 describe("redactRpcSecrets (api/devnet/_lib/rpc.ts) -- never leaks the configured RPC URL/API key", () => {
   const originalHelius = process.env.HELIUS_RPC_URL;
   afterEach(() => {
