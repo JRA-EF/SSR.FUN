@@ -48,6 +48,8 @@ import {
   validateFeeRecipientInputs,
   validateMetadataUri,
   computeEffectiveFeeSplit,
+  validateSeedPlan,
+  MIN_SEED_AMOUNT_PER_ASSET,
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   PROTOCOL_MIN_MINT_FEE_BPS,
@@ -479,6 +481,31 @@ async function fetchOwnedBalanceRaw(connection: Connection, mint: PublicKey, own
   }
 }
 
+/**
+ * Re-reads a mint balance after OUR OWN just-confirmed transaction, retrying
+ * until it genuinely differs from `balanceBefore` -- a single immediate read
+ * right after confirmation can hit an RPC node whose own view of account
+ * state hasn't caught up yet (confirmed live: a real Jupiter swap read back
+ * as 0 received immediately after confirming, while the wallet's actual
+ * on-chain balance -- checked moments later against a fresh RPC query --
+ * already correctly held the swapped tokens). Same root cause and same fix
+ * shape as DEC-0115's post-redemption balance read (see
+ * docs/project/DECISION_LOG.md). Returns whatever the last read saw even if
+ * it never changed (never fabricates a change that didn't happen) -- the
+ * caller decides what an unchanged/still-short result means.
+ */
+async function fetchOwnedBalanceRawSettled(connection: Connection, mint: PublicKey, owner: PublicKey, balanceBefore: bigint): Promise<bigint> {
+  const MAX_ATTEMPTS = 6;
+  const DELAY_MS = 1_000;
+  let balance = balanceBefore;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    balance = await fetchOwnedBalanceRaw(connection, mint, owner);
+    if (balance !== balanceBefore) return balance;
+    if (attempt < MAX_ATTEMPTS - 1) await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+  }
+  return balance;
+}
+
 export interface JupiterSwapFundingOptions {
   /** Mainnet only -- lets a non-USDC, non-wrapped-SOL asset be funded by actually swapping part of the creator's USDC into it via Jupiter, instead of requiring the creator to already hold that exact asset. */
   enabled: boolean;
@@ -501,6 +528,25 @@ const SHORTFALL_WARN_PCT = 0.05;
 /** True for any asset this app would consider swapping USDC into via Jupiter -- real Circle USDC and wrapped SOL are both funded through their own existing, non-swap paths. */
 export function isJupiterSwapEligible(mint: string): boolean {
   return !isWrappedSol(mint) && mint !== MAINNET_USDC_MINT;
+}
+
+/**
+ * Names WHICH asset is short before validateSeedPlan's generic (mint-
+ * agnostic) message would -- most useful for a Jupiter-swapped asset whose
+ * final amount is only known after the swap settles, where a genuinely
+ * empty/near-empty result (a real swap failure, or an RPC-consistency read
+ * that never settled even after fetchOwnedBalanceRawSettled's retries)
+ * would otherwise reach buildSeedReserveInstruction and revert on-chain
+ * with SsrError::SeedAmountTooLow, wasting a transaction.
+ */
+export function assertSeedAmountsMeetMinimum(assets: Pick<CreateReserveAssetInput, "mint">[], seedAmounts: bigint[]): void {
+  for (let i = 0; i < assets.length; i++) {
+    if (seedAmounts[i] < MIN_SEED_AMOUNT_PER_ASSET) {
+      throw new Error(
+        `${assets[i].mint} would be seeded with only ${seedAmounts[i]} raw units, below the protocol's minimum of ${MIN_SEED_AMOUNT_PER_ASSET} -- refusing to submit a transaction that would definitely revert on-chain. If this asset was just swapped for via Jupiter, wait a few seconds and try again (the wallet's real balance can take a moment to be visible to every RPC node after a swap confirms).`,
+      );
+    }
+  }
 }
 
 /**
@@ -575,8 +621,11 @@ async function fundSeedAssetsIdempotent(
       // OPTIMISTIC outAmount is expected/routine, not a failure to block
       // on. The Reserve is seeded with the real balance either way; only a
       // shortfall beyond ordinary slippage gets reported (never thrown) via
-      // onSwapShortfall.
-      const newBalance = await fetchOwnedBalanceRaw(connection, new PublicKey(asset.mint), owner);
+      // onSwapShortfall. fetchOwnedBalanceRawSettled (not a single
+      // immediate read) -- see its own header for why: a read right after
+      // OUR OWN confirmation can still hit an RPC node that hasn't caught
+      // up yet.
+      const newBalance = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, balances[i]);
       finalSeedAmounts[i] = newBalance;
       const shortfallPct = computeSwapShortfallPct(quote.outAmount, newBalance);
       if (shortfallPct > SHORTFALL_WARN_PCT) {
@@ -818,6 +867,14 @@ export async function createReserveOnChain(params: {
   let seedSig: string;
   try {
     const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
+    // Fail fast, client-side, before ever asking for a signature -- the
+    // program rejects any per-asset seed amount below its own real floor
+    // (SsrError::SeedAmountTooLow) and submitting anyway just wastes a
+    // transaction on a guaranteed revert. Named per-asset here (mint +
+    // decimals-aware amount) since validateSeedPlan's own message doesn't
+    // know which asset is which.
+    assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
+    validateSeedPlan(finalSeedAmounts, initialReserveTokens);
     const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
     seedSig = await signAndSend(connection, wallet, [seedIx]);
   } catch (e) {
@@ -958,6 +1015,8 @@ export async function resumeReserveDeploymentOnChain(params: {
   if (freshBeforeSeed?.status === "assetsInitializing") {
     try {
       const initialReserveTokens = BigInt(Math.max(1, Math.floor(pending.seedTotalUsd)) * 1_000_000);
+      assertSeedAmountsMeetMinimum(pending.assets, finalSeedAmounts);
+      validateSeedPlan(finalSeedAmounts, initialReserveTokens);
       const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
       seedSig = await signAndSend(connection, wallet, [seedIx]);
     } catch (e) {

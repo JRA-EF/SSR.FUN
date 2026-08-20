@@ -21,7 +21,7 @@ import { isReserveTradable, isSupportedAssetMint, registerDynamicSupportedAssetM
 import assetCatalogueHandler, { dedupeBySymbolPreferOrganicScore, type CatalogueRow } from "../api/ledger/asset-catalogue";
 import knownMintsHandler from "../api/ledger/known-asset-mints";
 import mainnetMetadataHandler from "../api/mainnet/reserve-metadata";
-import { uploadReserveMetadata, isJupiterSwapEligible } from "../src/merge/lib/createReserveClient";
+import { uploadReserveMetadata, isJupiterSwapEligible, assertSeedAmountsMeetMinimum } from "../src/merge/lib/createReserveClient";
 import { computeSwapShortfallPct } from "../src/merge/lib/createReserveResume";
 import { matchesAssetSearch } from "../src/merge/lib/assetSearch";
 import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
@@ -348,5 +348,26 @@ describe("src/merge/lib/jupiterSwapClient.ts -- describeJupiterSwapError (pure)"
     const msg = describeJupiterSwapError("not json at all");
     expect(msg).to.be.a("string");
     expect(msg.length).to.be.greaterThan(0);
+  });
+});
+
+describe("src/merge/lib/createReserveClient.ts -- assertSeedAmountsMeetMinimum (pure, pre-flight)", () => {
+  const usdc = { mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" };
+  const ssr = { mint: "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump" };
+
+  it("does not throw when every asset meets the protocol's minimum (1000 raw units)", () => {
+    expect(() => assertSeedAmountsMeetMinimum([usdc, ssr], [10_000_000n, 21_341_811_000n])).to.not.throw();
+  });
+
+  it("does not throw for an amount exactly at the minimum", () => {
+    expect(() => assertSeedAmountsMeetMinimum([ssr], [1_000n])).to.not.throw();
+  });
+
+  it("throws, naming the exact mint, when an asset's amount is below the minimum", () => {
+    expect(() => assertSeedAmountsMeetMinimum([usdc, ssr], [10_000_000n, 0n])).to.throw(/BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump/);
+  });
+
+  it("catches the exact reported scenario -- a Jupiter swap that settled at 0", () => {
+    expect(() => assertSeedAmountsMeetMinimum([ssr], [0n])).to.throw(/minimum/);
   });
 });
