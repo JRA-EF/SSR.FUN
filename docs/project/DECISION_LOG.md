@@ -3907,3 +3907,37 @@
   ]
 }
 ```
+
+## DEC-0127
+
+```json
+{
+  "id": "DEC-0127",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Fixed a stale post-swap balance read (RPC eventual consistency, same root-cause class as DEC-0115's redemption-read false alarm) that was reading a just-confirmed Jupiter swap as having delivered 0 tokens, and added a client-side pre-flight check that refuses to submit a seed transaction that would definitely revert on-chain.",
+  "context": "Creator reported a real on-chain failure: `Transaction failed on-chain ({\"InstructionError\":[2,{\"Custom\":6019}]})... SsrError::SeedAmountTooLow (6019)`, immediately preceded by a DEC-0125 shortfall toast claiming the Jupiter swap for SSR 'delivered 0 instead of the ~21,341.811 quoted (100.0% short)'. Creator flagged this as 'weird' and pointed at wallet 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen, noting the purchases went through. Directly verified via a live getTokenAccountsByOwner RPC call: that wallet genuinely holds 107,147.418057 SSR right now -- the swap(s) unambiguously succeeded and delivered real tokens; the '0' the app saw was never real.",
+  "rationale": "Root cause: fundSeedAssetsIdempotent read the post-swap balance with a single immediate fetchOwnedBalanceRaw call right after confirmSignatureBounded returned 'confirmed' -- but a confirmed signature only guarantees the SUBMITTING node has seen it land, not that every RPC node (including whichever one serves the very next getTokenAccountBalance call, especially behind a load-balanced provider like Helius) has caught up yet. This exact class of bug was already found and fixed once in this repo for a different flow (DEC-0115's Mainnet smoke test: 'an immediate post-redeem balance read showing no change... root-caused to Helius RPC eventual consistency... a fresh query moments later... confirmed the redemption had in fact moved... correctly'). The stale 0 then flowed straight into finalSeedAmounts and on into buildSeedReserveInstruction, which the program correctly rejected (SeedAmountTooLow requires >= MIN_SEED_AMOUNT_PER_ASSET, 1,000 raw units) -- a real, wasted transaction and a confusing user-facing failure for what was, underneath, a fully successful swap.\n\nFixed two ways, both defense-in-depth: (1) fetchOwnedBalanceRawSettled (createReserveClient.ts) retries the post-swap balance read (up to 6 attempts, 1s apart) until it genuinely differs from the pre-swap snapshot captured at the top of the funding pass, rather than trusting a single read -- same fix shape as DEC-0115's own resolution. (2) New assertSeedAmountsMeetMinimum, called immediately before ever building the seed transaction (in both createReserveOnChain and resumeReserveDeploymentOnChain): if any asset's final amount is still below the protocol's real floor even after the settled-read retries (a genuine remaining edge case -- e.g. an RPC provider outage lasting longer than the retry window, or a truly failed delivery the settled-read correctly still sees as unchanged), refuses to submit rather than wasting a transaction on a predictable on-chain revert, naming the exact asset. Also wired in packages/sdk/src/calculations.ts's existing validateSeedPlan/MIN_SEED_AMOUNT_PER_ASSET -- already written specifically for this purpose ('so a client can fail fast... before submitting a transaction that would revert') but never actually called anywhere in the live flow until now.",
+  "alternativesConsidered": [
+    "Increase confirmSignatureBounded's commitment level or wait longer before the FIRST balance read, instead of retrying on an unchanged result -- rejected: a fixed extra delay either wastes time in the common case (RPC already caught up) or still isn't long enough in a worse case; retrying specifically until the balance is OBSERVED to change is both faster on average and correct in the slow case, bounded at ~6 seconds worst case.",
+    "Silently proceed and let seed_reserve's own on-chain rejection be the only signal -- rejected: that's exactly what just happened and it wastes a real transaction (rent + network fee) every time, plus produces a confusing two-part error (a shortfall toast immediately followed by an unrelated-looking program error) instead of one clear, pre-flight explanation."
+  ],
+  "impact": "Deployed to production. A Jupiter swap's real result is now given a real chance to become visible before being used, closing the specific failure Creator hit. If a seed amount is still genuinely too low after that, the flow now fails fast with one clear, asset-named message instead of wasting a transaction on a guaranteed on-chain revert. Confirmed live that no funds were lost at any point -- the swap(s) always succeeded and delivered real SSR to Creator's wallet; only the app's own read of that fact was stale. Posted a follow-up comment on MCR-01 with the independently-verified wallet balance and asked Creator to retry.",
+  "affectedAreas": [
+    "src/merge/lib/createReserveClient.ts",
+    "tests/phase_mainnet_production_fixes.ts",
+    "road-to-mainnet.html's MCR-01 comment thread (Neon-backed, not a repository file)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live `getTokenAccountsByOwner` RPC call against wallet 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen for the SSR mint: real token account, tokenAmount.uiAmountString \"107147.418057\" -- conclusive proof the swap(s) had genuinely succeeded despite the app's stale '0 received' read.",
+    "`npx tsc -b`, `npx oxlint` (changed files): clean.",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_*.ts`: 647/647 passing (4 new assertSeedAmountsMeetMinimum cases: passes at/above minimum, throws naming the exact mint below minimum, catches the exact reported 0-amount scenario).",
+    "`npm run build`: clean.",
+    "`vercel --prod` deployment dpl_4VV5LKdrddSNTh96u8gBuM3RfTPM, readyState READY, target production, aliased to strategic-super-reserve.fun; `vercel logs --level error`: none.",
+    "Live GET /: 200, GET /create: 200 (site unaffected).",
+    "Comment id 21 posted to control MCR-01 via POST /api/road-to-mainnet/comments, confirmed 200 with the comment echoed back."
+  ]
+}
+```
