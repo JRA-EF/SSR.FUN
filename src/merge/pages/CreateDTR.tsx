@@ -85,6 +85,7 @@ const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
 };
 
 /** How many wallet approvals createReserveOnChain will request for this asset selection -- see createReserveClient.ts's signature-count note. */
+/** Rough fallback ONLY for the brief window before the real costEstimate (which has the authoritative numTransactions, including any Jupiter swaps -- see createReserveClient.ts's estimateCreateReserveCost) has loaded -- see its call site, which prefers costEstimate.numTransactions once available. */
 function expectedApprovalCount(assets: { symbol: string }[]): number {
   const needsSolWrap = assets.some((a) => a.symbol === "SOL");
   return needsSolWrap ? 3 : 2;
@@ -140,6 +141,18 @@ export function CreateDTR() {
   // a SEPARATE Reserve (the confirmed root cause of the reported "tells the
   // user to create another Reserve" failure).
   const [resumePending, setResumePending] = useState<PendingReserveDeploy | null>(null);
+  // Set by jupiterSwap.onSwapStart while a non-USDC asset is being funded via
+  // a real Jupiter swap (Mainnet only) -- overrides the generic
+  // "fund-seed-assets" step label with something more specific while it's
+  // happening. Cleared whenever a fresh submission/resume attempt starts.
+  const [jupiterSwapMint, setJupiterSwapMint] = useState<string | null>(null);
+  function stepLabel(step: CreateReserveStep | null, fallback: string): string {
+    if (!step) return fallback;
+    if (step === "fund-seed-assets" && jupiterSwapMint) {
+      return `Swapping USDC for ${jupiterSwapMint.slice(0, 4)}...${jupiterSwapMint.slice(-4)} via Jupiter...`;
+    }
+    return CREATE_STEP_LABELS[step];
+  }
   // Set by handleResumeDeployment's catch block when a Resume attempt fails
   // -- classified so the panel below can distinguish a genuinely transient
   // condition (safe to just click Resume again) from a deterministic
@@ -170,6 +183,19 @@ export function CreateDTR() {
   const [managerBuyTaxPct, setManagerBuyTaxPct] = useState(0);
   const [managerSellTaxPct, setManagerSellTaxPct] = useState(0);
   const [feeDestination, setFeeDestination] = useState(wallet.address || "");
+  // wallet.address can still be empty at this component's first render (the
+  // wallet adapter often resolves the public key asynchronously after
+  // mount), in which case the useState initializer above never re-runs to
+  // pick it up -- the field would sit visibly blank even though the actual
+  // submission logic already falls back to the connected wallet correctly.
+  // Backfills it the moment the wallet address becomes known, but never
+  // overwrites a value the user has since typed themselves.
+  const feeDestinationUserEditedRef = useRef(false);
+  useEffect(() => {
+    if (!feeDestinationUserEditedRef.current && !feeDestination && wallet.address) {
+      setFeeDestination(wallet.address);
+    }
+  }, [wallet.address, feeDestination]);
   const [feeRecipients, setFeeRecipients] = useState<FeeRecipient[]>([]);
   const [newRecipientAddress, setNewRecipientAddress] = useState("");
   const [newRecipientPct, setNewRecipientPct] = useState("");
@@ -358,6 +384,7 @@ export function CreateDTR() {
     setIsSubmitting(true);
     setResumeError(null);
     setCreateStep("fund-seed-assets");
+    setJupiterSwapMint(null);
     useAppStore.getState().setTxInFlight(true);
     try {
       const result = await resumeReserveDeploymentOnChain({
@@ -367,6 +394,7 @@ export function CreateDTR() {
         onProgress: setCreateStep,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
+        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: resumePending.seedTotalUsd, onSwapStart: setJupiterSwapMint } : undefined,
       });
       clearPendingReserveDeploy();
       // Same id-scheme requirement as handleSubmitReal's own dtrId -- see its comment above.
@@ -652,7 +680,7 @@ export function CreateDTR() {
                 <Button variant="secondary" onClick={handleResumeDeployment} disabled={isSubmitting} className="font-bold gap-2 min-w-[180px]">
                   {isSubmitting ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Resuming..."}
+                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> {stepLabel(createStep, "Resuming...")}
                     </>
                   ) : (
                     "Try again anyway"
@@ -663,7 +691,7 @@ export function CreateDTR() {
               <Button onClick={handleResumeDeployment} disabled={isSubmitting} className="font-bold gap-2 min-w-[180px]">
                 {isSubmitting ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Resuming..."}
+                    <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {stepLabel(createStep, "Resuming...")}
                   </>
                 ) : (
                   <>
@@ -793,6 +821,7 @@ export function CreateDTR() {
     submittingRef.current = true;
     setIsSubmitting(true);
     setCreateStep("create-and-register");
+    setJupiterSwapMint(null);
     const programId = SSR_PROGRAM_ID;
     useAppStore.getState().setTxInFlight(true);
 
@@ -827,6 +856,7 @@ export function CreateDTR() {
         seedTotalUsd,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
+        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint } : undefined,
         onProgress: setCreateStep,
         // Persisted immediately -- if the page reloads (or the user leaves
         // and comes back later) anywhere after this fires, the mount-time
@@ -1433,7 +1463,10 @@ export function CreateDTR() {
                   <Input
                     id="dest"
                     value={feeDestination}
-                    onChange={(e) => setFeeDestination(e.target.value)}
+                    onChange={(e) => {
+                      feeDestinationUserEditedRef.current = true;
+                      setFeeDestination(e.target.value);
+                    }}
                     className="font-merge-mono text-sm"
                   />
                   <p className="text-xs text-muted-foreground">
@@ -1662,7 +1695,9 @@ export function CreateDTR() {
                   <div className="bg-primary/5 p-4 border-b border-border">
                     <h3 className="font-semibold flex items-center gap-2">
                       Wallet Cost Summary
-                      <InfoTip label="More information about the wallet cost summary">Every SOL this wallet will actually be asked to spend, shown before Phantom does.</InfoTip>
+                      <InfoTip label="More information about the wallet cost summary">
+                        Every SOL this wallet will actually be asked to spend, shown before Phantom does. This is the TOTAL across every transaction below -- Phantom shows one popup per transaction, so any single popup will show less than this total, not the same number.
+                      </InfoTip>
                     </h3>
                   </div>
                   <div className="p-4 space-y-3">
@@ -1706,10 +1741,13 @@ export function CreateDTR() {
                             <span className="text-muted-foreground font-normal"> (&asymp; ${((Number(costEstimate.totalLamports) / 1e9) * SOL_TEST_PRICE_USD).toFixed(2)})</span>
                           </span>
                         </div>
+                        <p className="text-xs text-muted-foreground">
+                          Total across all {costEstimate.numTransactions} transactions above -- each Phantom popup below will ask for only its own share of this, never this full amount at once.
+                        </p>
                       </>
                     )}
                     <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
-                      <p className="font-semibold text-foreground">This will request {expectedApprovalCount(assets)} wallet approvals:</p>
+                      <p className="font-semibold text-foreground">This will request {costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets)} wallet approvals:</p>
                       <p>1. Create the Reserve + register {assets.length} reserve asset{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
                       {assets.some((a) => a.symbol === "SOL") && <p>2. Wrap your SOL for the seed deposit</p>}
                       <p>{assets.some((a) => a.symbol === "SOL") ? "3" : "2"}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>
@@ -1825,7 +1863,7 @@ export function CreateDTR() {
                 className="font-bold gap-2 min-w-[150px]"
               >
                 {isSubmitting ? (
-                  <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {createStep ? CREATE_STEP_LABELS[createStep] : "Deploying..."}</>
+                  <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {stepLabel(createStep, "Deploying...")}</>
                 ) : !costEstimate && !costEstimateError ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Calculating cost...</>
                 ) : metadataUploading ? (

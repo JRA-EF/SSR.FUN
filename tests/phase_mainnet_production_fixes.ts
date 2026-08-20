@@ -21,8 +21,9 @@ import { isReserveTradable, isSupportedAssetMint, registerDynamicSupportedAssetM
 import assetCatalogueHandler, { dedupeBySymbolPreferOrganicScore, type CatalogueRow } from "../api/ledger/asset-catalogue";
 import knownMintsHandler from "../api/ledger/known-asset-mints";
 import mainnetMetadataHandler from "../api/mainnet/reserve-metadata";
-import { uploadReserveMetadata } from "../src/merge/lib/createReserveClient";
+import { uploadReserveMetadata, isJupiterSwapEligible } from "../src/merge/lib/createReserveClient";
 import { matchesAssetSearch } from "../src/merge/lib/assetSearch";
+import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
 
 interface FakeReq {
   method?: string;
@@ -223,5 +224,85 @@ describe("src/merge/lib/createReserveClient.ts -- uploadReserveMetadata is clust
     expect(requestedUrl).to.equal("https://strategic-super-reserve.fun/api/mainnet/reserve-metadata");
     expect(uri).to.equal("https://strategic-super-reserve.fun/api/mainnet/reserve-metadata?id=xyz789");
     expect(uri).to.not.include("/api/devnet/");
+  });
+});
+
+describe("src/merge/lib/createReserveClient.ts -- isJupiterSwapEligible (pure)", () => {
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const WSOL = "So11111111111111111111111111111111111111112";
+  const SSR = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
+
+  it("real Circle USDC is never swap-eligible -- it's the input currency, not something to swap for", () => {
+    expect(isJupiterSwapEligible(USDC)).to.equal(false);
+  });
+
+  it("wrapped SOL is never swap-eligible -- it's funded by the creator wrapping their own SOL, not a Jupiter swap", () => {
+    expect(isJupiterSwapEligible(WSOL)).to.equal(false);
+  });
+
+  it("any other real asset (e.g. a Jupiter-catalogue token) is swap-eligible", () => {
+    expect(isJupiterSwapEligible(SSR)).to.equal(true);
+  });
+});
+
+describe("api/mainnet/jupiter-swap.ts -- input validation (no network/API-key dependency)", () => {
+  const VALID_OUTPUT_MINT = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
+  const VALID_USER_PUBKEY = "9bAG6E3NrPrnANfhCQTiqJ1MTGNApPqvMjDsxvtMWkJG";
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+  it("rejects a non-POST method with 405", async () => {
+    const res = new FakeRes();
+    await jupiterSwapHandler({ method: "GET", headers: {} } as never, res as never);
+    expect(res.statusCode).to.equal(405);
+  });
+
+  it("rejects USDC itself as the outputMint -- it's the input currency, not a swap target", async () => {
+    const res = new FakeRes();
+    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: USDC, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    expect(res.statusCode).to.equal(400);
+  });
+
+  it("rejects a malformed outputMint", async () => {
+    const res = new FakeRes();
+    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: "not-base58!!!", amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    expect(res.statusCode).to.equal(400);
+  });
+
+  it("rejects a malformed userPublicKey", async () => {
+    const res = new FakeRes();
+    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: "not-a-real-pubkey" } } as never, res as never);
+    expect(res.statusCode).to.equal(400);
+  });
+
+  it("rejects a non-numeric amountRaw", async () => {
+    const res = new FakeRes();
+    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "not-a-number", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    expect(res.statusCode).to.equal(400);
+  });
+
+  it("rejects a zero or negative amountRaw", async () => {
+    const res = new FakeRes();
+    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "0", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    expect(res.statusCode).to.equal(400);
+  });
+
+  it("rejects a slippageBps outside 1..500", async () => {
+    const res = new FakeRes();
+    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY, slippageBps: 10_000 } } as never, res as never);
+    expect(res.statusCode).to.equal(400);
+  });
+
+  it("returns a clean 500 (not a crash) when JUPITER_API_KEY isn't configured, only after input validation passes", async () => {
+    const previous = process.env.JUPITER_API_KEY;
+    delete process.env.JUPITER_API_KEY;
+    try {
+      const res = new FakeRes();
+      await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+      expect(res.statusCode).to.equal(500);
+      const body = res.body as { error?: string };
+      expect(body.error).to.equal("Jupiter swap is not configured on this deployment.");
+    } finally {
+      if (previous !== undefined) process.env.JUPITER_API_KEY = previous;
+    }
   });
 });

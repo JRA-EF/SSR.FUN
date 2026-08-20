@@ -53,11 +53,13 @@ import {
   PROTOCOL_MIN_MINT_FEE_BPS,
   usdToSolLamports,
   isSupportedAssetMint,
+  MAINNET_USDC_MINT,
   type NewReserveAddresses,
   type ReserveAssetAddresses,
   type ReserveOnChain,
   type RecipientInput,
 } from "@ssr/sdk";
+import { fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
 import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 import { computeFundingShortfall, determineDeploymentResumePoint, type ReserveOnChainStatus } from "./createReserveResume";
 import { PERMISSION_FLAGS } from "./onChainPermissions";
@@ -283,6 +285,8 @@ const SPL_MINT_ACCOUNT_BYTES = 82;
 const SPL_TOKEN_ACCOUNT_BYTES = 165;
 /** Rough per-transaction network fee estimate (base fee only, no priority fee) -- actual cost may vary slightly. */
 const ESTIMATED_TX_FEE_LAMPORTS = 5_000n;
+/** A Jupiter swap transaction typically carries a priority fee Jupiter itself recommends (observed ~0.0001 SOL) on top of the base fee -- a plain instruction's 5,000-lamport estimate above would understate it. Used only for the worst-case "this asset might need a swap" count below; never charged for an asset the wallet already holds enough of. */
+const ESTIMATED_JUPITER_SWAP_FEE_LAMPORTS = 110_000n;
 
 export interface CreateReserveCostEstimate {
   /** Rent for the new Reserve account itself. */
@@ -299,9 +303,11 @@ export interface CreateReserveCostEstimate {
   solSeedFundingLamports: bigint;
   /** Sum of all account-creation rent above (does NOT include SOL seed funding or network fees). */
   totalRentLamports: bigint;
-  /** Estimated base network fees across the (currently 2, or 3 if wrapping SOL) required transactions. */
+  /** Worst-case count of non-USDC/non-wrapped-SOL assets that may need a Jupiter swap to fund (Mainnet only) -- the ACTUAL count at launch time may be lower if the wallet already holds some of them; see fundSeedAssetsIdempotent's jupiterSwap path. */
+  jupiterSwapCount: number;
+  /** Estimated base network fees across every required transaction (create-and-register, fund-seed-assets, seed, and one per worst-case Jupiter swap above). */
   networkFeeLamportsEstimate: bigint;
-  /** Grand total SOL the wallet will actually be asked to spend: rent + SOL seed funding + estimated network fees. */
+  /** Grand total SOL the wallet will actually be asked to spend: rent + SOL seed funding + estimated network fees. This is a WORST-CASE total across every transaction the flow might submit -- Phantom (or any wallet) only ever shows the cost of the ONE transaction it's currently being asked to sign, so it will always show less than this per popup; see CreateDTR.tsx's Wallet Cost Summary copy. */
   totalLamports: bigint;
   numTransactions: number;
 }
@@ -389,8 +395,15 @@ export async function estimateCreateReserveCost(
   const totalRentLamports =
     BigInt(reserveRent) + BigInt(mintRent) + reserveAssetRentLamports + vaultRentLamports + managerReserveTokenAtaRentLamports + wsolAtaRent;
 
-  const numTransactions = wrapAssets.length > 0 ? 3 : 2;
-  const networkFeeLamportsEstimate = ESTIMATED_TX_FEE_LAMPORTS * BigInt(numTransactions);
+  // Worst case: every non-USDC/non-wrapped-SOL asset needs its own Jupiter
+  // swap transaction to fund (see fundSeedAssetsIdempotent) -- the real
+  // count at launch time may be lower (an asset the wallet already holds
+  // enough of needs no swap at all), so this is an upper bound, never an
+  // underestimate.
+  const jupiterSwapCount = assets.filter((a) => !isWrappedSol(a.mint) && a.mint !== MAINNET_USDC_MINT).length;
+
+  const numTransactions = 2 + (wrapAssets.length > 0 ? 1 : 0) + jupiterSwapCount;
+  const networkFeeLamportsEstimate = ESTIMATED_TX_FEE_LAMPORTS * BigInt(numTransactions - jupiterSwapCount) + ESTIMATED_JUPITER_SWAP_FEE_LAMPORTS * BigInt(jupiterSwapCount);
 
   return {
     reserveRentLamports: BigInt(reserveRent),
@@ -400,6 +413,7 @@ export async function estimateCreateReserveCost(
     managerReserveTokenAtaRentLamports,
     solSeedFundingLamports,
     totalRentLamports,
+    jupiterSwapCount,
     networkFeeLamportsEstimate,
     totalLamports: totalRentLamports + solSeedFundingLamports + networkFeeLamportsEstimate,
     numTransactions,
@@ -465,6 +479,19 @@ async function fetchOwnedBalanceRaw(connection: Connection, mint: PublicKey, own
   }
 }
 
+export interface JupiterSwapFundingOptions {
+  /** Mainnet only -- lets a non-USDC, non-wrapped-SOL asset be funded by actually swapping part of the creator's USDC into it via Jupiter, instead of requiring the creator to already hold that exact asset. */
+  enabled: boolean;
+  /** The Reserve's total USD seed value -- combined with each asset's own seedWeightFraction to size that asset's swap. */
+  seedTotalUsd: number;
+  onSwapStart?: (mint: string) => void;
+}
+
+/** True for any asset this app would consider swapping USDC into via Jupiter -- real Circle USDC and wrapped SOL are both funded through their own existing, non-swap paths. */
+export function isJupiterSwapEligible(mint: string): boolean {
+  return !isWrappedSol(mint) && mint !== MAINNET_USDC_MINT;
+}
+
 /**
  * Funds only the genuine SHORTFALL between each asset's required seed amount
  * and what the wallet already, really holds -- the fix that makes
@@ -474,26 +501,73 @@ async function fetchOwnedBalanceRaw(connection: Connection, mint: PublicKey, own
  * then hit an expired blockhash) tops up only what's still missing instead
  * of re-minting/re-wrapping the full amount again. Never submits anything
  * for an asset whose shortfall is already zero.
+ *
+ * Returns `finalSeedAmounts`, not just the input `seedAmounts` unchanged:
+ * when `jupiterSwap.enabled`, a swap-eligible asset's target amount is
+ * REPLACED with a live Jupiter quote's real output amount (the caller's own
+ * `seedRawAmountForAsset` estimate assumes every asset is pegged to $1,
+ * which is only true for USDC itself -- see docs/project/DECISION_LOG.md's
+ * entry for this pass). The caller must pass `finalSeedAmounts`, not its
+ * original `seedAmounts`, into buildSeedReserveInstruction.
  */
 async function fundSeedAssetsIdempotent(
   connection: Connection,
   wallet: WalletContextState,
-  assets: Pick<CreateReserveAssetInput, "mint" | "decimals">[],
+  assets: Pick<CreateReserveAssetInput, "mint" | "decimals" | "seedWeightFraction">[],
   seedAmounts: bigint[],
   // Mainnet has no faucet -- there is no such thing as a server-minted real
   // USDC top-up. When false, any genuine shortfall throws a plain,
   // actionable error (fund the wallet yourself first) instead of calling
-  // api/devnet/mint-test-assets, which only ever exists on DevNet. Defaults
-  // to true so every pre-existing DevNet caller/test behaves unchanged.
+  // api/devnet/mint-test-assets, which only ever exists on DevNet, UNLESS
+  // jupiterSwap.enabled covers that specific asset instead. Defaults to
+  // true so every pre-existing DevNet caller/test behaves unchanged.
   allowFaucet: boolean = true,
-): Promise<string | null> {
+  jupiterSwap?: JupiterSwapFundingOptions,
+): Promise<{ signature: string | null; finalSeedAmounts: bigint[] }> {
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const owner = wallet.publicKey;
 
   const balances = await Promise.all(assets.map((a) => fetchOwnedBalanceRaw(connection, new PublicKey(a.mint), owner)));
-  const shortfalls = assets.map((a, i) => ({ asset: a, amount: computeFundingShortfall(seedAmounts[i], balances[i]) }));
+  const finalSeedAmounts = [...seedAmounts];
 
-  const faucetAssets = shortfalls.filter(({ asset, amount }) => !isWrappedSol(asset.mint) && amount > 0n);
+  let jupiterSwapSig: string | null = null;
+  if (jupiterSwap?.enabled) {
+    for (let i = 0; i < assets.length; i++) {
+      const asset = assets[i];
+      if (!isJupiterSwapEligible(asset.mint)) continue;
+
+      const usdBudget = jupiterSwap.seedTotalUsd * asset.seedWeightFraction;
+      if (usdBudget <= 0) {
+        finalSeedAmounts[i] = 0n;
+        continue;
+      }
+      const usdcBudgetRaw = BigInt(Math.round(usdBudget * 1_000_000));
+      // A live quote is also the correct, price-aware target amount for
+      // this asset -- replacing the $1-peg placeholder seedAmounts[i] was
+      // computed with, which is only ever correct for real USDC itself.
+      const quote = await fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58());
+      finalSeedAmounts[i] = quote.outAmount;
+
+      if (balances[i] >= quote.outAmount) continue; // already holds enough -- no swap needed, no fee spent.
+
+      jupiterSwap.onSwapStart?.(asset.mint);
+      jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote);
+      const newBalance = await fetchOwnedBalanceRaw(connection, new PublicKey(asset.mint), owner);
+      if (newBalance < quote.outAmount) {
+        throw new Error(
+          `Swapped USDC for ${asset.mint} via Jupiter, but the resulting balance is still short of the target -- this can happen with a fast-moving or thin-liquidity token. Try again to top up the remainder (only the real shortfall will be swapped, not the full amount again).`,
+        );
+      }
+    }
+  }
+
+  const shortfalls = assets.map((a, i) => ({ asset: a, amount: computeFundingShortfall(finalSeedAmounts[i], balances[i]) }));
+
+  // Assets fully handled by the Jupiter-swap loop above (funded just now, or
+  // already held) are excluded here even if `balances` (captured before that
+  // loop ran) makes them look short -- the loop already verified each one's
+  // real post-swap balance meets its target.
+  const faucetAssets = shortfalls.filter(({ asset, amount }) => !isWrappedSol(asset.mint) && amount > 0n && !(jupiterSwap?.enabled && isJupiterSwapEligible(asset.mint)));
   const wrapAssets = shortfalls.filter(({ asset, amount }) => isWrappedSol(asset.mint) && amount > 0n);
 
   if (!allowFaucet && faucetAssets.length > 0) {
@@ -530,12 +604,13 @@ async function fundSeedAssetsIdempotent(
       createSyncNativeInstruction(wsolAta),
     ];
     const wrapSig = await signAndSend(connection, wallet, wrapIxs);
-    // If both faucet assets AND a SOL leg needed topping up, report the
-    // SOL-wrap signature only when there was no faucet call to report
-    // instead -- this return value just needs *a* representative signature.
+    // If more than one of faucet/wrap/swap needed topping up, report
+    // whichever signature isn't already set -- this return value just needs
+    // *a* representative signature.
     sig = sig ?? wrapSig;
   }
-  return sig;
+  sig = sig ?? jupiterSwapSig;
+  return { signature: sig, finalSeedAmounts };
 }
 
 /**
@@ -617,6 +692,8 @@ export async function createReserveOnChain(params: {
   programId?: PublicKey;
   /** See fundSeedAssetsIdempotent's own header -- false on Mainnet (no faucet exists there). Defaults to true, matching every pre-existing DevNet caller. */
   allowFaucet?: boolean;
+  /** See JupiterSwapFundingOptions -- Mainnet only, undefined/disabled everywhere else. */
+  jupiterSwap?: JupiterSwapFundingOptions;
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -704,8 +781,11 @@ export async function createReserveOnChain(params: {
   const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction));
 
   let fundSeedAssetsSig: string | null = null;
+  let finalSeedAmounts = seedAmounts;
   try {
-    fundSeedAssetsSig = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet);
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap);
+    fundSeedAssetsSig = fundResult.signature;
+    finalSeedAmounts = fundResult.finalSeedAmounts;
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses);
   }
@@ -714,7 +794,7 @@ export async function createReserveOnChain(params: {
   let seedSig: string;
   try {
     const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
-    const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, seedAmounts, initialReserveTokens);
+    const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
     seedSig = await signAndSend(connection, wallet, [seedIx]);
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
@@ -764,6 +844,8 @@ export async function resumeReserveDeploymentOnChain(params: {
   programId?: PublicKey;
   /** Same meaning as createReserveOnChain's own `allowFaucet`. */
   allowFaucet?: boolean;
+  /** Same meaning as createReserveOnChain's own `jupiterSwap`. */
+  jupiterSwap?: JupiterSwapFundingOptions;
 }): Promise<CreateReserveResult> {
   const { connection, wallet, pending } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -832,8 +914,11 @@ export async function resumeReserveDeploymentOnChain(params: {
 
   params.onProgress("fund-seed-assets");
   let fundSeedAssetsSig: string | null = null;
+  let finalSeedAmounts = seedAmounts;
   try {
-    fundSeedAssetsSig = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts, allowFaucet);
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts, allowFaucet, params.jupiterSwap);
+    fundSeedAssetsSig = fundResult.signature;
+    finalSeedAmounts = fundResult.finalSeedAmounts;
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses);
   }
@@ -849,7 +934,7 @@ export async function resumeReserveDeploymentOnChain(params: {
   if (freshBeforeSeed?.status === "assetsInitializing") {
     try {
       const initialReserveTokens = BigInt(Math.max(1, Math.floor(pending.seedTotalUsd)) * 1_000_000);
-      const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, seedAmounts, initialReserveTokens);
+      const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
       seedSig = await signAndSend(connection, wallet, [seedIx]);
     } catch (e) {
       throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
