@@ -137,7 +137,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const swapRes = await fetch(JUPITER_SWAP_URL, {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true }),
+      // dynamicSlippage: Jupiter computes its own volatility/route-aware
+      // slippage bound (bounded by MAX_SLIPPAGE_BPS's spirit -- Jupiter's
+      // own heuristic ceiling in practice) instead of a single fixed
+      // client-supplied value, which is what a fixed 150bps default was too
+      // tight for on a real low-liquidity/volatile token (see
+      // docs/project/DECISION_LOG.md's entry for this pass) -- it can go
+      // both tighter (no wasted slippage budget on a stable route) and
+      // wider (survives real short-term volatility) than a static number.
+      body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true }),
     });
     const swapBody = await swapRes.json().catch(() => null);
     if (!swapRes.ok || !swapBody || typeof swapBody.swapTransaction !== "string" || typeof swapBody.lastValidBlockHeight !== "number") {

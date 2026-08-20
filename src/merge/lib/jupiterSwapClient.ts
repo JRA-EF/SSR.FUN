@@ -8,12 +8,46 @@
 // Every swap is signed and submitted by the CONNECTED WALLET itself -- this
 // module (and the server endpoint it calls) never holds a private key or
 // custodies funds at any point. Mirrors createReserveClient.ts's own
-// signAndSend pattern (skipPreflight, confirmSignatureBounded, describeOnChainError),
-// adapted for a VersionedTransaction (Jupiter always returns v0).
+// signAndSend pattern (skipPreflight, confirmSignatureBounded), adapted for
+// a VersionedTransaction (Jupiter always returns v0).
+//
+// Deliberately does NOT reuse createReserveClient.ts's describeOnChainError
+// for an on-chain swap failure -- that decoder is scoped to ssr_protocol's
+// own deployed IDL/Anchor's framework error table and produces ssr_protocol-
+// flavored guidance ("check whether the deployed program binary has
+// drifted") that's actively misleading for a swap transaction, which never
+// invokes ssr_protocol at all. A swap transaction's instructions belong to
+// Jupiter's router and whichever AMM program(s) it routed through -- this
+// repo has no IDL for those, so describeJupiterSwapError below explains the
+// raw failure honestly instead of guessing at a specific meaning.
 import { Connection, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { describeOnChainError } from "@ssr/sdk";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
+
+/**
+ * Pure -- turns a raw JSON-stringified on-chain TransactionError (e.g.
+ * `{"InstructionError":[4,{"Custom":52}]}`) into an honest, swap-context
+ * explanation. Never claims to know exactly what a given custom error code
+ * means for an external program this repo has no IDL for -- the single most
+ * common real cause (by far) of an AMM/router instruction reverting mid-swap
+ * is a minimum-output/slippage check, so that's named as the likely cause,
+ * not asserted as certain.
+ */
+export function describeJupiterSwapError(rawErrorJson: string): string {
+  try {
+    const parsed = JSON.parse(rawErrorJson) as unknown;
+    if (parsed && typeof parsed === "object" && "InstructionError" in parsed) {
+      const [, detail] = (parsed as { InstructionError: [number, unknown] }).InstructionError;
+      if (detail && typeof detail === "object" && "Custom" in detail) {
+        const code = (detail as { Custom: number }).Custom;
+        return `The Jupiter swap was rejected on-chain by one of the programs in its route (error code ${code}) -- this most commonly means the price moved beyond the accepted slippage between fetching the quote and the swap actually executing, which is routine for a lower-liquidity token. Try again: a fresh quote is fetched automatically on retry.`;
+      }
+    }
+  } catch {
+    // Fall through to the generic message below.
+  }
+  return `The Jupiter swap was rejected on-chain (${rawErrorJson}) -- most likely the price moved beyond the accepted slippage between quote and execution. Try again: a fresh quote is fetched automatically on retry.`;
+}
 
 export interface JupiterSwapQuote {
   swapTransaction: string;
@@ -51,7 +85,7 @@ export async function executeJupiterSwap(connection: Connection, wallet: WalletC
   const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
   const outcome = await confirmSignatureBounded(connection, signature, quote.lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
-  if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Jupiter swap failed on-chain (${outcome.error}). Signature: ${signature}.`)));
+  if (outcome.status === "failed") throw new Error(`${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
   if (outcome.status === "expired") throw new Error(`Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
   throw new AmbiguousConfirmationError(signature);
 }

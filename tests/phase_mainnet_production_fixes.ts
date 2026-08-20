@@ -25,6 +25,7 @@ import { uploadReserveMetadata, isJupiterSwapEligible } from "../src/merge/lib/c
 import { computeSwapShortfallPct } from "../src/merge/lib/createReserveResume";
 import { matchesAssetSearch } from "../src/merge/lib/assetSearch";
 import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
+import { describeJupiterSwapError } from "../src/merge/lib/jupiterSwapClient";
 
 interface FakeReq {
   method?: string;
@@ -325,5 +326,27 @@ describe("src/merge/lib/createReserveResume.ts -- computeSwapShortfallPct (pure)
 
   it("a zero target is never a shortfall (nothing was expected)", () => {
     expect(computeSwapShortfallPct(0n, 0n)).to.equal(0);
+  });
+});
+
+describe("src/merge/lib/jupiterSwapClient.ts -- describeJupiterSwapError (pure)", () => {
+  it("decodes a real InstructionError/Custom shape into an honest, swap-context explanation, never claiming a specific ssr_protocol meaning", () => {
+    const msg = describeJupiterSwapError('{"InstructionError":[4,{"Custom":52}]}');
+    expect(msg).to.include("error code 52");
+    expect(msg).to.include("slippage");
+    expect(msg).to.not.include("ssr_protocol");
+    expect(msg).to.not.include("program binary has drifted");
+  });
+
+  it("falls back to a generic-but-honest message for an error shape it doesn't recognize", () => {
+    const msg = describeJupiterSwapError('{"SomeOtherErrorShape":true}');
+    expect(msg).to.include("slippage");
+    expect(msg).to.include('{"SomeOtherErrorShape":true}');
+  });
+
+  it("never throws on malformed/non-JSON input -- always returns a usable message", () => {
+    const msg = describeJupiterSwapError("not json at all");
+    expect(msg).to.be.a("string");
+    expect(msg.length).to.be.greaterThan(0);
   });
 });
