@@ -27,15 +27,16 @@
 // delegate/balance read go through the shared cache/dedupe/concurrency-limit
 // helpers so a manual refresh (DTRDetail) landing on the same tick collapses
 // into the same request instead of doubling it.
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
+import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, registerDynamicSupportedAssetMints, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
 import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from "./solana-config";
+import { useMainnetKnownAssetMints } from "../hooks/useMainnetKnownAssetMints";
 
 const BASE_POLL_MS = 15_000;
 const MAX_POLL_MS = 120_000;
@@ -44,13 +45,16 @@ const DISCOVERY_CACHE_TTL_MS = 5_000;
 /** A Reserve's off-chain metadata (name/ticker/description/category) is immutable in practice -- nothing in this app resubmits update_metadata today -- so a long TTL just avoids re-fetching it on every poll tick within the same browser session, never staleness risk. */
 const METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
-// Mainnet is scoped to USDC-only Reserves for this launch (see
-// docs/project/DECISION_LOG.md's Mainnet-launch entries) -- the DevNet
-// fixture/wrapped-SOL/devUSDC candidates below are meaningless on Mainnet
-// and must never be used there.
-const CANDIDATE_ASSET_MINTS = IS_MAINNET
-  ? [new PublicKey(MAINNET_USDC_MINT)]
-  : [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
+// DevNet's static candidate list is unchanged. Mainnet's is dynamic: the
+// hardcoded USDC mint (always) plus every mint the Ledger has actually seen
+// used on-chain (api/ledger/known-asset-mints.ts) plus any mint THIS
+// browser has itself just used to create a Reserve
+// (useAppStore.mainnetKnownAssetMints) -- see
+// api/ledger/known-asset-mints.ts's header for why this is deliberately
+// NOT the full Jupiter catalogue.
+const DEVNET_CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.values(DEVNET_FIXTURES.mints).map((m) => new PublicKey(m.address))];
+
+const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 export function RealReserveSync() {
   const { connection } = useConnection();
@@ -58,8 +62,27 @@ export function RealReserveSync() {
   const applyDiscoveredReserves = useAppStore((s) => s.applyDiscoveredReserves);
   const syncRealHolding = useAppStore((s) => s.syncRealHolding);
   const setChainDiscoveryStatus = useAppStore((s) => s.setChainDiscoveryStatus);
+  const mainnetLocalKnownMints = useAppStore((s) => s.mainnetKnownAssetMints);
+  const mainnetLedgerKnownMints = useMainnetKnownAssetMints(IS_MAINNET);
 
   const walletKey = connected && publicKey ? publicKey.toBase58() : null;
+
+  const mergedMainnetMints = useMemo(
+    () => (IS_MAINNET ? [...new Set<string>([MAINNET_USDC_MINT, ...mainnetLedgerKnownMints, ...mainnetLocalKnownMints])] : []),
+    [mainnetLedgerKnownMints, mainnetLocalKnownMints],
+  );
+
+  // Side-effecting registration deliberately lives in its own effect, not
+  // inside the useMemo above -- registerDynamicSupportedAssetMints mutates
+  // shared module state and must run as a genuine effect, not during render.
+  useEffect(() => {
+    if (IS_MAINNET && mergedMainnetMints.length > 0) registerDynamicSupportedAssetMints(mergedMainnetMints);
+  }, [mergedMainnetMints]);
+
+  const candidateAssetMints = useMemo(
+    () => (IS_MAINNET ? mergedMainnetMints.map((m) => new PublicKey(m)) : DEVNET_CANDIDATE_ASSET_MINTS),
+    [mergedMainnetMints],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -104,11 +127,11 @@ export function RealReserveSync() {
         const { reserves, protocolConfig, issues } = await getCached(
           `discovery:${connection.rpcEndpoint}:${programId.toBase58()}`,
           DISCOVERY_CACHE_TTL_MS,
-          () => withRateLimitRetry(() => withReadConcurrencyLimit(() => discoverAllReserves(connection, programId, CANDIDATE_ASSET_MINTS)), 3, 500),
+          () => withRateLimitRetry(() => withReadConcurrencyLimit(() => discoverAllReserves(connection, programId, candidateAssetMints)), 3, 500),
         );
         if (cancelled) return;
         if (!protocolConfig) {
-          setChainDiscoveryStatus("error", "SSR Protocol is not initialized on this DevNet endpoint.");
+          setChainDiscoveryStatus("error", `SSR Protocol is not initialized on this ${CLUSTER_LABEL} endpoint.`);
           return;
         }
         if (issues.length > 0) {
@@ -158,7 +181,7 @@ export function RealReserveSync() {
         }
       } catch (e) {
         if (isRateLimitError(e)) hitRateLimit = true;
-        if (!cancelled) setChainDiscoveryStatus("error", e instanceof Error ? e.message : "DevNet discovery failed.");
+        if (!cancelled) setChainDiscoveryStatus("error", e instanceof Error ? e.message : `${CLUSTER_LABEL} discovery failed.`);
       } finally {
         running = false;
         currentDelay = nextPollDelay(currentDelay, hitRateLimit, BASE_POLL_MS, MAX_POLL_MS);
@@ -172,7 +195,7 @@ export function RealReserveSync() {
       if (timeoutId) clearTimeout(timeoutId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection, walletKey, applyDiscoveredReserves, syncRealHolding, setChainDiscoveryStatus, publicKey]);
+  }, [connection, walletKey, applyDiscoveredReserves, syncRealHolding, setChainDiscoveryStatus, publicKey, candidateAssetMints]);
 
   return null;
 }

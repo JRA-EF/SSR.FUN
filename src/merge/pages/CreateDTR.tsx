@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
+import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
@@ -64,17 +65,15 @@ const DEVNET_REAL_ASSETS = [
     decimals: m.decimals,
   })),
 ];
-// Mainnet Reserves are USDC-only for this launch (see
-// docs/project/DECISION_LOG.md's Mainnet-launch entries) -- no multi-asset
-// picker, no in-kind minting of other assets. Exactly one selectable asset,
-// reusing the exact same picker/weight-slider UI below unchanged (it already
-// supports a single-asset basket; "unallocated" simply becomes 0% once USDC
-// is added at 100%).
-const MAINNET_REAL_ASSETS = [
-  { symbol: "USDC", name: "USD Coin", real: true as const, mint: MAINNET_USDC_MINT, decimals: 6 },
-];
-const SELECTABLE_ASSETS = IS_MAINNET ? MAINNET_REAL_ASSETS : DEVNET_REAL_ASSETS;
-const REAL_ASSET_BY_SYMBOL = new Map(SELECTABLE_ASSETS.map((a) => [a.symbol, a]));
+// Mainnet's asset picker is real Circle USDC (always selectable, the
+// protocol's settlement/mint-and-redeem currency -- see
+// docs/project/DECISION_LOG.md's Mainnet-launch entries) plus the live
+// Jupiter Tokens API V2 verified-token catalogue (see
+// useMainnetAssetCatalogue, api/ledger/asset-catalogue.ts) for the rest of
+// the basket -- computed inside the component below (SELECTABLE_ASSETS),
+// not as a module-level constant like DEVNET_REAL_ASSETS above, since it
+// depends on that catalogue fetch's live result.
+const MAINNET_USDC_ASSET = { symbol: "USDC", name: "USD Coin", real: true as const, mint: MAINNET_USDC_MINT, decimals: 6 };
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
@@ -92,10 +91,32 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 
 export function CreateDTR() {
   const [, setLocation] = useLocation();
-  const { wallet, registerRealReserve, syncRealHolding } = useAppStore();
+  const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints } = useAppStore();
   const { toast } = useToast();
   const { connection } = useConnection();
   const walletCtx = useWallet();
+
+  // Mainnet only: the live Jupiter verified-token catalogue for the Reserve
+  // Asset picker (see useMainnetAssetCatalogue's header). Registered as
+  // dynamically-supported as soon as it loads so createReserveClient.ts's
+  // isSupportedAssetMint check (which gates what can actually be submitted
+  // on-chain) accepts a brand-new asset nobody has used yet -- distinct from
+  // RealReserveSync.tsx's separate, narrower "known on-chain mints"
+  // registration, which only covers assets already in use (kept small on
+  // purpose for the live discovery poll's RPC cost; this one is a one-shot
+  // page-load registration with no polling cost concern).
+  const mainnetCatalogue = useMainnetAssetCatalogue(IS_MAINNET);
+  useEffect(() => {
+    if (IS_MAINNET && mainnetCatalogue.tokens.length > 0) {
+      registerDynamicSupportedAssetMints(mainnetCatalogue.tokens.map((t) => t.mint));
+    }
+  }, [mainnetCatalogue.tokens]);
+
+  const SELECTABLE_ASSETS = useMemo(() => {
+    if (!IS_MAINNET) return DEVNET_REAL_ASSETS;
+    return [MAINNET_USDC_ASSET, ...mainnetCatalogue.tokens.filter((t) => t.symbol !== MAINNET_USDC_ASSET.symbol)];
+  }, [mainnetCatalogue.tokens]);
+  const REAL_ASSET_BY_SYMBOL = useMemo(() => new Map(SELECTABLE_ASSETS.map((a) => [a.symbol, a])), [SELECTABLE_ASSETS]);
 
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -216,7 +237,7 @@ export function CreateDTR() {
       cancelled = true;
       clearTimeout(debounceHandle);
     };
-  }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection]);
+  }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection, REAL_ASSET_BY_SYMBOL]);
 
   // Uploads this Reserve's off-chain metadata (name/ticker/description/
   // category/buyTaxPct/sellTaxPct) and resolves the resulting permanent URL
@@ -239,14 +260,18 @@ export function CreateDTR() {
     let cancelled = false;
     setMetadataUploading(true);
     const debounceHandle = setTimeout(() => {
-      uploadReserveMetadata(window.location.origin, {
-        name,
-        ticker,
-        description,
-        category,
-        buyTaxPct: managerBuyTaxPct,
-        sellTaxPct: managerSellTaxPct,
-      })
+      uploadReserveMetadata(
+        window.location.origin,
+        {
+          name,
+          ticker,
+          description,
+          category,
+          buyTaxPct: managerBuyTaxPct,
+          sellTaxPct: managerSellTaxPct,
+        },
+        IS_MAINNET ? "mainnet" : "devnet",
+      )
         .then((uri) => {
           if (cancelled) return;
           setMetadataUri(uri);
@@ -419,6 +444,10 @@ export function CreateDTR() {
       });
       setResumePending(null);
       syncRealHolding(dtrId, "0", 1); // Placeholder holding entry -- RealReserveSync's next poll (or DTRDetail's own on-chain read) fills in the real balance/composition immediately; this just avoids a blank flash.
+      // So THIS browser's own just-resumed Reserve is discoverable
+      // immediately, before api/ledger/known-asset-mints.ts's daily-refreshed
+      // list would otherwise catch up -- see useAppStore.mainnetKnownAssetMints.
+      if (IS_MAINNET) addKnownAssetMints(result.assets.map((a) => a.mint));
       toast({
         title: "Reserve deployment resumed and completed",
         description: (
@@ -897,6 +926,10 @@ export function CreateDTR() {
       // balance being briefly (and misleadingly) absent from Portfolio right
       // after a successful deployment.
       syncRealHolding(dtrId, onChain.reserveTokenSupplyRaw, 1);
+      // So THIS browser's own just-created Reserve is discoverable
+      // immediately, before api/ledger/known-asset-mints.ts's daily-refreshed
+      // list would otherwise catch up -- see useAppStore.mainnetKnownAssetMints.
+      if (IS_MAINNET) addKnownAssetMints(realAssets.map((a) => a.mint));
 
       toast({
         title: `Reserve deployed on Solana ${IS_MAINNET ? "Mainnet" : "DevNet"}`,
@@ -1124,10 +1157,16 @@ export function CreateDTR() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Asset Selection */}
                 <div className="space-y-4">
+                  {IS_MAINNET && mainnetCatalogue.status === "loading" && (
+                    <p className="text-xs text-muted-foreground">Loading the full Mainnet asset list...</p>
+                  )}
+                  {IS_MAINNET && mainnetCatalogue.status === "unavailable" && (
+                    <p className="text-xs text-muted-foreground">Showing USDC only -- the full Mainnet asset list is temporarily unavailable.</p>
+                  )}
                   <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input 
-                      placeholder="Search assets to add..." 
+                    <Input
+                      placeholder="Search assets to add..."
                       className="pl-9"
                       value={assetSearch}
                       onChange={(e) => setAssetSearch(e.target.value)}

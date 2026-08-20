@@ -216,13 +216,17 @@ export interface ReserveMetadataInput {
 /**
  * Uploads a Reserve's off-chain metadata (name/ticker/description/category/
  * buyTaxPct/sellTaxPct) to this app's own permanent store
- * (api/devnet/reserve-metadata.ts) and returns the resulting short,
- * permanent HTTPS URL -- what CreateDTR.tsx submits on-chain as
- * Reserve.metadata_uri, NEVER the JSON payload itself. This is the fix for
- * the confirmed root cause of SsrError::MetadataUriTooLong: the previous
- * flow built `data:application/json,${encodeURIComponent(JSON.stringify({
- * name, ticker, description, category, buyTaxPct, sellTaxPct }))}` and
- * submitted THAT directly on-chain -- routinely 300-600+ bytes for any real
+ * (api/devnet/reserve-metadata.ts or api/mainnet/reserve-metadata.ts,
+ * selected by `cluster` -- see those files' headers: same generic,
+ * cluster-agnostic backend, kept as two separate routes so a Mainnet
+ * Reserve's metadata_uri can never end up minted under the
+ * /api/devnet/-prefixed path) and returns the resulting short, permanent
+ * HTTPS URL -- what CreateDTR.tsx submits on-chain as Reserve.metadata_uri,
+ * NEVER the JSON payload itself. This is the fix for the confirmed root
+ * cause of SsrError::MetadataUriTooLong: the previous flow built
+ * `data:application/json,${encodeURIComponent(JSON.stringify({ name,
+ * ticker, description, category, buyTaxPct, sellTaxPct }))}` and submitted
+ * THAT directly on-chain -- routinely 300-600+ bytes for any real
  * name/description, against a 200-byte on-chain limit. See
  * packages/sdk/src/metadataUri.ts's header for the full writeup.
  *
@@ -237,8 +241,9 @@ export interface ReserveMetadataInput {
  * fixed-format URL scheme) this should always be far under the limit, but a
  * caller must never trust that without checking.
  */
-export async function uploadReserveMetadata(origin: string, input: ReserveMetadataInput): Promise<string> {
-  const response = await fetch(`${origin}/api/devnet/reserve-metadata`, {
+export async function uploadReserveMetadata(origin: string, input: ReserveMetadataInput, cluster: "devnet" | "mainnet" = "devnet"): Promise<string> {
+  const path = `/api/${cluster}/reserve-metadata`;
+  const response = await fetch(`${origin}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -250,7 +255,7 @@ export async function uploadReserveMetadata(origin: string, input: ReserveMetada
   if (!body || typeof body.id !== "string" || !body.id) {
     throw new Error("Reserve metadata upload did not return a valid id.");
   }
-  const uri = `${origin}/api/devnet/reserve-metadata?id=${body.id}`;
+  const uri = `${origin}${path}?id=${body.id}`;
   validateMetadataUri(uri);
   return uri;
 }

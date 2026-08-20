@@ -7,7 +7,11 @@ import { avatarStyle } from '../lib/avatarStyle'
 import { useAppStore } from '@/store/useAppStore'
 import { buildReserveCardProps, selectFeaturedReserves } from '@/lib/reserveCardProps'
 import { useLandingStats } from '@/hooks/useLandingStats'
+import { IS_MAINNET } from '@/lib/solana-config'
 import type { DTR } from '@/lib/types'
+
+const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
+const SETTLEMENT_SYMBOL = IS_MAINNET ? 'USDC' : 'devUSDC'
 
 function FeaturedCard({ dtr }: { dtr: DTR }) {
   const cardProps = buildReserveCardProps(dtr)
@@ -62,10 +66,10 @@ export function Home() {
       <div className="kpi-strip">
         <div className="container">
           {stillDiscovering ? (
-            <div className="callout">Checking Solana DevNet for live Reserves…</div>
+            <div className="callout">Checking Solana {CLUSTER_LABEL} for live Reserves…</div>
           ) : discoveryUnavailable ? (
             <div className="callout warn">
-              Live Reserve data is temporarily unavailable on Solana DevNet ({chainDiscoveryError ?? 'unknown error'}).
+              Live Reserve data is temporarily unavailable on Solana {CLUSTER_LABEL} ({chainDiscoveryError ?? 'unknown error'}).
             </div>
           ) : (
             <div className="kpi-grid">
@@ -110,13 +114,11 @@ export function Home() {
             </h2>
             <Link to="/discover" className="faint" style={{ fontSize: 14 }}>View all →</Link>
           </div>
-          {stillDiscovering ? (
-            <div className="callout">Checking Solana DevNet for live Reserves…</div>
-          ) : discoveryUnavailable ? (
-            <div className="callout warn">
-              Live Reserve data is temporarily unavailable on Solana DevNet ({chainDiscoveryError ?? 'unknown error'}).
-            </div>
-          ) : featured.length === 0 ? (
+          {/* stillDiscovering/discoveryUnavailable render nothing here -- the
+              kpi-strip section above already shows that exact state, once,
+              so this section never repeats the same loading/error notice a
+              second time on the same page load. */}
+          {stillDiscovering || discoveryUnavailable ? null : featured.length === 0 ? (
             <div className="callout">
               No Reserves have launched yet. <Link to="/create">Launch a Reserve</Link> to be the
               first.
@@ -157,7 +159,7 @@ export function Home() {
               <div className="n display">03</div>
               <h3>Trade</h3>
               <p>
-                Use devUSDC to mint and redeem Reserve Tokens. Genuine on-chain activity updates the reserve asset
+                Use {SETTLEMENT_SYMBOL} to mint and redeem Reserve Tokens. Genuine on-chain activity updates the reserve asset
                 balances, Reserve Token supply, backing, and TVL.
               </p>
             </div>

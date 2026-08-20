@@ -37,7 +37,9 @@ import {
   type RecipientInput,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
-import { SSR_PROGRAM_ID } from "./solana-config";
+import { SSR_PROGRAM_ID, IS_MAINNET } from "./solana-config";
+
+const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 /** Signs, submits (once -- never auto-retried), and confirms via bounded signature-status polling instead of `connection.confirmTransaction`'s websocket subscription -- see zapClient.ts's signSubmitAndConfirm, which this mirrors. Never resubmits on an ambiguous result; throws AmbiguousConfirmationError (carrying the real signature) instead. */
 async function signAndSend(connection: Connection, wallet: WalletContextState, tx: Transaction): Promise<string> {
@@ -298,7 +300,7 @@ export async function executeCollectFees(
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
   const protocolConfig = await fetchProtocolConfig(connection, programId);
-  if (!protocolConfig) throw new Error("SSR Protocol is not initialized on this DevNet endpoint.");
+  if (!protocolConfig) throw new Error(`SSR Protocol is not initialized on this ${CLUSTER_LABEL} endpoint.`);
   const ix = await buildCollectFeesInstruction(
     program,
     programId,
@@ -328,7 +330,7 @@ export async function executeCollectProtocolFee(
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
   const protocolConfig = await fetchProtocolConfig(connection, programId);
-  if (!protocolConfig) throw new Error("SSR Protocol is not initialized on this DevNet endpoint.");
+  if (!protocolConfig) throw new Error(`SSR Protocol is not initialized on this ${CLUSTER_LABEL} endpoint.`);
   const ix = await buildCollectProtocolFeeInstruction(
     program,
     programId,

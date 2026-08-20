@@ -1,6 +1,8 @@
 // Shared hook for real, on-chain-derived Reserve stats (see
-// api/devnet/landing-stats.ts): globally-deduplicated Reserve Token holder
-// count, rolling 24h trade volume, and the same two numbers broken out per
+// api/devnet/landing-stats.ts and its Mainnet counterpart
+// api/mainnet/landing-stats.ts -- cluster-aware, IS_MAINNET picks which one
+// this hook calls): globally-deduplicated Reserve Token holder count,
+// rolling 24h trade volume, and the same two numbers broken out per
 // Reserve. Used by both the native Home page (global KPIs) and the merge
 // DTRDetail page (per-Reserve holder count/24h volume) so there is exactly
 // one fetch, one cache, and one counting algorithm behind every holder/volume
@@ -8,6 +10,7 @@
 // silently disagree. A read failure surfaces honestly as "unavailable",
 // never a fabricated 0 or a permanent "not indexed" placeholder.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IS_MAINNET } from "../lib/solana-config";
 
 export interface PerReserveStats {
   holders: number;
@@ -42,7 +45,8 @@ export function useLandingStats(): LandingStatsState {
 
   const fetchOnce = useCallback((force?: boolean) => {
     setStale(false);
-    fetch(force ? "/api/devnet/landing-stats?force=1" : "/api/devnet/landing-stats")
+    const base = IS_MAINNET ? "/api/mainnet/landing-stats" : "/api/devnet/landing-stats";
+    fetch(force ? `${base}?force=1` : base)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error("request failed"))))
       .then((data: LandingStatsData) => {
         if (!cancelledRef.current) setState({ status: "ready", data });

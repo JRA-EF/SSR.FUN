@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["**/*.ts", "../devnet/_lib/rateLimit.ts"]
+  "include": ["**/*.ts", "../devnet/_lib/rateLimit.ts", "../devnet/_lib/apiTypes.ts"]
 }

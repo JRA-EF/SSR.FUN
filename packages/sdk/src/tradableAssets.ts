@@ -40,8 +40,26 @@ export const SUPPORTED_ASSET_MINTS: ReadonlySet<string> = new Set([
   MAINNET_USDC_MINT,
 ]);
 
+/**
+ * Additive, runtime-registered Mainnet asset mints -- lets the Mainnet
+ * Jupiter-catalogue-backed Reserve Asset picker (src/merge/pages/CreateDTR.tsx)
+ * and the on-chain-usage-scoped discovery candidate list (RealReserveSync.tsx,
+ * api/mainnet/landing-stats.ts) widen what counts as "supported" without
+ * ever touching SUPPORTED_ASSET_MINTS itself or changing either exported
+ * function's signature -- every existing caller/test keeps working exactly
+ * as before for the static set. Never removes anything; a mint added here
+ * stays supported for the life of the process (Reserve composition is
+ * permanent once created, so there's no case where un-registering one would
+ * be correct). See docs/project/DECISION_LOG.md's Mainnet-catalogue entry.
+ */
+const dynamicSupportedAssetMints = new Set<string>();
+
+export function registerDynamicSupportedAssetMints(mints: Iterable<string>): void {
+  for (const mint of mints) dynamicSupportedAssetMints.add(mint);
+}
+
 export function isSupportedAssetMint(mint: string): boolean {
-  return SUPPORTED_ASSET_MINTS.has(mint);
+  return SUPPORTED_ASSET_MINTS.has(mint) || dynamicSupportedAssetMints.has(mint);
 }
 
 /**
@@ -53,5 +71,5 @@ export function isSupportedAssetMint(mint: string): boolean {
  * shape (e.g. still AssetsInitializing), not a supported one.
  */
 export function isReserveTradable(assetMints: string[]): boolean {
-  return assetMints.length > 0 && assetMints.every((m) => SUPPORTED_ASSET_MINTS.has(m));
+  return assetMints.length > 0 && assetMints.every((m) => isSupportedAssetMint(m));
 }

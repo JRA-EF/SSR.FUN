@@ -43,7 +43,7 @@ export const MAINNET_TREASURY_VAULT = "3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjW
 /** Mainnet only: the sole supported Reserve Asset for this launch (real Circle USDC) -- see the Mainnet-launch decision log entry for the USDC-only scoping decision. */
 export const MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-/** Solana Explorer URL for an address or transaction signature, always DevNet-tagged in this testing phase. */
+/** Solana Explorer URL for an address or transaction signature, cluster-tagged via SOLANA_CLUSTER (the query param is omitted entirely for Mainnet, Explorer's own default). */
 export function explorerUrl(kind: "address" | "tx", value: string): string {
   const cluster = SOLANA_CLUSTER === "mainnet-beta" ? "" : `?cluster=${SOLANA_CLUSTER}`;
   return `https://explorer.solana.com/${kind === "tx" ? "tx" : "address"}/${value}${cluster}`;

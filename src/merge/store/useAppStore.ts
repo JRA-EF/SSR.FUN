@@ -91,6 +91,18 @@ interface AppState {
   setChainDiscoveryStatus: (status: "loading" | "ready" | "error", error?: string | null) => void;
 
   /**
+   * Mainnet only: Reserve Asset mints this BROWSER has itself just used to
+   * create/seed a Reserve. RealReserveSync.tsx merges this into its
+   * discovery candidate-mint list so this browser's own just-created
+   * Reserve is discoverable immediately -- without waiting for the
+   * ledger-derived api/ledger/known-asset-mints.ts (refreshed by a daily
+   * cron) to catch up. Additive only, deliberately never pruned: a mint a
+   * Reserve once used stays relevant for the life of that Reserve.
+   */
+  mainnetKnownAssetMints: string[];
+  addKnownAssetMints: (mints: string[]) => void;
+
+  /**
    * True while ANY wallet transaction (Buy, Sell, or a Reserve launch) is
    * being prepared, signed, submitted, confirmed, or reconciled. See
    * src/merge/lib/RealReserveSync.tsx, which checks this before each poll
@@ -187,6 +199,13 @@ export const useAppStore = create<AppState>()(
       chainDiscoveryStatus: "loading",
       chainDiscoveryError: null,
       setChainDiscoveryStatus: (status, error) => set({ chainDiscoveryStatus: status, chainDiscoveryError: error ?? null }),
+      mainnetKnownAssetMints: [],
+      addKnownAssetMints: (mints) =>
+        set((state) => {
+          const merged = new Set(state.mainnetKnownAssetMints);
+          for (const m of mints) merged.add(m);
+          return { mainnetKnownAssetMints: [...merged] };
+        }),
       txInFlight: false,
       setTxInFlight: (inFlight) => set({ txInFlight: inFlight }),
       walletError: null,
