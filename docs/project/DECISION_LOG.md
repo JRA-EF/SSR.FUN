@@ -3587,11 +3587,68 @@
     "api/site/login.ts"
   ],
   "supersedes": null,
-  "supersededBy": null,
+  "supersededBy": "DEC-0119 (password-independence choice only -- the site-wide gate mechanism itself, middleware.ts, and api/site/login.ts are unchanged and remain exactly as implemented here)",
   "evidence": [
     "`npx tsc -p tsconfig.node.json --noEmit`: clean.",
     "Live curl verification against strategic-super-reserve.fun: unauthenticated page -> login HTML (200); unauthenticated /api/kpis/kpis -> 401 JSON; POST /api/site/login with the configured password -> 200 {\"ok\":true} + Set-Cookie; authenticated GET / -> 200 app shell.",
     "`vercel --prod` deployment: readyState READY, target production, aliased to strategic-super-reserve.fun."
+  ]
+}
+```
+
+## DEC-0119
+
+```json
+{
+  "id": "DEC-0119",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Set SSR_SITE_PASSWORD (strategic-super-reserve.fun's site-wide gate, DEC-0117) to the exact same value as SSR_DASHBOARD_PASSWORD (the pre-existing /internal/* gate), reversing DEC-0117's deliberate choice to keep the two passwords independent.",
+  "context": "Creator asked to 'password protect strategic-super-reserve.fun, same password as the other urls' -- ambiguous on its face since the site was already password-gated as of yesterday (DEC-0117). A clarifying question surfaced two readings: (a) just confirm the current SSR_SITE_PASSWORD value, or (b) actually set it equal to SSR_DASHBOARD_PASSWORD, which DEC-0117 explicitly chose not to do. Before acting, Creator was shown DEC-0117's stated rationale for keeping them separate (the dashboard password is more broadly distributed than 'people allowed to use the live product,' and reuse would let dashboard-password holders reach fund-moving Mainnet pages) and confirmed intent to merge the passwords anyway.",
+  "rationale": "No code change: middleware.ts's two-gate structure (Gate 1 site-wide / Gate 2 internal-team) is untouched, only the env var value changed. Removed the existing SSR_SITE_PASSWORD Production variable (`vercel env rm`), pulled SSR_DASHBOARD_PASSWORD's real value locally via `vercel env pull` (never printed to any output/log; the pulled file was deleted immediately after each use), and re-added SSR_SITE_PASSWORD (`vercel env add`, type Sensitive) with that exact value. Redeployed to production (`vercel --prod`) since Vercel does not hot-apply env var changes to already-built deployments -- same mechanism DEC-0117 itself used for the original rollout.",
+  "alternativesConsidered": [
+    "Leave the two passwords independent per DEC-0117's original security rationale -- rejected: Creator was shown that rationale directly and explicitly re-confirmed wanting the passwords merged anyway.",
+    "Keep SSR_SITE_PASSWORD separate but just hand the internal team a copy of its value -- rejected: doesn't satisfy 'same password,' and the two would silently drift apart the next time either is rotated by hand."
+  ],
+  "impact": "Anyone who knows the internal dashboard password (a broader, lower-trust distribution than 'people allowed to use the live product,' per DEC-0117's own rationale) can now also reach every fund-moving Mainnet page (Buy/Sell/Create/Manage) on strategic-super-reserve.fun, not just /internal/*. Rotating either password now requires rotating both together to keep them in sync, or they will diverge again on the next manual rotation. No repository files changed -- this is purely a Vercel Production environment-variable value change plus a redeploy to apply it.",
+  "affectedAreas": [
+    "Vercel Production environment variable SSR_SITE_PASSWORD (project ssr14/ssr-fun)"
+  ],
+  "supersedes": "DEC-0117 (password-independence choice only -- the site-wide gate itself, middleware.ts, and api/site/login.ts are unchanged and remain exactly as DEC-0117 implemented them)",
+  "supersededBy": "DEC-0120 (the specific password value only -- the decision to keep the two passwords merged/identical is unchanged)",
+  "evidence": [
+    "`vercel env ls production` (before): SSR_SITE_PASSWORD Encrypted, Production, ~19h old (from DEC-0117). `vercel env rm SSR_SITE_PASSWORD production` followed by `vercel env add SSR_SITE_PASSWORD production` (value sourced from a fresh `vercel env pull` of SSR_DASHBOARD_PASSWORD) succeeded, type Sensitive.",
+    "`vercel --prod`: deployment dpl_MZhWYi614N3GpnSM5GNx7mqu85qS, readyState READY, target production; `vercel inspect` confirmed aliases strategic-super-reserve.fun and www.strategic-super-reserve.fun both point at it.",
+    "Live verification: unauthenticated GET https://strategic-super-reserve.fun/ -> 200 login page ('SSR.fun - Sign in'); POST /api/site/login with SSR_DASHBOARD_PASSWORD's value -> 200 {\"ok\":true} + Set-Cookie; authenticated GET / with that cookie -> 200 real app shell.",
+    "A fresh `vercel env pull` immediately after redeploy confirmed SSR_SITE_PASSWORD and SSR_DASHBOARD_PASSWORD are now byte-identical (compared locally in a throwaway shell variable; neither value was ever printed to any transcript, and the pulled file was deleted right after)."
+  ]
+}
+```
+
+## DEC-0120
+
+```json
+{
+  "id": "DEC-0120",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Set both SSR_SITE_PASSWORD and SSR_DASHBOARD_PASSWORD (Production) to a specific value Creator provided, superseding DEC-0119's merge (which used SSR_DASHBOARD_PASSWORD's then-existing, un-chosen value as the shared password).",
+  "context": "Creator reported the password they expected ('the password... it's not accepting, please recheck') failed to log in. Verified locally (without ever printing either secret) that neither SSR_SITE_PASSWORD nor SSR_DASHBOARD_PASSWORD -- both already byte-identical per DEC-0119 -- matched the value Creator gave (different length, 11 vs. 13 characters): the login rejection was correct behavior, not a bug, because that value had genuinely never been configured anywhere. Confirmed with Creator before overwriting a live credential that both env vars should be set to this exact value.",
+  "rationale": "No code change (same as DEC-0119, middleware.ts/api/site/login.ts/api/dashboard/login.ts untouched). `vercel env rm` + `vercel env add` (Sensitive) replaced both SSR_SITE_PASSWORD and SSR_DASHBOARD_PASSWORD in Production with Creator's provided value, then `vercel --prod` redeployed to apply it. Live end-to-end verification initially showed a misleading result -- POSTing the new password directly to /api/dashboard/login from a fresh cookie jar returned 401 -- traced immediately to middleware.ts's Gate 1 (site-wide) running in front of EVERY route including /api/dashboard/login itself (only /api/site/login and the 5 cron paths are exempt), so an unauthenticated dashboard-login attempt is rejected by Gate 1 before api/dashboard/login.ts's own password check ever runs. Re-tested correctly (POST /api/site/login first to obtain the ssr_site_session cookie, then POST /api/dashboard/login reusing that same cookie jar) and both passwords confirmed working, with /internal/status subsequently loading (200).",
+  "alternativesConsidered": [
+    "Assume the reported 'not accepting' was a session/cookie/browser-side issue rather than a password mismatch -- rejected: checked the actual configured values first, which showed conclusively that the password Creator expected had never been set."
+  ],
+  "impact": "strategic-super-reserve.fun's site-wide gate and the /internal/* dashboard gate both now accept Creator's intended password. DEC-0119's risk entry (dashboard password also unlocks fund-moving Mainnet pages) still stands unchanged -- only the shared value changed, not the merged-password design.",
+  "affectedAreas": [
+    "Vercel Production environment variables SSR_SITE_PASSWORD and SSR_DASHBOARD_PASSWORD (project ssr14/ssr-fun)"
+  ],
+  "supersedes": "DEC-0119 (the specific password value only -- the decision to keep the two passwords merged/identical is unchanged)",
+  "supersededBy": null,
+  "evidence": [
+    "Local comparison (values never printed): the password Creator reported as failing matched neither the then-current SSR_SITE_PASSWORD nor SSR_DASHBOARD_PASSWORD (11 chars vs. the reported value's 13).",
+    "`vercel env rm`/`vercel env add` (Sensitive) for both SSR_SITE_PASSWORD and SSR_DASHBOARD_PASSWORD; `vercel --prod` deployment dpl_HrbmMnqX6pPrC7hoWjyv6FMrLtMn, readyState READY, target production, aliased to strategic-super-reserve.fun and www.strategic-super-reserve.fun (confirmed via `vercel inspect`).",
+    "Live verification: POST /api/site/login with Creator's password -> 200 {\"ok\":true}; reusing that session cookie, POST /api/dashboard/login with the same password -> 200 {\"ok\":true}; GET /internal/status with both cookies -> 200.",
+    "Isolated false-negative explained and reproduced: POST /api/dashboard/login from a cookie-less client -> 401 {\"error\":\"Unauthorized\"}, which is middleware.ts's Gate-1 site-wide check rejecting the request before api/dashboard/login.ts runs -- not a password error."
   ]
 }
 ```
@@ -3622,13 +3679,70 @@
     "public/road-to-mainnet.html"
   ],
   "supersedes": null,
-  "supersededBy": null,
+  "supersededBy": "DEC-0121 (Reserve Asset composition scope only -- this entry's USDC-only Buy/Sell/mint/redeem settlement design is unchanged and remains exactly as implemented here)",
   "evidence": [
     "Full offline suite: 602/602 passing after every edit in this pass.",
     "`npx tsc -b` and `npm run build`: clean after every edit in this pass.",
     "Deployed bundle (curl-fetched from strategic-super-reserve.fun after authenticating through the DEC-0117 site gate): 0 occurrences of 'preview your in-kind redemption'.",
     "`node --check` on road-to-mainnet.html's extracted inline script: clean.",
     "`vercel --prod` deployments dpl_2Y5u5evnRKFrphzkqE9idGa9zuhT and dpl_E68tr5EYcEtKNZqAEM3goCe2LAzB: both readyState READY, target production."
+  ]
+}
+```
+
+## DEC-0121
+
+```json
+{
+  "id": "DEC-0121",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Fixed the root cause of both reported production 500s (homepage, Reserve-launch Wallet Cost Summary), fixed several DevNet/Mainnet data-mixing bugs (hardcoded /api/devnet/* routes and 'DevNet' copy reachable on the live Mainnet build, a duplicated homepage warning), and restored the Mainnet Reserve Asset selector to the full Jupiter Tokens API V2 verified-token catalogue (previously silently hardcoded to USDC-only).",
+  "context": "Creator reported both live 500s by their exact Vercel invocation IDs, DevNet references still visible in production (including the literal /api/devnet/reserve-metadata URL), and asked why the Reserve Asset selector -- previously built against the Jupiter Tokens API V2 with a weekly refresh -- only offered USDC on Mainnet. On the last point, a clarifying exchange surfaced that DEC-0118's USDC-only Mainnet scoping (2026-08-19) was about Buy/Sell/mint/redeem settlement, not the Reserve Asset composition itself -- Creator confirmed: 'usdc is the go-to mint and redeem and create reserve token. however, the reserve assets should be as per Jupiter list,' and provided a JUPITER_API_KEY (Jupiter's catalogue fetch had never been runnable in production -- the key had never been configured).",
+  "rationale": "Root cause #1 (both 500s): `vercel logs` on the deployment that was live during the reported incident (dpl_EaqXq4nf1CcFvM8P4zeyJJPB5cKY) showed every /api/mainnet/rpc-proxy request -- GET or POST -- crashing identically at module-import time with `ReferenceError: exports is not defined in ES module scope`. api/devnet/, api/kpis/, and api/ledger/ each have their own package.json declaring {\"type\": \"commonjs\"} to override the root package.json's {\"type\": \"module\"} for their CommonJS-compiled build output; api/mainnet/ was the one directory missing it, so Node loaded its CommonJS output as ESM and crashed before the handler ever ran -- for every request, regardless of method, which is exactly what both reported invocation IDs' timestamps matched. Fixed with one file: api/mainnet/package.json ({\"type\": \"commonjs\"}), mirroring the three sibling directories exactly. This alone fixes both #1 and #2 -- the homepage's RealReserveSync discovery poll and Create-Reserve's estimateCreateReserveCost both route Mainnet RPC calls through this same proxy via solana-config.ts's SOLANA_RPC_URL.\n\nRoot cause #3/#4 (DevNet/Mainnet mixing): useLandingStats.ts (the homepage's holder/24h-volume hook) hardcoded /api/devnet/landing-stats regardless of cluster -- no Mainnet counterpart existed. createReserveClient.ts's uploadReserveMetadata hardcoded /api/devnet/reserve-metadata for both the upload call and the resulting on-chain metadata_uri, so a Mainnet Reserve's metadata pointed at a DevNet-prefixed URL (the exact URL Creator flagged). RealReserveSync.tsx and Home.tsx had several hardcoded 'DevNet' strings (discovery status messages, the 'How It Works' step-3 copy: 'Use devUSDC to mint and redeem...') shown regardless of actual cluster. Fixed by adding api/mainnet/landing-stats.ts and api/mainnet/reserve-metadata.ts (mirroring their DevNet counterparts -- the metadata store is fully cluster-agnostic already, kept as a separate route per cluster so a Mainnet metadata_uri can never land under /api/devnet/), making both call sites cluster-aware via IS_MAINNET, and replacing every hardcoded 'DevNet'/'devUSDC' string in the affected files with the existing CLUSTER_LABEL/SETTLEMENT_SYMBOL pattern already used elsewhere in this codebase since DEC-0118.\n\nRoot cause #5 (duplicate warnings): Home.tsx rendered the identical 'Live Reserve data is temporarily unavailable on Solana DevNet (...)' callout in both the kpi-strip AND the Featured Reserves section whenever discovery failed. Fixed by removing it from the Featured Reserves section (the kpi-strip's copy, now cluster-aware, already covers it once).\n\nRoot cause #6 (Jupiter catalogue): the code Creator remembered (lib/ledger/jupiterCatalogue.ts, api/ledger/jupiter-snapshot-cron.ts, a weekly cron already scheduled in vercel.json) was real and already built (DEC-0110), but was built for the internal Ledger/analytics system, never wired to CreateDTR.tsx's picker, and had never actually run in production (JUPITER_API_KEY was never configured -- confirmed via `vercel env ls production`, absent). Set JUPITER_API_KEY (Sensitive, Production) from Creator's provided key. Added api/ledger/asset-catalogue.ts, a new public read endpoint serving the existing catalogue table, deduplicated by symbol (dedupeBySymbolPreferOrganicScore, keeping only the highest Jupiter organic-score mint per symbol -- Jupiter's verified tag still contains bridged/duplicate/occasionally-squatted symbols, and this app's picker keys selectable assets by symbol) and excluding the literal 'USDC' symbol entirely (the app's own hardcoded MAINNET_USDC_MINT is the only USDC entry ever offered, since USDC remains, per Creator's clarification, the protocol's mint/redeem/settlement currency -- unchanged from DEC-0118). CreateDTR.tsx's MAINNET_REAL_ASSETS static array became a live useMainnetAssetCatalogue(IS_MAINNET) fetch, merged with the pinned USDC entry, feeding the SAME existing search/select UI unchanged (it already had a working search box).\n\nWhile wiring this up, found and fixed a second, independent bug: discovery (packages/sdk/src/discovery.ts) can only find a Reserve's registered assets among a caller-supplied 'candidate mint' list -- each ReserveAsset PDA is seeded by [reserve, assetMint], so an asset whose mint isn't in that list is invisible to discovery, not just unpriced. Widening the picker to hundreds of Jupiter mints without also widening RealReserveSync.tsx's (previously USDC-only on Mainnet) candidate list would have made any real Reserve someone created with a non-USDC asset silently disappear from Discover/Portfolio/the homepage right after creation. Weighed two options with Creator: probing the full ~500-mint catalogue on every ~15s poll tick (simple, but multiplies Mainnet RPC volume by ~500x with no benefit for assets nobody has used) vs. probing only mints actually used on-chain (bounded cost, new plumbing) -- Creator chose the latter. Added api/ledger/known-asset-mints.ts (distinct reserve_asset_mint values from the Ledger's own on-chain event ingestion, cluster-scoped to mainnet-beta) as the candidate-mint source for both RealReserveSync.tsx and api/mainnet/landing-stats.ts, plus a small local useAppStore.mainnetKnownAssetMints registry so a browser's own just-created Reserve is discoverable immediately rather than waiting for the Ledger's daily ingest cron. tradableAssets.ts gained an additive registerDynamicSupportedAssetMints (new function, zero changes to isReserveTradable/isSupportedAssetMint's existing signatures or the static SUPPORTED_ASSET_MINTS set) so a dynamically-known mint is actually treated as tradable/visible everywhere that gate is checked, without touching any of its ~7 existing call sites.\n\nWhile verifying this live, found and fixed a third, independent bug in the ALREADY-EXISTING (not written this pass) lib/ledger/jupiterCatalogue.ts: shapeSnapshotRows dropped Jupiter's decimals/tokenProgram fields entirely, so runWeeklyJupiterSnapshot had been upserting every mint into ledger_asset_catalogue with decimals permanently NULL -- the first live snapshot (2,577 mints, triggered manually via the pre-existing ?dryRun=true bypass) fetched successfully but api/ledger/asset-catalogue.ts's correct 'decimals is not null' safety filter (can't safely offer a mint for basket-weight math without knowing its decimals) then excluded every single row, returning an empty catalogue. Fixed shapeSnapshotRows to carry decimals/tokenProgram through and the upsert to persist them (coalesced, so a future fetch missing either never blanks an already-known value); added a force option to runWeeklyJupiterSnapshot (api/ledger/jupiter-snapshot-cron.ts's new ?force=1) to safely re-run the SAME UTC day and backfill the columns into the rows the first (buggy) run had already inserted, reusing that day's existing snapshot row rather than violating its (snapshot_date_utc) unique constraint.",
+  "alternativesConsidered": [
+    "Guess at the two 500s' cause from the reported symptoms alone instead of pulling real Vercel logs -- rejected per the task's explicit instruction to use authenticated Vercel CLI logs, and because the actual cause (a missing package.json) would never have been found by reading application code alone -- it's a deployment/build-format issue invisible to `tsc`/`oxlint`/the offline test suite.",
+    "Fetch Jupiter's API directly from the browser or per-request instead of reusing the existing weekly-snapshot Postgres cache -- rejected: threads JUPITER_API_KEY through a second surface for no benefit, and re-fetches a ~2,600-entry list on every page load instead of once a week.",
+    "Probe the full Jupiter catalogue as Mainnet discovery's candidate-mint list (simpler code) -- rejected by Creator: multiplies live Mainnet RPC volume by roughly the catalogue's size for assets that, by definition, no Reserve has ever actually used yet.",
+    "Ship the Jupiter picker without fixing the discovery-candidate-mint scope, deferring that gap to a follow-up pass -- offered as an option; Creator chose to close it in this same pass instead, given it would otherwise make a freshly-created diversified Reserve silently disappear.",
+    "Allow every Jupiter-catalogue symbol, including duplicate/bridged 'USDC' variants -- rejected: this app's asset picker keys selectable entries by symbol (REAL_ASSET_BY_SYMBOL), so a second 'USDC'-symbol mint could silently shadow the real one; excluded the literal USDC symbol from the catalogue entirely and kept the app's own hardcoded MAINNET_USDC_MINT as the sole USDC entry."
+  ],
+  "impact": "strategic-super-reserve.fun's homepage and Create-Reserve Wallet Cost Summary both work again (previously fully broken for every Mainnet visitor since the Mainnet cutover). The site no longer surfaces any DevNet-prefixed API route or 'DevNet'/'devUSDC' copy while running as a Mainnet build. The Reserve Asset selector now offers 500 real, verified Mainnet SPL tokens (deduplicated by symbol, sorted by Jupiter's organic score) instead of USDC only, refreshed weekly via the pre-existing cron (now actually runnable). A Reserve composed of a non-USDC catalogue asset will be discoverable/visible immediately after creation (own-browser) and within the Ledger's daily ingest cycle (everyone else), without materially increasing the live discovery poll's Mainnet RPC volume. No Solana program, authority, Treasury, or on-chain Reserve state was touched by any part of this pass -- purely frontend/server/data-loader work, per the task's explicit restriction.",
+  "affectedAreas": [
+    "api/mainnet/package.json (new)",
+    "api/mainnet/landing-stats.ts (new)",
+    "api/mainnet/reserve-metadata.ts (new)",
+    "api/ledger/asset-catalogue.ts (new)",
+    "api/ledger/known-asset-mints.ts (new)",
+    "api/ledger/jupiter-snapshot-cron.ts",
+    "lib/ledger/jupiterCatalogue.ts",
+    "packages/sdk/src/tradableAssets.ts",
+    "src/merge/hooks/useLandingStats.ts",
+    "src/merge/hooks/useMainnetAssetCatalogue.ts (new)",
+    "src/merge/hooks/useMainnetKnownAssetMints.ts (new)",
+    "src/merge/lib/RealReserveSync.tsx",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/managementClient.ts",
+    "src/merge/lib/solana-config.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/store/useAppStore.ts",
+    "src/pages/Home.tsx",
+    "tests/phase_mainnet_production_fixes.ts (new)",
+    "tests/phase_ledger.ts",
+    "Vercel Production environment variable JUPITER_API_KEY (project ssr14/ssr-fun)"
+  ],
+  "supersedes": "DEC-0118 (Reserve Asset composition scope only -- DEC-0118's USDC-only Buy/Sell/mint/redeem settlement design is unchanged and remains exactly as implemented)",
+  "supersededBy": null,
+  "evidence": [
+    "Live production logs (`vercel logs dpl_EaqXq4nf1CcFvM8P4zeyJJPB5cKY`, the deployment live during the reported incident) showed the exact repeating crash: `ReferenceError: exports is not defined in ES module scope ... at file:///var/task/api/mainnet/rpc-proxy.js:2:23`, on every GET/POST to /api/mainnet/rpc-proxy, timestamped within the reported invocation IDs' window (08:52/08:59 UTC 2026-08-20).",
+    "`npx tsc -b`, `npx oxlint` (changed files), `npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_*.ts` (620/620 passing, 33 new/updated across two commits), and `npm run build` all clean, run twice (once per commit).",
+    "Deployed dpl_DFypeVpGb7q9y8NS5RxuN4pDUvm9 then dpl_3XPxaYzATW24RvsNRSNA2sHsWZWa (the decimals-fix follow-up), both `vercel --prod`, readyState READY, target production, aliased to strategic-super-reserve.fun and www.strategic-super-reserve.fun.",
+    "Live post-deploy verification: authenticated `POST /api/mainnet/rpc-proxy` (getLatestBlockhash) -> 200 with a real slot/blockhash (previously 100% crash); `GET /api/mainnet/landing-stats` -> 200 with real data (2 holders, $0.4985 24h volume, the real DEC-0115 Mainnet test Reserve 9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i); `GET /api/mainnet/reserve-metadata` (no id) -> clean 400, not a crash; `GET /`  (homepage) -> 200.",
+    "`vercel logs <final-deployment> --level error`: only a pre-existing, harmless Node `url.parse()` deprecation warning from the manual verification call itself -- no application errors.",
+    "`GET /api/ledger/jupiter-snapshot-cron?dryRun=true` -> real fetch, 2,577 verified mints, `skipped:false`; after the decimals-fix redeploy, `?dryRun=true&force=1` re-ran the same day and backfilled decimals without a unique-constraint violation (`skipped:false` again, same snapshotDate).",
+    "`GET /api/ledger/asset-catalogue` (post-backfill): 500 real tokens returned with populated decimals -- e.g. USDT (6), SOL (9), JUP (6), ETH (8), JitoSOL (9) -- zero 'USDC'-symbol entries (excluded by design), zero duplicate symbols.",
+    "`vercel env ls production` confirmed JUPITER_API_KEY present (Sensitive) before the first snapshot call; confirmed absent beforehand (the root cause of the catalogue never having run).",
+    "Diff/secret scan (`git diff` + a direct grep of every new file) before each commit: no API keys, passwords, or other secrets present in any changed or new file."
   ]
 }
 ```
