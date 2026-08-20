@@ -39,13 +39,24 @@ export async function fetchJupiterVerifiedList(): Promise<JupiterFetchResult> {
   return { fetchedAt: new Date().toISOString(), mintCount: tokens.length, tokens };
 }
 
-/** Pure: given a freshly-fetched token list, decides what a weekly snapshot INSERT + the ledger_asset_catalogue upserts should contain. Split from the DB-writing function below so the shaping logic is unit-testable without a live fetch or database. */
-export function shapeSnapshotRows(result: JupiterFetchResult): { mint: string; symbol: string | null; organicScore: number | null; verified: boolean }[] {
+export interface CatalogueSnapshotRow {
+  mint: string;
+  symbol: string | null;
+  organicScore: number | null;
+  verified: boolean;
+  decimals: number | null;
+  tokenProgram: string | null;
+}
+
+/** Pure: given a freshly-fetched token list, decides what a weekly snapshot INSERT + the ledger_asset_catalogue upserts should contain. Split from the DB-writing function below so the shaping logic is unit-testable without a live fetch or database. `decimals`/`tokenProgram` are needed downstream by api/ledger/asset-catalogue.ts (the Mainnet Reserve Asset picker can't safely offer a mint whose decimals aren't known) -- carried through here rather than re-fetched per-mint later. */
+export function shapeSnapshotRows(result: JupiterFetchResult): CatalogueSnapshotRow[] {
   return result.tokens.map((t) => ({
     mint: t.id,
     symbol: t.symbol ?? null,
     organicScore: t.organicScore ?? null,
     verified: t.isVerified ?? true, // every entry returned BY the verified-tag query is, by construction, verified -- explicit fallback only in case a future API revision omits the field
+    decimals: typeof t.decimals === "number" ? t.decimals : null,
+    tokenProgram: t.tokenProgram ?? null,
   }));
 }
 
@@ -68,13 +79,29 @@ export function todayUtcDateString(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Fetches, stores a new weekly snapshot (idempotent per calendar date -- a second call the same UTC day updates nothing new), and upserts ledger_asset_catalogue's current-state rows. Returns the diff against the immediately prior snapshot, or null if this is the first snapshot ever taken. */
-export async function runWeeklyJupiterSnapshot(): Promise<{ snapshotDate: string; mintCount: number; diff: CatalogueDiff | null; skipped: boolean }> {
+/**
+ * Fetches, stores a new weekly snapshot (idempotent per calendar date -- a
+ * second call the same UTC day is a no-op UNLESS `force` is set), and
+ * upserts ledger_asset_catalogue's current-state rows. Returns the diff
+ * against the most recent PRIOR (strictly earlier-dated) snapshot, or null
+ * if none exists yet.
+ *
+ * `force`: re-runs the full fetch+upsert even if today's snapshot already
+ * exists, reusing that same snapshot row (never inserts a second row for
+ * the same date -- `ledger_jupiter_snapshots.snapshot_date_utc` is unique)
+ * -- see api/ledger/jupiter-snapshot-cron.ts's `?force=1`. Exists for
+ * exactly one legitimate case: backfilling a column added to
+ * ledger_asset_catalogue (like `decimals`/`token_program` below) after an
+ * already-run snapshot for today didn't populate it. Not for routine use --
+ * the weekly cron never passes it.
+ */
+export async function runWeeklyJupiterSnapshot(options?: { force?: boolean }): Promise<{ snapshotDate: string; mintCount: number; diff: CatalogueDiff | null; skipped: boolean }> {
   const sql = getSql();
   const today = todayUtcDateString();
+  const force = options?.force ?? false;
 
   const existing = await sql`select id from ledger_jupiter_snapshots where snapshot_date_utc = ${today}`;
-  if (existing.length > 0) {
+  if (existing.length > 0 && !force) {
     return { snapshotDate: today, mintCount: 0, diff: null, skipped: true };
   }
 
@@ -83,17 +110,25 @@ export async function runWeeklyJupiterSnapshot(): Promise<{ snapshotDate: string
 
   const priorRows = await sql`
     select mint from ledger_jupiter_snapshot_mints
-    where snapshot_id = (select id from ledger_jupiter_snapshots order by snapshot_date_utc desc limit 1)
+    where snapshot_id = (select id from ledger_jupiter_snapshots where snapshot_date_utc < ${today} order by snapshot_date_utc desc limit 1)
   `;
   const previousMints = (priorRows as { mint: string }[]).map((r) => r.mint);
   const diff = priorRows.length > 0 ? diffCatalogue(previousMints, rows.map((r) => r.mint)) : null;
 
-  const [snapshotRow] = await sql`
-    insert into ledger_jupiter_snapshots (snapshot_date_utc, source_url, mint_count)
-    values (${today}, ${JUPITER_VERIFIED_TAG_URL}, ${rows.length})
-    returning id
-  `;
-  const snapshotId = (snapshotRow as { id: number }).id;
+  let snapshotId: number;
+  if (existing.length > 0) {
+    // force=true, re-running the same UTC day -- reuse today's row rather
+    // than violating the (snapshot_date_utc) unique constraint.
+    snapshotId = (existing[0] as { id: number }).id;
+    await sql`update ledger_jupiter_snapshots set mint_count = ${rows.length}, fetched_at_utc = now() where id = ${snapshotId}`;
+  } else {
+    const [snapshotRow] = await sql`
+      insert into ledger_jupiter_snapshots (snapshot_date_utc, source_url, mint_count)
+      values (${today}, ${JUPITER_VERIFIED_TAG_URL}, ${rows.length})
+      returning id
+    `;
+    snapshotId = (snapshotRow as { id: number }).id;
+  }
 
   for (const r of rows) {
     await sql`
@@ -102,10 +137,12 @@ export async function runWeeklyJupiterSnapshot(): Promise<{ snapshotDate: string
       on conflict (snapshot_id, mint) do nothing
     `;
     await sql`
-      insert into ledger_asset_catalogue (mint, symbol, jupiter_verified, jupiter_organic_score, added_to_catalogue_at, first_seen_snapshot_id, last_seen_snapshot_id, updated_at)
-      values (${r.mint}, ${r.symbol}, ${r.verified}, ${r.organicScore}, now(), ${snapshotId}, ${snapshotId}, now())
+      insert into ledger_asset_catalogue (mint, symbol, decimals, token_program, jupiter_verified, jupiter_organic_score, added_to_catalogue_at, first_seen_snapshot_id, last_seen_snapshot_id, updated_at)
+      values (${r.mint}, ${r.symbol}, ${r.decimals}, ${r.tokenProgram}, ${r.verified}, ${r.organicScore}, now(), ${snapshotId}, ${snapshotId}, now())
       on conflict (mint) do update set
         symbol = coalesce(${r.symbol}, ledger_asset_catalogue.symbol),
+        decimals = coalesce(${r.decimals}, ledger_asset_catalogue.decimals),
+        token_program = coalesce(${r.tokenProgram}, ledger_asset_catalogue.token_program),
         jupiter_verified = ${r.verified},
         jupiter_organic_score = ${r.organicScore},
         last_seen_snapshot_id = ${snapshotId},

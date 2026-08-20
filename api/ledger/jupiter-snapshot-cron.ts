@@ -1,10 +1,14 @@
 // GET /api/ledger/jupiter-snapshot-cron -- weekly keeper (vercel.json's
 // `crons`) for requirement 9's Jupiter catalogue tracking. Idempotent per
 // UTC calendar date (lib/ledger/jupiterCatalogue.ts's runWeeklyJupiterSnapshot
-// skips if today's snapshot already exists). Requires JUPITER_API_KEY --
-// returns a clear 503 (not a crash) if it's unset, since this cannot run
-// at all without it. See docs/protocol/LEDGER_ARCHITECTURE.md for the
-// exact Creator action needed to unblock this.
+// skips if today's snapshot already exists) unless `?force=1`/`?force=true`
+// is given, which re-runs today's fetch+upsert anyway (see
+// runWeeklyJupiterSnapshot's header for the one legitimate use: backfilling
+// a newly-added ledger_asset_catalogue column into a snapshot that already
+// ran today). Requires JUPITER_API_KEY -- returns a clear 503 (not a crash)
+// if it's unset, since this cannot run at all without it. See
+// docs/protocol/LEDGER_ARCHITECTURE.md for the exact Creator action needed
+// to unblock this.
 import { runWeeklyJupiterSnapshot } from "../../lib/ledger/jupiterCatalogue";
 
 interface ApiRequest {
@@ -42,8 +46,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
 
+  const force = req.query?.force === "true" || req.query?.force === "1";
+
   try {
-    const result = await runWeeklyJupiterSnapshot();
+    const result = await runWeeklyJupiterSnapshot({ force });
     res.status(200).json(result);
   } catch (e) {
     res.status(503).json({ error: e instanceof Error ? e.message : "Jupiter snapshot failed." });
