@@ -4055,3 +4055,73 @@
   ]
 }
 ```
+
+## DEC-0131
+
+```json
+{
+  "id": "DEC-0131",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Fixed two live-reported Mainnet display bugs: (1) 'Live on Solana DevNet' and other 'DevNet' labels appeared everywhere -- Discover/Featured Reserve cards, Portfolio's per-Reserve badge, the global nav/footer/wallet-chip/wallet-panel/connect-modal shell, Buy/Sell in-flight labels and RPC-congestion toasts -- regardless of which cluster the app was actually running against; (2) a Mainnet Reserve composed of a real, non-fixture asset (Creator's example: a Reserve called 'alpha', 100% SSR) showed its composition entry as a generic 'Asset' placeholder instead of the real symbol.",
+  "context": "Creator reported directly: 'reserves still say \"live on solana devnet\" on their cards in discover reserves for example. reserve deployed on mainnet called \"alpha\", comprised 100% of SSR, but in the composition it's labeled as \"asset\"'. Reported alongside a third item (manager fees claimable in Reserve Token instead of USDC) -- see DEC-0132 for why that one was NOT implemented this pass.",
+  "rationale": "Item 1 root cause: reserveCardProps.ts's buildReserveCardProps hardcoded `{ label: \"Live on Solana DevNet\", tone: \"onchain\" }` unconditionally for every on-chain Reserve -- confirmed via grep this was one of roughly a dozen genuinely hardcoded 'DevNet' strings scattered across Discover.tsx, Portfolio.tsx, and the pre-merge FABLE shell (Shell.tsx/WalletPanel.tsx/WalletModal.tsx, which wrap literally every route via App.tsx and had never been touched during the Mainnet-launch pass) -- none of these had ever been made cluster-aware, unlike DTRDetail.tsx/CreateDTR.tsx/ManageDTR.tsx which already correctly used a local CLUSTER_LABEL constant. rpcResilience.ts's txPhaseLabel (the Buy/Sell in-flight status text) had the same hardcoding. Fixed every instance to be cluster-aware, following the exact CLUSTER_LABEL pattern already proven correct elsewhere. Two of the fixed functions (reserveCardProps.ts, rpcResilience.ts, onChainReserve.ts) are directly required by tests/phase_*.ts via ts-mocha's CommonJS loader, which cannot load solana-config.ts's import.meta.env syntax (a constraint already documented in onChainReserve.ts's own header) -- so each accepts its cluster context as a plain parameter with a DevNet-matching default instead, keeping every pre-existing caller/test unchanged. Also found and fixed two further Mainnet-vs-DevNet UX mismatches surfaced while auditing this: WalletPanel.tsx unconditionally tried to read and display a 'devUSDC' balance even on Mainnet (where that mint doesn't exist), and the DevNet-only 'Testing Environment'/'Unlisted testing deployment' badge and 'no real economic value' framing were still shown on a genuinely live Mainnet deployment with real funds.\n\nItem 2 root cause: buildDtrFromDiscoveredReserve's (onChainReserve.ts) symbol-resolution chain for a discovered Reserve's composition only recognized DevNet fixture mints, wrapped SOL, devUSDC, and the hardcoded Mainnet USDC constant -- ANY other real asset (any Jupiter-catalogued Mainnet token, including SSR itself) fell straight through to a generic `Asset${i+1}` placeholder regardless of cluster, since this function had no access to the Mainnet Jupiter asset catalogue's mint->symbol data at discovery time. Fixed by threading the catalogue (already fetched client-side for CreateDTR.tsx's asset picker via the existing useMainnetAssetCatalogue hook) into RealReserveSync.tsx as a mint->{symbol,name} map, passed through buildDtrFromDiscoveredReserve as a new, backward-compatible `mintMeta` parameter (default {}) consulted as an additional resolution source before the placeholder. Best-effort by design: a mint the catalogue hasn't (yet) indexed still honestly falls back to 'AssetN' rather than fabricating a symbol, self-correcting on RealReserveSync's next poll once the catalogue has loaded. Also found and fixed a second instance of the same underlying bug class while auditing this function: its `tags` array and unparsed-metadata fallback `category` both hardcoded the literal string 'devnet'/'DevNet' regardless of the real `clusterOverride` already being passed in.",
+  "alternativesConsidered": [
+    "Import IS_MAINNET from ./solana-config directly into reserveCardProps.ts/onChainReserve.ts/rpcResilience.ts -- rejected: that module reads import.meta.env (Vite-only syntax), and all three files are required directly by tests/phase_*.ts via ts-mocha's CommonJS loader, which crashes on that syntax the moment it's transitively imported (already documented and worked around this same way in onChainReserve.ts's pre-existing header comment for its own clusterOverride parameter).",
+    "Do a blanket find-and-replace of every 'DevNet' string in the whole codebase, including files unreachable from any live route -- rejected: scoped this pass to strings genuinely visible on a live page (confirmed each fixed file is actually rendered/reachable via App.tsx's route tree), not a mechanical sweep that could touch dead code or deliberately-DevNet-only surfaces (DevnetOnboarding.tsx is correctly gated behind `!IS_MAINNET` already and was left untouched)."
+  ],
+  "impact": "Deployed to production. Every 'DevNet' label a Mainnet user could see is now accurate, including the global nav bar/footer/wallet UI that wraps every single page (previously untouched by the Mainnet-launch pass entirely). A Reserve composed of a real Mainnet asset (e.g. SSR) now shows its real symbol in its composition breakdown instead of a generic placeholder, self-correcting automatically as the Jupiter catalogue indexes new mints. 10 new regression tests (690/690 total passing), tsc -b/oxlint/build all clean, live-verified (site/discover both 200, no error logs).",
+  "affectedAreas": [
+    "src/merge/lib/reserveCardProps.ts",
+    "src/merge/lib/onChainReserve.ts",
+    "src/merge/lib/RealReserveSync.tsx",
+    "src/merge/lib/rpcResilience.ts",
+    "src/merge/pages/Discover.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/pages/Portfolio.tsx",
+    "src/pages/Home.tsx",
+    "src/components/Shell.tsx",
+    "src/components/WalletPanel.tsx",
+    "src/components/WalletModal.tsx",
+    "tests/phase_create_reserve_delegate_and_metadata.ts",
+    "tests/phase_featured_cards_and_rpc_redaction.ts",
+    "tests/phase_rpc_resilience.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b`, `npx oxlint` (changed files): clean (2 pre-existing, unrelated DTRDetail.tsx react-hooks/exhaustive-deps warnings, not introduced this pass).",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_*.ts`: 690/690 passing (10 new).",
+    "`npm run build`: clean.",
+    "Commit `2162760` on `main`, pushed to `origin/main`; `vercel --prod --yes` deployment `dpl_CqTJ32ke3Kbjkoif1fVKgbmwNMry`, readyState READY, target production, aliased to strategic-super-reserve.fun/www.strategic-super-reserve.fun (confirmed via `vercel inspect`).",
+    "Live GET https://strategic-super-reserve.fun/: 200; GET https://strategic-super-reserve.fun/discover: 200; `vercel logs --level error` for this deployment: none."
+  ]
+}
+```
+
+## DEC-0132
+
+```json
+{
+  "id": "DEC-0132",
+  "date": "2026-08-20",
+  "status": "deferred",
+  "decision": "Deliberately did NOT implement Creator's third request this pass -- 'manager fees are claimable in reserve token. the fee shouldn't come out of the reserve token, it should come out in USDC and be claimable in usdc' -- pending explicit confirmation from Creator, after investigation confirmed this is a real-money, protocol-level (Rust) redesign of a live Mainnet program, not a client-side bug.",
+  "context": "Reported alongside the two display bugs fixed in DEC-0131. Investigated before writing any code, per this session's standing 'diagnose before changing anything' practice for anything touching real Mainnet state.",
+  "rationale": "Confirmed via direct code review (programs/ssr_protocol/src/instructions/mint_reserve_tokens_in_kind.rs, accrue_fees.rs, collect_fees.rs, collect_manager_fee_share.rs, collect_protocol_fee.rs, packages/sdk/src/feeMath.ts) that the mint fee and TVL fee are NOT deducted from deposited USDC/backing assets today -- they are additional Reserve Token SHARES minted on top of supply (an ERC-4626-style dilutive fee model, by original design -- see DEC-0094), and collect_fees.rs's/collect_manager_fee_share.rs's claim path literally calls token::mint_to into the recipient's Reserve Token ATA. ManageDTR.tsx's fee-claim UI (labeling every fee amount with the Reserve's own ticker) is honestly reporting real on-chain behavior, not a display bug -- there is no USDC-denominated fee path anywhere in the deployed program today. This means the request cannot be satisfied client-side at all; it requires reworking every fee-touching on-chain instruction (mint_reserve_tokens_in_kind.rs, accrue_fees.rs, collect_fees.rs, collect_manager_fee_share.rs, collect_protocol_fee.rs, seed_reserve.rs, fee_math.rs, and the relevant account state) from a mint-based accounting model to a transfer-based one -- not a parameter tweak.\n\nTwo genuine open product questions block writing this safely, neither of which this session can decide unilaterally: (1) where would USDC-denominated fees even come from for a non-100%-USDC Reserve -- Creator's own cited example, 'alpha', is 100% SSR and holds no USDC at all, so charging fees 'in USDC' requires either redeeming some of the backing asset into USDC (a new, non-trivial mechanism) or a different design entirely; (2) existing Reserves already have real, accrued-but-uncollected pending Reserve-Token-denominated fee balances on-chain today -- a format change needs an explicit migration decision (do they still pay out as Reserve Tokens, or does something else happen to them) rather than silently breaking or reinterpreting real pending state. Separately, this environment's `cargo-build-sbf` has worked as recently as DEC-0114 (2026-08-18), so a rebuild is technically feasible, but `solana-test-validator`/`anchor test` do not work here (a longstanding Windows privilege gap) -- meaning any change to this code would be validated with zero local integration coverage before going straight to a Mainnet program upgrade that already custodies real, live Reserves and real funds.",
+  "alternativesConsidered": [
+    "Implement the Rust change now and ship it -- rejected: a real-money, no-local-test-coverage change to a program with existing live Reserves and real pending fee balances must not be guessed at; the two open product questions above have real, materially different possible answers that change what code should even be written.",
+    "Silently do nothing and only mention this in the final report -- rejected: the investigation itself is genuinely useful and worth recording durably (root cause, exact affected files, exact blockers) so a future pass -- once Creator has answered the open questions -- doesn't have to re-derive any of this from scratch."
+  ],
+  "impact": "No code changed, no transaction submitted, nothing deployed for this item. Findings reported back to Creator directly, with the two open product questions surfaced explicitly so a future pass can proceed the moment they're answered.",
+  "affectedAreas": [],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Direct source review: programs/ssr_protocol/src/instructions/mint_reserve_tokens_in_kind.rs, accrue_fees.rs, collect_fees.rs, collect_manager_fee_share.rs, collect_protocol_fee.rs -- fee shares minted as Reserve Token supply via token::mint_to, no USDC transfer path present.",
+    "packages/sdk/src/feeMath.ts / DEC-0094: confirms the mint-based (dilutive share) fee model was the original, deliberate design, not an oversight.",
+    "src/merge/pages/ManageDTR.tsx: fee-claim UI amounts are suffixed with the Reserve's own ticker throughout -- confirmed to accurately reflect real on-chain behavior, not a mislabeling bug.",
+    "docs/project/PROJECT_STATUS.md / DEC-0113/DEC-0114: cargo-build-sbf confirmed working in this environment as of 2026-08-18; solana-test-validator/anchor test confirmed still blocked (pre-existing, documented Windows privilege gap)."
+  ]
+}
+```
