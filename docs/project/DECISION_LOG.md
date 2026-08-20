@@ -3800,3 +3800,41 @@
   ]
 }
 ```
+
+## DEC-0124
+
+```json
+{
+  "id": "DEC-0124",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Fixed all 3 issues Creator reported on MCR-01 (road-to-mainnet's Mainnet function checklist, Create Reserve): pre-filled the Primary Fee Destination field, added real Jupiter-swap-funded Reserve creation for non-USDC assets (fixing a related $1-peg pricing bug found along the way), and clarified the Wallet Cost Summary's multi-transaction total.",
+  "context": "Creator posted 3 comments on MCR-01 after live-testing Reserve creation on strategic-super-reserve.fun: (1) the fee-destination field wasn't visibly pre-filled despite defaulting correctly; (2) creating an SSR-backed Reserve with 10 USDC failed asking for '10 more of Bpdh...pump' with no faucet, when the expectation was that USDC would be traded into SSR automatically via Jupiter; (3) the displayed cost estimate (0.01074 SOL) didn't match what Phantom actually asked for (0.008665 SOL) for one transaction. Investigated and confirmed all three as real (see the prior turn's report); Creator said 'go and fix all of them.'",
+  "rationale": "(1) feeDestination's useState(wallet.address || \"\") only runs its initializer once -- if wallet.address isn't populated yet at first render (common with async wallet-adapter resolution), the field locks in blank forever even though submission's `feeDestination || walletCtx.publicKey.toBase58()` fallback was always correct. Added a useEffect that backfills it the moment wallet.address becomes known, gated by a feeDestinationUserEditedRef so it never overwrites a value the user has since typed. (2) Mainnet Reserve creation required the creator to already hold each selected asset directly -- no swap existed. Added api/mainnet/jupiter-swap.ts (server-only JUPITER_API_KEY, restricted to USDC-as-input only, price-impact capped at 15% server-side, rate-limited) which builds an UNSIGNED Jupiter swap transaction for the connected wallet to sign and submit itself -- never custodies funds, same model as every other Mainnet write path in this app. fundSeedAssetsIdempotent (createReserveClient.ts) gained a jupiterSwap option: for any asset that isn't USDC or wrapped SOL, it now gets a live Jupiter quote (replacing seedRawAmountForAsset's broken assumption that every non-SOL asset is worth exactly $1 -- true only for USDC, and the actual root cause of the reported error demanding exactly '10' of an asset trading nowhere near $1), swaps the shortfall if the wallet doesn't already hold enough, then re-verifies the real resulting balance before proceeding to seed_reserve with the live-quote-derived (not guessed) amount. Both createReserveOnChain and resumeReserveDeploymentOnChain now return/use finalSeedAmounts (the actual amounts, post-swap) rather than the original pre-swap estimate. (3) estimateCreateReserveCost's networkFeeLamportsEstimate and numTransactions previously never accounted for a Jupiter swap transaction (higher priority fee than a plain instruction) or its count; both now do (worst-case: every non-USDC/non-wSOL asset assumed to need one, since the estimate can't cheaply know current balances). Clarified the InfoTip and added a one-line caption explaining the total is summed across every transaction, while Phantom only ever shows the cost of the ONE transaction it's currently signing -- directly addressing the reported '0.01074 total vs 0.008665 for one popup' as expected behavior, not a bug, once explained.",
+  "alternativesConsidered": [
+    "Have the server co-sign/execute the Jupiter swap on the creator's behalf -- rejected outright: this app has never custodied Mainnet funds anywhere, and DEC-0117/0118's entire security posture depends on every Mainnet write being signed solely by the connected wallet. The server only ever builds an unsigned transaction; the swap literally cannot execute without the creator's own wallet signature.",
+    "Use Jupiter's ExactOut swap mode (specify the exact output amount needed) instead of ExactIn -- tried live against SSR specifically and got 'NO_ROUTES_FOUND' (thin-liquidity/pump.fun-graduated AMMs often don't support ExactOut cleanly); switched to ExactIn (spend a fixed USD budget, accept whatever real amount results, re-derive the seed target from that same live quote) which is both more broadly compatible and a more honest reflection of 'this is what your USD budget actually buys right now.'",
+    "Leave the cost-estimate mismatch as a documentation-only fix (copy clarification, no numeric change) -- rejected: the estimate's transaction/fee counts were ALSO genuinely incomplete (never counted a Jupiter swap transaction at all), so a pure copy fix would still have been wrong once feature (2) shipped; fixed the undercount for real, not just relabeled it."
+  ],
+  "impact": "Deployed to production. Live-verified: a real Jupiter quote+swap-transaction build for 1 USDC -> SSR succeeds (2,131,330,446 raw SSR out, 1.6% price impact, real serialized transaction returned); the endpoint correctly rejects USDC-as-output. Creating a Reserve with a non-USDC asset on Mainnet now actually trades USDC for it via Jupiter instead of demanding the creator already hold it. Posted a succinct fix summary as a comment on MCR-01 in road-to-mainnet.html per Creator's request, asking for a live re-test.",
+  "affectedAreas": [
+    "api/mainnet/jupiter-swap.ts (new)",
+    "src/merge/lib/jupiterSwapClient.ts (new)",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "tests/phase_mainnet_production_fixes.ts",
+    "road-to-mainnet.html's MCR-01 comment thread (Neon-backed, not a repository file)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b`, `npx oxlint` (changed files): clean.",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_*.ts`: 636/636 passing (11 new: isJupiterSwapEligible pure cases, api/mainnet/jupiter-swap.ts input-validation cases including a real full/partial USDC-rejection and a JUPITER_API_KEY-unset sanitized-503 case).",
+    "`npm run build`: clean.",
+    "`vercel --prod` deployment dpl_6BRXg9kNpiMVRD788AXfxvzpPatr, readyState READY, target production, aliased to strategic-super-reserve.fun; `vercel logs --level error`: none.",
+    "Live POST /api/mainnet/jupiter-swap (1 USDC -> real SSR mint, a throwaway pubkey): 200, real swapTransaction + lastValidBlockHeight + inAmount/outAmount/priceImpactPct returned. Live POST with outputMint=USDC: 400 'Invalid or unsupported outputMint.'",
+    "Live GET /: 200, GET /create: 200 (site unaffected).",
+    "Comment id 18 posted to control MCR-01 via POST /api/road-to-mainnet/comments, confirmed 200 with the comment echoed back."
+  ]
+}
+```
