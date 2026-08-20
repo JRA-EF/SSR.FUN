@@ -22,6 +22,7 @@ import assetCatalogueHandler, { dedupeBySymbolPreferOrganicScore, type Catalogue
 import knownMintsHandler from "../api/ledger/known-asset-mints";
 import mainnetMetadataHandler from "../api/mainnet/reserve-metadata";
 import { uploadReserveMetadata } from "../src/merge/lib/createReserveClient";
+import { matchesAssetSearch } from "../src/merge/lib/assetSearch";
 
 interface FakeReq {
   method?: string;
@@ -160,6 +161,38 @@ describe("api/mainnet/reserve-metadata.ts -- cluster-routed, no DevNet path", ()
     const res = new FakeRes();
     await mainnetMetadataHandler({ method: "GET", headers: {}, url: "/api/mainnet/reserve-metadata" } as never, res as never);
     expect(res.statusCode).to.equal(400);
+  });
+});
+
+describe("src/merge/lib/assetSearch.ts -- matchesAssetSearch (Reserve Asset picker search, pure)", () => {
+  const usdc = { name: "USD Coin", symbol: "USDC", mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" };
+  const ssr = { name: "SSR", symbol: "SSR", mint: "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump" };
+
+  it("an empty or whitespace-only query matches everything", () => {
+    expect(matchesAssetSearch(usdc, "")).to.equal(true);
+    expect(matchesAssetSearch(usdc, "   ")).to.equal(true);
+  });
+
+  it("matches by name or ticker, case-insensitively", () => {
+    expect(matchesAssetSearch(usdc, "usd")).to.equal(true);
+    expect(matchesAssetSearch(usdc, "USDC")).to.equal(true);
+    expect(matchesAssetSearch(usdc, "coin")).to.equal(true);
+    expect(matchesAssetSearch(usdc, "sol")).to.equal(false);
+  });
+
+  it("matches by a full contract address, case-insensitively", () => {
+    expect(matchesAssetSearch(ssr, "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump")).to.equal(true);
+    expect(matchesAssetSearch(ssr, "bpdhpqznegypxzNRJVRZvBhdWoafYLVVuLxTQo34PUMP")).to.equal(true);
+  });
+
+  it("matches by a partial contract-address substring (a pasted prefix/suffix)", () => {
+    expect(matchesAssetSearch(ssr, "34pump")).to.equal(true);
+    expect(matchesAssetSearch(ssr, "BpdHpqzn")).to.equal(true);
+  });
+
+  it("does not match an unrelated asset's contract address", () => {
+    expect(matchesAssetSearch(usdc, "34pump")).to.equal(false);
+    expect(matchesAssetSearch(ssr, "EPjFWdd5")).to.equal(false);
   });
 });
 

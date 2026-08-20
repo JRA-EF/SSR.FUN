@@ -4,6 +4,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
+import { matchesAssetSearch } from "@/lib/assetSearch";
 import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
@@ -88,6 +89,7 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
   const needsSolWrap = assets.some((a) => a.symbol === "SOL");
   return needsSolWrap ? 3 : 2;
 }
+
 
 export function CreateDTR() {
   const [, setLocation] = useLocation();
@@ -1166,31 +1168,40 @@ export function CreateDTR() {
                   <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
-                      placeholder="Search assets to add..."
+                      placeholder="Search by name, ticker, or contract address..."
                       className="pl-9"
                       value={assetSearch}
                       onChange={(e) => setAssetSearch(e.target.value)}
                     />
                   </div>
-                  
+
                   <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
                     {SELECTABLE_ASSETS
                       .filter(a => !assets.some(selected => selected.symbol === a.symbol))
-                      .filter(a => a.name.toLowerCase().includes(assetSearch.toLowerCase()) || a.symbol.toLowerCase().includes(assetSearch.toLowerCase()))
+                      .filter(a => matchesAssetSearch(a, assetSearch))
                       .map(asset => (
                         <div key={asset.symbol} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
                           <div>
                             <span className="font-semibold">{asset.name}</span>
                             <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{asset.symbol}</span>
+                            <div className="text-xs text-muted-foreground font-merge-mono">{asset.mint.slice(0, 4)}...{asset.mint.slice(-4)}</div>
                           </div>
                           <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => addAsset(asset.symbol, asset.name)}>
                             <Plus className="w-4 h-4 text-primary" />
                           </Button>
                         </div>
                       ))}
-                      {SELECTABLE_ASSETS.filter(a => !assets.some(selected => selected.symbol === a.symbol)).length === 0 && (
-                        <div className="p-4 text-center text-sm text-muted-foreground">All available assets added.</div>
-                      )}
+                      {(() => {
+                        const remaining = SELECTABLE_ASSETS.filter(a => !assets.some(selected => selected.symbol === a.symbol));
+                        if (remaining.length === 0) {
+                          return <div className="p-4 text-center text-sm text-muted-foreground">All available assets added.</div>;
+                        }
+                        const noMatches = assetSearch.trim().length > 0 && remaining.every((a) => !matchesAssetSearch(a, assetSearch));
+                        if (noMatches) {
+                          return <div className="p-4 text-center text-sm text-muted-foreground">No assets match "{assetSearch.trim()}".</div>;
+                        }
+                        return null;
+                      })()}
                   </div>
                 </div>
 
