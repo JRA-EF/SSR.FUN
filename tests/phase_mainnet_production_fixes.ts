@@ -17,12 +17,14 @@
 // file covers their pure/extractable logic and their fail-closed,
 // sanitized-error behavior only.
 import { expect } from "chai";
+import { PublicKey, Keypair } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { isReserveTradable, isSupportedAssetMint, registerDynamicSupportedAssetMints, SUPPORTED_ASSET_MINTS } from "../packages/sdk/src/tradableAssets";
 import assetCatalogueHandler, { dedupeBySymbolPreferOrganicScore, type CatalogueRow } from "../api/ledger/asset-catalogue";
 import knownMintsHandler from "../api/ledger/known-asset-mints";
 import mainnetMetadataHandler from "../api/mainnet/reserve-metadata";
-import { uploadReserveMetadata, isJupiterSwapEligible, assertSeedAmountsMeetMinimum } from "../src/merge/lib/createReserveClient";
-import { computeSwapShortfallPct } from "../src/merge/lib/createReserveResume";
+import { uploadReserveMetadata, isJupiterSwapEligible, assertSeedAmountsMeetMinimum, fetchOwnedBalanceRawSettled } from "../src/merge/lib/createReserveClient";
+import { computeSwapShortfallPct, rawToUiAmount, determineDeploymentResumePoint } from "../src/merge/lib/createReserveResume";
 import { matchesAssetSearch } from "../src/merge/lib/assetSearch";
 import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
 import { describeJupiterSwapError } from "../src/merge/lib/jupiterSwapClient";
@@ -369,5 +371,147 @@ describe("src/merge/lib/createReserveClient.ts -- assertSeedAmountsMeetMinimum (
 
   it("catches the exact reported scenario -- a Jupiter swap that settled at 0", () => {
     expect(() => assertSeedAmountsMeetMinimum([ssr], [0n])).to.throw(/minimum/);
+  });
+});
+
+// --- 2026-08-20 pass: "false failure" after a genuinely successful seed ---
+// Live-reported incident: the Creator received the correct Reserve Token
+// amount on-chain, but the UI reported "received less than expected: 0%"
+// and/or SsrError::SeedAmountTooLow (6019), then marked the deployment
+// incomplete. On-chain forensics (see docs/project/DECISION_LOG.md's entry
+// for this pass) confirmed the wallet genuinely held ~128,431 SSR at the
+// time of the failing seed_reserve call, ruling out a real, empty wallet.
+// Two concrete, independently-testable mechanisms are covered below: (1)
+// fetchOwnedBalanceRawSettled reading a real, just-landed balance as zero
+// because a single immediate read can hit an RPC node whose own view of
+// account state hasn't caught up yet (this repo's recurring RPC-eventual-
+// consistency failure mode -- see DEC-0115, DEC-0127), and (2) a raw-to-UI
+// decimal conversion that must be exact, since a wrong decimals value would
+// itself manufacture a fake "0" or wildly wrong received-amount display
+// even when the raw on-chain amount is correct. The third, architectural
+// half of this fix -- CreateDTR.tsx re-checking AUTHORITATIVE on-chain
+// Reserve state via checkReserveGenuinelyComplete before ever reporting
+// "deployment incomplete," so a real success is never misreported as a
+// failure and a real failure is never resubmitted -- reduces to
+// determineDeploymentResumePoint's already-complete branch (covered
+// exhaustively in tests/phase_reserve_deploy_resumability.ts); checkReserve
+// GenuinelyComplete's own network call is a thin, strictly-read-only wrapper
+// around that pure decision plus fetchReserveOnChain (an Anchor-program
+// read against a live Connection), so -- matching this file's own header
+// policy on live database/network reads -- its end-to-end behavior is
+// verified live post-deploy rather than re-mocking Anchor's Program/
+// AnchorProvider machinery here.
+describe("src/merge/lib/createReserveClient.ts -- fetchOwnedBalanceRawSettled (delayed RPC balance updates)", () => {
+  const mint = Keypair.generate().publicKey;
+  const owner = Keypair.generate().publicKey;
+
+  function fakeConnection(amounts: string[]) {
+    let call = 0;
+    return {
+      getTokenAccountBalance: async (_ata: PublicKey) => {
+        const amount = amounts[Math.min(call, amounts.length - 1)];
+        call++;
+        return { value: { amount } };
+      },
+    } as unknown as import("@solana/web3.js").Connection;
+  }
+
+  it("a real, correct receipt that only reads back as zero on the FIRST attempt (RPC lag) is corrected by the retry loop, never left at the stale zero", async () => {
+    // Exactly the reported/observed failure shape: the swap/seed genuinely
+    // landed, but the very first balance read after confirmation hit a
+    // lagging RPC node and returned 0.
+    const connection = fakeConnection(["0", "0", "21283780000"]);
+    const result = await fetchOwnedBalanceRawSettled(connection, mint, owner, 0n, { maxAttempts: 6, delayMs: 1 });
+    expect(result).to.equal(21_283_780_000n);
+  });
+
+  it("delayed RPC balance updates: keeps retrying (never gives up on attempt 1) until the read genuinely differs from the pre-transaction balance", async () => {
+    const connection = fakeConnection(["1000", "1000", "1000", "5000"]); // balanceBefore=1000, only changes on the 4th read
+    const result = await fetchOwnedBalanceRawSettled(connection, mint, owner, 1_000n, { maxAttempts: 6, delayMs: 1 });
+    expect(result).to.equal(5_000n);
+  });
+
+  it("returns immediately without any retry delay when the very first read already differs from balanceBefore (the common, non-lagged case)", async () => {
+    let calls = 0;
+    const connection = {
+      getTokenAccountBalance: async () => {
+        calls++;
+        return { value: { amount: "999999" } };
+      },
+    } as unknown as import("@solana/web3.js").Connection;
+    const result = await fetchOwnedBalanceRawSettled(connection, mint, owner, 0n, { maxAttempts: 6, delayMs: 5_000 });
+    expect(result).to.equal(999_999n);
+    expect(calls).to.equal(1);
+  });
+
+  it("if the balance genuinely never changes within the retry window, returns the last (unchanged/stale) read rather than fabricating a change -- the caller (assertSeedAmountsMeetMinimum) is what turns this into an honest, actionable error", async () => {
+    const connection = fakeConnection(["0"]); // never changes, ever
+    const result = await fetchOwnedBalanceRawSettled(connection, mint, owner, 0n, { maxAttempts: 3, delayMs: 1 });
+    expect(result).to.equal(0n);
+  });
+
+  it("real-world regression: a stale IMMEDIATE read of a successful swap would have wrongly tripped SeedAmountTooLow's pre-flight guard, but the settled read (after RPC catches up) does not", async () => {
+    // Mirrors the exact reported sequence: wallet held far more than enough
+    // (128,431 SSR, i.e. way above the 1000-raw-unit minimum), the swap/seed
+    // genuinely landed, but a naive single immediate read saw 0.
+    const staleImmediateRead = 0n;
+    expect(() => assertSeedAmountsMeetMinimum([{ mint: mint.toBase58() }], [staleImmediateRead])).to.throw(/minimum/);
+
+    const connection = fakeConnection(["0", "128431197991"]); // settles on the 2nd attempt
+    const settledRead = await fetchOwnedBalanceRawSettled(connection, mint, owner, 0n, { maxAttempts: 6, delayMs: 1 });
+    expect(() => assertSeedAmountsMeetMinimum([{ mint: mint.toBase58() }], [settledRead])).to.not.throw();
+  });
+
+  it("real ATA derivation is exercised (not bypassed) -- getAssociatedTokenAddressSync for this mint/owner pair is deterministic across calls", () => {
+    const ataA = getAssociatedTokenAddressSync(mint, owner);
+    const ataB = getAssociatedTokenAddressSync(mint, owner);
+    expect(ataA.equals(ataB)).to.equal(true);
+  });
+});
+
+describe("src/merge/lib/createReserveResume.ts -- rawToUiAmount (decimal conversion, pure)", () => {
+  it("converts a real 6-decimal SSR/USDC-scale raw amount to its exact human value", () => {
+    expect(rawToUiAmount(21_283_780_000n, 6)).to.equal(21_283.78);
+  });
+
+  it("converts a real 9-decimal (e.g. wrapped SOL-scale) raw amount correctly", () => {
+    expect(rawToUiAmount(1_500_000_000n, 9)).to.equal(1.5);
+  });
+
+  it("0 decimals is a pass-through (never divides when it shouldn't)", () => {
+    expect(rawToUiAmount(42n, 0)).to.equal(42);
+  });
+
+  it("a genuinely zero raw amount converts to exactly 0, never a falsy-but-wrong value, regardless of decimals", () => {
+    expect(rawToUiAmount(0n, 6)).to.equal(0);
+    expect(rawToUiAmount(0n, 9)).to.equal(0);
+  });
+
+  it("regression: using the WRONG decimals (e.g. falling back to 0 for an unrecognized mint) manufactures a fake, wildly-off received amount even when the raw on-chain value is correct -- this is exactly the kind of decimal-conversion bug that can produce a bogus '0%'/mismatched received-amount display independent of any real on-chain shortfall", () => {
+    const realRawReceived = 21_283_780_000n; // genuinely correct, 6-decimal SSR
+    const correctlyDisplayed = rawToUiAmount(realRawReceived, 6);
+    const wrongDecimalsDisplayed = rawToUiAmount(realRawReceived, 0); // decimals=0 fallback bug
+    expect(correctlyDisplayed).to.equal(21_283.78);
+    expect(wrongDecimalsDisplayed).to.not.equal(correctlyDisplayed);
+    expect(wrongDecimalsDisplayed).to.equal(21_283_780_000);
+  });
+});
+
+describe("Reserve deploy resumability -- successful transaction with stale UI state (idempotent resume, never resubmits)", () => {
+  it("a Reserve that reached Active (seeding genuinely succeeded) is ALWAYS reported already-complete regardless of what a caller's own stale in-flight error/state believed -- this is the exact fact checkReserveGenuinelyComplete's reconciliation relies on to turn a false 'deployment incomplete' failure back into a reported success without resubmitting anything", () => {
+    const point = determineDeploymentResumePoint({ reserveExists: true, reserveStatus: "active", onChainAssetCount: 2, expectedAssetCount: 2 });
+    expect(point).to.deep.equal({ kind: "already-complete" });
+  });
+
+  it("repeated reconciliation reads of the identical genuinely-complete on-chain state are idempotent -- calling it 1 time or 5 times (mirroring a flaky UI retrying/re-rendering) always yields the same already-complete verdict, never a resubmission-triggering verdict on a later call", () => {
+    const params = { reserveExists: true, reserveStatus: "active" as const, onChainAssetCount: 1, expectedAssetCount: 1 };
+    const results = [1, 2, 3, 4, 5].map(() => determineDeploymentResumePoint(params));
+    for (const r of results) expect(r).to.deep.equal({ kind: "already-complete" });
+  });
+
+  it("a Reserve genuinely still mid-seeding (assetsInitializing) is NEVER reported already-complete -- reconciliation must not paper over a real, still-incomplete deployment", () => {
+    const point = determineDeploymentResumePoint({ reserveExists: true, reserveStatus: "assetsInitializing", onChainAssetCount: 1, expectedAssetCount: 1 });
+    expect(point.kind).to.not.equal("already-complete");
+    expect(point).to.deep.equal({ kind: "resume-from-funding" });
   });
 });

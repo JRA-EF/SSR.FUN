@@ -91,6 +91,21 @@ export function computeSwapShortfallPct(targetRaw: bigint, actualRaw: bigint): n
   return Number(targetRaw - actualRaw) / Number(targetRaw);
 }
 
+/**
+ * Converts a raw on-chain token amount to its human-displayed value, given
+ * the mint's own decimals -- the single place CreateDTR.tsx's swap-shortfall
+ * toast (and anything else formatting a raw seed/swap amount for display)
+ * does this division, so a wrong decimals value (e.g. falling back to 0 for
+ * an asset SELECTABLE_ASSETS doesn't recognize, or a mint whose decimals
+ * differ from the $1-peg assumption baked into the UI's own cost estimate)
+ * is covered by a direct unit test instead of only being visible in a
+ * live toast string. Pure and offline-testable on purpose (see this
+ * module's own header).
+ */
+export function rawToUiAmount(raw: bigint, decimals: number): number {
+  return Number(raw) / 10 ** decimals;
+}
+
 /** A persisted deployment marker older than this is treated as abandoned rather than held onto forever -- the reconciliation check against real on-chain state (never this staleness window alone) is still what actually decides whether a Reserve exists. */
 export const PENDING_DEPLOY_STALE_MS = 10 * 60 * 1000;
 

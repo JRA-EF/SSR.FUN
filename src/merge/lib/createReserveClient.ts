@@ -92,6 +92,7 @@ export {
   isWalletRejectionError,
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
+  rawToUiAmount,
   type CreateReserveErrorClass,
   type DeploymentResumePoint,
   type ReserveOnChainStatus,
@@ -494,9 +495,19 @@ async function fetchOwnedBalanceRaw(connection: Connection, mint: PublicKey, own
  * it never changed (never fabricates a change that didn't happen) -- the
  * caller decides what an unchanged/still-short result means.
  */
-async function fetchOwnedBalanceRawSettled(connection: Connection, mint: PublicKey, owner: PublicKey, balanceBefore: bigint): Promise<bigint> {
-  const MAX_ATTEMPTS = 6;
-  const DELAY_MS = 1_000;
+export async function fetchOwnedBalanceRawSettled(
+  connection: Connection,
+  mint: PublicKey,
+  owner: PublicKey,
+  balanceBefore: bigint,
+  // Overridable only so tests can exercise the real retry-until-changed loop
+  // without actually waiting several real seconds -- every production
+  // caller relies on the defaults (unchanged from before this was made
+  // configurable).
+  opts: { maxAttempts?: number; delayMs?: number } = {},
+): Promise<bigint> {
+  const MAX_ATTEMPTS = opts.maxAttempts ?? 6;
+  const DELAY_MS = opts.delayMs ?? 1_000;
   let balance = balanceBefore;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     balance = await fetchOwnedBalanceRaw(connection, mint, owner);
@@ -897,6 +908,60 @@ export async function createReserveOnChain(params: {
       decimals: a.decimals,
     })),
     transactions: { createAndRegister: createAndRegisterSig, fundSeedAssets: fundSeedAssetsSig, seed: seedSig },
+  };
+}
+
+/**
+ * Strictly READ-ONLY: checks whether a pending deployment's Reserve is
+ * genuinely already fully seeded on-chain (status past AssetsInitializing),
+ * and if so, returns the same CreateReserveResult shape
+ * resumeReserveDeploymentOnChain's own "already-complete" branch would.
+ * Never funds, swaps, or seeds anything -- returns null for every other
+ * case (including a genuinely incomplete Reserve) rather than attempting
+ * to advance it. This exists specifically so a caller that just caught a
+ * fund-seed-assets/seed failure can determine the TRUE current state
+ * before deciding whether to report failure -- the UI must never conclude
+ * "incomplete" from a thrown exception alone when the seed transaction (or
+ * an earlier/concurrent attempt) may have actually succeeded; see
+ * docs/project/DECISION_LOG.md's entry for this pass. A caller that wants
+ * to actually ADVANCE an incomplete deployment must still call
+ * resumeReserveDeploymentOnChain -- this function deliberately cannot do
+ * that, so it can never be the thing that double-submits.
+ */
+export async function checkReserveGenuinelyComplete(
+  connection: Connection,
+  programId: PublicKey,
+  pending: Pick<PendingReserveDeploy, "reserve" | "reserveId" | "assets">,
+): Promise<CreateReserveResult | null> {
+  const reserveAddress = new PublicKey(pending.reserve);
+  const candidateMints = pending.assets.map((a) => new PublicKey(a.mint));
+  const onChain: ReserveOnChain | null = await fetchReserveOnChain(connection, programId, reserveAddress, candidateMints);
+  const resumePoint = determineDeploymentResumePoint({
+    reserveExists: onChain !== null,
+    reserveStatus: (onChain?.status as ReserveOnChainStatus) ?? null,
+    onChainAssetCount: onChain?.assetCount ?? 0,
+    expectedAssetCount: pending.assets.length,
+  });
+  if (resumePoint.kind !== "already-complete" || !onChain) return null;
+
+  const assetAddresses: ReserveAssetAddresses[] = pending.assets.map((a) => deriveReserveAssetAddresses(reserveAddress, new PublicKey(a.mint), programId));
+  return {
+    reserveId: pending.reserveId,
+    reserve: pending.reserve,
+    reserveTokenMint: onChain.reserveTokenMint,
+    mintAuthority: findMintAuthority(reserveAddress, programId)[0].toBase58(),
+    vaultAuthority: findVaultAuthority(reserveAddress, programId)[0].toBase58(),
+    assets: pending.assets.map((a, i) => {
+      const onChainAsset = onChain.assets.find((oa) => oa.assetMint === a.mint);
+      return {
+        mint: a.mint,
+        reserveAsset: assetAddresses[i].reserveAsset.toBase58(),
+        vault: assetAddresses[i].vault.toBase58(),
+        weightBps: onChainAsset?.targetWeightBps ?? 0,
+        decimals: a.decimals,
+      };
+    }),
+    transactions: { createAndRegister: null, fundSeedAssets: null, seed: null },
   };
 }
 

@@ -9,6 +9,7 @@ import { useAppStore } from "@/store/useAppStore";
 import {
   createReserveOnChain,
   resumeReserveDeploymentOnChain,
+  checkReserveGenuinelyComplete,
   estimateCreateReserveCost,
   reserveAccountExistsOnChain,
   savePendingReserveDeploy,
@@ -18,10 +19,12 @@ import {
   isWalletRejectionError,
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
+  rawToUiAmount,
   uploadReserveMetadata,
   estimateNetSeedReserveTokens,
   CreateReserveStepError,
   type CreateReserveStep,
+  type CreateReserveResult,
   type CreateReserveCostEstimate,
   type CreateReserveErrorClass,
   type PendingReserveDeploy,
@@ -159,12 +162,142 @@ export function CreateDTR() {
   // blocked), this just makes sure the creator sees it happened rather
   // than silently ending up with a lighter allocation than the weight
   // slider implied.
+  /**
+   * The single place a Resume (or a reconciled "actually already complete"
+   * recovery -- see the catch blocks below) is turned into UI state:
+   * registers the Reserve, syncs the creator's own holding, records any
+   * newly-used Mainnet asset mints, shows the completion toast, and
+   * navigates to the Reserve's own page. Extracted out of
+   * handleResumeDeployment's try block so a genuinely-completed Reserve
+   * discovered via on-chain reconciliation (not this specific call's own
+   * return value) gets the exact same treatment -- never a different,
+   * possibly-inconsistent "well it's sort of done" path.
+   */
+  function finalizeResumedReserve(result: CreateReserveResult, pending: PendingReserveDeploy) {
+    if (!walletCtx.publicKey) return;
+    clearPendingReserveDeploy();
+    // Same id-scheme requirement as handleSubmitReal's own dtrId -- see its comment above.
+    const dtrId = `${SOLANA_CLUSTER}-${result.reserveId}`;
+    const onChainResumed: OnChainReserveMeta = {
+      programId: SSR_PROGRAM_ID.toBase58(),
+      reserveId: result.reserveId,
+      reserve: result.reserve,
+      reserveTokenMint: result.reserveTokenMint,
+      mintAuthority: result.mintAuthority,
+      vaultAuthority: result.vaultAuthority,
+      manager: walletCtx.publicKey.toBase58(),
+      assets: result.assets.map((a, i) => ({
+        mint: a.mint,
+        symbol: SELECTABLE_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
+        decimals: a.decimals,
+        weightBps: a.weightBps,
+        reserveAsset: a.reserveAsset,
+        vault: a.vault,
+        orderIndex: i,
+      })),
+      status: "active",
+      totalTargetWeightBps: 10_000,
+      reserveTokenSupplyRaw: String(Math.max(1, Math.floor(pending.seedTotalUsd)) * 1_000_000),
+      vaultBalancesRaw: {},
+    };
+    registerRealReserve({
+      id: dtrId,
+      name: pending.name,
+      ticker: pending.ticker,
+      description: "",
+      category: DEFAULT_RESERVE_CATEGORY,
+      tags: [DEFAULT_RESERVE_CATEGORY, SOLANA_CLUSTER, "real"],
+      logoSeed: dtrId,
+      dtrAddress: result.reserve,
+      managerAddress: walletCtx.publicKey.toBase58(),
+      delegates: [],
+      feeConfig: {
+        mintFeePct: 0,
+        tvlFeePct: 0,
+        managerBuyTaxPct: 0,
+        managerSellTaxPct: 0,
+        creatorFeeDestination: walletCtx.publicKey.toBase58(),
+        feeRecipients: [],
+      },
+      tokenPrice: 1,
+      nav: 1,
+      aum: pending.seedTotalUsd,
+      liquidityUsdc: pending.seedTotalUsd,
+      change24h: 0,
+      change7d: 0,
+      holders: 1,
+      composition: result.assets.map((a) => {
+        const meta = SELECTABLE_ASSETS.find((m) => m.mint === a.mint);
+        return { symbol: meta?.symbol ?? "?", name: meta?.name ?? a.mint, weight: a.weightBps / 10_000 };
+      }),
+      unallocatedPct: 0,
+      isUserCreated: true,
+      priceHistory: [{ t: Date.now(), price: 1 }],
+      trades: [],
+      onChain: onChainResumed,
+    });
+    setResumePending(null);
+    syncRealHolding(dtrId, "0", 1); // Placeholder holding entry -- RealReserveSync's next poll (or DTRDetail's own on-chain read) fills in the real balance/composition immediately; this just avoids a blank flash.
+    if (IS_MAINNET) addKnownAssetMints(result.assets.map((a) => a.mint));
+    toast({
+      title: "Reserve deployment resumed and completed",
+      description: (
+        <div className="space-y-1">
+          <div>
+            Reserve:{" "}
+            <a href={solscanUrl("address", result.reserve)} target="_blank" rel="noreferrer" className="underline">
+              View on Solscan
+            </a>
+          </div>
+          {result.transactions.seed ? (
+            <div className="flex items-center gap-2">
+              <a href={solscanUrl("tx", result.transactions.seed)} target="_blank" rel="noreferrer" className="underline">
+                Seed transaction confirmed &mdash; View on Solscan
+              </a>
+              <CopySignatureButton signature={result.transactions.seed} size="xs" />
+            </div>
+          ) : (
+            <div>Was already fully seeded by the earlier attempt.</div>
+          )}
+        </div>
+      ),
+    });
+    setLocation(`/dtr/${dtrId}`);
+  }
+
+  /**
+   * Called from a fund-seed-assets/seed step failure's catch block, BEFORE
+   * ever reporting "deployment incomplete" to the user -- reads the
+   * AUTHORITATIVE on-chain Reserve state (never a wallet balance, never an
+   * assumption from the caught exception alone) to check whether seeding
+   * actually already succeeded despite this specific call erroring (a
+   * client-side pre-flight guard tripping on a stale read, a delayed RPC
+   * balance read, or a race with another attempt/tab). Delegates entirely to
+   * checkReserveGenuinelyComplete, which is STRICTLY read-only -- it cannot
+   * fund, swap, or seed anything under any circumstance, so this can never
+   * resubmit or double-submit whatever just (apparently) failed. Returns
+   * true if it resolved the Reserve as complete (and already finalized the
+   * UI for it) -- false means genuinely still incomplete, the caller's
+   * normal failure handling should proceed.
+   */
+  async function reconcileAlreadyCompleteReserve(pending: PendingReserveDeploy | null): Promise<boolean> {
+    if (!pending || !walletCtx.publicKey) return false;
+    // checkReserveGenuinelyComplete is strictly read-only -- it cannot fund,
+    // swap, or seed anything under any circumstance, so there is zero risk
+    // of this reconciliation step itself resubmitting or double-submitting
+    // whatever just failed.
+    const result = await checkReserveGenuinelyComplete(connection, SSR_PROGRAM_ID, pending).catch(() => null);
+    if (!result) return false;
+    finalizeResumedReserve(result, pending);
+    return true;
+  }
+
   function handleJupiterSwapShortfall(info: { mint: string; targetRaw: bigint; actualRaw: bigint; shortfallPct: number }) {
     const meta = SELECTABLE_ASSETS.find((a) => a.mint === info.mint);
     const symbol = meta?.symbol ?? `${info.mint.slice(0, 4)}...${info.mint.slice(-4)}`;
     const decimals = meta?.decimals ?? 0;
-    const actual = (Number(info.actualRaw) / 10 ** decimals).toLocaleString();
-    const target = (Number(info.targetRaw) / 10 ** decimals).toLocaleString();
+    const actual = rawToUiAmount(info.actualRaw, decimals).toLocaleString();
+    const target = rawToUiAmount(info.targetRaw, decimals).toLocaleString();
     toast({
       title: `Received less ${symbol} than quoted`,
       description: `The Jupiter swap for ${symbol} delivered ${actual} instead of the ~${target} quoted (${(info.shortfallPct * 100).toFixed(1)}% short) -- likely price movement on a thin-liquidity token. Your Reserve was still created/seeded with the real amount received.`,
@@ -405,125 +538,25 @@ export function CreateDTR() {
     setJupiterSwapMint(null);
     useAppStore.getState().setTxInFlight(true);
     try {
+      const pendingAtStart = resumePending;
       const result = await resumeReserveDeploymentOnChain({
         connection,
         wallet: walletCtx,
-        pending: resumePending,
+        pending: pendingAtStart,
         onProgress: setCreateStep,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
-        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: resumePending.seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
+        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: pendingAtStart.seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
       });
-      clearPendingReserveDeploy();
-      // Same id-scheme requirement as handleSubmitReal's own dtrId -- see its comment above.
-      const dtrId = `${SOLANA_CLUSTER}-${result.reserveId}`;
-      // Registers this Reserve into the store immediately, mirroring
-      // handleSubmitReal's fresh-creation path below -- without this, a
-      // successful Resume left `dtrs` without an entry for it until
-      // RealReserveSync's next poll (up to MAX_POLL_MS later), so navigating
-      // straight to /dtr/{dtrId} showed a transient "Reserve Not Found"
-      // right after a genuinely successful deployment (the confirmed root
-      // cause of the reported "eventually appeared after waiting/refreshing"
-      // behavior). description/category/fee config aren't knowable from
-      // `resumePending` alone (this may be a fresh page load after the
-      // original form's state was lost) -- honest defaults here; the very
-      // next discovery poll overwrites with full on-chain-verified data
-      // (mergeDiscoveredReserves merges by on-chain address, same as any
-      // other discovered Reserve). DTRDetail.tsx/ManageDTR.tsx's "indexing"
-      // state is the real safety net for every other path into this same
-      // gap; this is belt-and-suspenders for the resume path specifically.
-      const onChainResumed: OnChainReserveMeta = {
-        programId: SSR_PROGRAM_ID.toBase58(),
-        reserveId: result.reserveId,
-        reserve: result.reserve,
-        reserveTokenMint: result.reserveTokenMint,
-        mintAuthority: result.mintAuthority,
-        vaultAuthority: result.vaultAuthority,
-        manager: walletCtx.publicKey.toBase58(),
-        assets: result.assets.map((a, i) => ({
-          mint: a.mint,
-          symbol: SELECTABLE_ASSETS.find((m) => m.mint === a.mint)?.symbol ?? "?",
-          decimals: a.decimals,
-          weightBps: a.weightBps,
-          reserveAsset: a.reserveAsset,
-          vault: a.vault,
-          orderIndex: i,
-        })),
-        status: "active",
-        totalTargetWeightBps: 10_000,
-        reserveTokenSupplyRaw: String(Math.max(1, Math.floor(resumePending.seedTotalUsd)) * 1_000_000),
-        vaultBalancesRaw: {},
-      };
-      registerRealReserve({
-        id: dtrId,
-        name: resumePending.name,
-        ticker: resumePending.ticker,
-        description: "",
-        category: DEFAULT_RESERVE_CATEGORY,
-        tags: [DEFAULT_RESERVE_CATEGORY, SOLANA_CLUSTER, "real"],
-        logoSeed: dtrId,
-        dtrAddress: result.reserve,
-        managerAddress: walletCtx.publicKey.toBase58(),
-        delegates: [],
-        feeConfig: {
-          mintFeePct: 0,
-          tvlFeePct: 0,
-          managerBuyTaxPct: 0,
-          managerSellTaxPct: 0,
-          creatorFeeDestination: walletCtx.publicKey.toBase58(),
-          feeRecipients: [],
-        },
-        tokenPrice: 1,
-        nav: 1,
-        aum: resumePending.seedTotalUsd,
-        liquidityUsdc: resumePending.seedTotalUsd,
-        change24h: 0,
-        change7d: 0,
-        holders: 1,
-        composition: result.assets.map((a) => {
-          const meta = SELECTABLE_ASSETS.find((m) => m.mint === a.mint);
-          return { symbol: meta?.symbol ?? "?", name: meta?.name ?? a.mint, weight: a.weightBps / 10_000 };
-        }),
-        unallocatedPct: 0,
-        isUserCreated: true,
-        priceHistory: [{ t: Date.now(), price: 1 }],
-        trades: [],
-        onChain: onChainResumed,
-      });
-      setResumePending(null);
-      syncRealHolding(dtrId, "0", 1); // Placeholder holding entry -- RealReserveSync's next poll (or DTRDetail's own on-chain read) fills in the real balance/composition immediately; this just avoids a blank flash.
-      // So THIS browser's own just-resumed Reserve is discoverable
-      // immediately, before api/ledger/known-asset-mints.ts's daily-refreshed
-      // list would otherwise catch up -- see useAppStore.mainnetKnownAssetMints.
-      if (IS_MAINNET) addKnownAssetMints(result.assets.map((a) => a.mint));
-      toast({
-        title: "Reserve deployment resumed and completed",
-        description: (
-          <div className="space-y-1">
-            <div>
-              Reserve:{" "}
-              <a href={solscanUrl("address", result.reserve)} target="_blank" rel="noreferrer" className="underline">
-                View on Solscan
-              </a>
-            </div>
-            {result.transactions.seed ? (
-              <div className="flex items-center gap-2">
-                <a href={solscanUrl("tx", result.transactions.seed)} target="_blank" rel="noreferrer" className="underline">
-                  Seed transaction confirmed &mdash; View on Solscan
-                </a>
-                <CopySignatureButton signature={result.transactions.seed} size="xs" />
-              </div>
-            ) : (
-              <div>Was already fully seeded by the earlier attempt.</div>
-            )}
-          </div>
-        ),
-      });
-      setLocation(`/dtr/${dtrId}`);
+      finalizeResumedReserve(result, pendingAtStart);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (isWalletRejectionError(e)) {
         toast({ title: "Cancelled in wallet", description: "Nothing was submitted -- safe to try Resume again whenever you're ready." });
+      } else if (e instanceof CreateReserveStepError && (await reconcileAlreadyCompleteReserve(resumePending))) {
+        // Seeding (or an earlier/concurrent attempt) actually succeeded on
+        // real, authoritative on-chain state despite this call erroring --
+        // already finalized as a success above; nothing further to do here.
       } else if (e instanceof CreateReserveStepError) {
         // Classified so the Resume panel below can tell a genuinely
         // transient failure (safe to just click Resume again) apart from a
@@ -1019,6 +1052,17 @@ export function CreateDTR() {
         // instead of dead-ending the user on a blank form whose only action
         // would create a SEPARATE, duplicate Reserve.
         const resumable = readPendingReserveDeploy(walletCtx.publicKey!.toBase58());
+        // Before reporting failure, re-check the AUTHORITATIVE on-chain
+        // Reserve state directly -- a wallet-side error (RPC confirmation
+        // timeout, a stale local balance read used only for the error
+        // message, etc.) does not necessarily mean the on-chain transaction
+        // itself didn't land. checkReserveGenuinelyComplete is strictly
+        // read-only, so this can never resubmit or double-submit whatever
+        // just (apparently) failed -- see docs/project/DECISION_LOG.md's
+        // entry for this pass for the live incident this fixes (Creator
+        // received the correct Reserve Token amount on-chain while the UI
+        // still reported "received less than expected: 0%").
+        if (await reconcileAlreadyCompleteReserve(resumable)) return;
         if (resumable) setResumePending(resumable);
         toast({
           variant: "destructive",
