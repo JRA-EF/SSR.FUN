@@ -3746,3 +3746,31 @@
   ]
 }
 ```
+
+## DEC-0122
+
+```json
+{
+  "id": "DEC-0122",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Raised api/ledger/asset-catalogue.ts's MAX_RAW_ROWS/MAX_RESPONSE_TOKENS from 2000/500 to 6000/5000 -- both were below the real size of Jupiter's verified-token list (~2,600 as of this date), so a legitimately verified token with a lower organic score (Jupiter's trading-activity ranking, not a safety/verification signal) could be silently absent from the Reserve Asset picker and its own search box.",
+  "context": "Creator asked how to add support for $SSR (mint BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump, 'Strategic Super Reserve'). Looked it up directly against Jupiter Tokens API V2: isVerified true, tagged 'verified', classic SPL Token, 6 decimals, mint/freeze authority both disabled, pump.fun-graduated, but organicScore 0 ('low'). Confirmed live it was absent from the picker's 500-token response even though DEC-0121's snapshot had already fetched and stored it -- the DEC-0121-introduced 500-token response cap (sorted by organic score, intended as a reasonable default at the time) was silently excluding it, and the 2000-row raw-query cap risked excluding it even earlier in the pipeline. Flagged to Creator, before making it more visible, that a permissionless pump.fun token's name alone doesn't prove it's genuinely this project's token -- proceeded on Creator's exact CA as given.",
+  "rationale": "Fixed generally, not as a single-token carve-out: raised both caps to comfortably exceed the current verified-list size with headroom for growth (6000 raw rows, 5000 in the response), so ANY verified token -- not just this one -- is now findable via the picker's existing search box regardless of its organic score. Sort order (highest organic score first, for the default/no-search browse view) is unchanged; this only affects which verified tokens are included in the result set at all. No change to the verified/decimals/ssr_status/symbol-dedup safety filters from DEC-0121.",
+  "alternativesConsidered": [
+    "Add SSR to a manual always-include pin list (like the existing hardcoded USDC entry) -- rejected: a one-off carve-out for a single token doesn't fix the same problem for the next verified-but-low-organic-score token someone asks about, and a pinned entry would need its own ongoing manual curation.",
+    "Add server-side search (a `?q=` query param) instead of raising the caps -- more code for the same practical outcome given the verified list's actual size (~2,600) comfortably fits in one payload; deferred as unnecessary complexity unless the list grows enough to matter."
+  ],
+  "impact": "The Reserve Asset picker's catalogue endpoint now returns 2,522 tokens (up from 500), including SSR. Payload size increases accordingly (still comfortably small as JSON text) but is unchanged in shape/fields -- no frontend code change was needed beyond this endpoint's two constants.",
+  "affectedAreas": ["api/ledger/asset-catalogue.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Jupiter Tokens API V2 direct lookup (`/tokens/v2/search?query=<mint>`) confirmed SSR's real on-chain state: isVerified true, tags:['verified'], decimals 6, tokenProgram = classic SPL Token, audit.mintAuthorityDisabled/freezeAuthorityDisabled both true, organicScore 0/'low'.",
+    "Before the fix: `GET /api/ledger/asset-catalogue` returned exactly 500 tokens; SSR absent.",
+    "`npx tsc -b`, `npx oxlint api/ledger/asset-catalogue.ts`, `npx ts-mocha ... tests/phase_mainnet_production_fixes.ts` (17/17 passing, unchanged), `npm run build`: all clean.",
+    "`vercel --prod` deployment dpl_CBgKGKvhF8DP2rFZCrZ4RK5YGaM9, readyState READY, target production, aliased to strategic-super-reserve.fun.",
+    "After the fix: `GET /api/ledger/asset-catalogue` returned 2,522 tokens; SSR present with the exact expected mint/symbol/decimals. `vercel logs <deployment> --level error`: none."
+  ]
+}
+```
