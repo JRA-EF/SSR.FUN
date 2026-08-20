@@ -3981,3 +3981,34 @@
   ]
 }
 ```
+
+## DEC-0129
+
+```json
+{
+  "id": "DEC-0129",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "At Creator's explicit request ('remove password from the website for now please'), disabled the site-wide password gate (Gate 1, DEC-0117/0119) so the public site is reachable without a password again -- via a new SSR_SITE_GATE_ENABLED=false Production env var, not a code deletion, so it can be flipped back on later without a redeploy. The separate internal dashboard gate (Gate 2 -- /road-to-mainnet, /internal/status, /internal/feedback, /internal/kpis and their data endpoints, SSR_DASHBOARD_PASSWORD) was left completely untouched -- 'the website' was read as the public site, not the internal team dashboard.",
+  "context": "Creator asked to remove the password from the website, immediately after the DEC-0128 false-failure fix/report. No further scoping was given; interpreted 'the website' as the public-facing site-wide gate (the one a real, un-onboarded visitor hits), not the separate internal-team dashboard gate, since those protect genuinely different things (a controlled Mainnet launch vs. an internal engineering/status dashboard) and the request came with no mention of /road-to-mainnet or the dashboard specifically.",
+  "rationale": "middleware.ts's Gate 1 previously read SSR_SITE_PASSWORD unconditionally; verifySessionCookie (lib/dashboard/session.ts) returns false whenever the password argument is empty, so simply unsetting SSR_SITE_PASSWORD would NOT have opened the site -- it would have made Gate 1 permanently unsatisfiable (no session could ever verify against an empty password), locking everyone out instead of letting everyone in. Instead added an explicit, additive bypass: `if (process.env.SSR_SITE_GATE_ENABLED !== 'false') { ...existing Gate 1 checks... }`, defaulting to enabled (a no-op) so nothing changes unless the var is explicitly set to the literal string 'false'. Set it in Vercel Production and redeployed. Chosen over deleting Gate 1's code outright specifically because Creator said 'for now' -- re-enabling later is a one-line env var change (remove the var, or set it back to 'true'), not a code revert.",
+  "alternativesConsidered": [
+    "Unset SSR_SITE_PASSWORD entirely -- rejected: as above, this locks the site out completely (verifySessionCookie always returns false for an empty password) rather than opening it, the opposite of the request.",
+    "Delete Gate 1's code from middleware.ts outright -- rejected: Creator said 'for now,' implying this is expected to come back; a toggle is exactly as safe to disable and strictly easier to re-enable than a code deletion would be.",
+    "Also disable Gate 2 (the internal dashboard password) -- rejected: not requested, and conflates two independent concerns (public site access vs. internal team access) this repo has deliberately kept separate since DEC-0117/0119."
+  ],
+  "impact": "Deployed to production. https://strategic-super-reserve.fun/ and /create now serve real content directly, no login required. /road-to-mainnet and the rest of /internal/* still correctly require the internal dashboard password, unchanged. No code path was deleted -- re-enabling Gate 1 later is a single env var change (`vercel env rm SSR_SITE_GATE_ENABLED production` or setting it to 'true') plus a redeploy, no code change needed.",
+  "affectedAreas": ["middleware.ts", "Vercel Production env (SSR_SITE_GATE_ENABLED, new)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b`, `npx oxlint middleware.ts`: clean.",
+    "Commit `7048e3a` on `main`, pushed to `origin/main`.",
+    "`vercel env add SSR_SITE_GATE_ENABLED production` (value `false`, type Sensitive); `vercel --prod --yes` deployment `dpl_BjV6gkhVMytvmGa4ct2VgtP6uWCp`, readyState READY, target production, aliased to strategic-super-reserve.fun/www.strategic-super-reserve.fun (confirmed via `vercel inspect`).",
+    "Live GET https://strategic-super-reserve.fun/: 200, real app shell HTML (title 'SSR.fun — a launchpad for tokenized reserves'), no login form -- confirmed after an initial request briefly still showed the cached login page (edge propagation lag immediately after aliasing), which cleared within seconds on retry.",
+    "Live GET https://strategic-super-reserve.fun/create: 200.",
+    "Live GET https://strategic-super-reserve.fun/road-to-mainnet: still returns the 'Internal access' login page, confirming Gate 2 is completely unaffected.",
+    "`vercel logs --level error` for the new deployment: none."
+  ]
+}
+```
