@@ -246,13 +246,21 @@ export default async function middleware(request: Request): Promise<Response> {
 
   const cookieHeader = request.headers.get('cookie')
 
-  // Gate 1: site-wide. Applies to every remaining route.
-  const sitePassword = process.env.SSR_SITE_PASSWORD ?? ''
-  const siteSessionValue = parseCookie(cookieHeader, SITE_SESSION_COOKIE_NAME)
-  const siteAuthenticated = await verifySessionCookie(siteSessionValue, sitePassword)
+  // Gate 1: site-wide. Applies to every remaining route. Temporarily
+  // disableable via SSR_SITE_GATE_ENABLED=false (explicit request, 2026-08-20
+  // -- see docs/project/DECISION_LOG.md) without touching Gate 2 below, which
+  // stays exactly as strict as before. Defaults to enabled (unset/anything
+  // other than the literal string 'false' behaves exactly as before this
+  // toggle existed) so this is a no-op change until the env var is actually
+  // set. Re-enable by removing the env var or setting it back to 'true'.
+  if (process.env.SSR_SITE_GATE_ENABLED !== 'false') {
+    const sitePassword = process.env.SSR_SITE_PASSWORD ?? ''
+    const siteSessionValue = parseCookie(cookieHeader, SITE_SESSION_COOKIE_NAME)
+    const siteAuthenticated = await verifySessionCookie(siteSessionValue, sitePassword)
 
-  if (!siteAuthenticated) {
-    return isApiPath ? unauthorizedJson() : siteLoginPageResponse()
+    if (!siteAuthenticated) {
+      return isApiPath ? unauthorizedJson() : siteLoginPageResponse()
+    }
   }
 
   // Gate 2: internal-team, additional, only for the specific pre-existing
