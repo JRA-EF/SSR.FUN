@@ -3838,3 +3838,37 @@
   ]
 }
 ```
+
+## DEC-0125
+
+```json
+{
+  "id": "DEC-0125",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Reserve creation no longer blocks on a Jupiter swap landing below its quote's expected output -- it now always proceeds using the real amount received, and only warns (non-blocking) when that shortfall exceeds 5%.",
+  "context": "Creator hit DEC-0124's new shortfall error live: 'Swapped USDC for Bpdh...pump via Jupiter, but the resulting balance is still short of the target... this specific failure will not resolve itself on a plain retry.' Instructed: 'whatever the resulting value is just create with it. if the value is too short % of the usdc entry just warn the user.'",
+  "rationale": "Root cause: the prior check compared the real post-swap balance against the QUOTE's optimistic outAmount, but Jupiter's on-chain swap instruction only ever guarantees the much looser slippage-bounded otherAmountThreshold -- so any ordinary execution-price movement within the configured ~1.5% slippage tolerance (routine, especially on a thin-liquidity pump.fun-graduated token like the one Creator was testing with) tripped a 'failure' on a swap that had actually executed exactly as designed. Removed the throw entirely: fundSeedAssetsIdempotent's finalSeedAmounts[i] is now always set to the real post-swap balance (fetchOwnedBalanceRaw, re-read after confirmation), used whether it landed above, within, or below the quote's expectation. Added a new, non-blocking onSwapShortfall callback fired only when the real result is more than 5% short of the quote (SHORTFALL_WARN_PCT, comfortably above the routine slippage band so it only fires for a genuinely unusual outcome) -- CreateDTR.tsx wires this to a toast notification naming the asset, the amount actually received vs. quoted, and the percentage short, while making clear the Reserve was still created. Extracted the percentage math into a small pure computeSwapShortfallPct (createReserveResume.ts) for direct test coverage, mirroring the existing computeFundingShortfall.",
+  "alternativesConsidered": [
+    "Compare against Jupiter's own otherAmountThreshold (the real on-chain guarantee) instead of removing the check entirely -- considered, but Creator's explicit instruction was simpler and more permissive: never block, warn only past a real threshold. A threshold-based check would still occasionally interrupt an otherwise-successful flow for a difference the creator may not care about; the chosen design defers entirely to the real outcome and only interrupts attention (a toast, not a blocking error) when it's meaningfully large."
+  ],
+  "impact": "Deployed to production. A Mainnet Reserve creation that includes a Jupiter swap can no longer fail (in this specific way) due to ordinary slippage -- it always completes using the real swapped amount. A creator is still notified, via a non-blocking toast, if a swap underperformed its quote by more than 5%. Posted a follow-up comment on MCR-01 explaining the fix and asking Creator to retry.",
+  "affectedAreas": [
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/createReserveResume.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "tests/phase_mainnet_production_fixes.ts",
+    "road-to-mainnet.html's MCR-01 comment thread (Neon-backed, not a repository file)"
+  ],
+  "supersedes": "DEC-0124 (the swap-shortfall handling only -- everything else in DEC-0124 is unchanged)",
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b`, `npx oxlint` (changed files): clean.",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_*.ts`: 640/640 passing (4 new computeSwapShortfallPct cases: met-or-exceeded target, exact fractional shortfall, 100% shortfall from a zero result, zero-target edge case).",
+    "`npm run build`: clean.",
+    "`vercel --prod` deployment dpl_D5neKv9nwq64Ug6s8aLFmSqwtv4L, readyState READY, target production, aliased to strategic-super-reserve.fun; `vercel logs --level error`: none.",
+    "Live GET /: 200, GET /create: 200 (site unaffected).",
+    "Comment id 19 posted to control MCR-01 via POST /api/road-to-mainnet/comments, confirmed 200 with the comment echoed back."
+  ]
+}
+```
