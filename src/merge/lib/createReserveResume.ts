@@ -106,6 +106,29 @@ export function rawToUiAmount(raw: bigint, decimals: number): number {
   return Number(raw) / 10 ** decimals;
 }
 
+/**
+ * How much USDC (raw) to actually swap to cover a real, partial deficit --
+ * NOT the full per-asset budget every time, which was the confirmed root
+ * cause of a live-reported incident (2026-08-20, see
+ * docs/project/DECISION_LOG.md): a creator who already held ~9x the required
+ * SSR (from earlier, genuinely successful swaps this same flow had already
+ * executed) still had the FULL budget swapped again on every retry, instead
+ * of only the remaining shortfall -- wasting real USDC and swap fees on
+ * every resume attempt. Scales `usdcBudgetRaw` (what the full target would
+ * cost) proportionally down to just the `deficitRaw` fraction of
+ * `targetRaw`, using the same live quote's price ratio rather than fetching
+ * a second, possibly differently-priced quote for the scaled amount. Floors
+ * at 1 raw unit (never 0) so a genuine, nonzero deficit never gets scaled
+ * down into an amount Jupiter's own quote API would reject outright as
+ * non-positive.
+ */
+export function scaleUsdcBudgetForDeficit(usdcBudgetRaw: bigint, deficitRaw: bigint, targetRaw: bigint): bigint {
+  if (targetRaw <= 0n || deficitRaw <= 0n) return 0n;
+  if (deficitRaw >= targetRaw) return usdcBudgetRaw; // nothing held yet -- the deficit IS the full target, no scaling needed.
+  const scaled = (usdcBudgetRaw * deficitRaw) / targetRaw;
+  return scaled > 0n ? scaled : 1n;
+}
+
 /** A persisted deployment marker older than this is treated as abandoned rather than held onto forever -- the reconciliation check against real on-chain state (never this staleness window alone) is still what actually decides whether a Reserve exists. */
 export const PENDING_DEPLOY_STALE_MS = 10 * 60 * 1000;
 

@@ -17,6 +17,8 @@
 // file covers their pure/extractable logic and their fail-closed,
 // sanitized-error behavior only.
 import { expect } from "chai";
+import * as fs from "fs";
+import * as path from "path";
 import { PublicKey, Keypair } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { isReserveTradable, isSupportedAssetMint, registerDynamicSupportedAssetMints, SUPPORTED_ASSET_MINTS } from "../packages/sdk/src/tradableAssets";
@@ -24,9 +26,11 @@ import assetCatalogueHandler, { dedupeBySymbolPreferOrganicScore, type Catalogue
 import knownMintsHandler from "../api/ledger/known-asset-mints";
 import mainnetMetadataHandler from "../api/mainnet/reserve-metadata";
 import { uploadReserveMetadata, isJupiterSwapEligible, assertSeedAmountsMeetMinimum, fetchOwnedBalanceRawSettled } from "../src/merge/lib/createReserveClient";
-import { computeSwapShortfallPct, rawToUiAmount, determineDeploymentResumePoint } from "../src/merge/lib/createReserveResume";
+import { computeSwapShortfallPct, rawToUiAmount, determineDeploymentResumePoint, computeFundingShortfall, scaleUsdcBudgetForDeficit } from "../src/merge/lib/createReserveResume";
 import { matchesAssetSearch } from "../src/merge/lib/assetSearch";
 import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
+import { ALLOWED_METHODS as MAINNET_RPC_PROXY_ALLOWED_METHODS } from "../api/mainnet/rpc-proxy";
+import { ALLOWED_METHODS as DEVNET_RPC_PROXY_ALLOWED_METHODS } from "../api/devnet/rpc-proxy";
 import { describeJupiterSwapError } from "../src/merge/lib/jupiterSwapClient";
 
 interface FakeReq {
@@ -74,12 +78,13 @@ describe("packages/sdk/src/tradableAssets.ts -- dynamic Mainnet mint registratio
 });
 
 describe("api/ledger/asset-catalogue.ts -- dedupeBySymbolPreferOrganicScore (pure)", () => {
-  const row = (mint: string, symbol: string, organicScore: number | null, name: string | null = null): CatalogueRow => ({
+  const row = (mint: string, symbol: string, organicScore: number | null, name: string | null = null, tokenProgram: string | null = null): CatalogueRow => ({
     mint,
     symbol,
     name,
     decimals: 6,
     organicScore,
+    tokenProgram,
   });
 
   it("keeps only the highest-organic-score mint when two rows share a symbol (squatter/duplicate protection)", () => {
@@ -104,6 +109,17 @@ describe("api/ledger/asset-catalogue.ts -- dedupeBySymbolPreferOrganicScore (pur
   it("falls back to the symbol as the display name when Jupiter's name field is null (never blank)", () => {
     const result = dedupeBySymbolPreferOrganicScore([row("M1", "NONAME", 1, null)]);
     expect(result[0].name).to.equal("NONAME");
+  });
+
+  it("excludes a confirmed Token-2022 mint entirely -- the client-side SDK hardcodes the classic Token program on every instruction it builds, so a Token-2022 asset would fail on-chain regardless of anything else fixed client-side", () => {
+    const rows = [row("Classic1", "AAA", 10, null, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"), row("T22Mint", "BBB", 10, null, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")];
+    const result = dedupeBySymbolPreferOrganicScore(rows);
+    expect(result.map((r) => r.mint)).to.deep.equal(["Classic1"]);
+  });
+
+  it("never excludes a row with a null/unknown tokenProgram (rows captured before this field existed) -- only a POSITIVELY confirmed Token-2022 mint is excluded", () => {
+    const result = dedupeBySymbolPreferOrganicScore([row("Legacy1", "CCC", 10, null, null)]);
+    expect(result.map((r) => r.mint)).to.deep.equal(["Legacy1"]);
   });
 
   it("an empty input list produces an empty, valid (never fabricated) result", () => {
@@ -513,5 +529,202 @@ describe("Reserve deploy resumability -- successful transaction with stale UI st
     const point = determineDeploymentResumePoint({ reserveExists: true, reserveStatus: "assetsInitializing", onChainAssetCount: 1, expectedAssetCount: 1 });
     expect(point.kind).to.not.equal("already-complete");
     expect(point).to.deep.equal({ kind: "resume-from-funding" });
+  });
+});
+
+// --- 2026-08-20 pass (later the same day): "seeding step reads zero" ------
+// CONFIRMED ROOT CAUSE, verified against real Mainnet accounts/transactions
+// (see docs/project/DECISION_LOG.md's entry for this pass): the Mainnet
+// (and DevNet) rpc-proxy's ALLOWED_METHODS list was missing
+// "getTokenAccountBalance" entirely. Connection.getTokenAccountBalance --
+// the ONLY way fetchOwnedBalanceRaw reads a wallet's real token balance --
+// is the sole route the browser has to Mainnet RPC in production, so every
+// single call was rejected with a JSON-RPC "Method not permitted via this
+// proxy" error, which fetchOwnedBalanceRaw's blanket try/catch silently
+// swallowed and reported as a balance of exactly 0 -- deterministically, on
+// EVERY attempt (never a transient RPC-lag issue, which is what the prior
+// same-day pass, DEC-0127/DEC-0128, incorrectly diagnosed this class of
+// symptom as). This is why balance-based idempotency never worked: the
+// "already holds enough, skip the swap" check always saw 0, so every retry
+// re-swapped the FULL budget (confirmed live: a wallet holding ~149,711 SSR
+// -- already ~7x the ~21,000 required -- still had a fresh $10 swap
+// executed against it), and the post-swap settled-balance read ALSO always
+// converged to 0 after exhausting its retries (since every attempt hit the
+// identical hard rejection, not a lagging-but-eventually-consistent read),
+// so assertSeedAmountsMeetMinimum correctly refused to submit -- but for
+// the wrong-looking reason, since the wallet never actually lacked funds.
+describe("api/mainnet/rpc-proxy.ts and api/devnet/rpc-proxy.ts -- getTokenAccountBalance allowlist (the confirmed root cause)", () => {
+  it("Mainnet rpc-proxy allows getTokenAccountBalance -- Connection.getTokenAccountBalance is the ONLY way the browser can read a real Mainnet SPL token balance in production", () => {
+    expect(MAINNET_RPC_PROXY_ALLOWED_METHODS.has("getTokenAccountBalance")).to.equal(true);
+  });
+
+  it("DevNet rpc-proxy also allows getTokenAccountBalance -- the same createReserveClient.ts code path is shared between clusters", () => {
+    expect(DEVNET_RPC_PROXY_ALLOWED_METHODS.has("getTokenAccountBalance")).to.equal(true);
+  });
+
+  it("still rejects a genuinely unrelated/unaudited method (regression guard: fixing this one method must not have widened the allowlist into a blanket pass-through)", () => {
+    expect(MAINNET_RPC_PROXY_ALLOWED_METHODS.has("getProgramAccounts")).to.equal(false);
+    expect(DEVNET_RPC_PROXY_ALLOWED_METHODS.has("getProgramAccounts")).to.equal(false);
+  });
+});
+
+describe("createReserveClient.ts's real Connection method usage stays inside both rpc-proxy allowlists (self-auditing regression guard)", () => {
+  // Reads the ACTUAL source files and extracts every `connection.<method>(`
+  // call site, rather than hand-maintaining a second, driftable list here --
+  // this is exactly the kind of check that would have caught
+  // getTokenAccountBalance's omission the moment it was first called,
+  // instead of only being discovered live in production. web3.js's
+  // Connection.sendRawTransaction issues the JSON-RPC method
+  // "sendTransaction" (not literally "sendRawTransaction"), so that one
+  // client method name is mapped to its real wire method below.
+  const METHOD_TO_RPC_NAME: Record<string, string> = { sendRawTransaction: "sendTransaction" };
+
+  function extractConnectionMethodCalls(sourcePath: string): string[] {
+    const source = fs.readFileSync(path.join(__dirname, "..", sourcePath), "utf8");
+    const found = new Set<string>();
+    const re = /connection\.([a-zA-Z]+)\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source)) !== null) {
+      found.add(METHOD_TO_RPC_NAME[m[1]] ?? m[1]);
+    }
+    return [...found];
+  }
+
+  it("every Connection method createReserveClient.ts actually calls is present in BOTH the Mainnet and DevNet rpc-proxy allowlists", () => {
+    const methods = extractConnectionMethodCalls("src/merge/lib/createReserveClient.ts");
+    expect(methods.length).to.be.greaterThan(0); // sanity -- a broken extraction regex must not silently pass 0 checks.
+    expect(methods).to.include("getTokenAccountBalance"); // sanity -- confirms this audit would have caught the exact regression it's guarding against.
+    for (const method of methods) {
+      expect(MAINNET_RPC_PROXY_ALLOWED_METHODS.has(method), `Mainnet rpc-proxy missing "${method}"`).to.equal(true);
+      expect(DEVNET_RPC_PROXY_ALLOWED_METHODS.has(method), `DevNet rpc-proxy missing "${method}"`).to.equal(true);
+    }
+  });
+
+  it("every Connection method rpcResilience.ts actually calls is present in BOTH allowlists too", () => {
+    const methods = extractConnectionMethodCalls("src/merge/lib/rpcResilience.ts");
+    expect(methods.length).to.be.greaterThan(0);
+    for (const method of methods) {
+      expect(MAINNET_RPC_PROXY_ALLOWED_METHODS.has(method), `Mainnet rpc-proxy missing "${method}"`).to.equal(true);
+      expect(DEVNET_RPC_PROXY_ALLOWED_METHODS.has(method), `DevNet rpc-proxy missing "${method}"`).to.equal(true);
+    }
+  });
+});
+
+describe("src/merge/lib/createReserveResume.ts -- scaleUsdcBudgetForDeficit (pure, deficit-only Jupiter swap sizing)", () => {
+  it("existing sufficient balance: a zero deficit needs zero USDC -- the caller's own balance>=target check is what skips the swap entirely, but the sizing function itself must never suggest spending anything for a deficit that isn't real", () => {
+    expect(scaleUsdcBudgetForDeficit(10_000_000n, 0n, 21_000_000_000n)).to.equal(0n);
+  });
+
+  it("zero existing balance (nothing held yet): the deficit IS the full target, so the full USDC budget is used unchanged -- matches this app's original (correct) first-attempt behavior exactly", () => {
+    expect(scaleUsdcBudgetForDeficit(10_000_000n, 21_000_000_000n, 21_000_000_000n)).to.equal(10_000_000n);
+  });
+
+  it("partial deficit: scales the USDC budget down proportionally to only the genuinely-missing fraction of the target -- the exact fix for the confirmed live incident (a wallet already ~7x over target still had the FULL budget re-swapped)", () => {
+    // Held 30% of target already -> only the remaining 70% should be bought.
+    const usdcBudgetRaw = 10_000_000n; // $10
+    const targetRaw = 100_000_000n; // 100 tokens, 6 decimals
+    const existingRaw = 30_000_000n; // already holds 30 tokens (30%)
+    const deficitRaw = targetRaw - existingRaw; // 70 tokens
+    const scaled = scaleUsdcBudgetForDeficit(usdcBudgetRaw, deficitRaw, targetRaw);
+    expect(scaled).to.equal(7_000_000n); // exactly 70% of the $10 budget, not the full $10
+  });
+
+  it("a wallet holding ~9x the target (the exact reported scenario, 191,598 held vs. ~21,000 required) has a zero deficit -- computeFundingShortfall floors at zero, never a negative amount to 'buy back'", () => {
+    const targetRaw = 21_000_000_000n; // ~21,000 SSR, 6 decimals
+    const existingRaw = 191_598_743_106n; // the real, confirmed live balance
+    const deficitRaw = computeFundingShortfall(targetRaw, existingRaw);
+    expect(deficitRaw).to.equal(0n);
+    expect(scaleUsdcBudgetForDeficit(10_000_000n, deficitRaw, targetRaw)).to.equal(0n);
+  });
+
+  it("floors a genuine but tiny nonzero deficit at 1 raw unit -- never rounds an integer-division result down to 0 and silently asks Jupiter to swap nothing", () => {
+    const scaled = scaleUsdcBudgetForDeficit(1n, 1n, 1_000_000_000n); // 1 raw USDC unit budget, a minuscule fraction of the target still missing
+    expect(scaled).to.equal(1n);
+    expect(scaled).to.be.greaterThan(0n);
+  });
+
+  it("a zero or negative target never divides by zero -- returns 0 (nothing to buy) rather than throwing or fabricating an amount", () => {
+    expect(scaleUsdcBudgetForDeficit(10_000_000n, 5_000_000n, 0n)).to.equal(0n);
+  });
+});
+
+describe("Idempotent seed-funding across repeated resume attempts -- prevention of duplicate/full-re-swaps once a prior swap already landed", () => {
+  it("resume after a successful swap: once the real balance genuinely reaches the target (as it would after a prior attempt's swap actually confirmed), the NEXT attempt's own deficit calculation is zero -- the swap is never repeated", () => {
+    const targetRaw = 21_283_780_000n; // matches this pass's own real, confirmed-on-chain SSR seed target
+    // Simulates 3 successive resume attempts against the SAME real balance,
+    // as would happen if a user repeatedly clicks Resume -- every single one
+    // must compute the identical zero deficit, never re-deriving a nonzero
+    // one from stale/inconsistent state.
+    const balanceAfterFirstSwap = targetRaw; // the swap landed and met the target exactly
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const deficit = computeFundingShortfall(targetRaw, balanceAfterFirstSwap);
+      expect(deficit, `attempt ${attempt}`).to.equal(0n);
+      expect(scaleUsdcBudgetForDeficit(10_000_000n, deficit, targetRaw), `attempt ${attempt}`).to.equal(0n);
+    }
+  });
+
+  it("a genuinely still-partial balance after an interrupted first swap correctly computes a nonzero (but never full-budget) deficit on the resume attempt", () => {
+    const targetRaw = 21_283_780_000n;
+    const partialBalance = 10_000_000_000n; // roughly half-funded from an earlier, partially-successful attempt
+    const deficit = computeFundingShortfall(targetRaw, partialBalance);
+    const scaled = scaleUsdcBudgetForDeficit(10_000_000n, deficit, targetRaw);
+    expect(deficit).to.be.greaterThan(0n);
+    expect(scaled).to.be.greaterThan(0n);
+    expect(scaled).to.be.lessThan(10_000_000n); // must be LESS than the full $10 budget -- the whole point of this fix.
+  });
+});
+
+describe("src/merge/lib/createReserveClient.ts -- fetchOwnedBalanceRawSettled exponential backoff (delayed RPC visibility, reasonable timeout/backoff)", () => {
+  it("backs off exponentially (never a flat interval) between retries, capped at maxDelayMs", async () => {
+    const mint = Keypair.generate().publicKey;
+    const owner = Keypair.generate().publicKey;
+    const delaysObserved: number[] = [];
+    let call = 0;
+    const connection = {
+      getTokenAccountBalance: async () => {
+        call++;
+        return { value: { amount: "0" } }; // never changes -- forces every retry to actually sleep, so every delay gets observed.
+      },
+    } as unknown as import("@solana/web3.js").Connection;
+
+    const originalSetTimeout = global.setTimeout;
+    (global as unknown as { setTimeout: typeof setTimeout }).setTimeout = ((fn: () => void, ms?: number) => {
+      delaysObserved.push(ms ?? 0);
+      return originalSetTimeout(fn, 0); // fire immediately -- this test verifies the COMPUTED backoff values, not real wall-clock time.
+    }) as typeof setTimeout;
+    try {
+      await fetchOwnedBalanceRawSettled(connection, mint, owner, 0n, { maxAttempts: 4, delayMs: 100, maxDelayMs: 300 });
+    } finally {
+      global.setTimeout = originalSetTimeout;
+    }
+    expect(call).to.equal(4);
+    expect(delaysObserved).to.deep.equal([100, 200, 300]); // 100, 200 (100*2), then capped at maxDelayMs (would be 400 uncapped)
+  });
+});
+
+describe("ATA derivation -- Token Program vs. Token-2022 consistency", () => {
+  const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+  it("getAssociatedTokenAddressSync(mint, owner) with no explicit programId derives against the CLASSIC Token program -- verified live against the real, confirmed on-chain SSR account this incident was diagnosed against (63UUcPv7qnDjGXtS64VyUuYXQrLRNKoXK4ddWJP8YvM3, owned by TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA)", () => {
+    const owner = new PublicKey("6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen");
+    const mint = new PublicKey("BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump");
+    const ata = getAssociatedTokenAddressSync(mint, owner);
+    expect(ata.toBase58()).to.equal("63UUcPv7qnDjGXtS64VyUuYXQrLRNKoXK4ddWJP8YvM3");
+  });
+
+  it("this app's client-side SDK genuinely only supports the classic Token program end to end (every instruction builder hardcodes TOKEN_PROGRAM_ID) -- excluding Token-2022 mints from the picker (see the asset-catalogue tests above) is therefore correct scoping, not an arbitrary restriction", () => {
+    const sdkFiles = ["packages/sdk/src/createReserveFlow.ts", "packages/sdk/src/directInstructions.ts", "packages/sdk/src/managementInstructions.ts"];
+    for (const file of sdkFiles) {
+      const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+      expect(source, file).to.include("tokenProgram: TOKEN_PROGRAM_ID");
+      expect(source, file).to.not.include(TOKEN_2022_PROGRAM_ID);
+    }
+  });
+
+  it("TOKEN_PROGRAM_ID and TOKEN_2022_PROGRAM_ID are genuinely distinct real Mainnet program addresses (sanity -- guards against a copy-paste typo making the exclusion check above a no-op)", () => {
+    expect(TOKEN_PROGRAM_ID).to.not.equal(TOKEN_2022_PROGRAM_ID);
+    expect(() => new PublicKey(TOKEN_PROGRAM_ID)).to.not.throw();
+    expect(() => new PublicKey(TOKEN_2022_PROGRAM_ID)).to.not.throw();
   });
 });

@@ -25,6 +25,14 @@ export const ALLOWED_METHODS = new Set([
   "getAccountInfo",
   "getMultipleAccounts",
   "getTokenSupply",
+  // getTokenAccountBalance was missing from this allowlist entirely -- every
+  // call Connection.getTokenAccountBalance makes through this proxy (the
+  // ONLY route the browser has to Mainnet RPC in production) was rejected
+  // with a JSON-RPC "method not permitted" error, which createReserveClient.ts's
+  // fetchOwnedBalanceRaw silently swallowed and reported as a balance of 0 --
+  // deterministically, on every single call, never a transient/lag issue.
+  // See docs/project/DECISION_LOG.md's entry for this pass.
+  "getTokenAccountBalance",
   "getSignatureStatuses",
   "getBlockHeight",
   "getMinimumBalanceForRentExemption",

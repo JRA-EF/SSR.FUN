@@ -41,6 +41,7 @@ export interface CatalogueRow {
   name: string | null;
   decimals: number;
   organicScore: number | null;
+  tokenProgram: string | null;
 }
 
 export interface CatalogueToken {
@@ -50,11 +51,31 @@ export interface CatalogueToken {
   decimals: number;
 }
 
-/** Pure -- unit-testable without a live database. Keeps at most one entry per symbol (the highest organic-score mint), excludes the reserved "USDC" symbol entirely, and returns entries sorted by score (nulls last) then symbol. */
+/**
+ * The Token-2022 program's real, canonical Mainnet address. Every
+ * client-side instruction builder in packages/sdk (createReserveFlow.ts,
+ * directInstructions.ts, managementInstructions.ts, zapInstructions.ts,
+ * ammInstructions.ts, rebalanceExecutionInstructions.ts) currently
+ * hardcodes `tokenProgram: TOKEN_PROGRAM_ID` unconditionally -- even though
+ * the on-chain ssr_protocol program itself is genuinely Token-2022-aware
+ * (see programs/ssr_protocol/src/instructions/initialize_reserve_asset.rs's
+ * `TokenInterface`/`TokenProgramKind::Token2022` handling), the CLIENT never
+ * actually passes that program account for any mint, so a Token-2022 asset
+ * would build a transaction with the WRONG token_program account and fail
+ * on-chain regardless of anything fixed here. See
+ * docs/project/DECISION_LOG.md's entry for this pass -- excluding these
+ * mints from the picker is the properly-scoped fix until the SDK is updated
+ * end-to-end (a separate, larger, cross-cutting change affecting Buy/Sell/
+ * rebalance/zap too, not just Reserve creation).
+ */
+export const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+/** Pure -- unit-testable without a live database. Keeps at most one entry per symbol (the highest organic-score mint), excludes the reserved "USDC" symbol and any confirmed Token-2022 mint entirely (see TOKEN_2022_PROGRAM_ID), and returns entries sorted by score (nulls last) then symbol. A null/unknown tokenProgram (rows captured before this field existed) is never excluded -- only a POSITIVELY confirmed Token-2022 mint is. */
 export function dedupeBySymbolPreferOrganicScore(rows: CatalogueRow[]): CatalogueToken[] {
   const bestBySymbol = new Map<string, CatalogueRow>();
   for (const row of rows) {
     if (!row.symbol || row.symbol.toUpperCase() === "USDC") continue;
+    if (row.tokenProgram === TOKEN_2022_PROGRAM_ID) continue;
     const existing = bestBySymbol.get(row.symbol);
     const rowScore = row.organicScore ?? -Infinity;
     const existingScore = existing ? existing.organicScore ?? -Infinity : -Infinity;
@@ -81,7 +102,7 @@ let cached: { tokens: CatalogueToken[]; updatedAt: number } | null = null;
 async function loadCatalogue(): Promise<{ tokens: CatalogueToken[]; updatedAt: number }> {
   const sql = getSql();
   const rows = (await sql`
-    select mint, symbol, name, decimals, jupiter_organic_score as "organicScore"
+    select mint, symbol, name, decimals, jupiter_organic_score as "organicScore", token_program as "tokenProgram"
     from ledger_asset_catalogue
     where jupiter_verified = true
       and decimals is not null

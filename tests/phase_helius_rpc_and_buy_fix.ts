@@ -45,7 +45,7 @@ describe("Helius RPC integration -- server-side endpoint resolution (resolveRpcU
 
 describe("rpc-proxy -- method allowlist (only what this app's own Connection genuinely calls)", () => {
   it("allows every read/submit method the frontend actually uses", () => {
-    for (const m of ["getLatestBlockhash", "getBalance", "getAccountInfo", "getMultipleAccounts", "getTokenSupply", "getSignatureStatuses", "getBlockHeight", "getMinimumBalanceForRentExemption", "sendTransaction"]) {
+    for (const m of ["getLatestBlockhash", "getBalance", "getAccountInfo", "getMultipleAccounts", "getTokenSupply", "getTokenAccountBalance", "getSignatureStatuses", "getBlockHeight", "getMinimumBalanceForRentExemption", "sendTransaction"]) {
       expect(ALLOWED_METHODS.has(m), m).to.equal(true);
     }
   });

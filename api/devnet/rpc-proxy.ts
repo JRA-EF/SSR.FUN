@@ -49,6 +49,12 @@ export const ALLOWED_METHODS = new Set([
   "getAccountInfo",
   "getMultipleAccounts",
   "getTokenSupply",
+  // See api/mainnet/rpc-proxy.ts's identical addition -- this method was
+  // missing from both proxies' allowlists, deterministically breaking every
+  // client-side SPL token balance read routed through either of them (a
+  // Mainnet-confirmed live incident; kept in sync here since this repo's
+  // seed-funding logic is shared between clusters).
+  "getTokenAccountBalance",
   "getSignatureStatuses",
   "getBlockHeight",
   "getMinimumBalanceForRentExemption",

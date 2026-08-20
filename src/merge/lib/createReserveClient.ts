@@ -63,7 +63,7 @@ import {
 } from "@ssr/sdk";
 import { fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
 import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
-import { computeFundingShortfall, computeSwapShortfallPct, determineDeploymentResumePoint, type ReserveOnChainStatus } from "./createReserveResume";
+import { computeFundingShortfall, computeSwapShortfallPct, determineDeploymentResumePoint, scaleUsdcBudgetForDeficit, type ReserveOnChainStatus } from "./createReserveResume";
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
 /**
@@ -93,6 +93,7 @@ export {
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
   rawToUiAmount,
+  scaleUsdcBudgetForDeficit,
   type CreateReserveErrorClass,
   type DeploymentResumePoint,
   type ReserveOnChainStatus,
@@ -504,15 +505,24 @@ export async function fetchOwnedBalanceRawSettled(
   // without actually waiting several real seconds -- every production
   // caller relies on the defaults (unchanged from before this was made
   // configurable).
-  opts: { maxAttempts?: number; delayMs?: number } = {},
+  opts: { maxAttempts?: number; delayMs?: number; maxDelayMs?: number } = {},
 ): Promise<bigint> {
-  const MAX_ATTEMPTS = opts.maxAttempts ?? 6;
-  const DELAY_MS = opts.delayMs ?? 1_000;
+  const MAX_ATTEMPTS = opts.maxAttempts ?? 7;
+  const BASE_DELAY_MS = opts.delayMs ?? 750;
+  const MAX_DELAY_MS = opts.maxDelayMs ?? 4_000;
   let balance = balanceBefore;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     balance = await fetchOwnedBalanceRaw(connection, mint, owner);
     if (balance !== balanceBefore) return balance;
-    if (attempt < MAX_ATTEMPTS - 1) await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+    if (attempt < MAX_ATTEMPTS - 1) {
+      // Exponential backoff (750ms, 1.5s, 3s, capped at 4s) rather than a
+      // fixed interval -- a reasonable timeout/backoff for RPC propagation
+      // that's usually near-instant but occasionally takes a few seconds
+      // longer under load, without making the common (fast) case wait
+      // longer than it needs to.
+      const delay = Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
   return balance;
 }
@@ -616,13 +626,29 @@ async function fundSeedAssetsIdempotent(
         continue;
       }
       const usdcBudgetRaw = BigInt(Math.round(usdBudget * 1_000_000));
-      // A live quote is also the correct, price-aware target amount for
-      // this asset -- replacing the $1-peg placeholder seedAmounts[i] was
-      // computed with, which is only ever correct for real USDC itself.
-      const quote = await fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58());
-      finalSeedAmounts[i] = quote.outAmount;
+      // A live quote for the FULL budget is also the correct, price-aware
+      // TARGET amount for this asset -- replacing the $1-peg placeholder
+      // seedAmounts[i] was computed with, which is only ever correct for
+      // real USDC itself. This does not mean the full budget gets SWAPPED
+      // below -- see the deficit calculation immediately after.
+      const fullQuote = await fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58());
+      const targetRaw = fullQuote.outAmount;
+      finalSeedAmounts[i] = targetRaw;
 
-      if (balances[i] >= quote.outAmount) continue; // already holds enough -- no swap needed, no fee spent.
+      const existingRaw = balances[i]; // real balance already read at the top of this function, BEFORE any swap this call performs -- may already include tokens from an earlier attempt/session, not just this one.
+      if (existingRaw >= targetRaw) continue; // already holds enough (from this call's own funding below, an earlier attempt, or simply already owned) -- no swap needed, no fee spent, existing balance used as-is.
+
+      // Swap only the genuine DEFICIT, never the full target -- an asset
+      // already partially funded (by an earlier attempt, or simply already
+      // held by the creator before ever starting this deployment) must
+      // never be topped up as if it held nothing. Confirmed live incident
+      // (2026-08-20, see docs/project/DECISION_LOG.md): a creator who
+      // already held ~9x the required amount still had the FULL budget
+      // re-swapped on every retry. Reuses fullQuote directly when nothing
+      // is held yet (the deficit IS the full target) -- no wasted second
+      // Jupiter API call for the common first-attempt case.
+      const deficitRaw = computeFundingShortfall(targetRaw, existingRaw);
+      const quote = existingRaw <= 0n ? fullQuote : await fetchJupiterSwapQuote(asset.mint, scaleUsdcBudgetForDeficit(usdcBudgetRaw, deficitRaw, targetRaw), owner.toBase58());
 
       jupiterSwap.onSwapStart?.(asset.mint);
       jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote);
@@ -636,11 +662,16 @@ async function fundSeedAssetsIdempotent(
       // immediate read) -- see its own header for why: a read right after
       // OUR OWN confirmation can still hit an RPC node that hasn't caught
       // up yet.
-      const newBalance = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, balances[i]);
+      const newBalance = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, existingRaw);
       finalSeedAmounts[i] = newBalance;
-      const shortfallPct = computeSwapShortfallPct(quote.outAmount, newBalance);
+      // Shortfall is always measured against the FULL target (targetRaw),
+      // not the smaller deficit-only quote -- newBalance is the creator's
+      // real TOTAL holding (existing + just-acquired), so comparing it
+      // against anything less than the full target would systematically
+      // under-report a genuine shortfall.
+      const shortfallPct = computeSwapShortfallPct(targetRaw, newBalance);
       if (shortfallPct > SHORTFALL_WARN_PCT) {
-        jupiterSwap.onSwapShortfall?.({ mint: asset.mint, targetRaw: quote.outAmount, actualRaw: newBalance, shortfallPct });
+        jupiterSwap.onSwapShortfall?.({ mint: asset.mint, targetRaw, actualRaw: newBalance, shortfallPct });
       }
     }
   }
