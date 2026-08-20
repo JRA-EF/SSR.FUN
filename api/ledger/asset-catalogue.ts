@@ -66,8 +66,15 @@ export function dedupeBySymbolPreferOrganicScore(rows: CatalogueRow[]): Catalogu
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_RAW_ROWS = 2000;
-const MAX_RESPONSE_TOKENS = 500;
+// Both limits must comfortably exceed Jupiter's real verified-list size
+// (~2,600 as of 2026-08-20) -- a lower cap here silently hides any
+// verified, legitimately-catalogued token whose organic score (a trading-
+// activity ranking, not a safety signal) happens to be low, which is
+// exactly what made a newer verified token unfindable even via the picker's
+// own search box (organic score only affects sort ORDER below, never
+// inclusion). See docs/project/DECISION_LOG.md's entry for this fix.
+const MAX_RAW_ROWS = 6000;
+const MAX_RESPONSE_TOKENS = 5000;
 
 let cached: { tokens: CatalogueToken[]; updatedAt: number } | null = null;
 
