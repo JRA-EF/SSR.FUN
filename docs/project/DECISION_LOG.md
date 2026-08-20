@@ -3872,3 +3872,38 @@
   ]
 }
 ```
+
+## DEC-0126
+
+```json
+{
+  "id": "DEC-0126",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Fixed a misleading Jupiter swap failure message (was decoded as if it might be an ssr_protocol error) and enabled Jupiter's dynamic slippage so a genuine on-chain swap rejection (a real InstructionError/Custom(52) from an external AMM in the route) happens less often in the first place.",
+  "context": "Creator hit a real on-chain swap failure live: 'Jupiter swap failed on-chain ({\"InstructionError\":[4,{\"Custom\":52}]})... program error code 52 is not defined anywhere in the deployed SSR Protocol IDL... check whether the deployed program binary has drifted from this IDL.' The transaction genuinely failed on-chain (not a false alarm like DEC-0125's shortfall case) -- but the error explanation was wrong for the context: it was produced by createReserveClient.ts's describeOnChainError, which is scoped to ssr_protocol's own deployed IDL and Anchor's framework error table, neither of which the swap transaction's instructions ever touch (they belong to Jupiter's router and whichever AMM program(s) it routed through).",
+  "rationale": "Added describeJupiterSwapError (jupiterSwapClient.ts, pure), used instead of describeOnChainError for a swap-transaction failure specifically. It names the real error code, states the single most common real cause of an AMM/router instruction reverting mid-swap (a minimum-output/slippage check tripping because the price moved between quote-fetch and execution -- routine for a lower-liquidity token) WITHOUT claiming certainty about an external program's exact error semantics (this repo has no IDL for Jupiter's router or the AMMs it can route through), and confirms a retry already re-quotes fresh (fundSeedAssetsIdempotent fetches a new live quote on every attempt, unchanged from DEC-0124). Separately, enabled dynamicSlippage:true on the swap-build request (api/mainnet/jupiter-swap.ts) -- previously only a fixed 150bps slippage was ever used; Jupiter's dynamic mode computes its own volatility/route-aware tolerance instead (live-confirmed via a direct API test: it independently picked 80bps for the exact same SSR route where 150bps had been requested), which should reduce how often a real price-movement-driven revert like this happens at all, not just explain it better after the fact.",
+  "alternativesConsidered": [
+    "Simply raise the fixed default slippageBps (e.g. to 300 or 500) instead of switching to dynamic slippage -- rejected: a single static number is either too tight for a volatile token (this exact failure) or wastes slippage budget on a stable one; Jupiter's own dynamic mode adapts per-trade instead of guessing at one fixed compromise value.",
+    "Attempt to identify the exact semantic meaning of error code 52 for the specific AMM program involved -- rejected: this repo has no IDL/source for Jupiter's router or the third-party AMM programs it routes through, so asserting a specific meaning would be a guess presented as fact; named the far-more-likely general cause (slippage) honestly instead of fabricating certainty."
+  ],
+  "impact": "Deployed to production. A genuine on-chain swap rejection now explains itself in plain, swap-specific terms instead of misleadingly implicating ssr_protocol/this app's own deployed program. Dynamic slippage should reduce (not eliminate -- a real price-moving revert can still happen) how often this failure class occurs for real, lower-liquidity Mainnet assets. Posted a follow-up comment on MCR-01 explaining the fix and asking Creator to retry.",
+  "affectedAreas": [
+    "src/merge/lib/jupiterSwapClient.ts",
+    "api/mainnet/jupiter-swap.ts",
+    "tests/phase_mainnet_production_fixes.ts",
+    "road-to-mainnet.html's MCR-01 comment thread (Neon-backed, not a repository file)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b`, `npx oxlint` (changed files): clean.",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_*.ts`: 643/643 passing (3 new describeJupiterSwapError cases: real InstructionError/Custom decode, unrecognized-shape fallback, malformed-input never-throws).",
+    "`npm run build`: clean.",
+    "Live direct Jupiter API test confirmed dynamicSlippage:true returns a real dynamicSlippageReport (slippageBps 80 for the exact USDC->SSR route that had been requested at a fixed 150bps).",
+    "`vercel --prod` deployment dpl_8odfxQAWHmpX3Rr9hsydYKSN1Pse, readyState READY, target production, aliased to strategic-super-reserve.fun; `vercel logs --level error`: none.",
+    "Live POST /api/mainnet/jupiter-swap (1 USDC -> SSR) with dynamicSlippage enabled server-side: 200, real swapTransaction returned. Live GET /: 200, GET /create: 200.",
+    "Comment id 20 posted to control MCR-01 via POST /api/road-to-mainnet/comments, confirmed 200 with the comment echoed back."
+  ]
+}
+```
