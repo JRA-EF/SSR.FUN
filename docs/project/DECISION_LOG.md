@@ -3774,3 +3774,29 @@
   ]
 }
 ```
+
+## DEC-0123
+
+```json
+{
+  "id": "DEC-0123",
+  "date": "2026-08-20",
+  "status": "confirmed",
+  "decision": "Made the Create-Reserve asset picker's search box match on contract address (mint), not just name/ticker, and show each listed asset's truncated mint underneath its symbol.",
+  "context": "Creator asked to make assets searchable by CA, immediately following DEC-0122's $SSR investigation -- with thousands of verified tokens now in the picker (many sharing similar or ambiguous names), searching only by name/ticker isn't enough to confidently find and confirm a specific token.",
+  "rationale": "Added src/merge/lib/assetSearch.ts (matchesAssetSearch, pure: case-insensitive substring match against name, symbol, OR mint; empty query matches everything) as its own module rather than inline in CreateDTR.tsx, so that page component file keeps exporting only the component (avoids oxlint's react-fast-refresh warning, matching how every other shared-logic extraction in this codebase already avoids that warning). Both the picker's filter and its 'no results' empty-state check now call the same function, replacing what would otherwise have been duplicated inline predicate logic. Each row in the picker also now shows the asset's mint truncated to first4...last4 (the same truncation convention already used elsewhere in this same file for wallet addresses) so a user can visually confirm which specific mint they're about to select -- directly relevant given DEC-0121's own reasoning for excluding a duplicate 'USDC' catalogue entry: multiple real mints can legitimately share a name or symbol. Mint matching is deliberately case-insensitive (base58 is technically case-sensitive) for forgiving paste/retype UX -- a coincidental substring collision between two different real mints in this app's own already-curated/verified catalogue is astronomically unlikely.",
+  "alternativesConsidered": [
+    "Require an exact, full-length mint match rather than a substring match -- rejected: the existing name/ticker search is already a live substring filter as the user types, and a first-few/last-few-characters partial paste is a common, useful way to sanity-check a token without typing/pasting the whole address."
+  ],
+  "impact": "The Reserve Asset picker's search box (both Mainnet's Jupiter-catalogue-backed list and DevNet's fixture list, since both share the same SELECTABLE_ASSETS/search UI) now accepts a full or partial contract address in addition to name/ticker. Every listed asset's row shows its truncated mint for visual confirmation. No API/backend change -- purely a client-side filter and one new pure function.",
+  "affectedAreas": ["src/merge/lib/assetSearch.ts (new)", "src/merge/pages/CreateDTR.tsx", "tests/phase_mainnet_production_fixes.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx tsc -b`, `npx oxlint` (changed files, zero warnings including the react-fast-refresh one that first appeared with the inline version): clean.",
+    "`npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_*.ts`: 625/625 passing (5 new matchesAssetSearch cases, including a real full/partial/case-varied match against DEC-0122's SSR mint and a confirmed non-match against an unrelated mint).",
+    "`npm run build`: clean.",
+    "`vercel --prod` deployment dpl_E3uMFEXPT4tjeAQJwMZhbjDJ36WA, readyState READY, target production, aliased to strategic-super-reserve.fun and www.strategic-super-reserve.fun; `vercel logs --level error`: none."
+  ]
+}
+```
