@@ -115,6 +115,15 @@ describe("pricing.ts -- validateJupiterPrice", () => {
     const result = validateJupiterPrice(freshQuote({ blockId: 1 }), 6, 0);
     expect(result).to.not.equal(null);
   });
+
+  it("real ALPHA regression: a real ~19,956-slot (~133 minute) gap for the thin-liquidity SSR mint is accepted, not flagged unavailable -- live-confirmed against the real ALPHA Reserve post-deploy: Jupiter's blockId for SSR (440662420) legitimately lagged the real current Mainnet slot (440682376) by more than the original 15,000-slot bound, intermittently blanking a genuinely valid price for no real staleness reason", () => {
+    const realCurrentSlot = 440_682_376;
+    const realSsrBlockId = 440_662_420;
+    expect(realCurrentSlot - realSsrBlockId).to.equal(19_956);
+    const result = validateJupiterPrice({ usdPrice: 0.00048130018216587764, decimals: 6, blockId: realSsrBlockId }, 6, realCurrentSlot);
+    expect(result).to.not.equal(null);
+    expect(result!.usdPrice).to.equal(0.00048130018216587764);
+  });
 });
 
 describe("pricing.ts -- resolvePriceHierarchy", () => {

@@ -100,19 +100,26 @@ async function fetchPythPrices(feedIds: string[]): Promise<Map<string, RawPythPr
 }
 
 async function requestJupiterPrices(mints: string[], headers: Record<string, string>): Promise<{ ok: boolean; unauthorized: boolean; body: Record<string, unknown> | null }> {
-  const res = await fetch(`${JUPITER_PRICE_URL}?ids=${mints.join(",")}`, { headers });
-  if (!res.ok) return { ok: false, unauthorized: res.status === 401, body: null };
-  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  return { ok: body !== null, unauthorized: false, body };
+  try {
+    const res = await fetch(`${JUPITER_PRICE_URL}?ids=${mints.join(",")}`, { headers });
+    if (!res.ok) return { ok: false, unauthorized: res.status === 401, body: null };
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    return { ok: body !== null, unauthorized: false, body };
+  } catch {
+    return { ok: false, unauthorized: false, body: null };
+  }
 }
 
 /**
- * Jupiter Price V3 is usable unauthenticated (public rate limits) -- JUPITER_API_KEY
- * is attempted first (per Creator's requirement to use it) for its higher/authenticated
- * rate limit, but a 401 from a misconfigured/expired/wrong key falls back to the
- * unauthenticated request rather than taking every Mainnet asset's pricing dark. This
- * is a fallback on AUTHENTICATION failure only (401) -- any other failure (network
- * error, 5xx, malformed body) still yields "unavailable" for real, never fabricated.
+ * Jupiter Price V3 is usable unauthenticated (public rate limits). The
+ * configured JUPITER_API_KEY (confirmed valid live, see
+ * docs/project/DECISION_LOG.md) is attempted first, per Creator's
+ * requirement to use it, for its higher/authenticated rate limit -- a 401
+ * (an expired/rotated/misconfigured key, should that ever happen) falls
+ * back to the unauthenticated request rather than taking every Mainnet
+ * asset's pricing dark. This is a fallback on AUTHENTICATION failure only
+ * (401) -- any other failure (network error, 5xx, malformed body) still
+ * yields "unavailable" for real, never fabricated.
  */
 export async function fetchJupiterPrices(mints: string[]): Promise<Map<string, RawJupiterPrice>> {
   const out = new Map<string, RawJupiterPrice>();

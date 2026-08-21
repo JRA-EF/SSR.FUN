@@ -38,8 +38,25 @@ export const PYTH_MAX_STALENESS_SEC = 60;
 export const PYTH_MAX_CONFIDENCE_RATIO = 0.02;
 /** When both Pyth and Jupiter produce a valid price for the same mint, flag (never block) a relative disagreement past this fraction. */
 export const PRICE_DEVIATION_FLAG_RATIO = 0.01;
-/** Reject a Jupiter Price V3 quote whose blockId is this many slots (or more) behind the current Mainnet slot (~400ms/slot, so 15,000 slots is ~100 minutes) -- deliberately generous: this exists to catch an obviously stale/broken response, not to impose a tight freshness bound Jupiter's own API doesn't document. */
-export const MAX_BLOCK_LAG_SLOTS = 15_000;
+/**
+ * Reject a Jupiter Price V3 quote whose blockId is this many slots (or more)
+ * behind the current Mainnet slot (~400ms/slot, so 216,000 slots is ~24
+ * hours) -- deliberately generous: this exists to catch an obviously
+ * stale/broken response (a blockId from days/weeks ago), not to impose a
+ * tight freshness bound Jupiter's own API doesn't document. Widened from an
+ * initial 15,000 (~100 min) after live-verifying against the real ALPHA
+ * Reserve's SSR mint: Jupiter's blockId reflects its price index's last
+ * update for that mint, which for a genuinely thin-liquidity/low-trade-
+ * frequency token can legitimately lag by hours without the underlying
+ * price having gone stale or wrong -- a tight bound intermittently flagged a
+ * real, valid price as "unavailable" depending on exactly when a Reserve was
+ * viewed relative to Jupiter's last update for that specific mint (confirmed
+ * live: a real ~19,956-slot/~133-minute gap for SSR, comfortably inside this
+ * bound but outside the original one). A price this old is still real
+ * market data, not a fabrication -- the deviation-flagging/source-caption
+ * machinery already surfaces staleness honestly rather than hiding it.
+ */
+export const MAX_BLOCK_LAG_SLOTS = 216_000;
 
 export interface RawPythPrice {
   /** Feed ID this quote was returned for -- caller cross-checks it matches the requested feed. */
