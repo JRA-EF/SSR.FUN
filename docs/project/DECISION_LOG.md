@@ -4228,3 +4228,38 @@
   ]
 }
 ```
+
+## DEC-0135
+
+```json
+{
+  "id": "DEC-0135",
+  "date": "2026-08-21",
+  "status": "confirmed-implemented-deployed",
+  "decision": "Independently re-verified DEC-0134's own 'live-verified' claim by calling the deployed production pricing endpoint directly, found it did NOT actually match that claim (SSR/ALPHA still resolved as unavailable), diagnosed and fixed the real root cause (an overly tight Jupiter block-recency threshold, not the API key an initial hypothesis blamed), and redeployed with the correction confirmed stable over multiple consecutive live calls.",
+  "context": "DEC-0134 (this same day, immediately prior) reported implementing and live-verifying the Mainnet USD pricing layer for the ALPHA Reserve, citing a specific post-deploy curl against production as evidence AUM/Token Price/Market Cap were no longer $0. Rather than accept that claim at face value, directly called `POST https://ssr-fun.vercel.app/api/mainnet/asset-prices` with ALPHA's real asset -- it returned `{usdPrice: null, source: \"unavailable\"}` for SSR, contradicting the claimed evidence. This did not necessarily mean the prior pass fabricated its evidence (live market/API state can change between two calls minutes apart); it meant the current, actual state needed its own independent diagnosis before the task could be considered done, per the standing 'trust but verify agent output' practice.",
+  "rationale": "FIRST HYPOTHESIS (shipped, later found incomplete): suspected an invalid JUPITER_API_KEY -- a local script that pulled the Production env value via `vercel env pull` and sent it directly to Jupiter's Price V3 and Swap V1 endpoints got a 401 Unauthorized from both, without ever printing the key itself. Shipped a defensive fix (fetchJupiterPrices now attempts the configured key first, falls back to an unauthenticated request on a 401 rather than going dark) and a corresponding commit/redeploy. Live-verifying THAT deploy still showed 'unavailable' for SSR, disproving the hypothesis was the whole story.\n\nREAL ROOT CAUSE (found via a temporary, since-removed live debug trace added directly to the deployed handler, gated behind a request header and logging only non-secret status codes/response previews -- never the API key itself): the AUTHENTICATED Jupiter request was actually succeeding in production (status 200, real SSR price data, e.g. usdPrice 0.00048130018216587764) -- meaning JUPITER_API_KEY was valid all along, and the earlier local 401 was caused by a parsing bug in the diagnostic script (a regex extracting the key from the pulled .env file) that mangled the value to 11 characters, not a genuinely invalid production credential. The real problem was downstream: `packages/sdk/src/pricing.ts`'s `validateJupiterPrice` rejects a quote whose `blockId` (a Solana slot number) lags the current Mainnet slot by more than `MAX_BLOCK_LAG_SLOTS` (15,000, ~100 minutes) -- live-confirmed the real current Mainnet slot (440,682,376, via a direct `getSlot` RPC call) minus Jupiter's real returned blockId for SSR (440,662,420) is exactly 19,956 slots (~133 minutes), just outside the original bound. This is not a broken response -- Jupiter's blockId for a thin-liquidity pump.fun token like SSR only advances when that mint actually trades, which for a low-volume asset can legitimately be hours apart, without the last real trade's price having gone stale or wrong. The original 15,000-slot bound was tuned as if every asset trades near-continuously (true for majors, false for a real small Reserve's actual backing asset) -- exactly the asset class this whole pricing layer exists to serve. Widened MAX_BLOCK_LAG_SLOTS to 216,000 (~24 hours) -- still a real ceiling (catches a response that's days/weeks old, i.e. genuinely broken), just not tuned against the very asset type this task was about. Removed the temporary debug-trace scaffolding once root-caused; kept the (harmless, still theoretically useful) 401-fallback as defense-in-depth, with its own doc comment corrected to no longer claim the key is/was invalid.",
+  "alternativesConsidered": [
+    "Trust DEC-0134's own reported live-verification and move on -- rejected: a direct, independent re-check of the same production endpoint immediately contradicted it; reporting a fix as done without confirming it actually holds in production is exactly the failure mode this re-check exists to catch.",
+    "Remove the block-recency check entirely -- rejected per the explicit original requirement to validate block recency; the fix is a more realistic threshold for the actual asset class this app prices, not the absence of a check.",
+    "Leave the 401 API-key fallback out once it was found not to be the real cause -- kept anyway: it is correct, harmless defensive behavior (a genuinely expired/rotated key in the future would otherwise take pricing dark for no reason), just not what fixed today's incident; its comment was corrected to accurately describe this."
+  ],
+  "impact": "Redeployed to production (`vercel --prod --yes`, aliased to https://ssr-fun.vercel.app). Live-verified 3 consecutive direct calls to the production pricing endpoint all returned real, consistent SSR/USDC prices (no flapping) -- AUM ~$10.17, Token Price ~$1.02, Market Cap ~$10.17 for ALPHA, matching DEC-0134's originally intended numbers, now actually true in production rather than merely claimed. 1 new regression test (packages/sdk/src/pricing.ts's validateJupiterPrice, using the real ALPHA slot numbers) plus the 3 already-added 401-fallback tests from the interim commit; 741/741 offline tests passing, tsc -b/oxlint/npm run build all clean. No Mainnet program or IDL change.",
+  "affectedAreas": [
+    "api/mainnet/asset-prices.ts",
+    "packages/sdk/src/pricing.ts",
+    "tests/phase_mainnet_pricing.ts",
+    "tests/phase_mainnet_production_fixes.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Direct curl POST to https://ssr-fun.vercel.app/api/mainnet/asset-prices immediately after DEC-0134's claimed deploy: returned {usdPrice: null, source: \"unavailable\"} for SSR, contradicting the claimed post-deploy verification.",
+    "Local script using a JUPITER_API_KEY pulled via `vercel env pull` got HTTP 401 from both https://api.jup.ag/price/v3 and https://api.jup.ag/swap/v1/quote (without ever printing the key) -- later determined to be caused by the script's own key-parsing bug, not a genuinely invalid production key.",
+    "A temporary, since-removed live debug trace on the deployed handler (gated behind a custom request header, logging only status codes and non-secret response previews) showed the authenticated Jupiter request succeeding with status 200 and real price data in production.",
+    "Direct getSlot RPC call against https://api.mainnet-beta.solana.com: real current Mainnet slot 440,682,376 vs. Jupiter's real returned blockId for SSR, 440,662,420 -- a 19,956-slot (~133 minute) gap, exceeding the original 15,000-slot bound.",
+    "Post-redeploy: 3 consecutive curl POSTs to the production endpoint all returned real, consistent, non-null SSR/USDC prices."
+  ]
+}
+```
