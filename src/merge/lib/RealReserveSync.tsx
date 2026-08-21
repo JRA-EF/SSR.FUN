@@ -32,7 +32,8 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, registerDynamicSupportedAssetMints, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
-import { buildDtrFromDiscoveredReserve } from "./onChainReserve";
+import { buildDtrFromDiscoveredReserve, type AssetPriceInfo } from "./onChainReserve";
+import { fetchAssetPricesUsd } from "./assetPricing";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
 import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from "./solana-config";
@@ -43,6 +44,17 @@ const BASE_POLL_MS = 15_000;
 const MAX_POLL_MS = 120_000;
 /** Bounded so a manual "refresh now" moments after a poll tick reuses that tick's result instead of re-asking the RPC -- see refreshRealReserveNow in DTRDetail.tsx, which reads through the same cache key space for the balance half of this. */
 const DISCOVERY_CACHE_TTL_MS = 5_000;
+/** Mainnet only: how long a batch of real Pyth/Jupiter USD prices is reused across poll ticks -- short enough that displayed AUM/Token Price/Market Cap never lag genuinely-moving prices by more than a few ticks, long enough to avoid re-pricing every asset on every 15s poll. Matches api/mainnet/asset-prices.ts's own server-side cache window. */
+const ASSET_PRICE_CACHE_TTL_MS = 15_000;
+/** api/mainnet/asset-prices.ts caps a single request at 30 mints -- chunk rather than assume this app will always stay under that. */
+async function fetchAllAssetPrices(assets: { mint: string; decimals: number }[]): Promise<Record<string, AssetPriceInfo>> {
+  const CHUNK = 30;
+  const out: Record<string, AssetPriceInfo> = {};
+  for (let i = 0; i < assets.length; i += CHUNK) {
+    Object.assign(out, await fetchAssetPricesUsd(assets.slice(i, i + CHUNK)));
+  }
+  return out;
+}
 /** A Reserve's off-chain metadata (name/ticker/description/category) is immutable in practice -- nothing in this app resubmits update_metadata today -- so a long TTL just avoids re-fetching it on every poll tick within the same browser session, never staleness risk. */
 const METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
@@ -154,6 +166,24 @@ export function RealReserveSync() {
           console.warn(`Discovery found ${issues.length} account issue(s) this pass (non-fatal):`, issues);
         }
 
+        // Mainnet only: one batched pricing request per discovery pass,
+        // covering every distinct asset mint across every discovered
+        // Reserve -- never per-Reserve (would multiply request count for no
+        // benefit, since most Reserves share assets like USDC). Best-effort:
+        // a pricing failure here must never fail the whole discovery pass --
+        // buildDtrFromDiscoveredReserve/computeAumFromPrices already handle
+        // an empty/partial priceByMint honestly (aum unavailable, never a
+        // fabricated $0 silently mixed with real numbers elsewhere).
+        let priceByMint: Record<string, AssetPriceInfo> = {};
+        if (IS_MAINNET && reserves.length > 0) {
+          const priceAssets = new Map<string, number>();
+          for (const r of reserves) for (const a of r.assets) priceAssets.set(a.assetMint, a.decimals);
+          const assetList = [...priceAssets.entries()].map(([mint, decimals]) => ({ mint, decimals }));
+          priceByMint = await getCached(`asset-prices:${assetList.map((a) => a.mint).sort().join(",")}`, ASSET_PRICE_CACHE_TTL_MS, () => fetchAllAssetPrices(assetList)).catch(
+            () => ({}) as Record<string, AssetPriceInfo>,
+          );
+        }
+
         const dtrs = await Promise.all(
           reserves.map(async (reserve) => {
             const delegates = await withReadConcurrencyLimit(() =>
@@ -168,7 +198,7 @@ export function RealReserveSync() {
             const parsedMetadata = await getCached(`reserve-metadata:${reserve.metadataUri}`, METADATA_CACHE_TTL_MS, () => resolveReserveMetadata(reserve.metadataUri)).catch(
               () => null,
             );
-            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER, mainnetMintMeta);
+            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER, mainnetMintMeta, priceByMint);
           }),
         );
         if (cancelled) return;

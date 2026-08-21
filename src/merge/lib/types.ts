@@ -276,6 +276,22 @@ export interface OnChainReserveMeta {
   effectiveTvlFeeProtocolBps?: number;
   effectiveTvlFeeManagerBps?: number;
   effectiveTvlFeeTotalBps?: number;
+  /**
+   * Where AUM/tokenPrice's USD valuation came from this pass -- "pyth" |
+   * "jupiter" when every materially-held asset (nonzero vault balance)
+   * priced from that one source, "mixed" when different assets priced from
+   * different sources, "none" when the Reserve genuinely holds nothing yet
+   * (not a pricing failure), "unavailable" when at least one materially-held
+   * asset could not be priced at all this pass -- see
+   * onChainReserve.ts's computeAumFromPrices, the one place this is decided.
+   * Undefined only for a DevNet Reserve (which still uses the fixed
+   * TEST_ASSET_PRICES_USD test table, never this pipeline).
+   */
+  priceSource?: "pyth" | "jupiter" | "mixed" | "none" | "unavailable";
+  /** Unix ms of the least-recent contributing price quote, or null when priceSource is "none"/"unavailable". Never a fabricated "just now". */
+  priceAsOf?: number | null;
+  /** Mints of every materially-held (nonzero vault balance) asset that could not be priced this pass -- empty unless priceSource === "unavailable". */
+  unpricedAssetMints?: string[];
 }
 
 export type WalletProviderId = "phantom" | "solflare" | "backpack";

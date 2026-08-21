@@ -21,7 +21,7 @@ import type {
 import { emptyPermissions } from "@/lib/types";
 import { isManagerOrDelegate, canManageDelegates, canRebalance } from "@/lib/permissions";
 import { pickLogoForId } from "@/lib/seed-data";
-import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS } from "@/lib/onChainReserve";
+import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS, type AssetPriceInfo } from "@/lib/onChainReserve";
 import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
 import { applyRebalance, appendPricePoint, initialLiquidityForAum } from "@/lib/calculations";
 import { IS_MAINNET, SSR_PROGRAM_ID } from "@/lib/solana-config";
@@ -121,7 +121,7 @@ interface AppState {
   walletError: string | null;
   setWalletError: (message: string | null) => void;
   /** Merges a fresh on-chain read (see src/merge/lib/RealReserveSync.tsx) into the matching real DTR entry. */
-  mergeOnChainReserve: (dtrId: string, fixture: FixtureReserve, onChain: ReserveOnChain) => void;
+  mergeOnChainReserve: (dtrId: string, fixture: FixtureReserve, onChain: ReserveOnChain, priceByMint?: Record<string, AssetPriceInfo>, isMainnet?: boolean) => void;
   /**
    * Canonical discovery entry point (see packages/sdk/src/discovery.ts's
    * discoverAllReserves + src/merge/lib/onChainReserve.ts's
@@ -211,9 +211,9 @@ export const useAppStore = create<AppState>()(
       walletError: null,
       setWalletError: (message) => set({ walletError: message }),
 
-      mergeOnChainReserve: (dtrId, fixture, onChain) => {
+      mergeOnChainReserve: (dtrId, fixture, onChain, priceByMint = {}, isMainnet = false) => {
         set((state) => ({
-          dtrs: state.dtrs.map((d) => (d.id === dtrId ? mergeOnChainIntoDTR(d, fixture, onChain) : d)),
+          dtrs: state.dtrs.map((d) => (d.id === dtrId ? mergeOnChainIntoDTR(d, fixture, onChain, priceByMint, isMainnet) : d)),
         }));
       },
 

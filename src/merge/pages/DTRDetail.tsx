@@ -2,9 +2,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVUSDC_MINT, isReserveTradable, fetchReserveOnChain, fetchTokenBalanceRaw, discoverDelegatesForReserve, computeRedemptionEntitlements, findReserve, findProtocolConfig, type ZapAssetLeg } from "@ssr/sdk";
+import {
+  DEVUSDC_MINT,
+  isReserveTradable,
+  fetchReserveOnChain,
+  fetchTokenBalanceRaw,
+  discoverDelegatesForReserve,
+  computeRedemptionEntitlements,
+  computeDirectReserveTokensRequested,
+  computeNetMintOutput,
+  findReserve,
+  findProtocolConfig,
+  type ZapAssetLeg,
+} from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
-import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
+import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered, computeMarketCap, RESERVE_TOKEN_DECIMALS, type AssetPriceInfo } from "@/lib/onChainReserve";
+import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
@@ -29,11 +42,12 @@ import {
   buyAvailableFromDevUsdcBalance,
   isReservePureDevUsdc,
   formatUsdc,
+  formatUsdcOrUnavailable,
   formatTokenAmount,
   sampleLinePoints,
   calcReserveAssetPnlPct,
 } from "@/lib/calculations";
-import { normalizeReserveCategory, type ChartTimeframe } from "@/lib/types";
+import { normalizeReserveCategory, type ChartTimeframe, type OnChainReserveMeta } from "@/lib/types";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -85,6 +99,26 @@ const SETTLEMENT_MINT = IS_MAINNET ? new PublicKey(MAINNET_USDC_MINT) : DEVUSDC_
 const SETTLEMENT_DECIMALS = 6;
 const SETTLEMENT_SYMBOL = IS_MAINNET ? "USDC" : "devUSDC";
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
+
+/**
+ * Mainnet ONLY departs from SETTLEMENT_MINT/DECIMALS/SYMBOL for a Reserve
+ * whose sole asset genuinely isn't USDC (e.g. "alpha", 100% SSR) -- the
+ * direct in-kind Buy path (packages/sdk/src/directInstructions.ts) always
+ * deposits the Reserve's OWN registered asset, never a converted USDC
+ * amount, so "your balance"/insufficient-balance/the submitted raw amount
+ * must all be read against that real asset, not against USDC, or the
+ * displayed quote and the submitted transaction silently disagree (see the
+ * Mainnet-pricing-layer decision log entry's ALPHA diagnosis for the
+ * concrete bug this fixes). DevNet is untouched: its zap path genuinely can
+ * convert other legs, so SETTLEMENT_MINT stays authoritative there.
+ */
+function resolveBuyAsset(onChain: OnChainReserveMeta | undefined): { mint: PublicKey; decimals: number; symbol: string } {
+  const asset = onChain?.assets[0];
+  if (IS_MAINNET && onChain && asset && !isReservePureDevUsdc(onChain.assets.map((a) => a.mint), MAINNET_USDC_MINT)) {
+    return { mint: new PublicKey(asset.mint), decimals: asset.decimals, symbol: asset.symbol };
+  }
+  return { mint: SETTLEMENT_MINT, decimals: SETTLEMENT_DECIMALS, symbol: SETTLEMENT_SYMBOL };
+}
 
 export function DTRDetail() {
   const { dtrId } = useParams();
@@ -209,6 +243,14 @@ export function DTRDetail() {
       const mints = dtr.onChain.assets.map((a) => new PublicKey(a.mint));
       const onChain = await withReadConcurrencyLimit(() => fetchReserveOnChain(connection, programId, reserveAddress, mints));
       if (onChain) {
+        // Best-effort, same reasoning as RealReserveSync.tsx's own pricing
+        // fetch -- a failure here must never block this refresh; it just
+        // falls back to an empty price map, and mergeOnChainIntoDTR/
+        // computeAumFromPrices report the honest "unavailable" state rather
+        // than a stale or fabricated number.
+        const priceByMint: Record<string, AssetPriceInfo> = IS_MAINNET
+          ? await fetchAssetPricesUsd(onChain.assets.map((a) => ({ mint: a.assetMint, decimals: a.decimals }))).catch(() => ({}))
+          : {};
         mergeOnChainReserve(
           dtr.id,
           {
@@ -220,6 +262,8 @@ export function DTRDetail() {
             assets: dtr.onChain.assets.map((a) => ({ mint: a.mint, symbol: a.symbol, decimals: a.decimals, weightBps: a.weightBps, reserveAsset: a.reserveAsset, vault: a.vault })),
           },
           onChain,
+          priceByMint,
+          IS_MAINNET,
         );
         // Re-verify delegates directly too (mergeOnChainReserve never
         // touches delegatesOnChain -- see onChainReserve.ts's
@@ -235,7 +279,8 @@ export function DTRDetail() {
         const owner = walletCtx.publicKey;
         const rtMint = dtr.onChain.reserveTokenMint;
         const rtKey = tokenBalanceCacheKey(connection.rpcEndpoint, rtMint, owner.toBase58());
-        const settlementKey = tokenBalanceCacheKey(connection.rpcEndpoint, SETTLEMENT_MINT.toBase58(), owner.toBase58());
+        const buyAsset = resolveBuyAsset(dtr.onChain);
+        const settlementKey = tokenBalanceCacheKey(connection.rpcEndpoint, buyAsset.mint.toBase58(), owner.toBase58());
         invalidateCached(rtKey);
         invalidateCached(settlementKey);
         const balanceRaw = await getCached(rtKey, BALANCE_CACHE_TTL_MS, () =>
@@ -244,7 +289,7 @@ export function DTRDetail() {
         syncRealHolding(dtr.id, balanceRaw, dtr.nav);
         const solLamports = await connection.getBalance(owner, "confirmed");
         syncWalletFromChain({ connected: true, connecting: false, address: owner.toBase58(), provider: wallet.provider, solLamports });
-        const settlementRaw = await getCached(settlementKey, BALANCE_CACHE_TTL_MS, () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, SETTLEMENT_MINT, owner)));
+        const settlementRaw = await getCached(settlementKey, BALANCE_CACHE_TTL_MS, () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, buyAsset.mint, owner)));
         setSettlementBalanceRaw(BigInt(settlementRaw));
         setSettlementBalanceStatus("ready");
       }
@@ -273,8 +318,9 @@ export function DTRDetail() {
     const owner = walletCtx.publicKey;
     let cancelled = false;
     setSettlementBalanceStatus("loading");
-    getCached(tokenBalanceCacheKey(connection.rpcEndpoint, SETTLEMENT_MINT.toBase58(), owner.toBase58()), BALANCE_CACHE_TTL_MS, () =>
-      withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, SETTLEMENT_MINT, owner)),
+    const buyAsset = resolveBuyAsset(dtr?.onChain);
+    getCached(tokenBalanceCacheKey(connection.rpcEndpoint, buyAsset.mint.toBase58(), owner.toBase58()), BALANCE_CACHE_TTL_MS, () =>
+      withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, buyAsset.mint, owner)),
     )
       .then((raw) => {
         if (!cancelled) {
@@ -289,7 +335,7 @@ export function DTRDetail() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletCtx.publicKey?.toBase58(), connection]);
+  }, [walletCtx.publicKey?.toBase58(), connection, dtr?.onChain?.assets[0]?.mint, dtr?.onChain?.reserve]);
 
   // Derived chart/market data. Kept above the "not found" early return (and fed safe
   // fallbacks when dtr is undefined) so hook call order never changes between renders.
@@ -369,6 +415,21 @@ export function DTRDetail() {
   const premiumDiscount = dtr.nav > 0 ? (dtr.tokenPrice - dtr.nav) / dtr.nav : null;
   const isPremium = premiumDiscount !== null && premiumDiscount > 0;
 
+  // "Price unavailable" is only genuine pricing failure (a materially-held
+  // asset this pass couldn't get a valid Pyth/Jupiter quote for), never a
+  // simulated DTR or a DevNet Reserve (neither ever go through the real
+  // pricing pipeline -- see onChainReserve.ts's computeAumFromPrices).
+  const pricingUnavailable = isOnChain && IS_MAINNET && dtr.onChain?.priceSource === "unavailable";
+  const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
+  const priceSourceLabel = dtr.onChain?.priceSource === "pyth" ? "Pyth" : dtr.onChain?.priceSource === "jupiter" ? "Jupiter" : dtr.onChain?.priceSource === "mixed" ? "Pyth + Jupiter" : null;
+  const priceAgeLabel = (() => {
+    if (!dtr.onChain?.priceAsOf) return null;
+    const ageSec = Math.max(0, Math.floor((Date.now() - dtr.onChain.priceAsOf) / 1000));
+    if (ageSec < 60) return `${ageSec}s ago`;
+    if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
+    return `${Math.floor(ageSec / 3600)}h ago`;
+  })();
+
   const chartMin = chartData.length ? Math.min(...chartData.map((d) => d.price)) : 0;
   const chartMax = chartData.length ? Math.max(...chartData.map((d) => d.price)) : 1;
   // A flatlined series has chartMin === chartMax; pad by at least a cent so the line
@@ -394,12 +455,41 @@ export function DTRDetail() {
   // Trading Calculations
   const numBuyAmount = parseFloat(buyAmount) || 0;
   const buyQuote = calcTokensReceived(numBuyAmount, dtr.tokenPrice, dtr.liquidityUsdc);
-  // Preview only -- the program independently recomputes the exact amounts
-  // from live chain state at execution time. The settlement asset
-  // (SETTLEMENT_MINT) is $1-pegged (devUSDC by design, USDC in reality on
-  // Mainnet) -- the settlement amount IS the USD amount directly, no
-  // SOL-style price conversion needed.
-  const estReserveTokensOut = isOnChain && dtr.nav > 0 ? numBuyAmount / dtr.nav : 0;
+  // The Buy asset for a real (on-chain) Reserve -- the single asset it
+  // actually holds (see packages/sdk/src/directInstructions.ts's
+  // requireSingleAssetReserve; every Mainnet Reserve today is single-asset).
+  const buyDepositAsset = isOnChain ? dtr.onChain?.assets[0] : undefined;
+  /**
+   * Reconciled directly against the program: this is the EXACT same integer
+   * math buildDirectMintInstructions (packages/sdk/src/directInstructions.ts)
+   * uses to build the real transaction -- computeDirectReserveTokensRequested
+   * mirrors mint_reserve_tokens_in_kind's own on-chain ratio, then
+   * computeNetMintOutput mirrors its ceiling-rounded Mint Fee. Deliberately
+   * NOT derived from USD price/NAV: the actual on-chain instruction is a
+   * proportional in-kind deposit of the Reserve's own asset (no oracle
+   * involved at all), so basing the estimate on real vault balances/supply
+   * instead of a USD conversion makes the two impossible to disagree, and
+   * keeps this estimate available even during a Pyth/Jupiter outage. `null`
+   * means a genuine "Quote unavailable" (not yet seeded, or no deposit
+   * asset resolved) -- never silently shown as 0.
+   */
+  const estReserveTokensOut: number | null = (() => {
+    if (numBuyAmount <= 0) return 0; // Nothing typed yet -- a neutral "0," never the alarming "Quote unavailable."
+    if (!isOnChain || !dtr.onChain || !buyDepositAsset) return isOnChain ? null : 0;
+    const vaultBalance = BigInt(dtr.onChain.vaultBalancesRaw[buyDepositAsset.mint] ?? "0");
+    const supply = BigInt(dtr.onChain.reserveTokenSupplyRaw || "0");
+    if (vaultBalance <= 0n || supply <= 0n) return null;
+    const amountInRaw = BigInt(Math.floor(numBuyAmount * 10 ** buyDepositAsset.decimals));
+    if (amountInRaw <= 0n) return null;
+    try {
+      const gross = computeDirectReserveTokensRequested(amountInRaw, vaultBalance, supply);
+      const feeBps = BigInt(dtr.onChain.effectiveMintFeeTotalBps ?? dtr.onChain.mintFeeBps ?? 0);
+      const { netOut } = computeNetMintOutput(gross, feeBps);
+      return Number(netOut) / 10 ** RESERVE_TOKEN_DECIMALS;
+    } catch {
+      return null;
+    }
+  })();
 
   const numSellAmount = parseFloat(sellAmount) || 0;
   const sellQuote = calcUsdcReceived(numSellAmount, dtr.tokenPrice, dtr.liquidityUsdc);
@@ -449,16 +539,17 @@ export function DTRDetail() {
   async function reconcileBuy(signature: string) {
     if (!walletCtx.publicKey || !dtr) return;
     const owner = walletCtx.publicKey;
+    const buyAsset = resolveBuyAsset(dtr.onChain);
     try {
-      const key = tokenBalanceCacheKey(connection.rpcEndpoint, SETTLEMENT_MINT.toBase58(), owner.toBase58());
+      const key = tokenBalanceCacheKey(connection.rpcEndpoint, buyAsset.mint.toBase58(), owner.toBase58());
       invalidateCached(key);
-      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, SETTLEMENT_MINT, owner));
+      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, buyAsset.mint, owner));
       if (reconcileByBalanceChange(buyPreSettlementRawRef.current, BigInt(freshRaw), "decrease")) {
         // The real spent amount is the observed balance delta itself -- the
         // most authoritative figure available here (this whole function
         // only runs because normal confirmation was inconclusive).
         const spentRaw = buyPreSettlementRawRef.current - BigInt(freshRaw);
-        const spentUsdc = Number(spentRaw > 0n ? spentRaw : 0n) / 10 ** SETTLEMENT_DECIMALS;
+        const spentUsdc = Number(spentRaw > 0n ? spentRaw : 0n) / 10 ** buyAsset.decimals;
         setSettlementBalanceRaw(BigInt(freshRaw));
         setBuyPhase("confirmed");
         setBuyPendingSignature(null);
@@ -469,7 +560,7 @@ export function DTRDetail() {
       } else {
         toast({
           title: "Still verifying",
-          description: `Your ${SETTLEMENT_SYMBOL} balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Buy.`,
+          description: `Your ${buyAsset.symbol} balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Buy.`,
         });
       }
     } catch {
@@ -586,9 +677,11 @@ export function DTRDetail() {
 
   // Mainnet direct Buy: no swap, no server co-signer -- see
   // packages/sdk/src/directInstructions.ts's header for why. Requires the
-  // wallet's real USDC balance to fund the entire deposit directly (this
-  // Reserve's sole asset for the current USDC-only launch scope, see
-  // docs/project/DECISION_LOG.md's Mainnet-launch entries).
+  // wallet's real balance of this Reserve's OWN sole asset (USDC for a
+  // USDC-only Reserve; some other real Mainnet mint, e.g. SSR for "alpha",
+  // otherwise -- see resolveBuyAsset above) to fund the entire deposit
+  // directly. There is no swap step: the input box is always denominated in
+  // that real deposit asset, never converted from/to USDC.
   const handleBuyMainnet = async () => {
     if (!dtr.onChain) return;
     if (!walletCtx.publicKey) {
@@ -596,13 +689,22 @@ export function DTRDetail() {
       return;
     }
     if (!canSubmitNewTransaction(buyPhase)) return;
-    const usdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** 6));
+    const buyAsset = resolveBuyAsset(dtr.onChain);
+    const usdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** buyAsset.decimals));
     setBuyPhase("preparing");
     setBuyPendingSignature(null);
     useAppStore.getState().setTxInFlight(true);
     try {
       const reserveAddress = new PublicKey(dtr.onChain.reserve);
-      const live = await fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, [new PublicKey(MAINNET_USDC_MINT)]);
+      // Every one of this Reserve's ALREADY-KNOWN registered asset mints --
+      // never just USDC. fetchReserveOnChain only resolves an asset whose
+      // mint is passed as a candidate (its ReserveAsset PDA is derived
+      // per-candidate, not enumerated independently -- see
+      // packages/sdk/src/readOnly.ts's fetchReserveOnChain), so a Reserve
+      // whose sole asset genuinely isn't USDC (e.g. "alpha", 100% SSR) would
+      // resolve to an empty asset list and fail outright if only USDC were
+      // ever passed here.
+      const live = await fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, dtr.onChain.assets.map((a) => new PublicKey(a.mint)));
       if (!live) throw new Error("Could not read this Reserve's live on-chain state.");
       const assets: ZapAssetLeg[] = live.assets.map((a) => ({
         mint: a.assetMint,
@@ -627,7 +729,7 @@ export function DTRDetail() {
       });
       setBuyPhase("confirmed");
       await refreshRealReserveNow();
-      const spentUsdc = Number(usdcAmountRaw) / 10 ** 6;
+      const spentUsdc = Number(usdcAmountRaw) / 10 ** buyAsset.decimals;
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
       setBuyAmount("");
       toast(transactionConfirmedToast(signature, "Buy confirmed"));
@@ -789,7 +891,15 @@ export function DTRDetail() {
         await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), walletCtx.publicKey!)),
       );
       const reserveAddress = new PublicKey(dtr.onChain.reserve);
-      const live = await fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, [new PublicKey(MAINNET_USDC_MINT)]);
+      // Every one of this Reserve's ALREADY-KNOWN registered asset mints --
+      // never just USDC. fetchReserveOnChain only resolves an asset whose
+      // mint is passed as a candidate (its ReserveAsset PDA is derived
+      // per-candidate, not enumerated independently -- see
+      // packages/sdk/src/readOnly.ts's fetchReserveOnChain), so a Reserve
+      // whose sole asset genuinely isn't USDC (e.g. "alpha", 100% SSR) would
+      // resolve to an empty asset list and fail outright if only USDC were
+      // ever passed here.
+      const live = await fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, dtr.onChain.assets.map((a) => new PublicKey(a.mint)));
       if (!live) throw new Error("Could not read this Reserve's live on-chain state.");
       const assets: ZapAssetLeg[] = live.assets.map((a) => ({
         mint: a.assetMint,
@@ -845,15 +955,17 @@ export function DTRDetail() {
   const onBuyClick = isOnChain ? (IS_MAINNET ? handleBuyMainnet : handleBuy) : handleBuyUnavailable;
   const onSellClick = isOnChain ? (IS_MAINNET ? handleSellMainnet : handleSell) : handleSellUnavailable;
 
-  // SETTLEMENT_MINT (devUSDC on DevNet, real USDC on Mainnet) is SSR.fun's
-  // universal purchasing/settlement currency -- it is NEVER required to be
-  // one of a Reserve's own underlying Reserve Assets. The wallet's full real
-  // settlement-asset balance is what's available to spend on ANY purchasable
-  // Reserve, regardless of that Reserve's composition (see
-  // docs/project/DECISION_LOG.md's Buy architecture correction). What differs
-  // per-Reserve is whether Buy can genuinely EXECUTE right now -- see
-  // isSettlementBuySupported below.
-  const settlementBalanceHuman = Number(settlementBalanceRaw) / 10 ** SETTLEMENT_DECIMALS;
+  // On DevNet, SETTLEMENT_MINT (devUSDC) is SSR.fun's universal purchasing
+  // currency, never required to be one of a Reserve's own underlying assets
+  // (see docs/project/DECISION_LOG.md's Buy architecture correction). On
+  // Mainnet that held for every Reserve only while every Reserve was
+  // genuinely USDC-only; a Reserve like "alpha" (100% SSR) breaks that, so
+  // resolveBuyAsset above is what actually decides the deposit currency, and
+  // settlementBalanceRaw is already fetched against THAT mint (see
+  // refreshRealReserveNow/the initial-mount effect above) -- this just
+  // converts it to human units with the matching decimals.
+  const buyAssetForDisplay = resolveBuyAsset(dtr.onChain);
+  const settlementBalanceHuman = Number(settlementBalanceRaw) / 10 ** buyAssetForDisplay.decimals;
   // "Available" for the quick-select buttons: always the trader's real,
   // chain-confirmed settlement-asset balance -- never a hardcoded fallback,
   // and never gated on this Reserve's asset composition.
@@ -891,9 +1003,9 @@ export function DTRDetail() {
   const buyPctUnavailableReason: string | null = !wallet.connected
     ? null // handled by the existing !wallet.connected disabled check
     : settlementBalanceStatus === "loading"
-      ? `Confirming your real ${SETTLEMENT_SYMBOL} balance...`
+      ? `Confirming your real ${buyAssetForDisplay.symbol} balance...`
       : settlementBalanceStatus === "unavailable"
-        ? `Your ${SETTLEMENT_SYMBOL} balance couldn't be read from ${CLUSTER_LABEL} right now.`
+        ? `Your ${buyAssetForDisplay.symbol} balance couldn't be read from ${CLUSTER_LABEL} right now.`
         : null;
 
   const setBuyPct = (pct: number) => {
@@ -969,12 +1081,27 @@ export function DTRDetail() {
               <div className="bg-card border border-card-border shadow-sm rounded-xl p-4 min-w-[200px]">
                 <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider font-semibold">Token Price</p>
                 <div className="flex items-baseline gap-2 mb-1">
-                  <span className="text-3xl font-merge-mono font-bold text-foreground">{formatUsdc(dtr.tokenPrice)}</span>
+                  <span className={`font-merge-mono font-bold text-foreground ${pricingUnavailable ? 'text-lg' : 'text-3xl'}`}>
+                    {formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable)}
+                  </span>
                 </div>
-                <p className={`text-sm font-merge-mono flex items-center ${dtr.change24h >= 0 ? 'text-positive' : 'text-destructive'}`}>
-                  {dtr.change24h >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />}
-                  {Math.abs(dtr.change24h).toFixed(2)}% <span className="text-muted-foreground ml-1">(24h)</span>
-                </p>
+                {!pricingUnavailable && (
+                  <p className={`text-sm font-merge-mono flex items-center ${dtr.change24h >= 0 ? 'text-positive' : 'text-destructive'}`}>
+                    {dtr.change24h >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />}
+                    {Math.abs(dtr.change24h).toFixed(2)}% <span className="text-muted-foreground ml-1">(24h)</span>
+                  </p>
+                )}
+                {isOnChain && IS_MAINNET && priceSourceLabel && (
+                  <p className="text-[11px] text-muted-foreground/70 mt-1">
+                    via {priceSourceLabel}{priceAgeLabel ? ` · updated ${priceAgeLabel}` : ""}
+                    {dtr.onChain?.priceSource === "mixed" && " (per-asset)"}
+                  </p>
+                )}
+                {pricingUnavailable && dtr.onChain?.unpricedAssetMints && dtr.onChain.unpricedAssetMints.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground/70 mt-1">
+                    No verified Pyth or Jupiter price for {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "this Reserve's asset"} right now.
+                  </p>
+                )}
               </div>
               
               {isManagerOrDelegate(dtr, wallet.address) && (
@@ -1026,18 +1153,18 @@ export function DTRDetail() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   AUM
-                  <InfoTip label="More information about AUM">Assets Under Management (Total value of underlying assets)</InfoTip>
+                  <InfoTip label="More information about AUM">Assets Under Management: authoritative on-chain vault balances x validated USD price per asset. Shows "Price unavailable" instead of a fabricated $0 if any held asset can't be priced right now.</InfoTip>
                 </div>
-                <p className="text-xl font-merge-mono font-semibold">{formatUsdc(dtr.aum, { compact: true })}</p>
+                <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-xl'}`}>{formatUsdcOrUnavailable(dtr.aum, !pricingUnavailable, { compact: true })}</p>
               </CardContent>
             </Card>
             <Card className="bg-secondary/40 border-transparent shadow-none">
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  NAV per Token
-                  <InfoTip label="More information about NAV per Token">Net Asset Value: The underlying value backing each token.</InfoTip>
+                  Market Cap
+                  <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price (computed independently, not just AUM relabeled). Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every Buy/Sell executes at NAV -- so Market Cap and AUM are mathematically equal today, up to rounding; they would diverge if Token Price ever traded at a premium/discount to NAV.</InfoTip>
                 </div>
-                <p className="text-xl font-merge-mono font-semibold">{formatUsdc(dtr.nav)}</p>
+                <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-xl'}`}>{formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true })}</p>
               </CardContent>
             </Card>
             <Card className="bg-secondary/40 border-transparent shadow-none">
@@ -1294,7 +1421,7 @@ export function DTRDetail() {
                 <CardContent>
                   <TabsContent value="buy" className="mt-0 space-y-4">
                     <div className="flex justify-between items-center text-sm mb-2">
-                      <span className="text-muted-foreground">Your {SETTLEMENT_SYMBOL} balance</span>
+                      <span className="text-muted-foreground">Your {buyAssetForDisplay.symbol} balance</span>
                       <span className="font-merge-mono font-medium">
                         {!wallet.connected
                           ? "—"
@@ -1304,13 +1431,13 @@ export function DTRDetail() {
                               ? "Loading..."
                               : settlementBalanceStatus === "unavailable"
                                 ? "Unavailable"
-                                : `${settlementBalanceHuman.toFixed(2)} ${SETTLEMENT_SYMBOL}`}
+                                : `${settlementBalanceHuman.toFixed(2)} ${buyAssetForDisplay.symbol}`}
                       </span>
                     </div>
 
                     <div className="relative">
                       <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-muted-foreground font-medium text-sm">
-                        {isOnChain ? SETTLEMENT_SYMBOL : "USDC"}
+                        {isOnChain ? buyAssetForDisplay.symbol : "USDC"}
                       </div>
                       <Input
                         type="number"
@@ -1351,10 +1478,12 @@ export function DTRDetail() {
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-border/40 mt-6">
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
-                            Settlement asset
-                            <InfoTip label="More information about the settlement asset">
+                            Deposit asset
+                            <InfoTip label="More information about the deposit asset">
                               {IS_MAINNET
-                                ? "USDC is this Reserve's settlement asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
+                                ? isPureSettlementReserve
+                                  ? "USDC is this Reserve's sole asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
+                                  : `This Reserve's sole asset is ${buyDepositAsset?.symbol ?? "its underlying token"}, not USDC -- your input above is denominated in ${buyDepositAsset?.symbol ?? "that asset"} and deposited directly into its vault. No conversion or swap is involved; this is not a USDC purchase.`
                                 : `devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.${
                                     isPureSettlementReserve
                                       ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
@@ -1362,7 +1491,7 @@ export function DTRDetail() {
                                   }`}
                             </InfoTip>
                           </span>
-                          <span className="font-merge-mono">{SETTLEMENT_SYMBOL}</span>
+                          <span className="font-merge-mono">{IS_MAINNET && !isPureSettlementReserve ? (buyDepositAsset?.symbol ?? "—") : SETTLEMENT_SYMBOL}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Mint Fee</span>
@@ -1370,7 +1499,9 @@ export function DTRDetail() {
                         </div>
                         <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
                           <span>Est. You Receive</span>
-                          <span className="font-merge-mono text-primary">~{formatTokenAmount(estReserveTokensOut)} {dtr.ticker}</span>
+                          <span className="font-merge-mono text-primary">
+                            {estReserveTokensOut === null ? "Quote unavailable" : `~${formatTokenAmount(estReserveTokensOut)} ${dtr.ticker}`}
+                          </span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Slippage tolerance</span>
@@ -1458,7 +1589,8 @@ export function DTRDetail() {
                         buyProcessing ||
                         numBuyAmount <= 0 ||
                         buyInsufficientBalance ||
-                        (isOnChain && !isSettlementBuySupported)
+                        (isOnChain && !isSettlementBuySupported) ||
+                        (isOnChain && estReserveTokensOut === null)
                       }
                     >
                       {txPhaseLabel(buyPhase, CLUSTER_LABEL) ? (
@@ -1472,8 +1604,10 @@ export function DTRDetail() {
                         "Connect Wallet to Trade"
                       ) : isOnChain && !isSettlementBuySupported ? (
                         "Buy Not Yet Supported"
+                      ) : isOnChain && numBuyAmount > 0 && estReserveTokensOut === null ? (
+                        "Quote Unavailable"
                       ) : buyInsufficientBalance ? (
-                        `Insufficient ${SETTLEMENT_SYMBOL} Balance`
+                        `Insufficient ${buyAssetForDisplay.symbol} Balance`
                       ) : (
                         `Buy ${dtr.ticker}`
                       )}
@@ -1554,6 +1688,17 @@ export function DTRDetail() {
                           <p className="text-[11px] text-muted-foreground/80 pt-1">
                             This Reserve is backed 100% by {SETTLEMENT_SYMBOL} -- redemption deposits real {SETTLEMENT_SYMBOL} directly into your wallet. No
                             conversion or swap adapter is involved.
+                          </p>
+                        ) : IS_MAINNET ? (
+                          // Mainnet has no swap-adapter conversion step at all -- redeem_reserve_tokens_in_kind
+                          // always pays out this Reserve's real underlying asset(s) directly (see
+                          // packages/sdk/src/directInstructions.ts's buildDirectRedeemInstructions). The
+                          // per-asset "Est. You Receive" figures above are already the complete, accurate
+                          // answer; showing a synthetic "Settled in USDC" conversion here (as DevNet does,
+                          // where a genuine swap-adapter conversion path exists) would misrepresent what
+                          // actually happens on Mainnet.
+                          <p className="text-[11px] text-muted-foreground/80 pt-1">
+                            This Reserve pays out its real underlying asset(s) directly on redemption -- no conversion to {SETTLEMENT_SYMBOL} is performed.
                           </p>
                         ) : (
                           <div className="pt-3 border-t border-border/50 space-y-1.5">

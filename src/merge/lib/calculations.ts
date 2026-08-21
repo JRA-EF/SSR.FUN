@@ -457,6 +457,12 @@ export function formatPercent(value: number): string {
   return `${sign}${value.toFixed(2)}%`;
 }
 
+/** Same formatting as formatUsdc, but renders the honest "Price unavailable" instead of a misleading "$0.00" whenever `available` is false (see onChainReserve.ts's computeAumFromPrices -- pricingComplete === false is exactly this case: at least one materially-held Reserve Asset has no valid Pyth/Jupiter price this pass). */
+export function formatUsdcOrUnavailable(value: number, available: boolean, opts: { compact?: boolean } = {}): string {
+  if (!available) return "Price unavailable";
+  return formatUsdc(value, opts);
+}
+
 export function formatTokenAmount(value: number): string {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,

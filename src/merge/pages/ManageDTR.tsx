@@ -3,7 +3,8 @@ import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
-import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered } from "@/lib/onChainReserve";
+import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered, computeMarketCap, type AssetPriceInfo } from "@/lib/onChainReserve";
+import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
 import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
@@ -15,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { formatPct, formatUsdc } from "@/lib/calculations";
+import { formatPct, formatUsdc, formatUsdcOrUnavailable } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
 import { ChevronLeft, Shield, Users, Sliders, Save, Plus, X, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, History, ExternalLink, Search } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -542,6 +543,13 @@ export function ManageDTR() {
       const mints = [...dtr.onChain.assets.map((a) => new PublicKey(a.mint)), ...extraCandidateMints.filter((m) => !knownMints.has(m)).map((m) => new PublicKey(m))];
       const onChain = await fetchReserveOnChain(connection, programId, reserveAddress, mints);
       if (onChain) {
+        // Best-effort, same reasoning as RealReserveSync.tsx's own pricing
+        // fetch -- never blocks this refresh; falls back to an empty price
+        // map, and mergeOnChainIntoDTR/computeAumFromPrices report the
+        // honest "unavailable" state rather than a stale/fabricated number.
+        const priceByMint: Record<string, AssetPriceInfo> = IS_MAINNET
+          ? await fetchAssetPricesUsd(onChain.assets.map((a) => ({ mint: a.assetMint, decimals: a.decimals }))).catch(() => ({}))
+          : {};
         mergeOnChainReserve(
           dtr.id,
           {
@@ -553,6 +561,8 @@ export function ManageDTR() {
             assets: dtr.onChain.assets.map((a) => ({ mint: a.mint, symbol: a.symbol, decimals: a.decimals, weightBps: a.weightBps, reserveAsset: a.reserveAsset, vault: a.vault })),
           },
           onChain,
+          priceByMint,
+          IS_MAINNET,
         );
         // mergeOnChainReserve/mergeOnChainIntoDTR deliberately never touches
         // delegatesOnChain (it has no fresh delegate data to merge) -- it
@@ -940,11 +950,13 @@ export function ManageDTR() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
                       <p className="text-xs text-muted-foreground mb-1">AUM</p>
-                      <p className="font-merge-mono font-bold text-lg">{formatUsdc(dtr.aum, { compact: true })}</p>
+                      <p className="font-merge-mono font-bold text-lg">{formatUsdcOrUnavailable(dtr.aum, !(IS_MAINNET && dtr.onChain?.priceSource === "unavailable"), { compact: true })}</p>
                     </div>
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
-                      <p className="text-xs text-muted-foreground mb-1">NAV per Token</p>
-                      <p className="font-merge-mono font-bold text-lg">{formatUsdc(dtr.nav)}</p>
+                      <p className="text-xs text-muted-foreground mb-1">Market Cap</p>
+                      <p className="font-merge-mono font-bold text-lg">
+                        {formatUsdcOrUnavailable(computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice), !(IS_MAINNET && dtr.onChain?.priceSource === "unavailable"), { compact: true })}
+                      </p>
                     </div>
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
                       <p className="text-xs text-muted-foreground mb-1">Holders</p>

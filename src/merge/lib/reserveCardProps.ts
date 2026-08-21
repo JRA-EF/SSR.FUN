@@ -3,7 +3,8 @@
 // code path instead of two independently-computed views of the same DTR, so
 // they can never drift back out of sync with each other.
 import { isReserveTradable } from "@ssr/sdk";
-import { formatUsdc, buildLineSeries } from "./calculations";
+import { formatUsdc, formatUsdcOrUnavailable, buildLineSeries } from "./calculations";
+import { computeMarketCap } from "./onChainReserve";
 import { normalizeReserveCategory, type DTR } from "./types";
 
 export interface ReserveCardData {
@@ -53,6 +54,8 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
     .slice(0, 3)
     .map((a) => a.symbol);
   const recentHistory = buildLineSeries(dtr.priceHistory, "7d", validNav);
+  const pricingUnavailable = isMainnet && dtr.onChain?.priceSource === "unavailable";
+  const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
 
   return {
     name: dtr.name,
@@ -64,7 +67,7 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
     sourceBadge: dtr.onChain
       ? { label: `Live on Solana ${clusterLabel}`, tone: "onchain" }
       : { label: "Simulated Demo", tone: "simulated" },
-    priceFormatted: formatUsdc(dtr.tokenPrice),
+    priceFormatted: formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable),
     changePct: dtr.change24h,
     changeFormatted: `${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`,
     sparkline: recentHistory.unavailable ? [] : recentHistory.points.map((p) => p.price),
@@ -73,9 +76,9 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
     sparklineIsFallback: recentHistory.isFallback,
     topAssets,
     metrics: [
-      { key: "price", label: "Price", value: formatUsdc(dtr.tokenPrice) },
+      { key: "price", label: "Price", value: formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable) },
       { key: "24h", label: "24h", value: `${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`, tone: dtr.change24h >= 0 ? "up" : "down" },
-      { key: "nav", label: "NAV", value: validNav !== null ? formatUsdc(validNav) : "—" },
+      { key: "mcap", label: "Market Cap", value: formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true }) },
       {
         key: "prem",
         label: "Prem/Discount",

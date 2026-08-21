@@ -3,14 +3,17 @@
 // through the exact same components as the fully-simulated seed DTRs.
 //
 // PRICING NOTE (see docs/protocol/FRONTEND_INTEGRATION.md "DevNet test
-// pricing"): the deployed protocol has no oracle and no bonding-curve price
-// discovery -- it only tracks raw per-asset backing. The USD-ish
+// pricing" and the Mainnet-pricing-layer decision log entry): the deployed
+// protocol has no on-chain oracle and no bonding-curve price discovery --
+// it only tracks raw per-asset backing. On DevNet, the USD-ish
 // "tokenPrice"/"nav"/"aum" fields this UI expects are computed here using a
 // fixed, clearly-DevNet-only test price per fixture mint (declared in
-// TEST_ASSET_PRICES_USD below). This is NOT real market data and must never
-// be presented as such -- it exists purely so the existing dollar-denominated
-// UI (built for the old AMM simulation) has something coherent to render for
-// a real, oracle-free Reserve.
+// TEST_ASSET_PRICES_USD below) -- NOT real market data, never presented as
+// such. On Mainnet, those same fields are computed from real, server-
+// validated prices (Pyth Core, then Jupiter Price V3 -- see
+// assetPricing.ts/api/mainnet/asset-prices.ts) passed in as `priceByMint`;
+// see computeAumFromPrices below for exactly how a partially- or
+// un-priced Reserve is handled (never a fabricated $0).
 import { PublicKey } from "@solana/web3.js";
 // Deliberately NOT importing from "./solana-config" here: that module reads
 // import.meta.env (Vite-only syntax), and this file is required directly by
@@ -46,7 +49,85 @@ export const TEST_ASSET_PRICES_USD: Record<string, number> = {
   "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": 1, // real Circle USDC on Mainnet -- genuinely $1-pegged, not a test fabrication
 };
 
-const RESERVE_TOKEN_DECIMALS = 6;
+export const RESERVE_TOKEN_DECIMALS = 6;
+
+/** One mint's server-validated USD price (see assetPricing.ts/api/mainnet/asset-prices.ts) -- usdPrice is null, never 0, when genuinely unpriced. */
+export interface AssetPriceInfo {
+  usdPrice: number | null;
+  source: "pyth" | "jupiter" | "unavailable";
+  lastUpdated: number | null;
+  deviationFlagged?: boolean;
+  deviationPct?: number;
+}
+
+export interface AumResult {
+  aumUsd: number;
+  pricingComplete: boolean;
+  priceSource: "pyth" | "jupiter" | "mixed" | "none" | "unavailable";
+  priceAsOf: number | null;
+  unpricedAssetMints: string[];
+}
+
+/**
+ * The one place AUM is computed from real prices for a Mainnet Reserve.
+ * "Material" is defined as a nonzero vault balance -- an asset the Reserve
+ * doesn't actually hold any of yet (still assetsInitializing, or a
+ * zero-weight leftover) never blocks pricing just because it lacks a feed.
+ * If ANY materially-held asset lacks a valid price, the whole AUM is
+ * reported unavailable (pricingComplete: false, aumUsd: 0) rather than a
+ * silently-partial number that understates real backing -- see the Mainnet
+ * pricing-layer decision log entry's explicit "never publish a fabricated
+ * $0 AUM ... partial pricing must not silently produce a wrong total"
+ * requirement. A genuinely empty Reserve (no assets held yet) is NOT an
+ * unavailable-pricing case -- priceSource is "none", aumUsd is honestly 0,
+ * and pricingComplete is true (there's nothing to fail to price).
+ */
+export function computeAumFromPrices(
+  assets: { assetMint: string; vaultBalanceRaw: string; decimals: number }[],
+  priceByMint: Record<string, AssetPriceInfo>,
+): AumResult {
+  let aumUsd = 0;
+  let pricingComplete = true;
+  const unpricedAssetMints: string[] = [];
+  const sources = new Set<"pyth" | "jupiter">();
+  let earliestUpdate: number | null = null;
+  for (const a of assets) {
+    const balance = Number(a.vaultBalanceRaw) / 10 ** a.decimals;
+    if (!(balance > 0)) continue;
+    const info = priceByMint[a.assetMint];
+    if (!info || info.usdPrice === null || !Number.isFinite(info.usdPrice) || info.usdPrice <= 0) {
+      pricingComplete = false;
+      unpricedAssetMints.push(a.assetMint);
+      continue;
+    }
+    aumUsd += balance * info.usdPrice;
+    if (info.source === "pyth" || info.source === "jupiter") sources.add(info.source);
+    if (info.lastUpdated !== null && (earliestUpdate === null || info.lastUpdated < earliestUpdate)) earliestUpdate = info.lastUpdated;
+  }
+  if (!pricingComplete) {
+    return { aumUsd: 0, pricingComplete: false, priceSource: "unavailable", priceAsOf: null, unpricedAssetMints };
+  }
+  const priceSource: AumResult["priceSource"] = sources.size === 0 ? "none" : sources.size === 1 ? [...sources][0] : "mixed";
+  return { aumUsd, pricingComplete: true, priceSource, priceAsOf: earliestUpdate, unpricedAssetMints: [] };
+}
+
+/**
+ * Market Cap = circulating Reserve Token supply x displayed Token Price --
+ * computed independently from AUM (never just relabeled AUM), per the
+ * Mainnet pricing-layer decision log entry. In THIS protocol, Token Price
+ * (displayed) is itself the internal NAV (there is no secondary market yet
+ * -- every Buy/Sell executes at NAV), so Market Cap and AUM are
+ * mathematically equal by construction today, up to floating-point
+ * rounding -- see the "Market Cap" InfoTip copy in DTRDetail.tsx/ManageDTR.tsx
+ * for how that's explained to the user rather than silently coinciding.
+ * Returns 0 (the same "unavailable" sentinel used throughout this module)
+ * when tokenPrice is unavailable, never a fabricated figure.
+ */
+export function computeMarketCap(reserveTokenSupplyRaw: string, tokenPrice: number): number {
+  if (!(tokenPrice > 0)) return 0;
+  const supply = Number(reserveTokenSupplyRaw || "0") / 10 ** RESERVE_TOKEN_DECIMALS;
+  return supply * tokenPrice;
+}
 
 export interface RealReserveDescriptor {
   id: string;
@@ -166,16 +247,32 @@ export function buildPlaceholderRealDTR(descriptor: RealReserveDescriptor): DTR 
   };
 }
 
-/** Merges live on-chain reads into a DTR built by buildPlaceholderRealDTR (or a previous call to this function). */
-export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain: ReserveOnChain): DTR {
+/**
+ * Merges live on-chain reads into a DTR built by buildPlaceholderRealDTR (or
+ * a previous call to this function). `priceByMint`/`isMainnet` default to
+ * "no real prices, DevNet fixed test pricing" so every existing caller
+ * (tests, and any DevNet refresh) behaves exactly as before -- real Mainnet
+ * callers (DTRDetail.tsx's refreshRealReserveNow) pass a freshly-fetched
+ * priceByMint (see assetPricing.ts) and isMainnet: true.
+ */
+export function mergeOnChainIntoDTR(
+  prev: DTR,
+  fixture: FixtureReserve,
+  onChain: ReserveOnChain,
+  priceByMint: Record<string, AssetPriceInfo> = {},
+  isMainnet: boolean = false,
+): DTR {
   const assets = toOnChainAssetMeta(fixture.assets, onChain);
   const vaultBalancesRaw: Record<string, string> = {};
-  let aumUsd = 0;
-  for (const a of onChain.assets) {
-    vaultBalancesRaw[a.assetMint] = a.vaultBalanceRaw;
-    const price = TEST_ASSET_PRICES_USD[a.assetMint] ?? 0;
-    aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * price;
-  }
+  for (const a of onChain.assets) vaultBalancesRaw[a.assetMint] = a.vaultBalanceRaw;
+  const aumResult = isMainnet
+    ? computeAumFromPrices(onChain.assets, priceByMint)
+    : (() => {
+        let aumUsd = 0;
+        for (const a of onChain.assets) aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * (TEST_ASSET_PRICES_USD[a.assetMint] ?? 0);
+        return { aumUsd, pricingComplete: true, priceSource: "none" as const, priceAsOf: null, unpricedAssetMints: [] };
+      })();
+  const aumUsd = aumResult.aumUsd;
   const supply = Number(onChain.reserveTokenSupplyRaw) / 10 ** RESERVE_TOKEN_DECIMALS;
   // A not-yet-seeded Reserve has zero supply; fall back to 1 rather than 0 to
   // avoid a 0/0 NaN in the premium/discount display (Discover.tsx, DTRDetail.tsx).
@@ -220,6 +317,9 @@ export function mergeOnChainIntoDTR(prev: DTR, fixture: FixtureReserve, onChain:
     effectiveTvlFeeProtocolBps: onChain.effectiveTvlFeeProtocolBps,
     effectiveTvlFeeManagerBps: onChain.effectiveTvlFeeManagerBps,
     effectiveTvlFeeTotalBps: onChain.effectiveTvlFeeTotalBps,
+    priceSource: isMainnet ? aumResult.priceSource : undefined,
+    priceAsOf: isMainnet ? aumResult.priceAsOf : undefined,
+    unpricedAssetMints: isMainnet ? aumResult.unpricedAssetMints : undefined,
   };
 
   return {
@@ -298,6 +398,13 @@ export function buildDtrFromDiscoveredReserve(
   // fabricating a symbol, and self-corrects on RealReserveSync's next poll
   // once the catalogue has loaded.
   mintMeta: Record<string, { symbol: string; name: string }> = {},
+  // Mainnet-only: server-validated USD prices (see assetPricing.ts,
+  // api/mainnet/asset-prices.ts) keyed by asset mint -- RealReserveSync.tsx
+  // fetches these once per discovery pass and passes them through. Defaults
+  // to {} so every existing caller (tests, DevNet) is unaffected; DevNet
+  // never passes this and keeps using TEST_ASSET_PRICES_USD below, exactly
+  // as before this pass.
+  priceByMint: Record<string, AssetPriceInfo> = {},
 ): DTR {
   const meta =
     parsedMetadata ??
@@ -314,12 +421,10 @@ export function buildDtrFromDiscoveredReserve(
   const [mintAuthority] = findMintAuthority(reserveAddress, programId);
   const [vaultAuthority] = findVaultAuthority(reserveAddress, programId);
 
-  let aumUsd = 0;
+  const isMainnet = clusterOverride === "mainnet-beta";
   const vaultBalancesRaw: Record<string, string> = {};
   const assets: OnChainAssetMeta[] = discovered.assets.map((a, i) => {
     vaultBalancesRaw[a.assetMint] = a.vaultBalanceRaw;
-    const price = TEST_ASSET_PRICES_USD[a.assetMint] ?? 0;
-    aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * price;
     const fixtureSymbol = Object.values(DEVNET_FIXTURES.mints).find((m) => m.address === a.assetMint)?.symbol;
     const symbol =
       fixtureSymbol ??
@@ -340,6 +445,14 @@ export function buildDtrFromDiscoveredReserve(
       orderIndex: a.orderIndex,
     };
   });
+  const aumResult = isMainnet
+    ? computeAumFromPrices(discovered.assets, priceByMint)
+    : (() => {
+        let aumUsd = 0;
+        for (const a of discovered.assets) aumUsd += (Number(a.vaultBalanceRaw) / 10 ** a.decimals) * (TEST_ASSET_PRICES_USD[a.assetMint] ?? 0);
+        return { aumUsd, pricingComplete: true, priceSource: "none" as const, priceAsOf: null, unpricedAssetMints: [] };
+      })();
+  const aumUsd = aumResult.aumUsd;
   const supply = Number(discovered.reserveTokenSupplyRaw) / 10 ** RESERVE_TOKEN_DECIMALS;
   const nav = supply > 0 ? aumUsd / supply : 1;
 
@@ -374,6 +487,9 @@ export function buildDtrFromDiscoveredReserve(
     effectiveTvlFeeProtocolBps: discovered.effectiveTvlFeeProtocolBps,
     effectiveTvlFeeManagerBps: discovered.effectiveTvlFeeManagerBps,
     effectiveTvlFeeTotalBps: discovered.effectiveTvlFeeTotalBps,
+    priceSource: isMainnet ? aumResult.priceSource : undefined,
+    priceAsOf: isMainnet ? aumResult.priceAsOf : undefined,
+    unpricedAssetMints: isMainnet ? aumResult.unpricedAssetMints : undefined,
   };
 
   return {

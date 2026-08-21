@@ -106,14 +106,22 @@ describe("buildReserveCardProps -- sparkline always uses the centralized fallbac
     expect(props.sparkline).to.include(1.05);
   });
 
-  it("never renders NaN%/$NaN for NAV or Prem/Discount when NAV is 0 -- shows an honest placeholder instead", () => {
+  it("never renders NaN%/$NaN for Market Cap or Prem/Discount when NAV is 0 -- shows an honest placeholder instead", () => {
+    // Mainnet-pricing-layer pass: the card's "NAV" chip was replaced by
+    // "Market Cap" (supply x Token Price, computed independently -- see
+    // reserveCardProps.ts/onChainReserve.ts's computeMarketCap). This DTR
+    // has no onChain data (a simulated/non-Mainnet fixture, matching every
+    // other DTR in this test file), so supply is honestly 0 -- Market Cap is
+    // genuinely $0, not NaN and not a fabricated "unavailable," which is
+    // exactly what's being asserted here. Prem/Discount keeps its original
+    // "—" placeholder (nav === 0 makes the premium/discount ratio undefined).
     const dtr = makeDtr({ id: "a", nav: 0, tokenPrice: 5 });
     const props = buildReserveCardProps(dtr);
-    const navMetric = props.metrics.find((m) => m.key === "nav")!;
+    const mcapMetric = props.metrics.find((m) => m.key === "mcap")!;
     const premMetric = props.metrics.find((m) => m.key === "prem")!;
-    expect(navMetric.value).to.not.match(/NaN/);
+    expect(mcapMetric.value).to.not.match(/NaN/);
     expect(premMetric.value).to.not.match(/NaN/);
-    expect(navMetric.value).to.equal("—");
+    expect(mcapMetric.value).to.equal("$0");
     expect(premMetric.value).to.equal("—");
   });
 });
