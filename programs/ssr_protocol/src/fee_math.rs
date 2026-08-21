@@ -133,6 +133,34 @@ pub fn apportion_to_recipients(
     Ok(increments)
 }
 
+/// USDC fee-settlement pipeline (2026-08-21 pass): splits `amount` between
+/// Protocol and Manager proportionally to their CURRENT weights -- e.g.
+/// `FeeSettlement.protocol_shares_in_vault` vs `manager_shares_in_vault` at
+/// redemption time, or `protocol_shares_pending_settlement` vs
+/// `manager_shares_pending_settlement` at USDC-distribution time. Same
+/// floor+exact-remainder pattern as [`split_total_fee`] above (Manager
+/// floor-rounded, Protocol gets the exact remainder -- protocol-favored,
+/// matching this program's existing convention throughout), generalized to
+/// arbitrary `u64` weights instead of a fixed bps denominator: the fee
+/// vault's real split ratio isn't a configured bps value, it's whatever the
+/// vault's/pending-settlement's actual current composition happens to be.
+/// Returns `(0, 0)` when both weights are zero (nothing to split -- an empty
+/// vault or a distribution with nothing pending) rather than a division
+/// error. Exact: `protocol_share + manager_share == amount` always.
+pub fn split_by_weight(amount: u64, protocol_weight: u64, manager_weight: u64) -> Result<(u64, u64)> {
+    let total_weight = protocol_weight
+        .checked_add(manager_weight)
+        .ok_or(error!(SsrError::MathOverflow))?;
+    if total_weight == 0 {
+        return Ok((0, 0));
+    }
+    let manager_share = mul_div_floor(amount, manager_weight, total_weight)?;
+    let protocol_share = amount
+        .checked_sub(manager_share)
+        .ok_or(error!(SsrError::MathUnderflow))?;
+    Ok((protocol_share, manager_share))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +261,46 @@ mod tests {
                     total_fee_shares,
                     "configured={configured} requested={reserve_tokens_requested}"
                 );
+            }
+        }
+    }
+
+    // --- USDC fee-settlement pipeline (2026-08-21 pass): split_by_weight ---
+
+    #[test]
+    fn split_by_weight_is_exact_and_protocol_favored_on_odd_amounts() {
+        let (protocol_share, manager_share) = split_by_weight(985_341, 250, 250).unwrap();
+        assert_eq!(protocol_share + manager_share, 985_341);
+        assert_eq!(manager_share, 492_670); // floor(985341 * 250/500)
+        assert_eq!(protocol_share, 492_671); // exact remainder
+    }
+
+    #[test]
+    fn split_by_weight_both_weights_zero_returns_zero_never_a_division_error() {
+        assert_eq!(split_by_weight(1_000_000, 0, 0).unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn split_by_weight_all_protocol_weight_gives_protocol_everything() {
+        assert_eq!(split_by_weight(777, 100, 0).unwrap(), (777, 0));
+    }
+
+    #[test]
+    fn split_by_weight_all_manager_weight_gives_manager_everything() {
+        assert_eq!(split_by_weight(777, 0, 100).unwrap(), (0, 777));
+    }
+
+    #[test]
+    fn split_by_weight_zero_amount_splits_to_zero_regardless_of_weights() {
+        assert_eq!(split_by_weight(0, 250, 750).unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn split_by_weight_sweep_always_exact() {
+        for (pw, mw) in [(1u64, 1u64), (250, 750), (1, 999), (500_000, 1), (12_345, 67_890)] {
+            for amount in [0u64, 1, 7, 100, 999, 1_000_000, 123_456_789] {
+                let (p, m) = split_by_weight(amount, pw, mw).unwrap();
+                assert_eq!(p + m, amount, "amount={amount} pw={pw} mw={mw}");
             }
         }
     }

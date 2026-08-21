@@ -221,6 +221,38 @@ Permission bitmask flags (each independently grantable, least-privilege default 
 
 The root Reserve Manager implicitly has every permission (checked as `manager == signer OR delegate.permissions & FLAG != 0`, never by giving the manager their own maxed-out `Delegate` record) and, uniquely, the powers no bitmask flag ever grants to anyone: transferring `Reserve.manager` itself, granting/revoking an **unrestricted** delegate, and any future irreversible action.
 
+## USDC fee-settlement pipeline (2026-08-21 pass)
+
+Both the mint-time fee (`mint_reserve_tokens_in_kind`) and the Annualized TVL fee (`accrue_fees`) now crystallize into a shared per-Reserve fee vault instead of minting straight to final Reserve-Token destinations. A separate, permissionless settlement pipeline then redeems the vault, swaps the redeemed assets to USDC via Jupiter (off-chain, keeper-signed -- the program never signs a swap), and distributes the resulting USDC to the Protocol Treasury and the Reserve's Manager recipient(s). See `docs/project/DECISION_LOG.md`'s entry for this pass for the full design rationale, fee math, and security analysis; `docs/project/FEE_SETTLEMENT_RUNBOOK.md` for the operational (dry-run, keeper-configuration, live-verification) procedure.
+
+**All new, additive accounts -- zero changes to `Reserve`, `FeeConfig`, `TvlAccrual`, `ManagerFeeRecipients`, or `ProtocolConfig`'s existing layouts.** `ProtocolConfig` in particular is DELIBERATELY never grown with a new field after Mainnet genesis (see `state/protocol_config.rs`'s own header) -- every instruction reads it, so a realloc-requiring field addition would break every single instruction call the moment a program upgrade lands, until the realloc happened, which itself needs a successful prior deserialization. Any new protocol-wide setting must be its own separate singleton PDA instead.
+
+### FeeSettlement
+
+**Seeds:** `["fee_settlement", reserve.key()]`, lazily `init_if_needed` on this Reserve's first-ever fee crystallization.
+
+| Field | Type | Purpose |
+|---|---|---|
+| `protocol_shares_in_vault` / `manager_shares_in_vault` | `u64` each | Reserve-Token amount currently sitting in the fee vault attributable to each side (crystallized, not yet redeemed) |
+| `protocol_shares_pending_settlement` / `manager_shares_pending_settlement` | `u64` each | the share-weighted split RATIO to apply to whatever USDC is currently staged -- never asset- or USDC-denominated itself, so this needs no price oracle; reset to zero once `distribute_fee_usdc` actually moves a nonzero amount (see that instruction's own header for the honest, documented imprecision this introduces for a swap that lands in a later, different-ratio settlement cycle -- a real but bounded, fund-safe limitation, never a security issue) |
+| `fee_vault_authority_bump` / `settlement_authority_bump` | `u8` each | cached bumps for the two authority PDAs below |
+
+### Fee vault
+
+An ordinary SPL ATA for the Reserve's own `reserve_token_mint`, owned by `fee_vault_authority` (seeds `["fee_vault_authority", reserve.key()]`) -- where crystallized fee shares accumulate before redemption.
+
+### Settlement staging (per-asset + USDC)
+
+One ATA per Reserve Asset mint, plus one USDC ATA, all owned by `settlement_authority` (seeds `["settlement_authority", reserve.key()]`). Holds redeemed-but-not-yet-swapped underlying assets and swapped-but-undistributed USDC respectively. The token balance itself IS the "pending settlement" signal for that asset -- no separate per-asset counter needed, which is what makes "an asset with no valid Jupiter route right now" safe: it just sits in its own ATA, discoverable and retryable any time, never blocking any other asset's settlement.
+
+### SettlementKeeperConfig (singleton)
+
+**Seeds:** `["settlement_keeper_config"]` (no per-Reserve component -- one keeper, protocol-wide), lazily `init_if_needed` by `set_fee_settlement_keeper`.
+
+| Field | Type | Purpose |
+|---|---|---|
+| `keeper` | `Pubkey` | the ONLY wallet ever granted a bounded, per-call SPL delegate approval over a settlement staging account (`approve_settlement_swap`) -- never a fund-custody role, never able to move more than whatever was just explicitly approved for one specific asset. Defaults to the zero address until configured. |
+
 ## Instruction-to-account summary
 
 Full per-instruction account lists, signers, and validation rules are in `docs/protocol/INSTRUCTION_REFERENCE.md`. This document defines the nouns; that one defines the verbs.

@@ -9,7 +9,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
-import { findReserveAsset, findReserveVault, findManagerFeeRecipients } from "./pda";
+import { findReserveAsset, findReserveVault, findManagerFeeRecipients, findFeeSettlement } from "./pda";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
 
 /**
@@ -281,6 +281,44 @@ export async function fetchManagerFeeRecipients(
     initialized: true,
     recipients,
     routingUpdatedAt: Number(account.routingUpdatedAt.toString()),
+  };
+}
+
+export interface FeeSettlementView {
+  initialized: boolean;
+  protocolSharesInVault: string;
+  managerSharesInVault: string;
+  protocolSharesPendingSettlement: string;
+  managerSharesPendingSettlement: string;
+}
+
+/**
+ * USDC fee-settlement pipeline (2026-08-21 pass): a Reserve's current fee
+ * vault balance and pending-settlement ratio. Returns
+ * `{initialized: false, ...all zeros}` (never null/throws) for a Reserve
+ * that has never crystallized a fee onto this new path yet -- `FeeSettlement`
+ * is lazily created, so "doesn't exist" and "genuinely all-zero" mean the
+ * exact same thing here.
+ */
+export async function fetchFeeSettlement(connection: Connection, programId: PublicKey, reserve: PublicKey): Promise<FeeSettlementView> {
+  const program = buildReadOnlyProgram(connection);
+  const [address] = findFeeSettlement(reserve, programId);
+  const account = await program.account.feeSettlement.fetchNullable(address);
+  if (!account) {
+    return {
+      initialized: false,
+      protocolSharesInVault: "0",
+      managerSharesInVault: "0",
+      protocolSharesPendingSettlement: "0",
+      managerSharesPendingSettlement: "0",
+    };
+  }
+  return {
+    initialized: true,
+    protocolSharesInVault: account.protocolSharesInVault.toString(),
+    managerSharesInVault: account.managerSharesInVault.toString(),
+    protocolSharesPendingSettlement: account.protocolSharesPendingSettlement.toString(),
+    managerSharesPendingSettlement: account.managerSharesPendingSettlement.toString(),
   };
 }
 

@@ -255,6 +255,35 @@ pub mod ssr_protocol {
         instructions::set_protocol_paused::handler(ctx, paused)
     }
 
+    // --- USDC fee-settlement pipeline (2026-08-21 pass) ---
+
+    pub fn set_fee_settlement_keeper<'info>(
+        ctx: Context<'info, SetFeeSettlementKeeper<'info>>,
+        new_keeper: Pubkey,
+    ) -> Result<()> {
+        instructions::set_fee_settlement_keeper::handler(ctx, new_keeper)
+    }
+
+    pub fn redeem_fee_vault_shares<'info>(
+        ctx: Context<'info, RedeemFeeVaultShares<'info>>,
+        shares: u64,
+    ) -> Result<()> {
+        instructions::redeem_fee_vault_shares::handler(ctx, shares)
+    }
+
+    pub fn approve_settlement_swap<'info>(
+        ctx: Context<'info, ApproveSettlementSwap<'info>>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::approve_settlement_swap::handler(ctx, amount)
+    }
+
+    pub fn distribute_fee_usdc<'info>(
+        ctx: Context<'info, DistributeFeeUsdc<'info>>,
+    ) -> Result<()> {
+        instructions::distribute_fee_usdc::handler(ctx)
+    }
+
     // --- Phase F: composition management (config-only) ---
 
     pub fn add_reserve_asset_active<'info>(

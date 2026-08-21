@@ -342,3 +342,83 @@ pub struct ManagerFeeShareCollected {
     pub collected_by: Pubkey,
     pub ts: i64,
 }
+
+// --- USDC fee-settlement pipeline (2026-08-21 pass) -------------------------
+
+/// Emitted whenever `mint_reserve_tokens_in_kind`/`accrue_fees` crystallizes
+/// a fee into the shared fee vault (replacing the old instant-mint-to-
+/// treasury / pending-counter destinations for any Reserve that has been
+/// upgraded onto this path). `source` distinguishes which fee generated
+/// this credit, reusing the existing `ManagerFeeAccrualSource` enum (Mint or
+/// AnnualTvl) even though this event covers BOTH Protocol and Manager
+/// shares together (unlike `ManagerFeeShareAccrued`, which is Manager-only).
+#[event]
+pub struct FeeVaultCredited {
+    pub reserve: Pubkey,
+    pub protocol_shares: u64,
+    pub manager_shares: u64,
+    pub source: ManagerFeeAccrualSource,
+    pub ts: i64,
+}
+
+/// Emitted by `redeem_fee_vault_shares` -- burns `shares` from the fee vault
+/// and stages the proportional per-asset entitlement into each asset's own
+/// settlement staging ATA. `protocol_shares_redeemed`/`manager_shares_redeemed`
+/// are this redemption's own split (see fee_math::split_fee_vault_redemption),
+/// added to `FeeSettlement`'s running pending-settlement counters.
+#[event]
+pub struct FeeSharesRedeemed {
+    pub reserve: Pubkey,
+    pub shares_redeemed: u64,
+    pub protocol_shares_redeemed: u64,
+    pub manager_shares_redeemed: u64,
+    pub asset_mints: Vec<Pubkey>,
+    pub asset_amounts_staged: Vec<u64>,
+    pub redeemed_by: Pubkey,
+    pub ts: i64,
+}
+
+/// Emitted by `approve_settlement_swap` -- the ONE step in this pipeline
+/// that hands bounded spending power to an off-chain keeper wallet (an SPL
+/// `Approve`, not a transfer -- nothing has moved yet). The keeper is
+/// expected to build and submit an ordinary Jupiter swap transaction next,
+/// signing as the SPL delegate for exactly this approved amount.
+#[event]
+pub struct SettlementSwapApproved {
+    pub reserve: Pubkey,
+    pub asset_mint: Pubkey,
+    pub amount: u64,
+    pub keeper: Pubkey,
+    pub ts: i64,
+}
+
+/// Emitted by `distribute_fee_usdc` -- pays out whatever USDC is CURRENTLY
+/// sitting in the settlement USDC staging account (never a claimed/expected
+/// number) to the Protocol Treasury and the Reserve's configured Manager fee
+/// recipient(s), split by the current pending-settlement ratio. Naturally
+/// idempotent: a call that finds a zero staging balance still emits this
+/// event with `usdc_distributed: 0` (a genuine, harmless no-op), never an
+/// error -- see distribute_fee_usdc.rs's own header.
+#[event]
+pub struct FeeUsdcDistributed {
+    pub reserve: Pubkey,
+    pub usdc_distributed: u64,
+    pub protocol_usdc: u64,
+    pub manager_usdc: u64,
+    pub protocol_destination: Pubkey,
+    pub manager_recipients: Vec<Pubkey>,
+    pub manager_amounts: Vec<u64>,
+    pub distributed_by: Pubkey,
+    pub ts: i64,
+}
+
+/// Emitted once by `set_fee_settlement_keeper` whenever the Protocol Admin
+/// changes the configured keeper wallet (including its very first
+/// configuration, where `old_keeper` is the default/zero address).
+#[event]
+pub struct FeeSettlementKeeperSet {
+    pub authority: Pubkey,
+    pub old_keeper: Pubkey,
+    pub new_keeper: Pubkey,
+    pub ts: i64,
+}

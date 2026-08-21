@@ -426,6 +426,58 @@ pub fn validate_fee_recipient_inputs(recipients: &[FeeRecipientInput]) -> Result
     Ok(())
 }
 
+/// USDC fee-settlement pipeline (2026-08-21 pass): verifies `token_account`
+/// is the exact canonical ATA for `(expected_owner, expected_mint)` under
+/// `token_program` -- used to confirm a caller-supplied "staging" token
+/// account in `redeem_fee_vault_shares`'s `remaining_accounts` is really the
+/// program-derived settlement-staging ATA, never an arbitrary account the
+/// caller could redirect redeemed assets into (permissionless callers must
+/// never be able to choose where funds land, only trigger the Reserve's own
+/// fixed, deterministic destination). Requiring the CANONICAL address (not
+/// merely "any account owned by settlement_authority") also means every
+/// later step of the pipeline (`approve_settlement_swap`,
+/// `distribute_fee_usdc`) can re-derive the same address deterministically,
+/// with nothing to track persistently.
+pub fn require_canonical_ata<'info>(
+    token_account: &InterfaceAccount<'info, TokenAccount>,
+    expected_owner: &Pubkey,
+    expected_mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Result<()> {
+    let expected = anchor_spl::associated_token::get_associated_token_address_with_program_id(
+        expected_owner,
+        expected_mint,
+        token_program,
+    );
+    require_keys_eq!(
+        token_account.key(),
+        expected,
+        SsrError::FeeSettlementInvalidAsset
+    );
+    Ok(())
+}
+
+/// Classic-Token-only sibling of [`require_canonical_ata`] above, for a raw
+/// `AccountInfo` (an untyped `remaining_accounts` entry, e.g.
+/// `distribute_fee_usdc`'s per-recipient USDC destination list) rather than
+/// a typed `InterfaceAccount` -- real Circle USDC is always the classic SPL
+/// Token program, never Token-2022, so this never needs the generic
+/// interface machinery `require_canonical_ata` uses for arbitrary Reserve
+/// Assets.
+pub fn require_canonical_ata_classic(
+    token_account_info: &AccountInfo,
+    expected_owner: &Pubkey,
+    expected_mint: &Pubkey,
+) -> Result<()> {
+    let expected = anchor_spl::associated_token::get_associated_token_address(expected_owner, expected_mint);
+    require_keys_eq!(
+        *token_account_info.key,
+        expected,
+        SsrError::FeeSettlementInvalidAsset
+    );
+    Ok(())
+}
+
 /// Ceiling-division `a * b / c`, widened to u128 to avoid overflow, per the
 /// mint-side rounding-direction policy adopted from the reference protocol
 /// (round in the protocol's favor -- see RESERVE_REFERENCE_ANALYSIS.md

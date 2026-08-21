@@ -110,6 +110,30 @@ export function apportionToRecipients(managerTotal: bigint, recipients: FeeRecip
   return increments;
 }
 
+export interface WeightedSplit {
+  protocolShare: bigint;
+  managerShare: bigint;
+}
+
+/**
+ * USDC fee-settlement pipeline (2026-08-21 pass). Mirrors
+ * programs/ssr_protocol/src/fee_math.rs::split_by_weight EXACTLY -- keep
+ * both in sync. Splits `amount` between Protocol and Manager proportionally
+ * to their CURRENT weights (e.g. FeeSettlement's protocolSharesInVault vs
+ * managerSharesInVault, or protocolSharesPendingSettlement vs
+ * managerSharesPendingSettlement), same floor+exact-remainder pattern as
+ * splitTotalFee above (managerShare floor-rounded, protocolShare gets the
+ * exact remainder -- protocol-favored). Returns zeros when both weights are
+ * zero rather than dividing by zero.
+ */
+export function splitByWeight(amount: bigint, protocolWeight: bigint, managerWeight: bigint): WeightedSplit {
+  const totalWeight = protocolWeight + managerWeight;
+  if (totalWeight === 0n) return { protocolShare: 0n, managerShare: 0n };
+  const managerShare = mulDivFloor(amount, managerWeight, totalWeight);
+  const protocolShare = amount - managerShare;
+  return { protocolShare, managerShare };
+}
+
 export interface RecipientInput {
   wallet: string;
   allocationBps: number;

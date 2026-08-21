@@ -15,6 +15,19 @@ use crate::constants::SCHEMA_VERSION;
 /// vault custody; see `collect_protocol_fee.rs` for why fee collection can
 /// only mint pre-accounted Reserve Token shares to the fixed configured
 /// destination, never touch raw Reserve Assets.
+///
+/// DELIBERATELY never grown with new fields after Mainnet genesis (2026-08-21
+/// pass, see docs/project/DECISION_LOG.md): every instruction in this
+/// program reads this account, so adding a field here would require Anchor
+/// to successfully deserialize the NEW, larger struct shape against the
+/// EXISTING, still-smaller on-chain account data -- which fails immediately
+/// on every single instruction call, for every Reserve, the moment a program
+/// upgrade lands, since a realloc can only happen inside an instruction that
+/// itself first needs a successful deserialization to run at all. Any new
+/// protocol-wide setting (e.g. `SettlementKeeperConfig`) must be its own,
+/// separate, additive singleton PDA instead -- the same lesson this program
+/// already learned once for `TvlAccrual`/`ManagerFeeRecipients` at the
+/// per-Reserve level.
 #[account]
 pub struct ProtocolConfig {
     pub schema_version: u8,

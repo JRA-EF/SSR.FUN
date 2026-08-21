@@ -3,15 +3,16 @@ use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
 use super::accrue_fees::checkpoint_tvl_accrual;
-use super::common::{credit_manager_fee_shares, load_asset_legs, mul_div_ceil, transfer_into_vault};
+use super::common::{load_asset_legs, mul_div_ceil, transfer_into_vault};
 use crate::constants::{
-    BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED,
-    PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, TVL_ACCRUAL_SEED,
+    BPS_DENOMINATOR, FEE_SETTLEMENT_SEED, FEE_VAULT_AUTHORITY_SEED, MINT_AUTHORITY_SEED,
+    PROTOCOL_CONFIG_SEED, PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
+    TVL_ACCRUAL_SEED,
 };
 use crate::errors::SsrError;
-use crate::events::{ManagerFeeAccrualSource, ProtocolMintFeeTransferred, ReserveTokensMinted};
+use crate::events::{FeeVaultCredited, ManagerFeeAccrualSource, ReserveTokensMinted};
 use crate::fee_math::{split_configured_bps, split_total_fee};
-use crate::state::{ManagerFeeRecipients, ProtocolConfig, Reserve, ReserveStatus, TvlAccrual};
+use crate::state::{FeeSettlement, ProtocolConfig, Reserve, ReserveStatus, TvlAccrual};
 
 #[derive(Accounts)]
 pub struct MintReserveTokensInKind<'info> {
@@ -51,37 +52,39 @@ pub struct MintReserveTokensInKind<'info> {
     #[account(mut)]
     pub depositor: Signer<'info>,
 
-    /// Instant Protocol mint-fee transfer (this pass, see
-    /// docs/project/DECISION_LOG.md): the Protocol's share of THIS mint's
-    /// fee is minted directly here, in the same atomic transaction --
-    /// Protocol fees never accrue as a pending/claimable balance for mint
-    /// events anymore. `depositor` fronts this ATA's rent if it doesn't
-    /// exist yet, same as its own `depositor_reserve_token_account` above.
-    ///
-    /// Option (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
-    /// when `protocol_fee_destination` IS the depositor's own wallet, this
-    /// account's associated_token derivation would resolve to the exact
-    /// same address as `depositor_reserve_token_account` above -- two
-    /// separate mutable `Account<'info, TokenAccount>` slots resolving to
-    /// one underlying account, which Anchor's own
-    /// ConstraintDuplicateMutableAccount safety check rejects unconditionally
-    /// (the same failure mode confirmed live for seed_reserve, DevNet error
-    /// 2040). The client detects this ahead of time and passes this
-    /// program's own ID as the explicit "None" sentinel instead -- see
-    /// seed_reserve.rs's identical treatment. The handler verifies the
-    /// omission actually matches reality rather than trusting it blindly
-    /// (SsrError::ProtocolFeeDestinationTokenAccountRequired).
+    /// USDC fee-settlement pipeline (2026-08-21 pass, see
+    /// docs/project/DECISION_LOG.md): BOTH the Protocol's and the Manager's
+    /// mint-fee shares now crystallize together into this shared fee vault
+    /// (replacing the old instant-mint-to-treasury / pending-counter
+    /// destinations) -- see `fee_vault`/`fee_vault_authority` below and
+    /// `redeem_fee_vault_shares.rs` for what happens to them next.
+    /// `init_if_needed` on this Reserve's very first-ever fee crystallization.
+    #[account(
+        init_if_needed,
+        payer = depositor,
+        space = FeeSettlement::SPACE,
+        seeds = [FEE_SETTLEMENT_SEED, reserve.key().as_ref()],
+        bump,
+    )]
+    pub fee_settlement: Account<'info, FeeSettlement>,
+
     #[account(
         init_if_needed,
         payer = depositor,
         associated_token::mint = reserve_token_mint,
-        associated_token::authority = protocol_fee_destination,
+        associated_token::authority = fee_vault_authority,
     )]
-    pub protocol_fee_destination_token_account: Option<Account<'info, SplTokenAccount>>,
-    /// CHECK: only used as the associated-token-account authority above;
-    /// must equal `protocol_config.default_protocol_fee_destination`,
-    /// checked in the handler.
-    pub protocol_fee_destination: UncheckedAccount<'info>,
+    pub fee_vault: Account<'info, SplTokenAccount>,
+
+    /// CHECK: signer-only PDA (mint authority is `mint_authority` above,
+    /// same as every other mint destination in this instruction -- this
+    /// account is only the fee vault's ATA *owner*, verified purely by
+    /// seeds against the cached bump).
+    #[account(
+        seeds = [FEE_VAULT_AUTHORITY_SEED, reserve.key().as_ref()],
+        bump,
+    )]
+    pub fee_vault_authority: UncheckedAccount<'info>,
 
     /// Time-weighted average TVL accumulator (2026-08-14 pass) -- checkpointed
     /// here for free (cheap arithmetic, no CPI), never settled here. See
@@ -95,18 +98,6 @@ pub struct MintReserveTokensInKind<'info> {
         bump,
     )]
     pub tvl_accrual: Account<'info, TvlAccrual>,
-
-    /// Optional (DEC-0094): pass the program ID itself as a "None" sentinel
-    /// for a Reserve that hasn't opted into multi-recipient routing. See
-    /// `state/manager_fee_recipients.rs` and `common::credit_manager_fee_shares`.
-    /// Also used to credit the TVL-fee piggyback checkpoint this call
-    /// triggers (see `accrue_fees::checkpoint_tvl_fee`).
-    #[account(
-        mut,
-        seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
-        bump = manager_fee_recipients.bump,
-    )]
-    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
 
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -136,27 +127,6 @@ pub fn handler<'info>(
         ctx.accounts.reserve.asset_count as usize,
         SsrError::RemainingAccountsMismatch
     );
-    require_keys_eq!(
-        ctx.accounts.protocol_fee_destination.key(),
-        ctx.accounts
-            .protocol_config
-            .default_protocol_fee_destination,
-        SsrError::InvalidFeeShareSplit
-    );
-    // See the doc comment on `protocol_fee_destination_token_account` above:
-    // an omitted account is only ever valid when the Protocol fee-destination
-    // wallet genuinely IS the depositor's own -- verified here, never trusted
-    // blindly, so a caller can never dodge paying the Protocol's genuine fee
-    // share by mis-omitting this account for some OTHER wallet.
-    let collapse_protocol_fee_into_depositor =
-        ctx.accounts.protocol_fee_destination_token_account.is_none();
-    if collapse_protocol_fee_into_depositor {
-        require_keys_eq!(
-            ctx.accounts.protocol_fee_destination.key(),
-            ctx.accounts.depositor.key(),
-            SsrError::ProtocolFeeDestinationTokenAccountRequired
-        );
-    }
 
     // Snapshot supply/balances BEFORE any transfer -- the entire mint
     // requirement is computed on the pre-transaction ratio, matching the
@@ -235,18 +205,13 @@ pub fn handler<'info>(
         SsrError::SlippageMinOutputNotMet
     );
 
-    // protocol_fee_shares floor+exact-remainder split from manager_fee_shares
+    // protocol_fee_shares floor+exact-remainder split from mint_fee_shares
     // (DEC-0094: divides by effective_total_bps, NOT BPS_DENOMINATOR -- see
     // fee_math::split_total_fee's doc comment for why the pre-DEC-0094
-    // divisor would be wrong here). manager_fee_shares is then apportioned
-    // across up to MAX_FEE_RECIPIENTS recipients (or credited to the legacy
-    // aggregate) by credit_manager_fee_shares -- the full chain
-    // `protocol_fee_shares + sum(recipient credits) == mint_fee_shares`
-    // holds exactly at every step.
+    // divisor would be wrong here).
     let (protocol_fee_shares, manager_fee_shares) =
         split_total_fee(mint_fee_shares, protocol_bps, manager_bps)?;
 
-    let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
     {
         let reserve = &mut ctx.accounts.reserve;
         // Informational telemetry only (DEC-0094) -- see the doc comment on
@@ -256,13 +221,8 @@ pub fn handler<'info>(
         reserve.fee_config.manager_fee_share_bps = manager_bps;
         reserve.fee_config.protocol_fee_share_bps = protocol_bps;
     }
-    credit_manager_fee_shares(
-        &mut ctx.accounts.reserve,
-        &mut ctx.accounts.manager_fee_recipients,
-        manager_fee_shares,
-        ManagerFeeAccrualSource::MintFee,
-    )?;
 
+    let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
     let mint_authority_seeds: &[&[u8]] = &[
         MINT_AUTHORITY_SEED,
         reserve_key.as_ref(),
@@ -270,71 +230,57 @@ pub fn handler<'info>(
     ];
     let signer_seeds: &[&[&[u8]]] = &[mint_authority_seeds];
 
-    // Instant Protocol mint-fee transfer (this pass): mints the Protocol's
-    // share directly to its treasury ATA in this SAME transaction -- never
-    // accrued as pending/claimable for a mint event. See
-    // docs/project/DECISION_LOG.md's entry for this pass.
-    //
-    // 2026-08-17 pass: when the Protocol fee-destination wallet IS the
-    // depositor's own (collapse_protocol_fee_into_depositor, checked above),
-    // a SEPARATE mint CPI into protocol_fee_destination_token_account isn't
-    // possible -- that account was omitted precisely because it would
-    // resolve to the exact same ATA as depositor_reserve_token_account. The
-    // Protocol's share is not dropped or redirected: it's minted in the
-    // SAME single CPI as the depositor's own net share, to that one shared
-    // account, preserving the exact combined total.
-    if collapse_protocol_fee_into_depositor {
-        let combined_amount = protocol_fee_shares
-            .checked_add(net_shares_out)
-            .ok_or(error!(SsrError::MathOverflow))?;
-        let cpi_accounts = MintTo {
-            mint: ctx.accounts.reserve_token_mint.to_account_info(),
-            to: ctx
-                .accounts
-                .depositor_reserve_token_account
-                .to_account_info(),
-            authority: ctx.accounts.mint_authority.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.key(),
-            cpi_accounts,
-            signer_seeds,
-        );
-        token::mint_to(cpi_ctx, combined_amount)?;
-    } else {
-        if protocol_fee_shares > 0 {
-            let protocol_fee_destination_token_account = ctx
-                .accounts
-                .protocol_fee_destination_token_account
-                .as_ref()
-                .ok_or(error!(SsrError::ProtocolFeeDestinationTokenAccountRequired))?;
-            let protocol_cpi_accounts = MintTo {
-                mint: ctx.accounts.reserve_token_mint.to_account_info(),
-                to: protocol_fee_destination_token_account.to_account_info(),
-                authority: ctx.accounts.mint_authority.to_account_info(),
-            };
-            let protocol_cpi_ctx = CpiContext::new_with_signer(
-                ctx.accounts.token_program.key(),
-                protocol_cpi_accounts,
-                signer_seeds,
-            );
-            token::mint_to(protocol_cpi_ctx, protocol_fee_shares)?;
-        }
+    // Depositor's own net share, unchanged.
+    let cpi_accounts = MintTo {
+        mint: ctx.accounts.reserve_token_mint.to_account_info(),
+        to: ctx
+            .accounts
+            .depositor_reserve_token_account
+            .to_account_info(),
+        authority: ctx.accounts.mint_authority.to_account_info(),
+    };
+    let cpi_ctx = CpiContext::new_with_signer(
+        ctx.accounts.token_program.key(),
+        cpi_accounts,
+        signer_seeds,
+    );
+    token::mint_to(cpi_ctx, net_shares_out)?;
 
-        let cpi_accounts = MintTo {
+    // USDC fee-settlement pipeline (2026-08-21 pass): BOTH shares crystallize
+    // together into the shared fee vault, in the SAME single CPI -- no more
+    // ConstraintDuplicateMutableAccount collision risk to guard against
+    // (the fee vault is always one single, always-distinct account, never
+    // colliding with depositor_reserve_token_account).
+    if mint_fee_shares > 0 {
+        let vault_cpi_accounts = MintTo {
             mint: ctx.accounts.reserve_token_mint.to_account_info(),
-            to: ctx
-                .accounts
-                .depositor_reserve_token_account
-                .to_account_info(),
+            to: ctx.accounts.fee_vault.to_account_info(),
             authority: ctx.accounts.mint_authority.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new_with_signer(
+        let vault_cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.key(),
-            cpi_accounts,
+            vault_cpi_accounts,
             signer_seeds,
         );
-        token::mint_to(cpi_ctx, net_shares_out)?;
+        token::mint_to(vault_cpi_ctx, mint_fee_shares)?;
+
+        let fee_settlement = &mut ctx.accounts.fee_settlement;
+        fee_settlement.protocol_shares_in_vault = fee_settlement
+            .protocol_shares_in_vault
+            .checked_add(protocol_fee_shares)
+            .ok_or(error!(SsrError::MathOverflow))?;
+        fee_settlement.manager_shares_in_vault = fee_settlement
+            .manager_shares_in_vault
+            .checked_add(manager_fee_shares)
+            .ok_or(error!(SsrError::MathOverflow))?;
+
+        emit!(FeeVaultCredited {
+            reserve: reserve_key,
+            protocol_shares: protocol_fee_shares,
+            manager_shares: manager_fee_shares,
+            source: ManagerFeeAccrualSource::MintFee,
+            ts: Clock::get()?.unix_timestamp,
+        });
     }
 
     let now = Clock::get()?.unix_timestamp;
@@ -347,15 +293,6 @@ pub fn handler<'info>(
         asset_amounts_in,
         ts: now,
     });
-    if protocol_fee_shares > 0 {
-        emit!(ProtocolMintFeeTransferred {
-            reserve: reserve_key,
-            reserve_token_mint: ctx.accounts.reserve_token_mint.key(),
-            amount: protocol_fee_shares,
-            destination: ctx.accounts.protocol_fee_destination.key(),
-            ts: now,
-        });
-    }
 
     Ok(())
 }

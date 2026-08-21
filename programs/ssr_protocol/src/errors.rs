@@ -167,4 +167,17 @@ pub enum SsrError {
     // Appended at the end deliberately -- same append-only rule as above.
     #[msg("The two Protocol Admin wallets must be distinct.")]
     DuplicateProtocolAdmin,
+
+    // --- USDC fee-settlement pipeline (2026-08-21 pass) ---
+    // Appended at the end deliberately -- same append-only rule as above.
+    #[msg("Requested redemption/approval amount exceeds the fee vault's/staging account's current real balance.")]
+    FeeSettlementInsufficientBalance,
+    #[msg("The fee settlement keeper is not configured on ProtocolConfig -- set fee_settlement_keeper via set_fee_settlement_keeper first.")]
+    FeeSettlementKeeperNotConfigured,
+    #[msg("Signer is not the configured fee settlement keeper.")]
+    NotFeeSettlementKeeper,
+    #[msg("This asset mint is not a registered Reserve Asset for this Reserve.")]
+    FeeSettlementInvalidAsset,
+    #[msg("This FeeSettlement account does not belong to the supplied Reserve.")]
+    FeeSettlementReserveMismatch,
 }

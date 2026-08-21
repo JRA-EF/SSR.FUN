@@ -14,6 +14,12 @@ export const MINT_AUTHORITY_SEED = Buffer.from("mint_authority");
 export const DELEGATE_SEED = Buffer.from("delegate");
 export const MANAGER_FEE_RECIPIENTS_SEED = Buffer.from("manager_fee_recipients");
 export const TVL_ACCRUAL_SEED = Buffer.from("tvl_accrual");
+/** USDC fee-settlement pipeline (2026-08-21 pass) -- see programs/ssr_protocol/src/state/fee_settlement.rs. */
+export const FEE_SETTLEMENT_SEED = Buffer.from("fee_settlement");
+export const FEE_VAULT_AUTHORITY_SEED = Buffer.from("fee_vault_authority");
+export const SETTLEMENT_AUTHORITY_SEED = Buffer.from("settlement_authority");
+/** Protocol-wide singleton (no per-Reserve component) -- deliberately NOT a ProtocolConfig field, see state/protocol_config.rs's header. */
+export const SETTLEMENT_KEEPER_CONFIG_SEED = Buffer.from("settlement_keeper_config");
 
 export function findProtocolConfig(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([PROTOCOL_CONFIG_SEED], programId);
@@ -57,6 +63,38 @@ export function findManagerFeeRecipients(reserve: PublicKey, programId: PublicKe
 /** The time-weighted average TVL accumulator for a Reserve -- see programs/ssr_protocol/src/state/tvl_accrual.rs. */
 export function findTvlAccrual(reserve: PublicKey, programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([TVL_ACCRUAL_SEED, reserve.toBuffer()], programId);
+}
+
+/** USDC fee-settlement pipeline (2026-08-21 pass): the per-Reserve state tracking the shared fee vault's balance/split and pending-settlement ratio -- see programs/ssr_protocol/src/state/fee_settlement.rs. */
+export function findFeeSettlement(reserve: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([FEE_SETTLEMENT_SEED, reserve.toBuffer()], programId);
+}
+
+/** Owns the fee vault's Reserve Token ATA (mint/burn authority for crystallized, not-yet-redeemed fee shares). */
+export function findFeeVaultAuthority(reserve: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([FEE_VAULT_AUTHORITY_SEED, reserve.toBuffer()], programId);
+}
+
+/** Owns every settlement staging ATA (per-asset + USDC) -- the delegate-granting authority for `approveSettlementSwap`. */
+export function findSettlementAuthority(reserve: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([SETTLEMENT_AUTHORITY_SEED, reserve.toBuffer()], programId);
+}
+
+/** Protocol-wide singleton holding the configured fee-settlement keeper wallet -- see state/settlement_keeper_config.rs. */
+export function findSettlementKeeperConfig(programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([SETTLEMENT_KEEPER_CONFIG_SEED], programId);
+}
+
+/** Canonical ATA for the fee vault (Reserve Token, owned by `findFeeVaultAuthority`). */
+export function findFeeVaultAta(reserve: PublicKey, reserveTokenMint: PublicKey, programId: PublicKey): PublicKey {
+  const [feeVaultAuthority] = findFeeVaultAuthority(reserve, programId);
+  return getAssociatedTokenAddressSync(reserveTokenMint, feeVaultAuthority, true);
+}
+
+/** Canonical settlement staging ATA for one asset mint (owned by `findSettlementAuthority`). */
+export function findSettlementStagingAta(reserve: PublicKey, assetMint: PublicKey, programId: PublicKey): PublicKey {
+  const [settlementAuthority] = findSettlementAuthority(reserve, programId);
+  return getAssociatedTokenAddressSync(assetMint, settlementAuthority, true);
 }
 
 /**

@@ -34,7 +34,7 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { unpackAccount, unpackMint } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "./readOnly";
-import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault } from "./pda";
+import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault, findSettlementKeeperConfig } from "./pda";
 import { withRateLimitRetry } from "./rpcResilience";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
 
@@ -78,6 +78,22 @@ export async function fetchProtocolConfig(connection: Connection, programId: Pub
     defaultProtocolFeeDestination: pc.defaultProtocolFeeDestination.toBase58(),
     reserveCount: BigInt(pc.reserveCount.toString()),
   };
+}
+
+/**
+ * USDC fee-settlement pipeline (2026-08-21 pass): the configured keeper
+ * wallet, from its own separate, protocol-wide singleton PDA (deliberately
+ * NOT a ProtocolConfig field -- see state/protocol_config.rs's header).
+ * Returns null if never configured (SettlementKeeperConfig doesn't exist
+ * yet) -- every keeper-gated instruction requires a real, configured keeper
+ * first.
+ */
+export async function fetchSettlementKeeperConfig(connection: Connection, programId: PublicKey): Promise<{ keeper: string } | null> {
+  const program = buildReadOnlyProgram(connection);
+  const [address] = findSettlementKeeperConfig(programId);
+  const config = await program.account.settlementKeeperConfig.fetchNullable(address);
+  if (!config) return null;
+  return { keeper: config.keeper.toBase58() };
 }
 
 export interface DiscoveredReserveAsset {

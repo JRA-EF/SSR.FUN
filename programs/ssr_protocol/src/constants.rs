@@ -27,6 +27,23 @@ pub const MANAGER_FEE_RECIPIENTS_SEED: &[u8] = b"manager_fee_recipients";
 /// the Annualized TVL fee's weekly settlement (2026-08-14 pass, see
 /// docs/project/DECISION_LOG.md).
 pub const TVL_ACCRUAL_SEED: &[u8] = b"tvl_accrual";
+/// PDA seed prefix for a `FeeSettlement` account (combined with `reserve`).
+/// See state/fee_settlement.rs -- USDC fee-settlement pipeline (2026-08-21
+/// pass, see docs/project/DECISION_LOG.md). Also the seed prefix for two
+/// further, non-state PDAs derived the same way: `FEE_VAULT_AUTHORITY_SEED`
+/// (owns the fee-vault Reserve Token ATA) and `SETTLEMENT_AUTHORITY_SEED`
+/// (owns every per-asset/USDC settlement staging ATA) -- kept as separate
+/// seed prefixes, not the same authority, so the fee-vault's mint/burn
+/// authority is never the same signing key as the one that can approve a
+/// keeper's delegated spending allowance.
+pub const FEE_SETTLEMENT_SEED: &[u8] = b"fee_settlement";
+pub const FEE_VAULT_AUTHORITY_SEED: &[u8] = b"fee_vault_authority";
+pub const SETTLEMENT_AUTHORITY_SEED: &[u8] = b"settlement_authority";
+/// PDA seed for the singleton `SettlementKeeperConfig` account (no
+/// per-Reserve component -- one keeper, protocol-wide). See
+/// state/settlement_keeper_config.rs's header for why this is a SEPARATE
+/// account from `ProtocolConfig` rather than a field grown onto it.
+pub const SETTLEMENT_KEEPER_CONFIG_SEED: &[u8] = b"settlement_keeper_config";
 
 /// Reserve Token decimals. See docs/protocol/SSR_ARCHITECTURE.md section 2.
 pub const RESERVE_TOKEN_DECIMALS: u8 = 6;

@@ -2,25 +2,25 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
-use super::common::credit_manager_fee_shares;
 use crate::constants::{
-    BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED,
-    PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED, SCHEMA_VERSION,
-    SECONDS_PER_YEAR, TVL_ACCRUAL_SEED,
+    BPS_DENOMINATOR, FEE_SETTLEMENT_SEED, FEE_VAULT_AUTHORITY_SEED, MINT_AUTHORITY_SEED,
+    PROTOCOL_CONFIG_SEED, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
+    SCHEMA_VERSION, SECONDS_PER_YEAR, TVL_ACCRUAL_SEED,
 };
 use crate::errors::SsrError;
-use crate::events::{ManagerFeeAccrualSource, TvlFeeSettled};
-use crate::fee_math::{split_configured_bps, split_total_fee};
-use crate::state::{ManagerFeeRecipients, ProtocolConfig, Reserve, TvlAccrual};
+use crate::events::{FeeVaultCredited, ManagerFeeAccrualSource};
+use crate::fee_math::split_configured_bps;
+use crate::state::{FeeSettlement, ProtocolConfig, Reserve, TvlAccrual};
 
 /// Permissionless, matching the reference protocol's own `distributeFees`
 /// being callable by anyone (RESERVE_REFERENCE_ANALYSIS.md section 8) --
 /// settlement is pure accounting plus a mint the Reserve's own fee config
 /// authorizes, so there is no reason to gate who can trigger it. This is
-/// the ONLY instruction that ever actually SETTLES (mints the Protocol's
-/// share to treasury, credits the Manager's share) the Annualized TVL fee --
-/// see `checkpoint_tvl_accrual`'s doc comment for why mint/redeem/seed only
-/// ever cheaply CHECKPOINT the time-weighted accumulator, never settle.
+/// the ONLY instruction that ever actually SETTLES (mints BOTH shares to
+/// the shared fee vault -- see `FeeSettlement`/`redeem_fee_vault_shares.rs`,
+/// 2026-08-21 pass) the Annualized TVL fee -- see `checkpoint_tvl_accrual`'s
+/// doc comment for why mint/redeem/seed only ever cheaply CHECKPOINT the
+/// time-weighted accumulator, never settle.
 ///
 /// 2026-08-14 pass (see docs/project/DECISION_LOG.md): replaced the earlier
 /// linear "days since last snapshot x latest supply" approximation with a
@@ -69,34 +69,40 @@ pub struct AccrueFees<'info> {
     )]
     pub tvl_accrual: Account<'info, TvlAccrual>,
 
-    /// Instant Protocol TVL-fee transfer (this pass): the Protocol's settled
-    /// share is minted directly here, in this SAME transaction -- never
-    /// accrued as pending. `payer` fronts this ATA's rent if it doesn't
-    /// exist yet.
+    /// USDC fee-settlement pipeline (2026-08-21 pass, see
+    /// docs/project/DECISION_LOG.md): BOTH the Protocol's and the Manager's
+    /// settled TVL-fee shares now crystallize together into this shared fee
+    /// vault (replacing the old instant-mint-to-treasury / pending-counter
+    /// destinations). `init_if_needed` on this Reserve's very first-ever fee
+    /// crystallization.
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = FeeSettlement::SPACE,
+        seeds = [FEE_SETTLEMENT_SEED, reserve.key().as_ref()],
+        bump,
+    )]
+    pub fee_settlement: Account<'info, FeeSettlement>,
+
     #[account(
         init_if_needed,
         payer = payer,
         associated_token::mint = reserve_token_mint,
-        associated_token::authority = protocol_fee_destination,
+        associated_token::authority = fee_vault_authority,
     )]
-    pub protocol_fee_destination_token_account: Account<'info, SplTokenAccount>,
-    /// CHECK: only used as the associated-token-account authority above;
-    /// must equal `protocol_config.default_protocol_fee_destination`,
-    /// checked in the handler.
-    pub protocol_fee_destination: UncheckedAccount<'info>,
+    pub fee_vault: Account<'info, SplTokenAccount>,
 
-    /// Optional (DEC-0094 sentinel pattern, see common::credit_manager_fee_shares).
+    /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
-        mut,
-        seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
-        bump = manager_fee_recipients.bump,
+        seeds = [FEE_VAULT_AUTHORITY_SEED, reserve.key().as_ref()],
+        bump,
     )]
-    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
+    pub fee_vault_authority: UncheckedAccount<'info>,
 
     /// Permissionless caller (typically the weekly keeper's own wallet, or
     /// anyone else who chooses to poke a settlement early): fronts this
-    /// call's one-time rent for `tvl_accrual`/`protocol_fee_destination_token_account`
-    /// if either doesn't exist yet. Never a fund-custody role -- settlement
+    /// call's one-time rent for `tvl_accrual`/`fee_settlement`/`fee_vault`
+    /// if any doesn't exist yet. Never a fund-custody role -- settlement
     /// only ever moves the Reserve's OWN already-accrued fee, nothing of
     /// this wallet's own.
     #[account(mut)]
@@ -108,14 +114,6 @@ pub struct AccrueFees<'info> {
 }
 
 pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
-    require_keys_eq!(
-        ctx.accounts.protocol_fee_destination.key(),
-        ctx.accounts
-            .protocol_config
-            .default_protocol_fee_destination,
-        SsrError::InvalidFeeShareSplit
-    );
-
     let now = Clock::get()?.unix_timestamp;
     let supply = ctx.accounts.reserve_token_mint.supply;
     let reserve_key = ctx.accounts.reserve.key();
@@ -168,13 +166,7 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
         u64::try_from(total_fee_shares_u128).map_err(|_| error!(SsrError::MathOverflow))?;
 
     let (protocol_fee_shares, manager_fee_shares) =
-        split_total_fee(total_fee_shares, protocol_bps, manager_bps)?;
-
-    let time_weighted_avg_supply = u64::try_from(
-        period_supply_seconds / (elapsed_since_settlement as u128),
-    )
-    .unwrap_or(u64::MAX);
-    let period_start_ts = ctx.accounts.tvl_accrual.last_settled_ts;
+        crate::fee_math::split_total_fee(total_fee_shares, protocol_bps, manager_bps)?;
 
     {
         let tvl_accrual = &mut ctx.accounts.tvl_accrual;
@@ -186,14 +178,7 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
     // Reserves) remain accurate -- never read for control flow here.
     ctx.accounts.reserve.fee_config.last_fee_accrual_ts = now;
 
-    credit_manager_fee_shares(
-        &mut ctx.accounts.reserve,
-        &mut ctx.accounts.manager_fee_recipients,
-        manager_fee_shares,
-        ManagerFeeAccrualSource::AnnualTvlFee,
-    )?;
-
-    if protocol_fee_shares > 0 {
+    if total_fee_shares > 0 {
         let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
         let mint_authority_seeds: &[&[u8]] = &[
             MINT_AUTHORITY_SEED,
@@ -203,10 +188,7 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
         let signer_seeds: &[&[&[u8]]] = &[mint_authority_seeds];
         let cpi_accounts = MintTo {
             mint: ctx.accounts.reserve_token_mint.to_account_info(),
-            to: ctx
-                .accounts
-                .protocol_fee_destination_token_account
-                .to_account_info(),
+            to: ctx.accounts.fee_vault.to_account_info(),
             authority: ctx.accounts.mint_authority.to_account_info(),
         };
         let cpi_ctx = CpiContext::new_with_signer(
@@ -214,21 +196,26 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
             cpi_accounts,
             signer_seeds,
         );
-        token::mint_to(cpi_ctx, protocol_fee_shares)?;
-    }
+        token::mint_to(cpi_ctx, total_fee_shares)?;
 
-    emit!(TvlFeeSettled {
-        reserve: reserve_key,
-        reserve_token_mint: ctx.accounts.reserve_token_mint.key(),
-        period_start_ts,
-        period_end_ts: now,
-        time_weighted_avg_supply,
-        protocol_fee_shares,
-        manager_fee_shares,
-        protocol_destination: ctx.accounts.protocol_fee_destination.key(),
-        settled_by: ctx.accounts.payer.key(),
-        ts: now,
-    });
+        let fee_settlement = &mut ctx.accounts.fee_settlement;
+        fee_settlement.protocol_shares_in_vault = fee_settlement
+            .protocol_shares_in_vault
+            .checked_add(protocol_fee_shares)
+            .ok_or(error!(SsrError::MathOverflow))?;
+        fee_settlement.manager_shares_in_vault = fee_settlement
+            .manager_shares_in_vault
+            .checked_add(manager_fee_shares)
+            .ok_or(error!(SsrError::MathOverflow))?;
+
+        emit!(FeeVaultCredited {
+            reserve: reserve_key,
+            protocol_shares: protocol_fee_shares,
+            manager_shares: manager_fee_shares,
+            source: ManagerFeeAccrualSource::AnnualTvlFee,
+            ts: now,
+        });
+    }
 
     Ok(())
 }
