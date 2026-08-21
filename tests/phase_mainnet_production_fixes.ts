@@ -265,6 +265,70 @@ describe("src/merge/lib/createReserveClient.ts -- isJupiterSwapEligible (pure)",
   });
 });
 
+describe("api/mainnet/asset-prices.ts -- fetchJupiterPrices falls back to the unauthenticated tier on a 401 (root cause: production's configured JUPITER_API_KEY was found invalid, 401ing against both Price V3 and Swap V1 -- confirmed live, without ever exposing the key value)", () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.JUPITER_API_KEY;
+  const SSR = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
+  const VALID_BODY = { [SSR]: { usdPrice: 0.00048130018216587764, decimals: 6, blockId: 440662420 } };
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.JUPITER_API_KEY;
+    else process.env.JUPITER_API_KEY = originalKey;
+  });
+
+  it("retries without the x-api-key header when the configured key 401s, and still returns real prices", async () => {
+    process.env.JUPITER_API_KEY = "invalid-test-key";
+    const calls: Array<Record<string, string> | undefined> = [];
+    global.fetch = (async (_url: string, init?: { headers?: Record<string, string> }) => {
+      calls.push(init?.headers);
+      if (init?.headers?.["x-api-key"]) {
+        return { ok: false, status: 401, json: async () => ({ code: 401, message: "Unauthorized" }) };
+      }
+      return { ok: true, status: 200, json: async () => VALID_BODY };
+    }) as unknown as typeof fetch;
+
+    const { fetchJupiterPrices } = await import("../api/mainnet/asset-prices");
+    const result = await fetchJupiterPrices([SSR]);
+
+    expect(calls.length).to.equal(2, "expected one authenticated attempt, then one unauthenticated fallback");
+    expect(calls[0]).to.have.property("x-api-key");
+    expect(calls[1]).to.not.have.property("x-api-key");
+    expect(result.get(SSR)?.usdPrice).to.equal(0.00048130018216587764);
+  });
+
+  it("does not retry (and returns nothing) on a non-401 failure -- a real outage stays unavailable, never silently masked", async () => {
+    process.env.JUPITER_API_KEY = "some-key";
+    let callCount = 0;
+    global.fetch = (async () => {
+      callCount += 1;
+      return { ok: false, status: 500, json: async () => ({}) };
+    }) as unknown as typeof fetch;
+
+    const { fetchJupiterPrices } = await import("../api/mainnet/asset-prices");
+    const result = await fetchJupiterPrices([SSR]);
+
+    expect(callCount).to.equal(1);
+    expect(result.has(SSR)).to.equal(false);
+  });
+
+  it("makes a single unauthenticated request directly when no key is configured at all", async () => {
+    delete process.env.JUPITER_API_KEY;
+    const calls: Array<Record<string, string> | undefined> = [];
+    global.fetch = (async (_url: string, init?: { headers?: Record<string, string> }) => {
+      calls.push(init?.headers);
+      return { ok: true, status: 200, json: async () => VALID_BODY };
+    }) as unknown as typeof fetch;
+
+    const { fetchJupiterPrices } = await import("../api/mainnet/asset-prices");
+    const result = await fetchJupiterPrices([SSR]);
+
+    expect(calls.length).to.equal(1);
+    expect(calls[0]).to.not.have.property("x-api-key");
+    expect(result.get(SSR)?.usdPrice).to.equal(0.00048130018216587764);
+  });
+});
+
 describe("api/mainnet/jupiter-swap.ts -- input validation (no network/API-key dependency)", () => {
   const VALID_OUTPUT_MINT = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
   const VALID_USER_PUBKEY = "9bAG6E3NrPrnANfhCQTiqJ1MTGNApPqvMjDsxvtMWkJG";

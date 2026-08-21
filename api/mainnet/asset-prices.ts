@@ -99,15 +99,31 @@ async function fetchPythPrices(feedIds: string[]): Promise<Map<string, RawPythPr
   return out;
 }
 
-async function fetchJupiterPrices(mints: string[]): Promise<Map<string, RawJupiterPrice>> {
+async function requestJupiterPrices(mints: string[], headers: Record<string, string>): Promise<{ ok: boolean; unauthorized: boolean; body: Record<string, unknown> | null }> {
+  const res = await fetch(`${JUPITER_PRICE_URL}?ids=${mints.join(",")}`, { headers });
+  if (!res.ok) return { ok: false, unauthorized: res.status === 401, body: null };
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  return { ok: body !== null, unauthorized: false, body };
+}
+
+/**
+ * Jupiter Price V3 is usable unauthenticated (public rate limits) -- JUPITER_API_KEY
+ * is attempted first (per Creator's requirement to use it) for its higher/authenticated
+ * rate limit, but a 401 from a misconfigured/expired/wrong key falls back to the
+ * unauthenticated request rather than taking every Mainnet asset's pricing dark. This
+ * is a fallback on AUTHENTICATION failure only (401) -- any other failure (network
+ * error, 5xx, malformed body) still yields "unavailable" for real, never fabricated.
+ */
+export async function fetchJupiterPrices(mints: string[]): Promise<Map<string, RawJupiterPrice>> {
   const out = new Map<string, RawJupiterPrice>();
   if (mints.length === 0) return out;
   const apiKey = process.env.JUPITER_API_KEY;
-  if (!apiKey) return out; // Not configured on this deployment -- every mint just falls through to "unavailable," never a fabricated price.
-  const res = await fetch(`${JUPITER_PRICE_URL}?ids=${mints.join(",")}`, { headers: { "x-api-key": apiKey } });
-  if (!res.ok) return out;
-  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body) return out;
+  let result = apiKey ? await requestJupiterPrices(mints, { "x-api-key": apiKey }) : { ok: false, unauthorized: false, body: null as Record<string, unknown> | null };
+  if (!result.ok && (!apiKey || result.unauthorized)) {
+    result = await requestJupiterPrices(mints, {});
+  }
+  if (!result.ok || !result.body) return out;
+  const body = result.body;
   for (const mint of mints) {
     const entry = body[mint];
     if (!entry || typeof entry !== "object") continue;
