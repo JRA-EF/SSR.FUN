@@ -59,6 +59,10 @@ export const ALLOWED_METHODS = new Set([
   "getBlockHeight",
   "getMinimumBalanceForRentExemption",
   "sendTransaction",
+  // See api/mainnet/rpc-proxy.ts's identical addition (DEC-0142) -- kept in
+  // sync since createReserveClient.ts's Address-Lookup-Table fallback is
+  // shared between clusters, even though the reported failure was Mainnet-only.
+  "getSlot",
 ]);
 
 const MAX_BATCH_SIZE = 20;

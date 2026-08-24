@@ -4464,6 +4464,43 @@
   ]
 }
 ```
+
+## DEC-0142
+
+```json
+{
+  "id": "DEC-0142",
+  "date": "2026-08-24",
+  "status": "confirmed-implemented",
+  "decision": "Fixed a real Reserve (\"CHARLIE\", 6 assets, created by this Mainnet wallet) permanently stuck in an unresolvable Resume loop: seed_reserve deposits every asset and mints the initial Reserve Tokens in ONE atomic on-chain call (unlike create-and-register, which DEC-0136 already made resumable/multi-transaction), so a Reserve with enough assets produces a seed transaction that genuinely cannot fit Solana's 1232-byte legacy transaction limit no matter how many times Resume is retried. Added an Address Lookup Table fallback that only activates when the plain instruction is actually too large, letting seeding succeed regardless of asset count. Also fixed a real gap the fix's own regression test caught before shipping: Connection.getSlot was missing from both Mainnet and DevNet rpc-proxy method allowlists.",
+  "context": "Creator reported \"Transaction too large: 1432 > 1232\" with the exact CreateReserveStepError text for a non-retryable seed failure, for a real Mainnet Reserve created by wallet 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen, stuck in Resume.",
+  "rationale": "Queried the live Mainnet program directly (program.account.reserve.all(), memcmp-filtered on the manager field at its real byte offset, read-only) rather than guessing: found CHARLIE (6FN24ZMVZw8fAiQhvtdRCAMdLPbieXHjBx4Trw9NnYiQ), status assetsInitializing, assetCount 6, totalTargetWeightBps 10000 -- confirming create-and-register (DEC-0136's earlier fix) had already succeeded with all 6 assets registered, and the Reserve was stuck exactly at the next step, seeding. Read seed_reserve.rs directly: it require!'s the Reserve to be EXACTLY AssetsInitializing on entry and sets it to Active on success, in the same instruction that deposits every asset (via a per-asset remaining_accounts block: reserveAsset + vault + managerAssetAta + mint, 4 unique pubkeys/leg) and mints the initial Reserve Tokens -- there is no partial-seed state and no way to call it more than once for one Reserve. This means DEC-0136's create-and-register fix (splitting N independent instructions across several transactions) structurally cannot apply here: there is only ONE instruction, and it must stay atomic. For CHARLIE's 6 assets, that one instruction alone serializes to 1432 bytes -- confirmed the size math directly (createReserveFlow.ts's buildSeedReserveInstruction's remainingAccounts shape), and confirmed Solana's own PACKET_DATA_SIZE=1232 ceiling is what's asserting. The correct fix is Address Lookup Tables (ALTs) -- the standard Solana mechanism for exactly this: register each of the instruction's non-signer accounts once in a small on-chain table, then reference them in the actual transaction by a 1-byte table index instead of a 32-byte pubkey, shrinking the transaction regardless of how many assets a Reserve holds. Implemented signAndSendPossiblyOverLimit (createReserveClient.ts): measures the real instruction size first (reusing the same estimateSingleSignerTxBytes math packInstructionsBySize already uses, extracted out for reuse) and takes the existing fast legacy-transaction path unchanged for the common case (a Reserve with few enough assets to already fit -- zero added cost or wallet approvals); only when genuinely too large does it create a lookup table, extend it with the instruction's real accounts (chunked, since extendLookupTable has its own size limit), poll until the table is confirmed active (a real on-chain precondition -- using it too early fails outright), then submit the seed instruction as a v0 VersionedTransaction referencing the table. This app's wallet integration already signs VersionedTransactions successfully in production (jupiterSwapClient.ts, since DEC-0124) -- reused that same proven capability rather than introducing new wallet-compatibility risk. Wired into BOTH createReserveOnChain's and resumeReserveDeploymentOnChain's seed steps (CHARLIE specifically needs the resume path). Writing this pass's own regression test (mirroring tests/phase_mainnet_production_fixes.ts's existing self-auditing rpc-proxy-allowlist guard, which scans createReserveClient.ts's actual source for every Connection.<method>( call) caught a real gap before it ever shipped: Connection.getSlot (called twice by the new ALT logic) was missing from both api/mainnet/rpc-proxy.ts's and api/devnet/rpc-proxy.ts's method allowlists -- the exact same class of silent-rejection bug DEC-0130 already fixed once for getTokenAccountBalance. Fixed both allowlists. Connection.getAddressLookupTable also flagged by the naive regex scan, but confirmed (read directly in node_modules/@solana/web3.js's own compiled source) that it is a pure client-side wrapper around getAccountInfoAndContext/getAccountInfo, not a distinct wire RPC method -- extended the test's existing method-name-mapping table (the same pattern it already uses for sendRawTransaction -> sendTransaction) rather than adding a nonexistent method name to the real proxy allowlists.",
+  "alternativesConsidered": [
+    "A program upgrade adding a genuinely incremental/multi-call seeding instruction -- rejected for this pass: a real Anchor program change/redeploy against a live Mainnet program with existing Reserves is a materially larger, riskier undertaking than a client-side fix, and the ALT approach fully solves the problem without touching the deployed program at all.",
+    "Advise the Creator to close CHARLIE and recreate it with fewer assets -- rejected: destroys already-registered on-chain state for no protocol-level reason, doesn't fix the underlying capability gap for the NEXT 6+-asset Reserve, and isn't what 'resolve the error' was asking for.",
+    "Always use an Address Lookup Table for seeding, even for a small Reserve that would fit in a plain transaction -- rejected: adds real cost (ALT rent) and 2-3 extra wallet approvals plus a warm-up wait for the common case (1-3 assets) that never needed it; the size check keeps the existing fast path completely unchanged when it's sufficient.",
+    "Skip writing a Connection-method regression test for this pass, since one already exists for a similar purpose -- rejected: the existing self-auditing guard is specifically designed to catch exactly this class of gap automatically, and it did -- ignoring what it found rather than fixing the allowlist would have shipped the exact same silent-rejection bug DEC-0130 already fixed once, in a new code path."
+  ],
+  "impact": "771/771 offline tests passing (7 new: estimateSingleSignerTxBytes correctly classifying a realistic 3-asset seed instruction as fitting and a realistic 6-asset one as exceeding the limit, reproducing CHARLIE's real shape; monotonic size growth with asset count; the rpc-proxy allowlist regression test itself, which now passes with getSlot added to both proxies). tsc -b, oxlint, npm run build all clean. Not live-verified against CHARLIE's actual stuck deployment (no browser-automation/wallet tool in this environment, and this session cannot sign transactions on the Creator's behalf) -- Creator's own next \"Resume Deployment\" click against CHARLIE is the real confirmation this fix needed.",
+  "affectedAreas": [
+    "src/merge/lib/createReserveClient.ts",
+    "api/mainnet/rpc-proxy.ts",
+    "api/devnet/rpc-proxy.ts",
+    "tests/phase_reserve_deploy_resumability.ts",
+    "tests/phase_mainnet_production_fixes.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Direct read-only query against the live Mainnet ssr_protocol program (program.account.reserve.all(), memcmp on manager @ byte offset 17): CHARLIE (6FN24ZMVZw8fAiQhvtdRCAMdLPbieXHjBx4Trw9NnYiQ), status assetsInitializing, assetCount 6, totalTargetWeightBps 10000 -- confirms registration succeeded and seeding is the exact stuck step.",
+    "programs/ssr_protocol/src/instructions/seed_reserve.rs's require!(reserve.status == ReserveStatus::AssetsInitializing) plus its single-call deposit-and-mint design -- confirms this instruction cannot be split or called incrementally, unlike create-and-register.",
+    "node_modules/@solana/web3.js's own compiled source: Connection.getAddressLookupTable's body calls getAccountInfoAndContext internally, confirming it issues no RPC method of its own.",
+    "771/771 offline tests passing, including the self-auditing rpc-proxy-allowlist regression test that caught the getSlot gap before this pass shipped."
+  ]
+}
+```
+```
 ```
 ```
 }

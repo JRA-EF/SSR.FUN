@@ -27,7 +27,16 @@
 // reserve_id and orphan the original (the previously-documented behavior --
 // see git history -- and the confirmed root cause of the "UI tells the user
 // to create another Reserve despite one already existing" report).
-import { Connection, PublicKey, SystemProgram, Transaction, type TransactionInstruction } from "@solana/web3.js";
+import {
+  Connection,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionMessage,
+  VersionedTransaction,
+  AddressLookupTableProgram,
+  type TransactionInstruction,
+} from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
@@ -496,24 +505,32 @@ const SOLANA_MAX_TX_BYTES = 1232;
  * reachable for this app's own instruction shapes, but safer than silently
  * discarding it.
  */
-export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInstruction[]): TransactionInstruction[][] {
+/**
+ * The real, measured legacy-transaction wire size for `ixs` if signed by
+ * exactly one signer (`feePayer` -- every instruction this app builds only
+ * ever needs the connected wallet's own signature). Uses a real `Transaction`
+ * + a syntactically-valid dummy blockhash (a blockhash is always exactly 32
+ * bytes regardless of its real value, so this needs no network round trip)
+ * -- shared by packInstructionsBySize (below) and
+ * signAndSendPossiblyOverLimit (this file's Address-Lookup-Table fallback
+ * for a single instruction that can't be split, e.g. seed_reserve).
+ */
+export function estimateSingleSignerTxBytes(feePayer: PublicKey, ixs: TransactionInstruction[]): number {
   const dummyBlockhash = SystemProgram.programId.toBase58(); // any valid base58 pubkey-shaped string is a valid-length (32-byte) stand-in for sizing purposes only.
-  const sizeOf = (candidate: TransactionInstruction[]): number => {
-    const tx = new Transaction();
-    tx.feePayer = feePayer;
-    tx.recentBlockhash = dummyBlockhash;
-    tx.add(...candidate);
-    // Wire size = compact-array signature count/bytes (1 signer here: the
-    // fee payer wallet -- every instruction this app builds only ever needs
-    // the connected wallet's own signature) + the compiled message itself.
-    return 1 + 64 + tx.compileMessage().serialize().length;
-  };
+  const tx = new Transaction();
+  tx.feePayer = feePayer;
+  tx.recentBlockhash = dummyBlockhash;
+  tx.add(...ixs);
+  // Wire size = compact-array signature count/bytes + the compiled message itself.
+  return 1 + 64 + tx.compileMessage().serialize().length;
+}
 
+export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInstruction[]): TransactionInstruction[][] {
   const batches: TransactionInstruction[][] = [];
   let current: TransactionInstruction[] = [];
   for (const ix of ixs) {
     const candidate = [...current, ix];
-    if (current.length > 0 && sizeOf(candidate) > SOLANA_MAX_TX_BYTES) {
+    if (current.length > 0 && estimateSingleSignerTxBytes(feePayer, candidate) > SOLANA_MAX_TX_BYTES) {
       batches.push(current);
       current = [ix];
     } else {
@@ -570,6 +587,126 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, i
   if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
   throw new AmbiguousConfirmationError(signature);
+}
+
+/**
+ * Signs, submits, and confirms a VersionedTransaction the same way
+ * signAndSend does for a legacy one -- same submit/confirm/error-shape
+ * contract, just Message v0 + an Address Lookup Table instead of a legacy
+ * Message. Mirrors jupiterSwapClient.ts's executeJupiterSwap (the only other
+ * place in this app that already signs a VersionedTransaction -- proof
+ * Phantom/the wallet-adapter integration here already handles this
+ * transaction type, not new wallet-compatibility risk).
+ */
+async function signSubmitConfirmVersioned(connection: Connection, wallet: WalletContextState, tx: VersionedTransaction, lastValidBlockHeight: number): Promise<string> {
+  if (!wallet.signTransaction) throw new Error("This wallet does not support transaction signing.");
+  const signed = await wallet.signTransaction(tx);
+  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
+  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+  if (outcome.status === "confirmed") return signature;
+  if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
+  if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+  throw new AmbiguousConfirmationError(signature);
+}
+
+/**
+ * Sends a SINGLE instruction that must stay atomic (never split across
+ * transactions -- e.g. seed_reserve, which deposits every asset and mints
+ * the initial Reserve Tokens in one on-chain call) even when it alone
+ * exceeds Solana's legacy transaction size limit. Confirmed live (2026-08-24,
+ * road-to-mainnet MCR-01): seeding a real 6-asset Mainnet Reserve produced a
+ * 1432-byte transaction against the 1232-byte limit -- packInstructionsBySize
+ * cannot help here (it never splits a single instruction, by design; there's
+ * nothing else in this transaction TO split out into an earlier one, unlike
+ * the create-and-register step, which bundles many independent instructions
+ * together).
+ *
+ * The real fix: an Address Lookup Table (ALT), the standard Solana mechanism
+ * for exactly this -- each of `ix`'s non-signer accounts is registered once
+ * in a small on-chain table, and the final transaction references them by a
+ * 1-byte table index instead of their full 32-byte pubkey, shrinking the
+ * transaction enough to fit regardless of how many assets a Reserve holds.
+ * This app's wallet integration already signs VersionedTransactions
+ * successfully (see jupiterSwapClient.ts, in production since DEC-0124) --
+ * this reuses that same proven capability, not a new one. Only used as a
+ * fallback: a `ix` that already fits in a legacy transaction (the common
+ * case, 1-5ish assets) is sent exactly as before, no ALT overhead at all.
+ *
+ * Costs a few extra wallet approvals and a short wait (creating + extending
+ * the table, then waiting for it to warm up) ONLY when actually needed.
+ */
+async function signAndSendPossiblyOverLimit(
+  connection: Connection,
+  wallet: WalletContextState,
+  ix: TransactionInstruction,
+  onProgress?: (phase: "creating-lookup-table" | "waiting-for-lookup-table" | "submitting") => void,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Connect a wallet first.");
+  const feePayer = wallet.publicKey;
+
+  if (estimateSingleSignerTxBytes(feePayer, [ix]) <= SOLANA_MAX_TX_BYTES) {
+    onProgress?.("submitting");
+    return signAndSend(connection, wallet, [ix]);
+  }
+
+  onProgress?.("creating-lookup-table");
+  // Only non-signer accounts can live in a lookup table -- the fee
+  // payer/signer must stay directly in the transaction's own account list
+  // for signature verification. Deduped: the same account (e.g. the token
+  // program) can legitimately appear across several of this instruction's
+  // per-asset account groups.
+  const lookupAddresses = Array.from(new Set(ix.keys.filter((k) => !k.isSigner).map((k) => k.pubkey.toBase58()))).map((s) => new PublicKey(s));
+
+  const recentSlot = await connection.getSlot("finalized");
+  const [createIx, lookupTableAddress] = AddressLookupTableProgram.createLookupTable({ authority: feePayer, payer: feePayer, recentSlot });
+  await signAndSend(connection, wallet, [createIx]);
+
+  // extendLookupTable's own transaction has the same size ceiling as any
+  // other -- chunk conservatively (20 addresses/call fits comfortably; this
+  // app's own instructions need at most a few dozen accounts total, so this
+  // is at most 1-2 extend calls in practice).
+  const EXTEND_CHUNK = 20;
+  for (let i = 0; i < lookupAddresses.length; i += EXTEND_CHUNK) {
+    const chunk = lookupAddresses.slice(i, i + EXTEND_CHUNK);
+    const extendIx = AddressLookupTableProgram.extendLookupTable({ lookupTable: lookupTableAddress, authority: feePayer, payer: feePayer, addresses: chunk });
+    await signAndSend(connection, wallet, [extendIx]);
+  }
+
+  onProgress?.("waiting-for-lookup-table");
+  // A lookup table only becomes usable once the CURRENT slot has genuinely
+  // advanced past the slot it was derived from -- confirming the create/
+  // extend transactions above already guarantees real time has passed, but
+  // poll explicitly (bounded, ~15s) rather than assume, since this is a real
+  // on-chain precondition (using it too early fails outright).
+  const deadline = Date.now() + 15_000;
+  let lookupTableAccount = null;
+  while (Date.now() < deadline) {
+    const currentSlot = await connection.getSlot("confirmed");
+    if (currentSlot > recentSlot) {
+      const resp = await connection.getAddressLookupTable(lookupTableAddress);
+      if (resp.value && resp.value.isActive()) {
+        lookupTableAccount = resp.value;
+        break;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!lookupTableAccount) {
+    // The table itself was already created/extended on-chain above (real,
+    // confirmed transactions) -- only the warm-up wait timed out, which is
+    // extremely unlikely given confirming those transactions already took
+    // real time. Retrying re-derives a NEW table rather than reusing this
+    // one (its address isn't persisted anywhere) -- a small amount of
+    // abandoned rent, not a fund-safety issue; nothing from this attempt is
+    // lost or duplicated.
+    throw new Error("The address lookup table needed to submit this transaction did not become active in time. Please try again.");
+  }
+
+  onProgress?.("submitting");
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  const message = new TransactionMessage({ payerKey: feePayer, recentBlockhash: blockhash, instructions: [ix] }).compileToV0Message([lookupTableAccount]);
+  const versionedTx = new VersionedTransaction(message);
+  return signSubmitConfirmVersioned(connection, wallet, versionedTx, lastValidBlockHeight);
 }
 
 /** Reads a wallet's real, current raw balance for a mint -- 0 if the ATA doesn't exist yet (never an error in that case, since "no ATA" and "zero balance" mean the same thing for funding purposes). */
@@ -1039,7 +1176,7 @@ export async function createReserveOnChain(params: {
     assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
     validateSeedPlan(finalSeedAmounts, initialReserveTokens);
     const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-    seedSig = await signAndSend(connection, wallet, [seedIx]);
+    seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx);
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
   }
@@ -1268,7 +1405,7 @@ export async function resumeReserveDeploymentOnChain(params: {
       assertSeedAmountsMeetMinimum(pending.assets, finalSeedAmounts);
       validateSeedPlan(finalSeedAmounts, initialReserveTokens);
       const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-      seedSig = await signAndSend(connection, wallet, [seedIx]);
+      seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx);
     } catch (e) {
       throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
     }

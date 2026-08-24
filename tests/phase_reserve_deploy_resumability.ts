@@ -39,7 +39,7 @@ import { AmbiguousConfirmationError } from "../src/merge/lib/rpcResilience";
 import { decodeSsrProtocolError, extractCustomErrorCode, describeOnChainError, ssrProtocolErrorCodeRange } from "../packages/sdk/src/errors";
 import { resolveProtocolFeeDestinationTokenAccount } from "../packages/sdk/src/pda";
 import { computeEffectiveFeeSplit, splitTotalFee, PROTOCOL_MIN_MINT_FEE_BPS } from "../packages/sdk/src/feeMath";
-import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy, packInstructionsBySize, seedRawAmountForAsset } from "../src/merge/lib/createReserveClient";
+import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy, packInstructionsBySize, seedRawAmountForAsset, estimateSingleSignerTxBytes } from "../src/merge/lib/createReserveClient";
 import { WRAPPED_SOL_MINT } from "../packages/sdk/src/zapPricing";
 import { TransactionInstruction } from "@solana/web3.js";
 
@@ -476,5 +476,60 @@ describe("Reserve deploy resumability -- 11. seedRawAmountForAsset's real SOL/US
   it("never throws for a non-SOL asset even with an invalid solPriceUsd -- the price is simply irrelevant to that computation", () => {
     expect(() => seedRawAmountForAsset(usdcLikeAsset, 50, 0)).to.not.throw();
     expect(() => seedRawAmountForAsset(usdcLikeAsset, 50, -1)).to.not.throw();
+  });
+});
+
+describe("Reserve deploy resumability -- 12. estimateSingleSignerTxBytes' detection of an oversized seed_reserve call (2026-08-24, road-to-mainnet MCR-01, DEC-0142)", () => {
+  // seed_reserve deposits every asset and mints the initial Reserve Tokens
+  // in ONE atomic on-chain call (see programs/ssr_protocol/src/instructions/
+  // seed_reserve.rs -- require!'d to be exactly AssetsInitializing before,
+  // Active after) -- unlike create-and-register's independent per-asset
+  // instructions, there is nothing here packInstructionsBySize can split
+  // into an earlier transaction. Confirmed live: a real 6-asset Mainnet
+  // Reserve ("CHARLIE") produced a 1432-byte seed transaction against the
+  // 1232-byte limit, stuck in an unresolvable Resume loop until
+  // signAndSendPossiblyOverLimit's Address-Lookup-Table fallback was added.
+  // This suite covers the pure DETECTION math the fallback's branch decision
+  // depends on (estimateSingleSignerTxBytes) -- the ALT submission path
+  // itself needs a real Connection/wallet, consistent with this codebase's
+  // existing pattern of not unit-testing wallet-signing orchestration
+  // directly (see createReserveClient.ts's signAndSend/DEC-0138's directClient.ts).
+  const feePayer = Keypair.generate().publicKey;
+
+  // Mirrors seed_reserve.rs's real remainingAccounts shape (see
+  // packages/sdk/src/createReserveFlow.ts's buildSeedReserveInstruction):
+  // reserveAsset + vault + managerAssetAta + mint per leg (each genuinely
+  // unique, like real per-asset accounts), plus one TOKEN_PROGRAM_ID-like
+  // account shared/deduped across every leg, plus a realistic handful of
+  // non-repeating base accounts (protocolConfig, reserve, mint accounts,
+  // fee-destination accounts, tvlAccrual, etc.).
+  function makeSeedLikeIx(legCount: number): TransactionInstruction {
+    const sharedTokenProgram = Keypair.generate().publicKey;
+    const baseAccounts = Array.from({ length: 10 }, () => ({ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }));
+    const legAccounts = Array.from({ length: legCount }, () => [
+      { pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: false }, // reserveAsset
+      { pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }, // vault
+      { pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }, // managerAssetAta
+      { pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: false }, // mint
+      { pubkey: sharedTokenProgram, isSigner: false, isWritable: false }, // TOKEN_PROGRAM_ID (shared across legs)
+    ]).flat();
+    return new TransactionInstruction({
+      programId: Keypair.generate().publicKey,
+      keys: [...baseAccounts, ...legAccounts, { pubkey: feePayer, isSigner: true, isWritable: true }],
+      data: Buffer.alloc(40), // discriminator + a handful of numeric args
+    });
+  }
+
+  it("a small (1-3 asset) seed instruction fits comfortably in one legacy transaction -- the fast, no-ALT-needed path", () => {
+    expect(estimateSingleSignerTxBytes(feePayer, [makeSeedLikeIx(3)])).to.be.lessThan(1232);
+  });
+
+  it("reproduces the real reported failure shape: a 6-asset seed instruction genuinely exceeds Solana's 1232-byte legacy transaction limit", () => {
+    expect(estimateSingleSignerTxBytes(feePayer, [makeSeedLikeIx(6)])).to.be.greaterThan(1232);
+  });
+
+  it("size grows monotonically with leg count -- more assets never accidentally produces a smaller transaction", () => {
+    const sizes = [1, 2, 4, 6, 8].map((n) => estimateSingleSignerTxBytes(feePayer, [makeSeedLikeIx(n)]));
+    for (let i = 1; i < sizes.length; i++) expect(sizes[i]).to.be.greaterThan(sizes[i - 1]);
   });
 });

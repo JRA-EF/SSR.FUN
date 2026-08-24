@@ -641,7 +641,12 @@ describe("createReserveClient.ts's real Connection method usage stays inside bot
   // Connection.sendRawTransaction issues the JSON-RPC method
   // "sendTransaction" (not literally "sendRawTransaction"), so that one
   // client method name is mapped to its real wire method below.
-  const METHOD_TO_RPC_NAME: Record<string, string> = { sendRawTransaction: "sendTransaction" };
+  // Connection.getAddressLookupTable (added 2026-08-24, DEC-0142's
+  // signAndSendPossiblyOverLimit) is the same kind of client-side wrapper --
+  // confirmed directly in node_modules/@solana/web3.js/lib/index.cjs.js: it
+  // calls getAccountInfoAndContext (itself a getAccountInfo wrapper)
+  // internally and issues no RPC method of its own.
+  const METHOD_TO_RPC_NAME: Record<string, string> = { sendRawTransaction: "sendTransaction", getAddressLookupTable: "getAccountInfo" };
 
   function extractConnectionMethodCalls(sourcePath: string): string[] {
     const source = fs.readFileSync(path.join(__dirname, "..", sourcePath), "utf8");

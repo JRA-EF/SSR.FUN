@@ -37,6 +37,16 @@ export const ALLOWED_METHODS = new Set([
   "getBlockHeight",
   "getMinimumBalanceForRentExemption",
   "sendTransaction",
+  // Added 2026-08-24 (road-to-mainnet MCR-01, DEC-0142): createReserveClient.ts's
+  // Address-Lookup-Table fallback (signAndSendPossiblyOverLimit, needed once
+  // seed_reserve alone exceeds the legacy transaction size limit for a
+  // Reserve with enough assets) calls Connection.getSlot twice -- once to
+  // derive the lookup table, once while polling for it to warm up. Missing
+  // from this allowlist, every such call would have been rejected exactly
+  // like the getTokenAccountBalance gap above (DEC-0130) -- caught this time
+  // by tests/phase_mainnet_production_fixes.ts's self-auditing regression
+  // guard before it ever shipped.
+  "getSlot",
 ]);
 
 const MAX_BATCH_SIZE = 20;
