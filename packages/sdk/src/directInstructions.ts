@@ -35,11 +35,21 @@ export interface DirectInstructionResult {
   assetAmountRaw: bigint;
 }
 
-/** Fails loudly (never silently mis-prices a partial deposit) if the Reserve isn't genuinely single-asset. */
-function requireSingleAssetReserve(assets: ZapAssetLeg[]): ZapAssetLeg {
+/**
+ * Fails loudly (never silently mis-prices a partial deposit) if the Reserve
+ * isn't genuinely single-asset. There is deliberately no fallback path this
+ * throws "into" -- zapInstructions.ts's zap is DevNet-only (it depends on a
+ * server-held swap authority that can mint fake test tokens for legs the
+ * depositor doesn't hold; no Mainnet equivalent exists). A genuinely
+ * multi-asset Mainnet Reserve has no supported Buy/Sell mechanism at all
+ * today -- confirmed live (2026-08-24, road-to-mainnet MMT-01) -- callers on
+ * Mainnet must gate this UI-side (see DTRDetail.tsx's
+ * isSettlementBuySupported) rather than let a depositor reach this throw.
+ */
+export function requireSingleAssetReserve(assets: ZapAssetLeg[]): ZapAssetLeg {
   if (assets.length !== 1) {
     throw new Error(
-      `directInstructions requires a single-asset Reserve; found ${assets.length} assets. This Reserve needs the zap path (zapInstructions.ts), not the direct path.`,
+      `This Reserve holds ${assets.length} assets. There is no supported way to buy into or sell from a multi-asset Reserve on Mainnet yet -- only a single-asset Reserve can use this direct deposit/withdrawal path.`,
     );
   }
   return assets[0];

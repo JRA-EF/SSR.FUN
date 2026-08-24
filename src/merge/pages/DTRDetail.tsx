@@ -740,7 +740,19 @@ export function DTRDetail() {
         setBuyPhase("failed");
         const raw = e instanceof Error ? e.message : "The purchase failed.";
         console.error("Buy failed:", raw);
-        toast({ variant: "destructive", title: "Buy Failed", description: "Your purchase could not be completed. No funds were moved." });
+        // isSettlementBuySupported's Mainnet single-asset check (see its own
+        // header) should make this specific failure unreachable from the UI
+        // -- kept as a named, honest fallback rather than the previous
+        // always-generic message, in case this Reserve's client-cached asset
+        // list was stale/under-resolved when that gate was evaluated.
+        const isSingleAssetGap = raw.includes("no supported way to buy into or sell from a multi-asset Reserve");
+        toast({
+          variant: "destructive",
+          title: "Buy Failed",
+          description: isSingleAssetGap
+            ? "This Reserve holds more than one asset -- there is no supported way to buy into a multi-asset Reserve on Mainnet yet. No funds were moved."
+            : `Your purchase could not be completed: ${raw} No funds were moved.`,
+        });
       }
     } finally {
       useAppStore.getState().setTxInFlight(false);
@@ -933,7 +945,17 @@ export function DTRDetail() {
         setSellPhase("failed");
         const raw = e instanceof Error ? e.message : "The redemption failed.";
         console.error("Sell failed:", raw);
-        toast({ variant: "destructive", title: "Sell Failed", description: "Your redemption could not be completed. No funds were moved." });
+        // Same gap/reasoning as handleBuyMainnet's catch above -- see
+        // isMultiAssetSellUnsupported's own header for why this should be
+        // unreachable from the UI; kept as an honest fallback regardless.
+        const isSingleAssetGap = raw.includes("no supported way to buy into or sell from a multi-asset Reserve");
+        toast({
+          variant: "destructive",
+          title: "Sell Failed",
+          description: isSingleAssetGap
+            ? "This Reserve holds more than one asset -- there is no supported way to sell/redeem from a multi-asset Reserve on Mainnet yet. No funds were moved."
+            : `Your redemption could not be completed: ${raw} No funds were moved.`,
+        });
       }
     } finally {
       useAppStore.getState().setTxInFlight(false);
@@ -1004,12 +1026,37 @@ export function DTRDetail() {
   // the site at all). On DevNet a non-settlement leg is funded by the swap
   // authority minting that exact test asset to the buyer (Buy) or converting
   // the redeemed amount into devUSDC for the seller (Sell) -- see
-  // api/devnet/swap-sign.ts. On Mainnet every Reserve is USDC-only, so this
-  // is always true there. In practice this should always be true for any
+  // api/devnet/swap-sign.ts. In practice this should always be true for any
   // Reserve that reaches this page, since an ineligible Reserve is filtered
   // out of the app's catalogue entirely before it could ever be opened here;
   // kept as an explicit, independently-checked gate rather than assumed.
-  const isSettlementBuySupported = isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint));
+  //
+  // True on Mainnet only when this Reserve has MORE than one registered
+  // asset: directClient.ts's executeDirectMint/executeDirectRedeem
+  // (packages/sdk/src/directInstructions.ts's requireSingleAssetReserve) is
+  // a direct, no-swap deposit/withdrawal of the Reserve's own SOLE asset --
+  // it throws outright for a genuinely multi-asset Reserve (confirmed live:
+  // BETA, 4 real registered assets, "Buy Failed... no funds were moved" --
+  // 2026-08-24, road-to-mainnet MMT-01). There is no working multi-asset
+  // Buy/Sell path on Mainnet yet (unlike DevNet's swap-authority zap) --
+  // gating on this means an untradable multi-asset Reserve shows an honest
+  // "Not Yet Supported" instead of a confusing, unexplained failure after a
+  // wallet approval attempt.
+  const isMultiAssetMainnetReserve = IS_MAINNET && isOnChain && !!dtr.onChain && dtr.onChain.assets.length > 1;
+  // True for ANY Reserve composed entirely of site-wide supported assets
+  // (see packages/sdk/src/tradableAssets.ts, the same eligibility check that
+  // already determines whether a Reserve is discoverable/visible anywhere on
+  // the site at all). On DevNet a non-settlement leg is funded by the swap
+  // authority minting that exact test asset to the buyer (Buy) or converting
+  // the redeemed amount into devUSDC for the seller (Sell) -- see
+  // api/devnet/swap-sign.ts. In practice this should always be true for any
+  // Reserve that reaches this page, since an ineligible Reserve is filtered
+  // out of the app's catalogue entirely before it could ever be opened here;
+  // kept as an explicit, independently-checked gate rather than assumed.
+  const isSettlementBuySupported =
+    isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint)) && !isMultiAssetMainnetReserve;
+  // Same gate, for Sell/redeem -- see isMultiAssetMainnetReserve's header.
+  const isSettlementSellSupported = isOnChain && !!dtr.onChain && !isMultiAssetMainnetReserve;
   // Reason the 25/50/75/Max quick-select buttons can't be used right now, if
   // any -- distinct from buyProcessing (mid-transaction) so the UI can show
   // an honest "why" instead of a plain disabled control. Deliberately NOT
@@ -1789,7 +1836,13 @@ export function DTRDetail() {
                       variant="destructive"
                       className="w-full h-12 text-lg font-bold shadow-lg shadow-destructive/20"
                       onClick={onSellClick}
-                      disabled={!wallet.connected || sellProcessing || numSellAmount <= 0 || numSellAmount > (holding?.tokenBalance || 0)}
+                      disabled={
+                        !wallet.connected ||
+                        sellProcessing ||
+                        numSellAmount <= 0 ||
+                        numSellAmount > (holding?.tokenBalance || 0) ||
+                        (isOnChain && !isSettlementSellSupported)
+                      }
                     >
                       {txPhaseLabel(sellPhase, CLUSTER_LABEL) ? (
                         <div className="flex items-center gap-2">
@@ -1800,12 +1853,19 @@ export function DTRDetail() {
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
+                      ) : isOnChain && !isSettlementSellSupported ? (
+                        "Sell Not Yet Supported"
                       ) : numSellAmount > (holding?.tokenBalance || 0) ? (
                         "Insufficient Balance"
                       ) : (
                         `Sell ${dtr.ticker}`
                       )}
                     </Button>
+                    {isOnChain && isMultiAssetMainnetReserve && (
+                      <p className="text-xs text-muted-foreground -mt-2">
+                        This Reserve holds more than one asset -- there is no supported way to buy or sell a multi-asset Reserve on Mainnet yet.
+                      </p>
+                    )}
                     {isOnChain && (
                       <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
                         {IS_MAINNET

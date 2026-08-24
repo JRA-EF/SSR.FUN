@@ -7,8 +7,9 @@
 // Run in isolation:
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_mainnet_direct_instructions.ts
 import { expect } from "chai";
-import { computeDirectReserveTokensRequested } from "../packages/sdk/src/directInstructions";
+import { computeDirectReserveTokensRequested, requireSingleAssetReserve } from "../packages/sdk/src/directInstructions";
 import { computeMintRequirements } from "../packages/sdk/src/calculations";
+import type { ZapAssetLeg } from "../packages/sdk/src/zapInstructions";
 
 describe("computeDirectReserveTokensRequested (packages/sdk/src/directInstructions.ts)", () => {
   it("is the exact floor-inverse of computeMintRequirements's per-leg ceil formula -- required amount never exceeds amountIn", () => {
@@ -50,5 +51,39 @@ describe("computeDirectReserveTokensRequested (packages/sdk/src/directInstructio
   it("throws for a non-positive deposit amount rather than returning a nonsensical negative/zero requested amount", () => {
     expect(() => computeDirectReserveTokensRequested(0n, 1_000n, 1_000_000n)).to.throw(/must be positive/);
     expect(() => computeDirectReserveTokensRequested(-1n, 1_000n, 1_000_000n)).to.throw(/must be positive/);
+  });
+});
+
+describe("requireSingleAssetReserve (packages/sdk/src/directInstructions.ts) -- the real gate behind a live-reported failure", () => {
+  // 2026-08-24, road-to-mainnet MMT-01: buying into "BETA" (a real Mainnet
+  // Reserve with 4 registered assets) produced a generic "Buy Failed... no
+  // funds were moved" toast -- traced to this exact guard throwing, since
+  // the direct mint/redeem path only ever supports a genuinely single-asset
+  // Reserve. The error text used to point at "the zap path
+  // (zapInstructions.ts)" as an alternative -- misleading, since that zap is
+  // DevNet-only and has no Mainnet equivalent; fixed to state plainly that
+  // there is no supported multi-asset path on Mainnet yet.
+  const leg = (mint: string): ZapAssetLeg => ({ mint, decimals: 6, reserveAsset: `${mint}-reserveAsset`, vault: `${mint}-vault`, vaultBalanceRaw: "1000000" });
+
+  it("returns the sole asset unchanged for a genuinely single-asset Reserve", () => {
+    const only = leg("MintA1111111111111111111111111111111111");
+    expect(requireSingleAssetReserve([only])).to.equal(only);
+  });
+
+  it("throws an honest, actionable message (never mentioning a nonexistent Mainnet zap fallback) for a real multi-asset Reserve", () => {
+    const assets = [leg("SOL"), leg("Fartcoin"), leg("STONK"), leg("Cupsey")]; // BETA's real shape
+    expect(() => requireSingleAssetReserve(assets)).to.throw(/This Reserve holds 4 assets/);
+    try {
+      requireSingleAssetReserve(assets);
+      expect.fail("should have thrown");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      expect(message).to.not.include("zapInstructions.ts");
+      expect(message).to.include("no supported way to buy into or sell from a multi-asset Reserve");
+    }
+  });
+
+  it("also throws for an empty asset list (an unresolved/incomplete Reserve, never treated as single-asset)", () => {
+    expect(() => requireSingleAssetReserve([])).to.throw(/This Reserve holds 0 assets/);
   });
 });

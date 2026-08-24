@@ -4366,5 +4366,38 @@
   ]
 }
 ```
+
+## DEC-0139
+
+```json
+{
+  "id": "DEC-0139",
+  "date": "2026-08-24",
+  "status": "confirmed-implemented",
+  "decision": "Root-caused the very next \"Buy Failed... no funds were moved\" report against BETA (immediately after DEC-0138's fix deployed) to a real, more serious gap than a wallet-balance display bug: BETA genuinely has 4 registered assets on-chain, and the entire direct Buy/Sell mechanism is hard-scoped to single-asset Reserves only, with no working multi-asset alternative on Mainnet at all. Gated Buy/Sell in the UI to show an honest \"Not Yet Supported\" for a multi-asset Mainnet Reserve instead of letting a depositor attempt (and fail at) a transaction the code was never able to build, and corrected the underlying error message, which had been pointing at a Mainnet zap fallback that doesn't exist.",
+  "context": "Creator reported \"Buy Failed / Your purchase could not be completed, no funds were moved\" trying to mint BETA with SOL, immediately after DEC-0138 (the SOL-balance/wrap fix) had just deployed -- raising the question of whether that fix itself had a bug. Investigated by reading a real on-chain state snapshot rather than guessing.",
+  "rationale": "Queried the live Mainnet ssr_protocol program directly (program.account.reserve.all(), Anchor-decoded, read-only) rather than assuming: BETA (52eHitfwh7sPNnF9Ft8YHBd4EqY6TkjygVfCEhVdxw9y) has assetCount: 4, status Active -- a genuinely diversified, real Reserve, matching the earlier DEC-0137 report's own composition (SOL/Fartcoin/STONK/Cupsey, 25% each). packages/sdk/src/directInstructions.ts's requireSingleAssetReserve -- called by BOTH buildDirectMintInstructions (Buy) and buildDirectRedeemInstructions (Sell) -- throws synchronously, before any transaction is ever built or signed, whenever assets.length !== 1: this is a hard architectural scope (the file's own header: a 'direct, single-signer, single-asset in-kind deposit/withdrawal' path, deliberately not generalized to multi-asset). This means DEC-0138's fix was never reachable for BETA at all -- the throw happens before executeDirectMint's new wrap-SOL logic ever runs, so 'no funds were moved' was accurate, just for an entirely different, more fundamental reason than a balance-display bug. Two real problems followed from this: (1) the thrown message pointed depositors/callers at 'the zap path (zapInstructions.ts)' as if that were a working Mainnet alternative -- it is DevNet-only (depends on a server-held swap authority that mints fake test tokens, no Mainnet equivalent exists) -- corrected to state plainly that no multi-asset Mainnet path exists yet; (2) DTRDetail.tsx's Buy/Sell buttons had no gate for this at all, so a depositor could always attempt (and always fail) a multi-asset Reserve's Buy/Sell, learning why only via a generic toast (the message itself was ALSO generic before this pass -- see 'alternativesConsidered'). Fixed by adding isMultiAssetMainnetReserve (Mainnet + more than one registered asset) and folding it into isSettlementBuySupported (already the single source of truth the Buy panel/button use) plus a new, parallel isSettlementSellSupported for the Sell button, which had no equivalent gate before this pass at all -- both now show an honest 'Buy/Sell Not Yet Supported' with a one-line explanation instead of an active-looking control that always fails. Also made both catch blocks show the real underlying error text (still with an honest, actionable message for this specific known gap) instead of a hardcoded generic string, as defense-in-depth in case a client's cached asset count is ever stale relative to this gate.",
+  "alternativesConsidered": [
+    "Build the real multi-asset Buy/Sell mechanism (e.g. a Jupiter-swap-based zap analogous to DevNet's, or N sequential single-asset legs) in this same pass -- rejected: this is a materially larger feature on live financial value, explicitly out of today's scope per directInstructions.ts's own header, and deserves its own design pass (same conclusion DEC-0138 already reached for the separately-requested USDC-buy-currency feature -- this is the same underlying gap, now confirmed to affect ANY multi-asset Mainnet Reserve, not just a currency preference).",
+    "Leave Buy/Sell enabled for a multi-asset Reserve and only improve the error message -- rejected: an always-failing control that requires a real wallet approval flow to discover it will fail is a worse experience than an honest, pre-emptive 'Not Yet Supported' -- especially for Sell, which had no gate or improved messaging at all before this pass.",
+    "Silently hide the Buy/Sell panel entirely for a multi-asset Reserve rather than showing a disabled button with an explanation -- rejected: an unexplained missing feature reads as broken/incomplete; a disabled control with a one-line reason is more honest about what's actually going on and why."
+  ],
+  "impact": "759/759 offline tests passing (3 new: requireSingleAssetReserve's real single-asset pass-through, its corrected multi-asset error text -- including confirming it no longer references the nonexistent Mainnet zap fallback -- and the empty-list case). tsc -b, oxlint, npm run build all clean. Not yet live-verified in a browser (no browser-automation/wallet tool in this environment) -- Creator's own reload of BETA's page is the next real confirmation that Buy/Sell now show 'Not Yet Supported' instead of an active-looking control.",
+  "affectedAreas": [
+    "src/merge/pages/DTRDetail.tsx",
+    "packages/sdk/src/directInstructions.ts",
+    "tests/phase_mainnet_direct_instructions.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Direct read-only query against the live Mainnet ssr_protocol program (program.account.reserve.all()): BETA (52eHitfwh7sPNnF9Ft8YHBd4EqY6TkjygVfCEhVdxw9y) has assetCount 4, status Active, manager 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen -- alongside 8 other real Mainnet Reserve accounts (mostly ALPHA, single-asset), confirming BETA is genuinely the outlier this bug affects.",
+    "packages/sdk/src/directInstructions.ts's requireSingleAssetReserve, called at the top of both buildDirectMintInstructions and buildDirectRedeemInstructions, before any instruction is built -- confirms the throw happens pre-transaction, matching the honest 'no funds were moved' framing.",
+    "759/759 offline tests passing, including a direct reproduction of BETA's real 4-asset shape against requireSingleAssetReserve."
+  ]
+}
+```
+```
 }
 ```
