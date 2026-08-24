@@ -4334,3 +4334,37 @@
   ]
 }
 ```
+
+## DEC-0138
+
+```json
+{
+  "id": "DEC-0138",
+  "date": "2026-08-24",
+  "status": "confirmed-implemented",
+  "decision": "Fixed Buy on a Reserve whose registered asset is (wrapped) SOL always showing \"Insufficient SOL Balance\" for a wallet that genuinely held real SOL -- the affordability check read an SPL wrapped-SOL token-account balance nothing had ever funded instead of the wallet's real native SOL balance, and the actual mint transaction had the identical gap (never wrapped the deposited SOL at all). Flagged, but did not build, the separately-requested \"buy/mint with USDC\" capability as a larger, explicitly-scoped feature needing its own design pass.",
+  "context": "Creator reported (road-to-mainnet MMT-01, 2026-08-24 10:03), against a Reserve whose Buy panel showed \"Deposit asset: SOL\": the wallet dropdown showed a real 3.4472 SOL balance, but the Buy button read \"Insufficient SOL Balance\" for a 1 SOL purchase. Same report also asked to add USDC as a buy/mint currency (today only the Reserve's own registered asset can be deposited).",
+  "rationale": "Traced both the display and the transaction to the same root gap. DTRDetail.tsx's settlementBalanceHuman (used for both the shown balance and the affordability check) is sourced from fetchTokenBalanceRaw(connection, buyAsset.mint, owner) -- packages/sdk/src/readOnly.ts confirms this reads an SPL Associated Token Account (getAssociatedTokenAddress + getAccount), which for the WRAPPED SOL mint means the wallet's WSOL token account, not its native SOL balance the wallet dropdown itself reads via connection.getBalance (see useAppStore.ts's syncWalletFromChain, already storing this correctly in wallet.sol). A normal wallet holding only native SOL has no WSOL ATA at all, so this read as 0 balance regardless of the wallet's real SOL holdings -- the bug reproduces for ANY amount, not an edge case. Separately and more seriously: even had the balance check passed, the actual mint transaction (directClient.ts's executeDirectMint -> packages/sdk/src/directInstructions.ts's buildDirectMintInstructions) never wrapped the depositor's SOL at all -- it idempotent-creates the WSOL ATA (a no-op on an empty account) then tries to transfer FROM it, which would fail on-chain with an insufficient-balance error, exactly mirroring createReserveClient.ts's own documented wrap-SOL gap that DEC-0124's seed-funding pass already fixed for Create Reserve, just never ported to the Buy path. Fixed both: DTRDetail.tsx now sources the displayed/checked balance from wallet.sol (with a small 0.01 SOL fee-reserve subtracted from the Max quick-select amount specifically, since wrapping spends out of the exact same balance the transaction fee is paid from -- no other deposit asset has this property) whenever the deposit asset is wrapped SOL; executeDirectMint now prepends a SystemProgram.transfer + createSyncNativeInstruction for exactly the deposited amount, inserted after buildDirectMintInstructions' own two idempotent ATA-create instructions and before the mint instruction itself (order matters -- the ATA must exist before it can be funded), mirroring createReserveClient.ts's established wrap-SOL pattern exactly. The separately-requested USDC buy/mint capability was investigated but NOT built this pass: directInstructions.ts's own header states this direct-mint path is deliberately single-asset, no-swap, by explicit product decision (\"Creator has scoped Mainnet Reserves to a single primary settlement asset 'for simplicity for now'\") -- letting a depositor pay in USDC for a SOL-registered Reserve would require a real Jupiter-swap leg (the same class of mechanism DEC-0124 already built for Create Reserve's seed funding, but not yet for the ongoing Buy flow), with its own slippage/quote/route-failure handling on live, real-value transactions. Reversing a documented deliberate scope decision on a live Mainnet money flow deserves its own explicit design pass, not a same-pass addition alongside three unrelated bug fixes.",
+  "alternativesConsidered": [
+    "Read wallet.sol unconditionally for every Buy balance check, not just when the deposit asset is wrapped SOL -- rejected: would silently show the wrong (native SOL) balance for a USDC- or other-SPL-asset-backed Reserve, reintroducing exactly the class of bug this fix removes, just for a different asset.",
+    "Also validate buyInsufficientBalance itself against the 0.01 SOL fee reserve, not just the Max quick-select amount -- deferred: the reported bug was specifically about the displayed/checked balance being wrong, not about a manually-typed near-max amount failing on fees; the Max button (the actual product surface a user would hit this through) is fixed, and over-restricting manual entry risks a false 'insufficient' for a genuinely affordable amount.",
+    "Attempt the USDC buy/mint feature in this same pass since it was reported alongside the balance bug -- rejected: it is a materially larger, separately-scoped feature (a live Jupiter swap leg on real value) that reverses an explicit prior product decision; building it without a dedicated design/confirmation pass on a live Mainnet flow is a real-money risk this pass's effort budget and scope shouldn't absorb implicitly."
+  ],
+  "impact": "756/756 offline tests passing (unchanged -- executeDirectMint/directClient.ts is wallet-signing orchestration code, the same class this codebase already doesn't unit-test directly; see createReserveClient.ts's signAndSend for the established precedent of testing only the pure logic extracted from this class of function). tsc -b, oxlint, npm run build all clean. Not yet live-verified against a real Mainnet SOL-deposit Buy (no browser-automation/wallet tool in this environment) -- Creator's own retry is the next real confirmation.",
+  "affectedAreas": [
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/lib/directClient.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Creator-supplied screenshot: wallet dropdown showing 3.4472 real SOL, Buy panel for a 1 SOL purchase showing \"Insufficient SOL Balance\".",
+    "packages/sdk/src/readOnly.ts's fetchTokenBalanceRaw: `getAssociatedTokenAddress(mint, owner)` + `getAccount(...)`, confirming an SPL-token-account read, not a native lamport balance read.",
+    "packages/sdk/src/directInstructions.ts's buildDirectMintInstructions: idempotent-creates the deposit asset's ATA but contains no SystemProgram.transfer/createSyncNativeInstruction anywhere -- confirmed by direct grep, zero matches.",
+    "createReserveClient.ts's existing, working wrap-SOL block (create ATA idempotent -> SystemProgram.transfer -> createSyncNativeInstruction) used as the exact pattern mirrored into directClient.ts's executeDirectMint."
+  ]
+}
+```
+}
+```

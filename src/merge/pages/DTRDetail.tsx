@@ -13,6 +13,7 @@ import {
   computeNetMintOutput,
   findReserve,
   findProtocolConfig,
+  WRAPPED_SOL_MINT,
   type ZapAssetLeg,
 } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
@@ -961,11 +962,30 @@ export function DTRDetail() {
   // refreshRealReserveNow/the initial-mount effect above) -- this just
   // converts it to human units with the matching decimals.
   const buyAssetForDisplay = resolveBuyAsset(dtr.onChain);
-  const settlementBalanceHuman = Number(settlementBalanceRaw) / 10 ** buyAssetForDisplay.decimals;
+  // Wrapped SOL is a real exception to "settlementBalanceRaw is already
+  // fetched against THAT mint" above: fetchTokenBalanceRaw reads an SPL
+  // token-account balance, but a normal wallet holds NATIVE SOL, not
+  // pre-wrapped SOL -- confirmed live: "Insufficient SOL Balance" shown for
+  // a wallet that genuinely held 3.4472 real SOL (2026-08-24, road-to-mainnet
+  // MMT-01), because this was reading (and directClient.ts's Buy transaction
+  // was requiring) an SPL balance nothing had ever funded. wallet.sol is the
+  // store's own real, chain-synced NATIVE balance (see syncWalletFromChain);
+  // use it here instead whenever the deposit asset is wrapped SOL. The Buy
+  // transaction itself now wraps the deposited amount as part of minting
+  // (see directClient.ts's executeDirectMint), so this balance check is
+  // finally checking the same thing the transaction actually needs.
+  const isBuyAssetWrappedSol = buyAssetForDisplay.mint.equals(WRAPPED_SOL_MINT);
+  const settlementBalanceHuman = isBuyAssetWrappedSol ? wallet.sol : Number(settlementBalanceRaw) / 10 ** buyAssetForDisplay.decimals;
   // "Available" for the quick-select buttons: always the trader's real,
   // chain-confirmed settlement-asset balance -- never a hardcoded fallback,
-  // and never gated on this Reserve's asset composition.
-  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(settlementBalanceHuman) : 0;
+  // and never gated on this Reserve's asset composition. When depositing
+  // native SOL, reserve a small buffer for this same transaction's own
+  // network fee/rent -- unlike every other deposit asset, wrapping SOL
+  // spends directly out of the SAME balance the fee is paid from, so
+  // offering the full balance as "Max" would leave nothing to pay the fee
+  // with and the transaction would fail outright.
+  const SOL_FEE_RESERVE = 0.01;
+  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(isBuyAssetWrappedSol ? settlementBalanceHuman - SOL_FEE_RESERVE : settlementBalanceHuman) : 0;
   const buyInsufficientBalance = isOnChain && numBuyAmount > settlementBalanceHuman;
   // True when EVERY one of this Reserve's registered assets is the
   // settlement asset itself -- the only composition where Buy/Sell involve
