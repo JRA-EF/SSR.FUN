@@ -39,7 +39,8 @@ import { AmbiguousConfirmationError } from "../src/merge/lib/rpcResilience";
 import { decodeSsrProtocolError, extractCustomErrorCode, describeOnChainError, ssrProtocolErrorCodeRange } from "../packages/sdk/src/errors";
 import { resolveProtocolFeeDestinationTokenAccount } from "../packages/sdk/src/pda";
 import { computeEffectiveFeeSplit, splitTotalFee, PROTOCOL_MIN_MINT_FEE_BPS } from "../packages/sdk/src/feeMath";
-import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy, packInstructionsBySize } from "../src/merge/lib/createReserveClient";
+import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy, packInstructionsBySize, seedRawAmountForAsset } from "../src/merge/lib/createReserveClient";
+import { WRAPPED_SOL_MINT } from "../packages/sdk/src/zapPricing";
 import { TransactionInstruction } from "@solana/web3.js";
 
 describe("Reserve deploy resumability -- 1. Fresh Reserve deployment (determineDeploymentResumePoint)", () => {
@@ -436,5 +437,44 @@ describe("Reserve deploy resumability -- 10. Splitting create-and-register acros
     const huge = makeIx(30, 900);
     const batches = packInstructionsBySize(feePayer, [huge]);
     expect(batches).to.deep.equal([[huge]]);
+  });
+});
+
+describe("Reserve deploy resumability -- 11. seedRawAmountForAsset's real SOL/USD price (2026-08-24, road-to-mainnet MCR-01, DEC-0141)", () => {
+  // Real bug, not just a display issue: this function computes the ACTUAL
+  // raw lamport amount a creator is asked to wrap and deposit for a
+  // wrapped-SOL leg. Before this fix, every Mainnet caller effectively used
+  // the DevNet zap's fixed SOL_TEST_PRICE_USD ($20/SOL) regardless of
+  // cluster -- a creator including SOL in a Reserve was asked to wrap
+  // (real SOL price / $20)x too much or too little real SOL for their
+  // stated USD seed allocation. Reported live: the Review & Deploy Wallet
+  // Cost Summary showed "0.13177 SOL (≈ $2.64)" -- 2.64/0.13177 = exactly
+  // $20.04/SOL, confirming the stale peg was in effect on a real Mainnet
+  // deployment.
+  const wsolAsset = { mint: WRAPPED_SOL_MINT.toBase58(), decimals: 9 };
+  const usdcLikeAsset = { mint: "SomeOtherMint1111111111111111111111111", decimals: 6 };
+
+  it("uses the SUPPLIED price, not a fixed constant -- $180/SOL and $20/SOL give very different lamport amounts for the identical $100 target", () => {
+    const at180 = seedRawAmountForAsset(wsolAsset, 100, 180);
+    const at20 = seedRawAmountForAsset(wsolAsset, 100, 20);
+    // $100 / $180 ~= 0.5556 SOL; $100 / $20 = 5 SOL -- the old fixed-peg
+    // result would have requested ~9x too much real SOL for the same $100.
+    expect(at180).to.be.closeTo(555_555_555n, 1_000_000n);
+    expect(at20).to.equal(5_000_000_000n);
+    expect(Number(at20) / Number(at180)).to.be.closeTo(180 / 20, 0.01);
+  });
+
+  it("a non-SOL asset is completely unaffected by solPriceUsd -- still the simple $1-peg raw conversion", () => {
+    expect(seedRawAmountForAsset(usdcLikeAsset, 50, 999_999)).to.equal(50_000_000n); // 50 * 10^6, price ignored
+  });
+
+  it("throws rather than silently using a fabricated/zero price for a wrapped-SOL leg -- a wrong real-SOL amount is a fund-safety issue, not something to guess through", () => {
+    expect(() => seedRawAmountForAsset(wsolAsset, 100, 0)).to.throw(/real current SOL\/USD price is required/);
+    expect(() => seedRawAmountForAsset(wsolAsset, 100, -5)).to.throw(/real current SOL\/USD price is required/);
+  });
+
+  it("never throws for a non-SOL asset even with an invalid solPriceUsd -- the price is simply irrelevant to that computation", () => {
+    expect(() => seedRawAmountForAsset(usdcLikeAsset, 50, 0)).to.not.throw();
+    expect(() => seedRawAmountForAsset(usdcLikeAsset, 50, -1)).to.not.throw();
   });
 });

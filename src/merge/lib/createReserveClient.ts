@@ -53,7 +53,7 @@ import {
   DEVNET_FIXTURES,
   WRAPPED_SOL_MINT,
   PROTOCOL_MIN_MINT_FEE_BPS,
-  usdToSolLamports,
+  SOL_TEST_PRICE_USD,
   isSupportedAssetMint,
   MAINNET_USDC_MINT,
   type NewReserveAddresses,
@@ -270,13 +270,29 @@ export async function uploadReserveMetadata(origin: string, input: ReserveMetada
  * Converts a USD seed-allocation target into the raw token amount to deposit.
  * The DevNet fixture test assets are pegged 1 unit = $1 (see
  * FRONTEND_INTEGRATION.md), so their raw amount is just `usd * 10**decimals`.
- * Wrapped SOL is NOT 1:1 with USD -- it must go through the same
- * SOL_TEST_PRICE_USD conversion the Buy/Sell zap uses (usdToSolLamports),
- * otherwise a creator would be asked to wrap SOL_TEST_PRICE_USD-times too
- * much (or too little) real SOL for their stated USD allocation.
+ * Wrapped SOL is NOT 1:1 with USD -- it needs a real SOL/USD price to convert
+ * correctly. `solPriceUsd` is caller-supplied (DevNet passes the fixed
+ * SOL_TEST_PRICE_USD=$20 test peg; Mainnet MUST pass a real, live price) --
+ * this function itself has no cluster awareness, so a caller that ever
+ * passes the wrong one gets the wrong amount, not a silent DevNet/Mainnet
+ * mismatch buried in here. **Real bug, not just a display issue** (2026-08-24,
+ * road-to-mainnet MCR-01): before this fix, every Mainnet caller of this
+ * function effectively used usdToSolLamports (the DevNet zap's own
+ * SOL_TEST_PRICE_USD-based helper) regardless of cluster -- a Mainnet
+ * creator including SOL in their Reserve was asked to wrap
+ * (real SOL price / $20)x too much or too little real SOL for their stated
+ * USD seed allocation, not merely shown a wrong number. Throws rather than
+ * silently using a fabricated price if solPriceUsd isn't a real positive
+ * number AND the asset is wrapped SOL -- an incorrect amount of real SOL
+ * requested is a fund-safety issue, not something to guess through.
  */
-function seedRawAmountForAsset(asset: Pick<CreateReserveAssetInput, "mint" | "decimals">, usd: number): bigint {
-  if (isWrappedSol(asset.mint)) return usdToSolLamports(usd);
+export function seedRawAmountForAsset(asset: Pick<CreateReserveAssetInput, "mint" | "decimals">, usd: number, solPriceUsd: number): bigint {
+  if (isWrappedSol(asset.mint)) {
+    if (!(solPriceUsd > 0)) {
+      throw new Error("A real current SOL/USD price is required to compute how much SOL to wrap for this Reserve, but none is available right now. Try again shortly.");
+    }
+    return BigInt(Math.floor((usd / solPriceUsd) * 1_000_000_000));
+  }
   return BigInt(Math.max(1000, Math.floor(usd * 10 ** asset.decimals)));
 }
 
@@ -379,11 +395,22 @@ export async function getRentConstants(connection: Connection): Promise<RentCons
   return promise;
 }
 
-/** Computes a real, on-chain-rent-calculator-backed cost estimate BEFORE any signature is requested -- see CreateDTR.tsx's Review & Deploy step. Never submits a transaction -- a failure here (e.g. rate-limiting) can never mean a launch partially happened. */
+/**
+ * Computes a real, on-chain-rent-calculator-backed cost estimate BEFORE any
+ * signature is requested -- see CreateDTR.tsx's Review & Deploy step. Never
+ * submits a transaction -- a failure here (e.g. rate-limiting) can never
+ * mean a launch partially happened.
+ *
+ * `solPriceUsd` -- see seedRawAmountForAsset's header for why this must be a
+ * REAL current price on Mainnet, never a fixed test peg: it determines the
+ * actual lamport amount a SOL-including Reserve's creator is asked to wrap,
+ * not just a display number.
+ */
 export async function estimateCreateReserveCost(
   connection: Connection,
   assets: CreateReserveAssetInput[],
   seedTotalUsd: number,
+  solPriceUsd: number,
 ): Promise<CreateReserveCostEstimate> {
   const { reserveRent, mintRent, assetRent, vaultRent } = await getRentConstants(connection);
 
@@ -392,7 +419,7 @@ export async function estimateCreateReserveCost(
   const managerReserveTokenAtaRentLamports = BigInt(vaultRent); // an ATA is a TokenAccount, same size/rent
 
   const wrapAssets = assets.filter((a) => isWrappedSol(a.mint));
-  const solSeedFundingLamports = wrapAssets.reduce((sum, a) => sum + seedRawAmountForAsset(a, seedTotalUsd * a.seedWeightFraction), 0n);
+  const solSeedFundingLamports = wrapAssets.reduce((sum, a) => sum + seedRawAmountForAsset(a, seedTotalUsd * a.seedWeightFraction, solPriceUsd), 0n);
   // Wrapping SOL needs its own ATA + rent, paid by the creator, on top of the amount wrapped.
   const wsolAtaRent = wrapAssets.length > 0 ? BigInt(vaultRent) : 0n;
 
@@ -882,6 +909,8 @@ export async function createReserveOnChain(params: {
   allowFaucet?: boolean;
   /** See JupiterSwapFundingOptions -- Mainnet only, undefined/disabled everywhere else. */
   jupiterSwap?: JupiterSwapFundingOptions;
+  /** See seedRawAmountForAsset's header -- REQUIRED to be a real, live SOL/USD price on Mainnet if `assets` includes wrapped SOL (never the DevNet test peg there); defaults to SOL_TEST_PRICE_USD so every pre-existing DevNet caller/test is unaffected. */
+  solPriceUsd?: number;
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -900,6 +929,7 @@ export async function createReserveOnChain(params: {
   const additionalManagerWallets = validateAdditionalManagers(params.additionalManagers ?? [], wallet.publicKey);
   const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
   const allowFaucet = params.allowFaucet ?? true;
+  const solPriceUsd = params.solPriceUsd ?? SOL_TEST_PRICE_USD;
   const program = buildReadOnlyProgram(connection) as any;
 
   params.onProgress("create-and-register");
@@ -984,7 +1014,7 @@ export async function createReserveOnChain(params: {
   }
 
   params.onProgress("fund-seed-assets");
-  const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction));
+  const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction, solPriceUsd));
 
   let fundSeedAssetsSig: string | null = null;
   let finalSeedAmounts = seedAmounts;
@@ -1114,11 +1144,14 @@ export async function resumeReserveDeploymentOnChain(params: {
   allowFaucet?: boolean;
   /** Same meaning as createReserveOnChain's own `jupiterSwap`. */
   jupiterSwap?: JupiterSwapFundingOptions;
+  /** Same meaning as createReserveOnChain's own `solPriceUsd`. */
+  solPriceUsd?: number;
 }): Promise<CreateReserveResult> {
   const { connection, wallet, pending } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
   const allowFaucet = params.allowFaucet ?? true;
+  const solPriceUsd = params.solPriceUsd ?? SOL_TEST_PRICE_USD;
   const reserveAddress = new PublicKey(pending.reserve);
   const candidateMints = pending.assets.map((a) => new PublicKey(a.mint));
 
@@ -1208,7 +1241,7 @@ export async function resumeReserveDeploymentOnChain(params: {
 
   // create-and-register (including any catch-up above) landed with exactly
   // the expected assets registered. Fund any real shortfall, then seed.
-  const seedAmounts = pending.assets.map((a) => seedRawAmountForAsset(a, pending.seedTotalUsd * a.seedWeightFraction));
+  const seedAmounts = pending.assets.map((a) => seedRawAmountForAsset(a, pending.seedTotalUsd * a.seedWeightFraction, solPriceUsd));
 
   params.onProgress("fund-seed-assets");
   let fundSeedAssetsSig: string | null = null;

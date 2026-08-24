@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
+import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
 import { useAppStore } from "@/store/useAppStore";
@@ -356,6 +357,34 @@ export function CreateDTR() {
   const [newManagerAddress, setNewManagerAddress] = useState("");
   const [costEstimate, setCostEstimate] = useState<CreateReserveCostEstimate | null>(null);
   const [costEstimateError, setCostEstimateError] = useState<string | null>(null);
+  // Real current SOL/USD price for the Wallet Cost Summary's "(≈ $X)" line --
+  // that display used to multiply by SOL_TEST_PRICE_USD (a fixed $20 DevNet
+  // test constant) unconditionally, including on Mainnet, showing a real SOL
+  // amount's USD value at a stale price (2026-08-24, road-to-mainnet
+  // MCR-01/MMT-01: reported as "$2.64" for 0.13177 SOL, i.e. exactly
+  // $20.04/SOL). null (never a fabricated number) until a real price loads;
+  // the display falls back to an honest "USD estimate unavailable" rather
+  // than ever showing SOL_TEST_PRICE_USD's placeholder on Mainnet.
+  const [solPriceUsd, setSolPriceUsd] = useState<number | null>(null);
+  useEffect(() => {
+    if (!IS_MAINNET) return;
+    let cancelled = false;
+    fetchAssetPricesUsd([{ mint: WRAPPED_SOL_MINT.toBase58(), decimals: 9 }])
+      .then((prices) => {
+        if (cancelled) return;
+        const info = prices[WRAPPED_SOL_MINT.toBase58()];
+        if (info && info.usdPrice !== null && Number.isFinite(info.usdPrice) && info.usdPrice > 0) setSolPriceUsd(info.usdPrice);
+      })
+      .catch(() => {
+        // Best-effort -- the Wallet Cost Summary's SOL amount itself (the
+        // number that actually matters for what Phantom will ask for) is
+        // computed independently of this and is never affected; only the
+        // secondary "(≈ $X)" USD estimate falls back to "unavailable".
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // The permanent metadata URL Review will display and Launch will submit
   // on-chain -- see uploadReserveMetadata's header for the full
   // MetadataUriTooLong root-cause writeup this replaces (the old flow
@@ -392,7 +421,7 @@ export function CreateDTR() {
         const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
         return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeightForCost) * 10_000), seedWeightFraction: a.weight / totalWeightForCost };
       });
-      estimateCreateReserveCost(connection, realAssets, seedUsd)
+      estimateCreateReserveCost(connection, realAssets, seedUsd, IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD)
         .then((est) => {
           if (!cancelled) {
             setCostEstimate(est);
@@ -418,7 +447,7 @@ export function CreateDTR() {
       cancelled = true;
       clearTimeout(debounceHandle);
     };
-  }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection, REAL_ASSET_BY_SYMBOL]);
+  }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection, REAL_ASSET_BY_SYMBOL, solPriceUsd]);
 
   // Uploads this Reserve's off-chain metadata (name/ticker/description/
   // category/buyTaxPct/sellTaxPct) and resolves the resulting permanent URL
@@ -549,6 +578,10 @@ export function CreateDTR() {
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
         jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: pendingAtStart.seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
+        // 0 (never the DevNet SOL_TEST_PRICE_USD default) when the real price
+        // hasn't loaded yet -- seedRawAmountForAsset throws its own clear
+        // error rather than silently wrapping the wrong amount of real SOL.
+        solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
       });
       finalizeResumedReserve(result, pendingAtStart);
     } catch (e) {
@@ -937,6 +970,10 @@ export function CreateDTR() {
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
         jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
+        // 0 (never the DevNet SOL_TEST_PRICE_USD default) when the real price
+        // hasn't loaded yet -- seedRawAmountForAsset throws its own clear
+        // error rather than silently wrapping the wrong amount of real SOL.
+        solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
         onProgress: setCreateStep,
         // Persisted immediately -- if the page reloads (or the user leaves
         // and comes back later) anywhere after this fires, the mount-time
@@ -1841,7 +1878,16 @@ export function CreateDTR() {
                           <span>Estimated total SOL required</span>
                           <span className="font-merge-mono text-primary">
                             {(Number(costEstimate.totalLamports) / 1e9).toFixed(5)} SOL
-                            <span className="text-muted-foreground font-normal"> (&asymp; ${((Number(costEstimate.totalLamports) / 1e9) * SOL_TEST_PRICE_USD).toFixed(2)})</span>
+                            <span className="text-muted-foreground font-normal">
+                              {" "}
+                              (&asymp;{" "}
+                              {IS_MAINNET
+                                ? solPriceUsd !== null
+                                  ? `$${((Number(costEstimate.totalLamports) / 1e9) * solPriceUsd).toFixed(2)}`
+                                  : "USD estimate unavailable"
+                                : `$${((Number(costEstimate.totalLamports) / 1e9) * SOL_TEST_PRICE_USD).toFixed(2)}`}
+                              )
+                            </span>
                           </span>
                         </div>
                         <p className="text-xs text-muted-foreground">

@@ -4431,6 +4431,40 @@
   ]
 }
 ```
+
+## DEC-0141
+
+```json
+{
+  "id": "DEC-0141",
+  "date": "2026-08-24",
+  "status": "confirmed-implemented",
+  "decision": "Fixed a real (not just display) fund-safety bug: every Mainnet caller that computes how much real SOL a Create-Reserve creator must wrap for a wrapped-SOL leg was using the DevNet zap's fixed SOL_TEST_PRICE_USD=$20/SOL test peg instead of a real live price -- meaning a Mainnet creator including SOL in their Reserve was asked to wrap (real SOL price / $20)x too much or too little real SOL for their stated USD seed allocation, not merely shown a wrong number on screen. Threaded a real, live-fetched SOL/USD price through estimateCreateReserveCost/createReserveOnChain/resumeReserveDeploymentOnChain, fixed the Review & Deploy Wallet Cost Summary's own stale USD display, and confirmed via a targeted audit that no other Mainnet-reachable code path had the same bug.",
+  "context": "Creator reported the Review & Deploy screen for a real Mainnet Reserve (\"CHARLIE\") showing \"Estimated total SOL required: 0.13177 SOL (≈ $2.64)\" and asked for the SOL cost's USD value to always reflect the real price, plus a quick pass (\"once over\") for the same issue elsewhere.",
+  "rationale": "2.64 / 0.13177 = $20.04/SOL -- confirmed this is exactly SOL_TEST_PRICE_USD (packages/sdk/src/zapPricing.ts's fixed DevNet test constant, $20), used unconditionally (no IS_MAINNET guard) in the Wallet Cost Summary's own display line. Fixing only that display would have been the requested fix but not the real one: grepping every SOL_TEST_PRICE_USD usage found a second, far more serious instance -- createReserveClient.ts's seedRawAmountForAsset (the function that computes the ACTUAL raw lamport amount wrapped and deposited for a wrapped-SOL leg during real seeding, not an estimate) calls usdToSolLamports for any wrapped-SOL asset, which is itself built on SOL_TEST_PRICE_USD, with NO cluster check anywhere in the call chain. Every other seed asset already self-corrects to a real price via the existing Jupiter-swap-funding loop (fundSeedAssetsIdempotent overwrites its initial $1-peg guess with a live quote's real outAmount) -- but isJupiterSwapEligible explicitly EXCLUDES wrapped SOL (funded by direct wrap, not a swap, per DEC-0124's design), so a wrapped-SOL leg's amount was the ONE seed amount that never got corrected: it stayed pinned to the $20/SOL-derived estimate all the way through to the real on-chain SystemProgram.transfer that wraps it. At a real SOL price far above $20, this means a creator including SOL in their Reserve was asked to wrap many times more real SOL than their stated USD allocation intended (worked example, $100 target: $20/SOL asks for 5 SOL; $180/SOL should ask for ~0.556 SOL -- a ~9x overcharge in real SOL terms at that price). Fixed at the source: seedRawAmountForAsset now takes solPriceUsd as a required parameter (cluster-agnostic itself -- the caller decides which price, so there is no place left to silently default to the wrong one) and throws rather than fabricating an amount if a wrapped-SOL leg is priced at 0 or negative. Threaded solPriceUsd (optional, defaulting to SOL_TEST_PRICE_USD so every pre-existing DevNet call site/test is unaffected) through estimateCreateReserveCost, createReserveOnChain, and resumeReserveDeploymentOnChain. CreateDTR.tsx now fetches a real live SOL/USD price on mount via the same api/mainnet/asset-prices.ts endpoint DEC-0134/DEC-0137/DEC-0140 already use elsewhere, passing it (never a Mainnet fallback to the DevNet peg) into all three call sites, and using it for the Wallet Cost Summary's own USD display too (falling back to an honest \"USD estimate unavailable\" rather than a wrong number if the fetch hasn't completed yet). Audited every remaining SOL_TEST_PRICE_USD usage (zapPricing.ts's own definition, zapInstructions.ts's DevNet-only zap, api/devnet/landing-stats.ts and api/devnet/swap-sign.ts, both explicitly under the api/devnet/ path, and the ALREADY-CORRECTLY-guarded !IS_MAINNET display branch in CreateDTR.tsx's seed-amount helper text) -- confirmed every remaining one is genuinely DevNet-scoped, not Mainnet-reachable.",
+  "alternativesConsidered": [
+    "Fix only the Wallet Cost Summary's display line, as literally requested -- rejected once the deeper seedRawAmountForAsset bug was found during the requested \"once over\": the display bug was a symptom of the same root constant being used without a cluster check; leaving the real wrap-amount computation on the fixed peg would have left the actual fund-safety issue in place while making the screen LOOK correct.",
+    "Give seedRawAmountForAsset a fallback default (e.g. silently use SOL_TEST_PRICE_USD if no real price is supplied) instead of throwing -- rejected: silently falling back to a $20 peg for a real Mainnet wrap amount is exactly the bug being fixed; throwing surfaces the honest 'price not available yet' state through this app's existing error-handling paths (costEstimateError / CreateReserveStepError) instead.",
+    "Route the wrapped-SOL leg through the same Jupiter-swap-funding mechanism as other assets so it also self-corrects to a live quote -- rejected (same reasoning as DEC-0140's identical alternative for the multi-asset Buy path): Jupiter's swap API auto-unwraps WSOL output back to native SOL by default, and this codebase has never funded a wrapped-SOL leg that way; fixing the PRICE while keeping the proven direct-wrap-from-the-creator's-own-SOL funding source is the smaller, safer change."
+  ],
+  "impact": "768/768 offline tests passing (4 new: seedRawAmountForAsset's real-price-vs-fixed-constant divergence at a worked $100/$180-vs-$20 example, confirming a non-SOL asset is unaffected by the price, and confirming it throws rather than fabricates for an invalid price on a wrapped-SOL leg). tsc -b, oxlint, npm run build all clean. Not live-verified against a real Mainnet SOL-including Create Reserve flow (no browser-automation tool in this environment) -- Creator's own next Reserve creation including SOL is the real-world confirmation.",
+  "affectedAreas": [
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "tests/phase_reserve_deploy_resumability.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Creator-supplied Review & Deploy screenshot: \"Estimated total SOL required: 0.13177 SOL (≈ $2.64)\" -- 2.64/0.13177 = $20.04/SOL, matching SOL_TEST_PRICE_USD exactly.",
+    "packages/sdk/src/zapPricing.ts: `export const SOL_TEST_PRICE_USD = 20;`, confirmed as the DevNet zap's own fixed test constant, not a real price feed.",
+    "createReserveClient.ts's isJupiterSwapEligible: `!isWrappedSol(mint) && mint !== MAINNET_USDC_MINT` -- confirms wrapped SOL is explicitly excluded from the self-correcting live-quote loop every other non-USDC seed asset gets, so its amount was the one that stayed pinned to the stale estimate.",
+    "768/768 offline tests passing, including a worked $100-target example showing $20/SOL vs $180/SOL producing a ~9x difference in real lamports requested."
+  ]
+}
+```
+```
 ```
 }
 ```
