@@ -268,7 +268,7 @@ describe("Deployment-in-progress persistence (survives a reload mid-flight)", ()
 
   afterEach(() => clearPendingReserveDeploy());
 
-  const SAMPLE_ASSETS = [{ mint: "MintX", decimals: 6, seedWeightFraction: 1 }];
+  const SAMPLE_ASSETS = [{ mint: "MintX", decimals: 6, seedWeightFraction: 1, weightBps: 10_000 }];
 
   it("round-trips a saved marker for the matching wallet", () => {
     savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "1", name: "Test", ticker: "TST", startedAt: Date.now(), assets: SAMPLE_ASSETS, seedTotalUsd: 10 });

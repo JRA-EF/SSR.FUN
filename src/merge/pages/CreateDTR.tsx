@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -88,10 +88,11 @@ const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
 };
 
 /** How many wallet approvals createReserveOnChain will request for this asset selection -- see createReserveClient.ts's signature-count note. */
-/** Rough fallback ONLY for the brief window before the real costEstimate (which has the authoritative numTransactions, including any Jupiter swaps -- see createReserveClient.ts's estimateCreateReserveCost) has loaded -- see its call site, which prefers costEstimate.numTransactions once available. */
+/** Rough fallback ONLY for the brief window before the real costEstimate (which has the authoritative numTransactions, including any Jupiter swaps and the real registration-batch count -- see createReserveClient.ts's estimateCreateReserveCost) has loaded -- see its call site, which prefers costEstimate.numTransactions once available. Mirrors estimateCreateReserveCost's own conservative per-batch asset count so this brief-window number doesn't undercount for a large asset selection. */
 function expectedApprovalCount(assets: { symbol: string }[]): number {
   const needsSolWrap = assets.some((a) => a.symbol === "SOL");
-  return needsSolWrap ? 3 : 2;
+  const registerBatches = Math.max(1, Math.ceil(assets.length / 6));
+  return registerBatches + 1 /* seed */ + (needsSolWrap ? 1 : 0);
 }
 
 
@@ -924,7 +925,7 @@ export function CreateDTR() {
             name,
             ticker: ticker.toUpperCase(),
             startedAt: Date.now(),
-            assets: realAssets.map((a) => ({ mint: a.mint, decimals: a.decimals, seedWeightFraction: a.seedWeightFraction })),
+            assets: realAssets.map((a) => ({ mint: a.mint, decimals: a.decimals, seedWeightFraction: a.seedWeightFraction, weightBps: a.weightBps })),
             seedTotalUsd,
           });
         },
@@ -1810,9 +1811,36 @@ export function CreateDTR() {
                     )}
                     <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
                       <p className="font-semibold text-foreground">This will request {costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets)} wallet approvals:</p>
-                      <p>1. Create the Reserve + register {assets.length} reserve asset{assets.length === 1 ? "" : "s"} (combined into one transaction)</p>
-                      {assets.some((a) => a.symbol === "SOL") && <p>2. Wrap your SOL for the seed deposit</p>}
-                      <p>{assets.some((a) => a.symbol === "SOL") ? "3" : "2"}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>
+                      {(() => {
+                        // Registering many assets can take more than one transaction --
+                        // Solana caps a single transaction's size, and a large asset
+                        // selection (roughly 7+) doesn't fit alongside creating the
+                        // Reserve in just one (see createReserveClient.ts's
+                        // packInstructionsBySize). registerBatches here is the same
+                        // conservative estimate costEstimate.numTransactions itself uses
+                        // -- the real submission splits by exact measured size, so the
+                        // real count in the popups below may differ slightly.
+                        const registerBatches = Math.max(1, Math.ceil(assets.length / 6));
+                        const needsSolWrap = assets.some((a) => a.symbol === "SOL");
+                        let step = 1;
+                        const lines: ReactNode[] = [];
+                        if (registerBatches === 1) {
+                          lines.push(
+                            <p key="register">
+                              {step++}. Create the Reserve + register {assets.length} reserve asset{assets.length === 1 ? "" : "s"} (one transaction)
+                            </p>,
+                          );
+                        } else {
+                          lines.push(
+                            <p key="register">
+                              {step++}. Create the Reserve, then register {assets.length} reserve assets across {registerBatches} transactions -- Solana limits how many can fit in one
+                            </p>,
+                          );
+                        }
+                        if (needsSolWrap) lines.push(<p key="wrap">{step++}. Wrap your SOL for the seed deposit</p>);
+                        lines.push(<p key="seed">{step}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>);
+                        return lines;
+                      })()}
                       {(() => {
                         const grossSeedTokens = Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10));
                         const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);

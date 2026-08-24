@@ -39,7 +39,8 @@ import { AmbiguousConfirmationError } from "../src/merge/lib/rpcResilience";
 import { decodeSsrProtocolError, extractCustomErrorCode, describeOnChainError, ssrProtocolErrorCodeRange } from "../packages/sdk/src/errors";
 import { resolveProtocolFeeDestinationTokenAccount } from "../packages/sdk/src/pda";
 import { computeEffectiveFeeSplit, splitTotalFee, PROTOCOL_MIN_MINT_FEE_BPS } from "../packages/sdk/src/feeMath";
-import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy } from "../src/merge/lib/createReserveClient";
+import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy, packInstructionsBySize } from "../src/merge/lib/createReserveClient";
+import { TransactionInstruction } from "@solana/web3.js";
 
 describe("Reserve deploy resumability -- 1. Fresh Reserve deployment (determineDeploymentResumePoint)", () => {
   it("reports start-fresh when no Reserve account exists on-chain yet", () => {
@@ -54,8 +55,23 @@ describe("Reserve deploy resumability -- 2. Failure after the Reserve account is
     expect(point).to.deep.equal({ kind: "resume-from-funding" });
   });
 
-  it("refuses to resume automatically when the real on-chain asset count doesn't match what was expected -- never guesses at reconciling a mismatch", () => {
+  it("reports resume-from-registration (not a mismatch) when fewer assets are registered than expected but registration is still open -- registering many assets can itself span several transactions", () => {
     const point = determineDeploymentResumePoint({ reserveExists: true, reserveStatus: "assetsInitializing", onChainAssetCount: 1, expectedAssetCount: 2 });
+    expect(point).to.deep.equal({ kind: "resume-from-registration", onChainAssetCount: 1, expectedAssetCount: 2 });
+  });
+
+  it("also reports resume-from-registration when create_reserve landed but zero assets have been registered yet (status still created)", () => {
+    const point = determineDeploymentResumePoint({ reserveExists: true, reserveStatus: "created", onChainAssetCount: 0, expectedAssetCount: 10 });
+    expect(point).to.deep.equal({ kind: "resume-from-registration", onChainAssetCount: 0, expectedAssetCount: 10 });
+  });
+
+  it("refuses to resume automatically when MORE assets are registered on-chain than expected -- never explainable by a normal partial registration", () => {
+    const point = determineDeploymentResumePoint({ reserveExists: true, reserveStatus: "assetsInitializing", onChainAssetCount: 3, expectedAssetCount: 2 });
+    expect(point).to.deep.equal({ kind: "asset-count-mismatch", onChainAssetCount: 3, expectedAssetCount: 2 });
+  });
+
+  it("refuses to resume automatically when fewer assets are registered than expected but the Reserve has already moved past AssetsInitializing -- not explainable by an interrupted registration", () => {
+    const point = determineDeploymentResumePoint({ reserveExists: true, reserveStatus: "active", onChainAssetCount: 1, expectedAssetCount: 2 });
     expect(point).to.deep.equal({ kind: "asset-count-mismatch", onChainAssetCount: 1, expectedAssetCount: 2 });
   });
 });
@@ -116,7 +132,7 @@ describe("Reserve deploy resumability -- 5. Repeated clicks / concurrent submiss
   });
   afterEach(() => clearPendingReserveDeploy());
 
-  const ASSETS = [{ mint: "MintX", decimals: 6, seedWeightFraction: 1 }];
+  const ASSETS = [{ mint: "MintX", decimals: 6, seedWeightFraction: 1, weightBps: 10_000 }];
 
   it("a second read (simulating a second tab / a fast second click) sees the SAME pending deployment a first submission already wrote -- this is what lets a concurrent attempt be blocked instead of starting a duplicate", () => {
     savePendingReserveDeploy({ wallet: "WalletA", reserve: "ReserveA", reserveId: "7", name: "Test", ticker: "TST", startedAt: Date.now(), assets: ASSETS, seedTotalUsd: 25 });
@@ -366,5 +382,59 @@ describe("Reserve deploy resumability -- 9. Deterministic Anchor/ssr_protocol er
     const second = classifyCreateReserveError(e);
     const third = classifyCreateReserveError(e);
     expect([first, second, third]).to.deep.equal(["deterministic", "deterministic", "deterministic"]);
+  });
+});
+
+describe("Reserve deploy resumability -- 10. Splitting create-and-register across multiple transactions (packInstructionsBySize)", () => {
+  // Real-shaped synthetic instructions: each unique account is a distinct
+  // Keypair (like a real per-asset mint/PDA/vault -- Solana's account-key
+  // dedup can't help across genuinely different assets), so byte growth here
+  // mirrors createReserve/initializeReserveAsset's real behavior.
+  function makeIx(numAccounts: number, dataLen: number): TransactionInstruction {
+    return new TransactionInstruction({
+      programId: Keypair.generate().publicKey,
+      keys: Array.from({ length: numAccounts }, () => ({ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true })),
+      data: Buffer.alloc(dataLen),
+    });
+  }
+  const feePayer = Keypair.generate().publicKey;
+
+  it("keeps everything in one batch when it genuinely fits", () => {
+    const ixs = [makeIx(3, 10), makeIx(3, 10), makeIx(3, 10)];
+    const batches = packInstructionsBySize(feePayer, ixs);
+    expect(batches).to.have.lengthOf(1);
+    expect(batches[0]).to.have.lengthOf(3);
+  });
+
+  it("splits into multiple transactions once instructions genuinely don't fit in one, never reordering or dropping any", () => {
+    const ixs = Array.from({ length: 15 }, () => makeIx(6, 20));
+    const batches = packInstructionsBySize(feePayer, ixs);
+    expect(batches.length).to.be.greaterThan(1);
+    expect(batches.flat()).to.deep.equal(ixs);
+  });
+
+  it("keeps the first instruction (createReserve, in the real flow) first in the first batch -- registration instructions after it must never be reordered ahead of it", () => {
+    const first = makeIx(8, 100); // stands in for createReserve's own larger data (metadata URI)
+    const registers = Array.from({ length: 12 }, () => makeIx(4, 20));
+    const batches = packInstructionsBySize(feePayer, [first, ...registers]);
+    expect(batches[0][0]).to.equal(first);
+    expect(batches.length).to.be.greaterThan(1);
+  });
+
+  it("reproduces the real reported failure shape (2026-08-24, road-to-mainnet MCR-01): create_reserve + 10 initialize_reserve_asset instructions genuinely needed more than one transaction", () => {
+    // Mirrors create_reserve (~8 accounts, a metadata URI up to 200 bytes) +
+    // 10x initialize_reserve_asset (~7 accounts each, small data) -- the
+    // real failure was "Transaction too large: 1830 > 1232".
+    const createIx = makeIx(8, 150);
+    const registerIxs = Array.from({ length: 10 }, () => makeIx(7, 10));
+    const batches = packInstructionsBySize(feePayer, [createIx, ...registerIxs]);
+    expect(batches.length).to.be.greaterThan(1);
+    expect(batches.flat()).to.have.lengthOf(11);
+  });
+
+  it("never splits a single instruction, even a hypothetically oversized one -- safer to still submit it (and let the network reject it) than to silently drop it", () => {
+    const huge = makeIx(30, 900);
+    const batches = packInstructionsBySize(feePayer, [huge]);
+    expect(batches).to.deep.equal([[huge]]);
   });
 });

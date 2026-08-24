@@ -406,7 +406,17 @@ export async function estimateCreateReserveCost(
   // underestimate.
   const jupiterSwapCount = assets.filter((a) => !isWrappedSol(a.mint) && a.mint !== MAINNET_USDC_MINT).length;
 
-  const numTransactions = 2 + (wrapAssets.length > 0 ? 1 : 0) + jupiterSwapCount;
+  // Registering many assets can now span more than one transaction (see
+  // createReserveClient.ts's packInstructionsBySize -- a real 10-asset
+  // Reserve produced a 1830-byte transaction against Solana's 1232-byte
+  // limit). The exact real count depends on metadata URI length and
+  // recipient/delegate instructions this function doesn't have yet, so this
+  // is a conservative display-only estimate (never fewer transactions than
+  // packInstructionsBySize will actually need for a plain asset list) --
+  // the real submission always uses exact, measured packing regardless.
+  const ASSETS_PER_REGISTER_BATCH_ESTIMATE = 6;
+  const registerBatches = Math.max(1, Math.ceil(assets.length / ASSETS_PER_REGISTER_BATCH_ESTIMATE));
+  const numTransactions = 1 /* seed */ + registerBatches + (wrapAssets.length > 0 ? 1 : 0) + jupiterSwapCount;
   const networkFeeLamportsEstimate = ESTIMATED_TX_FEE_LAMPORTS * BigInt(numTransactions - jupiterSwapCount) + ESTIMATED_JUPITER_SWAP_FEE_LAMPORTS * BigInt(jupiterSwapCount);
 
   return {
@@ -422,6 +432,69 @@ export async function estimateCreateReserveCost(
     totalLamports: totalRentLamports + solSeedFundingLamports + networkFeeLamportsEstimate,
     numTransactions,
   };
+}
+
+/**
+ * Solana's hard legacy-transaction wire-size ceiling (@solana/web3.js's own
+ * `PACKET_DATA_SIZE`, asserted inside `Transaction.serialize()`) -- the exact
+ * number a real failure surfaced as "Transaction too large: 1830 > 1232"
+ * (2026-08-24, road-to-mainnet MCR-01): creating a Reserve with 10 assets
+ * bundled `createReserve` + 10 `initializeReserveAsset` instructions into one
+ * transaction, which genuinely cannot fit -- confirmed nothing was created
+ * on-chain (the assert throws during signing/serialization, before
+ * submission). Re-declared here rather than imported: the library doesn't
+ * export the constant, only asserts against it internally.
+ */
+const SOLANA_MAX_TX_BYTES = 1232;
+
+/**
+ * Greedily packs instructions into the fewest legacy transactions that each
+ * stay under SOLANA_MAX_TX_BYTES, WITHOUT ever reordering them (the caller's
+ * ordering is meaningful -- e.g. `createReserve` must be instruction 0 of
+ * batch 0, since every `initializeReserveAsset` after it depends on the
+ * Reserve it creates existing). Sizing is measured via a real, empty
+ * `Transaction` (feePayer + a syntactically-valid dummy blockhash -- a
+ * blockhash is always exactly 32 bytes regardless of its real value, so this
+ * measures the true wire size without a network round trip) plus each
+ * candidate instruction added in turn. On-chain, this is exactly what the
+ * program's own `Created -> AssetsInitializing -> Active` status machine
+ * (see programs/ssr_protocol/src/state/reserve.rs, "Tracks resumable
+ * multi-step creation") was already designed to support: `create_reserve`
+ * once, then any number of `initialize_reserve_asset` calls, in any number
+ * of separate transactions, before `seed_reserve`. The bug this fixes was
+ * purely client-side over-bundling, not a protocol limitation.
+ *
+ * A single instruction that alone exceeds the limit is still returned as its
+ * own one-instruction batch (never split further, never dropped) -- not
+ * reachable for this app's own instruction shapes, but safer than silently
+ * discarding it.
+ */
+export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInstruction[]): TransactionInstruction[][] {
+  const dummyBlockhash = SystemProgram.programId.toBase58(); // any valid base58 pubkey-shaped string is a valid-length (32-byte) stand-in for sizing purposes only.
+  const sizeOf = (candidate: TransactionInstruction[]): number => {
+    const tx = new Transaction();
+    tx.feePayer = feePayer;
+    tx.recentBlockhash = dummyBlockhash;
+    tx.add(...candidate);
+    // Wire size = compact-array signature count/bytes (1 signer here: the
+    // fee payer wallet -- every instruction this app builds only ever needs
+    // the connected wallet's own signature) + the compiled message itself.
+    return 1 + 64 + tx.compileMessage().serialize().length;
+  };
+
+  const batches: TransactionInstruction[][] = [];
+  let current: TransactionInstruction[] = [];
+  for (const ix of ixs) {
+    const candidate = [...current, ix];
+    if (current.length > 0 && sizeOf(candidate) > SOLANA_MAX_TX_BYTES) {
+      batches.push(current);
+      current = [ix];
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
 }
 
 /**
@@ -871,12 +944,14 @@ export async function createReserveOnChain(params: {
     }
 
     if (additionalManagerWallets.length > 0) {
-      // The signer IS reserve.manager at this point in the SAME transaction
-      // (createIx above just set it), so add_delegate.rs's permission check
-      // short-circuits on require_root_manager/require_reserve_permission
-      // without ever reading actingDelegate -- this self-referential PDA
-      // (which doesn't exist on-chain yet either) is never actually
-      // deserialized. Restricted=true always, matching
+      // The signer IS reserve.manager as soon as createIx (batch 0's first
+      // instruction, see packInstructionsBySize below) confirms -- possibly
+      // in an EARLIER transaction than this one now that registration can
+      // span several. add_delegate.rs's permission check short-circuits on
+      // require_root_manager/require_reserve_permission without ever
+      // reading actingDelegate (this self-referential PDA doesn't need to
+      // exist on-chain for that check), so this remains correct regardless
+      // of which batch it ends up in. Restricted=true always, matching
       // ADDITIONAL_MANAGER_PERMISSIONS's "can't manage other delegates" promise.
       const [actingDelegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
       const addDelegateIxs = await Promise.all(
@@ -887,7 +962,23 @@ export async function createReserveOnChain(params: {
       ixs.push(...addDelegateIxs);
     }
 
-    createAndRegisterSig = await signAndSend(connection, wallet, ixs);
+    // createReserve + one initializeReserveAsset per asset (+ optional
+    // recipients/delegate instructions) no longer fit in a single legacy
+    // transaction once a Reserve has more than a handful of assets --
+    // confirmed live: 10 assets produced a real 1830-byte transaction
+    // against Solana's 1232-byte hard limit ("Transaction too large: 1830 >
+    // 1232"), and nothing was created on-chain (2026-08-24, road-to-mainnet
+    // MCR-01). packInstructionsBySize splits into as many transactions as
+    // actually needed, in the same order (createIx always first/alone in
+    // batch 0), each requiring its own wallet approval -- exactly what the
+    // on-chain Created -> AssetsInitializing status machine was already
+    // designed to support (see packInstructionsBySize's own header).
+    const batches = packInstructionsBySize(wallet.publicKey, ixs);
+    const batchSigs: string[] = [];
+    for (const batch of batches) {
+      batchSigs.push(await signAndSend(connection, wallet, batch));
+    }
+    createAndRegisterSig = batchSigs[0];
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses);
   }
@@ -1079,14 +1170,44 @@ export async function resumeReserveDeploymentOnChain(params: {
     transactions,
   });
 
+  const program = buildReadOnlyProgram(connection) as any;
+
   if (resumePoint.kind === "already-complete") {
     params.onProgress("done");
     return buildResult({ createAndRegister: null, fundSeedAssets: null, seed: null });
   }
 
-  // resume-from-funding: create-and-register already landed with exactly the
-  // expected assets registered. Fund any real shortfall, then seed.
-  const program = buildReadOnlyProgram(connection) as any;
+  if (resumePoint.kind === "resume-from-registration") {
+    // createReserve landed, but not every initializeReserveAsset has (see
+    // packInstructionsBySize's header) -- register exactly the assets not
+    // yet on-chain, in the SAME order registration always uses, so the
+    // first onChainAssetCount entries of pending.assets are guaranteed to
+    // already be the ones actually registered.
+    params.onProgress("create-and-register");
+    const remainingAssets = pending.assets.slice(resumePoint.onChainAssetCount);
+    const remainingAddresses = assetAddresses.slice(resumePoint.onChainAssetCount);
+    try {
+      const registerIxs = await Promise.all(
+        remainingAssets.map((a, i) => buildInitializeReserveAssetInstruction(program, addresses, remainingAddresses[i], wallet.publicKey!, a.weightBps)),
+      );
+      for (const batch of packInstructionsBySize(wallet.publicKey, registerIxs)) {
+        await signAndSend(connection, wallet, batch);
+      }
+    } catch (e) {
+      throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses);
+    }
+    // Falls through to the resume-from-funding logic below -- registration
+    // is now complete (or this function already threw), so funding/seeding
+    // proceeds exactly as it would for a deployment that registered
+    // everything in its first attempt. Manager Fee Recipients / Additional
+    // Managers configured on the ORIGINAL attempt are not persisted in
+    // PendingReserveDeploy and are not retried here if the transaction that
+    // carried them didn't land -- the Reserve itself is never blocked on
+    // this; both can be added afterward via Manage Reserve.
+  }
+
+  // create-and-register (including any catch-up above) landed with exactly
+  // the expected assets registered. Fund any real shortfall, then seed.
   const seedAmounts = pending.assets.map((a) => seedRawAmountForAsset(a, pending.seedTotalUsd * a.seedWeightFraction));
 
   params.onProgress("fund-seed-assets");
@@ -1170,8 +1291,8 @@ export interface PendingReserveDeploy {
   name: string;
   ticker: string;
   startedAt: number;
-  /** Exactly the asset list (and order) create-and-register registered -- required to resume funding/seeding correctly. */
-  assets: { mint: string; decimals: number; seedWeightFraction: number }[];
+  /** Exactly the asset list (and order) create-and-register registered -- required to resume funding/seeding correctly, and (weightBps) to resume registering any assets a later transaction in that step hadn't reached yet. */
+  assets: { mint: string; decimals: number; seedWeightFraction: number; weightBps: number }[];
   seedTotalUsd: number;
 }
 

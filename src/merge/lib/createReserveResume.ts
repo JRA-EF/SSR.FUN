@@ -45,7 +45,17 @@ export type DeploymentResumePoint =
   | { kind: "resume-from-funding" }
   /** Reserve has moved past AssetsInitializing (Active or later) -- seeding already succeeded. Nothing left to submit; report success from on-chain state, never resubmit seed_reserve. */
   | { kind: "already-complete" }
-  /** The Reserve exists, but its real on-chain registered-asset count doesn't match what this pending deployment expected. This can only happen from data corruption, a wallet reused across a differently-composed attempt, or an unrelated concurrent modification -- never safe to auto-resume through; the caller must surface this plainly and refuse to submit anything. */
+  /**
+   * The Reserve exists with FEWER registered assets than this pending
+   * deployment expected, and hasn't moved past AssetsInitializing -- i.e.
+   * `createReserve` landed but not every `initializeReserveAsset` has (see
+   * createReserveClient.ts's packInstructionsBySize: registering many assets
+   * can now span several transactions, any of which after the first may not
+   * yet have landed). Safe to resume by registering exactly the remaining
+   * assets, in the same order, then continuing to funding/seeding as normal.
+   */
+  | { kind: "resume-from-registration"; onChainAssetCount: number; expectedAssetCount: number }
+  /** The Reserve exists, but its real on-chain registered-asset count doesn't match what this pending deployment expected, in a way that ISN'T simply "fewer registered so far" (either more than expected, or fewer but already past AssetsInitializing). This can only happen from data corruption, a wallet reused across a differently-composed attempt, or an unrelated concurrent modification -- never safe to auto-resume through; the caller must surface this plainly and refuse to submit anything. */
   | { kind: "asset-count-mismatch"; onChainAssetCount: number; expectedAssetCount: number };
 
 /**
@@ -63,20 +73,32 @@ export function determineDeploymentResumePoint(params: {
   expectedAssetCount: number;
 }): DeploymentResumePoint {
   if (!params.reserveExists) return { kind: "start-fresh" };
-  if (params.onChainAssetCount !== params.expectedAssetCount) {
+  // More registered on-chain than this pending deployment expected can never
+  // be explained by a normal partial create-and-register -- registration
+  // only ever adds exactly this deployment's own asset list, in order, never
+  // more. Genuinely anomalous; refuse rather than guess.
+  if (params.onChainAssetCount > params.expectedAssetCount) {
     return { kind: "asset-count-mismatch", onChainAssetCount: params.onChainAssetCount, expectedAssetCount: params.expectedAssetCount };
   }
+  if (params.onChainAssetCount < params.expectedAssetCount) {
+    // Still within the registration window (0 registered = "created" only,
+    // 1+ but not all = "assetsInitializing") -- exactly the normal shape of
+    // an interrupted multi-transaction registration. Anything past that
+    // (already Active/Paused/WindDown/Closed) with fewer assets than
+    // expected can't be explained by a normal interruption -- refuse.
+    if (params.reserveStatus === "created" || params.reserveStatus === "assetsInitializing") {
+      return { kind: "resume-from-registration", onChainAssetCount: params.onChainAssetCount, expectedAssetCount: params.expectedAssetCount };
+    }
+    return { kind: "asset-count-mismatch", onChainAssetCount: params.onChainAssetCount, expectedAssetCount: params.expectedAssetCount };
+  }
+  // Exact match on asset count from here on.
   if (params.reserveStatus === "assetsInitializing") return { kind: "resume-from-funding" };
   // "created" with a matching (necessarily zero) expected asset count isn't
-  // reachable through this app's own flow (create-and-register always bundles
-  // every asset registration into the same atomic transaction as create), but
-  // is handled safely here regardless: zero assets registered is never
-  // "already complete" for a deployment that expected any assets, and it
-  // already fell into the mismatch branch above whenever expectedAssetCount
-  // > 0. A deployment that genuinely expected zero assets (not offered by
-  // this app's UI) would fall through to "already-complete" here, which is
-  // wrong -- but 0-asset Reserves are not a producible state from CreateDTR.tsx
-  // (assets.length === 0 disables Submit), so this is unreachable in practice.
+  // reachable through this app's own flow (CreateDTR.tsx disables Submit for
+  // an empty asset list), but is handled safely here regardless: zero assets
+  // registered is never "already complete" for a deployment that expected
+  // any assets, and it already fell into the mismatch/registration branches
+  // above whenever expectedAssetCount > 0.
   return { kind: "already-complete" };
 }
 
