@@ -1,19 +1,30 @@
-// Mainnet-native Buy/Sell: a direct, single-signer, single-asset in-kind
-// deposit/withdrawal against a Reserve whose sole underlying asset is USDC
-// (or any other single settlement asset) -- no server-held swap authority,
-// no minted/fabricated legs, no price oracle. This exists because
-// zapInstructions.ts's DevNet zap fundamentally depends on a swap authority
-// that can mint fake test tokens for legs the user doesn't already hold --
-// there is no equivalent for a real Mainnet asset like USDC, and Creator has
-// scoped Mainnet Reserves to a single primary settlement asset "for
-// simplicity for now" (see docs/project/DECISION_LOG.md's Mainnet-launch
-// entry), so no swap is needed at all: the user's own deposit IS the
-// Reserve's sole required leg.
+// Mainnet-native Buy/Sell: a direct, single-signer in-kind deposit/
+// withdrawal against a Reserve -- no server-held swap authority, no minted/
+// fabricated legs, no price oracle. This exists because zapInstructions.ts's
+// DevNet zap fundamentally depends on a swap authority that can mint fake
+// test tokens for legs the user doesn't already hold -- there is no
+// equivalent for a real Mainnet asset.
 //
-// Deliberately does not attempt to generalize to a multi-asset Reserve --
-// see requireSingleAssetReserve below, which fails loudly rather than
-// silently mis-computing a partial deposit if that assumption ever stops
-// holding.
+// Two shapes:
+//  - buildDirectMintInstructions/buildDirectRedeemInstructions: the ORIGINAL
+//    single-asset path (requireSingleAssetReserve fails loudly for anything
+//    else) -- the user's own deposit IS the Reserve's sole required leg, no
+//    funding step needed beyond holding it.
+//  - buildDirectMultiAssetMintInstructions (added 2026-08-24, road-to-mainnet
+//    MMT-01, DEC-0140): a genuinely multi-asset Reserve's in-kind mint
+//    requires N proportional legs at once (the on-chain mint_reserve_tokens_in_kind
+//    instruction already supports this -- see zapInstructions.ts's
+//    buildBuyZapInstructions, which has always built exactly this shape for
+//    DevNet's swap-authority-funded zap). The caller is responsible for the
+//    user's wallet already holding each leg's required amount BEFORE calling
+//    this -- see src/merge/lib/multiAssetBuyClient.ts, which funds each
+//    shortfall for real (wrap the user's own SOL for a wrapped-SOL leg,
+//    swap the user's own USDC via Jupiter for any other leg, mirroring
+//    createReserveClient.ts's proven seed-funding pattern) before this
+//    function ever builds the final mint transaction. There is still no
+//    multi-asset Sell/redeem path -- redeeming an in-kind basket back into a
+//    single currency needs an extra sell-each-leg-via-Jupiter step this pass
+//    didn't build; buildDirectRedeemInstructions remains single-asset-only.
 
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import {
@@ -27,6 +38,7 @@ import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { findTvlAccrual, resolveProtocolFeeDestinationTokenAccount } from "./pda";
 import type { ZapAssetLeg } from "./zapInstructions";
+import { computeMintRequirements, mulDivCeil } from "./calculations";
 
 export interface DirectInstructionResult {
   instructions: TransactionInstruction[];
@@ -138,6 +150,105 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
   instructions.push(mintIx);
 
   return { instructions, reserveTokensRequested, assetAmountRaw: params.amountIn };
+}
+
+export interface BuildDirectMultiAssetMintParams {
+  program: Program<anchor.Idl>;
+  protocolConfig: PublicKey;
+  protocolFeeDestination: PublicKey;
+  reserve: PublicKey;
+  reserveTokenMint: PublicKey;
+  mintAuthority: PublicKey;
+  user: PublicKey;
+  assets: ZapAssetLeg[];
+  reserveTokenSupplyRaw: string;
+  /** Already computed (see src/merge/lib/multiAssetBuyClient.ts's usdToReserveTokensRequested) -- how many Reserve Tokens (gross, before the mint fee) this deposit is targeting. */
+  reserveTokensRequested: bigint;
+  /** Fractional slippage buffer applied on top of each leg's exact required amount (e.g. 0.02 = 2%) -- the on-chain instruction enforces this as a hard per-leg cap (transfer_checked can never move more), so the whole transaction reverts safely (nothing partially moves) if the real requirement ever exceeds it. */
+  slippageBps?: number;
+}
+
+export interface BuildDirectMultiAssetMintResult extends DirectInstructionResult {
+  /** Exact (pre-slippage-buffer) raw amount required for each of `params.assets`, in the same order -- what the caller must have already ensured the wallet holds (see multiAssetBuyClient.ts's funding step) before submitting this transaction. */
+  requiredAmountsRaw: bigint[];
+}
+
+/**
+ * Multi-signer-account (still ONE signer -- the connected user), multi-leg
+ * in-kind mint: deposits a proportional amount of EVERY one of the Reserve's
+ * registered assets in a single transaction, exactly mirroring
+ * zapInstructions.ts's buildBuyZapInstructions' remainingAccounts/
+ * maxAssetAmounts shape (the on-chain mint_reserve_tokens_in_kind instruction
+ * has always supported this -- only this app's Mainnet client never built it
+ * before). Unlike the zap, there is no swap authority here: every leg's ATA
+ * must ALREADY hold at least its required amount by the time this builds --
+ * see this file's header and multiAssetBuyClient.ts for how that's funded
+ * for real (wrap/swap) before this ever runs. If a leg's real balance is
+ * short, `transfer_checked` fails and the whole transaction reverts --
+ * nothing partially deposits.
+ */
+export async function buildDirectMultiAssetMintInstructions(params: BuildDirectMultiAssetMintParams): Promise<BuildDirectMultiAssetMintResult> {
+  const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user, assets, reserveTokensRequested } = params;
+  if (assets.length < 2) {
+    throw new Error(`buildDirectMultiAssetMintInstructions requires a genuinely multi-asset Reserve; found ${assets.length}. Use buildDirectMintInstructions for a single-asset Reserve instead.`);
+  }
+  const totalSupply = BigInt(params.reserveTokenSupplyRaw);
+  const balances = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
+  const requirements = computeMintRequirements(reserveTokensRequested, totalSupply, balances);
+  const slippageBps = BigInt(Math.round((params.slippageBps ?? 0.02) * 10_000));
+  const maxAssetAmounts = requirements.map((r) => mulDivCeil(r.requiredAmount, 10_000n + slippageBps, 10_000n));
+
+  const instructions: TransactionInstruction[] = [];
+
+  const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+
+  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId);
+  const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
+
+  const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
+  for (const leg of assets) {
+    const mint = new PublicKey(leg.mint);
+    const userAta = getAssociatedTokenAddressSync(mint, user);
+    // Idempotent -- a no-op if multiAssetBuyClient.ts's funding step already
+    // created this ATA (it always does, to fund it), harmless either way.
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint));
+    remainingAccounts.push(
+      { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
+      { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
+      { pubkey: userAta, isWritable: true, isSigner: false },
+      { pubkey: mint, isWritable: false, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+    );
+  }
+
+  const mintIx = await program.methods
+    .mintReserveTokensInKind(
+      new BN(reserveTokensRequested.toString()),
+      new BN(1),
+      maxAssetAmounts.map((a) => new BN(a.toString())),
+    )
+    .accounts({
+      protocolConfig,
+      reserve,
+      reserveTokenMint,
+      mintAuthority,
+      depositorReserveTokenAccount: depositorReserveTokenAta,
+      depositor: user,
+      protocolFeeDestinationTokenAccount,
+      protocolFeeDestination,
+      tvlAccrual,
+      // "None" sentinel (DEC-0094 convention) -- same as the single-asset path above.
+      managerFeeRecipients: program.programId,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+  instructions.push(mintIx);
+
+  return { instructions, reserveTokensRequested, assetAmountRaw: requirements.reduce((sum, r) => sum + r.requiredAmount, 0n), requiredAmountsRaw: requirements.map((r) => r.requiredAmount) };
 }
 
 export interface BuildDirectRedeemParams {

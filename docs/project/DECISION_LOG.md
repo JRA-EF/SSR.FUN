@@ -4398,6 +4398,39 @@
   ]
 }
 ```
+
+## DEC-0140
+
+```json
+{
+  "id": "DEC-0140",
+  "date": "2026-08-24",
+  "status": "confirmed-implemented",
+  "decision": "Built the real multi-asset Buy path DEC-0139 gated around: a genuinely multi-asset Mainnet Reserve (e.g. BETA) can now be bought with a single USD amount, which funds a proportional in-kind deposit of every one of the Reserve's registered assets (wrapping the depositor's own SOL for a wrapped-SOL leg, swapping the depositor's USDC via a real Jupiter route for every other leg) and mints Reserve Tokens in one final multi-leg mint_reserve_tokens_in_kind call. Requested explicitly by Creator (\"we need to add support to multi asset reserves ASAP\") immediately after DEC-0139 shipped the honest-failure gate. Sell/redeem for a multi-asset Reserve remains not-yet-supported -- out of scope for this pass.",
+  "context": "DEC-0139 (same day, immediately prior) found and gated the real cause of BETA's \"Buy Failed\" reports: the direct Buy/Sell mechanism only ever supported a single-asset Reserve, with no multi-asset alternative on Mainnet, and flagged building the real multi-asset mechanism as a separate, larger feature needing explicit direction. Creator responded asking for it ASAP.",
+  "rationale": "Confirmed the on-chain program already supports a genuinely multi-leg in-kind mint -- mint_reserve_tokens_in_kind already accepts an array of maxAssetAmounts (one per leg) and a matching remaining_accounts list; zapInstructions.ts's buildBuyZapInstructions (the DevNet zap) has always built exactly this shape, just funded by a server-held swap authority that mints/wraps fake test tokens for free, which has no Mainnet equivalent. The real gap was purely client-side: directInstructions.ts's Mainnet path never built more than a single leg. Added buildDirectMultiAssetMintInstructions (packages/sdk/src/directInstructions.ts) -- the same accounts/remaining_accounts shape as the proven single-asset buildDirectMintInstructions, generalized to N legs via computeMintRequirements (already used and tested elsewhere) plus a slippage-buffered maxAssetAmounts cap per leg (2% default, matching the DevNet zap's own default) that the on-chain instruction itself enforces as a hard ceiling -- transfer_checked can never move more than that, so an under-funded or stale-snapshot mint attempt reverts the WHOLE transaction atomically rather than partially depositing. Funding (src/merge/lib/multiAssetBuyClient.ts) deliberately mirrors createReserveClient.ts's proven seed-funding pattern (used successfully in production for Create Reserve since DEC-0124) rather than inventing a new model: a wrapped-SOL leg is funded by wrapping the depositor's OWN real SOL (SystemProgram.transfer + createSyncNativeInstruction, the exact same three-instruction block already in production) -- deliberately NOT a Jupiter swap into wrapped SOL, since this codebase has never done that and Jupiter's swap API defaults to auto-unwrapping WSOL output back to native SOL (wrapAndUnwrapSol defaults true), which would silently leave the SPL balance the mint instruction needs empty; every other non-USDC leg is funded via the same real Jupiter route/endpoint (api/mainnet/jupiter-swap.ts) Create Reserve's seed funding already uses, topping up only the genuine shortfall against an EXACT target (computeMintRequirements's ratio-based requiredAmount, needing no price data at all to be exact -- USD prices are used only to size the FIRST quote request, never to determine the real target); a USDC leg (if the Reserve has one) can only be funded from the depositor's own USDC holdings, failing fast and honestly if short rather than attempting to swap USDC into USDC. Every funding step is naturally idempotent against a retry (re-running only tops up genuine remaining shortfalls, mirroring fundSeedAssetsIdempotent's proven shortfall-based design exactly) -- if a partial failure happens (a swap succeeds but the final mint reverts because the live on-chain requirement drifted slightly from the snapshot funding was based on), already-acquired assets remain in the depositor's wallet, never lost, and a retry funds only what's still missing. DTRDetail.tsx's Buy panel now branches on asset count: resolveBuyAsset returns USDC (not asset[0]) for a multi-asset Reserve, the amount typed is a USD investment target (usdToReserveTokensRequested, NAV-based, mirroring exactly what the transaction submits, no drift between quote and execution possible), and isSettlementBuySupported no longer gates on asset count (isSettlementSellSupported still does -- Sell has no equivalent multi-asset path yet, deliberately out of scope for this pass, since redeeming an in-kind basket back into a single currency needs an additional sell-each-leg-via-Jupiter step this pass didn't build).",
+  "alternativesConsidered": [
+    "Fund a wrapped-SOL leg via a Jupiter swap (USDC -> WSOL) instead of a direct wrap from the depositor's own SOL, for a fully single-currency 'pay entirely in USDC' experience -- rejected: genuinely higher-risk and unprecedented in this codebase (Jupiter's swap API defaults to auto-unwrapping WSOL output back to native SOL before this mint step could use it as an SPL balance; the direct-wrap pattern is already proven safe in production for Create Reserve).",
+    "Build multi-asset Sell/redeem in the same pass, since it was requested alongside Buy -- deferred, not rejected: redeeming an in-kind basket back into a single currency needs an additional sell-each-leg-via-Jupiter step (the inverse problem, with its own slippage/routing risk) that the funding side didn't need; shipping Buy alone first, tested and reviewed carefully, was judged the safer sequencing for a live-money feature built without any way to browser-test it in this environment.",
+    "Add a full pre-flight per-asset cost breakdown (like CreateDTR.tsx's Wallet Cost Summary) before the first wallet approval -- deferred: real UX improvement, but each funding step (wrap/swap) still requires its own real wallet approval showing the exact amount before signing, so this is a visibility improvement, not a safety gap; not blocking a first ship given the ASAP request."
+  ],
+  "impact": "764/764 offline tests passing (5 new: usdToReserveTokensRequested's NAV-based conversion, including cross-checking it against computeDirectReserveTokensRequested's single-asset math for consistency). tsc -b, oxlint, npm run build all clean. NOT live-tested in a browser (no browser-automation/wallet tool in this environment, same documented gap as every prior Mainnet UI pass) -- this is real, untested-in-browser code moving real value via real Jupiter swaps; reviewed carefully end-to-end for safety properties (every funding step is idempotent/retry-safe, the final mint is atomic and reverts whole rather than partial, nothing is ever swapped away without a fresh wallet approval) but a small test purchase is strongly recommended as the actual first real-world exercise of this path.",
+  "affectedAreas": [
+    "packages/sdk/src/directInstructions.ts",
+    "src/merge/lib/multiAssetBuyClient.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "tests/phase_mainnet_direct_instructions.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "zapInstructions.ts's buildBuyZapInstructions (existing, in production for DevNet): confirms mint_reserve_tokens_in_kind already accepts a real multi-leg maxAssetAmounts array + matching remaining_accounts, the exact shape buildDirectMultiAssetMintInstructions reuses.",
+    "createReserveClient.ts's fundSeedAssetsIdempotent (existing, in production for Create Reserve since DEC-0124): the exact wrap-SOL/swap-USDC-via-Jupiter/shortfall-only funding pattern multiAssetBuyClient.ts mirrors.",
+    "764/764 offline tests passing."
+  ]
+}
+```
 ```
 }
 ```

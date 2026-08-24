@@ -10,6 +10,7 @@ import { expect } from "chai";
 import { computeDirectReserveTokensRequested, requireSingleAssetReserve } from "../packages/sdk/src/directInstructions";
 import { computeMintRequirements } from "../packages/sdk/src/calculations";
 import type { ZapAssetLeg } from "../packages/sdk/src/zapInstructions";
+import { usdToReserveTokensRequested } from "../src/merge/lib/multiAssetBuyClient";
 
 describe("computeDirectReserveTokensRequested (packages/sdk/src/directInstructions.ts)", () => {
   it("is the exact floor-inverse of computeMintRequirements's per-leg ceil formula -- required amount never exceeds amountIn", () => {
@@ -85,5 +86,47 @@ describe("requireSingleAssetReserve (packages/sdk/src/directInstructions.ts) -- 
 
   it("also throws for an empty asset list (an unresolved/incomplete Reserve, never treated as single-asset)", () => {
     expect(() => requireSingleAssetReserve([])).to.throw(/This Reserve holds 0 assets/);
+  });
+});
+
+describe("usdToReserveTokensRequested (src/merge/lib/multiAssetBuyClient.ts) -- the real multi-asset Buy fix (DEC-0140)", () => {
+  // 2026-08-24, road-to-mainnet MMT-01/MCR-01: BETA (4 real registered
+  // assets) had no working Buy path at all -- requireSingleAssetReserve
+  // above threw before ever building a transaction. This is the pure math
+  // at the front of the real fix: converting a USD investment amount into a
+  // gross Reserve Token target using the Reserve's real NAV, the same way
+  // computeDirectReserveTokensRequested does for the single-asset path, just
+  // NAV-based (a multi-asset Reserve has no single vault ratio to divide by).
+  it("computes the exact gross Reserve Token target for a round-number NAV", () => {
+    // NAV = $2/token -- investing $100 should target exactly 50 gross tokens.
+    expect(usdToReserveTokensRequested(100, 2, 6)).to.equal(50_000_000n);
+  });
+
+  it("matches computeDirectReserveTokensRequested's single-asset result when NAV is derived from the same vault/supply ratio", () => {
+    // vaultBalance 901_500, totalSupply 1_200_000 -> NAV = 901_500/1_200_000
+    // (in raw-unit terms, both sides at the same decimals cancel out).
+    const vaultBalance = 901_500n;
+    const totalSupply = 1_200_000n;
+    const nav = Number(vaultBalance) / Number(totalSupply);
+    const amountIn = 250_000n;
+    const singleAssetResult = computeDirectReserveTokensRequested(amountIn, vaultBalance, totalSupply);
+    const multiAssetResult = usdToReserveTokensRequested(Number(amountIn), nav, 0);
+    // Both floor a real division -- within 1 unit of each other, not
+    // necessarily bit-identical (NAV itself is already a lossy float).
+    expect(multiAssetResult >= singleAssetResult - 1n && multiAssetResult <= singleAssetResult + 1n).to.equal(true);
+  });
+
+  it("floors at 1 (never 0) for a tiny but genuinely positive USD amount -- a real deposit is never silently rounded away to nothing", () => {
+    expect(usdToReserveTokensRequested(0.0000001, 1000, 6)).to.equal(1n);
+  });
+
+  it("throws for a non-positive USD amount rather than silently returning 0/garbage", () => {
+    expect(() => usdToReserveTokensRequested(0, 1, 6)).to.throw(/usdAmount must be positive/);
+    expect(() => usdToReserveTokensRequested(-5, 1, 6)).to.throw(/usdAmount must be positive/);
+  });
+
+  it("throws for a non-positive or missing NAV rather than dividing by zero/producing Infinity", () => {
+    expect(() => usdToReserveTokensRequested(100, 0, 6)).to.throw(/nav must be a real, positive/);
+    expect(() => usdToReserveTokensRequested(100, -1, 6)).to.throw(/nav must be a real, positive/);
   });
 });

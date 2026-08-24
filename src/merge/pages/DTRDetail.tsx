@@ -22,6 +22,7 @@ import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
+import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested } from "@/lib/multiAssetBuyClient";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import {
@@ -103,20 +104,26 @@ const SETTLEMENT_SYMBOL = IS_MAINNET ? "USDC" : "devUSDC";
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 /**
- * Mainnet ONLY departs from SETTLEMENT_MINT/DECIMALS/SYMBOL for a Reserve
- * whose sole asset genuinely isn't USDC (e.g. "alpha", 100% SSR) -- the
- * direct in-kind Buy path (packages/sdk/src/directInstructions.ts) always
- * deposits the Reserve's OWN registered asset, never a converted USDC
+ * Mainnet ONLY departs from SETTLEMENT_MINT/DECIMALS/SYMBOL for a genuinely
+ * SINGLE-asset Reserve whose sole asset isn't USDC (e.g. "alpha", 100% SSR)
+ * -- the single-asset direct in-kind Buy path
+ * (packages/sdk/src/directInstructions.ts's buildDirectMintInstructions)
+ * always deposits the Reserve's OWN registered asset, never a converted USDC
  * amount, so "your balance"/insufficient-balance/the submitted raw amount
  * must all be read against that real asset, not against USDC, or the
  * displayed quote and the submitted transaction silently disagree (see the
  * Mainnet-pricing-layer decision log entry's ALPHA diagnosis for the
- * concrete bug this fixes). DevNet is untouched: its zap path genuinely can
- * convert other legs, so SETTLEMENT_MINT stays authoritative there.
+ * concrete bug this fixes). A genuinely MULTI-asset Reserve (2026-08-24,
+ * DEC-0140) uses buildDirectMultiAssetMintInstructions instead, whose input
+ * genuinely IS a USD/USDC amount (multiAssetBuyClient.ts funds every other
+ * leg via a real Jupiter swap from that USDC) -- SETTLEMENT_MINT is correct
+ * for it, same as a genuinely USDC-only Reserve. DevNet is untouched: its
+ * zap path genuinely can convert other legs, so SETTLEMENT_MINT stays
+ * authoritative there regardless of asset count.
  */
 function resolveBuyAsset(onChain: OnChainReserveMeta | undefined): { mint: PublicKey; decimals: number; symbol: string } {
   const asset = onChain?.assets[0];
-  if (IS_MAINNET && onChain && asset && !isReservePureDevUsdc(onChain.assets.map((a) => a.mint), MAINNET_USDC_MINT)) {
+  if (IS_MAINNET && onChain && asset && onChain.assets.length === 1 && !isReservePureDevUsdc(onChain.assets.map((a) => a.mint), MAINNET_USDC_MINT)) {
     return { mint: new PublicKey(asset.mint), decimals: asset.decimals, symbol: asset.symbol };
   }
   return { mint: SETTLEMENT_MINT, decimals: SETTLEMENT_DECIMALS, symbol: SETTLEMENT_SYMBOL };
@@ -202,6 +209,13 @@ export function DTRDetail() {
   const [buyPhase, setBuyPhase] = useState<TxPhase>("idle");
   const [buyPendingSignature, setBuyPendingSignature] = useState<string | null>(null);
   const buyPreSettlementRawRef = useRef<bigint>(0n);
+  // Fine-grained step label for a multi-asset Buy (multiAssetBuyClient.ts's
+  // executeMultiAssetBuyMainnet spans several separately-confirmed
+  // transactions: wrap SOL, one swap per non-USDC/non-SOL leg, then the
+  // final mint) -- shown alongside buyPhase's own generic in-flight label
+  // (see txPhaseLabel) rather than replacing it, so canSubmitNewTransaction/
+  // the button's disabled state keep working unchanged.
+  const [multiAssetBuyStep, setMultiAssetBuyStep] = useState<string | null>(null);
 
   const [sellPhase, setSellPhase] = useState<TxPhase>("idle");
   const [sellPendingSignature, setSellPendingSignature] = useState<string | null>(null);
@@ -472,10 +486,27 @@ export function DTRDetail() {
    */
   const estReserveTokensOut: number | null = (() => {
     if (numBuyAmount <= 0) return 0; // Nothing typed yet -- a neutral "0," never the alarming "Quote unavailable."
-    if (!isOnChain || !dtr.onChain || !buyDepositAsset) return isOnChain ? null : 0;
-    const vaultBalance = BigInt(dtr.onChain.vaultBalancesRaw[buyDepositAsset.mint] ?? "0");
+    if (!isOnChain || !dtr.onChain) return isOnChain ? null : 0;
     const supply = BigInt(dtr.onChain.reserveTokenSupplyRaw || "0");
-    if (vaultBalance <= 0n || supply <= 0n) return null;
+    if (supply <= 0n) return null;
+    // A genuinely multi-asset Reserve has no single vault ratio to divide by
+    // -- numBuyAmount here is a USD amount (see resolveBuyAsset's multi-asset
+    // branch), so the quote is NAV-based instead, mirroring exactly what
+    // handleBuyMultiAssetMainnet actually submits (usdToReserveTokensRequested).
+    if (dtr.onChain.assets.length > 1) {
+      if (!(dtr.nav > 0)) return null;
+      try {
+        const gross = usdToReserveTokensRequested(numBuyAmount, dtr.nav, RESERVE_TOKEN_DECIMALS);
+        const feeBps = BigInt(dtr.onChain.effectiveMintFeeTotalBps ?? dtr.onChain.mintFeeBps ?? 0);
+        const { netOut } = computeNetMintOutput(gross, feeBps);
+        return Number(netOut) / 10 ** RESERVE_TOKEN_DECIMALS;
+      } catch {
+        return null;
+      }
+    }
+    if (!buyDepositAsset) return null;
+    const vaultBalance = BigInt(dtr.onChain.vaultBalancesRaw[buyDepositAsset.mint] ?? "0");
+    if (vaultBalance <= 0n) return null;
     const amountInRaw = BigInt(Math.floor(numBuyAmount * 10 ** buyDepositAsset.decimals));
     if (amountInRaw <= 0n) return null;
     try {
@@ -740,18 +771,111 @@ export function DTRDetail() {
         setBuyPhase("failed");
         const raw = e instanceof Error ? e.message : "The purchase failed.";
         console.error("Buy failed:", raw);
-        // isSettlementBuySupported's Mainnet single-asset check (see its own
-        // header) should make this specific failure unreachable from the UI
-        // -- kept as a named, honest fallback rather than the previous
-        // always-generic message, in case this Reserve's client-cached asset
-        // list was stale/under-resolved when that gate was evaluated.
+        // onBuyClick only ever routes here for a genuinely single-asset
+        // Reserve (see isMultiAssetMainnetReserve/handleBuyMultiAssetMainnet
+        // below) -- this specific failure should be unreachable from the UI;
+        // kept as a named, honest fallback rather than a generic message, in
+        // case this Reserve's client-cached asset list was stale when routing
+        // decided which handler to call.
         const isSingleAssetGap = raw.includes("no supported way to buy into or sell from a multi-asset Reserve");
         toast({
           variant: "destructive",
           title: "Buy Failed",
           description: isSingleAssetGap
-            ? "This Reserve holds more than one asset -- there is no supported way to buy into a multi-asset Reserve on Mainnet yet. No funds were moved."
+            ? "This Reserve holds more than one asset and needs the multi-asset Buy path -- please reload the page and try again."
             : `Your purchase could not be completed: ${raw} No funds were moved.`,
+        });
+      }
+    } finally {
+      useAppStore.getState().setTxInFlight(false);
+    }
+  };
+
+  /**
+   * Buy for a genuinely multi-asset Mainnet Reserve (e.g. BETA) -- see
+   * multiAssetBuyClient.ts's header for the full funding/mint model. Unlike
+   * handleBuyMainnet, `numBuyAmount` here is a USD amount to invest (see
+   * resolveBuyAsset's multi-asset branch, which is why buyAssetForDisplay is
+   * USDC for this Reserve), and the flow spans several separate wallet
+   * approvals (wrap SOL if needed, one swap per other non-USDC leg, then the
+   * final mint) -- multiAssetBuyStep shows which one is in flight.
+   */
+  const handleBuyMultiAssetMainnet = async () => {
+    if (!dtr.onChain) return;
+    if (!walletCtx.publicKey) {
+      toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
+      return;
+    }
+    if (!canSubmitNewTransaction(buyPhase)) return;
+    if (!(dtr.nav > 0)) {
+      toast({ variant: "destructive", title: "Pricing Unavailable", description: "This Reserve's current price isn't available right now -- try again shortly." });
+      return;
+    }
+    setBuyPhase("preparing");
+    setBuyPendingSignature(null);
+    setMultiAssetBuyStep(null);
+    useAppStore.getState().setTxInFlight(true);
+    try {
+      const reserveAddress = new PublicKey(dtr.onChain.reserve);
+      const live = await fetchReserveOnChain(connection, SSR_PROGRAM_ID, reserveAddress, dtr.onChain.assets.map((a) => new PublicKey(a.mint)));
+      if (!live) throw new Error("Could not read this Reserve's live on-chain state.");
+      const assets: ZapAssetLeg[] = live.assets.map((a) => ({
+        mint: a.assetMint,
+        decimals: a.decimals,
+        reserveAsset: a.reserveAsset,
+        vault: a.vault,
+        vaultBalanceRaw: a.vaultBalanceRaw,
+      }));
+      const [protocolConfig] = findProtocolConfig(SSR_PROGRAM_ID);
+      const reserveTokensRequested = usdToReserveTokensRequested(numBuyAmount, dtr.nav, RESERVE_TOKEN_DECIMALS);
+      const { signature } = await executeMultiAssetBuyMainnet({
+        connection,
+        wallet: walletCtx,
+        protocolConfig,
+        protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
+        reserve: reserveAddress,
+        reserveTokenMint: new PublicKey(dtr.onChain.reserveTokenMint),
+        mintAuthority: new PublicKey(dtr.onChain.mintAuthority),
+        assets,
+        reserveTokenSupplyRaw: live.reserveTokenSupplyRaw,
+        reserveTokensRequested,
+        assetPricesUsd: dtr.onChain.assetPricesUsd ?? {},
+        onProgress: (e) => {
+          if (e.phase === "wrapping-sol") {
+            setMultiAssetBuyStep("Wrapping SOL for this Reserve's SOL holding...");
+            setBuyPhase("awaiting-wallet");
+          } else if (e.phase === "swapping") {
+            setMultiAssetBuyStep(`Swapping into asset ${e.index + 1} of ${e.total}...`);
+            setBuyPhase("awaiting-wallet");
+          } else if (e.phase === "minting") {
+            setMultiAssetBuyStep("Depositing into the Reserve and minting your tokens...");
+            setBuyPhase("preparing");
+          } else {
+            setBuyPhase("awaiting-wallet");
+          }
+        },
+      });
+      setMultiAssetBuyStep(null);
+      setBuyPhase("confirmed");
+      await refreshRealReserveNow();
+      recordConfirmedTrade(dtr.id, "buy", numBuyAmount / (dtr.nav || 1), numBuyAmount);
+      setBuyAmount("");
+      toast(transactionConfirmedToast(signature, "Buy confirmed"));
+    } catch (e) {
+      setMultiAssetBuyStep(null);
+      if (e instanceof AmbiguousConfirmationError) {
+        setBuyPhase("unresolved");
+        setBuyPendingSignature(e.signature);
+        toast({ title: "Mainnet RPC is temporarily busy", description: "No confirmation could be verified yet -- your transaction may still be confirming. Checking your real balance now." });
+        await reconcileBuy(e.signature);
+      } else {
+        setBuyPhase("failed");
+        const raw = e instanceof Error ? e.message : "The purchase failed.";
+        console.error("Multi-asset Buy failed:", raw);
+        toast({
+          variant: "destructive",
+          title: "Buy Failed",
+          description: `${raw} Any asset already acquired for this purchase (e.g. from a completed swap) remains in your wallet -- nothing is lost; retrying will only fund the genuine remaining shortfall, not repeat what already succeeded.`,
         });
       }
     } finally {
@@ -971,7 +1095,6 @@ export function DTRDetail() {
     });
   };
 
-  const onBuyClick = isOnChain ? (IS_MAINNET ? handleBuyMainnet : handleBuy) : handleBuyUnavailable;
   const onSellClick = isOnChain ? (IS_MAINNET ? handleSellMainnet : handleSell) : handleSellUnavailable;
 
   // On DevNet, SETTLEMENT_MINT (devUSDC) is SSR.fun's universal purchasing
@@ -1032,17 +1155,15 @@ export function DTRDetail() {
   // kept as an explicit, independently-checked gate rather than assumed.
   //
   // True on Mainnet only when this Reserve has MORE than one registered
-  // asset: directClient.ts's executeDirectMint/executeDirectRedeem
-  // (packages/sdk/src/directInstructions.ts's requireSingleAssetReserve) is
-  // a direct, no-swap deposit/withdrawal of the Reserve's own SOLE asset --
-  // it throws outright for a genuinely multi-asset Reserve (confirmed live:
-  // BETA, 4 real registered assets, "Buy Failed... no funds were moved" --
-  // 2026-08-24, road-to-mainnet MMT-01). There is no working multi-asset
-  // Buy/Sell path on Mainnet yet (unlike DevNet's swap-authority zap) --
-  // gating on this means an untradable multi-asset Reserve shows an honest
-  // "Not Yet Supported" instead of a confusing, unexplained failure after a
-  // wallet approval attempt.
+  // asset (confirmed live: BETA, 4 real registered assets -- 2026-08-24,
+  // road-to-mainnet MMT-01/MCR-01). Buy now has a real multi-asset path
+  // (multiAssetBuyClient.ts's executeMultiAssetBuyMainnet, DEC-0140) --
+  // Sell/redeem does not yet (redeeming an in-kind basket back into a single
+  // currency needs an extra sell-each-leg-via-Jupiter step this pass didn't
+  // build), so this still gates Sell but no longer gates Buy. See
+  // isSettlementBuySupported/isSettlementSellSupported below.
   const isMultiAssetMainnetReserve = IS_MAINNET && isOnChain && !!dtr.onChain && dtr.onChain.assets.length > 1;
+  const onBuyClick = isOnChain ? (IS_MAINNET ? (isMultiAssetMainnetReserve ? handleBuyMultiAssetMainnet : handleBuyMainnet) : handleBuy) : handleBuyUnavailable;
   // True for ANY Reserve composed entirely of site-wide supported assets
   // (see packages/sdk/src/tradableAssets.ts, the same eligibility check that
   // already determines whether a Reserve is discoverable/visible anywhere on
@@ -1053,9 +1174,8 @@ export function DTRDetail() {
   // Reserve that reaches this page, since an ineligible Reserve is filtered
   // out of the app's catalogue entirely before it could ever be opened here;
   // kept as an explicit, independently-checked gate rather than assumed.
-  const isSettlementBuySupported =
-    isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint)) && !isMultiAssetMainnetReserve;
-  // Same gate, for Sell/redeem -- see isMultiAssetMainnetReserve's header.
+  const isSettlementBuySupported = isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint));
+  // Sell/redeem has no multi-asset path yet -- see isMultiAssetMainnetReserve's header.
   const isSettlementSellSupported = isOnChain && !!dtr.onChain && !isMultiAssetMainnetReserve;
   // Reason the 25/50/75/Max quick-select buttons can't be used right now, if
   // any -- distinct from buyProcessing (mid-transaction) so the UI can show
@@ -1550,9 +1670,11 @@ export function DTRDetail() {
                             Deposit asset
                             <InfoTip label="More information about the deposit asset">
                               {IS_MAINNET
-                                ? isPureSettlementReserve
-                                  ? "USDC is this Reserve's sole asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
-                                  : `This Reserve's sole asset is ${buyDepositAsset?.symbol ?? "its underlying token"}, not USDC -- your input above is denominated in ${buyDepositAsset?.symbol ?? "that asset"} and deposited directly into its vault. No conversion or swap is involved; this is not a USDC purchase.`
+                                ? isMultiAssetMainnetReserve
+                                  ? `This Reserve holds ${dtr.onChain?.assets.length ?? "several"} assets -- your USDC input funds a proportional deposit of every one of them (via a real Jupiter swap for any leg that isn't already USDC or SOL you hold), then mints your Reserve Tokens in one final step. Several wallet approvals are expected.`
+                                  : isPureSettlementReserve
+                                    ? "USDC is this Reserve's sole asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
+                                    : `This Reserve's sole asset is ${buyDepositAsset?.symbol ?? "its underlying token"}, not USDC -- your input above is denominated in ${buyDepositAsset?.symbol ?? "that asset"} and deposited directly into its vault. No conversion or swap is involved; this is not a USDC purchase.`
                                 : `devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.${
                                     isPureSettlementReserve
                                       ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
@@ -1560,7 +1682,9 @@ export function DTRDetail() {
                                   }`}
                             </InfoTip>
                           </span>
-                          <span className="font-merge-mono">{IS_MAINNET && !isPureSettlementReserve ? (buyDepositAsset?.symbol ?? "—") : SETTLEMENT_SYMBOL}</span>
+                          <span className="font-merge-mono">
+                            {IS_MAINNET && !isPureSettlementReserve && !isMultiAssetMainnetReserve ? (buyDepositAsset?.symbol ?? "—") : SETTLEMENT_SYMBOL}
+                          </span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Mint Fee</span>
@@ -1667,7 +1791,7 @@ export function DTRDetail() {
                           {(buyPhase === "preparing" || buyPhase === "awaiting-wallet" || buyPhase === "confirming" || buyPhase === "submitted") && (
                             <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
                           )}
-                          {txPhaseLabel(buyPhase, CLUSTER_LABEL)}
+                          {multiAssetBuyStep ?? txPhaseLabel(buyPhase, CLUSTER_LABEL)}
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
@@ -1863,7 +1987,7 @@ export function DTRDetail() {
                     </Button>
                     {isOnChain && isMultiAssetMainnetReserve && (
                       <p className="text-xs text-muted-foreground -mt-2">
-                        This Reserve holds more than one asset -- there is no supported way to buy or sell a multi-asset Reserve on Mainnet yet.
+                        This Reserve holds more than one asset -- selling/redeeming from a multi-asset Reserve isn't supported yet on Mainnet.
                       </p>
                     )}
                     {isOnChain && (
