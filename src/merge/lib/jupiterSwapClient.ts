@@ -87,5 +87,5 @@ export async function executeJupiterSwap(connection: Connection, wallet: WalletC
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(`${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
   if (outcome.status === "expired") throw new Error(`Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
-  throw new AmbiguousConfirmationError(signature);
+  throw new AmbiguousConfirmationError(signature, "Mainnet"); // Jupiter swaps are Mainnet-only.
 }

@@ -582,6 +582,7 @@ export function CreateDTR() {
         // hasn't loaded yet -- seedRawAmountForAsset throws its own clear
         // error rather than silently wrapping the wrong amount of real SOL.
         solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
+        clusterLabel: CLUSTER_LABEL,
       });
       finalizeResumedReserve(result, pendingAtStart);
     } catch (e) {
@@ -974,6 +975,7 @@ export function CreateDTR() {
         // hasn't loaded yet -- seedRawAmountForAsset throws its own clear
         // error rather than silently wrapping the wrong amount of real SOL.
         solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
+        clusterLabel: CLUSTER_LABEL,
         onProgress: setCreateStep,
         // Persisted immediately -- if the page reloads (or the user leaves
         // and comes back later) anywhere after this fires, the mount-time

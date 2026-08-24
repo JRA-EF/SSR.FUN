@@ -46,7 +46,7 @@ async function signSubmitAndConfirm(
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`);
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
-  throw new AmbiguousConfirmationError(signature);
+  throw new AmbiguousConfirmationError(signature, "Mainnet"); // this module is Mainnet-only -- see its own header.
 }
 
 export interface ExecuteDirectMintParams {

@@ -564,7 +564,17 @@ export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInst
  * (redundant with the real confirmation this function already performs) for
  * eliminating that specific, confirmed false-negative failure mode.
  */
-async function signAndSend(connection: Connection, wallet: WalletContextState, ixs: TransactionInstruction[]): Promise<string> {
+/**
+ * `clusterLabel` defaults to "DevNet" (matching every pre-existing caller/
+ * test unchanged) rather than importing IS_MAINNET from ./solana-config
+ * directly -- that module reads import.meta.env (Vite-only syntax) and this
+ * file is required directly by tests/phase_reserve_deploy_resumability.ts
+ * via ts-mocha's CommonJS loader, which crashes on that syntax (same
+ * constraint documented in rpcResilience.ts's txPhaseLabel/
+ * AmbiguousConfirmationError). CreateDTR.tsx passes its own real
+ * CLUSTER_LABEL down through createReserveOnChain/resumeReserveDeploymentOnChain.
+ */
+async function signAndSend(connection: Connection, wallet: WalletContextState, ixs: TransactionInstruction[], clusterLabel: string = "DevNet"): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
   const tx = new Transaction().add(...ixs);
   tx.feePayer = wallet.publicKey;
@@ -586,7 +596,7 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, i
   // genuine ssr_protocol error -- never a guessed meaning either way.
   if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
-  throw new AmbiguousConfirmationError(signature);
+  throw new AmbiguousConfirmationError(signature, clusterLabel);
 }
 
 /**
@@ -598,7 +608,13 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, i
  * Phantom/the wallet-adapter integration here already handles this
  * transaction type, not new wallet-compatibility risk).
  */
-async function signSubmitConfirmVersioned(connection: Connection, wallet: WalletContextState, tx: VersionedTransaction, lastValidBlockHeight: number): Promise<string> {
+async function signSubmitConfirmVersioned(
+  connection: Connection,
+  wallet: WalletContextState,
+  tx: VersionedTransaction,
+  lastValidBlockHeight: number,
+  clusterLabel: string = "DevNet",
+): Promise<string> {
   if (!wallet.signTransaction) throw new Error("This wallet does not support transaction signing.");
   const signed = await wallet.signTransaction(tx);
   const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
@@ -606,7 +622,7 @@ async function signSubmitConfirmVersioned(connection: Connection, wallet: Wallet
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
-  throw new AmbiguousConfirmationError(signature);
+  throw new AmbiguousConfirmationError(signature, clusterLabel);
 }
 
 /**
@@ -640,13 +656,14 @@ async function signAndSendPossiblyOverLimit(
   wallet: WalletContextState,
   ix: TransactionInstruction,
   onProgress?: (phase: "creating-lookup-table" | "waiting-for-lookup-table" | "submitting") => void,
+  clusterLabel: string = "DevNet",
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const feePayer = wallet.publicKey;
 
   if (estimateSingleSignerTxBytes(feePayer, [ix]) <= SOLANA_MAX_TX_BYTES) {
     onProgress?.("submitting");
-    return signAndSend(connection, wallet, [ix]);
+    return signAndSend(connection, wallet, [ix], clusterLabel);
   }
 
   onProgress?.("creating-lookup-table");
@@ -659,7 +676,7 @@ async function signAndSendPossiblyOverLimit(
 
   const recentSlot = await connection.getSlot("finalized");
   const [createIx, lookupTableAddress] = AddressLookupTableProgram.createLookupTable({ authority: feePayer, payer: feePayer, recentSlot });
-  await signAndSend(connection, wallet, [createIx]);
+  await signAndSend(connection, wallet, [createIx], clusterLabel);
 
   // extendLookupTable's own transaction has the same size ceiling as any
   // other -- chunk conservatively (20 addresses/call fits comfortably; this
@@ -669,7 +686,7 @@ async function signAndSendPossiblyOverLimit(
   for (let i = 0; i < lookupAddresses.length; i += EXTEND_CHUNK) {
     const chunk = lookupAddresses.slice(i, i + EXTEND_CHUNK);
     const extendIx = AddressLookupTableProgram.extendLookupTable({ lookupTable: lookupTableAddress, authority: feePayer, payer: feePayer, addresses: chunk });
-    await signAndSend(connection, wallet, [extendIx]);
+    await signAndSend(connection, wallet, [extendIx], clusterLabel);
   }
 
   onProgress?.("waiting-for-lookup-table");
@@ -706,7 +723,7 @@ async function signAndSendPossiblyOverLimit(
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   const message = new TransactionMessage({ payerKey: feePayer, recentBlockhash: blockhash, instructions: [ix] }).compileToV0Message([lookupTableAccount]);
   const versionedTx = new VersionedTransaction(message);
-  return signSubmitConfirmVersioned(connection, wallet, versionedTx, lastValidBlockHeight);
+  return signSubmitConfirmVersioned(connection, wallet, versionedTx, lastValidBlockHeight, clusterLabel);
 }
 
 /** Reads a wallet's real, current raw balance for a mint -- 0 if the ATA doesn't exist yet (never an error in that case, since "no ATA" and "zero balance" mean the same thing for funding purposes). */
@@ -844,6 +861,7 @@ async function fundSeedAssetsIdempotent(
   // true so every pre-existing DevNet caller/test behaves unchanged.
   allowFaucet: boolean = true,
   jupiterSwap?: JupiterSwapFundingOptions,
+  clusterLabel: string = "DevNet",
 ): Promise<{ signature: string | null; finalSeedAmounts: bigint[] }> {
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const owner = wallet.publicKey;
@@ -955,7 +973,7 @@ async function fundSeedAssetsIdempotent(
       SystemProgram.transfer({ fromPubkey: owner, toPubkey: wsolAta, lamports: totalLamports }),
       createSyncNativeInstruction(wsolAta),
     ];
-    const wrapSig = await signAndSend(connection, wallet, wrapIxs);
+    const wrapSig = await signAndSend(connection, wallet, wrapIxs, clusterLabel);
     // If more than one of faucet/wrap/swap needed topping up, report
     // whichever signature isn't already set -- this return value just needs
     // *a* representative signature.
@@ -1048,6 +1066,8 @@ export async function createReserveOnChain(params: {
   jupiterSwap?: JupiterSwapFundingOptions;
   /** See seedRawAmountForAsset's header -- REQUIRED to be a real, live SOL/USD price on Mainnet if `assets` includes wrapped SOL (never the DevNet test peg there); defaults to SOL_TEST_PRICE_USD so every pre-existing DevNet caller/test is unaffected. */
   solPriceUsd?: number;
+  /** See signAndSend's header -- shown in an AmbiguousConfirmationError if RPC confirmation times out. Defaults to "DevNet" so every pre-existing caller/test is unaffected; CreateDTR.tsx passes its own real CLUSTER_LABEL. */
+  clusterLabel?: string;
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -1067,6 +1087,7 @@ export async function createReserveOnChain(params: {
   const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
   const allowFaucet = params.allowFaucet ?? true;
   const solPriceUsd = params.solPriceUsd ?? SOL_TEST_PRICE_USD;
+  const clusterLabel = params.clusterLabel ?? "DevNet";
   const program = buildReadOnlyProgram(connection) as any;
 
   params.onProgress("create-and-register");
@@ -1143,7 +1164,7 @@ export async function createReserveOnChain(params: {
     const batches = packInstructionsBySize(wallet.publicKey, ixs);
     const batchSigs: string[] = [];
     for (const batch of batches) {
-      batchSigs.push(await signAndSend(connection, wallet, batch));
+      batchSigs.push(await signAndSend(connection, wallet, batch, clusterLabel));
     }
     createAndRegisterSig = batchSigs[0];
   } catch (e) {
@@ -1156,7 +1177,7 @@ export async function createReserveOnChain(params: {
   let fundSeedAssetsSig: string | null = null;
   let finalSeedAmounts = seedAmounts;
   try {
-    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap);
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel);
     fundSeedAssetsSig = fundResult.signature;
     finalSeedAmounts = fundResult.finalSeedAmounts;
   } catch (e) {
@@ -1176,7 +1197,7 @@ export async function createReserveOnChain(params: {
     assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
     validateSeedPlan(finalSeedAmounts, initialReserveTokens);
     const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-    seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx);
+    seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel);
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
   }
@@ -1283,12 +1304,15 @@ export async function resumeReserveDeploymentOnChain(params: {
   jupiterSwap?: JupiterSwapFundingOptions;
   /** Same meaning as createReserveOnChain's own `solPriceUsd`. */
   solPriceUsd?: number;
+  /** Same meaning as createReserveOnChain's own `clusterLabel`. */
+  clusterLabel?: string;
 }): Promise<CreateReserveResult> {
   const { connection, wallet, pending } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
   const allowFaucet = params.allowFaucet ?? true;
   const solPriceUsd = params.solPriceUsd ?? SOL_TEST_PRICE_USD;
+  const clusterLabel = params.clusterLabel ?? "DevNet";
   const reserveAddress = new PublicKey(pending.reserve);
   const candidateMints = pending.assets.map((a) => new PublicKey(a.mint));
 
@@ -1361,7 +1385,7 @@ export async function resumeReserveDeploymentOnChain(params: {
         remainingAssets.map((a, i) => buildInitializeReserveAssetInstruction(program, addresses, remainingAddresses[i], wallet.publicKey!, a.weightBps)),
       );
       for (const batch of packInstructionsBySize(wallet.publicKey, registerIxs)) {
-        await signAndSend(connection, wallet, batch);
+        await signAndSend(connection, wallet, batch, clusterLabel);
       }
     } catch (e) {
       throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses);
@@ -1384,7 +1408,7 @@ export async function resumeReserveDeploymentOnChain(params: {
   let fundSeedAssetsSig: string | null = null;
   let finalSeedAmounts = seedAmounts;
   try {
-    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts, allowFaucet, params.jupiterSwap);
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel);
     fundSeedAssetsSig = fundResult.signature;
     finalSeedAmounts = fundResult.finalSeedAmounts;
   } catch (e) {
@@ -1405,7 +1429,7 @@ export async function resumeReserveDeploymentOnChain(params: {
       assertSeedAmountsMeetMinimum(pending.assets, finalSeedAmounts);
       validateSeedPlan(finalSeedAmounts, initialReserveTokens);
       const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-      seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx);
+      seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel);
     } catch (e) {
       throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
     }

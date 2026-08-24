@@ -57,7 +57,7 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, t
   // see createReserveClient.ts's signAndSend for the identical pattern.
   if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
-  throw new AmbiguousConfirmationError(signature);
+  throw new AmbiguousConfirmationError(signature, CLUSTER_LABEL);
 }
 
 const programId = SSR_PROGRAM_ID;

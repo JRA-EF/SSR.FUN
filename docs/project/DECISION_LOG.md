@@ -4500,6 +4500,47 @@
   ]
 }
 ```
+
+## DEC-0143
+
+```json
+{
+  "id": "DEC-0143",
+  "date": "2026-08-24",
+  "status": "confirmed-implemented",
+  "decision": "Fixed AmbiguousConfirmationError (thrown whenever bounded confirmation polling times out without a definitive answer) hardcoding \"DevNet RPC could not confirm...\" regardless of which cluster the transaction actually ran on -- confirmed live: CHARLIE's Mainnet seed-transaction confirmation timeout was reported as a DevNet RPC issue. Added an optional clusterLabel parameter (defaulting to \"DevNet\" so every pre-existing caller/test is unaffected) and threaded the real cluster label through every one of the 7 real throw sites across 6 files.",
+  "context": "Creator retried CHARLIE's Resume after DEC-0142 deployed and hit \"DevNet RPC could not confirm signature ... within the verification window\" for what is a real Mainnet Reserve on a Mainnet-only deployment -- actively confusing about which network/RPC provider was actually involved.",
+  "rationale": "Traced directly to rpcResilience.ts's AmbiguousConfirmationError constructor: `DevNet RPC could not confirm signature ${signature}...` with the word \"DevNet\" hardcoded as a literal string, no cluster parameter at all -- present since this class was first written for the DevNet-only zap, never updated when Mainnet support (DEC-0116) was added. Independently verified the reported signature directly against live Mainnet RPC (getSignatureStatuses + getTransaction, read-only): genuinely not found on-chain at all -- not actually ambiguous by the time it was checked, just a transaction that never landed (ordinary network flakiness, not a bug in DEC-0142's new lookup-table logic) -- and confirmed CHARLIE's on-chain state is unchanged (still assetsInitializing, 6 assets, nothing lost), safe to retry. Fixed the mislabeling itself: added `clusterLabel: string = \"DevNet\"` as a second constructor parameter (default preserves every pre-existing caller/test exactly). Could not simply have rpcResilience.ts import IS_MAINNET from ./solana-config directly -- that module reads import.meta.env at module scope (Vite-only syntax), and rpcResilience.ts is required directly by tests/phase_rpc_resilience.ts via ts-mocha's CommonJS loader, which crashes on that syntax (the exact same constraint this file's own txPhaseLabel already documented and worked around the same way). Threaded the real label through all 7 throw sites: createReserveClient.ts's two (signAndSend, the new signSubmitConfirmVersioned) needed real parameter-threading since that file is shared between clusters -- added clusterLabel through signAndSend/signSubmitConfirmVersioned/signAndSendPossiblyOverLimit/fundSeedAssetsIdempotent/createReserveOnChain/resumeReserveDeploymentOnChain, all defaulting to \"DevNet\" the same way, with CreateDTR.tsx (which already computes a real CLUSTER_LABEL) passing it in at the top; directClient.ts, jupiterSwapClient.ts, and multiAssetBuyClient.ts are Mainnet-only modules by design (their own file headers say so), so each simply hardcodes \"Mainnet\" at its one throw site; managementClient.ts already had its own CLUSTER_LABEL computed locally, so its throw site just needed to pass it through; zapClient.ts is DevNet-only by design, so its throw site hardcodes \"DevNet\" explicitly rather than relying on the implicit default.",
+  "alternativesConsidered": [
+    "Leave the default parameter unused and require every caller to always pass an explicit clusterLabel -- rejected: would have required touching every pre-existing test/call site immediately, for no real benefit over an opt-in default that every REAL production call site (all 7) now does pass explicitly anyway.",
+    "Have rpcResilience.ts import IS_MAINNET from ./solana-config for a zero-parameter fix -- rejected: breaks tests/phase_rpc_resilience.ts's ts-mocha CommonJS loading, the exact constraint this file's own pre-existing txPhaseLabel doc comment already identified and avoided the same way; the threading approach is more code but doesn't reintroduce a known-broken pattern.",
+    "Treat the reported failure as proof DEC-0142's Address-Lookup-Table logic is broken and start debugging it -- rejected once the signature was checked directly: genuinely never landed on-chain, matching ordinary transient network behavior (skipPreflight + maxRetries:0 + no auto-retry is the existing, deliberate policy across this whole codebase), not a symptom of anything the lookup-table change did differently. CHARLIE's own on-chain state (still assetsInitializing, 6 assets, no partial changes) is exactly what should be expected either way."
+  ],
+  "impact": "773/773 offline tests passing (2 new: AmbiguousConfirmationError's default-to-DevNet behavior and its use-the-real-supplied-label behavior). tsc -b, oxlint, npm run build all clean. Confirmed via direct RPC read that the specific reported signature never landed and CHARLIE's on-chain state is unchanged -- Creator's plain retry of Resume is expected to work now that the message will also correctly say \"Mainnet\" if it happens again.",
+  "affectedAreas": [
+    "src/merge/lib/rpcResilience.ts",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/directClient.ts",
+    "src/merge/lib/jupiterSwapClient.ts",
+    "src/merge/lib/managementClient.ts",
+    "src/merge/lib/multiAssetBuyClient.ts",
+    "src/merge/lib/zapClient.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "tests/phase_rpc_resilience.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Creator-reported exact error text: \"DevNet RPC could not confirm signature 3FEp1PDX9AaTMDPcVZCcbeV6iaEXy3itDczP8pb8HPiSMtaq3LXsf5hRMo6s8PndMNLM3H4pZqu4Y8ECiUsv6Rqr...\" for a real Mainnet transaction.",
+    "Direct read-only Mainnet RPC check (getSignatureStatuses + getTransaction) on that exact signature: both returned null/not-found, confirming it genuinely never landed (not a lingering ambiguous case) and nothing needs reconciling.",
+    "CHARLIE's on-chain state re-checked directly: still assetsInitializing, assetCount 6, unchanged from before the failed attempt.",
+    "rpcResilience.ts's AmbiguousConfirmationError, before this fix: `DevNet RPC could not confirm signature ${signature}...` with no parameter at all -- confirmed by direct source read.",
+    "773/773 offline tests passing."
+  ]
+}
+```
+```
 ```
 ```
 ```

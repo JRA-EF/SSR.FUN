@@ -284,6 +284,22 @@ describe("RPC-resilience -- AmbiguousConfirmationError", () => {
     expect(err.name).to.equal("AmbiguousConfirmationError");
     expect(err.message).to.include("sigABC123");
   });
+
+  it("defaults to 'DevNet' in its message when no clusterLabel is given -- every pre-existing caller/test unaffected", () => {
+    const err = new AmbiguousConfirmationError("sigDEF456");
+    expect(err.message).to.include("DevNet RPC could not confirm");
+  });
+
+  // 2026-08-24, road-to-mainnet MCR-01: a genuinely Mainnet seed-transaction
+  // confirmation timeout was reported back as "DevNet RPC could not
+  // confirm...", actively misleading about which network was actually
+  // involved -- every real Mainnet caller now passes its own real cluster
+  // label explicitly instead of relying on this default.
+  it("uses the real supplied clusterLabel instead of the DevNet default when a caller passes one", () => {
+    const err = new AmbiguousConfirmationError("sigGHI789", "Mainnet");
+    expect(err.message).to.include("Mainnet RPC could not confirm");
+    expect(err.message).to.not.include("DevNet");
+  });
 });
 
 describe("RPC-resilience -- honest token-supply reads under transient RPC failure (getTokenSupplyWithRetry)", () => {

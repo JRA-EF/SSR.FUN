@@ -142,8 +142,21 @@ export type ConfirmationOutcome =
  */
 export class AmbiguousConfirmationError extends Error {
   signature: string;
-  constructor(signature: string) {
-    super(`DevNet RPC could not confirm signature ${signature} within the verification window. It may still land -- check the signature before submitting another transaction.`);
+  /**
+   * `clusterLabel` defaults to "DevNet" (matching every pre-existing
+   * caller/test unchanged) rather than importing IS_MAINNET from
+   * ./solana-config directly -- that module reads import.meta.env
+   * (Vite-only syntax) and this file is required directly by
+   * tests/phase_rpc_resilience.ts via ts-mocha's CommonJS loader, which
+   * crashes on that syntax (same constraint documented in txPhaseLabel's own
+   * doc comment above). Every real Mainnet caller passes its own real
+   * CLUSTER_LABEL explicitly -- confirmed live (2026-08-24, road-to-mainnet
+   * MCR-01): a genuinely Mainnet seed-transaction timeout was reported back
+   * as "DevNet RPC could not confirm...", actively misleading about which
+   * network/RPC provider was actually involved.
+   */
+  constructor(signature: string, clusterLabel: string = "DevNet") {
+    super(`${clusterLabel} RPC could not confirm signature ${signature} within the verification window. It may still land -- check the signature before submitting another transaction.`);
     this.name = "AmbiguousConfirmationError";
     this.signature = signature;
   }
