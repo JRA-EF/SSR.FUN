@@ -42,6 +42,7 @@ import {
   buyAvailableFromDevUsdcBalance,
   isReservePureDevUsdc,
   formatUsdc,
+  formatAssetPriceUsd,
   formatUsdcOrUnavailable,
   formatTokenAmount,
   sampleLinePoints,
@@ -409,11 +410,6 @@ export function DTRDetail() {
   }
 
   const holding = holdings.find((h) => h.dtrId === dtr.id);
-  // dtr.nav can be 0 when a Reserve's assets are under-resolved (AUM reads as
-  // $0) even though it already has token supply -- guard against NaN rather
-  // than computing 0/0.
-  const premiumDiscount = dtr.nav > 0 ? (dtr.tokenPrice - dtr.nav) / dtr.nav : null;
-  const isPremium = premiumDiscount !== null && premiumDiscount > 0;
 
   // "Price unavailable" is only genuine pricing failure (a materially-held
   // asset this pass couldn't get a valid Pyth/Jupiter quote for), never a
@@ -1147,35 +1143,21 @@ export function DTRDetail() {
             </div>
           )}
 
-          {/* Stats Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            <Card className="bg-secondary/40 border-transparent shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  AUM
-                  <InfoTip label="More information about AUM">Assets Under Management: authoritative on-chain vault balances x validated USD price per asset. Shows "Price unavailable" instead of a fabricated $0 if any held asset can't be priced right now.</InfoTip>
-                </div>
-                <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-xl'}`}>{formatUsdcOrUnavailable(dtr.aum, !pricingUnavailable, { compact: true })}</p>
-              </CardContent>
-            </Card>
+          {/* Stats Grid -- AUM and Prem/Discount removed per explicit request
+              (2026-08-24, road-to-mainnet MCR-01): Market Cap already showed
+              the same number as AUM (both are Circulating Supply x Token
+              Price today -- there's no secondary market yet, so Token Price
+              IS NAV, per Market Cap's own InfoTip), and Prem/Discount is
+              always ~0% for the same reason -- neither carried information
+              Market Cap didn't already show. */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <Card className="bg-secondary/40 border-transparent shadow-none">
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   Market Cap
-                  <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price (computed independently, not just AUM relabeled). Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every Buy/Sell executes at NAV -- so Market Cap and AUM are mathematically equal today, up to rounding; they would diverge if Token Price ever traded at a premium/discount to NAV.</InfoTip>
+                  <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price. Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every Buy/Sell executes at NAV.</InfoTip>
                 </div>
                 <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-xl'}`}>{formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true })}</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-secondary/40 border-transparent shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  Prem/Discount
-                  <InfoTip label="More information about Premium/Discount">Difference between market price and NAV. Premium implies high demand.</InfoTip>
-                </div>
-                <p className={`text-xl font-merge-mono font-semibold ${premiumDiscount === null ? 'text-muted-foreground' : isPremium ? 'text-positive' : 'text-destructive'}`}>
-                  {premiumDiscount === null ? '—' : `${isPremium ? '+' : ''}${(premiumDiscount * 100).toFixed(2)}%`}
-                </p>
               </CardContent>
             </Card>
             <Card className="bg-secondary/40 border-transparent shadow-none">
@@ -1331,6 +1313,7 @@ export function DTRDetail() {
                       <TableRow className="border-border/50">
                         <TableHead>Asset</TableHead>
                         <TableHead className="text-right">Weight</TableHead>
+                        <TableHead className="text-right hidden sm:table-cell">Price</TableHead>
                         <TableHead className="text-right hidden sm:table-cell">Value in Reserve</TableHead>
                         <TableHead className="text-right hidden sm:table-cell">
                           P&amp;L %
@@ -1347,9 +1330,25 @@ export function DTRDetail() {
                         // weight-of-AUM estimate and shows no P&L (nothing
                         // to compute it from).
                         const onChainAsset = dtr.onChain?.assets.find((a) => a.symbol === asset.symbol);
-                        const valueUsd = onChainAsset
-                          ? (Number(dtr.onChain!.vaultBalancesRaw[onChainAsset.mint] ?? "0") / 10 ** onChainAsset.decimals) * (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? 0)
-                          : asset.weight * dtr.aum;
+                        // On Mainnet, price each asset from the SAME real,
+                        // validated Pyth/Jupiter data AUM/Token Price already
+                        // use (dtr.onChain.assetPricesUsd -- see
+                        // onChainReserve.ts's extractAssetPricesUsd), never
+                        // the DevNet-only TEST_ASSET_PRICES_USD fixture
+                        // table, which has no real entry for most Mainnet
+                        // assets and silently priced every one of them at $0
+                        // here (2026-08-24, road-to-mainnet MCR-01) even
+                        // after DEC-0134 fixed this same class of bug for
+                        // AUM/Token Price/the Buy estimate elsewhere on this
+                        // page. `unitPriceUsd` is null (never fabricated 0)
+                        // when this pass genuinely couldn't price the asset.
+                        const unitPriceUsd = !onChainAsset
+                          ? null
+                          : IS_MAINNET
+                            ? (dtr.onChain!.assetPricesUsd?.[onChainAsset.mint] ?? null)
+                            : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
+                        const balance = onChainAsset ? Number(dtr.onChain!.vaultBalancesRaw[onChainAsset.mint] ?? "0") / 10 ** onChainAsset.decimals : null;
+                        const valueUsd = onChainAsset ? (unitPriceUsd !== null ? balance! * unitPriceUsd : null) : asset.weight * dtr.aum;
                         const pnlPct = onChainAsset ? calcReserveAssetPnlPct(onChainAsset.mint) : null;
                         return (
                           <TableRow key={asset.symbol} className="border-border/50">
@@ -1363,7 +1362,10 @@ export function DTRDetail() {
                               {(asset.weight * 100).toFixed(2)}%
                             </TableCell>
                             <TableCell className="text-right font-merge-mono text-muted-foreground hidden sm:table-cell">
-                              {formatUsdc(valueUsd, { compact: true })}
+                              {onChainAsset ? formatAssetPriceUsd(unitPriceUsd) : "—"}
+                            </TableCell>
+                            <TableCell className="text-right font-merge-mono text-muted-foreground hidden sm:table-cell">
+                              {valueUsd === null ? "Price unavailable" : formatUsdc(valueUsd, { compact: true })}
                             </TableCell>
                             <TableCell className="text-right font-merge-mono hidden sm:table-cell">
                               {pnlPct === null ? (

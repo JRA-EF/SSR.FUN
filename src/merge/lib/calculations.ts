@@ -463,6 +463,24 @@ export function formatUsdcOrUnavailable(value: number, available: boolean, opts:
   return formatUsdc(value, opts);
 }
 
+/**
+ * A single Reserve Asset's own per-unit USD price -- unlike formatUsdc's
+ * fixed 2 decimals (fine for an aggregate USD total, or a Reserve Token's
+ * own NAV-anchored price which stays roughly $0.01+), a real underlying
+ * asset can genuinely be a thin-liquidity token worth a small fraction of a
+ * cent (e.g. a real observed SSR price of ~$0.00048 -- see DEC-0134).
+ * formatUsdc would round that to "$0.00", true but useless. Shows up to 6
+ * significant decimal places for anything under $1, otherwise the normal
+ * 2-decimal currency format. `null` (never fabricated) renders as an
+ * explicit "unavailable" label, matching formatUsdcOrUnavailable's honesty
+ * convention.
+ */
+export function formatAssetPriceUsd(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value <= 0) return "Price unavailable";
+  if (value >= 1) return formatUsdc(value);
+  return `$${value.toPrecision(3)}`;
+}
+
 export function formatTokenAmount(value: number): string {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,

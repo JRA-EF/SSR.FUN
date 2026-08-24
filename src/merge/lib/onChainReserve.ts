@@ -123,6 +123,25 @@ export function computeAumFromPrices(
  * Returns 0 (the same "unavailable" sentinel used throughout this module)
  * when tokenPrice is unavailable, never a fabricated figure.
  */
+/**
+ * Reduces a raw priceByMint response (AssetPriceInfo, including unavailable/
+ * null entries) down to just the mints that resolved to a real, valid price
+ * -- the shape OnChainReserveMeta.assetPricesUsd stores. Shared by
+ * mergeOnChainIntoDTR and buildDtrFromDiscoveredReserve so both real-price
+ * merge paths (a targeted post-tx refresh and the background discovery poll)
+ * populate per-asset prices identically, never by re-deriving this filter
+ * twice. Deliberately never includes an entry for an unpriced/invalid mint
+ * -- absence, not a fabricated 0, is how a caller distinguishes "we tried
+ * and it's genuinely unpriced" from "priced at zero."
+ */
+export function extractAssetPricesUsd(priceByMint: Record<string, AssetPriceInfo>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [mint, info] of Object.entries(priceByMint)) {
+    if (info.usdPrice !== null && Number.isFinite(info.usdPrice) && info.usdPrice > 0) out[mint] = info.usdPrice;
+  }
+  return out;
+}
+
 export function computeMarketCap(reserveTokenSupplyRaw: string, tokenPrice: number): number {
   if (!(tokenPrice > 0)) return 0;
   const supply = Number(reserveTokenSupplyRaw || "0") / 10 ** RESERVE_TOKEN_DECIMALS;
@@ -320,6 +339,7 @@ export function mergeOnChainIntoDTR(
     priceSource: isMainnet ? aumResult.priceSource : undefined,
     priceAsOf: isMainnet ? aumResult.priceAsOf : undefined,
     unpricedAssetMints: isMainnet ? aumResult.unpricedAssetMints : undefined,
+    assetPricesUsd: isMainnet ? extractAssetPricesUsd(priceByMint) : undefined,
   };
 
   return {
@@ -490,6 +510,7 @@ export function buildDtrFromDiscoveredReserve(
     priceSource: isMainnet ? aumResult.priceSource : undefined,
     priceAsOf: isMainnet ? aumResult.priceAsOf : undefined,
     unpricedAssetMints: isMainnet ? aumResult.unpricedAssetMints : undefined,
+    assetPricesUsd: isMainnet ? extractAssetPricesUsd(priceByMint) : undefined,
   };
 
   return {

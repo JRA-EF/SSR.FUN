@@ -351,6 +351,7 @@ export function CreateDTR() {
   const [feeRecipients, setFeeRecipients] = useState<FeeRecipient[]>([]);
   const [newRecipientAddress, setNewRecipientAddress] = useState("");
   const [newRecipientPct, setNewRecipientPct] = useState("");
+  const [feeRecipientAddError, setFeeRecipientAddError] = useState<string | null>(null);
   const [additionalManagers, setAdditionalManagers] = useState<string[]>([]);
   const [newManagerAddress, setNewManagerAddress] = useState("");
   const [costEstimate, setCostEstimate] = useState<CreateReserveCostEstimate | null>(null);
@@ -802,13 +803,40 @@ export function CreateDTR() {
 
   const feeRecipientTotalPct = feeRecipients.reduce((sum, r) => sum + r.pct, 0);
 
+  // Every early-out below used to fail completely silently -- confirmed root
+  // cause of a live report ("click add it doesn't really add them... just
+  // stays there and doesn't do anything", 2026-08-24, road-to-mainnet
+  // MCR-01): the single most likely real trigger is the last check below --
+  // the Primary Fee Destination field is pre-filled with the connected
+  // wallet's own address (DEC-0124), so pasting that SAME address again as
+  // an "additional" recipient (an easy thing to do when only one wallet is
+  // available to test with) was silently rejected every time. Every guard
+  // here now explains itself instead of just returning.
   const addFeeRecipient = () => {
+    setFeeRecipientAddError(null);
+    const address = newRecipientAddress.trim();
     const pct = parseFloat(newRecipientPct);
-    if (!newRecipientAddress.trim() || !pct || pct <= 0) return;
-    if (feeRecipients.length + 1 >= 10) return; // +1 for the Primary, MAX_FEE_RECIPIENTS = 10
-    if (feeRecipients.some((r) => r.address === newRecipientAddress.trim())) return;
-    if (newRecipientAddress.trim() === (feeDestination || wallet.address)) return; // Primary is already implicitly a recipient
-    setFeeRecipients([...feeRecipients, { address: newRecipientAddress.trim(), pct }]);
+    if (!address) {
+      setFeeRecipientAddError("Enter a wallet address first.");
+      return;
+    }
+    if (!pct || pct <= 0) {
+      setFeeRecipientAddError("Enter a percentage greater than 0.");
+      return;
+    }
+    if (feeRecipients.length + 1 >= 10) {
+      setFeeRecipientAddError("Maximum of 10 recipients reached, including the Primary Fee Destination.");
+      return;
+    }
+    if (feeRecipients.some((r) => r.address === address)) {
+      setFeeRecipientAddError("That address is already an additional recipient.");
+      return;
+    }
+    if (address === (feeDestination || wallet.address)) {
+      setFeeRecipientAddError("That's already the Primary Fee Destination above -- it doesn't need to be added again as an additional recipient.");
+      return;
+    }
+    setFeeRecipients([...feeRecipients, { address, pct }]);
     setNewRecipientAddress("");
     setNewRecipientPct("");
   };
@@ -1572,7 +1600,10 @@ export function CreateDTR() {
                         placeholder="Recipient wallet address"
                         className="font-merge-mono text-sm"
                         value={newRecipientAddress}
-                        onChange={(e) => setNewRecipientAddress(e.target.value)}
+                        onChange={(e) => {
+                          setNewRecipientAddress(e.target.value);
+                          setFeeRecipientAddError(null);
+                        }}
                       />
                       <Input
                         type="number"
@@ -1581,7 +1612,10 @@ export function CreateDTR() {
                         min="0"
                         max="100"
                         value={newRecipientPct}
-                        onChange={(e) => setNewRecipientPct(e.target.value)}
+                        onChange={(e) => {
+                          setNewRecipientPct(e.target.value);
+                          setFeeRecipientAddError(null);
+                        }}
                       />
                       <Button variant="outline" onClick={addFeeRecipient} className="shrink-0 gap-1.5">
                         <Plus className="w-4 h-4" /> Add
@@ -1589,6 +1623,12 @@ export function CreateDTR() {
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">Maximum of 10 recipients reached, including the Primary Fee Destination.</p>
+                  )}
+                  {feeRecipientAddError && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>{feeRecipientAddError}</p>
+                    </div>
                   )}
                   {feeRecipientTotalPct > 100 && (
                     <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">

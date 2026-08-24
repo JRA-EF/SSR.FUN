@@ -4298,3 +4298,39 @@
   ]
 }
 ```
+
+## DEC-0137
+
+```json
+{
+  "id": "DEC-0137",
+  "date": "2026-08-24",
+  "status": "confirmed-implemented",
+  "decision": "Fixed the Reserve Composition table showing $0 \"Value in Reserve\" for every real Mainnet asset outside a fixed DevNet fixture table (root cause: it never used the real Pyth/Jupiter prices already fetched for AUM), added a Price column, gave the silent Create-Reserve \"Additional Fee Recipients Add\" failure honest explanatory messages instead of doing nothing, and removed the AUM and Prem/Discount stat tiles (Market Cap already showed the same number as AUM; Prem/Discount is always ~0% today) -- per three separate reports on road-to-mainnet MCR-01 (2026-08-24).",
+  "context": "Creator reported, against a real Mainnet Reserve (\"BETA\", 4 assets at 25% each): (1) only the SOL leg showed a nonzero \"Value in Reserve\" -- Fartcoin/STONK/Cupsey all showed $0 despite genuinely being 25%-weighted holdings -- and asked for a per-asset current-price column; (2) AUM ($19.21) not matching the $10 inception cost looked suspicious; (3) clicking Add under Additional Fee Recipients \"doesn't really add them... just stays there and doesn't do anything\", with no way to add anyone.",
+  "rationale": "(1) Root-caused by reading DTRDetail.tsx's composition row directly: `valueUsd = balance * (TEST_ASSET_PRICES_USD[mint] ?? 0)` -- TEST_ASSET_PRICES_USD is explicitly the DevNet-only fixed fixture table (per its own doc comment), which has no real entry for Fartcoin/STONK/Cupsey, silently pricing them at $0 in this ONE spot even though `dtr.aum` ($19.21, displayed correctly) was already computed from the real, validated Pyth/Jupiter prices this same page fetches (see fetchAssetPricesUsd, wired in by DEC-0134) -- exactly the same bug class DEC-0134 fixed for AUM/Token Price/the Buy estimate, just a spot that pass didn't touch. Confirmed AUM being real and nonzero ($19.21, not $0) proves pricing genuinely succeeded for all 4 assets at the aggregate level -- the per-mint prices were computed, then discarded: computeAumFromPrices/onChainReserve.ts's mergeOnChainIntoDTR and buildDtrFromDiscoveredReserve both fold priceByMint into a single AUM total and never persisted the per-mint map itself anywhere the composition table could read it. Fixed by adding a new pure `extractAssetPricesUsd` (keeps only mints that resolved to a real, valid, positive price -- never a fabricated 0) and a new `OnChainReserveMeta.assetPricesUsd` field, populated by both merge paths so a real per-asset price is available regardless of whether a Reserve was just loaded via a background poll or a targeted post-tx refresh. DTRDetail.tsx's composition row now sources `unitPriceUsd` from this on Mainnet (falling back to TEST_ASSET_PRICES_USD only on DevNet, unchanged there) and shows \"Price unavailable\" (never a fabricated $0) when a specific asset genuinely couldn't be priced. Added the requested Price column via a new `formatAssetPriceUsd` -- formatUsdc's fixed 2 decimals would round a real sub-cent memecoin price (e.g. SSR's real ~$0.00048, see DEC-0134) to a useless \"$0.00\", so this shows 3 significant figures for anything under $1. (2) AUM differing from the original $10 seed cost is NOT a bug -- it is a real Mainnet Reserve whose underlying asset prices (SOL, Fartcoin, STONK, Cupsey) move independently after inception, so AUM tracking real current market value away from the original cost basis is exactly correct behavior, not a defect; no code change for this specifically, beyond (3) below removing the tiles that were making it look like a discrepancy needing an explanation. (3) Read `addFeeRecipient`'s 5 early-return guards directly -- ALL FIVE failed completely silently (empty input, invalid percentage, the 10-recipient cap, a duplicate address, and -- almost certainly the actual live trigger, since the Primary Fee Destination field auto-fills to the connected wallet's own address per DEC-0124 -- typing that SAME address again as an \"additional\" recipient, an easy mistake when only one wallet is available to test with). Every guard now sets a specific, user-facing error message (a new feeRecipientAddError state, rendered the same way the existing >100%-total warning already is) instead of a bare `return`, per CLAUDE.md's existing Interface Copy Standards. (4) Removed the AUM and Prem/Discount stat tiles per explicit request: Market Cap's own InfoTip already documents that Market Cap and AUM are mathematically equal today (Token Price IS this protocol's internal NAV, no secondary market yet), and Prem/Discount is consequently always ~0% -- neither tile carried information Market Cap didn't already show, and their apparent redundancy is exactly what prompted the AUM-vs-inception-cost question in (2).",
+  "alternativesConsidered": [
+    "Leave AUM's correct-but-confusing divergence from the $10 inception cost unexplained and just answer it in a checklist comment -- rejected as the ONLY fix: the Creator's own explicit request was to remove the tiles, which also resolves the visual redundancy that likely prompted the question in the first place.",
+    "Re-fetch prices specifically for the composition table render instead of reusing what AUM already fetched -- rejected: redundant network calls and cache-consistency risk (the composition table could show a different price than AUM/Token Price computed moments earlier from the same data); persisting the already-fetched priceByMint is strictly better and was already half-built (computeAumFromPrices already receives the right data, it just wasn't kept).",
+    "For the fee-recipient Add button, guess at ONE specific root cause and fix only that -- rejected: there are 5 independent silent-failure branches, several plausible from the report alone; explaining all 5 fixes the actual complaint (no feedback) regardless of which one the Creator was actually hitting."
+  ],
+  "impact": "756/756 offline tests passing (7 new: extractAssetPricesUsd's real-price/null/zero/negative/non-finite filtering, formatAssetPriceUsd's sub-$1 precision vs. >= $1 currency formatting vs. the honest unavailable label). tsc -b, oxlint, npm run build all clean. Not yet live-verified against the real BETA Reserve in a browser (no browser-automation tool in this environment) -- Creator's own reload of that Reserve's page is the next real confirmation.",
+  "affectedAreas": [
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/lib/onChainReserve.ts",
+    "src/merge/lib/types.ts",
+    "src/merge/lib/calculations.ts",
+    "tests/phase_mainnet_pricing.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Creator-supplied screenshot of the real Mainnet \"BETA\" Reserve: AUM/Market Cap $19.21, SOL row showing $2.5 Value in Reserve, Fartcoin/STONK/Cupsey rows all showing $0 despite equal 25% weights.",
+    "Direct read of DTRDetail.tsx's composition row (pre-fix): `(balance) * (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? 0)`, and of TEST_ASSET_PRICES_USD's own doc comment confirming it is DevNet-fixture-only.",
+    "computeAumFromPrices (unchanged, already correct) computing BETA's real $19.21 AUM from the same priceByMint data confirms Pyth/Jupiter genuinely priced all 4 assets that pass -- the per-mint data existed and was simply not kept anywhere the composition table could read it.",
+    "756/756 offline tests passing."
+  ]
+}
+```

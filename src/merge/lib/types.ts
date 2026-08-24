@@ -292,6 +292,18 @@ export interface OnChainReserveMeta {
   priceAsOf?: number | null;
   /** Mints of every materially-held (nonzero vault balance) asset that could not be priced this pass -- empty unless priceSource === "unavailable". */
   unpricedAssetMints?: string[];
+  /**
+   * Per-asset real USD price (mint -> price), the SAME validated Pyth/Jupiter
+   * data computeAumFromPrices already used to total AUM above -- kept here
+   * too so a per-asset display (e.g. the Reserve Composition table's "Value
+   * in Reserve"/"Price" columns) can price each asset individually instead
+   * of falling back to the DevNet-only TEST_ASSET_PRICES_USD fixture table,
+   * which has no real entry for most Mainnet assets and silently priced them
+   * at $0 (2026-08-24, road-to-mainnet MCR-01). Only ever set for a Mainnet
+   * Reserve; only includes mints that actually resolved to a valid price
+   * this pass -- absent (never a fabricated 0) for anything unpriced.
+   */
+  assetPricesUsd?: Record<string, number>;
 }
 
 export type WalletProviderId = "phantom" | "solflare" | "backpack";

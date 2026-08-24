@@ -31,7 +31,8 @@ import {
   type RawPythPrice,
   type RawJupiterPrice,
 } from "../packages/sdk/src/pricing";
-import { computeAumFromPrices, computeMarketCap, type AssetPriceInfo } from "../src/merge/lib/onChainReserve";
+import { computeAumFromPrices, computeMarketCap, extractAssetPricesUsd, type AssetPriceInfo } from "../src/merge/lib/onChainReserve";
+import { formatAssetPriceUsd } from "../src/merge/lib/calculations";
 import { computeDirectReserveTokensRequested } from "../packages/sdk/src/directInstructions";
 import { computeNetMintOutput } from "../packages/sdk/src/calculations";
 
@@ -228,6 +229,63 @@ describe("onChainReserve.ts -- computeAumFromPrices (real ALPHA Reserve numbers)
     );
     expect(aum.priceSource).to.equal("mixed");
     expect(aum.priceAsOf).to.equal(100); // earliest contributing quote
+  });
+});
+
+describe("onChainReserve.ts -- extractAssetPricesUsd (per-asset prices preserved for display, not just totaled into AUM)", () => {
+  // Regression coverage for a real bug (2026-08-24, road-to-mainnet MCR-01):
+  // computeAumFromPrices's priceByMint input was used to total AUM and then
+  // discarded -- DTRDetail.tsx's Reserve Composition table fell back to the
+  // DevNet-only TEST_ASSET_PRICES_USD fixture table for per-asset "Value in
+  // Reserve", showing $0 for every real Mainnet asset outside that fixed
+  // table even though AUM itself (computed from the SAME real prices) was
+  // correct. extractAssetPricesUsd is what lets a caller keep the per-mint
+  // prices instead of only the aggregate.
+  it("keeps only mints that resolved to a real, valid, positive price", () => {
+    const priceByMint: Record<string, AssetPriceInfo> = {
+      [SSR_MINT]: { usdPrice: 0.00048268588081433423, source: "jupiter", lastUpdated: Date.now() },
+      UnavailableMint1111111111111111111111111: { usdPrice: null, source: "unavailable", lastUpdated: null },
+      ZeroMint11111111111111111111111111111111: { usdPrice: 0, source: "jupiter", lastUpdated: Date.now() },
+      NegativeMint111111111111111111111111111: { usdPrice: -1, source: "jupiter", lastUpdated: Date.now() },
+      NonFiniteMint11111111111111111111111111: { usdPrice: Number.NaN, source: "jupiter", lastUpdated: Date.now() },
+    };
+    expect(extractAssetPricesUsd(priceByMint)).to.deep.equal({ [SSR_MINT]: 0.00048268588081433423 });
+  });
+
+  it("returns an empty object (never throws) for an empty priceByMint", () => {
+    expect(extractAssetPricesUsd({})).to.deep.equal({});
+  });
+
+  it("preserves multiple valid prices independently", () => {
+    const priceByMint: Record<string, AssetPriceInfo> = {
+      MintA1111111111111111111111111111111111: { usdPrice: 1.5, source: "pyth", lastUpdated: 100 },
+      MintB1111111111111111111111111111111111: { usdPrice: 200, source: "jupiter", lastUpdated: 200 },
+    };
+    expect(extractAssetPricesUsd(priceByMint)).to.deep.equal({
+      MintA1111111111111111111111111111111111: 1.5,
+      MintB1111111111111111111111111111111111: 200,
+    });
+  });
+});
+
+describe("calculations.ts -- formatAssetPriceUsd (a single Reserve Asset's own per-unit price, unlike formatUsdc's fixed 2 decimals)", () => {
+  it("shows the honest 'Price unavailable' label for null, never a fabricated $0.00", () => {
+    expect(formatAssetPriceUsd(null)).to.equal("Price unavailable");
+  });
+
+  it("shows the honest 'Price unavailable' label for 0, a negative value, or a non-finite value -- never a misleading currency figure", () => {
+    expect(formatAssetPriceUsd(0)).to.equal("Price unavailable");
+    expect(formatAssetPriceUsd(-5)).to.equal("Price unavailable");
+    expect(formatAssetPriceUsd(Number.NaN)).to.equal("Price unavailable");
+  });
+
+  it("uses normal 2-decimal currency formatting for a price >= $1", () => {
+    expect(formatAssetPriceUsd(1.93)).to.equal("$1.93");
+    expect(formatAssetPriceUsd(200)).to.equal("$200.00");
+  });
+
+  it("shows real precision for a sub-$1 price instead of rounding it away to $0.00 -- the exact real ALPHA/SSR price from DEC-0134", () => {
+    expect(formatAssetPriceUsd(0.00048268588081433423)).to.equal("$0.000483");
   });
 });
 
