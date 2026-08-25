@@ -262,8 +262,30 @@ export function classifyCreateReserveError(e: unknown): CreateReserveErrorClass 
   if (isWalletRejectionError(underlying)) return "wallet-rejected";
   if (underlying instanceof AmbiguousConfirmationError) return "ambiguous";
   if (isRateLimitError(underlying)) return "retryable";
+  const underlyingMsg = (underlying instanceof Error ? underlying.message : String(underlying)).toLowerCase();
+  // A Jupiter swap rejected ON-CHAIN by one of the programs in its route
+  // (jupiterSwapClient.ts's describeJupiterSwapError, thrown by
+  // executeJupiterSwap) is a real, decodable Custom(N) error -- but it is
+  // NOT an ssr_protocol/Anchor condition the extractCustomErrorCode check
+  // below is meant to catch, and unlike those, this codebase's own design
+  // treats it as routine/transient by construction: describeJupiterSwapError
+  // itself always says "Try again: a fresh quote is fetched automatically
+  // on retry" (the single most common real cause of an AMM/router
+  // instruction reverting mid-swap is an ordinary minimum-output/slippage
+  // check, not a stable configuration problem -- see that function's own
+  // header). Confirmed live (2026-08-25, real Mainnet Reserve "CHARLIE",
+  // error code 6024): this message previously fell through every rule
+  // below (its plain-English "error code N" phrasing matches none of
+  // extractCustomErrorCode's raw-JSON/hex/Custom() patterns, so that check
+  // itself wasn't even the culprit -- it simply hit the conservative
+  // "deterministic" default) and got told "will not resolve itself on a
+  // plain retry" directly contradicting its own "Try again" text. Checked
+  // BEFORE extractCustomErrorCode below (never after) so this stays
+  // correctly retryable even if some future rawErrorJson shape happens to
+  // also match one of that check's patterns.
+  if (underlyingMsg.includes("jupiter swap was rejected on-chain")) return "retryable";
   if (extractCustomErrorCode(underlying) !== null) return "deterministic";
-  const msg = (underlying instanceof Error ? underlying.message : String(underlying)).toLowerCase();
+  const msg = underlyingMsg;
   if (msg.includes("failed to fetch") || msg.includes("network error") || msg.includes("timed out") || msg.includes("timeout")) return "retryable";
   return "deterministic";
 }

@@ -38,6 +38,7 @@ import {
   PENDING_DEPLOY_STALE_MS,
 } from "../src/merge/lib/createReserveResume";
 import { AmbiguousConfirmationError } from "../src/merge/lib/rpcResilience";
+import { describeJupiterSwapError } from "../src/merge/lib/jupiterSwapClient";
 import { decodeSsrProtocolError, extractCustomErrorCode, describeOnChainError, ssrProtocolErrorCodeRange } from "../packages/sdk/src/errors";
 import { resolveProtocolFeeDestinationTokenAccount } from "../packages/sdk/src/pda";
 import { computeEffectiveFeeSplit, splitTotalFee, PROTOCOL_MIN_MINT_FEE_BPS } from "../packages/sdk/src/feeMath";
@@ -456,6 +457,40 @@ describe("Reserve deploy resumability -- 9. Deterministic Anchor/ssr_protocol er
       original.name = "WalletSignTransactionError";
       const wrapped = new CreateReserveStepError(original.message, "create-and-register", null, original);
       expect(classifyCreateReserveError(wrapped)).to.equal("wallet-rejected");
+    });
+  });
+
+  // Regression (2026-08-25, real Mainnet Reserve "CHARLIE"): a Jupiter swap
+  // rejected ON-CHAIN by one of the programs in its route (error code 6024,
+  // a routine slippage-exceeded rejection -- executeJupiterSwap/
+  // describeJupiterSwapError, jupiterSwapClient.ts) was falling through
+  // every rule to the conservative "deterministic" default, even though
+  // describeJupiterSwapError's own message explicitly says "Try again: a
+  // fresh quote is fetched automatically on retry" -- the UI then told the
+  // Creator the opposite: "this specific failure will not resolve itself
+  // on a plain retry", directly contradicting the error's own text.
+  describe("9c. A Jupiter swap rejected on-chain (describeJupiterSwapError) is retryable, never deterministic", () => {
+    it("classifies a real Custom(N)-coded Jupiter route rejection (e.g. 6024) as retryable, exactly reproducing the live CHARLIE report", () => {
+      const message = describeJupiterSwapError(JSON.stringify({ InstructionError: [3, { Custom: 6024 }] }));
+      expect(message).to.include("Try again");
+      expect(classifyCreateReserveError(new Error(`${message} Signature: 28ezn3tBYimLnzhXuy4yg6JY2xsUXP9ZMXuDHp9oQ7N9uwD3JJ95Ek74jpfnt2A8ZsaNReyoH47AsnpPiT9AYCzf.`))).to.equal("retryable");
+    });
+
+    it("also classifies the generic (non-InstructionError) Jupiter-swap-rejection fallback message as retryable", () => {
+      const message = describeJupiterSwapError("not valid transaction-error json");
+      expect(classifyCreateReserveError(new Error(message))).to.equal("retryable");
+    });
+
+    it("still classifies a CreateReserveStepError wrapping a Jupiter-swap-rejection error as retryable (the real shape once fund-seed-assets re-wraps it)", () => {
+      const original = new Error(describeJupiterSwapError(JSON.stringify({ InstructionError: [3, { Custom: 6024 }] })));
+      const wrapped = new CreateReserveStepError(original.message, "fund-seed-assets", null, original);
+      expect(classifyCreateReserveError(wrapped)).to.equal("retryable");
+    });
+
+    it("checked BEFORE extractCustomErrorCode -- stays retryable even though the message names a real Custom(N) code, never misread as an ssr_protocol/Anchor deterministic error", () => {
+      const message = describeJupiterSwapError(JSON.stringify({ InstructionError: [3, { Custom: 6024 }] }));
+      expect(extractCustomErrorCode(new Error(message))).to.equal(null); // the plain-English "error code 6024" phrasing doesn't match extractCustomErrorCode's own raw-JSON/hex/Custom() patterns
+      expect(classifyCreateReserveError(new Error(message))).to.equal("retryable");
     });
   });
 

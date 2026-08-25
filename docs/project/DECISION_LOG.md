@@ -4693,3 +4693,49 @@
   ]
 }
 ```
+
+## DEC-0149
+
+```json
+{
+  "id": "DEC-0149",
+  "date": "2026-08-25",
+  "status": "confirmed-implemented",
+  "decision": "Added server-side diagnostic logging (console.error) to api/mainnet/jupiter-swap.ts's quote and swap-transaction-build failure paths -- every failure reason (HTTP status, raw response body, thrown exception) was previously discarded before ever reaching a log line, making it impossible to tell whether a 'transient' classification was genuinely transient or a specific, recurring condition. Switched both from `.json().catch(() => null)` (silently swallows a non-JSON body) to reading `.text()` once, logging it, then parsing manually. No behavior change for callers.",
+  "context": "DEC-0148 shipped, then Creator's next Resume attempt on DELTA still hit \"Jupiter's swap-transaction service had a network error and is temporarily unavailable\" -- correctly classified as retryable this time (not falsely deterministic), but with zero visibility into what Jupiter actually said, this session could only keep guessing at fixes rather than diagnosing the real cause.",
+  "rationale": "A purely observability-focused pass -- no behavior change, just making the next real failure legible instead of another guess. Deliberately logs the RAW text (never assumes JSON) so even a non-JSON upstream response (an HTML error page, an empty body) is visible.",
+  "alternativesConsidered": ["Keep guessing at fixes without adding logging -- rejected: this session had already fixed the same bug shape three times (quote call, swap-build call), and this pass makes clear WHY: no visibility into the actual failure reason to confirm or rule out a fourth."],
+  "impact": "801/801 offline tests passing (existing tests' mocks updated for the .text()-based reads, no new test count change). tsc -b, oxlint, npm run build all clean. Deployed to production.",
+  "affectedAreas": ["api/mainnet/jupiter-swap.ts", "tests/phase_mainnet_production_fixes.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["801/801 offline tests passing.", "Deployed to production, commit ae46b78."]
+}
+```
+
+## DEC-0150
+
+```json
+{
+  "id": "DEC-0150",
+  "date": "2026-08-25",
+  "status": "confirmed-implemented",
+  "decision": "Fixed classifyCreateReserveError misclassifying a genuine on-chain Jupiter-swap-route rejection (e.g. error code 6024, an ordinary slippage-exceeded rejection) as \"deterministic\" even though describeJupiterSwapError's own message explicitly says \"Try again: a fresh quote is fetched automatically on retry.\" Added a check for describeJupiterSwapError's stable \"jupiter swap was rejected on-chain\" message marker, classifying it as retryable -- checked BEFORE extractCustomErrorCode so it can never be misread as an ssr_protocol/Anchor deterministic error just because its message happens to name a real Custom(N) code.",
+  "context": "Creator, now resuming CHARLIE (having abandoned tracking DELTA locally -- DELTA itself is untouched, still real on-chain), hit: \"The Jupiter swap was rejected on-chain by one of the programs in its route (error code 6024) -- this most commonly means the price moved beyond the accepted slippage... Try again: a fresh quote is fetched automatically on retry.\" immediately followed by the UI's own \"this specific failure will not resolve itself on a plain retry\" -- directly contradicting the error's own text.",
+  "rationale": "Traced to classifyCreateReserveError: describeJupiterSwapError (jupiterSwapClient.ts, thrown by executeJupiterSwap when a swap transaction genuinely fails on-chain) renders a Custom(N) code as plain English (\"error code N\"), which doesn't match extractCustomErrorCode's raw-JSON/hex/Custom() patterns (confirmed: extractCustomErrorCode returns null for this exact message) -- so THAT check wasn't even the direct culprit this time; the message simply fell through every retryable-shape check (no wallet-rejection, not AmbiguousConfirmationError, no 429/'too many'+'requests', no 'network error'/'timeout' substring) to the conservative default. This is the third distinct call site in this session where a message that says 'try again' in its own text got the opposite framing slapped on top by the generic wrapper -- fixed the same way as DEC-0144/0148: recognize the specific known-safe-to-retry shape explicitly, this time via describeJupiterSwapError's own stable message marker rather than a typed class (no dedicated error class exists for this path; the marker string is deliberate and already used by two separate branches of describeJupiterSwapError, so it's a reliable signal).",
+  "alternativesConsidered": [
+    "Give describeJupiterSwapError its own typed error class (like AmbiguousConfirmationError) instead of matching on a message substring -- rejected for this pass: a bigger refactor than the fix needs; the marker string is already deliberate, stable, and shared by both of the function's branches, and a message-based check is consistent with how isRateLimitError already works in this same file.",
+    "Treat EVERY decodable Custom(N) code from a Jupiter swap as retryable via a broader extractCustomErrorCode-based rule -- rejected: extractCustomErrorCode's patterns are shared with ssr_protocol/Anchor error decoding elsewhere; scoping the fix to describeJupiterSwapError's own specific message shape avoids ever accidentally reclassifying a genuine ssr_protocol deterministic error."
+  ],
+  "impact": "805/805 offline tests passing (4 new, reproducing the exact live error code 6024/signature). tsc -b, oxlint, npm run build all clean. Neither CHARLIE nor DELTA touched -- classification fix only.",
+  "affectedAreas": ["src/merge/lib/createReserveResume.ts", "tests/phase_reserve_deploy_resumability.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Creator-reported live error, verbatim, including signature 28ezn3tBYimLnzhXuy4yg6JY2xsUXP9ZMXuDHp9oQ7N9uwD3JJ95Ek74jpfnt2A8ZsaNReyoH47AsnpPiT9AYCzf.",
+    "jupiterSwapClient.ts's describeJupiterSwapError, both branches, confirmed by direct source read to always end with the literal phrase \"Try again: a fresh quote is fetched automatically on retry.\"",
+    "extractCustomErrorCode(new Error(describeJupiterSwapError(...))) confirmed to return null in a direct test -- the plain-English rendering doesn't match any of that function's own detection patterns.",
+    "805/805 offline tests passing, including the 4 new regression tests added by this pass."
+  ]
+}
+```
