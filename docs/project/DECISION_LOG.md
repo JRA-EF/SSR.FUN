@@ -4665,3 +4665,31 @@
   ]
 }
 ```
+
+## DEC-0148
+
+```json
+{
+  "id": "DEC-0148",
+  "date": "2026-08-25",
+  "status": "confirmed-implemented",
+  "decision": "Mirrored DEC-0146's bounded-retry/genuine-vs-transient fix onto api/mainnet/jupiter-swap.ts's OTHER real Jupiter call (building the swap transaction from an already-fetched quote), which had the identical unhandled generic-fallback shape as the quote call DEC-0146 already fixed. Also fixed a real test-isolation gap this pass's own new tests exposed: checkRateWindow (api/devnet/_lib/rateLimit.ts) is a module-scope, in-memory Map that persists for the whole test process -- every test in this file that didn't set a distinct x-forwarded-for header shared ONE rate-limit bucket (falling back to clientIp's \"unknown\"), so simply adding enough new tests to this file could trip this app's own 12-requests/60s limit purely from test volume, unrelated to what any individual test claimed to verify. Gave every POST-issuing test in this file its own synthetic IP.",
+  "context": "Immediately after DEC-0147 deployed to production, Creator's next Resume attempt on DELTA hit a NEW failure at the same funding step: \"Failed to build the Jupiter swap transaction.\" -- again framed as deterministic. Creator then asked directly: \"does it make sense to continue at this stage?\", given the string of live-tested-then-patched failures in this same pipeline (DEC-0144 through DEC-0147).",
+  "rationale": "Recognized this as the SAME class of bug DEC-0146 had just fixed one call earlier, not a new investigation: jupiter-swap.ts makes exactly two real upstream calls (quote, then build-swap-transaction from that quote) and only the first had bounded retry + genuine-vs-transient distinction. The second call's failure path -- `!swapRes.ok || !swapBody || typeof swapBody.swapTransaction !== \"string\" || ...` -- fell back to a generic 'Failed to build the Jupiter swap transaction.' for ANY malformed/non-OK response, exactly mirroring the quote call's pre-DEC-0146 shape. Applied the identical pattern: a genuine, parseable Jupiter error (a real problem with the built transaction) is reported immediately and unretried; an unparseable body or thrown fetch() is retried up to 3 times before falling back to a 'network error'-worded message (again deliberately matching classifyCreateReserveError's existing retryable substring check). While writing this pass's own regression tests, discovered they'd push this file's total POST-issuing test count past 12 within a single ts-mocha process -- api/mainnet/jupiter-swap.ts's real rate limiter (checkRateWindow) is a shared, module-scope, in-memory Map with no test-reset hook, and every test that left `headers: {}` (the pre-existing convention in this file) shared the SAME 'unknown' IP bucket. Fixed by giving every test a unique synthetic x-forwarded-for IP (a module-level counter, `uniqueTestIp()`), which is also the more realistic simulation (real callers each have their own real IP) and makes this file's test count no longer fragile to future additions.",
+  "alternativesConsidered": [
+    "Retry the WHOLE quote+swap-build sequence together (refetch a fresh quote on every outer retry) instead of just the swap-build call alone -- rejected for this pass: no live evidence pointed at quote staleness specifically (Jupiter quotes remain valid well beyond this endpoint's short retry backoff window), and retrying just the implicated call is the smaller, more targeted change; can be revisited if a live staleness-specific failure is ever actually observed.",
+    "Add a reset/clear function to checkRateWindow for tests to call in a beforeEach -- rejected: touches shared production rate-limiting code purely to serve tests, and a per-test unique IP is a strictly simpler, zero-production-risk fix that also better simulates real traffic (distinct real callers, not one shared bucket).",
+    "Stop after this fix and treat the pattern as fully closed -- considered directly per the Creator's own question. Assessed as reasonable to continue: every failure in this chain (DEC-0144-0148) has been the SAME root cause (a generic failure message masking a transient condition) recurring at different call sites in the same funding pipeline, not unrelated new bugs -- and this pass closes the second (and only remaining) Jupiter call site in that specific class. Explicitly flagged to Creator that the steps AFTER a successful swap build (wallet signing, execution, confirmation) use older, already-tested machinery from before this session, and that if a genuinely DIFFERENT failure class appears next, that's the signal to reconsider the approach rather than keep patching incrementally."
+  ],
+  "impact": "801/801 offline tests passing (5 new: 3 for the swap-build retry/distinction, plus the test-isolation fix keeping the 2 pre-existing quote-step tests it would otherwise have starved of rate-limit budget passing). tsc -b, oxlint, npm run build all clean. Neither CHARLIE nor DELTA touched -- server-side retry/messaging fix and test-infrastructure fix only.",
+  "affectedAreas": ["api/mainnet/jupiter-swap.ts", "tests/phase_mainnet_production_fixes.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Creator-reported live Resume failure: \"Failed to build the Jupiter swap transaction.\" during DELTA's 'Funding seed assets (Mainnet)' step, immediately after DEC-0147's fixes were live in production.",
+    "api/mainnet/jupiter-swap.ts's swap-transaction-build path, before this fix: `res.status(502).json({ error: (swapBody && typeof swapBody.error === \"string\" && swapBody.error) || \"Failed to build the Jupiter swap transaction.\" })` -- confirmed by direct source read to be the exact same generic-fallback shape as the quote call DEC-0146 already fixed, just unfixed on this second call site.",
+    "Confirmed the test-isolation bug directly: adding this pass's 3 new swap-build regression tests (bringing the file's total POST-issuing tests to 13) made the 13th test's own fetch mock receive ZERO calls (swapCalls stayed 0), because checkRateWindow's shared 'unknown'-IP bucket had already been exhausted by the prior 12 tests in the same process.",
+    "801/801 offline tests passing, including the 5 new/fixed regression tests from this pass."
+  ]
+}
+```

@@ -329,6 +329,24 @@ describe("api/mainnet/asset-prices.ts -- fetchJupiterPrices falls back to the un
   });
 });
 
+// api/mainnet/jupiter-swap.ts's own real rate limiter (checkRateWindow,
+// api/devnet/_lib/rateLimit.ts) is a module-scope Map keyed by client IP --
+// real, shared, in-memory state that persists for this whole test process,
+// not reset between tests. clientIp() falls back to "unknown" when no
+// x-forwarded-for header is set, which would silently bucket EVERY test
+// below (and in the describe block after this one) into the SAME rate-limit
+// counter, and the 13th+ POST call within this file's test run would get a
+// real 429 from OUR OWN test setup rather than exercising what it's meant
+// to -- confirmed live while adding this file's later swap-transaction-
+// build regression tests. A unique synthetic IP per test keeps every test's
+// rate-limit bucket independent, regardless of how many tests this file (or
+// a future one) ends up adding.
+let testIpCounter = 0;
+function uniqueTestIp(): string {
+  testIpCounter += 1;
+  return `203.0.113.${testIpCounter}`;
+}
+
 describe("api/mainnet/jupiter-swap.ts -- input validation (no network/API-key dependency)", () => {
   const VALID_OUTPUT_MINT = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
   const VALID_USER_PUBKEY = "9bAG6E3NrPrnANfhCQTiqJ1MTGNApPqvMjDsxvtMWkJG";
@@ -342,37 +360,37 @@ describe("api/mainnet/jupiter-swap.ts -- input validation (no network/API-key de
 
   it("rejects USDC itself as the outputMint -- it's the input currency, not a swap target", async () => {
     const res = new FakeRes();
-    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: USDC, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    await jupiterSwapHandler({ method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: USDC, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
     expect(res.statusCode).to.equal(400);
   });
 
   it("rejects a malformed outputMint", async () => {
     const res = new FakeRes();
-    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: "not-base58!!!", amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    await jupiterSwapHandler({ method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: "not-base58!!!", amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
     expect(res.statusCode).to.equal(400);
   });
 
   it("rejects a malformed userPublicKey", async () => {
     const res = new FakeRes();
-    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: "not-a-real-pubkey" } } as never, res as never);
+    await jupiterSwapHandler({ method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: "not-a-real-pubkey" } } as never, res as never);
     expect(res.statusCode).to.equal(400);
   });
 
   it("rejects a non-numeric amountRaw", async () => {
     const res = new FakeRes();
-    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "not-a-number", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    await jupiterSwapHandler({ method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "not-a-number", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
     expect(res.statusCode).to.equal(400);
   });
 
   it("rejects a zero or negative amountRaw", async () => {
     const res = new FakeRes();
-    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "0", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+    await jupiterSwapHandler({ method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "0", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
     expect(res.statusCode).to.equal(400);
   });
 
   it("rejects a slippageBps outside 1..500", async () => {
     const res = new FakeRes();
-    await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY, slippageBps: 10_000 } } as never, res as never);
+    await jupiterSwapHandler({ method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY, slippageBps: 10_000 } } as never, res as never);
     expect(res.statusCode).to.equal(400);
   });
 
@@ -381,7 +399,7 @@ describe("api/mainnet/jupiter-swap.ts -- input validation (no network/API-key de
     delete process.env.JUPITER_API_KEY;
     try {
       const res = new FakeRes();
-      await jupiterSwapHandler({ method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
+      await jupiterSwapHandler({ method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } } as never, res as never);
       expect(res.statusCode).to.equal(500);
       const body = res.body as { error?: string };
       expect(body.error).to.equal("Jupiter swap is not configured on this deployment.");
@@ -409,7 +427,9 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
   const originalKey = process.env.JUPITER_API_KEY;
   const VALID_OUTPUT_MINT = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
   const VALID_USER_PUBKEY = "9bAG6E3NrPrnANfhCQTiqJ1MTGNApPqvMjDsxvtMWkJG";
-  const validReq = { method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } };
+  function makeValidReq() {
+    return { method: "POST", headers: { "x-forwarded-for": uniqueTestIp() }, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } };
+  }
 
   beforeEach(() => {
     process.env.JUPITER_API_KEY = "test-key";
@@ -427,7 +447,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
       return { ok: false, status: 400, json: async () => ({ error: "The token X is not tradable", errorCode: "TOKEN_NOT_TRADABLE" }) };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
-    await jupiterSwapHandler(validReq as never, res as never);
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
     expect(quoteCalls).to.equal(1);
     expect(res.statusCode).to.equal(502);
     expect((res.body as { error?: string }).error).to.equal("The token X is not tradable");
@@ -444,7 +464,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
       return { ok: true, json: async () => ({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
-    await jupiterSwapHandler(validReq as never, res as never);
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
     expect(quoteCalls).to.equal(3);
     expect(res.statusCode).to.equal(200);
   });
@@ -456,12 +476,67 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
       return { ok: false, status: 502, json: async () => { throw new Error("not valid json"); } };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
-    await jupiterSwapHandler(validReq as never, res as never);
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
     expect(quoteCalls).to.equal(3);
     expect(res.statusCode).to.equal(502);
     const body = res.body as { error?: string };
     expect(body.error).to.include("network error");
     expect(body.error).to.not.include("No Jupiter swap route");
+  });
+
+  // Regression (2026-08-25, immediately after the quote-step fix above
+  // shipped): the exact same generic-fallback-hides-a-transient-failure
+  // shape existed one call later, on Jupiter's SEPARATE swap-transaction-
+  // build endpoint -- "Failed to build the Jupiter swap transaction." for
+  // ANY non-OK/malformed response, not only a genuine, stable problem with
+  // the built transaction.
+  it("also retries a transient failure on the swap-transaction-build call (the quote itself succeeds first try) and eventually succeeds", async () => {
+    let quoteCalls = 0;
+    let swapCalls = 0;
+    global.fetch = (async (url: string) => {
+      if (String(url).includes("/quote")) {
+        quoteCalls += 1;
+        return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
+      }
+      swapCalls += 1;
+      if (swapCalls < 3) throw new Error("simulated transient network failure");
+      return { ok: true, json: async () => ({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
+    expect(quoteCalls).to.equal(1);
+    expect(swapCalls).to.equal(3);
+    expect(res.statusCode).to.equal(200);
+  });
+
+  it("reports a genuine, specific swap-transaction-build error immediately, without retrying", async () => {
+    let swapCalls = 0;
+    global.fetch = (async (url: string) => {
+      if (String(url).includes("/quote")) return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
+      swapCalls += 1;
+      return { ok: false, status: 400, json: async () => ({ error: "Simulation failed: insufficient funds for rent." }) };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
+    expect(swapCalls).to.equal(1);
+    expect(res.statusCode).to.equal(502);
+    expect((res.body as { error?: string }).error).to.equal("Simulation failed: insufficient funds for rent.");
+  });
+
+  it("bounds swap-transaction-build retries at 3 attempts, reporting a network-error message never the old generic 'Failed to build' wording", async () => {
+    let swapCalls = 0;
+    global.fetch = (async (url: string) => {
+      if (String(url).includes("/quote")) return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
+      swapCalls += 1;
+      return { ok: false, status: 502, json: async () => { throw new Error("not valid json"); } };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
+    expect(swapCalls).to.equal(3);
+    expect(res.statusCode).to.equal(502);
+    const body = res.body as { error?: string };
+    expect(body.error).to.include("network error");
+    expect(body.error).to.not.include("Failed to build the Jupiter swap transaction");
   });
 });
 

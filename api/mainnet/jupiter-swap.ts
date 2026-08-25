@@ -192,33 +192,71 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
-  try {
-    const swapRes = await fetch(JUPITER_SWAP_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": apiKey },
-      // dynamicSlippage: Jupiter computes its own volatility/route-aware
-      // slippage bound (bounded by MAX_SLIPPAGE_BPS's spirit -- Jupiter's
-      // own heuristic ceiling in practice) instead of a single fixed
-      // client-supplied value, which is what a fixed 150bps default was too
-      // tight for on a real low-liquidity/volatile token (see
-      // docs/project/DECISION_LOG.md's entry for this pass) -- it can go
-      // both tighter (no wasted slippage budget on a stable route) and
-      // wider (survives real short-term volatility) than a static number.
-      body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true }),
-    });
-    const swapBody = await swapRes.json().catch(() => null);
-    if (!swapRes.ok || !swapBody || typeof swapBody.swapTransaction !== "string" || typeof swapBody.lastValidBlockHeight !== "number") {
-      res.status(502).json({ error: (swapBody && typeof swapBody.error === "string" && swapBody.error) || "Failed to build the Jupiter swap transaction." });
-      return;
+  // Same bounded-retry/genuine-vs-transient treatment as the quote step
+  // above, applied to Jupiter's OTHER real call this endpoint makes.
+  // Confirmed live (2026-08-25, real Mainnet Reserve "DELTA", immediately
+  // after the quote step's own equivalent fix shipped): the exact same
+  // failure SHAPE -- a non-OK/malformed response with no usable `.error`
+  // string, or a thrown fetch() -- was unhandled here, producing the
+  // identical "sounds permanent, isn't" experience one call later in the
+  // same request. A genuine, parseable Jupiter error from THIS endpoint
+  // (e.g. a real problem with the built transaction) is still reported
+  // immediately, unretried -- only an unparseable/thrown failure, which
+  // indicates something upstream broke rather than Jupiter deliberately
+  // rejecting the request, is retried.
+  type SwapBuildResult =
+    | { kind: "ok"; swapTransaction: string; lastValidBlockHeight: number }
+    | { kind: "specific-error"; message: string }
+    | { kind: "transient" };
+  async function attemptBuildSwap(): Promise<SwapBuildResult> {
+    try {
+      const swapRes = await fetch(JUPITER_SWAP_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": jupiterApiKey },
+        // dynamicSlippage: Jupiter computes its own volatility/route-aware
+        // slippage bound (bounded by MAX_SLIPPAGE_BPS's spirit -- Jupiter's
+        // own heuristic ceiling in practice) instead of a single fixed
+        // client-supplied value, which is what a fixed 150bps default was too
+        // tight for on a real low-liquidity/volatile token (see
+        // docs/project/DECISION_LOG.md's entry for this pass) -- it can go
+        // both tighter (no wasted slippage budget on a stable route) and
+        // wider (survives real short-term volatility) than a static number.
+        body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true }),
+      });
+      const swapBody = await swapRes.json().catch(() => null);
+      if (swapRes.ok && swapBody && typeof swapBody.swapTransaction === "string" && typeof swapBody.lastValidBlockHeight === "number") {
+        return { kind: "ok", swapTransaction: swapBody.swapTransaction, lastValidBlockHeight: swapBody.lastValidBlockHeight };
+      }
+      if (swapBody && typeof swapBody.error === "string") return { kind: "specific-error", message: swapBody.error };
+      return { kind: "transient" };
+    } catch {
+      return { kind: "transient" };
     }
-    res.status(200).json({
-      swapTransaction: swapBody.swapTransaction,
-      lastValidBlockHeight: swapBody.lastValidBlockHeight,
-      inAmount: quote.inAmount,
-      outAmount: quote.outAmount,
-      priceImpactPct: quote.priceImpactPct,
-    });
-  } catch {
-    res.status(502).json({ error: "Jupiter swap-transaction request failed." });
   }
+
+  let built: { swapTransaction: string; lastValidBlockHeight: number } | null = null;
+  const MAX_SWAP_BUILD_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_SWAP_BUILD_ATTEMPTS && !built; attempt++) {
+    const result = await attemptBuildSwap();
+    if (result.kind === "ok") {
+      built = { swapTransaction: result.swapTransaction, lastValidBlockHeight: result.lastValidBlockHeight };
+    } else if (result.kind === "specific-error") {
+      res.status(502).json({ error: result.message });
+      return;
+    } else if (attempt < MAX_SWAP_BUILD_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  if (!built) {
+    res.status(502).json({ error: "Jupiter's swap-transaction service had a network error and is temporarily unavailable -- wait a moment and try again." });
+    return;
+  }
+
+  res.status(200).json({
+    swapTransaction: built.swapTransaction,
+    lastValidBlockHeight: built.lastValidBlockHeight,
+    inAmount: quote.inAmount,
+    outAmount: quote.outAmount,
+    priceImpactPct: quote.priceImpactPct,
+  });
 }
