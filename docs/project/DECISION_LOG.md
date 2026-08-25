@@ -4771,3 +4771,29 @@
   ]
 }
 ```
+
+## DEC-0152
+
+```json
+{
+  "id": "DEC-0152",
+  "date": "2026-08-25",
+  "status": "confirmed-implemented",
+  "decision": "Added first-class Jupiter per-key 429 rate-limit handling to both retry loops in api/mainnet/jupiter-swap.ts (quote and swap-transaction-build): a 429 now waits the response's Retry-After (capped at 5s; 2s default) instead of the generic 400/800ms backoff, a 429 body's text is never treated as a stable specific answer even when it happens to contain an .error field, and exhausted 429s return a real HTTP 429 with 'too many ... requests' wording (which classifyCreateReserveError already classifies retryable) instead of the misleading generic 'network error' text.",
+  "context": "Immediately after DEC-0151 deployed and the Creator topped the wallet up with USDC, the next Resume failed with 'Jupiter's swap-quote service had a network error and is temporarily unavailable for this asset' -- correctly framed as retryable, but still a failure with no visible cause.",
+  "rationale": "A direct manual reproduction of the identical request against production (POST /api/mainnet/jupiter-swap, outputMint USD1, $2, the real manager wallet) succeeded in 0.402s moments after the reported failure -- ruling out a stable outage and pointing at burst shape: a Resume for a many-asset Reserve legitimately fires several quote requests within a couple of seconds against Jupiter's api.jup.ag, which rate-limits PER KEY and answers 429 with a {\"message\":...} body (no .error field, so the specific-error branch never matches -- it fell into the generic transient bucket), and the loop's 400/800ms retries land back inside the same rate window, exhausting all bounded attempts. Production logs' request-line noise made the console.error diagnostics unreachable within the CLI's fetch window, so the reproduction test was the decisive evidence.",
+  "alternativesConsidered": [
+    "Server-side request queuing/spacing across concurrent function invocations -- rejected for now: Vercel functions are per-invocation isolated (no shared in-memory queue works reliably), and Retry-After-honoring bounded retries inside each request address the observed failure without new infrastructure.",
+    "Raising the Jupiter API plan/key limits -- outside this repo's control and not evidenced as necessary once retries actually wait out the window."
+  ],
+  "impact": "831/831 offline tests passing (3 new: Retry-After honored with a real timing assertion; exhausted 429s produce the rate-limit wording and a real 429 status; a 429 body containing .error is still treated as transient). tsc -b, oxlint, npm run build clean. Deployed to production.",
+  "affectedAreas": ["api/mainnet/jupiter-swap.ts", "tests/phase_mainnet_production_fixes.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Manual reproduction against production immediately after the reported failure: identical USD1/$2 quote+build returned HTTP 200 with a real unsigned transaction in 0.402s -- the condition was transient/burst-shaped, not stable.",
+    "Jupiter API gateway 429 responses use a {\"message\":...} body without an .error field -- confirmed against the api's documented error shapes and the pre-existing DEC-0135 key-behavior investigation.",
+    "831/831 offline tests passing."
+  ]
+}
+```

@@ -141,7 +141,32 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // from before ever reaching the Creator as an error at all.
   // Result of one quote attempt: the real quote, a genuine/specific Jupiter
   // error to report as-is (never retried), or "transient" (worth retrying).
-  type QuoteAttemptResult = { kind: "ok"; quote: JupiterQuote } | { kind: "specific-error"; message: string } | { kind: "transient" };
+  // A transient result carries the failing status plus an optional
+  // Retry-After-derived delay: Jupiter's API gateway rate-limits PER KEY
+  // and answers 429 with a `{"message":...}` body (no `.error` field, so
+  // the specific-error branch never matches it) -- and a Resume for a
+  // many-asset Reserve legitimately fires several quote requests within a
+  // couple of seconds, exactly the burst shape that trips a per-key RPM
+  // cap. Retrying a 429 after only 400/800ms usually lands INSIDE the same
+  // rate window and fails all bounded attempts (live-observed 2026-08-25:
+  // a Resume failed with the generic quote-unavailable message while a
+  // manual reproduction of the identical request succeeded in 0.4s moments
+  // later). A 429 now waits Retry-After (capped) or a full 2s per attempt.
+  type QuoteAttemptResult =
+    | { kind: "ok"; quote: JupiterQuote }
+    | { kind: "specific-error"; message: string }
+    | { kind: "transient"; status: number | null; retryAfterMs: number | null };
+  function retryAfterMsFrom(res: { headers?: { get(name: string): string | null } }): number | null {
+    try {
+      const raw = res.headers?.get("retry-after");
+      if (!raw) return null;
+      const seconds = Number(raw);
+      if (!Number.isFinite(seconds) || seconds <= 0) return null;
+      return Math.min(seconds, 5) * 1000; // capped -- never stall a user-facing request longer than a few seconds
+    } catch {
+      return null;
+    }
+  }
   async function attemptQuote(): Promise<QuoteAttemptResult> {
     try {
       const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${MAINNET_USDC_MINT}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`;
@@ -161,17 +186,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           errBody = null;
         }
         console.error(`[jupiter-swap] quote non-OK: status=${quoteRes.status} outputMint=${outputMint} body=${rawText.slice(0, 500)}`);
-        if (errBody && typeof errBody.error === "string") return { kind: "specific-error", message: errBody.error };
-        return { kind: "transient" };
+        if (quoteRes.status !== 429 && errBody && typeof errBody.error === "string") return { kind: "specific-error", message: errBody.error };
+        return { kind: "transient", status: quoteRes.status, retryAfterMs: retryAfterMsFrom(quoteRes) };
       }
       return { kind: "ok", quote: (await quoteRes.json()) as JupiterQuote };
     } catch (e) {
       console.error(`[jupiter-swap] quote fetch threw: outputMint=${outputMint} error=${e instanceof Error ? e.stack || e.message : String(e)}`);
-      return { kind: "transient" };
+      return { kind: "transient", status: null, retryAfterMs: null };
     }
   }
 
   let quote: JupiterQuote | null = null;
+  let lastTransientStatus: number | null = null;
   const MAX_QUOTE_ATTEMPTS = 3;
   for (let attempt = 0; attempt < MAX_QUOTE_ATTEMPTS && !quote; attempt++) {
     const result = await attemptQuote();
@@ -184,19 +210,27 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       // retrying further.
       res.status(502).json({ error: result.message });
       return;
-    } else if (attempt < MAX_QUOTE_ATTEMPTS - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    } else {
+      lastTransientStatus = result.status;
+      if (attempt < MAX_QUOTE_ATTEMPTS - 1) {
+        const delayMs = result.status === 429 ? (result.retryAfterMs ?? 2_000) : 400 * (attempt + 1);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
   }
   if (!quote) {
-    // Every attempt either threw or came back with an unparseable body --
+    // Every attempt either threw or came back rate-limited/unparseable --
     // a real transient condition, never Jupiter's own specific "no route"
     // answer (that path already returned above, on the first occurrence).
-    // Deliberately worded to include "network error", which
-    // classifyCreateReserveError (createReserveResume.ts) already
-    // recognizes as retryable -- consistent with every other transient-
-    // failure message in this app, rather than a second special case.
-    res.status(502).json({ error: "Jupiter's swap-quote service had a network error and is temporarily unavailable for this asset -- wait a moment and try again." });
+    // Wording matters: both messages contain phrases classifyCreateReserveError
+    // (createReserveResume.ts) already recognizes as retryable ("too many
+    // ... requests" / "network error") -- consistent with every other
+    // transient-failure message in this app.
+    if (lastTransientStatus === 429) {
+      res.status(429).json({ error: "Jupiter's API answered with too many requests for this key right now (a burst of quotes in quick succession) -- wait a few seconds and try again." });
+    } else {
+      res.status(502).json({ error: "Jupiter's swap-quote service had a network error and is temporarily unavailable for this asset -- wait a moment and try again." });
+    }
     return;
   }
 
@@ -221,7 +255,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   type SwapBuildResult =
     | { kind: "ok"; swapTransaction: string; lastValidBlockHeight: number }
     | { kind: "specific-error"; message: string }
-    | { kind: "transient" };
+    | { kind: "transient"; status: number | null; retryAfterMs: number | null };
   async function attemptBuildSwap(): Promise<SwapBuildResult> {
     try {
       const swapRes = await fetch(JUPITER_SWAP_URL, {
@@ -253,15 +287,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       // check, discarded with no trace. See attemptQuote's identical
       // rationale above.
       console.error(`[jupiter-swap] swap-build non-OK/malformed: status=${swapRes.status} outputMint=${outputMint} body=${rawText.slice(0, 500)}`);
-      if (swapBody && typeof swapBody.error === "string") return { kind: "specific-error", message: swapBody.error };
-      return { kind: "transient" };
+      // Same 429 handling as attemptQuote -- Jupiter's per-key rate limit
+      // answers with a `{"message":...}` body the specific-error branch
+      // never matches, and needs a real (Retry-After-honoring) pause, not a
+      // sub-second one.
+      if (swapRes.status !== 429 && swapBody && typeof swapBody.error === "string") return { kind: "specific-error", message: swapBody.error };
+      return { kind: "transient", status: swapRes.status, retryAfterMs: retryAfterMsFrom(swapRes) };
     } catch (e) {
       console.error(`[jupiter-swap] swap-build fetch threw: outputMint=${outputMint} error=${e instanceof Error ? e.stack || e.message : String(e)}`);
-      return { kind: "transient" };
+      return { kind: "transient", status: null, retryAfterMs: null };
     }
   }
 
   let built: { swapTransaction: string; lastValidBlockHeight: number } | null = null;
+  let lastBuildTransientStatus: number | null = null;
   const MAX_SWAP_BUILD_ATTEMPTS = 3;
   for (let attempt = 0; attempt < MAX_SWAP_BUILD_ATTEMPTS && !built; attempt++) {
     const result = await attemptBuildSwap();
@@ -270,12 +309,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } else if (result.kind === "specific-error") {
       res.status(502).json({ error: result.message });
       return;
-    } else if (attempt < MAX_SWAP_BUILD_ATTEMPTS - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    } else {
+      lastBuildTransientStatus = result.status;
+      if (attempt < MAX_SWAP_BUILD_ATTEMPTS - 1) {
+        const delayMs = result.status === 429 ? (result.retryAfterMs ?? 2_000) : 400 * (attempt + 1);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
   }
   if (!built) {
-    res.status(502).json({ error: "Jupiter's swap-transaction service had a network error and is temporarily unavailable -- wait a moment and try again." });
+    if (lastBuildTransientStatus === 429) {
+      res.status(429).json({ error: "Jupiter's API answered with too many requests for this key right now (a burst of quotes in quick succession) -- wait a few seconds and try again." });
+    } else {
+      res.status(502).json({ error: "Jupiter's swap-transaction service had a network error and is temporarily unavailable -- wait a moment and try again." });
+    }
     return;
   }
 

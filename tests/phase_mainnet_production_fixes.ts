@@ -523,6 +523,65 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     expect((res.body as { error?: string }).error).to.equal("Simulation failed: insufficient funds for rent.");
   });
 
+  // Live-observed 2026-08-25 (post-DEC-0151, Creator's topped-up Resume):
+  // a quote failed with the generic "network error" fallback while a manual
+  // reproduction of the identical request succeeded in 0.4s moments later
+  // -- the burst shape of a many-asset Resume tripping Jupiter's PER-KEY
+  // rate limit, whose 429 body is `{"message":...}` (no `.error`, so the
+  // specific-error branch never matches) and whose window a 400/800ms
+  // retry lands straight back inside.
+  it("a Jupiter 429 is retried after honoring Retry-After (not the sub-second default backoff), then succeeds", async () => {
+    let quoteCalls = 0;
+    const t0 = Date.now();
+    global.fetch = (async (url: string) => {
+      if (String(url).includes("/quote")) {
+        quoteCalls += 1;
+        if (quoteCalls === 1) {
+          return { ok: false, status: 429, headers: { get: (n: string) => (n.toLowerCase() === "retry-after" ? "1" : null) }, text: async () => JSON.stringify({ message: "Rate limit exceeded" }) };
+        }
+        return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
+      }
+      return { ok: true, text: async () => JSON.stringify({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
+    expect(quoteCalls).to.equal(2);
+    expect(res.statusCode).to.equal(200);
+    expect(Date.now() - t0).to.be.greaterThan(900); // genuinely waited the Retry-After second
+  });
+
+  it("exhausted 429s report a rate-limit message (classified retryable client-side via its 'too many ... requests' wording), never the misleading generic network-error text, with a real 429 status", async () => {
+    let quoteCalls = 0;
+    global.fetch = (async () => {
+      quoteCalls += 1;
+      return { ok: false, status: 429, headers: { get: () => "1" }, text: async () => JSON.stringify({ message: "Rate limit exceeded" }) };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
+    expect(quoteCalls).to.equal(3);
+    expect(res.statusCode).to.equal(429);
+    const body = res.body as { error?: string };
+    expect(body.error!.toLowerCase()).to.include("too many");
+    expect(body.error!.toLowerCase()).to.include("requests");
+    expect(body.error).to.not.include("network error");
+  });
+
+  it("a 429 whose body happens to contain an .error field is STILL treated as rate-limit transient, never reported as a stable specific answer", async () => {
+    let quoteCalls = 0;
+    global.fetch = (async (url: string) => {
+      if (String(url).includes("/quote")) {
+        quoteCalls += 1;
+        if (quoteCalls < 2) return { ok: false, status: 429, headers: { get: () => "1" }, text: async () => JSON.stringify({ error: "Too many requests" }) };
+        return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
+      }
+      return { ok: true, text: async () => JSON.stringify({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(makeValidReq() as never, res as never);
+    expect(quoteCalls).to.equal(2);
+    expect(res.statusCode).to.equal(200);
+  });
+
   it("bounds swap-transaction-build retries at 3 attempts, reporting a network-error message never the old generic 'Failed to build' wording", async () => {
     let swapCalls = 0;
     global.fetch = (async (url: string) => {
