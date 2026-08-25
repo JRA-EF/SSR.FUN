@@ -71,8 +71,16 @@ import {
   type RecipientInput,
 } from "@ssr/sdk";
 import { fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
-import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
-import { computeFundingShortfall, computeSwapShortfallPct, determineDeploymentResumePoint, scaleUsdcBudgetForDeficit, type ReserveOnChainStatus } from "./createReserveResume";
+import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded, getCached } from "./rpcResilience";
+import {
+  computeFundingShortfall,
+  computeSwapShortfallPct,
+  determineDeploymentResumePoint,
+  scaleUsdcBudgetForDeficit,
+  isDustDeficit,
+  isWithinAcceptableShortfallTolerance,
+  type ReserveOnChainStatus,
+} from "./createReserveResume";
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
 /**
@@ -800,6 +808,26 @@ export interface JupiterSwapFundingOptions {
 /** Below this fraction short of the live quote's expected output, a swap's result is treated as ordinary slippage and never warned about -- comfortably above the default/typical slippageBps (150 = 1.5%) so routine execution-price movement never trips it. */
 const SHORTFALL_WARN_PCT = 0.05;
 
+/**
+ * Below this raw USDC amount, a swap-eligible asset's remaining deficit is
+ * treated as dust rather than swapped for -- Jupiter's own quote/slippage
+ * computation can reject an amount this small outright (confirmed live,
+ * 2026-08-25, a real Mainnet Reserve stuck in Resume across every retry:
+ * "Cannot compute other amount threshold, with amount 1 and slippageBps
+ * 150" for a scaled-down deficit quote -- scaleUsdcBudgetForDeficit's own
+ * "never 0" floor of 1 raw unit is itself still too small for Jupiter to
+ * apply a 150bps threshold to), and the swap's own network/priority fee
+ * would exceed the value being topped up anyway. Only applies when the
+ * wallet already holds SOME real balance for this asset (existingRaw >
+ * 0n) -- an asset already this close to its target (from an earlier
+ * attempt, or simply already held) is treated as "close enough," never
+ * re-swapped for a few cents of remaining headroom. A genuinely EMPTY
+ * asset (existingRaw === 0n) still attempts its full swap regardless of
+ * size -- skipping that would silently seed with nothing at all, a real
+ * gap rather than an acceptable rounding difference.
+ */
+const DUST_DEFICIT_USDC_RAW = 50_000n; // $0.05
+
 /** True for any asset this app would consider swapping USDC into via Jupiter -- real Circle USDC and wrapped SOL are both funded through their own existing, non-swap paths. */
 export function isJupiterSwapEligible(mint: string): boolean {
   return !isWrappedSol(mint) && mint !== MAINNET_USDC_MINT;
@@ -885,8 +913,24 @@ async function fundSeedAssetsIdempotent(
       // TARGET amount for this asset -- replacing the $1-peg placeholder
       // seedAmounts[i] was computed with, which is only ever correct for
       // real USDC itself. This does not mean the full budget gets SWAPPED
-      // below -- see the deficit calculation immediately after.
-      const fullQuote = await fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58());
+      // below -- see the deficit calculation immediately after. Cached for
+      // a short window (getCached, shared with every other "don't ask
+      // twice within a few seconds" caller in this app) keyed by
+      // mint+budget -- ONLY used here to determine targetRaw for the
+      // already-holds-enough/dust/tolerance checks below, never as the
+      // actual swap quote executed (that's a fresh, uncached call further
+      // down), so a short-lived cached value is safe. Confirmed live
+      // (2026-08-25, real Mainnet Reserve "DELTA", 9 swap-eligible assets):
+      // every Resume click re-fetches this for EVERY asset regardless of
+      // outcome, so a Creator retrying Resume a few times in quick
+      // succession while debugging a DIFFERENT failure was genuinely
+      // driving up to 9+ requests per click against this app's own
+      // 12-requests/60s per-IP proxy limit (api/mainnet/jupiter-swap.ts) --
+      // a real, self-inflicted contributor to "Too many swap requests",
+      // not only Jupiter-side congestion.
+      const fullQuote = await getCached(`jupiter-full-quote:${asset.mint}:${usdcBudgetRaw.toString()}`, 20_000, () =>
+        fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58()),
+      );
       const targetRaw = fullQuote.outAmount;
       finalSeedAmounts[i] = targetRaw;
 
@@ -903,7 +947,32 @@ async function fundSeedAssetsIdempotent(
       // is held yet (the deficit IS the full target) -- no wasted second
       // Jupiter API call for the common first-attempt case.
       const deficitRaw = computeFundingShortfall(targetRaw, existingRaw);
-      const quote = existingRaw <= 0n ? fullQuote : await fetchJupiterSwapQuote(asset.mint, scaleUsdcBudgetForDeficit(usdcBudgetRaw, deficitRaw, targetRaw), owner.toBase58());
+      const scaledDeficitUsdcRaw = scaleUsdcBudgetForDeficit(usdcBudgetRaw, deficitRaw, targetRaw);
+
+      if (
+        isDustDeficit(existingRaw, scaledDeficitUsdcRaw, DUST_DEFICIT_USDC_RAW) ||
+        isWithinAcceptableShortfallTolerance(existingRaw, targetRaw, SHORTFALL_WARN_PCT)
+      ) {
+        // Either an absolute-dollar dust deficit (DUST_DEFICIT_USDC_RAW's
+        // own header) or a real, already-adequate balance that only looks
+        // short because the live-quoted target moved with the market since
+        // it was acquired (isWithinAcceptableShortfallTolerance's own
+        // header) -- neither is worth (or, for the dust case, often even
+        // possible to) swap for. Seed with the real balance already held
+        // instead of attempting a swap the Creator would rightly find
+        // confusing ("I already have this"), and report the gap through
+        // the same onSwapShortfall path a real post-swap shortfall uses --
+        // never silently understating what the Reserve actually ends up
+        // holding.
+        finalSeedAmounts[i] = existingRaw;
+        const dustShortfallPct = computeSwapShortfallPct(targetRaw, existingRaw);
+        if (dustShortfallPct > SHORTFALL_WARN_PCT) {
+          jupiterSwap.onSwapShortfall?.({ mint: asset.mint, targetRaw, actualRaw: existingRaw, shortfallPct: dustShortfallPct });
+        }
+        continue;
+      }
+
+      const quote = existingRaw <= 0n ? fullQuote : await fetchJupiterSwapQuote(asset.mint, scaledDeficitUsdcRaw, owner.toBase58());
 
       jupiterSwap.onSwapStart?.(asset.mint);
       jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote);
@@ -1015,8 +1084,26 @@ export async function reserveAccountExistsOnChain(connection: Connection, reserv
 export class CreateReserveStepError extends Error {
   readonly step: CreateReserveStep;
   readonly addresses: NewReserveAddresses | null;
-  constructor(message: string, step: CreateReserveStep, addresses: NewReserveAddresses | null) {
-    super(message);
+  constructor(message: string, step: CreateReserveStep, addresses: NewReserveAddresses | null, cause?: unknown) {
+    // `cause` (standard Error option, ES2022+) preserves the ORIGINAL
+    // thrown value's identity -- critically, whether it was a genuine
+    // AmbiguousConfirmationError (a transaction WAS submitted; outcome
+    // unknown) rather than a real failure. Every catch site below used to
+    // discard this by re-stringifying to `e.message` alone, which meant
+    // classifyCreateReserveError (createReserveResume.ts) could never see
+    // `e instanceof AmbiguousConfirmationError` once the error reached this
+    // class -- an ambiguous RPC-confirmation timeout on Resume fell through
+    // every other classification rule to "deterministic" (the conservative
+    // default for an error classifyCreateReserveError can't positively
+    // identify as transient), which told the Creator "this specific
+    // failure will not resolve itself on a plain retry" for an outcome that
+    // was, in fact, exactly the kind of thing a plain Resume click (which
+    // always re-reads on-chain state first) safely resolves. Confirmed live
+    // (2026-08-25, real Mainnet Reserve "CHARLIE", signature
+    // 5ZXVDEFL34cK9gQ69sn4c3n2LWi28wsfqCjw8NqNxY3iiwKXFBEbcFkiUMcu9WZaFv76FSeYoAcLpHqHr25iJ9eC
+    // -- verified via direct Mainnet RPC read to have never landed on-chain
+    // at all, ordinary transient network behavior).
+    super(message, cause !== undefined ? { cause } : undefined);
     this.name = "CreateReserveStepError";
     this.step = step;
     this.addresses = addresses;
@@ -1168,7 +1255,7 @@ export async function createReserveOnChain(params: {
     }
     createAndRegisterSig = batchSigs[0];
   } catch (e) {
-    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses);
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses, e);
   }
 
   params.onProgress("fund-seed-assets");
@@ -1181,7 +1268,7 @@ export async function createReserveOnChain(params: {
     fundSeedAssetsSig = fundResult.signature;
     finalSeedAmounts = fundResult.finalSeedAmounts;
   } catch (e) {
-    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses);
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses, e);
   }
 
   params.onProgress("seed");
@@ -1199,7 +1286,7 @@ export async function createReserveOnChain(params: {
     const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
     seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel);
   } catch (e) {
-    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses, e);
   }
 
   params.onProgress("done");
@@ -1388,7 +1475,7 @@ export async function resumeReserveDeploymentOnChain(params: {
         await signAndSend(connection, wallet, batch, clusterLabel);
       }
     } catch (e) {
-      throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses);
+      throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses, e);
     }
     // Falls through to the resume-from-funding logic below -- registration
     // is now complete (or this function already threw), so funding/seeding
@@ -1412,7 +1499,7 @@ export async function resumeReserveDeploymentOnChain(params: {
     fundSeedAssetsSig = fundResult.signature;
     finalSeedAmounts = fundResult.finalSeedAmounts;
   } catch (e) {
-    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses);
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses, e);
   }
 
   params.onProgress("seed");
@@ -1431,7 +1518,7 @@ export async function resumeReserveDeploymentOnChain(params: {
       const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
       seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel);
     } catch (e) {
-      throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses);
+      throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses, e);
     }
   }
 

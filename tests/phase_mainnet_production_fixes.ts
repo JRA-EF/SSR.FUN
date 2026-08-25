@@ -391,6 +391,80 @@ describe("api/mainnet/jupiter-swap.ts -- input validation (no network/API-key de
   });
 });
 
+// Regression (2026-08-25, a real 10-asset Mainnet Reserve "DELTA", stuck
+// failing Resume with "No Jupiter swap route is currently available for
+// this asset"): a direct, independent read-only check of every one of
+// DELTA's assets against Jupiter's own public quote API, moments after the
+// reported failure, found every single one had a real, healthy, low-
+// price-impact route -- proving the failure was a transient upstream
+// hiccup on THIS endpoint's own quote call, not a genuine lack of
+// liquidity. Jupiter's real shape for a genuine "no route"/"not tradable"
+// answer IS parseable JSON with a specific message (confirmed live against
+// the public quote API: {"error":"The token ... is not tradable",
+// "errorCode":"TOKEN_NOT_TRADABLE"}) -- an unparseable body or a thrown
+// fetch() therefore means something upstream broke, not that Jupiter
+// deliberately said no.
+describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient upstream hiccup from Jupiter's own genuine answer", () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.JUPITER_API_KEY;
+  const VALID_OUTPUT_MINT = "BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump";
+  const VALID_USER_PUBKEY = "9bAG6E3NrPrnANfhCQTiqJ1MTGNApPqvMjDsxvtMWkJG";
+  const validReq = { method: "POST", headers: {}, body: { outputMint: VALID_OUTPUT_MINT, amountRaw: "1000000", userPublicKey: VALID_USER_PUBKEY } };
+
+  beforeEach(() => {
+    process.env.JUPITER_API_KEY = "test-key";
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.JUPITER_API_KEY;
+    else process.env.JUPITER_API_KEY = originalKey;
+  });
+
+  it("reports Jupiter's own genuine, specific error immediately, WITHOUT retrying -- a real parseable answer is likely stable, and Jupiter's real reason is more informative than a generic message", async () => {
+    let quoteCalls = 0;
+    global.fetch = (async () => {
+      quoteCalls += 1;
+      return { ok: false, status: 400, json: async () => ({ error: "The token X is not tradable", errorCode: "TOKEN_NOT_TRADABLE" }) };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(validReq as never, res as never);
+    expect(quoteCalls).to.equal(1);
+    expect(res.statusCode).to.equal(502);
+    expect((res.body as { error?: string }).error).to.equal("The token X is not tradable");
+  });
+
+  it("retries a transient network-level failure and succeeds once a later attempt lands, exactly reproducing DELTA's real fix", async () => {
+    let quoteCalls = 0;
+    global.fetch = (async (url: string) => {
+      if (String(url).includes("/quote")) {
+        quoteCalls += 1;
+        if (quoteCalls < 3) throw new Error("simulated transient network failure");
+        return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
+      }
+      return { ok: true, json: async () => ({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(validReq as never, res as never);
+    expect(quoteCalls).to.equal(3);
+    expect(res.statusCode).to.equal(200);
+  });
+
+  it("bounds retries at 3 attempts, and never claims 'no route' for an unparseable-body failure -- reports a network-error message instead, which classifyCreateReserveError already treats as retryable", async () => {
+    let quoteCalls = 0;
+    global.fetch = (async () => {
+      quoteCalls += 1;
+      return { ok: false, status: 502, json: async () => { throw new Error("not valid json"); } };
+    }) as unknown as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(validReq as never, res as never);
+    expect(quoteCalls).to.equal(3);
+    expect(res.statusCode).to.equal(502);
+    const body = res.body as { error?: string };
+    expect(body.error).to.include("network error");
+    expect(body.error).to.not.include("No Jupiter swap route");
+  });
+});
+
 describe("src/merge/lib/createReserveResume.ts -- computeSwapShortfallPct (pure)", () => {
   it("a swap that met or exceeded its quoted target is never a shortfall", () => {
     expect(computeSwapShortfallPct(1_000_000n, 1_000_000n)).to.equal(0);

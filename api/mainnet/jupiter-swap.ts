@@ -97,7 +97,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(400).json({ error: "Invalid amountRaw." });
     return;
   }
-  if (amount <= 0n) {
+  // Bounded to the u64 range the upstream Jupiter quote API actually accepts
+  // -- forwarding anything above this produces a raw upstream Rust parser
+  // error (ParseIntError { kind: PosOverflow }), which this route would
+  // otherwise relay verbatim as an unhandled-looking 502 instead of the
+  // same clean 400 every other invalid-amount case returns.
+  const U64_MAX = 18446744073709551615n;
+  if (amount <= 0n || amount > U64_MAX) {
     res.status(400).json({ error: "amountRaw must be a positive integer." });
     return;
   }
@@ -111,19 +117,72 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(500).json({ error: "Jupiter swap is not configured on this deployment." });
     return;
   }
+  // Re-bound to a definitely-string local: TS control-flow narrowing from
+  // the guard above doesn't carry into the nested attemptQuote() closure
+  // below, even for a const.
+  const jupiterApiKey: string = apiKey;
 
-  let quote: JupiterQuote;
-  try {
-    const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${MAINNET_USDC_MINT}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`;
-    const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": apiKey } });
-    if (!quoteRes.ok) {
-      const errBody = await quoteRes.json().catch(() => null);
-      res.status(502).json({ error: (errBody && typeof errBody.error === "string" && errBody.error) || "No Jupiter swap route is currently available for this asset." });
-      return;
+  // Bounded retry (3 attempts, short backoff) around ONLY the two failure
+  // shapes that indicate a transient upstream hiccup rather than Jupiter's
+  // own genuine answer: the fetch() call itself throwing (network-level
+  // failure), or a non-OK response whose body isn't parseable JSON with a
+  // real `.error` string (Jupiter's normal shape for a genuine "no
+  // route"/"not tradable" answer IS parseable JSON with a specific message
+  // -- see the real observed shape, {"error":"...","errorCode":"..."} --
+  // so an unparseable body here means something upstream broke, not that
+  // Jupiter deliberately said no). Confirmed live (2026-08-25): a real
+  // 10-asset Mainnet Reserve ("DELTA") hit exactly this generic fallback
+  // message during Resume, yet a direct, independent read-only check of
+  // every one of its assets against Jupiter's own public quote API moments
+  // later found EVERY asset had a real, healthy, low-price-impact route --
+  // proving the failure was transient (this endpoint's own upstream call,
+  // not a genuine lack of liquidity), and retrying does, in fact, resolve
+  // it -- exactly the class of failure a bare retry should already recover
+  // from before ever reaching the Creator as an error at all.
+  // Result of one quote attempt: the real quote, a genuine/specific Jupiter
+  // error to report as-is (never retried), or "transient" (worth retrying).
+  type QuoteAttemptResult = { kind: "ok"; quote: JupiterQuote } | { kind: "specific-error"; message: string } | { kind: "transient" };
+  async function attemptQuote(): Promise<QuoteAttemptResult> {
+    try {
+      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${MAINNET_USDC_MINT}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`;
+      const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": jupiterApiKey } });
+      if (!quoteRes.ok) {
+        const errBody = await quoteRes.json().catch(() => null);
+        if (errBody && typeof errBody.error === "string") return { kind: "specific-error", message: errBody.error };
+        return { kind: "transient" };
+      }
+      return { kind: "ok", quote: (await quoteRes.json()) as JupiterQuote };
+    } catch {
+      return { kind: "transient" };
     }
-    quote = (await quoteRes.json()) as JupiterQuote;
-  } catch {
-    res.status(502).json({ error: "Jupiter quote request failed." });
+  }
+
+  let quote: JupiterQuote | null = null;
+  const MAX_QUOTE_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_QUOTE_ATTEMPTS && !quote; attempt++) {
+    const result = await attemptQuote();
+    if (result.kind === "ok") {
+      quote = result.quote;
+    } else if (result.kind === "specific-error") {
+      // Jupiter's own genuine, specific answer (e.g. "not tradable") -- its
+      // normal shape for a real "no route" verdict IS parseable JSON with
+      // a message like this; likely stable, so report it as-is rather than
+      // retrying further.
+      res.status(502).json({ error: result.message });
+      return;
+    } else if (attempt < MAX_QUOTE_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  if (!quote) {
+    // Every attempt either threw or came back with an unparseable body --
+    // a real transient condition, never Jupiter's own specific "no route"
+    // answer (that path already returned above, on the first occurrence).
+    // Deliberately worded to include "network error", which
+    // classifyCreateReserveError (createReserveResume.ts) already
+    // recognizes as retryable -- consistent with every other transient-
+    // failure message in this app, rather than a second special case.
+    res.status(502).json({ error: "Jupiter's swap-quote service had a network error and is temporarily unavailable for this asset -- wait a moment and try again." });
     return;
   }
 

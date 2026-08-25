@@ -222,6 +222,29 @@ describe("RPC-resilience -- isRateLimitError / withRateLimitRetry (still used fo
     expect(isRateLimitError(new Error("Request failed (status 429): rate limited"))).to.equal(true);
   });
 
+  // Regression (2026-08-25, real Mainnet Reserve stuck failing every Resume
+  // retry): api/mainnet/jupiter-swap.ts genuinely rate-limits with a real
+  // HTTP 429, but its body text -- "Too many swap requests from this client
+  // -- wait a moment and try again." -- doesn't contain the exact phrase
+  // "too many requests" (it's "too many SWAP requests"), and
+  // fetchJupiterSwapQuote (jupiterSwapClient.ts) throws using that body text
+  // alone, discarding the HTTP status entirely (this codebase's established
+  // fetch-error-wrapping pattern). Before this fix, this genuine rate limit
+  // fell through to classifyCreateReserveError's "deterministic" default,
+  // telling the Creator a plain retry "will not resolve itself" for a
+  // condition whose own text says to simply wait and retry.
+  it("classifies a real rate-limit message that isn't the exact phrase 'too many requests' (e.g. this app's own Jupiter-swap-proxy rate limit) as a rate limit", () => {
+    expect(isRateLimitError(new Error("Too many swap requests from this client -- wait a moment and try again."))).to.equal(true);
+  });
+
+  it("does not misclassify an unrelated message that merely contains the bare word 'too many' on its own", () => {
+    expect(isRateLimitError(new Error("Too many assets selected -- a Reserve supports at most 20."))).to.equal(false);
+  });
+
+  it("does not misclassify an unrelated message that merely contains the bare word 'requests' on its own", () => {
+    expect(isRateLimitError(new Error("This wallet has 3 pending fee-recipient requests."))).to.equal(false);
+  });
+
   it("retries only genuine rate-limit errors, bounded", async () => {
     let attempts = 0;
     const result = await withRateLimitRetry(

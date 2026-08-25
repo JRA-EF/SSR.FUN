@@ -300,9 +300,15 @@ export function CreateDTR() {
     const decimals = meta?.decimals ?? 0;
     const actual = rawToUiAmount(info.actualRaw, decimals).toLocaleString();
     const target = rawToUiAmount(info.targetRaw, decimals).toLocaleString();
+    // Covers two real cases with the same shape: an executed swap landing
+    // below its quote (price movement on a thin-liquidity token), and a
+    // dust-sized remaining shortfall skipped entirely because it was too
+    // small to reliably swap for at all (see createReserveClient.ts's
+    // DUST_DEFICIT_USDC_RAW) -- worded generically so it's accurate either
+    // way, never claiming a swap happened when one didn't.
     toast({
-      title: `Received less ${symbol} than quoted`,
-      description: `The Jupiter swap for ${symbol} delivered ${actual} instead of the ~${target} quoted (${(info.shortfallPct * 100).toFixed(1)}% short) -- likely price movement on a thin-liquidity token. Your Reserve was still created/seeded with the real amount received.`,
+      title: `${symbol} funded slightly below target`,
+      description: `${symbol} ended up seeded with ${actual} instead of the ~${target} targeted (${(info.shortfallPct * 100).toFixed(1)}% short) -- likely price movement or a remaining gap too small to swap for. Your Reserve was still created/seeded with the real amount held.`,
       variant: "destructive",
     });
   }
@@ -605,14 +611,28 @@ export function CreateDTR() {
         const errorClass = classifyCreateReserveError(e);
         const isFeeDestinationCollision = isFeeDestinationCollisionError(e);
         setResumeError({ errorClass, step: e.step, message: describeOnChainError(e), isFeeDestinationCollision });
-        toast({
-          variant: "destructive",
-          title: `Resume failed (${CREATE_STEP_LABELS[e.step]})`,
-          description:
-            errorClass === "deterministic"
-              ? `${msg} -- your Reserve's on-chain identity is unchanged, but this specific failure will not resolve itself on a plain retry. See the details below before trying again.`
-              : `${msg} -- your Reserve's on-chain identity is unchanged. Click Resume Deployment again once ready; nothing already confirmed will be resubmitted.`,
-        });
+        // "ambiguous" means a transaction WAS submitted and confirmation
+        // simply couldn't be verified within the polling window -- it is
+        // NOT a failure (it may already have landed, or still land), so it
+        // must never be titled/styled the same as a real failure: doing so
+        // is exactly what reads as "stuck in a loop" even though clicking
+        // Resume again (which always re-reads real on-chain state first,
+        // never blindly resubmits) is the correct, safe recovery action.
+        toast(
+          errorClass === "ambiguous"
+            ? {
+                title: `Outcome unknown -- verifying (${CREATE_STEP_LABELS[e.step]})`,
+                description: `${msg} This was not a failure -- your Reserve's on-chain identity is unchanged, and Resume will re-check real on-chain state before submitting anything. Click Resume Deployment again once ready.`,
+              }
+            : {
+                variant: "destructive",
+                title: `Resume failed (${CREATE_STEP_LABELS[e.step]})`,
+                description:
+                  errorClass === "deterministic"
+                    ? `${msg} -- your Reserve's on-chain identity is unchanged, but this specific failure will not resolve itself on a plain retry. See the details below before trying again.`
+                    : `${msg} -- your Reserve's on-chain identity is unchanged. Click Resume Deployment again once ready; nothing already confirmed will be resubmitted.`,
+              },
+        );
       } else {
         toast({ variant: "destructive", title: "Resume failed", description: msg });
       }

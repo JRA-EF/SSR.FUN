@@ -33,13 +33,23 @@ import {
   isWalletRejectionError,
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
+  isDustDeficit,
+  isWithinAcceptableShortfallTolerance,
   PENDING_DEPLOY_STALE_MS,
 } from "../src/merge/lib/createReserveResume";
 import { AmbiguousConfirmationError } from "../src/merge/lib/rpcResilience";
 import { decodeSsrProtocolError, extractCustomErrorCode, describeOnChainError, ssrProtocolErrorCodeRange } from "../packages/sdk/src/errors";
 import { resolveProtocolFeeDestinationTokenAccount } from "../packages/sdk/src/pda";
 import { computeEffectiveFeeSplit, splitTotalFee, PROTOCOL_MIN_MINT_FEE_BPS } from "../packages/sdk/src/feeMath";
-import { savePendingReserveDeploy, readPendingReserveDeploy, clearPendingReserveDeploy, packInstructionsBySize, seedRawAmountForAsset, estimateSingleSignerTxBytes } from "../src/merge/lib/createReserveClient";
+import {
+  savePendingReserveDeploy,
+  readPendingReserveDeploy,
+  clearPendingReserveDeploy,
+  packInstructionsBySize,
+  seedRawAmountForAsset,
+  estimateSingleSignerTxBytes,
+  CreateReserveStepError,
+} from "../src/merge/lib/createReserveClient";
 import { WRAPPED_SOL_MINT } from "../packages/sdk/src/zapPricing";
 import { TransactionInstruction } from "@solana/web3.js";
 
@@ -92,6 +102,63 @@ describe("Reserve deploy resumability -- 3. Failure during seed-asset funding (c
   it("requests nothing once the wallet already holds enough -- never over-funds on a retry", () => {
     expect(computeFundingShortfall(1_000_000n, 1_000_000n)).to.equal(0n);
     expect(computeFundingShortfall(1_000_000n, 5_000_000n)).to.equal(0n);
+  });
+});
+
+describe("Reserve deploy resumability -- 3b. Dust-sized deficits are seeded with what's already held, not swapped for (isDustDeficit)", () => {
+  const DUST_FLOOR = 50_000n; // $0.05, matching createReserveClient.ts's DUST_DEFICIT_USDC_RAW
+
+  it("treats a tiny remaining shortfall against an already-held balance as dust -- do not attempt a swap Jupiter would reject anyway", () => {
+    // Confirmed live regression: scaleUsdcBudgetForDeficit's own 'never 0'
+    // floor of 1 raw unit was STILL too small for Jupiter to compute a
+    // 150bps slippage threshold against ("Cannot compute other amount
+    // threshold, with amount 1 and slippageBps 150").
+    expect(isDustDeficit(999_950n /* existingRaw */, 1n /* scaled deficit budget */, DUST_FLOOR)).to.equal(true);
+  });
+
+  it("is NOT dust when the wallet holds nothing at all yet, no matter how small the scaled deficit computes to -- a genuinely empty asset must still attempt its full swap", () => {
+    expect(isDustDeficit(0n /* existingRaw */, 1n, DUST_FLOOR)).to.equal(false);
+  });
+
+  it("is NOT dust once the scaled deficit meets or exceeds the floor -- a real, worth-swapping-for shortfall still swaps normally", () => {
+    expect(isDustDeficit(500_000n, DUST_FLOOR, DUST_FLOOR)).to.equal(false);
+    expect(isDustDeficit(500_000n, 60_000n, DUST_FLOOR)).to.equal(false);
+  });
+
+  it("is dust right up to (but not including) the floor", () => {
+    expect(isDustDeficit(500_000n, DUST_FLOOR - 1n, DUST_FLOOR)).to.equal(true);
+  });
+});
+
+describe("Reserve deploy resumability -- 3c. A real held balance that only looks short because the live-quoted target moved with market price is 'close enough' (isWithinAcceptableShortfallTolerance)", () => {
+  const TOLERANCE = 0.05; // matches createReserveClient.ts's SHORTFALL_WARN_PCT
+
+  // Regression (2026-08-25, real Mainnet Reserve "DELTA"): targetRaw is a
+  // LIVE Jupiter quote recomputed fresh on every Resume click -- a wallet
+  // that already holds a genuinely adequate amount (acquired on an
+  // earlier attempt, at a different price) can look "short" again on a
+  // later click purely from real price movement, prompting a wallet
+  // swap-approval popup the Creator finds confusing ("I already have
+  // this").
+  it("skips swapping when the existing balance is within tolerance of a target that drifted upward with market price", () => {
+    // Held 950_000, target drifted from ~950_000 up to 1_000_000 (5.0%
+    // gap, right at the tolerance boundary) -- close enough.
+    expect(isWithinAcceptableShortfallTolerance(950_000n, 1_000_000n, TOLERANCE)).to.equal(true);
+  });
+
+  it("still swaps for a genuinely large shortfall beyond ordinary market drift", () => {
+    // Held only half of a real, substantial target -- a genuine deficit,
+    // not price noise.
+    expect(isWithinAcceptableShortfallTolerance(500_000n, 1_000_000n, TOLERANCE)).to.equal(false);
+  });
+
+  it("is NOT close enough when the wallet holds nothing at all -- zero is never 'close enough' regardless of how the percentage math would work out", () => {
+    expect(isWithinAcceptableShortfallTolerance(0n, 1_000_000n, TOLERANCE)).to.equal(false);
+  });
+
+  it("a balance that already meets or exceeds the target is trivially within tolerance", () => {
+    expect(isWithinAcceptableShortfallTolerance(1_000_000n, 1_000_000n, TOLERANCE)).to.equal(true);
+    expect(isWithinAcceptableShortfallTolerance(2_000_000n, 1_000_000n, TOLERANCE)).to.equal(true);
   });
 });
 
@@ -330,6 +397,66 @@ describe("Reserve deploy resumability -- 9. Deterministic Anchor/ssr_protocol er
 
   it("classifies an AmbiguousConfirmationError as ambiguous -- a transaction WAS submitted and its outcome is unknown, never safe to blindly resubmit", () => {
     expect(classifyCreateReserveError(new AmbiguousConfirmationError("sigABC"))).to.equal("ambiguous");
+  });
+
+  // Regression (2026-08-25, real Mainnet Reserve "CHARLIE", signature
+  // 5ZXVDEFL34cK9gQ69sn4c3n2LWi28wsfqCjw8NqNxY3iiwKXFBEbcFkiUMcu9WZaFv76FSeYoAcLpHqHr25iJ9eC
+  // -- verified via direct Mainnet RPC read, both getSignatureStatuses and
+  // getTransaction, to have never landed on-chain at all): the test above
+  // only ever exercises classifyCreateReserveError against a BARE
+  // AmbiguousConfirmationError, which is not what CreateDTR.tsx's Resume
+  // button actually passes it -- createReserveOnChain/
+  // resumeReserveDeploymentOnChain's own catch blocks always re-wrap
+  // whatever they caught into a CreateReserveStepError first. Before this
+  // fix, that wrapping re-stringified the original error to `e.message`
+  // alone, discarding its identity -- an ambiguous RPC-confirmation timeout
+  // on Resume's seed step fell through every rule in
+  // classifyCreateReserveError (no wallet-rejection shape, not an
+  // AmbiguousConfirmationError instance anymore, no 429, no decodable
+  // custom error code, and AmbiguousConfirmationError's own "...within the
+  // verification window" wording contains neither "timeout" nor "timed
+  // out") all the way to the conservative "deterministic" default --
+  // telling the Creator a plain Resume click would not resolve it, for an
+  // outcome that Resume (which always re-reads real on-chain state first)
+  // actually resolves safely. The fix: CreateReserveStepError now takes an
+  // optional `cause` (every real throw site passes the original caught
+  // error), and classifyCreateReserveError classifies against `e.cause`
+  // when present.
+  describe("9b. CreateReserveStepError's real-world wrapped shape (the actual value CreateDTR.tsx's Resume catch block receives)", () => {
+    it("classifies a CreateReserveStepError wrapping an AmbiguousConfirmationError as ambiguous, not deterministic", () => {
+      const original = new AmbiguousConfirmationError(
+        "5ZXVDEFL34cK9gQ69sn4c3n2LWi28wsfqCjw8NqNxY3iiwKXFBEbcFkiUMcu9WZaFv76FSeYoAcLpHqHr25iJ9eC",
+        "Mainnet",
+      );
+      const wrapped = new CreateReserveStepError(original.message, "seed", null, original);
+      expect(classifyCreateReserveError(wrapped)).to.equal("ambiguous");
+    });
+
+    it("classifies a CreateReserveStepError wrapping a decodable on-chain custom error (e.g. the fee-destination collision, 2040) as deterministic, unaffected by the cause-preservation fix", () => {
+      const stringified = JSON.stringify({ InstructionError: [2, { Custom: 2040 }] });
+      const original = new Error(`Transaction failed on-chain (${stringified}). Signature: sigXYZ.`);
+      const wrapped = new CreateReserveStepError(original.message, "seed", null, original);
+      expect(classifyCreateReserveError(wrapped)).to.equal("deterministic");
+      expect(isFeeDestinationCollisionError(wrapped)).to.equal(true);
+    });
+
+    it("classifies a CreateReserveStepError wrapping a genuine RPC rate-limit error as retryable", () => {
+      const original = new Error("429 Too Many Requests");
+      const wrapped = new CreateReserveStepError(original.message, "fund-seed-assets", null, original);
+      expect(classifyCreateReserveError(wrapped)).to.equal("retryable");
+    });
+
+    it("classifies a CreateReserveStepError constructed with no cause at all (every pre-existing call site's shape before this pass) by its own message, unchanged", () => {
+      const wrapped = new CreateReserveStepError("Something genuinely unexpected happened", "seed", null);
+      expect(classifyCreateReserveError(wrapped)).to.equal("deterministic");
+    });
+
+    it("classifies a wallet-rejection error unaffected by cause-wrapping (the wallet-rejected branch is checked first, before any cause is even considered)", () => {
+      const original = new Error("User rejected the request.");
+      original.name = "WalletSignTransactionError";
+      const wrapped = new CreateReserveStepError(original.message, "create-and-register", null, original);
+      expect(classifyCreateReserveError(wrapped)).to.equal("wallet-rejected");
+    });
   });
 
   it("classifies a genuine RPC rate-limit error as retryable", () => {

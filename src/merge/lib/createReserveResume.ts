@@ -107,6 +107,48 @@ export function computeFundingShortfall(requiredRaw: bigint, currentBalanceRaw: 
   return requiredRaw > currentBalanceRaw ? requiredRaw - currentBalanceRaw : 0n;
 }
 
+/**
+ * True when a swap-eligible asset's remaining funding deficit is small
+ * enough to skip swapping for entirely and just seed with what's already
+ * held, rather than attempt a swap. Confirmed live (2026-08-25, a real
+ * Mainnet Reserve stuck failing every Resume retry): Jupiter's own
+ * quote/slippage-threshold computation can reject an amount this small
+ * outright ("Cannot compute other amount threshold, with amount 1 and
+ * slippageBps 150") -- scaleUsdcBudgetForDeficit's own "never 0" floor of 1
+ * raw unit is itself still too small for Jupiter to apply a 150bps
+ * threshold to -- and the swap's own network/priority fee would exceed the
+ * value being topped up anyway. Only true when the wallet already holds
+ * SOME real balance (`existingRaw > 0n`) -- a genuinely empty asset is
+ * never "dust" regardless of how small its target is; skipping that would
+ * silently seed with nothing at all, a real gap rather than an acceptable
+ * rounding difference.
+ */
+export function isDustDeficit(existingRaw: bigint, scaledDeficitUsdcRaw: bigint, dustFloorUsdcRaw: bigint): boolean {
+  return existingRaw > 0n && scaledDeficitUsdcRaw < dustFloorUsdcRaw;
+}
+
+/**
+ * True when the wallet's existing balance is already within ordinary
+ * market-driven tolerance of a FRESHLY re-quoted target, so topping up the
+ * remaining gap isn't worth attempting -- the same tolerance
+ * (SHORTFALL_WARN_PCT, see createReserveClient.ts) this app already treats
+ * as "not even worth warning about" once a real swap executes, reused here
+ * to decide BEFORE attempting one at all. Confirmed live (2026-08-25, real
+ * Mainnet Reserve "DELTA"): `targetRaw` is a live Jupiter quote for the
+ * asset's FULL USD budget, recomputed fresh on every Resume click -- for a
+ * volatile/thin-liquidity token, real price movement between attempts can
+ * make a wallet balance that was already genuinely adequate look "short"
+ * again on a later click, prompting a wallet swap-approval popup for an
+ * asset the Creator plainly already holds enough of. Only true when the
+ * wallet holds SOME real balance already (`existingRaw > 0n`) -- a
+ * genuinely empty asset is never "close enough," regardless of how small
+ * its target is.
+ */
+export function isWithinAcceptableShortfallTolerance(existingRaw: bigint, targetRaw: bigint, tolerancePct: number): boolean {
+  if (existingRaw <= 0n) return false;
+  return computeSwapShortfallPct(targetRaw, existingRaw) <= tolerancePct;
+}
+
 /** How far a Jupiter swap's real result landed below its quote's expected output, as a fraction of that expectation -- 0 if it met or exceeded it (a surplus is never a "shortfall"). Used only to decide whether to WARN the creator (see createReserveClient.ts's SHORTFALL_WARN_PCT/onSwapShortfall) -- the Reserve is always created with the real actualRaw amount regardless of this value, never blocked on it. */
 export function computeSwapShortfallPct(targetRaw: bigint, actualRaw: bigint): number {
   if (targetRaw <= 0n || actualRaw >= targetRaw) return 0;
@@ -201,11 +243,27 @@ export type CreateReserveErrorClass =
  * failure mode: it stops a blind retry loop rather than risking one).
  */
 export function classifyCreateReserveError(e: unknown): CreateReserveErrorClass {
-  if (isWalletRejectionError(e)) return "wallet-rejected";
-  if (e instanceof AmbiguousConfirmationError) return "ambiguous";
-  if (isRateLimitError(e)) return "retryable";
-  if (extractCustomErrorCode(e) !== null) return "deterministic";
-  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  // CreateReserveStepError (createReserveClient.ts) wraps whatever it
+  // caught, re-stringified to a plain message -- classification must run
+  // against the ORIGINAL error (its `cause`, a standard Error option) when
+  // present, never the wrapper alone, or every `instanceof` check below
+  // (most importantly `AmbiguousConfirmationError`) silently stops
+  // matching. Confirmed live (2026-08-25, real Mainnet Reserve "CHARLIE"):
+  // an RPC-confirmation-timeout during Resume's seed step was reaching this
+  // function as a bare CreateReserveStepError with no cause, which fell
+  // through every rule below (no wallet-rejection shape, not
+  // AmbiguousConfirmationError, no 429, no decodable custom error code, no
+  // "timeout"/"timed out" substring in AmbiguousConfirmationError's own
+  // "...within the verification window" wording) to the conservative
+  // "deterministic" default -- telling the Creator a plain Resume retry
+  // would not help, for an outcome that a Resume click (which always
+  // re-reads on-chain state first) actually resolves safely.
+  const underlying = e instanceof Error && e.cause !== undefined ? e.cause : e;
+  if (isWalletRejectionError(underlying)) return "wallet-rejected";
+  if (underlying instanceof AmbiguousConfirmationError) return "ambiguous";
+  if (isRateLimitError(underlying)) return "retryable";
+  if (extractCustomErrorCode(underlying) !== null) return "deterministic";
+  const msg = (underlying instanceof Error ? underlying.message : String(underlying)).toLowerCase();
   if (msg.includes("failed to fetch") || msg.includes("network error") || msg.includes("timed out") || msg.includes("timeout")) return "retryable";
   return "deterministic";
 }
