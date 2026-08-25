@@ -33,7 +33,7 @@ import {
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
-import { assessLaunchFeasibility, type LaunchAssetPlan } from "@/lib/launchFunding";
+import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, type LaunchAssetPlan } from "@/lib/launchFunding";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
@@ -1842,7 +1842,7 @@ export function CreateDTR() {
                       <span className="font-merge-mono font-medium">
                         {formatUsdc(parseFloat(initialSeedUsdc) || 0)}
                         {isRealDeployment && (
-                          <span className="text-muted-foreground"> (see Wallet Cost Summary below for the exact SOL requested)</span>
+                          <span className="text-muted-foreground"> (see Wallet Cost Summary below for the exact {IS_MAINNET ? "USDC and SOL" : "SOL"} requested)</span>
                         )}
                       </span>
                     </div>
@@ -1919,7 +1919,9 @@ export function CreateDTR() {
                     <h3 className="font-semibold flex items-center gap-2">
                       Wallet Cost Summary
                       <InfoTip label="More information about the wallet cost summary">
-                        Every SOL this wallet will actually be asked to spend, shown before Phantom does. This is the TOTAL across every transaction below -- Phantom shows one popup per transaction, so any single popup will show less than this total, not the same number.
+                        {IS_MAINNET
+                          ? "Everything this wallet will be asked to spend, shown before Phantom does: your Reserve's assets are paid in USDC (plus wrapped SOL for a SOL holding), while account rent and network fees are paid in SOL. Totals are across every transaction below -- Phantom shows one popup per transaction, so any single popup will show less than the total."
+                          : "Every SOL this wallet will actually be asked to spend, shown before Phantom does. This is the TOTAL across every transaction below -- Phantom shows one popup per transaction, so any single popup will show less than this total, not the same number."}
                       </InfoTip>
                     </h3>
                   </div>
@@ -1930,54 +1932,137 @@ export function CreateDTR() {
                     {!costEstimateError && !costEstimate && (
                       <p className="text-sm text-muted-foreground">Estimating costs from live {CLUSTER_LABEL} rent rates...</p>
                     )}
-                    {costEstimate && (
-                      <>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Initial Reserve funding</span>
-                          <span className="font-merge-mono">
-                            {(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL
-                            {costEstimate.solSeedFundingLamports === 0n && <span className="text-muted-foreground"> (test assets minted for you, no SOL cost)</span>}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground flex items-center gap-1">
-                            Account creation &amp; rent
-                            <InfoTip label="More information about account creation and rent">Solana requires new accounts (the Reserve, its assets, vaults, and Reserve Token mint) to be rent-exempt -- this SOL isn't a fee, it stays locked in those accounts.</InfoTip>
-                          </span>
-                          <span className="font-merge-mono">{(Number(costEstimate.totalRentLamports) / 1e9).toFixed(5)} SOL</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Estimated network fees ({costEstimate.numTransactions} transactions)</span>
-                          <span className="font-merge-mono">{(Number(costEstimate.networkFeeLamportsEstimate) / 1e9).toFixed(5)} SOL</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground flex items-center gap-1">
-                            Protocol fees
-                            <InfoTip label="More information about protocol fees">No fee is charged at creation itself -- Mint Fee ({mintFeePct.toFixed(2)}%) and TVL Fee ({tvlFeePct.toFixed(2)}%) apply to future Buy/holding activity, configured above.</InfoTip>
-                          </span>
-                          <span className="font-merge-mono text-muted-foreground">$0.00 now</span>
-                        </div>
-                        <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
-                          <span>Estimated total SOL required</span>
-                          <span className="font-merge-mono text-primary">
-                            {(Number(costEstimate.totalLamports) / 1e9).toFixed(5)} SOL
-                            <span className="text-muted-foreground font-normal">
-                              {" "}
-                              (&asymp;{" "}
-                              {IS_MAINNET
-                                ? solPriceUsd !== null
-                                  ? `$${((Number(costEstimate.totalLamports) / 1e9) * solPriceUsd).toFixed(2)}`
-                                  : "USD estimate unavailable"
-                                : `$${((Number(costEstimate.totalLamports) / 1e9) * SOL_TEST_PRICE_USD).toFixed(2)}`}
-                              )
+                    {costEstimate && (() => {
+                      // The three-section Mainnet layout (DEC-0153, requested
+                      // by Creator): (1) what goes INTO the Reserve, in USD,
+                      // split by the currency it's actually paid in; (2) fees
+                      // and overhead in their native currency (SOL); (3)
+                      // totals in USD. DevNet keeps the original SOL-only
+                      // layout (its assets are faucet-minted test tokens with
+                      // no USDC involved).
+                      const seedTotalUsdUi = parseFloat(initialSeedUsdc) || 10;
+                      const solFraction = totalWeight > 0 ? assets.filter((a) => a.symbol === "SOL").reduce((s, a) => s + a.weight, 0) / totalWeight : 0;
+                      const solLegUsd = seedTotalUsdUi * solFraction;
+                      const usdcCapitalUsd = Math.max(0, seedTotalUsdUi - solLegUsd);
+                      // Matches the launch-feasibility preflight's own buffer
+                      // exactly (assessLaunchFeasibility) -- the wallet-should-
+                      // hold figure shown here is the same number the preflight
+                      // enforces at submit.
+                      const usdcToHoldUsd = usdcCapitalUsd * (1 + DEFAULT_FEE_BUFFER_FRACTION);
+                      const overheadLamports = costEstimate.totalRentLamports + costEstimate.networkFeeLamportsEstimate;
+                      const solToUsd = (lamports: bigint): number | null =>
+                        IS_MAINNET ? (solPriceUsd !== null ? (Number(lamports) / 1e9) * solPriceUsd : null) : (Number(lamports) / 1e9) * SOL_TEST_PRICE_USD;
+                      const overheadUsd = solToUsd(overheadLamports);
+                      const fmtUsd = (v: number | null) => (v === null ? "USD unavailable" : `$${v.toFixed(2)}`);
+
+                      if (!IS_MAINNET) {
+                        return (
+                          <>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">Initial Reserve funding</span>
+                              <span className="font-merge-mono">
+                                {(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL
+                                {costEstimate.solSeedFundingLamports === 0n && <span className="text-muted-foreground"> (test assets minted for you, no SOL cost)</span>}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                Account creation &amp; rent
+                                <InfoTip label="More information about account creation and rent">Solana requires new accounts (the Reserve, its assets, vaults, and Reserve Token mint) to be rent-exempt -- this SOL isn't a fee, it stays locked in those accounts.</InfoTip>
+                              </span>
+                              <span className="font-merge-mono">{(Number(costEstimate.totalRentLamports) / 1e9).toFixed(5)} SOL</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">Estimated network fees ({costEstimate.numTransactions} transactions)</span>
+                              <span className="font-merge-mono">{(Number(costEstimate.networkFeeLamportsEstimate) / 1e9).toFixed(5)} SOL</span>
+                            </div>
+                            <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
+                              <span>Estimated total SOL required</span>
+                              <span className="font-merge-mono text-primary">
+                                {(Number(costEstimate.totalLamports) / 1e9).toFixed(5)} SOL
+                                <span className="text-muted-foreground font-normal"> (&asymp; ${((Number(costEstimate.totalLamports) / 1e9) * SOL_TEST_PRICE_USD).toFixed(2)})</span>
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Total across all {costEstimate.numTransactions} transactions above -- each Phantom popup below will ask for only its own share of this, never this full amount at once.
+                            </p>
+                          </>
+                        );
+                      }
+
+                      return (
+                        <>
+                          <p className="text-xs font-semibold text-foreground">Goes into your Reserve (its actual holdings)</p>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              Paid in USDC
+                              <InfoTip label="More information about the USDC-funded portion">
+                                Funds this Reserve's USDC holding and buys each other asset for you via a real Jupiter swap. Your wallet should hold about {fmtUsd(usdcToHoldUsd)} USDC -- the extra {(DEFAULT_FEE_BUFFER_FRACTION * 100).toFixed(0)}% covers swap fees and price movement, and whatever the swaps don't use stays in your wallet. This is checked before anything is created.
+                              </InfoTip>
                             </span>
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Total across all {costEstimate.numTransactions} transactions above -- each Phantom popup below will ask for only its own share of this, never this full amount at once.
-                        </p>
-                      </>
-                    )}
+                            <span className="font-merge-mono">
+                              {fmtUsd(usdcCapitalUsd)}
+                              {usdcCapitalUsd > 0 && <span className="text-muted-foreground"> (hold &asymp; {fmtUsd(usdcToHoldUsd)} USDC)</span>}
+                            </span>
+                          </div>
+                          {solLegUsd > 0 && (
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                Paid by wrapping your SOL
+                                <InfoTip label="More information about the SOL-funded portion">This Reserve holds SOL, and that holding is funded by wrapping your own SOL directly -- no USDC is spent for it.</InfoTip>
+                              </span>
+                              <span className="font-merge-mono">
+                                {fmtUsd(solLegUsd)}
+                                <span className="text-muted-foreground"> ({(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL)</span>
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex justify-between text-sm font-semibold">
+                            <span>Reserve assets subtotal</span>
+                            <span className="font-merge-mono">${seedTotalUsdUi.toFixed(2)}</span>
+                          </div>
+
+                          <p className="pt-3 border-t border-border/50 text-xs font-semibold text-foreground">Fees &amp; overhead (paid in SOL)</p>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              Account creation &amp; rent
+                              <InfoTip label="More information about account creation and rent">Solana requires new accounts (the Reserve, its assets, vaults, and Reserve Token mint) to be rent-exempt -- this SOL isn't a fee, it stays locked in those accounts.</InfoTip>
+                            </span>
+                            <span className="font-merge-mono">
+                              {(Number(costEstimate.totalRentLamports) / 1e9).toFixed(5)} SOL
+                              <span className="text-muted-foreground"> (&asymp; {fmtUsd(solToUsd(costEstimate.totalRentLamports))})</span>
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Estimated network fees ({costEstimate.numTransactions} transactions)</span>
+                            <span className="font-merge-mono">
+                              {(Number(costEstimate.networkFeeLamportsEstimate) / 1e9).toFixed(5)} SOL
+                              <span className="text-muted-foreground"> (&asymp; {fmtUsd(solToUsd(costEstimate.networkFeeLamportsEstimate))})</span>
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              Protocol fees
+                              <InfoTip label="More information about protocol fees">No fee is charged at creation itself -- Mint Fee ({mintFeePct.toFixed(2)}%) and TVL Fee ({tvlFeePct.toFixed(2)}%) apply to future Buy/holding activity, configured above.</InfoTip>
+                            </span>
+                            <span className="font-merge-mono text-muted-foreground">$0.00 now</span>
+                          </div>
+
+                          <div className="pt-3 border-t border-border/50 space-y-1.5">
+                            <div className="flex justify-between text-sm font-semibold">
+                              <span>Total (USD)</span>
+                              <span className="font-merge-mono text-primary">
+                                {overheadUsd === null ? `$${seedTotalUsdUi.toFixed(2)} + SOL overhead (USD unavailable)` : `≈ $${(seedTotalUsdUi + overheadUsd).toFixed(2)}`}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Requested as {(Number(costEstimate.totalLamports) / 1e9).toFixed(5)} SOL
+                              {usdcCapitalUsd > 0 ? <> plus &asymp; {fmtUsd(usdcToHoldUsd)} of your USDC</> : null}, across {costEstimate.numTransactions} transactions -- each Phantom popup asks for only its own share, never the full amount at once.
+                            </p>
+                          </div>
+                        </>
+                      );
+                    })()}
                     <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
                       <p className="font-semibold text-foreground">This will request {costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets)} wallet approvals:</p>
                       {(() => {

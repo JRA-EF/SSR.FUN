@@ -4797,3 +4797,22 @@
   ]
 }
 ```
+
+## DEC-0153
+
+```json
+{
+  "id": "DEC-0153",
+  "date": "2026-08-25",
+  "status": "confirmed-implemented",
+  "decision": "Restructured the Mainnet Wallet Cost Summary (CreateDTR.tsx Review & Deploy) into the three sections the Creator specified: (1) 'Goes into your Reserve' -- launch capital in USD, split by the currency it's actually paid in ('Paid in USDC' covering the USDC leg + every Jupiter-swapped asset, with the exact wallet-should-hold USDC figure including the same buffer the feasibility preflight enforces; 'Paid by wrapping your SOL' for a SOL holding, shown in USD + SOL); (2) 'Fees & overhead (paid in SOL)' -- rent and network fees in their native currency with USD approximations; (3) 'Total (USD)' -- capital + overhead as one USD number, with a caption stating exactly how it's requested (X SOL plus ~$Y of USDC, across N transactions). DevNet keeps its original SOL-only layout (its assets are faucet-minted test tokens; no USDC is involved).",
+  "context": "Launching a new CHARLIE (SOL 50% / SSR 50%, $20), Creator read 'Initial Reserve funding 0.10190 SOL' + 'Estimated total SOL required 0.11850 SOL (~$11.63)' and reasonably asked whether the $11.63 excluded the launch capital, then why the total didn't include the SSR side. Both questions expose the same display gap: the summary was SOL-denominated only, silently omitting the USDC-funded half of the capital (the invariant's own funding currency since DEC-0151), and mixing capital (the SOL leg) with overhead (rent/fees) in one SOL number.",
+  "rationale": "The USDC-side figure shown ('hold ~$X USDC') deliberately reuses DEFAULT_FEE_BUFFER_FRACTION from launchFunding.ts so the displayed number and the preflight-enforced number can never disagree. The SOL-leg USD amount is computed from the composition's SOL weight fraction x seed total (exact by construction -- the same derivation seedRawAmountForAsset uses), not re-derived from lamports.",
+  "alternativesConsidered": ["Adding a single 'USDC required' line to the existing SOL-centric layout -- rejected: the Creator explicitly specified the three-way split (capital in USDC terms, fees in native currency, totals in USD), and the old layout's core confusion (capital and overhead summed in one SOL figure) would have remained."],
+  "impact": "831/831 offline tests passing (display-only change; no logic altered -- the preflight/funding logic this displays was already covered). tsc -b, oxlint, npm run build clean. Deployed to production.",
+  "affectedAreas": ["src/merge/pages/CreateDTR.tsx", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Creator-reported confusion, verbatim, over the $20/$10/$11.63 relationship on the live Review & Deploy screen.", "831/831 offline tests passing."]
+}
+```
