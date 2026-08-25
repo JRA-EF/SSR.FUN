@@ -81,6 +81,7 @@ import {
   isWithinAcceptableShortfallTolerance,
   type ReserveOnChainStatus,
 } from "./createReserveResume";
+import { advanceAssetFunding, canEnterSeeding, countReadyToSeed, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
 /**
@@ -876,6 +877,23 @@ export function assertSeedAmountsMeetMinimum(assets: Pick<CreateReserveAssetInpu
  * this pass. The caller must pass `finalSeedAmounts`, not its original
  * `seedAmounts`, into buildSeedReserveInstruction.
  */
+/** Per-asset funding progress event -- drives the "4 of 10 assets funded" display (see CreateDTR.tsx). `funded` counts assets fully `ready_to_seed`. */
+export interface AssetFundingProgressEvent {
+  funded: number;
+  total: number;
+  mint: string;
+  stage: AssetFundingStatus;
+}
+
+export interface FundSeedAssetsOptions {
+  /** Fired on every per-asset stage change (launchFunding.ts's state machine). */
+  onAssetProgress?: (event: AssetFundingProgressEvent) => void;
+  /** Per-asset funding state persisted by a previous attempt (PendingReserveDeploy.assetFunding) -- any `submitted` signature in here is reconciled against real on-chain status BEFORE any new swap is considered. */
+  persistedFunding?: Record<string, PersistedAssetFunding>;
+  /** Called with the full updated record on every transition so the caller can persist it (savePendingAssetFunding) -- progress survives refresh/reconnect. */
+  onFundingStateChange?: (record: Record<string, PersistedAssetFunding>) => void;
+}
+
 async function fundSeedAssetsIdempotent(
   connection: Connection,
   wallet: WalletContextState,
@@ -890,12 +908,32 @@ async function fundSeedAssetsIdempotent(
   allowFaucet: boolean = true,
   jupiterSwap?: JupiterSwapFundingOptions,
   clusterLabel: string = "DevNet",
-): Promise<{ signature: string | null; finalSeedAmounts: bigint[] }> {
+  opts: FundSeedAssetsOptions = {},
+): Promise<{ signature: string | null; finalSeedAmounts: bigint[]; fundingStates: PersistedAssetFunding[] }> {
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const owner = wallet.publicKey;
 
   const balances = await Promise.all(assets.map((a) => fetchOwnedBalanceRaw(connection, new PublicKey(a.mint), owner)));
   const finalSeedAmounts = [...seedAmounts];
+
+  // Per-asset funding state machine (launchFunding.ts, DEC-0151): every
+  // asset starts from its persisted state (or not_started) and only ever
+  // moves forward through
+  // not_started -> quoted -> awaiting_signature -> submitted -> confirmed
+  //   -> balance_verified -> ready_to_seed.
+  // Seeding is gated on EVERY asset reaching ready_to_seed -- completion is
+  // never inferred from a wallet approval, a submitted transaction, or a
+  // timeout, only from an authoritatively verified balance.
+  let funding: Record<string, PersistedAssetFunding> = { ...(opts.persistedFunding ?? {}) };
+  const advance = (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw">>) => {
+    funding = advanceAssetFunding(funding, mint, to, extra);
+    opts.onFundingStateChange?.(funding);
+    opts.onAssetProgress?.({ funded: countReadyToSeed(assets.map((a) => funding[a.mint] ?? { mint: a.mint, status: "not_started" })), total: assets.length, mint, stage: to });
+  };
+  const resetForRetry = (mint: string) => {
+    funding = advanceAssetFunding(funding, mint, "not_started");
+    opts.onFundingStateChange?.(funding);
+  };
 
   let jupiterSwapSig: string | null = null;
   if (jupiterSwap?.enabled) {
@@ -903,9 +941,29 @@ async function fundSeedAssetsIdempotent(
       const asset = assets[i];
       if (!isJupiterSwapEligible(asset.mint)) continue;
 
+      // Reconcile a previously-submitted swap signature BEFORE anything
+      // else -- a prior attempt may have submitted a swap whose
+      // confirmation this client never saw (refresh, RPC timeout). Its
+      // real on-chain status decides what happens next: confirmed means
+      // the tokens are (or will be, once read settles) already in the
+      // wallet -- never re-swapped; failed/expired/not-found means the
+      // attempt genuinely didn't land and this asset restarts cleanly.
+      const persisted = funding[asset.mint];
+      if (persisted?.lastSignature && (persisted.status === "submitted" || persisted.status === "awaiting_signature")) {
+        const { value } = await withRateLimitRetry(() => connection.getSignatureStatuses([persisted.lastSignature!], { searchTransactionHistory: true }), 3, 500);
+        const st = value[0];
+        if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
+          advance(asset.mint, "confirmed");
+          balances[i] = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, balances[i]);
+        } else {
+          resetForRetry(asset.mint);
+        }
+      }
+
       const usdBudget = jupiterSwap.seedTotalUsd * asset.seedWeightFraction;
       if (usdBudget <= 0) {
         finalSeedAmounts[i] = 0n;
+        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: "0" });
         continue;
       }
       const usdcBudgetRaw = BigInt(Math.round(usdBudget * 1_000_000));
@@ -935,7 +993,13 @@ async function fundSeedAssetsIdempotent(
       finalSeedAmounts[i] = targetRaw;
 
       const existingRaw = balances[i]; // real balance already read at the top of this function, BEFORE any swap this call performs -- may already include tokens from an earlier attempt/session, not just this one.
-      if (existingRaw >= targetRaw) continue; // already holds enough (from this call's own funding below, an earlier attempt, or simply already owned) -- no swap needed, no fee spent, existing balance used as-is.
+      if (existingRaw >= targetRaw) {
+        // Already holds enough (from a prior confirmed swap, an earlier
+        // attempt, or simply already owned) -- verified against the real
+        // balance, so straight to ready. No swap, no fee spent.
+        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: existingRaw.toString(), targetRaw: targetRaw.toString() });
+        continue;
+      }
 
       // Swap only the genuine DEFICIT, never the full target -- an asset
       // already partially funded (by an earlier attempt, or simply already
@@ -965,6 +1029,7 @@ async function fundSeedAssetsIdempotent(
         // never silently understating what the Reserve actually ends up
         // holding.
         finalSeedAmounts[i] = existingRaw;
+        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: existingRaw.toString(), targetRaw: targetRaw.toString() });
         const dustShortfallPct = computeSwapShortfallPct(targetRaw, existingRaw);
         if (dustShortfallPct > SHORTFALL_WARN_PCT) {
           jupiterSwap.onSwapShortfall?.({ mint: asset.mint, targetRaw, actualRaw: existingRaw, shortfallPct: dustShortfallPct });
@@ -972,10 +1037,35 @@ async function fundSeedAssetsIdempotent(
         continue;
       }
 
-      const quote = existingRaw <= 0n ? fullQuote : await fetchJupiterSwapQuote(asset.mint, scaledDeficitUsdcRaw, owner.toBase58());
+      // USDC preflight, per swap, IMMEDIATELY before requesting a signature
+      // -- the direct guard against the confirmed live disaster (2026-08-25,
+      // Reserve 11's USD1 swap: wallet held 0.490579 USDC against a ~$2
+      // required input, producing Jupiter error 6024 InsufficientFunds five
+      // consecutive times over 34 minutes with a UI that kept implying
+      // retry could help). Jupiter's own documented handling for 6024 is
+      // exactly this: show the current balance and the required balance.
+      // A small buffer covers the swap's own fee/rounding headroom.
+      const usdcHeldRaw = await fetchOwnedBalanceRaw(connection, new PublicKey(MAINNET_USDC_MINT), owner);
+      const usdcRequiredWithBufferRaw = (scaledDeficitUsdcRaw * 102n) / 100n;
+      if (usdcHeldRaw < usdcRequiredWithBufferRaw) {
+        throw new Error(
+          `This wallet holds ${(Number(usdcHeldRaw) / 1e6).toFixed(2)} USDC, but the next funding swap (${asset.mint}) needs ~${(Number(usdcRequiredWithBufferRaw) / 1e6).toFixed(2)} USDC -- and later assets in this launch still need funding after it. Send this wallet more USDC, then resume: everything already funded is verified and will never be re-bought.`,
+        );
+      }
+
+      // A FRESH execution quote, always -- the cached fullQuote above is
+      // used strictly to determine the live-priced target, never as the
+      // quote a real swap transaction is built from (a cached quote's
+      // route/amounts can be up to 20s stale, exactly the staleness class
+      // the "fresh quote immediately before each swap" invariant exists to
+      // prevent).
+      advance(asset.mint, "quoted", { targetRaw: targetRaw.toString() });
+      const quote = await fetchJupiterSwapQuote(asset.mint, existingRaw <= 0n ? usdcBudgetRaw : scaledDeficitUsdcRaw, owner.toBase58());
 
       jupiterSwap.onSwapStart?.(asset.mint);
-      jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote);
+      advance(asset.mint, "awaiting_signature");
+      jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote, (submittedSig) => advance(asset.mint, "submitted", { lastSignature: submittedSig }));
+      advance(asset.mint, "confirmed");
       // Use whatever the swap actually produced -- Jupiter's on-chain swap
       // instruction already enforces its own worst-case slippage floor
       // (otherAmountThreshold), so a real result below the quote's
@@ -988,6 +1078,7 @@ async function fundSeedAssetsIdempotent(
       // up yet.
       const newBalance = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, existingRaw);
       finalSeedAmounts[i] = newBalance;
+      advance(asset.mint, "balance_verified", { verifiedBalanceRaw: newBalance.toString() });
       // Shortfall is always measured against the FULL target (targetRaw),
       // not the smaller deficit-only quote -- newBalance is the creator's
       // real TOTAL holding (existing + just-acquired), so comparing it
@@ -997,6 +1088,7 @@ async function fundSeedAssetsIdempotent(
       if (shortfallPct > SHORTFALL_WARN_PCT) {
         jupiterSwap.onSwapShortfall?.({ mint: asset.mint, targetRaw, actualRaw: newBalance, shortfallPct });
       }
+      advance(asset.mint, "ready_to_seed");
     }
   }
 
@@ -1049,7 +1141,22 @@ async function fundSeedAssetsIdempotent(
     sig = sig ?? wrapSig;
   }
   sig = sig ?? jupiterSwapSig;
-  return { signature: sig, finalSeedAmounts };
+
+  // Every non-swap-funded asset (the USDC leg, wrapped SOL, DevNet
+  // faucet-funded test assets) reaches this line only if its
+  // shortfall-funding phase above either found it already sufficient or
+  // genuinely funded it (a shortfall that couldn't be funded threw before
+  // here) -- mark each ready_to_seed with its verified amount so the
+  // canEnterSeeding gate covers EVERY asset uniformly, not just the
+  // Jupiter-swapped ones.
+  for (let i = 0; i < assets.length; i++) {
+    const st = funding[assets[i].mint];
+    if (!st || st.status !== "ready_to_seed") {
+      advance(assets[i].mint, "ready_to_seed", { verifiedBalanceRaw: finalSeedAmounts[i].toString() });
+    }
+  }
+  const fundingStates = assets.map((a) => funding[a.mint] ?? { mint: a.mint, status: "not_started" as AssetFundingStatus });
+  return { signature: sig, finalSeedAmounts, fundingStates };
 }
 
 /**
@@ -1155,6 +1262,10 @@ export async function createReserveOnChain(params: {
   solPriceUsd?: number;
   /** See signAndSend's header -- shown in an AmbiguousConfirmationError if RPC confirmation times out. Defaults to "DevNet" so every pre-existing caller/test is unaffected; CreateDTR.tsx passes its own real CLUSTER_LABEL. */
   clusterLabel?: string;
+  /** Per-asset funding progress -- see FundSeedAssetsOptions (launchFunding.ts's state machine, DEC-0151). */
+  onAssetProgress?: (event: AssetFundingProgressEvent) => void;
+  /** Persist per-asset funding state on every transition (see savePendingAssetFunding) so progress survives refresh/reconnect. */
+  onFundingStateChange?: (record: Record<string, PersistedAssetFunding>) => void;
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -1263,10 +1374,15 @@ export async function createReserveOnChain(params: {
 
   let fundSeedAssetsSig: string | null = null;
   let finalSeedAmounts = seedAmounts;
+  let fundingStates: PersistedAssetFunding[] = [];
   try {
-    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel);
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel, {
+      onAssetProgress: params.onAssetProgress,
+      onFundingStateChange: params.onFundingStateChange,
+    });
     fundSeedAssetsSig = fundResult.signature;
     finalSeedAmounts = fundResult.finalSeedAmounts;
+    fundingStates = fundResult.fundingStates;
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses, e);
   }
@@ -1274,6 +1390,14 @@ export async function createReserveOnChain(params: {
   params.onProgress("seed");
   let seedSig: string;
   try {
+    // THE seeding gate (launchFunding.ts, DEC-0151): every asset must be
+    // authoritatively ready_to_seed. Structurally, fundSeedAssetsIdempotent
+    // throwing on any failure already prevents reaching here early -- this
+    // asserts it explicitly so no future code path can ever seed a Reserve
+    // whose assets weren't all verified.
+    if (!canEnterSeeding(fundingStates)) {
+      throw new Error(`Refusing to seed: only ${countReadyToSeed(fundingStates)} of ${fundingStates.length} assets are verified as fully funded.`);
+    }
     const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
     // Fail fast, client-side, before ever asking for a signature -- the
     // program rejects any per-asset seed amount below its own real floor
@@ -1393,6 +1517,8 @@ export async function resumeReserveDeploymentOnChain(params: {
   solPriceUsd?: number;
   /** Same meaning as createReserveOnChain's own `clusterLabel`. */
   clusterLabel?: string;
+  /** Same meaning as createReserveOnChain's own `onAssetProgress`. */
+  onAssetProgress?: (event: AssetFundingProgressEvent) => void;
 }): Promise<CreateReserveResult> {
   const { connection, wallet, pending } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -1494,10 +1620,20 @@ export async function resumeReserveDeploymentOnChain(params: {
   params.onProgress("fund-seed-assets");
   let fundSeedAssetsSig: string | null = null;
   let finalSeedAmounts = seedAmounts;
+  let fundingStates: PersistedAssetFunding[] = [];
   try {
-    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel);
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, pending.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel, {
+      onAssetProgress: params.onAssetProgress,
+      // A previous attempt's per-asset progress -- lets this resume
+      // reconcile any previously-submitted swap signature against real
+      // on-chain status before ever considering a new swap, and skip
+      // (never repeat) already-verified assets.
+      persistedFunding: pending.assetFunding,
+      onFundingStateChange: (record) => savePendingAssetFunding(pending.wallet, record),
+    });
     fundSeedAssetsSig = fundResult.signature;
     finalSeedAmounts = fundResult.finalSeedAmounts;
+    fundingStates = fundResult.fundingStates;
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses, e);
   }
@@ -1512,6 +1648,11 @@ export async function resumeReserveDeploymentOnChain(params: {
   let seedSig: string | null = null;
   if (freshBeforeSeed?.status === "assetsInitializing") {
     try {
+      // Same explicit seeding gate as createReserveOnChain -- see its own
+      // comment (launchFunding.ts, DEC-0151).
+      if (!canEnterSeeding(fundingStates)) {
+        throw new Error(`Refusing to seed: only ${countReadyToSeed(fundingStates)} of ${fundingStates.length} assets are verified as fully funded.`);
+      }
       const initialReserveTokens = BigInt(Math.max(1, Math.floor(pending.seedTotalUsd)) * 1_000_000);
       assertSeedAmountsMeetMinimum(pending.assets, finalSeedAmounts);
       validateSeedPlan(finalSeedAmounts, initialReserveTokens);
@@ -1575,6 +1716,24 @@ export interface PendingReserveDeploy {
   /** Exactly the asset list (and order) create-and-register registered -- required to resume funding/seeding correctly, and (weightBps) to resume registering any assets a later transaction in that step hadn't reached yet. */
   assets: { mint: string; decimals: number; seedWeightFraction: number; weightBps: number }[];
   seedTotalUsd: number;
+  /**
+   * Per-asset funding progress (launchFunding.ts's explicit state machine,
+   * DEC-0151) -- persisted on every state change so a refresh/reconnect
+   * resumes from the first genuinely unresolved asset, reconciling any
+   * previously-submitted swap signature against real on-chain status
+   * instead of blindly re-swapping. Optional: a marker written by an older
+   * version of this app simply resumes with a fresh (all not_started)
+   * record, which is safe -- the funding loop re-derives everything from
+   * real balances anyway.
+   */
+  assetFunding?: Record<string, PersistedAssetFunding>;
+}
+
+/** Merges an updated per-asset funding record into the persisted pending-deploy marker (best-effort, like every other localStorage write here) -- called on every state-machine transition so progress survives refresh/reconnect. */
+export function savePendingAssetFunding(walletAddress: string, assetFunding: Record<string, PersistedAssetFunding>): void {
+  const pending = readPendingReserveDeploy(walletAddress);
+  if (!pending) return;
+  savePendingReserveDeploy({ ...pending, assetFunding });
 }
 
 export function savePendingReserveDeploy(deploy: PendingReserveDeploy): void {

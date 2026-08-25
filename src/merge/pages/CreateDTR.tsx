@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
@@ -23,7 +23,9 @@ import {
   rawToUiAmount,
   uploadReserveMetadata,
   estimateNetSeedReserveTokens,
+  savePendingAssetFunding,
   CreateReserveStepError,
+  type AssetFundingProgressEvent,
   type CreateReserveStep,
   type CreateReserveResult,
   type CreateReserveCostEstimate,
@@ -31,6 +33,7 @@ import {
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
+import { assessLaunchFeasibility, type LaunchAssetPlan } from "@/lib/launchFunding";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
@@ -151,8 +154,18 @@ export function CreateDTR() {
   // "fund-seed-assets" step label with something more specific while it's
   // happening. Cleared whenever a fresh submission/resume attempt starts.
   const [jupiterSwapMint, setJupiterSwapMint] = useState<string | null>(null);
+  // Per-asset funding progress (launchFunding.ts's state machine, DEC-0151)
+  // -- drives the "4 of 10 assets funded" display so a multi-asset launch's
+  // several sequential wallet approvals read as visible forward progress
+  // instead of an opaque spinner. Cleared whenever a fresh submission/resume
+  // attempt starts.
+  const [fundingProgress, setFundingProgress] = useState<AssetFundingProgressEvent | null>(null);
   function stepLabel(step: CreateReserveStep | null, fallback: string): string {
     if (!step) return fallback;
+    if (step === "fund-seed-assets" && fundingProgress) {
+      const swapping = jupiterSwapMint ? ` -- swapping USDC for ${jupiterSwapMint.slice(0, 4)}...${jupiterSwapMint.slice(-4)}` : "";
+      return `Funding seed assets: ${fundingProgress.funded} of ${fundingProgress.total} ready${swapping}...`;
+    }
     if (step === "fund-seed-assets" && jupiterSwapMint) {
       return `Swapping USDC for ${jupiterSwapMint.slice(0, 4)}...${jupiterSwapMint.slice(-4)} via Jupiter...`;
     }
@@ -573,6 +586,7 @@ export function CreateDTR() {
     setResumeError(null);
     setCreateStep("fund-seed-assets");
     setJupiterSwapMint(null);
+    setFundingProgress(null);
     useAppStore.getState().setTxInFlight(true);
     try {
       const pendingAtStart = resumePending;
@@ -581,6 +595,7 @@ export function CreateDTR() {
         wallet: walletCtx,
         pending: pendingAtStart,
         onProgress: setCreateStep,
+        onAssetProgress: setFundingProgress,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
         jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: pendingAtStart.seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
@@ -956,6 +971,7 @@ export function CreateDTR() {
     setIsSubmitting(true);
     setCreateStep("create-and-register");
     setJupiterSwapMint(null);
+    setFundingProgress(null);
     const programId = SSR_PROGRAM_ID;
     useAppStore.getState().setTxInFlight(true);
 
@@ -977,6 +993,45 @@ export function CreateDTR() {
     const seedTotalUsd = parseFloat(initialSeedUsdc) || 10;
 
     try {
+      // Complete launch-feasibility preflight BEFORE creating the Reserve
+      // PDA (launchFunding.ts, DEC-0151): per-asset allocation practicality
+      // (dust-sized swap allocations are rejected with a precise recommended
+      // minimum, never an arbitrary blanket number) and, critically, whether
+      // this wallet actually holds enough USDC for the whole funding plan --
+      // the confirmed root cause of Reserve 11's five consecutive Jupiter
+      // 6024 (InsufficientFunds) failures was a launch started against a
+      // wallet holding $0.49 USDC. An RPC failure READING the balance never
+      // blocks the launch (the per-swap preflight inside funding still
+      // guards) -- only a real, readable insufficiency does.
+      if (IS_MAINNET) {
+        let walletUsdcRaw: bigint | null = null;
+        try {
+          walletUsdcRaw = BigInt(await fetchTokenBalanceRaw(connection, new PublicKey(MAINNET_USDC_MINT), walletCtx.publicKey));
+        } catch {
+          walletUsdcRaw = null;
+        }
+        if (walletUsdcRaw !== null) {
+          const plan: LaunchAssetPlan[] = realAssets.map((a) => ({
+            mint: a.mint,
+            seedWeightFraction: a.seedWeightFraction,
+            kind: a.mint === MAINNET_USDC_MINT ? ("usdc" as const) : a.mint === WRAPPED_SOL_MINT.toBase58() ? ("wrapped-sol" as const) : ("swap" as const),
+          }));
+          const feasibility = assessLaunchFeasibility({ assets: plan, seedTotalUsd, walletUsdcRaw });
+          if (!feasibility.feasible) {
+            toast({
+              variant: "destructive",
+              title: "This launch isn't fundable yet",
+              description: `${feasibility.reasons.join(". ")}.${
+                feasibility.minimumRecommendedSeedUsd > seedTotalUsd
+                  ? ` The recommended minimum initial amount for this composition is $${feasibility.minimumRecommendedSeedUsd.toFixed(2)}.`
+                  : ""
+              } Nothing was created on-chain.`,
+            });
+            return;
+          }
+        }
+      }
+
       const result = await createReserveOnChain({
         connection,
         wallet: walletCtx,
@@ -997,6 +1052,12 @@ export function CreateDTR() {
         solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
         clusterLabel: CLUSTER_LABEL,
         onProgress: setCreateStep,
+        onAssetProgress: setFundingProgress,
+        // Persist per-asset funding progress on every transition so a
+        // refresh/reconnect resumes from the first genuinely unresolved
+        // asset, reconciling any submitted swap signature instead of
+        // re-swapping (launchFunding.ts, DEC-0151).
+        onFundingStateChange: (record) => savePendingAssetFunding(walletCtx.publicKey!.toBase58(), record),
         // Persisted immediately -- if the page reloads (or the user leaves
         // and comes back later) anywhere after this fires, the mount-time
         // recovery effect above can reconcile THIS exact Reserve PDA against

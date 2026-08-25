@@ -104,28 +104,20 @@ const SETTLEMENT_SYMBOL = IS_MAINNET ? "USDC" : "devUSDC";
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 /**
- * Mainnet ONLY departs from SETTLEMENT_MINT/DECIMALS/SYMBOL for a genuinely
- * SINGLE-asset Reserve whose sole asset isn't USDC (e.g. "alpha", 100% SSR)
- * -- the single-asset direct in-kind Buy path
- * (packages/sdk/src/directInstructions.ts's buildDirectMintInstructions)
- * always deposits the Reserve's OWN registered asset, never a converted USDC
- * amount, so "your balance"/insufficient-balance/the submitted raw amount
- * must all be read against that real asset, not against USDC, or the
- * displayed quote and the submitted transaction silently disagree (see the
- * Mainnet-pricing-layer decision log entry's ALPHA diagnosis for the
- * concrete bug this fixes). A genuinely MULTI-asset Reserve (2026-08-24,
- * DEC-0140) uses buildDirectMultiAssetMintInstructions instead, whose input
- * genuinely IS a USD/USDC amount (multiAssetBuyClient.ts funds every other
- * leg via a real Jupiter swap from that USDC) -- SETTLEMENT_MINT is correct
- * for it, same as a genuinely USDC-only Reserve. DevNet is untouched: its
- * zap path genuinely can convert other legs, so SETTLEMENT_MINT stays
- * authoritative there regardless of asset count.
+ * The Buy INPUT asset is always the settlement currency (real USDC on
+ * Mainnet, devUSDC on DevNet) -- the product's funding invariant (DEC-0151,
+ * see docs/protocol/FRONTEND_INTEGRATION.md's "Mainnet funding invariant"):
+ * a user supplies only USDC; any Reserve whose composition isn't purely USDC
+ * is bought through the USDC-funded path (multiAssetBuyClient.ts's
+ * executeMultiAssetBuyMainnet -- USDC -> Jupiter swap per non-USDC leg ->
+ * deposit -> mint), which works identically for one leg or ten. An earlier
+ * version of this function made a single-asset non-USDC Reserve (e.g.
+ * "alpha", 100% SSR) demand the user ALREADY HOLD its underlying asset --
+ * honest for the old direct-deposit path it routed to, but a violation of
+ * the invariant this pass establishes; that path now serves only pure-USDC
+ * Reserves, for which the settlement asset is trivially correct.
  */
-function resolveBuyAsset(onChain: OnChainReserveMeta | undefined): { mint: PublicKey; decimals: number; symbol: string } {
-  const asset = onChain?.assets[0];
-  if (IS_MAINNET && onChain && asset && onChain.assets.length === 1 && !isReservePureDevUsdc(onChain.assets.map((a) => a.mint), MAINNET_USDC_MINT)) {
-    return { mint: new PublicKey(asset.mint), decimals: asset.decimals, symbol: asset.symbol };
-  }
+function resolveBuyAsset(_onChain: OnChainReserveMeta | undefined): { mint: PublicKey; decimals: number; symbol: string } {
   return { mint: SETTLEMENT_MINT, decimals: SETTLEMENT_DECIMALS, symbol: SETTLEMENT_SYMBOL };
 }
 
@@ -489,11 +481,12 @@ export function DTRDetail() {
     if (!isOnChain || !dtr.onChain) return isOnChain ? null : 0;
     const supply = BigInt(dtr.onChain.reserveTokenSupplyRaw || "0");
     if (supply <= 0n) return null;
-    // A genuinely multi-asset Reserve has no single vault ratio to divide by
-    // -- numBuyAmount here is a USD amount (see resolveBuyAsset's multi-asset
-    // branch), so the quote is NAV-based instead, mirroring exactly what
+    // Any Reserve bought through the USDC-funded path (every Mainnet
+    // Reserve that isn't purely USDC -- single-asset SSR included, DEC-0151
+    // -- plus any multi-asset Reserve) takes numBuyAmount as a USD amount,
+    // so the quote is NAV-based, mirroring exactly what
     // handleBuyMultiAssetMainnet actually submits (usdToReserveTokensRequested).
-    if (dtr.onChain.assets.length > 1) {
+    if (dtr.onChain.assets.length > 1 || (IS_MAINNET && dtr.onChain.assets[0] && dtr.onChain.assets[0].mint !== MAINNET_USDC_MINT)) {
       if (!(dtr.nav > 0)) return null;
       try {
         const gross = usdToReserveTokensRequested(numBuyAmount, dtr.nav, RESERVE_TOKEN_DECIMALS);
@@ -1163,7 +1156,16 @@ export function DTRDetail() {
   // build), so this still gates Sell but no longer gates Buy. See
   // isSettlementBuySupported/isSettlementSellSupported below.
   const isMultiAssetMainnetReserve = IS_MAINNET && isOnChain && !!dtr.onChain && dtr.onChain.assets.length > 1;
-  const onBuyClick = isOnChain ? (IS_MAINNET ? (isMultiAssetMainnetReserve ? handleBuyMultiAssetMainnet : handleBuyMainnet) : handleBuy) : handleBuyUnavailable;
+  // The USDC-funded Buy path (multiAssetBuyClient.ts) serves EVERY Mainnet
+  // Reserve except one composed purely of USDC (which deposits USDC
+  // directly, no swap) -- the funding invariant (DEC-0151): a buyer supplies
+  // only USDC; any needed constituent asset is acquired by a real Jupiter
+  // swap inside the flow, never demanded from the buyer's own holdings.
+  // Confirmed live gap this closes: ALPHA (100% SSR) previously demanded the
+  // buyer already hold SSR itself.
+  const isUsdcFundedBuyMainnetReserve =
+    IS_MAINNET && isOnChain && !!dtr.onChain && dtr.onChain.assets.length > 0 && !(dtr.onChain.assets.length === 1 && dtr.onChain.assets[0].mint === MAINNET_USDC_MINT);
+  const onBuyClick = isOnChain ? (IS_MAINNET ? (isUsdcFundedBuyMainnetReserve ? handleBuyMultiAssetMainnet : handleBuyMainnet) : handleBuy) : handleBuyUnavailable;
   // True for ANY Reserve composed entirely of site-wide supported assets
   // (see packages/sdk/src/tradableAssets.ts, the same eligibility check that
   // already determines whether a Reserve is discoverable/visible anywhere on
@@ -1670,11 +1672,9 @@ export function DTRDetail() {
                             Deposit asset
                             <InfoTip label="More information about the deposit asset">
                               {IS_MAINNET
-                                ? isMultiAssetMainnetReserve
-                                  ? `This Reserve holds ${dtr.onChain?.assets.length ?? "several"} assets -- your USDC input funds a proportional deposit of every one of them (via a real Jupiter swap for any leg that isn't already USDC or SOL you hold), then mints your Reserve Tokens in one final step. Several wallet approvals are expected.`
-                                  : isPureSettlementReserve
-                                    ? "USDC is this Reserve's sole asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
-                                    : `This Reserve's sole asset is ${buyDepositAsset?.symbol ?? "its underlying token"}, not USDC -- your input above is denominated in ${buyDepositAsset?.symbol ?? "that asset"} and deposited directly into its vault. No conversion or swap is involved; this is not a USDC purchase.`
+                                ? isUsdcFundedBuyMainnetReserve
+                                  ? `Your USDC input funds this Reserve's ${dtr.onChain?.assets.length === 1 ? "underlying asset" : `${dtr.onChain?.assets.length ?? "several"} underlying assets`} for you (via a real Jupiter swap for any part that isn't already USDC or SOL you hold), then mints your Reserve Tokens in one final step. ${dtr.onChain?.assets.length === 1 ? "Two wallet approvals are expected -- one for the swap, one for the mint." : "Several wallet approvals are expected."} You never need to buy the underlying asset${dtr.onChain?.assets.length === 1 ? "" : "s"} yourself.`
+                                  : "USDC is this Reserve's sole asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
                                 : `devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.${
                                     isPureSettlementReserve
                                       ? " This Reserve is backed 100% by devUSDC, so your entire input is genuinely deposited into its vault."
@@ -1682,9 +1682,7 @@ export function DTRDetail() {
                                   }`}
                             </InfoTip>
                           </span>
-                          <span className="font-merge-mono">
-                            {IS_MAINNET && !isPureSettlementReserve && !isMultiAssetMainnetReserve ? (buyDepositAsset?.symbol ?? "—") : SETTLEMENT_SYMBOL}
-                          </span>
+                          <span className="font-merge-mono">{SETTLEMENT_SYMBOL}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Mint Fee</span>

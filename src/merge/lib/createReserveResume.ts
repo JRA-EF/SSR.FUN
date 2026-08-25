@@ -263,27 +263,27 @@ export function classifyCreateReserveError(e: unknown): CreateReserveErrorClass 
   if (underlying instanceof AmbiguousConfirmationError) return "ambiguous";
   if (isRateLimitError(underlying)) return "retryable";
   const underlyingMsg = (underlying instanceof Error ? underlying.message : String(underlying)).toLowerCase();
-  // A Jupiter swap rejected ON-CHAIN by one of the programs in its route
-  // (jupiterSwapClient.ts's describeJupiterSwapError, thrown by
-  // executeJupiterSwap) is a real, decodable Custom(N) error -- but it is
-  // NOT an ssr_protocol/Anchor condition the extractCustomErrorCode check
-  // below is meant to catch, and unlike those, this codebase's own design
-  // treats it as routine/transient by construction: describeJupiterSwapError
-  // itself always says "Try again: a fresh quote is fetched automatically
-  // on retry" (the single most common real cause of an AMM/router
-  // instruction reverting mid-swap is an ordinary minimum-output/slippage
-  // check, not a stable configuration problem -- see that function's own
-  // header). Confirmed live (2026-08-25, real Mainnet Reserve "CHARLIE",
-  // error code 6024): this message previously fell through every rule
-  // below (its plain-English "error code N" phrasing matches none of
-  // extractCustomErrorCode's raw-JSON/hex/Custom() patterns, so that check
-  // itself wasn't even the culprit -- it simply hit the conservative
-  // "deterministic" default) and got told "will not resolve itself on a
-  // plain retry" directly contradicting its own "Try again" text. Checked
-  // BEFORE extractCustomErrorCode below (never after) so this stays
-  // correctly retryable even if some future rawErrorJson shape happens to
-  // also match one of that check's patterns.
-  if (underlyingMsg.includes("jupiter swap was rejected on-chain")) return "retryable";
+  // A Jupiter swap rejected ON-CHAIN (jupiterSwapClient.ts's
+  // describeJupiterSwapError, thrown by executeJupiterSwap) is classified by
+  // WHAT Jupiter's documented error code actually means -- never by a blanket
+  // rule. Root-caused live (2026-08-25, Reserve 11's USD1 swap, wallet
+  // holding 0.49 USDC against a ~$2 required input, 5 identical failures
+  // over 34 minutes): Jupiter error 6024 is InsufficientFunds
+  // (https://developers.jup.ag/docs/swap/common-errors) -- a DETERMINISTIC
+  // condition no retry can fix until the wallet is funded; an earlier
+  // version of this rule classified EVERY on-chain swap rejection as
+  // retryable, steering the Creator into a doomed retry loop against a
+  // wallet that had simply run out of USDC. describeJupiterSwapError's 6024
+  // branch renders the honest "does not hold enough" message, which is the
+  // marker matched here. Every OTHER swap-route rejection (6001 slippage,
+  // unknown route/AMM codes) remains retryable -- the price-movement class
+  // whose own message correctly says "Try again". Checked BEFORE
+  // extractCustomErrorCode below (never after) so a code named in the
+  // message's plain-English text can never be misread as an
+  // ssr_protocol/Anchor deterministic error.
+  if (underlyingMsg.includes("jupiter swap was rejected on-chain")) {
+    return underlyingMsg.includes("does not hold enough") ? "deterministic" : "retryable";
+  }
   if (extractCustomErrorCode(underlying) !== null) return "deterministic";
   const msg = underlyingMsg;
   if (msg.includes("failed to fetch") || msg.includes("network error") || msg.includes("timed out") || msg.includes("timeout")) return "retryable";

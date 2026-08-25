@@ -11,6 +11,53 @@
 
 # Frontend Integration (Gate 10-11)
 
+## Mainnet funding invariant (DEC-0151 -- binding product rule)
+
+**A user supplies only Mainnet USDC (plus SOL for network fees/rent).**
+
+- **Reserve inception:** `USDC → Jupiter swaps → all required Reserve
+  Assets → seed Reserve → mint Reserve Tokens`.
+- **Buying an existing Reserve:** `USDC → Jupiter swaps → Reserve Assets →
+  deposit assets → mint Reserve Tokens` -- for EVERY Reserve, including one
+  composed 100% of a single non-USDC asset (a pure-USDC Reserve deposits
+  USDC directly, no swap).
+
+The user must never need to acquire constituent assets manually during a
+normal launch or purchase. A resume MAY count constituent assets already in
+the wallet from previously confirmed swaps toward the requirement, but it
+must only obtain genuine remaining deficits and must never repeat
+successful work.
+
+Enforcement (all client-side; the deployed on-chain program already
+supports this flow unmodified):
+
+- **Upfront feasibility preflight** (`src/merge/lib/launchFunding.ts`'s
+  `assessLaunchFeasibility`, run in `CreateDTR.tsx` BEFORE the Reserve PDA
+  is created): per-asset allocation practicality (dust-sized swap
+  allocations rejected with a precise computed minimum recommended seed,
+  never an arbitrary blanket number) and whether the wallet actually holds
+  enough USDC for the whole plan.
+- **Explicit per-asset funding state machine** (`launchFunding.ts`,
+  persisted inside `PendingReserveDeploy`): `not_started → quoted →
+  awaiting_signature → submitted → confirmed → balance_verified →
+  ready_to_seed`. Seeding is gated on EVERY asset reaching
+  `ready_to_seed`; completion is never inferred from a wallet approval, a
+  submitted transaction, optimistic UI state, or a timeout.
+- **Sequential swap policy** (`createReserveClient.ts`'s
+  `fundSeedAssetsIdempotent`): a fresh execution quote immediately before
+  each swap (a cached quote is only ever used to estimate the target),
+  per-swap USDC-balance preflight (Jupiter error 6024 = InsufficientFunds
+  is surfaced BEFORE a signature is ever requested, with current vs.
+  required balances -- Jupiter's own documented handling), reconciliation
+  of any previously-submitted signature before retrying, persistence
+  across refresh/reconnect, resume from the first unresolved asset, and
+  "N of M assets funded" progress.
+
+Established after the 2026-08-25 Reserve 11 incident (see DEC-0151): a
+10-asset ~$20 launch failed deterministically at its 4th swap five
+consecutive times because the wallet had $0.49 USDC left, and nothing
+checked USDC sufficiency anywhere.
+
 ## Summary
 
 The existing SSR.fun frontend (native + merge design systems, unchanged
