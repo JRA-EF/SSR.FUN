@@ -147,12 +147,26 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${MAINNET_USDC_MINT}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`;
       const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": jupiterApiKey } });
       if (!quoteRes.ok) {
-        const errBody = await quoteRes.json().catch(() => null);
+        // Read the RAW text once (never .json() directly) so a genuinely
+        // non-JSON response (an HTML error page, an empty body, a gateway
+        // error) is still visible in server logs instead of silently
+        // vanishing into a `.json().catch(() => null)` -- this endpoint's
+        // "transient" classification was previously unauditable: every
+        // failure reason was discarded before ever reaching a log line.
+        const rawText = await quoteRes.text().catch(() => "<unreadable body>");
+        let errBody: { error?: unknown } | null = null;
+        try {
+          errBody = JSON.parse(rawText);
+        } catch {
+          errBody = null;
+        }
+        console.error(`[jupiter-swap] quote non-OK: status=${quoteRes.status} outputMint=${outputMint} body=${rawText.slice(0, 500)}`);
         if (errBody && typeof errBody.error === "string") return { kind: "specific-error", message: errBody.error };
         return { kind: "transient" };
       }
       return { kind: "ok", quote: (await quoteRes.json()) as JupiterQuote };
-    } catch {
+    } catch (e) {
+      console.error(`[jupiter-swap] quote fetch threw: outputMint=${outputMint} error=${e instanceof Error ? e.stack || e.message : String(e)}`);
       return { kind: "transient" };
     }
   }
@@ -223,13 +237,26 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         // wider (survives real short-term volatility) than a static number.
         body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true }),
       });
-      const swapBody = await swapRes.json().catch(() => null);
+      const rawText = await swapRes.text().catch(() => "<unreadable body>");
+      let swapBody: { swapTransaction?: unknown; lastValidBlockHeight?: unknown; error?: unknown } | null = null;
+      try {
+        swapBody = JSON.parse(rawText);
+      } catch {
+        swapBody = null;
+      }
       if (swapRes.ok && swapBody && typeof swapBody.swapTransaction === "string" && typeof swapBody.lastValidBlockHeight === "number") {
         return { kind: "ok", swapTransaction: swapBody.swapTransaction, lastValidBlockHeight: swapBody.lastValidBlockHeight };
       }
+      // Logged on every non-success outcome (not just a thrown exception) --
+      // this is what was completely invisible before: a real Jupiter
+      // response (status + body) that failed this endpoint's own shape
+      // check, discarded with no trace. See attemptQuote's identical
+      // rationale above.
+      console.error(`[jupiter-swap] swap-build non-OK/malformed: status=${swapRes.status} outputMint=${outputMint} body=${rawText.slice(0, 500)}`);
       if (swapBody && typeof swapBody.error === "string") return { kind: "specific-error", message: swapBody.error };
       return { kind: "transient" };
-    } catch {
+    } catch (e) {
+      console.error(`[jupiter-swap] swap-build fetch threw: outputMint=${outputMint} error=${e instanceof Error ? e.stack || e.message : String(e)}`);
       return { kind: "transient" };
     }
   }

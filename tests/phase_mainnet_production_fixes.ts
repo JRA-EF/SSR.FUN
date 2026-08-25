@@ -444,7 +444,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     let quoteCalls = 0;
     global.fetch = (async () => {
       quoteCalls += 1;
-      return { ok: false, status: 400, json: async () => ({ error: "The token X is not tradable", errorCode: "TOKEN_NOT_TRADABLE" }) };
+      return { ok: false, status: 400, text: async () => JSON.stringify({ error: "The token X is not tradable", errorCode: "TOKEN_NOT_TRADABLE" }) };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
@@ -461,7 +461,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
         if (quoteCalls < 3) throw new Error("simulated transient network failure");
         return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
       }
-      return { ok: true, json: async () => ({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
+      return { ok: true, text: async () => JSON.stringify({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
@@ -473,7 +473,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     let quoteCalls = 0;
     global.fetch = (async () => {
       quoteCalls += 1;
-      return { ok: false, status: 502, json: async () => { throw new Error("not valid json"); } };
+      return { ok: false, status: 502, text: async () => "not valid json" };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
@@ -500,7 +500,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
       }
       swapCalls += 1;
       if (swapCalls < 3) throw new Error("simulated transient network failure");
-      return { ok: true, json: async () => ({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
+      return { ok: true, text: async () => JSON.stringify({ swapTransaction: "abc", lastValidBlockHeight: 123 }) };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
@@ -514,7 +514,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     global.fetch = (async (url: string) => {
       if (String(url).includes("/quote")) return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
       swapCalls += 1;
-      return { ok: false, status: 400, json: async () => ({ error: "Simulation failed: insufficient funds for rent." }) };
+      return { ok: false, status: 400, text: async () => JSON.stringify({ error: "Simulation failed: insufficient funds for rent." }) };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
@@ -528,7 +528,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     global.fetch = (async (url: string) => {
       if (String(url).includes("/quote")) return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
       swapCalls += 1;
-      return { ok: false, status: 502, json: async () => { throw new Error("not valid json"); } };
+      return { ok: false, status: 502, text: async () => "not valid json" };
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
