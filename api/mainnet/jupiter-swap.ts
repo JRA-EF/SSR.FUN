@@ -81,6 +81,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const amountRaw = typeof body.amountRaw === "string" ? body.amountRaw : "";
   const userPublicKey = typeof body.userPublicKey === "string" ? body.userPublicKey : "";
   const slippageBps = typeof body.slippageBps === "number" && Number.isFinite(body.slippageBps) ? Math.round(body.slippageBps) : DEFAULT_SLIPPAGE_BPS;
+  // DEC-0154: a caller funding a Reserve's wrapped-SOL leg FROM USDC (the
+  // funding invariant) needs the swap output to STAY as SPL wrapped SOL in
+  // the buyer's wSOL ATA -- Jupiter's default (wrapAndUnwrapSol: true)
+  // auto-unwraps a wSOL output back to native SOL, which the in-kind
+  // deposit instruction can't use. Only honored for a wrapped-SOL
+  // outputMint; meaningless (and ignored) for any other output.
+  const receiveWrappedSol = body.receiveWrappedSol === true && outputMint === "So11111111111111111111111111111111111111112";
 
   if (!BASE58_RE.test(outputMint) || outputMint === MAINNET_USDC_MINT) {
     res.status(400).json({ error: "Invalid or unsupported outputMint." });
@@ -269,7 +276,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         // docs/project/DECISION_LOG.md's entry for this pass) -- it can go
         // both tighter (no wasted slippage budget on a stable route) and
         // wider (survives real short-term volatility) than a static number.
-        body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true }),
+        body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true, ...(receiveWrappedSol ? { wrapAndUnwrapSol: false } : {}) }),
       });
       const rawText = await swapRes.text().catch(() => "<unreadable body>");
       let swapBody: { swapTransaction?: unknown; lastValidBlockHeight?: unknown; error?: unknown } | null = null;

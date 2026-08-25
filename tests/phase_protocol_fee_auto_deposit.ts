@@ -159,7 +159,7 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
     expect(recipient.signer, "recipient must be a signer -- the on-chain claimant-only enforcement").to.equal(true);
   });
 
-  it("mint_reserve_tokens_in_kind: 2026-08-21 pass replaced protocol_fee_destination_token_account/protocol_fee_destination/manager_fee_recipients with fee_settlement/fee_vault/fee_vault_authority -- BOTH shares now crystallize into the shared fee vault instead of minting straight to final destinations (see docs/project/DECISION_LOG.md)", () => {
+  it("mint_reserve_tokens_in_kind: the SDK IDL tracks the DEPLOYED Mainnet binary (pre-fee-settlement shape), NOT the Rust source tree -- DEC-0154. The 2026-08-21 fee-settlement redesign changed this instruction's accounts in source, but that program change was never deployed to Mainnet; regenerating the IDL from source anyway made every built mint fail on-chain with Anchor 3002 AccountDiscriminatorMismatch (confirmed live 2026-08-25, the failed CHARLI buy). This assertion may only change together with a real Mainnet program upgrade.", () => {
     const ix = (idl as any).instructions.find((i: any) => i.name === "mint_reserve_tokens_in_kind");
     const names = ix.accounts.map((a: any) => a.name);
     expect(names).to.deep.equal([
@@ -169,10 +169,10 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
       "mint_authority",
       "depositor_reserve_token_account",
       "depositor",
-      "fee_settlement",
-      "fee_vault",
-      "fee_vault_authority",
+      "protocol_fee_destination_token_account",
+      "protocol_fee_destination",
       "tvl_accrual",
+      "manager_fee_recipients",
       "token_program",
       "associated_token_program",
       "system_program",
@@ -217,7 +217,7 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
     expect(redeemer.writable).to.equal(true);
   });
 
-  it("accrue_fees: 2026-08-21 pass replaced protocol_fee_destination_token_account/protocol_fee_destination/manager_fee_recipients with fee_settlement/fee_vault/fee_vault_authority -- it settles into the shared fee vault, not straight to final destinations, same crystallization redesign as mint_reserve_tokens_in_kind", () => {
+  it("accrue_fees: the SDK IDL tracks the DEPLOYED Mainnet binary (pre-fee-settlement shape), NOT the Rust source tree -- same DEC-0154 rule and rationale as mint_reserve_tokens_in_kind above. May only change together with a real Mainnet program upgrade.", () => {
     const ix = (idl as any).instructions.find((i: any) => i.name === "accrue_fees");
     const names = ix.accounts.map((a: any) => a.name);
     expect(names).to.deep.equal([
@@ -226,9 +226,9 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
       "reserve_token_mint",
       "mint_authority",
       "tvl_accrual",
-      "fee_settlement",
-      "fee_vault",
-      "fee_vault_authority",
+      "protocol_fee_destination_token_account",
+      "protocol_fee_destination",
+      "manager_fee_recipients",
       "payer",
       "token_program",
       "associated_token_program",

@@ -72,12 +72,12 @@ export interface JupiterSwapQuote {
   priceImpactPct: number;
 }
 
-/** Fetches a real Jupiter quote + unsigned swap transaction for spending `amountRawUsdc` (raw USDC, 6 decimals) into `outputMint`. Throws with the server's own honest message on any failure (no route, price impact too high, etc.) -- never fabricates a quote. */
-export async function fetchJupiterSwapQuote(outputMint: string, amountRawUsdc: bigint, userPublicKey: string, slippageBps?: number): Promise<JupiterSwapQuote> {
+/** Fetches a real Jupiter quote + unsigned swap transaction for spending `amountRawUsdc` (raw USDC, 6 decimals) into `outputMint`. Throws with the server's own honest message on any failure (no route, price impact too high, etc.) -- never fabricates a quote. `receiveWrappedSol` (DEC-0154): for a wrapped-SOL outputMint, keep the output as SPL wrapped SOL in the buyer's wSOL ATA instead of Jupiter's default auto-unwrap to native -- required when the swap funds a Reserve's wrapped-SOL asset leg from USDC. */
+export async function fetchJupiterSwapQuote(outputMint: string, amountRawUsdc: bigint, userPublicKey: string, slippageBps?: number, receiveWrappedSol?: boolean): Promise<JupiterSwapQuote> {
   const res = await fetch("/api/mainnet/jupiter-swap", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ outputMint, amountRaw: amountRawUsdc.toString(), userPublicKey, slippageBps }),
+    body: JSON.stringify({ outputMint, amountRaw: amountRawUsdc.toString(), userPublicKey, slippageBps, receiveWrappedSol }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok || !body) {

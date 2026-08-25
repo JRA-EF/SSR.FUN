@@ -22,7 +22,7 @@ import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates";
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
-import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested } from "@/lib/multiAssetBuyClient";
+import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested, MultiAssetBuyError } from "@/lib/multiAssetBuyClient";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import {
@@ -199,6 +199,10 @@ export function DTRDetail() {
   // "genuinely stuck." A signature is recorded (and shown) the instant
   // submission succeeds, before confirmation even starts.
   const [buyPhase, setBuyPhase] = useState<TxPhase>("idle");
+  // Synchronous same-tick duplicate-click/concurrent-attempt guard for Buy
+  // (DEC-0154) -- see handleBuyMultiAssetMainnet; React state alone leaves a
+  // pre-render window a fast double-click can slip through.
+  const buySubmittingRef = useRef(false);
   const [buyPendingSignature, setBuyPendingSignature] = useState<string | null>(null);
   const buyPreSettlementRawRef = useRef<bigint>(0n);
   // Fine-grained step label for a multi-asset Buy (multiAssetBuyClient.ts's
@@ -710,6 +714,8 @@ export function DTRDetail() {
       return;
     }
     if (!canSubmitNewTransaction(buyPhase)) return;
+    if (buySubmittingRef.current) return; // same-tick duplicate-click guard (DEC-0154), matching handleBuyMultiAssetMainnet
+    buySubmittingRef.current = true;
     const buyAsset = resolveBuyAsset(dtr.onChain);
     const usdcAmountRaw = BigInt(Math.floor(numBuyAmount * 10 ** buyAsset.decimals));
     setBuyPhase("preparing");
@@ -780,6 +786,7 @@ export function DTRDetail() {
         });
       }
     } finally {
+      buySubmittingRef.current = false;
       useAppStore.getState().setTxInFlight(false);
     }
   };
@@ -800,7 +807,15 @@ export function DTRDetail() {
       return;
     }
     if (!canSubmitNewTransaction(buyPhase)) return;
+    // Synchronous, same-tick guard against a fast double-click or a
+    // concurrent buy/resume for the same purchase -- buyPhase (React
+    // state) only takes effect after the next render, exactly the gap
+    // CreateDTR.tsx's submittingRef already closes for launches (DEC-0154
+    // requirement: prevent duplicate clicks/concurrent attempts).
+    if (buySubmittingRef.current) return;
+    buySubmittingRef.current = true;
     if (!(dtr.nav > 0)) {
+      buySubmittingRef.current = false;
       toast({ variant: "destructive", title: "Pricing Unavailable", description: "This Reserve's current price isn't available right now -- try again shortly." });
       return;
     }
@@ -821,7 +836,7 @@ export function DTRDetail() {
       }));
       const [protocolConfig] = findProtocolConfig(SSR_PROGRAM_ID);
       const reserveTokensRequested = usdToReserveTokensRequested(numBuyAmount, dtr.nav, RESERVE_TOKEN_DECIMALS);
-      const { signature } = await executeMultiAssetBuyMainnet({
+      const { signature, alreadyMinted } = await executeMultiAssetBuyMainnet({
         connection,
         wallet: walletCtx,
         protocolConfig,
@@ -832,13 +847,11 @@ export function DTRDetail() {
         assets,
         reserveTokenSupplyRaw: live.reserveTokenSupplyRaw,
         reserveTokensRequested,
+        effectiveMintFeeTotalBps: BigInt(dtr.onChain.effectiveMintFeeTotalBps ?? dtr.onChain.mintFeeBps ?? 0),
         assetPricesUsd: dtr.onChain.assetPricesUsd ?? {},
         onProgress: (e) => {
-          if (e.phase === "wrapping-sol") {
-            setMultiAssetBuyStep("Wrapping SOL for this Reserve's SOL holding...");
-            setBuyPhase("awaiting-wallet");
-          } else if (e.phase === "swapping") {
-            setMultiAssetBuyStep(`Swapping into asset ${e.index + 1} of ${e.total}...`);
+          if (e.phase === "swapping") {
+            setMultiAssetBuyStep(`Swapping your USDC into Reserve asset ${e.index + 1} of ${e.total}...`);
             setBuyPhase("awaiting-wallet");
           } else if (e.phase === "minting") {
             setMultiAssetBuyStep("Depositing into the Reserve and minting your tokens...");
@@ -853,7 +866,11 @@ export function DTRDetail() {
       await refreshRealReserveNow();
       recordConfirmedTrade(dtr.id, "buy", numBuyAmount / (dtr.nav || 1), numBuyAmount);
       setBuyAmount("");
-      toast(transactionConfirmedToast(signature, "Buy confirmed"));
+      toast(
+        alreadyMinted
+          ? { title: "Purchase already completed", description: "A previous attempt's mint had already landed on-chain -- your Reserve Tokens were already in your wallet, and nothing was purchased or minted twice." }
+          : transactionConfirmedToast(signature, "Buy confirmed"),
+      );
     } catch (e) {
       setMultiAssetBuyStep(null);
       if (e instanceof AmbiguousConfirmationError) {
@@ -865,13 +882,25 @@ export function DTRDetail() {
         setBuyPhase("failed");
         const raw = e instanceof Error ? e.message : "The purchase failed.";
         console.error("Multi-asset Buy failed:", raw);
+        // The on-chain-verified state report (multiAssetBuyPlan.ts's
+        // buildBuyStateReport) -- what succeeded, what is held, whether
+        // the Reserve Token was minted, and what retry will actually do.
+        // NEVER a blanket "your funds are safe" claim: every line below
+        // comes from balances re-read from Mainnet after the failure; when
+        // even that read failed, the message says the state is unverified
+        // instead of guessing.
+        const report = e instanceof MultiAssetBuyError ? e.report : null;
+        const reportLines = report
+          ? `Verified on-chain after the failure: ${report.legs.map((l) => `${l.mint.slice(0, 4)}...${l.mint.slice(-4)} held ${l.heldRaw} of ${l.requiredRaw} raw (in your wallet)${l.fundedEnough ? " -- fully funded" : ""}`).join("; ")}. Reserve Tokens minted: ${report.reserveTokenMinted ? "YES -- already in your wallet" : "no"}. ${report.retrySummary}`
+          : "The post-failure on-chain state check itself could not complete -- verify your balances on Explorer before retrying.";
         toast({
           variant: "destructive",
           title: "Buy Failed",
-          description: `${raw} Any asset already acquired for this purchase (e.g. from a completed swap) remains in your wallet -- nothing is lost; retrying will only fund the genuine remaining shortfall, not repeat what already succeeded.`,
+          description: `${raw} ${reportLines}`,
         });
       }
     } finally {
+      buySubmittingRef.current = false;
       useAppStore.getState().setTxInFlight(false);
     }
   };
