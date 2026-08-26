@@ -65,6 +65,8 @@ export interface PersistedAssetFunding {
   verifiedBalanceRaw?: string;
   /** The live-quoted target amount this asset was being funded toward. */
   targetRaw?: string;
+  /** Cumulative raw amount THIS flow's own confirmed swaps acquired of this asset, reconciled from the recorded signatures' real on-chain token deltas (DEC-0155) -- the buy path's purchase-scoped accounting; unset for flows that don't track it. */
+  acquiredRaw?: string;
 }
 
 /**
@@ -84,7 +86,7 @@ export function advanceAssetFunding(
   record: Record<string, PersistedAssetFunding>,
   mint: string,
   to: AssetFundingStatus,
-  extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw">>,
+  extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw" | "acquiredRaw">>,
 ): Record<string, PersistedAssetFunding> {
   const current = record[mint] ?? { mint, status: "not_started" as AssetFundingStatus };
   if (current.status !== to && !isLegalFundingTransition(current.status, to)) return record;

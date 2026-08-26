@@ -2,38 +2,45 @@
 // purely USDC routes through here since DEC-0151) -- deposits a proportional
 // in-kind amount of EVERY registered Reserve asset at once, in a single
 // mint_reserve_tokens_in_kind call, funding each leg's genuine shortfall
-// from the buyer's USDC first (see multiAssetBuyPlan.ts's planBuyFunding,
-// the pure planning brain this module executes).
+// from the buyer's USDC (see multiAssetBuyPlan.ts's planBuyFunding, the
+// pure planning brain this module executes).
 //
-// FUNDING INVARIANT (DEC-0151/DEC-0154): the buyer supplies ONLY USDC (plus
-// SOL for network fees/rent). Every leg the wallet doesn't already
-// sufficiently hold -- INCLUDING a wrapped-SOL leg -- is acquired by a real
-// Jupiter swap from USDC (a wrapped-SOL leg's swap is built with
-// receiveWrappedSol so the output stays SPL wrapped SOL). An earlier version
-// funded a wrapped-SOL leg by silently wrapping the buyer's own native SOL:
-// observed live 2026-08-25, a "$10 USDC" CHARLI purchase's first wallet
-// transaction moved ~$5 of native SOL into wrapped SOL while the UI named
-// USDC as the deposit asset. Already-held balances always count first --
-// a retry only ever funds the genuine remaining deficit.
+// FUNDING INVARIANT (DEC-0151/DEC-0154/DEC-0155): the buyer supplies ONLY
+// USDC (plus SOL for network fees/rent, which is never spent INTO the
+// purchase). Every leg is acquired by a real Jupiter swap from USDC (a
+// wrapped-SOL leg's swap is built with receiveWrappedSol so the output
+// stays SPL wrapped SOL). Only assets THIS purchase's own confirmed swaps
+// acquired count toward a leg -- reconciled from the recorded signatures'
+// real on-chain token deltas, capped at what the wallet still holds. Assets
+// the wallet already held for other reasons are NEVER silently consumed in
+// place of the quoted USDC (the live 2026-08-25 CHARLI buy's wallet held
+// 154k pre-existing SSR and 0.0515 wSOL wrapped from native SOL; an earlier
+// version would have "funded" the whole purchase from those, charging
+// almost none of the quoted USDC).
 //
-// SAFETY MODEL (DEC-0154, after the live 2026-08-25 failed CHARLI buy):
+// SAFETY MODEL (DEC-0154/DEC-0155, after the live failed CHARLI buys):
 //  - Whole-purchase feasibility gate (assessBuyFeasibility) BEFORE any
 //    transaction is constructed: real USDC balance vs. the full plan's
 //    cost, real SOL balance vs. fees/rent -- shown as current-vs-required,
 //    never discovered mid-flight as an on-chain InsufficientFunds.
 //  - Per-leg persistent state (launchFunding.ts's PersistedAssetFunding
-//    machine, stored under ssr_pending_buy_v1 keyed by wallet+reserve):
-//    survives refresh/reconnect; a previously-submitted swap signature is
-//    reconciled against real on-chain status before any new swap.
+//    machine, stored under ssr_pending_buys_v2 as a map keyed by
+//    wallet+reserve so concurrent purchases of different Reserves never
+//    overwrite each other's records): survives refresh/reconnect; every
+//    previously-submitted swap signature is reconciled against its real
+//    on-chain status AND its transaction's actual token delta before any
+//    planning -- a confirmed swap is never repeated, a failed one is
+//    cleanly restarted, and an unverifiable one stops the purchase with
+//    nothing submitted rather than guessing.
 //  - Double-mint guard (shouldSubmitMint): before the final mint is ever
 //    submitted, the buyer's REAL Reserve Token balance is re-read; if it
 //    already grew by the expected output since this purchase began, a prior
 //    attempt's mint landed and nothing is re-submitted.
 //  - Honest failure state (buildBuyStateReport): on any failure, every
-//    leg's REAL held balance and the REAL Reserve Token balance are re-read
-//    and reported -- what succeeded, what failed, what is held and where,
-//    whether the Reserve Token was minted, and exactly what retry will do.
-//    Never claimed from client-side state alone.
+//    leg's REAL balances and the REAL Reserve Token balance are re-read and
+//    reported -- the exact stage that failed, what this purchase acquired,
+//    what the wallet holds, whether the Reserve Token was minted, and
+//    exactly what retry will do. Never claimed from client-side state alone.
 //  - Never custodies funds: every transaction is signed by the buyer's own
 //    wallet; acquired assets live in the buyer's own ATAs until the mint
 //    deposits them.
@@ -53,7 +60,17 @@ import { fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
 import { packInstructionsBySize, fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { computeSwapShortfallPct } from "./createReserveResume";
 import { advanceAssetFunding, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
-import { planBuyFunding, assessBuyFeasibility, shouldSubmitMint, buildBuyStateReport, type BuyLegInput, type BuyStateReport } from "./multiAssetBuyPlan";
+import {
+  planBuyFunding,
+  assessBuyFeasibility,
+  shouldSubmitMint,
+  buildBuyStateReport,
+  countableAcquiredRaw,
+  computeOwnerTokenDeltaRaw,
+  type BuyLegInput,
+  type BuyStateReport,
+  type TokenBalanceEntry,
+} from "./multiAssetBuyPlan";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 import { withRateLimitRetry } from "./rpcResilience";
 
@@ -98,7 +115,11 @@ export class MultiAssetBuyError extends Error {
 }
 
 // --- Per-purchase persistence (survives refresh/reconnect) ------------------
-const PENDING_BUY_KEY = "ssr_pending_buy_v1";
+// A MAP keyed `${wallet}:${reserve}` (DEC-0155) -- the previous single-slot
+// shape meant starting a purchase of Reserve B silently discarded an
+// in-flight purchase record for Reserve A, losing its double-mint baseline
+// and acquired-asset accounting. Never shipped; no migration needed.
+const PENDING_BUY_KEY = "ssr_pending_buys_v2";
 
 export interface PendingBuyState {
   wallet: string;
@@ -111,21 +132,30 @@ export interface PendingBuyState {
   lastMintSignature?: string;
 }
 
-export function readPendingBuy(wallet: string, reserve: string): PendingBuyState | null {
+const pendingBuyMapKey = (wallet: string, reserve: string) => `${wallet}:${reserve}`;
+
+function readPendingBuyMap(): Record<string, PendingBuyState> {
   try {
     const raw = localStorage.getItem(PENDING_BUY_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as PendingBuyState;
-    if (parsed.wallet !== wallet || parsed.reserve !== reserve) return null;
-    return parsed;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, PendingBuyState>;
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    return null;
+    return {};
   }
+}
+
+export function readPendingBuy(wallet: string, reserve: string): PendingBuyState | null {
+  const entry = readPendingBuyMap()[pendingBuyMapKey(wallet, reserve)];
+  if (!entry || entry.wallet !== wallet || entry.reserve !== reserve) return null;
+  return entry;
 }
 
 export function savePendingBuy(state: PendingBuyState): void {
   try {
-    localStorage.setItem(PENDING_BUY_KEY, JSON.stringify(state));
+    const map = readPendingBuyMap();
+    map[pendingBuyMapKey(state.wallet, state.reserve)] = state;
+    localStorage.setItem(PENDING_BUY_KEY, JSON.stringify(map));
   } catch {
     // Best-effort -- persistence never blocks the purchase itself.
   }
@@ -133,8 +163,12 @@ export function savePendingBuy(state: PendingBuyState): void {
 
 export function clearPendingBuy(wallet: string, reserve: string): void {
   try {
-    const existing = readPendingBuy(wallet, reserve);
-    if (existing) localStorage.removeItem(PENDING_BUY_KEY);
+    const map = readPendingBuyMap();
+    const key = pendingBuyMapKey(wallet, reserve);
+    if (map[key]) {
+      delete map[key];
+      localStorage.setItem(PENDING_BUY_KEY, JSON.stringify(map));
+    }
   } catch {
     // Best-effort.
   }
@@ -163,10 +197,12 @@ export interface ExecuteMultiAssetBuyParams {
 
 /**
  * Full USDC-denominated buy. Sequential phases, each verified before the
- * next: feasibility gate -> per-leg funding (Jupiter swaps from USDC, one
- * per genuinely-deficient leg, freshly quoted immediately before each) ->
- * double-mint guard -> final in-kind mint -> post-mint delivery
- * verification (the buyer's real Reserve Token balance must show the mint).
+ * next: reconcile previously-recorded signatures -> feasibility gate ->
+ * per-leg funding (Jupiter swaps from USDC, one per genuinely-deficient
+ * leg, freshly quoted immediately before each, actual output measured and
+ * recorded) -> double-mint guard -> final in-kind mint -> post-mint
+ * delivery verification (the buyer's real Reserve Token balance must show
+ * the mint).
  */
 export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyParams): Promise<MultiAssetBuyResult> {
   if (!params.wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -205,7 +241,8 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   const rtBalanceNow = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner));
 
   // Per-purchase persisted state: resume an interrupted purchase's baseline
-  // (so the double-mint guard survives refresh), or start fresh.
+  // and acquired-asset records (so both the double-mint guard and the
+  // never-repeat-a-swap guarantee survive refresh), or start fresh.
   let pending = readPendingBuy(ownerBase58, reserveBase58);
   if (!pending) {
     pending = {
@@ -220,10 +257,11 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   } else {
     log("resuming a previously-started purchase", { startedAt: new Date(pending.startedAt).toISOString(), lastMintSignature: pending.lastMintSignature ?? null });
   }
-  const advanceLeg = (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw">>) => {
+  const advanceLeg = (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw" | "acquiredRaw">>) => {
     pending!.legFunding = advanceAssetFunding(pending!.legFunding, mint, to, extra);
     savePendingBuy(pending!);
   };
+  const acquiredRawOf = (mint: string): bigint => BigInt(pending!.legFunding[mint]?.acquiredRaw ?? "0");
 
   // DOUBLE-MINT GUARD, part 1 (before doing anything else): if a previous
   // attempt's mint already landed -- however that attempt's confirmation
@@ -252,34 +290,100 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     }
   }
 
+  // Reconcile EVERY previously-recorded swap signature BEFORE planning --
+  // the plan's deficits depend on what those swaps actually delivered. A
+  // confirmed swap's real output is measured from its own transaction's
+  // token-balance delta (the authoritative record), a definitively
+  // failed/expired one resets its leg cleanly, and an unverifiable one
+  // stops here with nothing submitted -- never guessed either way.
+  for (const asset of params.assets) {
+    const persisted = pending.legFunding[asset.mint];
+    if (!persisted?.lastSignature || !(persisted.status === "submitted" || persisted.status === "awaiting_signature")) continue;
+    const signature = persisted.lastSignature;
+    const { value } = await withRateLimitRetry(() => params.connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), 3, 500);
+    const st = value[0];
+    log("reconciling previous swap signature", { mint: asset.mint, signature, status: st?.confirmationStatus ?? "not-found", err: st?.err ?? null });
+    if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
+      const parsedTx = await withRateLimitRetry(
+        () => params.connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }),
+        3,
+        750,
+      );
+      if (!parsedTx?.meta) {
+        throw new MultiAssetBuyError(
+          `A previous swap for this purchase confirmed on-chain but its delivered amount could not be verified yet (signature ${signature}). Nothing was submitted -- try again in a moment; the confirmed swap will be counted, not repeated.`,
+          null,
+        );
+      }
+      const delta = computeOwnerTokenDeltaRaw(
+        (parsedTx.meta.preTokenBalances ?? []) as TokenBalanceEntry[],
+        (parsedTx.meta.postTokenBalances ?? []) as TokenBalanceEntry[],
+        ownerBase58,
+        asset.mint,
+      );
+      const gained = delta > 0n ? delta : 0n;
+      const newAcquired = acquiredRawOf(asset.mint) + gained;
+      log("previous swap reconciled as confirmed -- output counted, never repeated", { mint: asset.mint, signature, deliveredRaw: gained.toString(), totalAcquiredRaw: newAcquired.toString() });
+      advanceLeg(asset.mint, "confirmed", { acquiredRaw: newAcquired.toString() });
+    } else if (st?.err) {
+      log("previous swap definitively failed on-chain -- leg reset for a clean retry", { mint: asset.mint, signature, err: st.err });
+      advanceLeg(asset.mint, "not_started");
+    } else {
+      // Not found: either expired unlanded or not yet visible. Statuses were
+      // fetched with searchTransactionHistory, so treat as unlanded and
+      // reset -- the swap never delivered anything to count.
+      log("previous swap signature not found on-chain -- leg reset for a clean retry", { mint: asset.mint, signature });
+      advanceLeg(asset.mint, "not_started");
+    }
+  }
+
   // The funding plan + whole-purchase feasibility gate -- BEFORE any
-  // transaction is constructed or signature requested.
+  // transaction is constructed or signature requested. Deficits are
+  // purchase-scoped: only what THIS purchase's confirmed swaps acquired
+  // counts toward a leg, never the wallet's unrelated holdings.
   const legInputs: BuyLegInput[] = params.assets.map((a, i) => ({
     mint: a.mint,
     decimals: a.decimals,
     requiredRaw: requiredAmountsRaw[i],
-    heldRaw: heldRaw[i],
+    walletHeldRaw: heldRaw[i],
+    purchaseAcquiredRaw: acquiredRawOf(a.mint),
     priceUsd: params.assetPricesUsd[a.mint] ?? null,
   }));
   const plan = planBuyFunding(legInputs);
   log("funding plan", {
     walletUsdcRaw: walletUsdcRaw.toString(),
     walletSolLamports: walletSolLamports.toString(),
-    actions: plan.actions.map((ac) => (ac.kind === "jupiter-swap" ? { swap: ac.mint, deficitRaw: ac.deficitRaw.toString(), usdcBudgetRaw: ac.usdcBudgetRaw.toString(), receiveWrappedSol: ac.receiveWrappedSol } : { alreadyHeld: ac.mint })),
+    actions: plan.actions.map((ac) =>
+      ac.kind === "jupiter-swap"
+        ? { swap: ac.mint, deficitRaw: ac.deficitRaw.toString(), usdcBudgetRaw: ac.usdcBudgetRaw.toString(), receiveWrappedSol: ac.receiveWrappedSol }
+        : { alreadyFunded: ac.mint, countableRaw: ac.countableRaw.toString() },
+    ),
   });
   const feasibility = assessBuyFeasibility({ plan, walletUsdcRaw, walletSolLamports });
   if (!feasibility.feasible) {
     throw new MultiAssetBuyError(`This purchase can't start yet: ${feasibility.reasons.join("; ")}. Nothing was submitted.`, null);
   }
 
+  // Plain-language name of the stage currently executing -- reported
+  // verbatim in the failure state so the user sees exactly where it
+  // stopped and what remains.
+  let currentStage = "preparing this purchase (before anything was submitted)";
+
   const buildFailureReport = async (): Promise<BuyStateReport> => {
     const freshHeld = await readLegBalances().catch(() => heldRaw);
     const freshRt = await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner).then(BigInt).catch(() => rtBalanceNow);
     return buildBuyStateReport(
-      params.assets.map((a, i) => ({ mint: a.mint, symbol: a.mint.slice(0, 4) + "..." + a.mint.slice(-4), requiredRaw: requiredAmountsRaw[i], heldRaw: freshHeld[i] })),
+      params.assets.map((a, i) => ({
+        mint: a.mint,
+        symbol: a.mint.slice(0, 4) + "..." + a.mint.slice(-4),
+        requiredRaw: requiredAmountsRaw[i],
+        walletHeldRaw: freshHeld[i],
+        purchaseAcquiredRaw: acquiredRawOf(a.mint),
+      })),
       preMintBaseline,
       freshRt,
       BigInt(pending!.expectedNetReserveTokensRaw),
+      currentStage,
     );
   };
 
@@ -291,49 +395,45 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const action = swapActions[s];
       if (action.kind !== "jupiter-swap") continue;
       const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
-
-      // Reconcile a previously-submitted swap for this leg first -- never
-      // blindly re-swap what may already have landed.
-      const persisted = pending.legFunding[action.mint];
-      if (persisted?.lastSignature && (persisted.status === "submitted" || persisted.status === "awaiting_signature")) {
-        const { value } = await withRateLimitRetry(() => params.connection.getSignatureStatuses([persisted.lastSignature!], { searchTransactionHistory: true }), 3, 500);
-        const st = value[0];
-        log("reconciling previous swap signature", { mint: action.mint, signature: persisted.lastSignature, status: st?.confirmationStatus ?? "not-found", err: st?.err ?? null });
-        if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
-          heldRaw[legIndex] = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(action.mint), owner, heldRaw[legIndex]);
-          advanceLeg(action.mint, "confirmed");
-          if (heldRaw[legIndex] >= requiredAmountsRaw[legIndex]) {
-            advanceLeg(action.mint, "ready_to_seed", { verifiedBalanceRaw: heldRaw[legIndex].toString() });
-            continue;
-          }
-        } else {
-          advanceLeg(action.mint, "not_started");
-        }
-      }
+      currentStage = `swapping your USDC for one of the Reserve's assets (${action.mint.slice(0, 4)}...${action.mint.slice(-4)})`;
 
       params.onProgress?.({ phase: "swapping", mint: action.mint, index: s, total: swapActions.length });
       advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
       const quote = await fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol);
       log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
+      // The leg balance immediately before this swap -- the baseline the
+      // swap's actual delivered output is measured against.
+      const preSwapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
       advanceLeg(action.mint, "awaiting_signature");
       await executeJupiterSwap(params.connection, params.wallet, quote, (sig) => advanceLeg(action.mint, "submitted", { lastSignature: sig }));
       advanceLeg(action.mint, "confirmed");
-      const newBalance = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(action.mint), owner, heldRaw[legIndex]);
+      const newBalance = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(action.mint), owner, preSwapRaw);
       heldRaw[legIndex] = newBalance;
-      advanceLeg(action.mint, "ready_to_seed", { verifiedBalanceRaw: newBalance.toString() });
-      log("leg funded and balance-verified", { mint: action.mint, heldRaw: newBalance.toString(), requiredRaw: requiredAmountsRaw[legIndex].toString() });
-      const shortfallPct = computeSwapShortfallPct(requiredAmountsRaw[legIndex], newBalance);
+      const gained = newBalance > preSwapRaw ? newBalance - preSwapRaw : 0n;
+      const newAcquired = acquiredRawOf(action.mint) + gained;
+      advanceLeg(action.mint, "ready_to_seed", { verifiedBalanceRaw: newBalance.toString(), acquiredRaw: newAcquired.toString() });
+      log("leg funded and output measured", {
+        mint: action.mint,
+        deliveredRaw: gained.toString(),
+        totalAcquiredRaw: newAcquired.toString(),
+        requiredRaw: requiredAmountsRaw[legIndex].toString(),
+      });
+      const shortfallPct = computeSwapShortfallPct(requiredAmountsRaw[legIndex], newAcquired);
       if (shortfallPct > SHORTFALL_WARN_PCT) {
-        params.onSwapShortfall?.({ mint: action.mint, targetRaw: requiredAmountsRaw[legIndex], actualRaw: newBalance, shortfallPct });
+        params.onSwapShortfall?.({ mint: action.mint, targetRaw: requiredAmountsRaw[legIndex], actualRaw: newAcquired, shortfallPct });
       }
     }
 
-    // Every leg must now genuinely hold its requirement -- the mint is
-    // never submitted against unverified funding.
+    // Every leg must now be genuinely covered by THIS purchase's own
+    // acquisitions (still present in the wallet) -- the mint is never
+    // submitted against unverified funding or against unrelated holdings.
+    currentStage = "verifying every Reserve asset was acquired before the final mint";
     for (let i = 0; i < params.assets.length; i++) {
-      if (heldRaw[i] < requiredAmountsRaw[i]) {
+      const mint = params.assets[i].mint;
+      const countable = mint === MAINNET_USDC_MINT ? heldRaw[i] : countableAcquiredRaw({ walletHeldRaw: heldRaw[i], purchaseAcquiredRaw: acquiredRawOf(mint) });
+      if (countable < requiredAmountsRaw[i]) {
         throw new Error(
-          `Reserve asset ${params.assets[i].mint} is still short after funding: held ${heldRaw[i].toString()} raw vs required ${requiredAmountsRaw[i].toString()} raw. Nothing further was submitted.`,
+          `Reserve asset ${mint} is still short after funding: this purchase has acquired ${countable.toString()} raw of the ${requiredAmountsRaw[i].toString()} raw required. Nothing further was submitted -- retrying funds only this remaining shortfall.`,
         );
       }
     }
@@ -347,6 +447,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       return { signature: pending.lastMintSignature ?? "", reserveTokensRequested: params.reserveTokensRequested, requiredAmountsRaw, alreadyMinted: true };
     }
 
+    currentStage = "the final mint that deposits the acquired assets and delivers your Reserve Tokens";
     params.onProgress?.({ phase: "minting" });
     const { instructions, requiredAmountsRaw: finalRequired } = await buildDirectMultiAssetMintInstructions({
       program,
@@ -379,6 +480,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
 
     // DELIVERY VERIFICATION: success is only ever reported after the
     // buyer's REAL Reserve Token balance shows the minted output.
+    currentStage = "verifying your Reserve Tokens actually arrived after the mint";
     const rtAfter = await fetchOwnedBalanceRawSettled(params.connection, params.reserveTokenMint, owner, rtBeforeMint);
     const supplyAfter = await program.provider.connection
       .getTokenSupply(params.reserveTokenMint)
@@ -399,7 +501,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   } catch (e) {
     if (e instanceof AmbiguousConfirmationError) throw e; // DTRDetail's reconcileBuy path owns this case.
     const report = await buildFailureReport().catch(() => null);
-    log("buy failed -- verified state report", { error: e instanceof Error ? e.message : String(e), report });
+    log("buy failed -- verified state report", { error: e instanceof Error ? e.message : String(e), stage: currentStage, report });
     throw new MultiAssetBuyError(e instanceof Error ? e.message : String(e), report, e);
   }
 }

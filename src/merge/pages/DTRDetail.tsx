@@ -891,7 +891,7 @@ export function DTRDetail() {
         // instead of guessing.
         const report = e instanceof MultiAssetBuyError ? e.report : null;
         const reportLines = report
-          ? `Verified on-chain after the failure: ${report.legs.map((l) => `${l.mint.slice(0, 4)}...${l.mint.slice(-4)} held ${l.heldRaw} of ${l.requiredRaw} raw (in your wallet)${l.fundedEnough ? " -- fully funded" : ""}`).join("; ")}. Reserve Tokens minted: ${report.reserveTokenMinted ? "YES -- already in your wallet" : "no"}. ${report.retrySummary}`
+          ? `This purchase stopped at: ${report.failedStage}. Verified on-chain after the failure: ${report.legs.map((l) => `${l.mint.slice(0, 4)}...${l.mint.slice(-4)} -- this purchase acquired ${l.purchaseAcquiredRaw} of the ${l.requiredRaw} raw needed${l.fundedEnough ? " (fully funded)" : ""}`).join("; ")}. Reserve Tokens minted: ${report.reserveTokenMinted ? "YES -- already in your wallet" : "no"}. ${report.retrySummary}`
           : "The post-failure on-chain state check itself could not complete -- verify your balances on Explorer before retrying.";
         toast({
           variant: "destructive",
