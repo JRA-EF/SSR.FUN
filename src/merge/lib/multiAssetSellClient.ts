@@ -26,7 +26,6 @@ import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
   buildReadOnlyProgram,
   buildDirectMultiAssetRedeemInstructions,
-  buildDirectRedeemInstructions,
   fetchTokenBalanceRaw,
   describeOnChainError,
   MAINNET_USDC_MINT,
@@ -155,23 +154,11 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     legs: params.assets.map((a) => a.mint),
   });
 
-  // Build the redeem (single- or multi-leg) + exact entitlement amounts.
-  const buildRedeem = async () => {
-    if (params.assets.length >= 2) {
-      const built = await buildDirectMultiAssetRedeemInstructions({
-        program,
-        reserve: params.reserve,
-        reserveTokenMint: params.reserveTokenMint,
-        vaultAuthority: params.vaultAuthority,
-        user: owner,
-        assets: params.assets,
-        reserveTokenSupplyRaw: params.reserveTokenSupplyRaw,
-        redemptionFeeBps: params.redemptionFeeBps,
-        reserveTokensToRedeem: params.reserveTokensToRedeem,
-      });
-      return { instructions: built.instructions, entitlementsRaw: built.entitlementsRaw };
-    }
-    const built = await buildDirectRedeemInstructions({
+  // ONE redeem builder for every composition (DEC-0160: the builder accepts
+  // any leg count >= 1, so a single-asset Reserve like ALPHA takes exactly
+  // the same path as CHARLI/BETA).
+  const buildRedeem = async () =>
+    buildDirectMultiAssetRedeemInstructions({
       program,
       reserve: params.reserve,
       reserveTokenMint: params.reserveTokenMint,
@@ -182,8 +169,6 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
       redemptionFeeBps: params.redemptionFeeBps,
       reserveTokensToRedeem: params.reserveTokensToRedeem,
     });
-    return { instructions: built.instructions, entitlementsRaw: [built.assetAmountRaw] };
-  };
 
   const preSaleUsdcRaw = BigInt(await fetchTokenBalanceRaw(params.connection, usdcMint, owner));
   const preRedeemRtRaw = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner));

@@ -144,7 +144,27 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
     void findTvlAccrual; // referenced for parity with the mint-shape test suite
   });
 
-  it("refuses a single-asset Reserve (that path is buildDirectRedeemInstructions')", async () => {
+  it("builds a SINGLE-asset (ALPHA-shaped, 100% SSR) redeem through the same path -- one leg is just the smallest basket (DEC-0160), so every composition sells into USDC identically", async () => {
+    const connection = new Connection("http://localhost:9999");
+    const program = buildReadOnlyProgram(connection);
+    const { instructions, entitlementsRaw } = await buildDirectMultiAssetRedeemInstructions({
+      program,
+      reserve: OWNER,
+      reserveTokenMint: OWNER,
+      vaultAuthority: OWNER,
+      user: OWNER,
+      assets: [{ mint: SSR, decimals: 6, reserveAsset: "5wfs7tUrkvVzUPKst5mk7pHpMvvoZaskpkKSwk2huAfo", vault: "34hNxsxqBWH9czMKpng6zqcsmpg8SA4NeznenyF7VqH8", vaultBalanceRaw: "30000000000" }],
+      reserveTokenSupplyRaw: "20000000",
+      redemptionFeeBps: 0n,
+      reserveTokensToRedeem: 1_000_000n,
+    });
+    expect(instructions).to.have.length(2); // 1 ATA create + the redeem
+    const redeemIx = instructions[instructions.length - 1];
+    expect(redeemIx.keys.length).to.equal(9 + 1 * 5); // 9 fixed + one 5-account leg
+    expect(entitlementsRaw).to.deep.equal([1_500_000_000n]); // floor(1M x 30B / 20M)
+  });
+
+  it("still refuses an empty asset list (an unresolved Reserve shape is never redeemable)", async () => {
     const connection = new Connection("http://localhost:9999");
     const program = buildReadOnlyProgram(connection);
     try {
@@ -154,14 +174,14 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
         reserveTokenMint: OWNER,
         vaultAuthority: OWNER,
         user: OWNER,
-        assets: [{ mint: SSR, decimals: 6, reserveAsset: SSR, vault: SSR, vaultBalanceRaw: "1" }],
+        assets: [],
         reserveTokenSupplyRaw: "1",
         redemptionFeeBps: 0n,
         reserveTokensToRedeem: 1n,
       });
       expect.fail("expected a throw");
     } catch (e) {
-      expect(String(e)).to.include("genuinely multi-asset");
+      expect(String(e)).to.include("at least one registered asset");
     }
   });
 });

@@ -4970,3 +4970,26 @@
   "evidence": ["Creator instruction, verbatim.", "892/892 offline tests passing."]
 }
 ```
+
+## DEC-0160
+
+```json
+{
+  "id": "DEC-0160",
+  "date": "2026-08-26",
+  "status": "confirmed-implemented",
+  "decision": "Generalized buildDirectMultiAssetMintInstructions and buildDirectMultiAssetRedeemInstructions to accept ANY leg count >= 1 (were artificially restricted to >= 2), and simplified multiAssetSellClient to use the one redeem builder for every composition. Every Mainnet Reserve now buys from USDC and sells into USDC through the same two paths: pure-USDC Reserves via the direct deposit/redeem (USDC IS the asset), everything else -- single-asset like ALPHA (100% SSR) or multi-asset like CHARLI/BETA -- via the USDC-funded/USDC-settled clients.",
+  "context": "Creator's live ALPHA buy failed at composition time: 'buildDirectMultiAssetMintInstructions requires a genuinely multi-asset Reserve; found 1' (the honest new failure report correctly showed the stage as pre-submission, 0 acquired of 14,770,864,432 raw SSR needed, nothing moved). DTRDetail's routing was RIGHT (DEC-0151: ALPHA buys with USDC through the funded path) but the SDK builder refused one leg -- an artificial restriction: the on-chain mint/redeem_reserve_tokens_in_kind instructions have always supported any N (DevNet's zap built arbitrary N from the start). Creator also mandated: sell/mint must convert to/from USDC across ALL Reserves.",
+  "rationale": "One leg is just the smallest basket; the wire shape (13/9 fixed accounts + 5 per leg) is identical. PROVEN by read-only Mainnet simulation against the live single-asset Reserves: ALPHA (H7NDKmf9..., 100% SSR) one-leg mint err:null (2,123,863,980 raw SSR required for 1 RT, inner CPIs executing); the redeem side shares the same generalized builder, already proven on CHARLI. buildDirectMintInstructions/buildDirectRedeemInstructions (the amountIn-shaped direct pure-USDC path) remain unchanged for their existing callers.",
+  "alternativesConsidered": ["Branching the buy client to the single-asset builder for one-leg Reserves (as the sell client briefly did) -- rejected: two builders for the same on-chain instruction shape is exactly how the composition-dependent gap slipped through; one builder for N>=1 removes the class."],
+  "impact": "895/895 offline tests passing (3 new/updated: a single-leg ALPHA-shaped mint builds with the deployed 13+5 shape and exact mulDivCeil requirement; a single-leg redeem builds with 9+5 and exact floor entitlements; empty asset lists still refused on both). tsc -b, oxlint, npm run build clean. scripts/verify_single_asset_mint_mainnet.cjs kept as the permanent read-only verifier (expected: err null). Deployed to production.",
+  "affectedAreas": ["packages/sdk/src/directInstructions.ts", "src/merge/lib/multiAssetSellClient.ts", "scripts/verify_single_asset_mint_mainnet.cjs", "tests/phase_mainnet_buy_mint_shape.ts", "tests/phase_mainnet_sell_and_perf.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0140/DEC-0158 (partially: their >=2 builder restrictions)",
+  "supersededBy": null,
+  "evidence": [
+    "Creator's live ALPHA buy failure toast, verbatim (composition-time throw, nothing submitted).",
+    "Read-only Mainnet simulation: ALPHA (H7NDKmf9...) single-leg mint err:null; pure-USDC 9KkRx62F correctly excluded (direct path).",
+    "895/895 offline tests passing."
+  ]
+}
+```

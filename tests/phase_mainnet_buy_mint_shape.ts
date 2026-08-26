@@ -126,6 +126,51 @@ describe("Deployed-binary account-shape pinning (the DEC-0154 root cause, made i
     // The exact live failure shape (token program in the manager_fee_recipients slot) can never rebuild:
     expect(mintIx.keys[9].pubkey.toBase58()).to.not.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
   });
+
+  it("a SINGLE-asset (ALPHA-shaped, 100% SSR) mint builds through the same USDC-funded path -- one leg is just the smallest basket (DEC-0160; the old >=2 restriction failed every live ALPHA buy at composition time)", async () => {
+    const connection = new Connection("http://localhost:9999"); // never contacted -- .instruction() builds offline
+    const program = buildReadOnlyProgram(connection);
+    const USER = new PublicKey("6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen");
+    const { instructions, requiredAmountsRaw } = await buildDirectMultiAssetMintInstructions({
+      program,
+      protocolConfig: findProtocolConfig(program.programId)[0],
+      protocolFeeDestination: new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5"),
+      reserve: new PublicKey("EK5WwpsRuWPCAhV4Rd4s5SRuE6Gnbc8SA94oUjZbHfVb"),
+      reserveTokenMint: new PublicKey("J4XbyjS6iPHRQ8oPAAAc2GhmP3549ga9gZiu8MR5iimq"),
+      mintAuthority: new PublicKey("FAjR5aMW9j8fZwFw9nDxkhjU3fjDAGq8Taniby6rmrZ5"),
+      user: USER,
+      assets: [{ mint: SSR, decimals: 6, reserveAsset: "5wfs7tUrkvVzUPKst5mk7pHpMvvoZaskpkKSwk2huAfo", vault: "34hNxsxqBWH9czMKpng6zqcsmpg8SA4NeznenyF7VqH8", vaultBalanceRaw: "30000000000" }],
+      reserveTokenSupplyRaw: "20000000",
+      reserveTokensRequested: 9_690_000n,
+    });
+    const mintIx = instructions[instructions.length - 1];
+    expect(mintIx.keys.length).to.equal(13 + 1 * 5); // the same deployed shape, one leg
+    expect(mintIx.keys[9].pubkey.toBase58()).to.equal(program.programId.toBase58()); // manager_fee_recipients "None" sentinel unchanged
+    expect(requiredAmountsRaw).to.have.length(1);
+    expect(requiredAmountsRaw[0]).to.equal((9_690_000n * 30_000_000_000n + 19_999_999n) / 20_000_000n); // mulDivCeil(requested, vault, supply)
+  });
+
+  it("an empty asset list is still refused (an unresolved Reserve shape is never mintable)", async () => {
+    const connection = new Connection("http://localhost:9999");
+    const program = buildReadOnlyProgram(connection);
+    try {
+      await buildDirectMultiAssetMintInstructions({
+        program,
+        protocolConfig: findProtocolConfig(program.programId)[0],
+        protocolFeeDestination: new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5"),
+        reserve: new PublicKey("EK5WwpsRuWPCAhV4Rd4s5SRuE6Gnbc8SA94oUjZbHfVb"),
+        reserveTokenMint: new PublicKey("J4XbyjS6iPHRQ8oPAAAc2GhmP3549ga9gZiu8MR5iimq"),
+        mintAuthority: new PublicKey("FAjR5aMW9j8fZwFw9nDxkhjU3fjDAGq8Taniby6rmrZ5"),
+        user: new PublicKey("6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen"),
+        assets: [],
+        reserveTokenSupplyRaw: "20000000",
+        reserveTokensRequested: 1n,
+      });
+      expect.fail("expected a throw");
+    } catch (e) {
+      expect(String(e)).to.include("at least one registered asset");
+    }
+  });
 });
 
 describe("USDC-only buy funding plan (planBuyFunding) -- the funding invariant applied to purchases (DEC-0155: purchase-scoped, never whole-wallet)", () => {

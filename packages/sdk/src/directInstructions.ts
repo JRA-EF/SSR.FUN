@@ -191,8 +191,15 @@ export interface BuildDirectMultiAssetMintResult extends DirectInstructionResult
  */
 export async function buildDirectMultiAssetMintInstructions(params: BuildDirectMultiAssetMintParams): Promise<BuildDirectMultiAssetMintResult> {
   const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user, assets, reserveTokensRequested } = params;
-  if (assets.length < 2) {
-    throw new Error(`buildDirectMultiAssetMintInstructions requires a genuinely multi-asset Reserve; found ${assets.length}. Use buildDirectMintInstructions for a single-asset Reserve instead.`);
+  // N >= 1 (DEC-0160): the on-chain mint_reserve_tokens_in_kind has always
+  // supported any leg count -- one leg is just the smallest basket, and the
+  // USDC-funded buy path serves single-asset Reserves like ALPHA (100% SSR)
+  // through this exact builder (confirmed live 2026-08-26: the old `< 2`
+  // throw failed every ALPHA buy at composition time). The separate
+  // buildDirectMintInstructions remains for the deposit-what-you-hold
+  // amountIn shape (the pure-USDC direct path).
+  if (assets.length < 1) {
+    throw new Error(`buildDirectMultiAssetMintInstructions requires at least one registered asset; found ${assets.length}.`);
   }
   const totalSupply = BigInt(params.reserveTokenSupplyRaw);
   const balances = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
@@ -331,8 +338,10 @@ export interface BuildDirectMultiAssetRedeemResult {
  */
 export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirectRedeemParams): Promise<BuildDirectMultiAssetRedeemResult> {
   const { program, reserve, reserveTokenMint, vaultAuthority, user, assets } = params;
-  if (assets.length < 2) {
-    throw new Error(`buildDirectMultiAssetRedeemInstructions requires a genuinely multi-asset Reserve; found ${assets.length}. Use buildDirectRedeemInstructions for a single-asset Reserve instead.`);
+  // N >= 1, mirroring the mint builder (DEC-0160) -- the USDC-settled sell
+  // serves single-asset Reserves through this builder too.
+  if (assets.length < 1) {
+    throw new Error(`buildDirectMultiAssetRedeemInstructions requires at least one registered asset; found ${assets.length}.`);
   }
   const balances = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
   const entitlements = computeRedemptionEntitlements(
