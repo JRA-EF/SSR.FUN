@@ -23,6 +23,7 @@ import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
 import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested, MultiAssetBuyError } from "@/lib/multiAssetBuyClient";
+import { executeMultiAssetSellMainnet } from "@/lib/multiAssetSellClient";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import {
@@ -217,6 +218,9 @@ export function DTRDetail() {
   const [sellPhase, setSellPhase] = useState<TxPhase>("idle");
   const [sellPendingSignature, setSellPendingSignature] = useState<string | null>(null);
   const sellPreRtRawRef = useRef<bigint>(0n);
+  // Fine-grained step label for a USDC-settled multi-asset Sell -- same
+  // short-label-in-button / full-sentence-below-it split as the Buy side.
+  const [multiAssetSellStep, setMultiAssetSellStep] = useState<string | null>(null);
 
   const buyProcessing = !canSubmitNewTransaction(buyPhase);
   const sellProcessing = !canSubmitNewTransaction(sellPhase);
@@ -1068,23 +1072,67 @@ export function DTRDetail() {
         vaultBalanceRaw: a.vaultBalanceRaw,
       }));
       const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
-      const { signature } = await executeDirectRedeem({
-        connection,
-        wallet: walletCtx,
-        reserve: reserveAddress,
-        reserveTokenMint: new PublicKey(dtr.onChain.reserveTokenMint),
-        vaultAuthority: new PublicKey(dtr.onChain.vaultAuthority),
-        assets,
-        reserveTokenSupplyRaw: live.reserveTokenSupplyRaw,
-        redemptionFeeBps: BigInt(live.redemptionFeeBps),
-        reserveTokensToRedeem,
-        onProgress: (e) => setSellPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
-      });
-      setSellPhase("confirmed");
-      await refreshRealReserveNow();
-      recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
-      setSellAmount("");
-      toast(transactionConfirmedToast(signature, "Sell confirmed"));
+      // A Reserve composed purely of USDC redeems USDC directly -- no swap
+      // step exists or is needed. Every other composition routes through
+      // the USDC-settled sell (DEC-0158): redeem the in-kind basket, then
+      // sell each non-USDC leg into USDC via Jupiter -- atomically in one
+      // wallet approval where it fits.
+      const isPureUsdcReserve = assets.length === 1 && assets[0].mint === MAINNET_USDC_MINT;
+      if (isPureUsdcReserve) {
+        const { signature } = await executeDirectRedeem({
+          connection,
+          wallet: walletCtx,
+          reserve: reserveAddress,
+          reserveTokenMint: new PublicKey(dtr.onChain.reserveTokenMint),
+          vaultAuthority: new PublicKey(dtr.onChain.vaultAuthority),
+          assets,
+          reserveTokenSupplyRaw: live.reserveTokenSupplyRaw,
+          redemptionFeeBps: BigInt(live.redemptionFeeBps),
+          reserveTokensToRedeem,
+          onProgress: (e) => setSellPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
+        });
+        setSellPhase("confirmed");
+        await refreshRealReserveNow();
+        recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
+        setSellAmount("");
+        toast(transactionConfirmedToast(signature, "Sell confirmed"));
+      } else {
+        const result = await executeMultiAssetSellMainnet({
+          connection,
+          wallet: walletCtx,
+          reserve: reserveAddress,
+          reserveTokenMint: new PublicKey(dtr.onChain.reserveTokenMint),
+          vaultAuthority: new PublicKey(dtr.onChain.vaultAuthority),
+          assets,
+          reserveTokenSupplyRaw: live.reserveTokenSupplyRaw,
+          redemptionFeeBps: BigInt(live.redemptionFeeBps),
+          reserveTokensToRedeem,
+          onProgress: (e) => {
+            if (e.phase === "single-transaction") {
+              setMultiAssetSellStep("One transaction: your Reserve Tokens are redeemed and every asset sold into USDC -- a single wallet approval.");
+              setSellPhase("preparing");
+            } else if (e.phase === "redeeming") {
+              setMultiAssetSellStep("Redeeming your Reserve Tokens for the Reserve's assets...");
+              setSellPhase("preparing");
+            } else if (e.phase === "swapping") {
+              setMultiAssetSellStep(`Selling Reserve asset ${e.index + 1} of ${e.total} into USDC...`);
+              setSellPhase("awaiting-wallet");
+            } else {
+              setSellPhase("awaiting-wallet");
+            }
+          },
+        });
+        setMultiAssetSellStep(null);
+        setSellPhase("confirmed");
+        await refreshRealReserveNow();
+        const usdcReceived = Number(result.usdcReceivedRaw) / 1e6;
+        recordConfirmedTrade(dtr.id, "sell", numSellAmount, usdcReceived);
+        setSellAmount("");
+        toast({
+          title: "Sell confirmed",
+          description: `You received ${usdcReceived.toFixed(2)} USDC (verified from your wallet's real balance). Signature: ${result.signature}`,
+        });
+      }
     } catch (e) {
       if (e instanceof AmbiguousConfirmationError) {
         setSellPhase("unresolved");
@@ -1092,6 +1140,7 @@ export function DTRDetail() {
         toast({ title: "Mainnet RPC is temporarily busy", description: "No confirmation could be verified yet -- your transaction may still be confirming. Checking your real balance now." });
         await reconcileSell(e.signature);
       } else {
+        setMultiAssetSellStep(null);
         setSellPhase("failed");
         const raw = e instanceof Error ? e.message : "The redemption failed.";
         console.error("Sell failed:", raw);
@@ -1180,15 +1229,10 @@ export function DTRDetail() {
   // out of the app's catalogue entirely before it could ever be opened here;
   // kept as an explicit, independently-checked gate rather than assumed.
   //
-  // True on Mainnet only when this Reserve has MORE than one registered
-  // asset (confirmed live: BETA, 4 real registered assets -- 2026-08-24,
-  // road-to-mainnet MMT-01/MCR-01). Buy now has a real multi-asset path
-  // (multiAssetBuyClient.ts's executeMultiAssetBuyMainnet, DEC-0140) --
-  // Sell/redeem does not yet (redeeming an in-kind basket back into a single
-  // currency needs an extra sell-each-leg-via-Jupiter step this pass didn't
-  // build), so this still gates Sell but no longer gates Buy. See
-  // isSettlementBuySupported/isSettlementSellSupported below.
-  const isMultiAssetMainnetReserve = IS_MAINNET && isOnChain && !!dtr.onChain && dtr.onChain.assets.length > 1;
+  // NOTE (DEC-0158): both Buy and Sell now have full multi-asset Mainnet
+  // paths (multiAssetBuyClient.ts / multiAssetSellClient.ts) -- being
+  // multi-asset no longer gates anything; routing is decided by
+  // composition (pure-USDC vs USDC-settled) below.
   // The USDC-funded Buy path (multiAssetBuyClient.ts) serves EVERY Mainnet
   // Reserve except one composed purely of USDC (which deposits USDC
   // directly, no swap) -- the funding invariant (DEC-0151): a buyer supplies
@@ -1210,8 +1254,11 @@ export function DTRDetail() {
   // out of the app's catalogue entirely before it could ever be opened here;
   // kept as an explicit, independently-checked gate rather than assumed.
   const isSettlementBuySupported = isOnChain && !!dtr.onChain && isReserveTradable(dtr.onChain.assets.map((a) => a.mint));
-  // Sell/redeem has no multi-asset path yet -- see isMultiAssetMainnetReserve's header.
-  const isSettlementSellSupported = isOnChain && !!dtr.onChain && !isMultiAssetMainnetReserve;
+  // Sell is supported for every on-chain Reserve (DEC-0158): a pure-USDC
+  // Reserve redeems USDC directly; every other composition routes through
+  // the USDC-settled sell (redeem in-kind + sell each leg into USDC via
+  // Jupiter -- multiAssetSellClient.ts).
+  const isSettlementSellSupported = isOnChain && !!dtr.onChain;
   // Reason the 25/50/75/Max quick-select buttons can't be used right now, if
   // any -- distinct from buyProcessing (mid-transaction) so the UI can show
   // an honest "why" instead of a plain disabled control. Deliberately NOT
@@ -2031,14 +2078,9 @@ export function DTRDetail() {
                         `Sell ${dtr.ticker}`
                       )}
                     </Button>
-                    {isOnChain && isMultiAssetMainnetReserve && (
-                      <p className="text-xs text-muted-foreground -mt-2">
-                        This Reserve holds more than one asset -- selling/redeeming from a multi-asset Reserve isn't supported yet on Mainnet.
-                      </p>
-                    )}
                     {txPhaseShortLabel(sellPhase) ? (
                       <p className="text-[11px] text-muted-foreground text-center mt-2 break-words" aria-live="polite">
-                        {txPhaseLabel(sellPhase, CLUSTER_LABEL)}
+                        {multiAssetSellStep ?? txPhaseLabel(sellPhase, CLUSTER_LABEL)}
                       </p>
                     ) : (
                       isOnChain && (

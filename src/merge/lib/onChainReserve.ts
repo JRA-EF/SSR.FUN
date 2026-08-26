@@ -27,6 +27,7 @@ import { PublicKey } from "@solana/web3.js";
 // import solana-config.ts directly) passes the real cluster-aware values.
 import type { DTR, OnChainAssetMeta, OnChainDelegateMeta, OnChainReserveMeta, QuarantinedReserveInfo } from "./types";
 import type { DiscoveredDelegate, DiscoveredReserve, ReserveOnChain, ParsedReserveMetadata } from "@ssr/sdk";
+import { refreshPriceSeries } from "./calculations";
 import {
   DEVNET_FIXTURES,
   SOL_TEST_PRICE_USD,
@@ -342,6 +343,11 @@ export function mergeOnChainIntoDTR(
     assetPricesUsd: isMainnet ? extractAssetPricesUsd(priceByMint) : undefined,
   };
 
+  // Real 24h/7d performance + a growing price history, refreshed on every
+  // sync (DEC-0158) -- see calculations.ts's refreshPriceSeries for the
+  // root cause (these were constructed as 0 and never recomputed).
+  const series = refreshPriceSeries(prev.priceHistory, supply > 0 ? nav : 0);
+
   return {
     ...prev,
     managerAddress: onChain.manager,
@@ -351,6 +357,9 @@ export function mergeOnChainIntoDTR(
     liquidityUsdc: aumUsd,
     composition: assets.map((a) => ({ symbol: a.symbol, name: a.symbol, weight: a.weightBps / 10_000 })),
     unallocatedPct: Math.max(0, 1 - onChain.totalTargetWeightBps / 10_000),
+    priceHistory: series.priceHistory,
+    change24h: series.change24h,
+    change7d: series.change7d,
     onChain: onChainMeta,
   };
 }
@@ -623,10 +632,17 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
   const byAddress = new Map(existingDtrs.filter((d) => d.onChain).map((d) => [d.onChain!.reserve, d]));
   const merged = discovered.map((fresh) => {
     const existing = fresh.onChain ? byAddress.get(fresh.onChain.reserve) : undefined;
-    if (!existing) return fresh;
+    // Real 24h/7d performance + a growing price history on every discovery
+    // pass (DEC-0158) -- previously fresh discovery reset changes to 0 and
+    // history only ever grew on the user's own trades.
+    const baseHistory = existing && existing.priceHistory.length > 1 ? existing.priceHistory : fresh.priceHistory;
+    const series = refreshPriceSeries(baseHistory, fresh.nav);
+    if (!existing) return { ...fresh, priceHistory: series.priceHistory, change24h: series.change24h, change7d: series.change7d };
     return {
       ...fresh,
-      priceHistory: existing.priceHistory.length > 1 ? existing.priceHistory : fresh.priceHistory,
+      priceHistory: series.priceHistory,
+      change24h: series.change24h,
+      change7d: series.change7d,
       trades: existing.trades,
       logoUrl: existing.logoUrl ?? fresh.logoUrl,
     };

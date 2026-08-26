@@ -19,6 +19,19 @@
 // the ledger ingest cron) would otherwise catch up.
 //
 // Public, read-only, no dashboard auth, no secrets.
+//
+// DEC-0158 correction: the ledger is no longer the ONLY source. The Mainnet
+// ledger had ingested ZERO events (its ingest cron still points at DevNet),
+// so this endpoint returned an empty list -- leaving every non-USDC Mainnet
+// Reserve's assets unresolvable on a fresh client and invisible to
+// landing-stats. The chain itself is the authority: one getProgramAccounts
+// discriminator scan enumerates every ReserveAsset account's mint
+// (packages/sdk's enumerateReserveAssetMintsOnChain -- works on the paid
+// Mainnet RPC; the DevNet public-RPC 403 that originally forced the
+// ledger-hint design doesn't apply here). Ledger rows are still unioned in
+// as a secondary source so neither source's outage empties the list.
+import { Connection } from "@solana/web3.js";
+import { enumerateReserveAssetMintsOnChain } from "@ssr/sdk";
 import { getSql } from "../../lib/ledger/db";
 
 interface ApiRequest {
@@ -36,7 +49,7 @@ const MAX_MINTS = 2000;
 
 let cached: { mints: string[]; updatedAt: number } | null = null;
 
-async function loadKnownMints(): Promise<{ mints: string[]; updatedAt: number }> {
+async function loadLedgerMints(): Promise<string[]> {
   const sql = getSql();
   const rows = (await sql`
     select distinct reserve_asset_mint as mint
@@ -46,7 +59,31 @@ async function loadKnownMints(): Promise<{ mints: string[]; updatedAt: number }>
       and status = 'confirmed'
     limit ${MAX_MINTS}
   `) as { mint: string }[];
-  return { mints: rows.map((r) => r.mint), updatedAt: Date.now() };
+  return rows.map((r) => r.mint);
+}
+
+async function loadOnChainMints(): Promise<string[]> {
+  const rpcUrl = process.env.HELIUS_MAINNET_RPC_URL || process.env.MAINNET_RPC_URL;
+  // No RPC configured is a FAILURE of this source, never an empty answer --
+  // both sources failing must surface as the endpoint's 503, not as "no
+  // mints exist" (which would silently blank every non-USDC Reserve).
+  if (!rpcUrl) throw new Error("No Mainnet RPC URL is configured for on-chain mint enumeration.");
+  return enumerateReserveAssetMintsOnChain(new Connection(rpcUrl, "confirmed"));
+}
+
+async function loadKnownMints(): Promise<{ mints: string[]; updatedAt: number }> {
+  // Each source is independently best-effort; both failing IS an error
+  // (handled by the caller) -- an empty union from real failures must not
+  // masquerade as "no mints exist".
+  const [ledgerResult, onChainResult] = await Promise.allSettled([loadLedgerMints(), loadOnChainMints()]);
+  if (ledgerResult.status === "rejected" && onChainResult.status === "rejected") {
+    throw new Error(`Both mint sources failed -- ledger: ${String(ledgerResult.reason)}; on-chain: ${String(onChainResult.reason)}`);
+  }
+  const mints = new Set<string>([
+    ...(ledgerResult.status === "fulfilled" ? ledgerResult.value : []),
+    ...(onChainResult.status === "fulfilled" ? onChainResult.value : []),
+  ]);
+  return { mints: [...mints].slice(0, MAX_MINTS), updatedAt: Date.now() };
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {

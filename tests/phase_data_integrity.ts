@@ -83,12 +83,16 @@ describe("Corrective pass -- legacy/mock Reserve exclusion (mergeDiscoveredReser
     expect(dtrs.find((d) => d.onChain?.reserve === "BBB")).to.not.equal(undefined);
   });
 
-  it("keeps a genuinely re-discovered on-chain DTR and preserves its session-accumulated price history", () => {
+  it("keeps a genuinely re-discovered on-chain DTR, preserves its session-accumulated price history, and EXTENDS it with the fresh NAV (DEC-0158: history now grows on every discovery pass, not only on the user's own trades)", () => {
     const existing = { ...makeOnChainDtr("live-one", "CCC"), priceHistory: [{ t: 1, price: 1 }, { t: 2, price: 1.1 }, { t: 3, price: 1.2 }] };
     const fresh = makeOnChainDtr("live-one", "CCC");
     const { dtrs } = mergeDiscoveredReserves([existing], [fresh], true);
     expect(dtrs).to.have.length(1);
-    expect(dtrs[0].priceHistory).to.have.length(3);
+    // The accumulated points survive...
+    expect(dtrs[0].priceHistory.slice(0, 3)).to.deep.equal(existing.priceHistory);
+    // ...and the fresh pass's NAV is appended so 24h/7d performance has real data to work from.
+    expect(dtrs[0].priceHistory.length).to.be.greaterThan(3);
+    expect(dtrs[0].priceHistory[dtrs[0].priceHistory.length - 1].price).to.equal(fresh.nav);
   });
 });
 

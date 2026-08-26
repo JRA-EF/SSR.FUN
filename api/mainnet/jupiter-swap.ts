@@ -1,9 +1,10 @@
 // POST /api/mainnet/jupiter-swap -- the ONLY route to Jupiter's paid Swap
 // API (JUPITER_API_KEY, server-only secret, never sent to the browser).
-// Restricted to USDC-in swaps only (the app's own real Circle USDC mint,
-// MAINNET_USDC_MINT) -- this is not a general-purpose swap proxy, it exists
-// solely to let CreateDTR.tsx acquire a non-USDC Reserve Asset for seeding
-// (see docs/project/DECISION_LOG.md's entry for this pass).
+// Restricted to USDC-SETTLED swaps only: either USDC -> asset (funding a
+// Reserve leg for a launch or Buy) or asset -> USDC (converting a redeemed
+// Reserve leg back into the settlement currency for a Sell, DEC-0158) --
+// exactly one side of every swap is always USDC. This is not a
+// general-purpose swap proxy.
 //
 // Never custodies funds: this endpoint only builds an UNSIGNED transaction
 // (Jupiter's own Swap API response) for the caller's OWN wallet to sign and
@@ -79,6 +80,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // fail fast on a malformed request regardless of deployment state.
   const body = parseBody(req);
   const outputMint = typeof body.outputMint === "string" ? body.outputMint : "";
+  // Sell direction (DEC-0158): an explicit non-USDC inputMint sells that
+  // asset INTO USDC (outputMint must then be USDC). Exactly one side of
+  // every swap this endpoint builds is always USDC -- it remains a
+  // USDC-settlement proxy, never a general-purpose router.
+  const inputMint = typeof body.inputMint === "string" ? body.inputMint : MAINNET_USDC_MINT;
   const amountRaw = typeof body.amountRaw === "string" ? body.amountRaw : "";
   const userPublicKey = typeof body.userPublicKey === "string" ? body.userPublicKey : "";
   const slippageBps = typeof body.slippageBps === "number" && Number.isFinite(body.slippageBps) ? Math.round(body.slippageBps) : DEFAULT_SLIPPAGE_BPS;
@@ -102,9 +108,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // a route needs (idempotently); nothing is ever unwrapped or closed.
   void body.receiveWrappedSol;
 
-  if (!BASE58_RE.test(outputMint) || outputMint === MAINNET_USDC_MINT) {
-    res.status(400).json({ error: "Invalid or unsupported outputMint." });
-    return;
+  if (inputMint === MAINNET_USDC_MINT) {
+    // Buy direction: USDC -> asset.
+    if (!BASE58_RE.test(outputMint) || outputMint === MAINNET_USDC_MINT) {
+      res.status(400).json({ error: "Invalid or unsupported outputMint." });
+      return;
+    }
+  } else {
+    // Sell direction: asset -> USDC, and nothing else.
+    if (!BASE58_RE.test(inputMint)) {
+      res.status(400).json({ error: "Invalid inputMint." });
+      return;
+    }
+    if (outputMint !== MAINNET_USDC_MINT) {
+      res.status(400).json({ error: "A non-USDC inputMint may only swap into USDC (outputMint must be the USDC mint)." });
+      return;
+    }
   }
   if (!BASE58_RE.test(userPublicKey)) {
     res.status(400).json({ error: "Invalid userPublicKey." });
@@ -189,7 +208,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
   async function attemptQuote(): Promise<QuoteAttemptResult> {
     try {
-      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${MAINNET_USDC_MINT}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`;
+      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`;
       const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": jupiterApiKey } });
       if (!quoteRes.ok) {
         // Read the RAW text once (never .json() directly) so a genuinely

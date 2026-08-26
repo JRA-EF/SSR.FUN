@@ -21,10 +21,12 @@
 //    shortfall for real (wrap the user's own SOL for a wrapped-SOL leg,
 //    swap the user's own USDC via Jupiter for any other leg, mirroring
 //    createReserveClient.ts's proven seed-funding pattern) before this
-//    function ever builds the final mint transaction. There is still no
-//    multi-asset Sell/redeem path -- redeeming an in-kind basket back into a
-//    single currency needs an extra sell-each-leg-via-Jupiter step this pass
-//    didn't build; buildDirectRedeemInstructions remains single-asset-only.
+//    function ever builds the final mint transaction.
+//  - buildDirectMultiAssetRedeemInstructions (added 2026-08-26, DEC-0158):
+//    the inverse -- one redeem_reserve_tokens_in_kind paying every leg's
+//    proportional entitlement into the redeemer's own ATAs; converting
+//    those legs to USDC is the caller's next step (multiAssetSellClient.ts
+//    swaps each non-USDC leg via Jupiter, atomically where it fits).
 
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import {
@@ -38,7 +40,7 @@ import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { findTvlAccrual, resolveProtocolFeeDestinationTokenAccount } from "./pda";
 import type { ZapAssetLeg } from "./zapInstructions";
-import { computeMintRequirements, mulDivCeil } from "./calculations";
+import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil } from "./calculations";
 
 export interface DirectInstructionResult {
   instructions: TransactionInstruction[];
@@ -307,4 +309,78 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
   instructions.push(redeemIx);
 
   return { instructions, reserveTokensToRedeem: params.reserveTokensToRedeem, assetAmountRaw: entitlement };
+}
+
+export interface BuildDirectMultiAssetRedeemResult {
+  /** Idempotent per-leg user-ATA creations first, the single redeem instruction last. */
+  instructions: TransactionInstruction[];
+  reserveTokensToRedeem: bigint;
+  /** Per-leg proportional entitlement (raw), in `assets` order -- the exact floor-rounded amounts the deployed program will pay (computeRedemptionEntitlements). */
+  entitlementsRaw: bigint[];
+}
+
+/**
+ * Multi-asset in-kind redeem (DEC-0158): ONE redeem_reserve_tokens_in_kind
+ * call paying the redeemer's proportional entitlement of EVERY registered
+ * Reserve asset into their own ATAs -- the exact inverse of
+ * buildDirectMultiAssetMintInstructions, using the same deployed-binary
+ * account shape (redeem never drifted -- verified instruction-by-instruction
+ * in the DEC-0154 pass). Selling to USDC is the caller's next step
+ * (multiAssetSellClient.ts swaps each non-USDC leg's entitlement to USDC
+ * via Jupiter, ideally inside the same atomic transaction).
+ */
+export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirectRedeemParams): Promise<BuildDirectMultiAssetRedeemResult> {
+  const { program, reserve, reserveTokenMint, vaultAuthority, user, assets } = params;
+  if (assets.length < 2) {
+    throw new Error(`buildDirectMultiAssetRedeemInstructions requires a genuinely multi-asset Reserve; found ${assets.length}. Use buildDirectRedeemInstructions for a single-asset Reserve instead.`);
+  }
+  const balances = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
+  const entitlements = computeRedemptionEntitlements(
+    params.reserveTokensToRedeem,
+    params.redemptionFeeBps,
+    BigInt(params.reserveTokenSupplyRaw),
+    balances,
+  );
+
+  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
+  const instructions: TransactionInstruction[] = [];
+  const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
+  for (const leg of assets) {
+    const mint = new PublicKey(leg.mint);
+    const userAta = getAssociatedTokenAddressSync(mint, user);
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint));
+    remainingAccounts.push(
+      { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
+      { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
+      { pubkey: userAta, isWritable: true, isSigner: false },
+      { pubkey: mint, isWritable: false, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+    );
+  }
+
+  const redeemIx = await program.methods
+    .redeemReserveTokensInKind(
+      new BN(params.reserveTokensToRedeem.toString()),
+      // min_asset_amounts_out: 0 per leg, matching every existing redeem
+      // caller -- the entitlement math is deterministic from supply/vault
+      // balances, and the caller verifies real delivery after confirmation.
+      entitlements.map(() => new BN(0)),
+    )
+    .accounts({
+      reserve,
+      reserveTokenMint,
+      vaultAuthority,
+      redeemerReserveTokenAccount: redeemerReserveTokenAta,
+      redeemer: user,
+      managerFeeRecipients: program.programId, // "None" sentinel, same as the mint path above
+      tvlAccrual,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+  instructions.push(redeemIx);
+
+  return { instructions, reserveTokensToRedeem: params.reserveTokensToRedeem, entitlementsRaw: entitlements.map((e) => e.entitlement) };
 }

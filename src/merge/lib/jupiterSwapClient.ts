@@ -72,12 +72,12 @@ export interface JupiterSwapQuote {
   priceImpactPct: number;
 }
 
-/** Fetches a real Jupiter quote + unsigned swap transaction for spending `amountRawUsdc` (raw USDC, 6 decimals) into `outputMint`. Throws with the server's own honest message on any failure (no route, price impact too high, etc.) -- never fabricates a quote. `receiveWrappedSol` (DEC-0154): for a wrapped-SOL outputMint, keep the output as SPL wrapped SOL in the buyer's wSOL ATA instead of Jupiter's default auto-unwrap to native -- required when the swap funds a Reserve's wrapped-SOL asset leg from USDC. */
-export async function fetchJupiterSwapQuote(outputMint: string, amountRawUsdc: bigint, userPublicKey: string, slippageBps?: number, receiveWrappedSol?: boolean): Promise<JupiterSwapQuote> {
+/** Fetches a real Jupiter quote + unsigned swap transaction. Default (buy) direction spends `amountRaw` of USDC into `outputMint`; passing `inputMint` (DEC-0158, the sell direction) spends `amountRaw` of that asset into USDC (`outputMint` must then be the USDC mint -- server-enforced). Throws with the server's own honest message on any failure (no route, price impact too high, etc.) -- never fabricates a quote. `receiveWrappedSol` is retained for caller compatibility; since DEC-0156 the server builds EVERY swap with wrapAndUnwrapSol:false regardless. */
+export async function fetchJupiterSwapQuote(outputMint: string, amountRaw: bigint, userPublicKey: string, slippageBps?: number, receiveWrappedSol?: boolean, inputMint?: string): Promise<JupiterSwapQuote> {
   const res = await fetch("/api/mainnet/jupiter-swap", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ outputMint, amountRaw: amountRawUsdc.toString(), userPublicKey, slippageBps, receiveWrappedSol }),
+    body: JSON.stringify({ outputMint, amountRaw: amountRaw.toString(), userPublicKey, slippageBps, receiveWrappedSol, ...(inputMint ? { inputMint } : {}) }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok || !body) {
@@ -102,12 +102,12 @@ export interface JupiterSwapInstructionsResult {
   priceImpactPct: number;
 }
 
-/** Fetches a real Jupiter quote as RAW INSTRUCTIONS + lookup-table addresses (mode "instructions") so the caller can compose every swap and the final mint into ONE wallet-signed transaction (singleTxBuy.ts). Same server endpoint, honesty, and USDC-in restriction as fetchJupiterSwapQuote. The server builds every swap with wrapAndUnwrapSol: false, and the cleanup instruction (the wSOL-ATA-closing unwrap) is never composed. */
-export async function fetchJupiterSwapInstructions(outputMint: string, amountRawUsdc: bigint, userPublicKey: string, slippageBps?: number): Promise<JupiterSwapInstructionsResult> {
+/** Fetches a real Jupiter quote as RAW INSTRUCTIONS + lookup-table addresses (mode "instructions") so the caller can compose every swap and the final mint/redeem into ONE wallet-signed transaction (singleTxBuy.ts / multiAssetSellClient.ts). Same server endpoint and honesty as fetchJupiterSwapQuote; the swap is always USDC-settled -- USDC -> `outputMint` by default, or `inputMint` -> USDC when `inputMint` is passed (the sell direction, DEC-0158; the server then requires outputMint to be USDC). The server builds every swap with wrapAndUnwrapSol: false, and the cleanup instruction (the wSOL-ATA-closing unwrap) is never composed. */
+export async function fetchJupiterSwapInstructions(outputMint: string, amountRaw: bigint, userPublicKey: string, slippageBps?: number, inputMint?: string): Promise<JupiterSwapInstructionsResult> {
   const res = await fetch("/api/mainnet/jupiter-swap", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ outputMint, amountRaw: amountRawUsdc.toString(), userPublicKey, slippageBps, mode: "instructions" }),
+    body: JSON.stringify({ outputMint, amountRaw: amountRaw.toString(), userPublicKey, slippageBps, mode: "instructions", ...(inputMint ? { inputMint } : {}) }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok || !body || typeof body.swapInstruction !== "object" || body.swapInstruction === null) {

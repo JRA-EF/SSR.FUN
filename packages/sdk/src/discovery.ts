@@ -502,3 +502,28 @@ export async function resolveReserveMetadata(metadataUri: string, timeoutMs = 50
     clearTimeout(timeout);
   }
 }
+
+/**
+ * Enumerates the asset mint of EVERY ReserveAsset account that exists on the
+ * deployed program, via one getProgramAccounts discriminator scan
+ * (program.account.reserveAsset.all()) -- the chain-authoritative source of
+ * "which asset mints are actually in use by any Reserve" (DEC-0158).
+ *
+ * This is exactly the approach this module's own header documents as the
+ * right fix once a paid RPC allows memcmp/gPA scans: the Mainnet deployment
+ * runs on Helius, where this works. It removes the ledger-derived
+ * candidate-mint dependency that left every non-USDC Reserve unresolvable on
+ * a fresh client (live 2026-08-26: the Mainnet ledger had ingested ZERO
+ * events, so known-asset-mints was empty and landing-stats could only see
+ * one USDC-composed Reserve). The DevNet public-RPC 403 constraint still
+ * applies THERE -- callers on DevNet should keep using candidate hints; this
+ * function is for connections whose RPC genuinely supports the scan, and it
+ * throws (never fabricates an empty answer) when the scan itself fails.
+ */
+export async function enumerateReserveAssetMintsOnChain(connection: Connection): Promise<string[]> {
+  const program = buildReadOnlyProgram(connection);
+  const accounts = await (program.account as { reserveAsset: { all(): Promise<{ account: { assetMint: PublicKey } }[]> } }).reserveAsset.all();
+  const mints = new Set<string>();
+  for (const a of accounts) mints.add(a.account.assetMint.toBase58());
+  return [...mints];
+}

@@ -23,7 +23,7 @@ import { isManagerOrDelegate, canManageDelegates, canRebalance } from "@/lib/per
 import { pickLogoForId } from "@/lib/seed-data";
 import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS, type AssetPriceInfo } from "@/lib/onChainReserve";
 import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
-import { applyRebalance, appendPricePoint, initialLiquidityForAum } from "@/lib/calculations";
+import { applyRebalance, appendPricePoint, initialLiquidityForAum, weightedAvgCostBasis } from "@/lib/calculations";
 import { IS_MAINNET, SSR_PROGRAM_ID } from "@/lib/solana-config";
 
 /**
@@ -253,25 +253,53 @@ export const useAppStore = create<AppState>()(
           }
           return {
             holdings: existing
-              ? state.holdings.map((h) => (h.dtrId === dtrId ? { ...h, tokenBalance, avgPurchasePrice: nav } : h))
-              : [...state.holdings, { dtrId, tokenBalance, avgPurchasePrice: nav }],
+              ? // A background balance sync must NEVER touch the cost basis
+                // (DEC-0158; root-caused in DEC-0149): overwriting
+                // avgPurchasePrice with the CURRENT nav on every sync made
+                // Unrealized P&L structurally read ~$0 forever. The cost
+                // basis is owned by recordConfirmedTrade below; only the
+                // balance is chain-synced here.
+                state.holdings.map((h) => (h.dtrId === dtrId ? { ...h, tokenBalance } : h))
+              : // First sighting of a real position with no recorded trade
+                // history in this browser -- the current nav is the honest
+                // best-available baseline (the true historical cost isn't
+                // recoverable from a balance alone).
+                [...state.holdings, { dtrId, tokenBalance, avgPurchasePrice: nav }],
           };
         });
       },
 
       recordConfirmedTrade: (dtrId, side, tokenAmount, usdcAmount) => {
-        set((state) => ({
-          dtrs: state.dtrs.map((d) => {
-            if (d.id !== dtrId) return d;
-            const now = Date.now();
-            const trade: Trade = { id: `${dtrId}-${now}`, t: now, side, price: d.nav, tokenAmount, usdcAmount };
-            return {
-              ...d,
-              priceHistory: appendPricePoint(d.priceHistory, d.nav, now),
-              trades: [...d.trades, trade].slice(-500),
-            };
-          }),
-        }));
+        set((state) => {
+          const now = Date.now();
+          // A confirmed BUY moves the position's cost basis: the classic
+          // weighted average of what was actually paid (usdcAmount for
+          // tokenAmount) into what was already held (DEC-0158). A SELL
+          // leaves the basis unchanged (average cost method); the balance
+          // itself is chain-synced by syncRealHolding.
+          const holdings =
+            side === "buy" && tokenAmount > 0
+              ? (() => {
+                  const existing = state.holdings.find((h) => h.dtrId === dtrId);
+                  const tradePrice = usdcAmount > 0 ? usdcAmount / tokenAmount : (state.dtrs.find((d) => d.id === dtrId)?.nav ?? 0);
+                  if (!existing) return [...state.holdings, { dtrId, tokenBalance: tokenAmount, avgPurchasePrice: tradePrice }];
+                  const newAvg = weightedAvgCostBasis(existing.tokenBalance, existing.avgPurchasePrice, tokenAmount, tradePrice);
+                  return state.holdings.map((h) => (h.dtrId === dtrId ? { ...h, tokenBalance: existing.tokenBalance + tokenAmount, avgPurchasePrice: newAvg } : h));
+                })()
+              : state.holdings;
+          return {
+            holdings,
+            dtrs: state.dtrs.map((d) => {
+              if (d.id !== dtrId) return d;
+              const trade: Trade = { id: `${dtrId}-${now}`, t: now, side, price: d.nav, tokenAmount, usdcAmount };
+              return {
+                ...d,
+                priceHistory: appendPricePoint(d.priceHistory, d.nav, now),
+                trades: [...d.trades, trade].slice(-500),
+              };
+            }),
+          };
+        });
       },
 
       syncWalletFromChain: (payload) => {

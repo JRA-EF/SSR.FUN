@@ -25,6 +25,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import {
   buildReadOnlyProgram,
   discoverAllReserves,
+  enumerateReserveAssetMintsOnChain,
   fetchReserveTokenHolderOwners,
   fetchReserve24hVolumeUsd,
   evaluateReserveEligibility,
@@ -32,6 +33,7 @@ import {
   MAINNET_USDC_MINT,
   type AssetPricing,
 } from "@ssr/sdk";
+import { fetchJupiterPrices } from "./asset-prices";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
@@ -62,12 +64,13 @@ const KNOWN_MINTS_TTL_MS = 2 * 60_000;
 const TWENTY_FOUR_HOURS_SEC = 24 * 60 * 60;
 const MAX_KNOWN_MINTS = 2000;
 
-// Only USDC has a known, fixed USD price today -- no live price oracle is
-// wired up for arbitrary Reserve Assets yet (see docs/protocol/
-// LEDGER_ARCHITECTURE.md). An asset with no known price contributes 0 to
-// this endpoint's USD volume figure (never a fabricated guess), the exact
-// same fallback-to-zero convention api/devnet/landing-stats.ts already uses
-// for its own unpriced assets.
+// USDC is a fixed $1; every OTHER Reserve Asset is priced live via the same
+// Jupiter Price source api/mainnet/asset-prices.ts already serves the app
+// from (DEC-0158 -- previously only USDC was priced, so every non-USDC
+// leg's volume was counted as $0). An asset whose live price can't be
+// fetched still contributes 0 to the USD volume figure (never a fabricated
+// guess), the same fallback-to-zero convention api/devnet/landing-stats.ts
+// uses for its own unpriced assets.
 const ASSET_PRICES_USD: Record<string, number> = { [MAINNET_USDC_MINT]: 1 };
 
 interface PerReserveStats {
@@ -108,12 +111,18 @@ async function computeLandingStats(): Promise<LandingStats> {
   const connection = new Connection(RPC_URL, "confirmed");
   const program = buildReadOnlyProgram(connection);
 
-  // The Ledger read is best-effort -- a Ledger/DB hiccup must never take the
-  // whole endpoint down; it just means this pass only sees USDC-composed
-  // Reserves (the previously-existing, always-correct baseline) until the
-  // next successful read.
-  const knownMints = await loadKnownAssetMints().catch(() => [] as string[]);
-  const candidateAssetMints = [new PublicKey(MAINNET_USDC_MINT), ...knownMints.map((m) => new PublicKey(m))];
+  // Candidate mints: the chain's own ReserveAsset enumeration is the
+  // authority (DEC-0158 -- one gPA discriminator scan; the Mainnet ledger
+  // had ingested nothing, which silently reduced this endpoint to
+  // USDC-composed Reserves only). The Ledger read stays unioned in as a
+  // secondary source; either source failing alone must never take the
+  // endpoint down.
+  const [ledgerMints, onChainMints] = await Promise.all([
+    loadKnownAssetMints().catch(() => [] as string[]),
+    enumerateReserveAssetMintsOnChain(connection).catch(() => [] as string[]),
+  ]);
+  const knownMints = [...new Set([...ledgerMints, ...onChainMints])];
+  const candidateAssetMints = [new PublicKey(MAINNET_USDC_MINT), ...knownMints.filter((m) => m !== MAINNET_USDC_MINT).map((m) => new PublicKey(m))];
   registerDynamicSupportedAssetMints(knownMints);
 
   const { reserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints);
@@ -134,13 +143,23 @@ async function computeLandingStats(): Promise<LandingStats> {
   const globalOwners = new Set<string>();
   let volume24hUsd = 0;
 
+  // Live USD prices for every asset any displayable Reserve holds -- one
+  // batched Jupiter Price read, best-effort per mint (an unpriced mint's
+  // volume counts as 0, never a guess).
+  const allAssetMints = [...new Set(displayable.flatMap((r) => r.assets.map((a) => a.assetMint)))];
+  const livePrices: Map<string, { usdPrice: number | null | undefined }> = await fetchJupiterPrices(allAssetMints.filter((m) => !(m in ASSET_PRICES_USD))).catch(
+    () => new Map<string, { usdPrice: number | null | undefined }>(),
+  );
+
   await Promise.all(
     displayable.map((reserve) =>
       withReadConcurrencyLimit(async () => {
         try {
           const pricing: Record<string, AssetPricing> = {};
           for (const asset of reserve.assets) {
-            pricing[asset.assetMint] = { decimals: asset.decimals, priceUsd: ASSET_PRICES_USD[asset.assetMint] ?? 0 };
+            const fixed = ASSET_PRICES_USD[asset.assetMint];
+            const live = livePrices.get(asset.assetMint)?.usdPrice;
+            pricing[asset.assetMint] = { decimals: asset.decimals, priceUsd: fixed ?? (Number.isFinite(live) && (live as number) > 0 ? (live as number) : 0) };
           }
           const [reserveOwners, reserveVolume] = await Promise.all([
             fetchReserveTokenHolderOwners(connection, new PublicKey(reserve.reserveTokenMint)),

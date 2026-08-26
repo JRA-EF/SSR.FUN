@@ -140,6 +140,57 @@ export function appendPricePoint(
   return series.length > MAX_PRICE_POINTS ? series.slice(series.length - MAX_PRICE_POINTS) : series;
 }
 
+/** Minimum spacing between routinely-appended sync points -- 6000 points at 5-minute spacing spans ~20 days, comfortably covering the 7d performance window. */
+export const PRICE_SYNC_MIN_INTERVAL_MS = 5 * 60_000;
+/** A genuine price move worth recording immediately, even before the routine interval elapses. */
+export const PRICE_SYNC_MOVE_FRACTION = 0.001; // 0.1%
+
+/**
+ * The one refresh applied on EVERY real-Reserve sync (DEC-0158): appends the
+ * freshly-computed NAV onto the Reserve's price history (throttled so a
+ * 15-second poll doesn't burn the 6000-point budget in hours) and derives
+ * the real 24h/7d performance from that history. Root cause this fixes: an
+ * on-chain Reserve's change24h/change7d were constructed as 0 and NEVER
+ * recomputed, and its price history only grew on the user's own confirmed
+ * trades -- so "7D Performance" sat at +0.00% forever regardless of how the
+ * underlying asset prices moved. Non-positive placeholder points (the
+ * pre-first-fetch `price: 0` seed) are dropped rather than used as a
+ * percent-change base.
+ */
+export function refreshPriceSeries(
+  priceHistory: PricePoint[],
+  nav: number,
+  now: number = Date.now(),
+): { priceHistory: PricePoint[]; change24h: number; change7d: number } {
+  const cleaned = priceHistory.filter((p) => p.price > 0);
+  if (!(nav > 0)) {
+    // No real price this pass -- keep history untouched and report the
+    // changes derivable from what's already recorded (0 when nothing is).
+    const last = cleaned[cleaned.length - 1];
+    const changes = last ? calcRecentChanges(cleaned, last.price, now) : { change24h: 0, change7d: 0 };
+    return { priceHistory: cleaned.length === priceHistory.length ? priceHistory : cleaned, ...changes };
+  }
+  const last = cleaned[cleaned.length - 1];
+  const movedEnough = last ? Math.abs(nav - last.price) / last.price >= PRICE_SYNC_MOVE_FRACTION : true;
+  const intervalElapsed = last ? now - last.t >= PRICE_SYNC_MIN_INTERVAL_MS : true;
+  const history = !last || intervalElapsed || movedEnough ? appendPricePoint(cleaned, nav, now) : cleaned;
+  return { priceHistory: history, ...calcRecentChanges(history, nav, now) };
+}
+
+/**
+ * Classic weighted-average cost basis after buying `addAmount` tokens for a
+ * total of `addAmount * addPrice` (DEC-0158) -- the ONE place a confirmed
+ * Buy moves a holding's avgPurchasePrice. A background balance sync must
+ * never touch the basis (the DEC-0149 root cause: overwriting it with the
+ * current nav made Unrealized P&L structurally ~$0). A Sell leaves the
+ * basis unchanged (average-cost method).
+ */
+export function weightedAvgCostBasis(prevBalance: number, prevAvgPrice: number, addAmount: number, addPrice: number): number {
+  const newBalance = prevBalance + addAmount;
+  if (!(newBalance > 0)) return addPrice;
+  return (prevBalance * prevAvgPrice + addAmount * addPrice) / newBalance;
+}
+
 /** 24h/7d percent change derived from the earliest point still inside each rolling window vs. the latest price. */
 export function calcRecentChanges(
   priceHistory: PricePoint[],
