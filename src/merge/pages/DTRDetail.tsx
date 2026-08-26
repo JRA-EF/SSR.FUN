@@ -1954,15 +1954,18 @@ export function DTRDetail() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Canonical redemption
-                            <InfoTip label="More information about canonical redemption">Proportional, on-chain redemption into this Reserve's actual underlying asset(s) -- computed live from real vault balances and supply, not a synthetic price.</InfoTip>
+                            <InfoTip label="More information about canonical redemption">
+                              Proportional, on-chain redemption into this Reserve's actual underlying asset(s) -- computed live from real vault balances and supply, not a synthetic price.
+                              {IS_MAINNET && !isPureSettlementReserve ? ` Every redeemed asset is then sold into ${SETTLEMENT_SYMBOL} in the same purchase, so what you receive is ${SETTLEMENT_SYMBOL}.` : ""}
+                            </InfoTip>
                           </span>
                         </div>
                         {sellEntitlements.length > 0 ? (
                           <div className="pt-1 space-y-1.5">
                             {sellEntitlements.map((e) => (
-                              <div key={e.mint} className="flex justify-between font-semibold">
-                                <span>Est. You Receive</span>
-                                <span className="font-merge-mono text-foreground">~{e.amount.toFixed(6)} {e.symbol}</span>
+                              <div key={e.mint} className={`flex justify-between ${isPureSettlementReserve ? "font-semibold" : "text-xs text-muted-foreground"}`}>
+                                <span>{isPureSettlementReserve ? "Est. You Receive" : "Redeems"}</span>
+                                <span className={`font-merge-mono ${isPureSettlementReserve ? "text-foreground" : ""}`}>~{e.amount.toFixed(6)} {e.symbol}</span>
                               </div>
                             ))}
                           </div>
@@ -1975,16 +1978,27 @@ export function DTRDetail() {
                             conversion or swap adapter is involved.
                           </p>
                         ) : IS_MAINNET ? (
-                          // Mainnet has no swap-adapter conversion step at all -- redeem_reserve_tokens_in_kind
-                          // always pays out this Reserve's real underlying asset(s) directly (see
-                          // packages/sdk/src/directInstructions.ts's buildDirectRedeemInstructions). The
-                          // per-asset "Est. You Receive" figures above are already the complete, accurate
-                          // answer; showing a synthetic "Settled in USDC" conversion here (as DevNet does,
-                          // where a genuine swap-adapter conversion path exists) would misrepresent what
-                          // actually happens on Mainnet.
-                          <p className="text-[11px] text-muted-foreground/80 pt-1">
-                            This Reserve pays out its real underlying asset(s) directly on redemption -- no conversion to {SETTLEMENT_SYMBOL} is performed.
-                          </p>
+                          // USDC-settled sell (DEC-0158/DEC-0161): the redeemed assets
+                          // above are sold into USDC as part of the same sale --
+                          // the USDC figure is the headline; the per-asset rows
+                          // above show what backs it.
+                          sellEntitlements.length > 0 ? (
+                            <div className="pt-3 border-t border-border/50 space-y-1.5">
+                              <div className="flex justify-between font-semibold">
+                                <span className="flex items-center gap-1">
+                                  Est. You Receive
+                                  <InfoTip label={`More information about ${SETTLEMENT_SYMBOL} settlement`}>
+                                    The redeemed assets above are sold into {SETTLEMENT_SYMBOL} at live market prices as part of the same sale. The estimate uses the
+                                    Reserve's current value; the exact amount depends on live routing and is verified from your wallet's real balance.
+                                  </InfoTip>
+                                </span>
+                                <span className="font-merge-mono text-foreground">~{estSettlementOut.toFixed(2)} {SETTLEMENT_SYMBOL}</span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground/80">
+                                You receive {SETTLEMENT_SYMBOL} -- your Reserve Tokens are redeemed and every asset is sold into {SETTLEMENT_SYMBOL} in the same sale.
+                              </p>
+                            </div>
+                          ) : null
                         ) : (
                           <div className="pt-3 border-t border-border/50 space-y-1.5">
                             <div className="flex justify-between text-xs text-muted-foreground">

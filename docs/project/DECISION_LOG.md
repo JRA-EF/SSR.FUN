@@ -4993,3 +4993,30 @@
   ]
 }
 ```
+
+## DEC-0161
+
+```json
+{
+  "id": "DEC-0161",
+  "date": "2026-08-26",
+  "status": "confirmed-implemented",
+  "decision": "One-approval trading made real for account-heavy compositions, three parts: (1) ACCOUNT-BUDGETED ROUTES: the Jupiter proxy accepts maxAccounts (clamped 8-64, forwarded to the quote); composed Buy/Sell requests budget 32 per swap (SINGLE_TX_SWAP_MAX_ACCOUNTS), retrying uncapped when no route fits the budget. (2) PER-RESERVE TRADING ADDRESS LOOKUP TABLE: new api/mainnet/reserve-alt registry (GET/POST; POST verifies ON-CHAIN that the address is a real lookup table containing the Reserve's own pubkey before storing -- and a lookup table can never substitute accounts, since v0 compilation only compresses the client's own pubkeys by content match, so a wrong table merely fails to compress); reserveAltClient.ts builds the table's contents (the ~21 fixed protocol accounts: program, reserve, RT mint, PDAs, vaults, asset mints, treasury + its RT ATA, USDC, token/ATA/system/compute-budget/Jupiter programs -- never user ATAs) and creates+extends+registers it in ONE wallet approval; Manage gained an 'Enable one-approval trading' card (one-time, ~0.003 SOL rent, paid by whoever clicks -- in practice the manager); both composed trade paths automatically include a Reserve's registered table. (3) SELL PANEL HONESTY: the stale 'pays out its real underlying asset(s) directly -- no conversion to USDC is performed' note (pre-DEC-0158 reality) replaced by the USDC-settled display: headline 'Est. You Receive ~X USDC' (amount x NAV) with the per-asset redemption amounts as secondary 'Redeems' rows and copy stating every asset is sold into USDC in the same sale.",
+  "context": "Creator's CHARLI sell succeeded USDC-settled (7.67 USDC, balance-verified) but took THREE wallet approvals -- the composed single transaction overran Solana's 1232-byte limit (measured live: 26-30 static keys; the uncapped SSR->USDC route alone used 68 accounts) and fell back sequentially. The sell panel still showed the pre-DEC-0158 in-kind copy. Creator also asked to confirm Reserve Tokens are genuine SPL tokens.",
+  "rationale": "Measured, not guessed: uncapped composition OVERRUNS; maxAccounts=32 (SSR's minimum viable budget; 28 has no route) plus the reserve table compiles the full CHARLI sell (redeem + wSOL->USDC + SSR->USDC) to 1,113 bytes -- 119 under the limit, staticKeys 30->18 -- verified by compiling against a locally-constructed table with exactly the contents the enable button creates. SPL CONFIRMATION (read from Mainnet): the CHARLI Reserve Token mint J4XbyjS6... is a genuine classic-SPL mint (owner TokenkegQ..., 6 decimals, mint authority = the Reserve's mint-authority PDA, no freeze authority) and holders' balances live in ordinary SPL ATAs in their own wallets; wallets show it as an unnamed token because no Metaplex token-metadata account exists for RT mints -- creating one requires the mint authority (a program PDA), i.e. an on-chain program change, explicitly out of scope and left as a recorded follow-up decision.",
+  "alternativesConsidered": [
+    "A single global protocol table -- rejected: extending it for every future Reserve needs one fixed authority; per-Reserve tables let each manager enable their own, and the registry binds table->Reserve verifiably.",
+    "Creating the table implicitly during the trade -- impossible: a lookup table only becomes usable a slot after extension, so it cannot serve the same transaction that creates it.",
+    "Squeezing without a table (dropping ATA creates/CU price) -- measured insufficient: ~90-120 bytes of savings against a ~120+ byte overrun with no headroom."
+  ],
+  "impact": "897/897 offline tests passing (2 new: maxAccounts forwarded and clamped; table contents complete/deduplicated/never user ATAs). tsc -b, oxlint, npm run build clean. Deployed to production. ACTIVATION: one-approval trading turns on per Reserve the first time its manager clicks Enable in Manage (until then, oversize trades keep the safe sequential fallback).",
+  "affectedAreas": ["api/mainnet/jupiter-swap.ts", "api/mainnet/reserve-alt.ts", "src/merge/lib/reserveAltClient.ts", "src/merge/lib/singleTxBuy.ts", "src/merge/lib/jupiterSwapClient.ts", "src/merge/lib/multiAssetBuyClient.ts", "src/merge/lib/multiAssetSellClient.ts", "src/merge/pages/ManageDTR.tsx", "src/merge/pages/DTRDetail.tsx", "tests/phase_mainnet_sell_and_perf.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0158 (partially: its sell-panel in-kind copy and uncapped composed quotes)",
+  "supersededBy": null,
+  "evidence": [
+    "Live measurements: uncapped SSR->USDC route 68 accounts; composed sell OVERRUN at 26-30 static keys; maxAccounts=28 no route, 32 -> 47-account route; with budget 32 + the reserve table: 1,113 bytes, staticKeys 18.",
+    "CHARLI RT mint parsed account: owner TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, type mint, decimals 6, mintAuthority FAjR5aMW... (the Reserve's PDA), freezeAuthority none.",
+    "897/897 offline tests passing."
+  ]
+}
+```

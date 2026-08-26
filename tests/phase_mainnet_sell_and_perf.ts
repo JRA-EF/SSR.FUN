@@ -27,6 +27,7 @@ import {
   type PricePoint,
 } from "../src/merge/lib/calculations";
 import { readPendingSell, savePendingSell, clearPendingSell, type PendingSellState } from "../src/merge/lib/multiAssetSellClient";
+import { buildReserveAltAddresses } from "../src/merge/lib/reserveAltClient";
 import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
 
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -234,6 +235,41 @@ describe("Pending-sale persistence (ssr_pending_sells_v1) -- refresh/reconnect r
   });
 });
 
+describe("Reserve trading lookup table contents (buildReserveAltAddresses, DEC-0161) -- the fixed accounts a composed trade compresses", () => {
+  const params = {
+    ssrProgramId: new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9"),
+    reserve: new PublicKey("EK5WwpsRuWPCAhV4Rd4s5SRuE6Gnbc8SA94oUjZbHfVb"),
+    reserveTokenMint: new PublicKey("J4XbyjS6iPHRQ8oPAAAc2GhmP3549ga9gZiu8MR5iimq"),
+    mintAuthority: new PublicKey("FAjR5aMW9j8fZwFw9nDxkhjU3fjDAGq8Taniby6rmrZ5"),
+    vaultAuthority: new PublicKey("FAjR5aMW9j8fZwFw9nDxkhjU3fjDAGq8Taniby6rmrZ5"),
+    protocolFeeDestination: new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5"),
+    assets: [
+      { mint: WSOL, reserveAsset: "6k3bmpVsP9T6mYHmJbJoGguQrrv7rB3wH8zqSRYo8kpa", vault: "9xQQ9UUjuUbKpu2E5Pswf8SsjfmEJVrYMdRwLX7spNvu" },
+      { mint: SSR, reserveAsset: "5wfs7tUrkvVzUPKst5mk7pHpMvvoZaskpkKSwk2huAfo", vault: "34hNxsxqBWH9czMKpng6zqcsmpg8SA4NeznenyF7VqH8" },
+    ],
+  };
+
+  it("contains every fixed account a composed Buy/Sell references (protocol PDAs, vaults, mints, programs, USDC), deduplicated, and NEVER a user-specific ATA", () => {
+    const addresses = buildReserveAltAddresses(params).map((a) => a.toBase58());
+    for (const required of [
+      params.ssrProgramId.toBase58(),
+      params.reserve.toBase58(),
+      params.reserveTokenMint.toBase58(),
+      USDC,
+      WSOL,
+      SSR,
+      "6k3bmpVsP9T6mYHmJbJoGguQrrv7rB3wH8zqSRYo8kpa",
+      "9xQQ9UUjuUbKpu2E5Pswf8SsjfmEJVrYMdRwLX7spNvu",
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+    ]) {
+      expect(addresses, required).to.include(required);
+    }
+    expect(new Set(addresses).size).to.equal(addresses.length); // deduplicated
+    expect(addresses.every((a) => a !== getAssociatedTokenAddressSync(new PublicKey(WSOL), OWNER).toBase58())).to.equal(true);
+  });
+});
+
 describe("api/mainnet/jupiter-swap -- the sell direction (asset -> USDC), USDC-settled only", () => {
   const originalFetch = global.fetch;
   const originalKey = process.env.JUPITER_API_KEY;
@@ -274,6 +310,34 @@ describe("api/mainnet/jupiter-swap -- the sell direction (asset -> USDC), USDC-s
     );
     expect(res.statusCode).to.equal(400);
     expect(upstreamCalled).to.equal(false);
+  });
+
+  it("maxAccounts (DEC-0161) is forwarded to the upstream quote bounded to Jupiter's range -- the composed single transaction depends on account-budgeted routes (a live uncapped SSR->USDC route used 68 accounts and overran the 1232-byte wire limit)", async () => {
+    let quoteUrl = "";
+    const quoteJson = { inAmount: "1000000", outAmount: "50000", priceImpactPct: "0.01" };
+    global.fetch = (async (url: string) => {
+      const u = String(url);
+      if (u.includes("/quote")) {
+        quoteUrl = u;
+        return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(quoteJson), json: async () => quoteJson } as unknown as Response;
+      }
+      const b = { swapTransaction: "dGVzdA==", lastValidBlockHeight: 1 };
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(b), json: async () => b } as unknown as Response;
+    }) as typeof fetch;
+    const res = new FakeRes();
+    await jupiterSwapHandler(
+      { method: "POST", headers: { "x-forwarded-for": uniqueIp() }, body: { outputMint: SSR, amountRaw: "1000000", userPublicKey: OWNER.toBase58(), maxAccounts: 24 } } as never,
+      res as never,
+    );
+    expect(res.statusCode).to.equal(200);
+    expect(quoteUrl).to.include("maxAccounts=24");
+    // Out-of-range values are clamped, never forwarded raw:
+    const res2 = new FakeRes();
+    await jupiterSwapHandler(
+      { method: "POST", headers: { "x-forwarded-for": uniqueIp() }, body: { outputMint: SSR, amountRaw: "1000000", userPublicKey: OWNER.toBase58(), maxAccounts: 500 } } as never,
+      res2 as never,
+    );
+    expect(quoteUrl).to.include("maxAccounts=64");
   });
 
   it("asset -> USDC quotes with the real inputMint in the upstream quote URL and still builds with wrapAndUnwrapSol:false", async () => {

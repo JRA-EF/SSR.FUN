@@ -103,11 +103,11 @@ export interface JupiterSwapInstructionsResult {
 }
 
 /** Fetches a real Jupiter quote as RAW INSTRUCTIONS + lookup-table addresses (mode "instructions") so the caller can compose every swap and the final mint/redeem into ONE wallet-signed transaction (singleTxBuy.ts / multiAssetSellClient.ts). Same server endpoint and honesty as fetchJupiterSwapQuote; the swap is always USDC-settled -- USDC -> `outputMint` by default, or `inputMint` -> USDC when `inputMint` is passed (the sell direction, DEC-0158; the server then requires outputMint to be USDC). The server builds every swap with wrapAndUnwrapSol: false, and the cleanup instruction (the wSOL-ATA-closing unwrap) is never composed. */
-export async function fetchJupiterSwapInstructions(outputMint: string, amountRaw: bigint, userPublicKey: string, slippageBps?: number, inputMint?: string): Promise<JupiterSwapInstructionsResult> {
+export async function fetchJupiterSwapInstructions(outputMint: string, amountRaw: bigint, userPublicKey: string, slippageBps?: number, inputMint?: string, maxAccounts?: number): Promise<JupiterSwapInstructionsResult> {
   const res = await fetch("/api/mainnet/jupiter-swap", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ outputMint, amountRaw: amountRaw.toString(), userPublicKey, slippageBps, mode: "instructions", ...(inputMint ? { inputMint } : {}) }),
+    body: JSON.stringify({ outputMint, amountRaw: amountRaw.toString(), userPublicKey, slippageBps, mode: "instructions", ...(inputMint ? { inputMint } : {}), ...(maxAccounts ? { maxAccounts } : {}) }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok || !body || typeof body.swapInstruction !== "object" || body.swapInstruction === null) {

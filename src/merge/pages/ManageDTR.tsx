@@ -6,7 +6,8 @@ import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } fr
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered, computeMarketCap, type AssetPriceInfo } from "@/lib/onChainReserve";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
-import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT } from "@/lib/solana-config";
+import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
+import { createAndRegisterReserveAlt, fetchReserveAltAddress } from "@/lib/reserveAltClient";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -225,6 +226,53 @@ export function ManageDTR() {
   const { toast } = useToast();
   const { connection } = useConnection();
   const walletCtx = useWallet();
+
+  // One-approval trading (DEC-0161): whether this Reserve has its trading
+  // address lookup table registered -- without one, a Buy/Sell that can't
+  // fit Solana's transaction-size limit falls back to several separate
+  // wallet approvals.
+  const [tradingAlt, setTradingAlt] = useState<string | null | "loading">("loading");
+  const [enablingAlt, setEnablingAlt] = useState(false);
+  const reserveForAlt = dtr?.onChain?.reserve;
+  useEffect(() => {
+    if (!IS_MAINNET || !reserveForAlt) return;
+    let cancelled = false;
+    fetchReserveAltAddress(reserveForAlt)
+      .then((alt) => {
+        if (!cancelled) setTradingAlt(alt);
+      })
+      .catch(() => {
+        if (!cancelled) setTradingAlt(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reserveForAlt]);
+
+  const enableOneApprovalTrading = async () => {
+    if (!dtr?.onChain || !walletCtx.publicKey) {
+      toast({ variant: "destructive", title: "Connect Wallet", description: "Connect a wallet first." });
+      return;
+    }
+    setEnablingAlt(true);
+    try {
+      const alt = await createAndRegisterReserveAlt(connection, walletCtx, {
+        ssrProgramId: SSR_PROGRAM_ID,
+        reserve: new PublicKey(dtr.onChain.reserve),
+        reserveTokenMint: new PublicKey(dtr.onChain.reserveTokenMint),
+        mintAuthority: new PublicKey(dtr.onChain.mintAuthority),
+        vaultAuthority: new PublicKey(dtr.onChain.vaultAuthority),
+        protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
+        assets: dtr.onChain.assets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
+      });
+      setTradingAlt(alt);
+      toast({ title: "One-approval trading enabled", description: "Buys and Sells of this Reserve can now complete in a single wallet approval for every trader." });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not enable one-approval trading", description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setEnablingAlt(false);
+    }
+  };
 
   // See DTRDetail.tsx's identical direct-check effect for the full
   // root-cause explanation -- covers the gap where discovery already
@@ -971,6 +1019,32 @@ export function ManageDTR() {
                   </div>
                 </CardContent>
               </Card>
+
+              {IS_MAINNET && dtr.onChain && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-xl font-merge-display">One-Approval Trading</CardTitle>
+                    <CardDescription>
+                      A one-time on-chain lookup table for this Reserve lets every Buy and Sell complete in a single wallet approval instead of several
+                      separate ones. Creating it costs a small one-time network deposit (~0.003 SOL) paid by your wallet.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {tradingAlt === "loading" ? (
+                      <p className="text-sm text-muted-foreground">Checking whether one-approval trading is enabled…</p>
+                    ) : tradingAlt ? (
+                      <div className="flex items-center gap-2 text-sm">
+                        <Badge variant="secondary">Enabled</Badge>
+                        <span className="font-merge-mono text-xs text-muted-foreground break-all">{tradingAlt}</span>
+                      </div>
+                    ) : (
+                      <Button onClick={() => void enableOneApprovalTrading()} disabled={enablingAlt || !walletCtx.publicKey}>
+                        {enablingAlt ? "Enabling…" : "Enable one-approval trading"}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">

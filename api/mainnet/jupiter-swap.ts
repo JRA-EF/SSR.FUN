@@ -93,6 +93,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // the client can compose ALL of a purchase's swaps and the final mint
   // into ONE wallet-signed atomic transaction.
   const mode = body.mode === "instructions" ? "instructions" : "transaction";
+  // maxAccounts (DEC-0161): bounds how many accounts Jupiter's route may
+  // use -- essential when the caller composes several swaps plus a
+  // mint/redeem into ONE transaction (a live SSR->USDC route used 68
+  // accounts and blew Solana's 1232-byte transaction limit, forcing the
+  // 3-signature fallback). Bounded to Jupiter's supported range; omitted
+  // upstream when not requested.
+  const maxAccounts =
+    typeof body.maxAccounts === "number" && Number.isFinite(body.maxAccounts) ? Math.min(64, Math.max(8, Math.round(body.maxAccounts))) : null;
   // `receiveWrappedSol` is accepted for compatibility but no longer changes
   // anything: EVERY swap this endpoint builds now sets wrapAndUnwrapSol:
   // false (see the swap-build body below). CONFIRMED LIVE why this must be
@@ -208,7 +216,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
   async function attemptQuote(): Promise<QuoteAttemptResult> {
     try {
-      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`;
+      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn${maxAccounts !== null ? `&maxAccounts=${maxAccounts}` : ""}`;
       const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": jupiterApiKey } });
       if (!quoteRes.ok) {
         // Read the RAW text once (never .json() directly) so a genuinely

@@ -64,6 +64,7 @@ import {
   compileSingleBuyTransaction,
   fetchLookupTables,
   SingleTxTooLargeError,
+  SINGLE_TX_SWAP_MAX_ACCOUNTS,
 } from "./singleTxBuy";
 import { packInstructionsBySize, fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { computeSwapShortfallPct } from "./createReserveResume";
@@ -81,6 +82,7 @@ import {
 } from "./multiAssetBuyPlan";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 import { withRateLimitRetry } from "./rpcResilience";
+import { fetchReserveAltAddress } from "./reserveAltClient";
 
 /** Same threshold createReserveClient.ts's seed funding uses -- routine slippage below this is never reported as a shortfall worth warning about. */
 const SHORTFALL_WARN_PCT = 0.05;
@@ -416,8 +418,13 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const swapSets: JupiterSwapInstructionsResult[] = [];
       for (const action of swapActionList) {
         if (action.kind !== "jupiter-swap") continue;
-        const set = await fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58);
-        log("single-tx swap instructions fetched", { mint: action.mint, inUsdcRaw: set.inAmount.toString(), quotedOutRaw: set.outAmount.toString(), lookupTables: set.addressLookupTableAddresses.length });
+        // Account-budgeted quote first (DEC-0161) so the composed
+        // transaction actually fits the wire limit; if no route fits the
+        // budget, retry uncapped -- oversize then falls back sequentially.
+        const set = await fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, undefined, SINGLE_TX_SWAP_MAX_ACCOUNTS).catch(
+          () => fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58),
+        );
+        log("single-tx swap instructions fetched", { mint: action.mint, inUsdcRaw: set.inAmount.toString(), quotedOutRaw: set.outAmount.toString(), swapAccounts: set.swapInstruction.accounts.length, lookupTables: set.addressLookupTableAddresses.length });
         swapSets.push(set);
       }
       const wrapIxs = wrapActionList.flatMap((a) => (a.kind === "wrap-recovered-sol" ? buildWrapRecoveredSolInstructions(owner, a.lamports) : []));
@@ -446,7 +453,11 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
         wrapInstructions: wrapIxs,
         mintInstruction: mintIx,
       });
-      const lookupTables = await fetchLookupTables(params.connection, swapSets.flatMap((s) => s.addressLookupTableAddresses));
+      // The Reserve's registered trading lookup table (DEC-0161, when one
+      // exists) compresses the protocol's fixed accounts -- often the
+      // difference between one approval and the sequential fallback.
+      const reserveAlt = await fetchReserveAltAddress(reserveBase58);
+      const lookupTables = await fetchLookupTables(params.connection, [...(reserveAlt ? [reserveAlt] : []), ...swapSets.flatMap((s) => s.addressLookupTableAddresses)]);
       const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
       const tx = compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
       log("single-tx composed", { instructions: ixs.length, bytes: tx.serialize().length, lookupTables: lookupTables.length });

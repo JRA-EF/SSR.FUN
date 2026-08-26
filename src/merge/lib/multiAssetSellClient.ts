@@ -41,10 +41,12 @@ import {
   SingleTxTooLargeError,
   SINGLE_TX_COMPUTE_UNIT_LIMIT,
   SINGLE_TX_MICRO_LAMPORTS_PER_CU,
+  SINGLE_TX_SWAP_MAX_ACCOUNTS,
   type SwapInstructionSet,
 } from "./singleTxBuy";
 import { ComputeBudgetProgram, type TransactionInstruction } from "@solana/web3.js";
 import { AmbiguousConfirmationError, confirmSignatureBounded, withRateLimitRetry } from "./rpcResilience";
+import { fetchReserveAltAddress } from "./reserveAltClient";
 
 const log = (msg: string, extra?: Record<string, unknown>) => {
   console.info(`[multi-asset-sell] ${msg}`, extra ?? "");
@@ -206,8 +208,13 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     const swapSets: SwapInstructionSet[] = [];
     const lookupAddresses: string[] = [];
     for (const { leg, entitlementRaw } of nonUsdcLegs) {
-      const set = await fetchJupiterSwapInstructions(MAINNET_USDC_MINT, entitlementRaw, ownerBase58, undefined, leg.mint);
-      log("single-tx sell-swap instructions fetched", { mint: leg.mint, inRaw: entitlementRaw.toString(), quotedUsdcOutRaw: set.outAmount.toString() });
+      // Account-budgeted quote first (DEC-0161; a live uncapped SSR->USDC
+      // route used 68 accounts and overran the wire limit, forcing the
+      // 3-signature fallback); uncapped retry if no route fits the budget.
+      const set = await fetchJupiterSwapInstructions(MAINNET_USDC_MINT, entitlementRaw, ownerBase58, undefined, leg.mint, SINGLE_TX_SWAP_MAX_ACCOUNTS).catch(
+        () => fetchJupiterSwapInstructions(MAINNET_USDC_MINT, entitlementRaw, ownerBase58, undefined, leg.mint),
+      );
+      log("single-tx sell-swap instructions fetched", { mint: leg.mint, inRaw: entitlementRaw.toString(), quotedUsdcOutRaw: set.outAmount.toString(), swapAccounts: set.swapInstruction.accounts.length });
       swapSets.push({ setupInstructions: set.setupInstructions, swapInstruction: set.swapInstruction, addressLookupTableAddresses: set.addressLookupTableAddresses });
       lookupAddresses.push(...set.addressLookupTableAddresses);
     }
@@ -231,7 +238,11 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
       const swapIx = deserializeJupiterInstruction(set.swapInstruction);
       if (!isComputeBudgetInstruction(swapIx)) ixs.push(swapIx);
     }
-    const lookupTables = await fetchLookupTables(params.connection, lookupAddresses);
+    // The Reserve's registered trading lookup table (DEC-0161, when one
+    // exists) compresses the protocol's fixed accounts -- often the
+    // difference between one approval and the sequential fallback.
+    const reserveAlt = await fetchReserveAltAddress(reserveBase58);
+    const lookupTables = await fetchLookupTables(params.connection, [...(reserveAlt ? [reserveAlt] : []), ...lookupAddresses]);
     const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
     const tx = compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
     log("single-tx sell composed", { instructions: ixs.length, bytes: tx.serialize().length, lookupTables: lookupTables.length });

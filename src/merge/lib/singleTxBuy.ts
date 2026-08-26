@@ -36,6 +36,15 @@ export const SOLANA_MAX_TX_BYTES = 1232;
 export const SINGLE_TX_COMPUTE_UNIT_LIMIT = 1_400_000;
 /** Priority fee per CU -- ~0.00014 SOL at the full CU limit, in line with what Jupiter's own dynamic builds have been paying on this app's live swaps. */
 export const SINGLE_TX_MICRO_LAMPORTS_PER_CU = 100_000;
+/**
+ * Per-swap account budget requested from Jupiter when composing (quote
+ * param maxAccounts, DEC-0161) -- an uncapped route can use 60+ accounts
+ * (live SSR->USDC: 68), which alone overruns Solana's 1232-byte transaction
+ * limit and forces the multi-signature fallback. Jupiter picks the best
+ * route that fits the budget; the caller retries uncapped (and the
+ * sequential fallback re-quotes freely) if no route fits it.
+ */
+export const SINGLE_TX_SWAP_MAX_ACCOUNTS = 24;
 
 const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
 
