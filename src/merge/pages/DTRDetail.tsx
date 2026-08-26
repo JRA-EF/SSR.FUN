@@ -34,6 +34,7 @@ import {
   reconcileByBalanceChange,
   tokenBalanceCacheKey,
   txPhaseLabel,
+  txPhaseShortLabel,
   withReadConcurrencyLimit,
   type TxPhase,
 } from "@/lib/rpcResilience";
@@ -851,7 +852,7 @@ export function DTRDetail() {
         assetPricesUsd: dtr.onChain.assetPricesUsd ?? {},
         onProgress: (e) => {
           if (e.phase === "single-transaction") {
-            setMultiAssetBuyStep("Preparing your purchase as one transaction: your USDC is swapped, deposited, and your tokens minted in a single approval...");
+            setMultiAssetBuyStep("One transaction: your USDC is swapped, deposited, and your Reserve Tokens minted -- a single wallet approval.");
             setBuyPhase("preparing");
           } else if (e.phase === "swapping") {
             setMultiAssetBuyStep(`Swapping your USDC into Reserve asset ${e.index + 1} of ${e.total}...`);
@@ -1816,12 +1817,17 @@ export function DTRDetail() {
                         (isOnChain && estReserveTokensOut === null)
                       }
                     >
-                      {txPhaseLabel(buyPhase, CLUSTER_LABEL) ? (
+                      {txPhaseShortLabel(buyPhase) ? (
+                        // The button shows only a SHORT phase word -- it is a
+                        // fixed-height single-line control. The full step
+                        // sentence wraps in the status line rendered below
+                        // the button instead (it overflowed the button when
+                        // rendered here, live-reported 2026-08-26).
                         <div className="flex items-center gap-2">
                           {(buyPhase === "preparing" || buyPhase === "awaiting-wallet" || buyPhase === "confirming" || buyPhase === "submitted") && (
                             <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
                           )}
-                          {multiAssetBuyStep ?? txPhaseLabel(buyPhase, CLUSTER_LABEL)}
+                          {txPhaseShortLabel(buyPhase)}
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
@@ -1835,12 +1841,21 @@ export function DTRDetail() {
                         `Buy ${dtr.ticker}`
                       )}
                     </Button>
-                    {isOnChain && (
-                      <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
-                        {IS_MAINNET
-                          ? "Submits a real Solana Mainnet transaction, signed by your wallet."
-                          : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
+                    {txPhaseShortLabel(buyPhase) ? (
+                      // While a purchase is in flight, the caption slot shows
+                      // the detailed step (wrapping freely) instead of the
+                      // static submits-a-real-transaction note.
+                      <p className="text-[11px] text-muted-foreground text-center mt-2 break-words" aria-live="polite">
+                        {multiAssetBuyStep ?? txPhaseLabel(buyPhase, CLUSTER_LABEL)}
                       </p>
+                    ) : (
+                      isOnChain && (
+                        <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
+                          {IS_MAINNET
+                            ? "Submits a real Solana Mainnet transaction, signed by your wallet."
+                            : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
+                        </p>
+                      )
                     )}
                   </TabsContent>
 
@@ -1998,12 +2013,13 @@ export function DTRDetail() {
                         (isOnChain && !isSettlementSellSupported)
                       }
                     >
-                      {txPhaseLabel(sellPhase, CLUSTER_LABEL) ? (
+                      {txPhaseShortLabel(sellPhase) ? (
+                        // Same short-label-in-button rule as Buy above.
                         <div className="flex items-center gap-2">
                           {(sellPhase === "preparing" || sellPhase === "awaiting-wallet" || sellPhase === "confirming" || sellPhase === "submitted") && (
                             <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
                           )}
-                          {txPhaseLabel(sellPhase, CLUSTER_LABEL)}
+                          {txPhaseShortLabel(sellPhase)}
                         </div>
                       ) : !wallet.connected ? (
                         "Connect Wallet to Trade"
@@ -2020,12 +2036,18 @@ export function DTRDetail() {
                         This Reserve holds more than one asset -- selling/redeeming from a multi-asset Reserve isn't supported yet on Mainnet.
                       </p>
                     )}
-                    {isOnChain && (
-                      <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
-                        {IS_MAINNET
-                          ? "Submits a real Solana Mainnet transaction, signed by your wallet."
-                          : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
+                    {txPhaseShortLabel(sellPhase) ? (
+                      <p className="text-[11px] text-muted-foreground text-center mt-2 break-words" aria-live="polite">
+                        {txPhaseLabel(sellPhase, CLUSTER_LABEL)}
                       </p>
+                    ) : (
+                      isOnChain && (
+                        <p className="text-[11px] text-muted-foreground/70 text-center mt-2">
+                          {IS_MAINNET
+                            ? "Submits a real Solana Mainnet transaction, signed by your wallet."
+                            : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
+                        </p>
+                      )
                     )}
                   </TabsContent>
                 </CardContent>

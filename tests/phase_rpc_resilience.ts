@@ -18,6 +18,7 @@ import {
   reconcileByBalanceChange,
   AmbiguousConfirmationError,
   txPhaseLabel,
+  txPhaseShortLabel,
   withReadConcurrencyLimit,
   withRateLimitRetry,
   type TxPhase,
@@ -297,6 +298,29 @@ describe("RPC-resilience -- txPhaseLabel", () => {
     expect(txPhaseLabel("confirming", "Mainnet")).to.equal("Submitted -- confirming on Mainnet...");
     expect(txPhaseLabel("submitted", "Mainnet")).to.equal("Submitted -- confirming on Mainnet...");
     expect(txPhaseLabel("unresolved", "Mainnet")).to.equal("Mainnet RPC is temporarily busy -- your transaction is still being verified");
+  });
+});
+
+describe("RPC-resilience -- txPhaseShortLabel (the IN-BUTTON label; the full sentence belongs below the button)", () => {
+  // Live-reported 2026-08-26: the one-transaction buy's long step sentence
+  // was rendered INSIDE the fixed-height Buy button and overflowed it.
+  // Buttons get these few-word labels; anything longer wraps in the status
+  // line below the button.
+  it("every in-flight phase gets a short label that can never overflow a fixed-height button", () => {
+    expect(txPhaseShortLabel("preparing")).to.equal("Preparing...");
+    expect(txPhaseShortLabel("awaiting-wallet")).to.equal("Approve in Wallet...");
+    expect(txPhaseShortLabel("confirming")).to.equal("Confirming...");
+    expect(txPhaseShortLabel("submitted")).to.equal("Confirming...");
+    expect(txPhaseShortLabel("unresolved")).to.equal("Verifying...");
+    for (const phase of ["preparing", "awaiting-wallet", "confirming", "submitted", "unresolved"] as const) {
+      expect(txPhaseShortLabel(phase)!.length).to.be.lessThan(25);
+    }
+  });
+
+  it("is in-flight for exactly the same phases as txPhaseLabel -- the button and the status line below it always switch modes together", () => {
+    for (const phase of ["idle", "confirmed", "failed", "expired", "preparing", "awaiting-wallet", "confirming", "submitted", "unresolved"] as const) {
+      expect(txPhaseShortLabel(phase) === null).to.equal(txPhaseLabel(phase) === null);
+    }
   });
 });
 

@@ -249,6 +249,31 @@ export function txPhaseLabel(phase: TxPhase, clusterLabel: string = "DevNet"): s
   }
 }
 
+/**
+ * The SHORT in-flight label rendered INSIDE an action button (next to its
+ * spinner). Buttons are fixed-height single-line controls, so this must
+ * always be a few words -- the full sentence (txPhaseLabel, or a flow's own
+ * step description) belongs in the wrapping status line rendered BELOW the
+ * button instead. Live-reported 2026-08-26: the one-transaction buy's long
+ * step sentence was rendered inside the Buy button and overflowed it,
+ * unreadable past the button's edges.
+ */
+export function txPhaseShortLabel(phase: TxPhase): string | null {
+  switch (phase) {
+    case "preparing":
+      return "Preparing...";
+    case "awaiting-wallet":
+      return "Approve in Wallet...";
+    case "submitted":
+    case "confirming":
+      return "Confirming...";
+    case "unresolved":
+      return "Verifying...";
+    default:
+      return null;
+  }
+}
+
 // --- Post-transaction reconciliation (pure, unit-testable) ------------------
 
 /**

@@ -4905,3 +4905,21 @@
   ]
 }
 ```
+
+## DEC-0157
+
+```json
+{
+  "id": "DEC-0157",
+  "date": "2026-08-26",
+  "status": "confirmed-implemented",
+  "decision": "Split trade-button in-flight text into two homes: the Buy/Sell button itself now always shows a SHORT fixed phase label next to its spinner (new pure txPhaseShortLabel: Preparing... / Approve in Wallet... / Confirming... / Verifying...), and the full step sentence (the one-transaction buy's step description, or txPhaseLabel's sentence) renders in the small wrapping status line BELOW the button, temporarily replacing the static submits-a-real-transaction caption while a transaction is in flight (aria-live for screen readers). Applied identically to Buy and Sell.",
+  "context": "Creator reported (with screenshot) that DEC-0156's one-transaction step sentence -- rendered INSIDE the fixed-height Buy button, the pre-existing pattern for in-flight labels -- overflowed the button: 'action: your USDC is swapped, deposited, and y...' clipped at both edges, unreadable.",
+  "rationale": "A button is a fixed-height single-line control; no sentence belongs inside it. Keeping a stable short label prevents layout jumping across phases, while the caption slot directly below is already the established home for per-action explanatory text and wraps freely. Alternatives -- shrinking the font, wrapping inside a taller button, or truncating with ellipsis -- all either break the approved control sizing (UI Baseline DEC-0080) or hide exactly the information the step text exists to show.",
+  "impact": "880/880 offline tests passing (2 new: every in-flight phase's short label under 25 chars; short/long labels agree on what counts as in-flight so button and status line always switch modes together). tsc -b, oxlint, npm run build clean. Deployed to production.",
+  "affectedAreas": ["src/merge/lib/rpcResilience.ts", "src/merge/pages/DTRDetail.tsx", "tests/phase_rpc_resilience.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0156 (partially: its in-button step-sentence rendering)",
+  "supersededBy": null,
+  "evidence": ["Creator screenshot 2026-08-26: the Buy button rendering 'action: your USDC is swapped, deposited, and y...' clipped past both button edges.", "880/880 offline tests passing."]
+}
+```
