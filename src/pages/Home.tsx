@@ -6,6 +6,7 @@ import { ReserveCard } from '../components/ReserveCard'
 import { avatarStyle } from '../lib/avatarStyle'
 import { useAppStore } from '@/store/useAppStore'
 import { buildReserveCardProps, selectFeaturedReserves } from '@/lib/reserveCardProps'
+import { computeMarketCap } from '@/lib/onChainReserve'
 import { useLandingStats } from '@/hooks/useLandingStats'
 import { IS_MAINNET } from '@/lib/solana-config'
 import type { DTR } from '@/lib/types'
@@ -33,7 +34,12 @@ export function Home() {
 
   const onChainDtrs = useMemo(() => dtrs.filter(d => Boolean(d.onChain)), [dtrs])
   const featured = useMemo(() => selectFeaturedReserves(dtrs), [dtrs])
-  const tvl = onChainDtrs.reduce((s, d) => s + d.aum, 0)
+  // Total Reserve Market Cap = sum over every live Reserve of circulating
+  // Reserve Token supply x displayed Token Price (computeMarketCap) --
+  // genuinely computed per Reserve, never a relabeled AUM sum, per the
+  // Mainnet pricing-layer decision (see computeMarketCap's own header;
+  // an unpriced Reserve contributes 0, never a fabricated figure).
+  const totalMarketCap = onChainDtrs.reduce((s, d) => s + computeMarketCap(d.onChain?.reserveTokenSupplyRaw ?? '0', d.tokenPrice), 0)
   const activeCount = onChainDtrs.length
   const stillDiscovering = chainDiscoveryStatus === 'loading' && onChainDtrs.length === 0
   const discoveryUnavailable = chainDiscoveryStatus === 'error' && onChainDtrs.length === 0
@@ -74,8 +80,8 @@ export function Home() {
           ) : (
             <div className="kpi-grid">
               <div className="kpi-cell">
-                <div className="k">Total Reserve AUM</div>
-                <div className="v">{fmtUsd(tvl)}</div>
+                <div className="k">Total Reserve Market Cap</div>
+                <div className="v">{fmtUsd(totalMarketCap)}</div>
               </div>
               <div className="kpi-cell">
                 <div className="k">24h Volume</div>

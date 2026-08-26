@@ -4951,3 +4951,22 @@
   ]
 }
 ```
+
+## DEC-0159
+
+```json
+{
+  "id": "DEC-0159",
+  "date": "2026-08-26",
+  "status": "confirmed-implemented",
+  "decision": "Replaced the landing page KPI strip's 'Total Reserve AUM' tile with 'Total Reserve Market Cap', GENUINELY computed as the sum over every live Reserve of computeMarketCap(circulating Reserve Token supply x displayed Token Price) -- never a relabeled AUM sum, per the Mainnet pricing-layer convention computeMarketCap's own header documents. An unpriced Reserve contributes 0, never a fabricated figure.",
+  "context": "Creator: 'let's change the total reserve AUM to total reserve market cap as part of our earlier decisions' -- extending the earlier per-Reserve Market Cap decision (Market Cap computed independently from AUM even while the two coincide numerically today, since every Buy/Sell executes at NAV with no secondary market) to the site-wide aggregate tile.",
+  "rationale": "Same per-Reserve computeMarketCap helper DTRDetail/ManageDTR already use -- one definition, no drift. Today the aggregate equals the AUM sum by construction (Token Price IS NAV); the tile stops silently coinciding the day a secondary market prices the Reserve Token independently.",
+  "alternativesConsidered": ["Relabel the existing aum sum -- rejected: the earlier decision explicitly forbids presenting AUM as Market Cap by relabeling."],
+  "impact": "892/892 offline tests passing (display aggregation of an already-covered pure helper). tsc -b, oxlint, npm run build clean. Deployed to production.",
+  "affectedAreas": ["src/pages/Home.tsx", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Creator instruction, verbatim.", "892/892 offline tests passing."]
+}
+```
