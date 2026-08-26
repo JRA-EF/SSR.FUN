@@ -850,7 +850,10 @@ export function DTRDetail() {
         effectiveMintFeeTotalBps: BigInt(dtr.onChain.effectiveMintFeeTotalBps ?? dtr.onChain.mintFeeBps ?? 0),
         assetPricesUsd: dtr.onChain.assetPricesUsd ?? {},
         onProgress: (e) => {
-          if (e.phase === "swapping") {
+          if (e.phase === "single-transaction") {
+            setMultiAssetBuyStep("Preparing your purchase as one transaction: your USDC is swapped, deposited, and your tokens minted in a single approval...");
+            setBuyPhase("preparing");
+          } else if (e.phase === "swapping") {
             setMultiAssetBuyStep(`Swapping your USDC into Reserve asset ${e.index + 1} of ${e.total}...`);
             setBuyPhase("awaiting-wallet");
           } else if (e.phase === "minting") {

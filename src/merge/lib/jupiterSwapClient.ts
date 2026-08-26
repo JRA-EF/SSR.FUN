@@ -92,6 +92,37 @@ export async function fetchJupiterSwapQuote(outputMint: string, amountRawUsdc: b
   };
 }
 
+/** One swap's raw instruction material for single-transaction composition (DEC-0156) -- see singleTxBuy.ts. */
+export interface JupiterSwapInstructionsResult {
+  setupInstructions: { programId: string; accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }[];
+  swapInstruction: { programId: string; accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string };
+  addressLookupTableAddresses: string[];
+  inAmount: bigint;
+  outAmount: bigint;
+  priceImpactPct: number;
+}
+
+/** Fetches a real Jupiter quote as RAW INSTRUCTIONS + lookup-table addresses (mode "instructions") so the caller can compose every swap and the final mint into ONE wallet-signed transaction (singleTxBuy.ts). Same server endpoint, honesty, and USDC-in restriction as fetchJupiterSwapQuote. The server builds every swap with wrapAndUnwrapSol: false, and the cleanup instruction (the wSOL-ATA-closing unwrap) is never composed. */
+export async function fetchJupiterSwapInstructions(outputMint: string, amountRawUsdc: bigint, userPublicKey: string, slippageBps?: number): Promise<JupiterSwapInstructionsResult> {
+  const res = await fetch("/api/mainnet/jupiter-swap", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ outputMint, amountRaw: amountRawUsdc.toString(), userPublicKey, slippageBps, mode: "instructions" }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body || typeof body.swapInstruction !== "object" || body.swapInstruction === null) {
+    throw new Error((body && typeof body.error === "string" && body.error) || `Jupiter swap-instructions build failed (HTTP ${res.status}).`);
+  }
+  return {
+    setupInstructions: Array.isArray(body.setupInstructions) ? body.setupInstructions : [],
+    swapInstruction: body.swapInstruction,
+    addressLookupTableAddresses: Array.isArray(body.addressLookupTableAddresses) ? body.addressLookupTableAddresses : [],
+    inAmount: BigInt(body.inAmount),
+    outAmount: BigInt(body.outAmount),
+    priceImpactPct: Number(body.priceImpactPct) || 0,
+  };
+}
+
 /** Signs and submits an already-fetched Jupiter swap quote's transaction via the connected wallet, then confirms it -- never resubmitted on an ambiguous result, matching every other Mainnet write path in this app. `onSubmitted` fires the instant the signature exists (before confirmation) so the caller's per-asset funding state machine (launchFunding.ts) can persist it -- a later resume reconciles that exact signature against real on-chain status instead of blindly re-swapping. */
 export async function executeJupiterSwap(connection: Connection, wallet: WalletContextState, quote: JupiterSwapQuote, onSubmitted?: (signature: string) => void): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Cross2Icon } from "@radix-ui/react-icons"
+import { CheckIcon, CopyIcon, Cross2Icon } from "@radix-ui/react-icons"
 import * as ToastPrimitives from "@radix-ui/react-toast"
 import { cva, type VariantProps } from "class-variance-authority"
 
@@ -23,7 +23,12 @@ const ToastViewport = React.forwardRef<
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName
 
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-md border p-4 pr-6 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-top-full data-[state=open]:sm:slide-in-from-bottom-full",
+  // items-start (not center) + overflow-hidden: long diagnostic messages
+  // (signatures, serialized errors) top-align against the close/copy
+  // controls and wrap INSIDE the box instead of stretching it past the
+  // screen edge (see ToastDescription's overflow-wrap) -- a live failure
+  // toast was rendering wider than the viewport, its right half unreadable.
+  "group pointer-events-auto relative flex w-full items-start justify-between space-x-2 overflow-hidden rounded-md border p-4 pr-12 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-top-full data-[state=open]:sm:slide-in-from-bottom-full",
   {
     variants: {
       variant: {
@@ -92,7 +97,7 @@ const ToastTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitives.Title
     ref={ref}
-    className={cn("text-sm font-semibold [&+div]:text-xs", className)}
+    className={cn("select-text break-words text-sm font-semibold [&+div]:text-xs", className)}
     {...props}
   />
 ))
@@ -101,14 +106,64 @@ ToastTitle.displayName = ToastPrimitives.Title.displayName
 const ToastDescription = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Description>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Description>
->(({ className, ...props }, ref) => (
+>(({ className, onPointerDown, ...props }, ref) => (
   <ToastPrimitives.Description
     ref={ref}
-    className={cn("text-sm opacity-90", className)}
+    // - [overflow-wrap:anywhere]: signatures and serialized errors have no
+    //   break points, so without this the text forces the toast wider than
+    //   the screen and the right side is unreadable (live-reported).
+    // - max-h + overflow-y-auto: a very long diagnostic scrolls inside the
+    //   toast instead of growing past the viewport -- always fully readable.
+    // - select-text/cursor-text + the pointer-down stop below: Radix's
+    //   swipe-to-dismiss handler grabs pointer drags, which is exactly the
+    //   gesture of selecting text -- stopping propagation here keeps the
+    //   message selectable (and copyable) without disabling swipe on the
+    //   rest of the toast.
+    className={cn("max-h-[45vh] select-text cursor-text overflow-y-auto whitespace-pre-wrap break-words text-sm opacity-90 [overflow-wrap:anywhere]", className)}
+    onPointerDown={(e) => {
+      e.stopPropagation()
+      onPointerDown?.(e)
+    }}
     {...props}
   />
 ))
 ToastDescription.displayName = ToastPrimitives.Description.displayName
+
+/**
+ * One-click copy of the toast's full message (title + description) -- long
+ * diagnostics (transaction signatures, decoded errors) are meant to be
+ * pasted into an explorer or a report, not retyped from a toast.
+ */
+const ToastCopy = ({ text, className }: { text: string; className?: string }) => {
+  const [copied, setCopied] = React.useState(false)
+  return (
+    <button
+      type="button"
+      aria-label="Copy message"
+      title="Copy message"
+      className={cn(
+        "absolute right-7 top-1 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600",
+        copied && "opacity-100",
+        className
+      )}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={() => {
+        navigator.clipboard
+          ?.writeText(text)
+          .then(() => {
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 1500)
+          })
+          .catch(() => {
+            // Clipboard permission denied -- the text stays selectable by hand.
+          })
+      }}
+    >
+      {copied ? <CheckIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
+    </button>
+  )
+}
+ToastCopy.displayName = "ToastCopy"
 
 type ToastProps = React.ComponentPropsWithoutRef<typeof Toast>
 
@@ -123,5 +178,6 @@ export {
   ToastTitle,
   ToastDescription,
   ToastClose,
+  ToastCopy,
   ToastAction,
 }

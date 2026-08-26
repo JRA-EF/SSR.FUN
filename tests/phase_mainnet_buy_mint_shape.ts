@@ -178,9 +178,12 @@ describe("USDC-only buy funding plan (planBuyFunding) -- the funding invariant a
 
   it("a recorded acquisition the wallet no longer fully holds (assets moved out mid-purchase) is capped at the real balance -- only the genuine remainder is re-funded", () => {
     expect(countableAcquiredRaw({ walletHeldRaw: 20_000_000n, purchaseAcquiredRaw: 51_510_000n })).to.equal(20_000_000n);
-    const plan = planBuyFunding(legs({ wsolHeld: 20_000_000n, wsolAcquired: 51_510_000n }));
-    const wsolSwap = plan.actions.find((a) => a.kind === "jupiter-swap" && a.mint === WSOL);
-    if (wsolSwap?.kind === "jupiter-swap") expect(wsolSwap.deficitRaw).to.equal(51_510_000n - 20_000_000n);
+    // Non-wSOL: the moved-out portion is a genuine top-up swap. (For wSOL
+    // the same situation re-WRAPS instead -- see phase_single_tx_buy.ts's
+    // wrap-recovered-sol coverage, DEC-0156.)
+    const plan = planBuyFunding(legs({ ssrHeld: 2_000_000_000n, ssrAcquired: 8_134_000_000n }));
+    const ssrSwap = plan.actions.find((a) => a.kind === "jupiter-swap" && a.mint === SSR);
+    if (ssrSwap?.kind === "jupiter-swap") expect(ssrSwap.deficitRaw).to.equal(8_134_000_000n - 2_000_000_000n);
     else expect.fail("expected a top-up swap for the moved-out portion");
   });
 

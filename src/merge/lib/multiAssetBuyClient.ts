@@ -45,6 +45,7 @@
 //    wallet; acquired assets live in the buyer's own ATAs until the mint
 //    deposits them.
 import { Connection, PublicKey, Transaction, type TransactionInstruction } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
   buildReadOnlyProgram,
@@ -56,7 +57,14 @@ import {
   MAINNET_USDC_MINT,
   type ZapAssetLeg,
 } from "@ssr/sdk";
-import { fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
+import { fetchJupiterSwapQuote, executeJupiterSwap, fetchJupiterSwapInstructions, type JupiterSwapInstructionsResult } from "./jupiterSwapClient";
+import {
+  assembleSingleBuyInstructions,
+  buildWrapRecoveredSolInstructions,
+  compileSingleBuyTransaction,
+  fetchLookupTables,
+  SingleTxTooLargeError,
+} from "./singleTxBuy";
 import { packInstructionsBySize, fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { computeSwapShortfallPct } from "./createReserveResume";
 import { advanceAssetFunding, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
@@ -92,6 +100,8 @@ export function usdToReserveTokensRequested(usdAmount: number, nav: number, rese
 }
 
 export type MultiAssetBuyProgressEvent =
+  /** The whole purchase (swaps + deposit + mint) is going through as ONE wallet-signed atomic transaction (DEC-0156) -- the normal path. */
+  | { phase: "single-transaction" }
   | { phase: "swapping"; mint: string; index: number; total: number }
   | { phase: "minting" }
   | { phase: "awaiting-wallet" };
@@ -356,7 +366,9 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     actions: plan.actions.map((ac) =>
       ac.kind === "jupiter-swap"
         ? { swap: ac.mint, deficitRaw: ac.deficitRaw.toString(), usdcBudgetRaw: ac.usdcBudgetRaw.toString(), receiveWrappedSol: ac.receiveWrappedSol }
-        : { alreadyFunded: ac.mint, countableRaw: ac.countableRaw.toString() },
+        : ac.kind === "wrap-recovered-sol"
+          ? { wrapRecoveredSol: ac.mint, lamports: ac.lamports.toString() }
+          : { alreadyFunded: ac.mint, countableRaw: ac.countableRaw.toString() },
     ),
   });
   const feasibility = assessBuyFeasibility({ plan, walletUsdcRaw, walletSolLamports });
@@ -388,9 +400,140 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   };
 
   try {
+    // ---------------------------------------------------------------------
+    // SINGLE-TRANSACTION PATH (DEC-0156, the normal path): every swap, any
+    // recovered-SOL re-wrap, the ATA creations, and the mint -- ONE wallet
+    // approval, fully atomic. Falls back to the sequential flow below only
+    // when the composition genuinely cannot fit Solana's transaction-size
+    // limit (many-asset Reserves).
+    // ---------------------------------------------------------------------
+    const swapActionList = plan.actions.filter((a) => a.kind === "jupiter-swap");
+    const wrapActionList = plan.actions.filter((a) => a.kind === "wrap-recovered-sol");
+    let singleTxUnsupported = false;
+    try {
+      currentStage = "preparing the single combined purchase transaction (nothing submitted yet)";
+      params.onProgress?.({ phase: "single-transaction" });
+      const swapSets: JupiterSwapInstructionsResult[] = [];
+      for (const action of swapActionList) {
+        if (action.kind !== "jupiter-swap") continue;
+        const set = await fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58);
+        log("single-tx swap instructions fetched", { mint: action.mint, inUsdcRaw: set.inAmount.toString(), quotedOutRaw: set.outAmount.toString(), lookupTables: set.addressLookupTableAddresses.length });
+        swapSets.push(set);
+      }
+      const wrapIxs = wrapActionList.flatMap((a) => (a.kind === "wrap-recovered-sol" ? buildWrapRecoveredSolInstructions(owner, a.lamports) : []));
+      if (wrapActionList.length > 0) {
+        log("single-tx re-wrap of recovered purchase SOL included", {
+          lamports: wrapActionList.map((a) => (a.kind === "wrap-recovered-sol" ? a.lamports.toString() : "")),
+        });
+      }
+      const { instructions: mintPrelude, requiredAmountsRaw: finalRequired } = await buildDirectMultiAssetMintInstructions({
+        program,
+        protocolConfig: params.protocolConfig,
+        protocolFeeDestination: params.protocolFeeDestination,
+        reserve: params.reserve,
+        reserveTokenMint: params.reserveTokenMint,
+        mintAuthority: params.mintAuthority,
+        user: owner,
+        assets: params.assets,
+        reserveTokenSupplyRaw: params.reserveTokenSupplyRaw,
+        reserveTokensRequested: params.reserveTokensRequested,
+        slippageBps: params.slippageBps,
+      });
+      const mintIx = mintPrelude[mintPrelude.length - 1];
+      const ixs = assembleSingleBuyInstructions({
+        ataCreateInstructions: mintPrelude.slice(0, -1),
+        swapSets,
+        wrapInstructions: wrapIxs,
+        mintInstruction: mintIx,
+      });
+      const lookupTables = await fetchLookupTables(params.connection, swapSets.flatMap((s) => s.addressLookupTableAddresses));
+      const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
+      const tx = compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
+      log("single-tx composed", { instructions: ixs.length, bytes: tx.serialize().length, lookupTables: lookupTables.length });
+
+      // Read-only simulation BEFORE the wallet signature -- a doomed
+      // transaction is refused here without costing an approval or a fee.
+      // (replaceRecentBlockhash sidesteps the cross-node blockhash
+      // false-negative that made per-submission preflight harmful -- see
+      // createReserveClient.ts's signSubmitAndConfirm note. A failure of
+      // the simulation CALL itself never blocks the purchase.)
+      try {
+        const sim = await params.connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true });
+        if (sim.value.err) {
+          log("single-tx simulation failed -- refusing before any signature", { err: sim.value.err, logs: sim.value.logs ?? [] });
+          throw new Error(
+            `${describeOnChainError(new Error(`Transaction failed on-chain (${JSON.stringify(sim.value.err)}).`))} This was caught by a read-only simulation BEFORE anything was signed or submitted -- nothing moved and no fee was paid.`,
+          );
+        }
+      } catch (simError) {
+        if (simError instanceof Error && simError.message.includes("read-only simulation")) throw simError;
+        log("single-tx simulation call itself failed -- proceeding (real confirmation remains the source of truth)", { error: String(simError) });
+      }
+
+      currentStage = "the single combined purchase transaction (swap, deposit, and mint in one atomic step)";
+      params.onProgress?.({ phase: "awaiting-wallet" });
+      if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+      const signed = await params.wallet.signTransaction(tx);
+      const signature = await params.connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
+      pending.lastMintSignature = signature;
+      savePendingBuy(pending);
+      log("single-tx submitted", { signature });
+      const outcome = await confirmSignatureBounded(params.connection, signature, lastValidBlockHeight);
+      if (outcome.status === "failed") {
+        throw new Error(
+          `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} The purchase was ONE atomic transaction, so nothing was swapped, deposited, or minted -- only the network fee was spent. Signature: ${signature}.`,
+        );
+      }
+      if (outcome.status === "expired") {
+        throw new Error(`The purchase transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+      }
+      if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
+
+      currentStage = "verifying your Reserve Tokens actually arrived after the mint";
+      const rtAfter = await fetchOwnedBalanceRawSettled(params.connection, params.reserveTokenMint, owner, rtBalanceNow);
+      log("single-tx post-mint verification", { buyerReserveTokenBefore: rtBalanceNow.toString(), buyerReserveTokenAfter: rtAfter.toString() });
+      if (rtAfter <= rtBalanceNow) {
+        throw new Error(
+          `The purchase transaction confirmed but your Reserve Token balance has not increased yet (before ${rtBalanceNow.toString()}, now ${rtAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`,
+        );
+      }
+      clearPendingBuy(ownerBase58, reserveBase58);
+      return { signature, reserveTokensRequested: params.reserveTokensRequested, requiredAmountsRaw: finalRequired, alreadyMinted: false };
+    } catch (e) {
+      if (!(e instanceof SingleTxTooLargeError)) throw e;
+      singleTxUnsupported = true;
+      log("single-tx too large for this Reserve -- falling back to the sequential flow", { message: e.message });
+    }
+    void singleTxUnsupported;
+
+    // ---------------------------------------------------------------------
+    // SEQUENTIAL FALLBACK: one transaction per step, fully guarded by the
+    // persistent purchase state machine (used only when the single
+    // transaction cannot fit).
+    // ---------------------------------------------------------------------
+
+    // Recovered-SOL re-wrap first (see multiAssetBuyPlan.ts's
+    // wrap-recovered-sol): restores wrapped SOL this purchase already
+    // bought with USDC -- never a new USDC spend.
+    for (const action of wrapActionList) {
+      if (action.kind !== "wrap-recovered-sol") continue;
+      const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
+      currentStage = "re-wrapping the SOL this purchase already bought with your USDC";
+      params.onProgress?.({ phase: "awaiting-wallet" });
+      const wsolAta = getAssociatedTokenAddressSync(new PublicKey(action.mint), owner);
+      const preWrapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
+      const wrapIxs = [
+        createAssociatedTokenAccountIdempotentInstruction(owner, wsolAta, owner, new PublicKey(action.mint)),
+        ...buildWrapRecoveredSolInstructions(owner, action.lamports),
+      ];
+      await signSubmitAndConfirmWithPersistedSig(params.connection, params.wallet, wrapIxs);
+      heldRaw[legIndex] = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(action.mint), owner, preWrapRaw);
+      log("recovered SOL re-wrapped", { lamports: action.lamports.toString(), wsolBalanceNow: heldRaw[legIndex].toString() });
+    }
+
     // --- Per-leg funding: USDC -> Jupiter -> Reserve asset, one swap per
     // --- genuinely-deficient leg, freshly quoted immediately before each.
-    const swapActions = plan.actions.filter((a) => a.kind === "jupiter-swap");
+    const swapActions = swapActionList;
     for (let s = 0; s < swapActions.length; s++) {
       const action = swapActions[s];
       if (action.kind !== "jupiter-swap") continue;
@@ -427,7 +570,15 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // Every leg must now be genuinely covered by THIS purchase's own
     // acquisitions (still present in the wallet) -- the mint is never
     // submitted against unverified funding or against unrelated holdings.
+    // Balances are RE-READ here, after every funding transaction: the live
+    // 2026-08-26 failure proved a later transaction can destroy an earlier
+    // leg's funding (a swap's cleanup closed the wSOL ATA), and the stale
+    // per-leg reads taken at each leg's own funding time missed it.
     currentStage = "verifying every Reserve asset was acquired before the final mint";
+    {
+      const freshHeld = await readLegBalances();
+      for (let i = 0; i < params.assets.length; i++) heldRaw[i] = freshHeld[i];
+    }
     for (let i = 0; i < params.assets.length; i++) {
       const mint = params.assets[i].mint;
       const countable = mint === MAINNET_USDC_MINT ? heldRaw[i] : countableAcquiredRaw({ walletHeldRaw: heldRaw[i], purchaseAcquiredRaw: acquiredRawOf(mint) });

@@ -45,6 +45,17 @@ export function countableAcquiredRaw(leg: Pick<BuyLegInput, "walletHeldRaw" | "p
 export type BuyFundingAction =
   /** Swap `usdcBudgetRaw` of the buyer's USDC into `mint` via Jupiter. For a wrapped-SOL leg the swap must be built with `receiveWrappedSol` so the output arrives as SPL wrapped SOL (never auto-unwrapped to native). */
   | { kind: "jupiter-swap"; mint: string; deficitRaw: bigint; usdcBudgetRaw: bigint; receiveWrappedSol: boolean }
+  /**
+   * Re-wrap `lamports` of the buyer's native SOL back into wrapped SOL --
+   * ONLY ever for wrapped SOL this purchase's own recorded, confirmed swap
+   * ALREADY BOUGHT with USDC that was later force-unwrapped to native SOL
+   * outside the purchase's control (live 2026-08-26: another leg's Jupiter
+   * cleanup closed the buyer's wSOL ATA, sweeping the USDC-funded wrapped
+   * SOL into native). Bounded by the recorded acquired-but-no-longer-held
+   * amount, so it can never touch fee SOL or unrelated holdings, and never
+   * spends USDC a second time for the same leg.
+   */
+  | { kind: "wrap-recovered-sol"; mint: string; lamports: bigint }
   /** This purchase already acquired enough of this leg (or the leg is the USDC input currency itself) -- nothing to do, and a retry MUST take this branch for every leg a prior attempt's confirmed swap already funded. */
   | { kind: "already-funded"; mint: string; countableRaw: bigint; requiredRaw: bigint };
 
@@ -54,6 +65,8 @@ export interface BuyFundingPlan {
   totalSwapUsdcRaw: bigint;
   /** USDC (raw) consumed directly by a USDC leg's own deposit, if the Reserve holds USDC. */
   usdcLegRequiredRaw: bigint;
+  /** Native lamports the plan will re-wrap into wSOL (recovered purchase assets only -- see wrap-recovered-sol). */
+  totalWrapLamports: bigint;
 }
 
 /** Fractional headroom applied when sizing each swap's USDC budget -- covers swap fees and quote-to-execution price movement. */
@@ -71,6 +84,8 @@ export function planBuyFunding(legs: BuyLegInput[]): BuyFundingPlan {
   const actions: BuyFundingAction[] = [];
   let totalSwapUsdcRaw = 0n;
   let usdcLegRequiredRaw = 0n;
+  let totalWrapLamports = 0n;
+  const wsolMint = WRAPPED_SOL_MINT.toBase58();
 
   for (const leg of legs) {
     if (leg.mint === MAINNET_USDC_MINT) {
@@ -83,10 +98,27 @@ export function planBuyFunding(legs: BuyLegInput[]): BuyFundingPlan {
       continue;
     }
     const countable = countableAcquiredRaw(leg);
-    const deficitRaw = leg.requiredRaw > countable ? leg.requiredRaw - countable : 0n;
+    let deficitRaw = leg.requiredRaw > countable ? leg.requiredRaw - countable : 0n;
     if (deficitRaw === 0n) {
       actions.push({ kind: "already-funded", mint: leg.mint, countableRaw: countable, requiredRaw: leg.requiredRaw });
       continue;
+    }
+    // Recovery for the wrapped-SOL leg (DEC-0156): if this purchase's own
+    // recorded, confirmed swap already bought MORE wrapped SOL than the
+    // wallet still holds wrapped, the difference was force-unwrapped into
+    // native SOL outside the purchase's control (live 2026-08-26: another
+    // leg's Jupiter cleanup closed the wSOL ATA). Re-wrap exactly that
+    // recorded remainder -- never fee SOL, never unrelated holdings, never
+    // a second USDC spend for the same already-funded amount.
+    if (leg.mint === wsolMint && leg.purchaseAcquiredRaw > leg.walletHeldRaw) {
+      const recoverable = leg.purchaseAcquiredRaw - leg.walletHeldRaw;
+      const wrapLamports = recoverable < deficitRaw ? recoverable : deficitRaw;
+      if (wrapLamports > 0n) {
+        totalWrapLamports += wrapLamports;
+        actions.push({ kind: "wrap-recovered-sol", mint: leg.mint, lamports: wrapLamports });
+        deficitRaw -= wrapLamports;
+      }
+      if (deficitRaw === 0n) continue;
     }
     if (leg.priceUsd === null || !Number.isFinite(leg.priceUsd) || leg.priceUsd <= 0) {
       throw new Error(`No real current USD price is available for ${leg.mint} -- refusing to guess a swap budget for it. Try again once pricing is available.`);
@@ -102,10 +134,10 @@ export function planBuyFunding(legs: BuyLegInput[]): BuyFundingPlan {
       // A wrapped-SOL leg is STILL funded from USDC (the invariant) -- the
       // swap just has to be built so its output stays as SPL wrapped SOL
       // instead of Jupiter's default auto-unwrap to native.
-      receiveWrappedSol: leg.mint === WRAPPED_SOL_MINT.toBase58(),
+      receiveWrappedSol: leg.mint === wsolMint,
     });
   }
-  return { actions, totalSwapUsdcRaw, usdcLegRequiredRaw };
+  return { actions, totalSwapUsdcRaw, usdcLegRequiredRaw, totalWrapLamports };
 }
 
 // --- Swap-output reconciliation ---------------------------------------------
@@ -168,7 +200,11 @@ export const DEFAULT_BUY_FEE_LAMPORTS = 8_000_000n; // 0.008 SOL
  * spent INTO the purchase.
  */
 export function assessBuyFeasibility(params: BuyFeasibilityParams): BuyFeasibility {
-  const fee = params.estimatedFeeLamports ?? DEFAULT_BUY_FEE_LAMPORTS;
+  // The SOL requirement is fees/rent PLUS any recovered-wSOL re-wrap the
+  // plan performs (wrap-recovered-sol) -- the latter is not fee SOL, it is
+  // the purchase's own USDC-funded wrapped SOL being restored, but it still
+  // has to be present in the native balance to wrap.
+  const fee = (params.estimatedFeeLamports ?? DEFAULT_BUY_FEE_LAMPORTS) + params.plan.totalWrapLamports;
   const requiredUsdcRaw = params.plan.totalSwapUsdcRaw + params.plan.usdcLegRequiredRaw;
   const missingUsdcRaw = requiredUsdcRaw > params.walletUsdcRaw ? requiredUsdcRaw - params.walletUsdcRaw : 0n;
   const missingSolLamports = fee > params.walletSolLamports ? fee - params.walletSolLamports : 0n;
@@ -245,11 +281,28 @@ export function buildBuyStateReport(
   }));
   const reserveTokenMinted = !shouldSubmitMint(preMintRtRaw, currentRtRaw, expectedNetRaw);
   const unfunded = legs.filter((l) => countableAcquiredRaw(l) < l.requiredRaw);
+  const wsolMint = WRAPPED_SOL_MINT.toBase58();
+  // A wSOL shortfall whose amount this purchase ALREADY bought (recorded
+  // acquired > still-wrapped balance) is recovered by re-wrapping, not by
+  // spending USDC again -- say so, or the summary would wrongly promise a
+  // second USDC charge for an already-funded leg.
+  const wrapRecoverable = unfunded.filter((l) => l.mint === wsolMint && l.purchaseAcquiredRaw > l.walletHeldRaw);
+  const needsUsdc = unfunded.filter((l) => !wrapRecoverable.includes(l));
   const retrySummary = reserveTokenMinted
     ? "Your Reserve Tokens were already minted -- retrying will not mint again."
     : unfunded.length === 0
       ? "This purchase already acquired every Reserve asset it needs -- retrying only re-submits the final mint, buying nothing again."
-      : `Retrying will swap USDC for only the genuine remaining shortfall of: ${unfunded.map((l) => l.symbol).join(", ")} -- whatever this purchase already acquired is counted first and never repurchased, and other assets already in your wallet are never used in place of your USDC.`;
+      : [
+          wrapRecoverable.length > 0
+            ? `Retrying will re-wrap the SOL this purchase already bought with your USDC (it was auto-unwrapped to regular SOL outside this purchase's control) -- no extra USDC is spent for it.`
+            : "",
+          needsUsdc.length > 0
+            ? `Retrying will swap USDC for only the genuine remaining shortfall of: ${needsUsdc.map((l) => l.symbol).join(", ")}.`
+            : "",
+          "Whatever this purchase already acquired is counted first and never repurchased, and other assets already in your wallet are never used in place of your USDC.",
+        ]
+          .filter(Boolean)
+          .join(" ");
   return {
     legs: legLines,
     reserveTokenMinted,

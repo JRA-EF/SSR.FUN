@@ -27,6 +27,7 @@ interface ApiResponse {
 const MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const JUPITER_QUOTE_URL = "https://api.jup.ag/swap/v1/quote";
 const JUPITER_SWAP_URL = "https://api.jup.ag/swap/v1/swap";
+const JUPITER_SWAP_INSTRUCTIONS_URL = "https://api.jup.ag/swap/v1/swap-instructions";
 
 const DEFAULT_SLIPPAGE_BPS = 150; // 1.5% -- generous enough for thinner-liquidity pump.fun-style tokens without being reckless.
 const MAX_SLIPPAGE_BPS = 500; // 5% hard ceiling -- a caller cannot ask for more.
@@ -81,13 +82,25 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const amountRaw = typeof body.amountRaw === "string" ? body.amountRaw : "";
   const userPublicKey = typeof body.userPublicKey === "string" ? body.userPublicKey : "";
   const slippageBps = typeof body.slippageBps === "number" && Number.isFinite(body.slippageBps) ? Math.round(body.slippageBps) : DEFAULT_SLIPPAGE_BPS;
-  // DEC-0154: a caller funding a Reserve's wrapped-SOL leg FROM USDC (the
-  // funding invariant) needs the swap output to STAY as SPL wrapped SOL in
-  // the buyer's wSOL ATA -- Jupiter's default (wrapAndUnwrapSol: true)
-  // auto-unwraps a wSOL output back to native SOL, which the in-kind
-  // deposit instruction can't use. Only honored for a wrapped-SOL
-  // outputMint; meaningless (and ignored) for any other output.
-  const receiveWrappedSol = body.receiveWrappedSol === true && outputMint === "So11111111111111111111111111111111111111112";
+  // mode "instructions" (DEC-0156): return Jupiter's raw instruction set +
+  // address-lookup-table addresses instead of a fully-built transaction, so
+  // the client can compose ALL of a purchase's swaps and the final mint
+  // into ONE wallet-signed atomic transaction.
+  const mode = body.mode === "instructions" ? "instructions" : "transaction";
+  // `receiveWrappedSol` is accepted for compatibility but no longer changes
+  // anything: EVERY swap this endpoint builds now sets wrapAndUnwrapSol:
+  // false (see the swap-build body below). CONFIRMED LIVE why this must be
+  // universal, not per-leg (2026-08-26, signature n6JMY9xFfG7...): a
+  // USDC->SSR swap whose route hopped through SOL used the buyer's own wSOL
+  // ATA as an intermediate, and Jupiter's default cleanup then CLOSED that
+  // ATA -- sweeping the buyer's ENTIRE wSOL balance (including another
+  // leg's just-acquired wrapped-SOL deposit) into native SOL, so the mint
+  // 8 seconds later failed with SPL Token InsufficientFunds. No flow served
+  // by this endpoint ever wants a native-SOL output: swap outputs are
+  // Reserve assets, and a wrapped-SOL output must STAY wrapped for the
+  // in-kind deposit. Jupiter's own setup instructions still create any ATA
+  // a route needs (idempotently); nothing is ever unwrapped or closed.
+  void body.receiveWrappedSol;
 
   if (!BASE58_RE.test(outputMint) || outputMint === MAINNET_USDC_MINT) {
     res.status(400).json({ error: "Invalid or unsupported outputMint." });
@@ -260,12 +273,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // indicates something upstream broke rather than Jupiter deliberately
   // rejecting the request, is retried.
   type SwapBuildResult =
-    | { kind: "ok"; swapTransaction: string; lastValidBlockHeight: number }
+    | { kind: "ok"; payload: Record<string, unknown> }
     | { kind: "specific-error"; message: string }
     | { kind: "transient"; status: number | null; retryAfterMs: number | null };
   async function attemptBuildSwap(): Promise<SwapBuildResult> {
     try {
-      const swapRes = await fetch(JUPITER_SWAP_URL, {
+      const swapRes = await fetch(mode === "instructions" ? JUPITER_SWAP_INSTRUCTIONS_URL : JUPITER_SWAP_URL, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": jupiterApiKey },
         // dynamicSlippage: Jupiter computes its own volatility/route-aware
@@ -276,17 +289,36 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         // docs/project/DECISION_LOG.md's entry for this pass) -- it can go
         // both tighter (no wasted slippage budget on a stable route) and
         // wider (survives real short-term volatility) than a static number.
-        body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true, ...(receiveWrappedSol ? { wrapAndUnwrapSol: false } : {}) }),
+        //
+        // wrapAndUnwrapSol: false, ALWAYS -- see the long note where
+        // `mode` is parsed above (the live 2026-08-26 wSOL-ATA sweep).
+        body: JSON.stringify({ quoteResponse: quote, userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true, wrapAndUnwrapSol: false }),
       });
       const rawText = await swapRes.text().catch(() => "<unreadable body>");
-      let swapBody: { swapTransaction?: unknown; lastValidBlockHeight?: unknown; error?: unknown } | null = null;
+      let swapBody: { swapTransaction?: unknown; lastValidBlockHeight?: unknown; swapInstruction?: unknown; error?: unknown } | null = null;
       try {
         swapBody = JSON.parse(rawText);
       } catch {
         swapBody = null;
       }
-      if (swapRes.ok && swapBody && typeof swapBody.swapTransaction === "string" && typeof swapBody.lastValidBlockHeight === "number") {
-        return { kind: "ok", swapTransaction: swapBody.swapTransaction, lastValidBlockHeight: swapBody.lastValidBlockHeight };
+      if (mode === "transaction" && swapRes.ok && swapBody && typeof swapBody.swapTransaction === "string" && typeof swapBody.lastValidBlockHeight === "number") {
+        return { kind: "ok", payload: { swapTransaction: swapBody.swapTransaction, lastValidBlockHeight: swapBody.lastValidBlockHeight } };
+      }
+      if (mode === "instructions" && swapRes.ok && swapBody && typeof swapBody.swapInstruction === "object" && swapBody.swapInstruction !== null) {
+        const b = swapBody as Record<string, unknown>;
+        return {
+          kind: "ok",
+          payload: {
+            setupInstructions: Array.isArray(b.setupInstructions) ? b.setupInstructions : [],
+            swapInstruction: b.swapInstruction,
+            // cleanupInstruction is passed through for transparency; with
+            // wrapAndUnwrapSol: false Jupiter emits none, and the client
+            // composer never includes one regardless (it would close the
+            // buyer's wSOL ATA -- the exact live failure this fixes).
+            cleanupInstruction: b.cleanupInstruction ?? null,
+            addressLookupTableAddresses: Array.isArray(b.addressLookupTableAddresses) ? b.addressLookupTableAddresses : [],
+          },
+        };
       }
       // Logged on every non-success outcome (not just a thrown exception) --
       // this is what was completely invisible before: a real Jupiter
@@ -306,13 +338,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
 
-  let built: { swapTransaction: string; lastValidBlockHeight: number } | null = null;
+  let built: Record<string, unknown> | null = null;
   let lastBuildTransientStatus: number | null = null;
   const MAX_SWAP_BUILD_ATTEMPTS = 3;
   for (let attempt = 0; attempt < MAX_SWAP_BUILD_ATTEMPTS && !built; attempt++) {
     const result = await attemptBuildSwap();
     if (result.kind === "ok") {
-      built = { swapTransaction: result.swapTransaction, lastValidBlockHeight: result.lastValidBlockHeight };
+      built = result.payload;
     } else if (result.kind === "specific-error") {
       res.status(502).json({ error: result.message });
       return;
@@ -334,8 +366,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   res.status(200).json({
-    swapTransaction: built.swapTransaction,
-    lastValidBlockHeight: built.lastValidBlockHeight,
+    ...built,
     inAmount: quote.inAmount,
     outAmount: quote.outAmount,
     priceImpactPct: quote.priceImpactPct,
