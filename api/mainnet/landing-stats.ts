@@ -35,6 +35,7 @@ import {
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
+import { checkRateWindow } from "../devnet/_lib/rateLimit";
 
 interface ApiRequest {
   method?: string;
@@ -159,6 +160,12 @@ async function computeLandingStats(): Promise<LandingStats> {
   return { holders: globalOwners.size, volume24hUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
 }
 
+function clientIp(req: ApiRequest): string {
+  const fwd = req.headers["x-forwarded-for"];
+  const raw = Array.isArray(fwd) ? fwd[0] : fwd;
+  return (raw ?? "unknown").split(",")[0].trim();
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -166,6 +173,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const forceFresh = typeof req.url === "string" && /[?&]force=1(?:&|$)/.test(req.url);
+
+  // force=1 is an undocumented, unauthenticated cache-bypass -- kept for a
+  // genuine internal "refresh now" use, but gated by a per-IP throttle so it
+  // can't be used to keep the backend permanently doing full-cost
+  // recomputation on demand. A plain cached read is unaffected.
+  if (forceFresh && !checkRateWindow(`mainnet-landing-stats-force:${clientIp(req)}`, 60_000, 3)) {
+    res.status(429).json({ error: "Too many forced-refresh requests -- wait a moment and try again." });
+    return;
+  }
 
   if (!forceFresh && cached && Date.now() - cached.computedAt < CACHE_TTL_MS) {
     res.status(200).json(cached);

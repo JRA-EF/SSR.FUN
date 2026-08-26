@@ -135,7 +135,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(400).json({ error: `Request must contain between 1 and ${MAX_BATCH_SIZE} JSON-RPC calls.` });
     return;
   }
-  if (JSON.stringify(rawBody).length > MAX_BODY_BYTES) {
+  // JSON.stringify(rawBody) is itself `undefined` (the JS value, not a
+  // string) when rawBody is undefined -- e.g. a top-level JSON string body
+  // like `"hello"`, which parseBody's re-parse attempt above fails and
+  // reports as undefined. Calling .length on that unguarded threw a raw,
+  // uncaught TypeError (crashing the function) before isPlainJsonRpcRequest
+  // below ever got a chance to reject it cleanly as a malformed request.
+  const rawBodyJson = JSON.stringify(rawBody);
+  if (rawBodyJson !== undefined && rawBodyJson.length > MAX_BODY_BYTES) {
     res.status(400).json({ error: "Request body too large." });
     return;
   }

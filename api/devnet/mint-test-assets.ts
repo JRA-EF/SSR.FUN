@@ -77,14 +77,25 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(400).json({ error: "Invalid userPubkey." });
     return;
   }
+  // getAssociatedTokenAddressSync below throws for an off-curve owner (a PDA
+  // or other program-controlled address) unless allowOwnerOffCurve is set --
+  // this faucet only ever funds ordinary wallets, so reject up front with a
+  // clean 400 instead of letting that throw escape uncaught later.
+  if (!PublicKey.isOnCurve(userPubkey.toBytes())) {
+    res.status(400).json({ error: "userPubkey must be a wallet address -- PDA/off-curve addresses are not supported by this faucet." });
+    return;
+  }
   if (requests.length === 0) {
     res.status(400).json({ error: "mints must be a non-empty array of { mint, rawAmount }." });
     return;
   }
 
-  const connection = new Connection(RPC_URL, "confirmed");
-  const tx = new Transaction();
-
+  // Validate first (including the aggregate per-mint total across possibly
+  // duplicated array entries, not just each entry in isolation -- repeating
+  // the same mint several times at the per-item cap must not multiply the
+  // intended per-request ceiling), THEN build instructions once every
+  // request in the batch is known-good.
+  const totalRawByMint = new Map<string, bigint>();
   for (const r of requests) {
     const meta = ALLOWED_MINTS[r.mint];
     if (!meta) {
@@ -98,11 +109,24 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       res.status(400).json({ error: "rawAmount must be an integer string." });
       return;
     }
-    const cap = BigInt(MAX_AMOUNT_PER_MINT) * BigInt(10 ** meta.decimals);
-    if (rawAmount <= 0n || rawAmount > cap) {
-      res.status(400).json({ error: `rawAmount for ${meta.symbol} must be between 1 and ${cap.toString()} (${MAX_AMOUNT_PER_MINT} tokens).` });
+    if (rawAmount <= 0n) {
+      res.status(400).json({ error: `rawAmount for ${meta.symbol} must be a positive integer.` });
       return;
     }
+    const cap = BigInt(MAX_AMOUNT_PER_MINT) * BigInt(10 ** meta.decimals);
+    const runningTotal = (totalRawByMint.get(r.mint) ?? 0n) + rawAmount;
+    if (runningTotal > cap) {
+      res.status(400).json({ error: `Total rawAmount requested for ${meta.symbol} in this request must not exceed ${cap.toString()} (${MAX_AMOUNT_PER_MINT} tokens).` });
+      return;
+    }
+    totalRawByMint.set(r.mint, runningTotal);
+  }
+
+  const connection = new Connection(RPC_URL, "confirmed");
+  const tx = new Transaction();
+
+  for (const r of requests) {
+    const rawAmount = BigInt(r.rawAmount);
     const mint = new PublicKey(r.mint);
     const ata = getAssociatedTokenAddressSync(mint, userPubkey);
     tx.add(createAssociatedTokenAccountIdempotentInstruction(swapAuthority.publicKey, ata, userPubkey, mint));

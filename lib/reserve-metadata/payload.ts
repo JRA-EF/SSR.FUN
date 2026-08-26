@@ -25,6 +25,13 @@ export interface ReserveMetadataPayload {
  */
 export const MAX_PAYLOAD_JSON_BYTES = 4_000;
 
+/** Tax percentages are stored and later consumed as literal percentages (0-100) by downstream fee math -- a value outside this range (e.g. -25 or 500) is never economically meaningful, so it's treated the same as a non-finite value below: normalized to 0 rather than persisted as garbage. */
+const MAX_TAX_PCT = 100;
+
+function isValidTaxPct(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_TAX_PCT;
+}
+
 /**
  * Validates and normalizes an arbitrary request body into a
  * ReserveMetadataPayload, or throws a plain-language error. Never trusts
@@ -46,9 +53,19 @@ export function validateReserveMetadataPayload(body: unknown): ReserveMetadataPa
     ticker,
     description: typeof p.description === "string" ? p.description : "",
     category: typeof p.category === "string" ? p.category : "",
-    buyTaxPct: typeof p.buyTaxPct === "number" && Number.isFinite(p.buyTaxPct) ? p.buyTaxPct : 0,
-    sellTaxPct: typeof p.sellTaxPct === "number" && Number.isFinite(p.sellTaxPct) ? p.sellTaxPct : 0,
+    buyTaxPct: isValidTaxPct(p.buyTaxPct) ? p.buyTaxPct : 0,
+    sellTaxPct: isValidTaxPct(p.sellTaxPct) ? p.sellTaxPct : 0,
   };
+
+  // Postgres' UTF-8 column type rejects a literal null byte outright (a raw
+  // driver-level exception, not a validation error) -- reject it here, at
+  // the one place every write goes through, instead of letting that DB
+  // exception (and its internal error text) reach the client.
+  for (const [field, value] of Object.entries(payload)) {
+    if (typeof value === "string" && value.includes("\u0000")) {
+      throw new Error(`Metadata field "${field}" contains a null byte, which is not supported.`);
+    }
+  }
 
   const jsonBytes = new TextEncoder().encode(JSON.stringify(payload)).length;
   if (jsonBytes > MAX_PAYLOAD_JSON_BYTES) {

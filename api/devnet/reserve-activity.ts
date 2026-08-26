@@ -14,6 +14,7 @@ import { buildReadOnlyProgram } from "@ssr/sdk";
 import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
 import { syncReserveActivity } from "../../lib/reserve-activity/indexer";
 import { getSql } from "../../lib/reserve-activity/db";
+import { checkRateWindow } from "./_lib/rateLimit";
 
 interface ApiRequest {
   method?: string;
@@ -38,6 +39,12 @@ interface ActivityRow {
   summary: string;
 }
 
+function clientIp(req: ApiRequest): string {
+  const fwd = req.headers["x-forwarded-for"];
+  const raw = Array.isArray(fwd) ? fwd[0] : fwd;
+  return (raw ?? "unknown").split(",")[0].trim();
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -45,6 +52,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   res.setHeader?.("Cache-Control", "no-store");
+
+  // This route does real backfill work (syncReserveActivity) per request for
+  // any syntactically-valid address, not just a known Reserve -- a per-IP
+  // throttle here is a cheap secondary defense against that being driven at
+  // volume, on top of syncReserveActivity's own bounded work per call.
+  if (!checkRateWindow(`devnet-reserve-activity:${clientIp(req)}`, 1_000, 5)) {
+    res.status(429).json({ error: "Too many requests to the Reserve Activity Log from this client -- wait a moment and try again." });
+    return;
+  }
 
   const url = new URL(req.url ?? "", "http://internal");
   const reserveParam = url.searchParams.get("reserve");

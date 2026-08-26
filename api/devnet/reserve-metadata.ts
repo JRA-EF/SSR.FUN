@@ -65,6 +65,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       res.status(400).json({ error: "Missing required 'id' query param." });
       return;
     }
+    // See api/mainnet/reserve-metadata.ts's identical check -- computeMetadataId
+    // always produces exactly 16 lowercase hex characters, so reject anything
+    // else (including a null byte or other unsupported character) before it
+    // ever reaches the database driver, instead of letting Postgres reject
+    // it with a raw, leaked driver error.
+    if (!/^[0-9a-f]{16}$/i.test(id)) {
+      res.status(400).json({ error: "Malformed 'id' query param." });
+      return;
+    }
     try {
       const sql = getSql();
       const rows = await sql`select payload from reserve_metadata where id = ${id}`;

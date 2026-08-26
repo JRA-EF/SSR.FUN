@@ -214,3 +214,44 @@ describe("Reserve Holdings RPC reliability -- checkRateWindow reused correctly f
     expect(checkRateWindow(key, 1000, 2)).to.equal(false);
   });
 });
+
+describe("rpc-proxy -- top-level JSON string body no longer crashes the handler", () => {
+  // Regression for a confirmed live report: Vercel's own body parser turns
+  // a bare JSON string literal like `"hello"` into the JS string "hello"
+  // before this handler ever runs; parseBody's re-parse attempt on that
+  // already-decoded string then fails and returns undefined, and the old
+  // `JSON.stringify(rawBody).length` crashed uncaught on that undefined
+  // (JSON.stringify(undefined) is the JS value undefined, not a string) --
+  // a raw platform 500 instead of the clean, structured JSON-RPC rejection
+  // every other malformed body already gets.
+  function fakeRes(): { res: ApiResponse; calls: { status: number; body: unknown }[] } {
+    const calls: { status: number; body: unknown }[] = [];
+    const res: ApiResponse = {
+      status(code: number) {
+        calls.push({ status: code, body: undefined });
+        return res;
+      },
+      json(body: unknown) {
+        calls[calls.length - 1].body = body;
+      },
+    };
+    return { res, calls };
+  }
+
+  it("a top-level JSON string literal body is rejected cleanly instead of crashing", async () => {
+    const { res, calls } = fakeRes();
+    const req: ApiRequest = { method: "POST", headers: {}, body: "hello" };
+    await handler(req, res);
+    expect(calls.length).to.be.greaterThan(0);
+    expect(calls[0].status).to.equal(200); // the proxy's own JSON-RPC error shape, not an HTTP-level failure
+    expect(calls[0].body).to.deep.include({ jsonrpc: "2.0" });
+  });
+
+  it("an empty JSON string literal body is also rejected cleanly", async () => {
+    const { res, calls } = fakeRes();
+    const req: ApiRequest = { method: "POST", headers: {}, body: "" };
+    await handler(req, res);
+    expect(calls.length).to.be.greaterThan(0);
+    expect(calls[0].status).to.equal(200);
+  });
+});

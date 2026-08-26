@@ -180,6 +180,29 @@ describe("lib/reserve-metadata/payload.ts -- validateReserveMetadataPayload", ()
     expect(p.sellTaxPct).to.equal(0);
   });
 
+  it("accepts buyTaxPct/sellTaxPct anywhere within the valid 0-100 range", () => {
+    const p = validateReserveMetadataPayload({ name: "X", ticker: "X", buyTaxPct: 0, sellTaxPct: 100 });
+    expect(p.buyTaxPct).to.equal(0);
+    expect(p.sellTaxPct).to.equal(100);
+  });
+
+  it("normalizes an out-of-range (negative or >100) buyTaxPct/sellTaxPct to 0 rather than persisting it -- regression for the confirmed unbounded-tax-rate report", () => {
+    const p = validateReserveMetadataPayload({ name: "X", ticker: "X", buyTaxPct: -25, sellTaxPct: 500 });
+    expect(p.buyTaxPct).to.equal(0);
+    expect(p.sellTaxPct).to.equal(0);
+  });
+
+  it("normalizes a non-numeric buyTaxPct/sellTaxPct (string/boolean) to 0, same as an absent field", () => {
+    const p = validateReserveMetadataPayload({ name: "X", ticker: "X", buyTaxPct: "abc", sellTaxPct: false });
+    expect(p.buyTaxPct).to.equal(0);
+    expect(p.sellTaxPct).to.equal(0);
+  });
+
+  it("rejects a name/ticker/description/category containing a null byte -- regression for the confirmed Postgres null-byte crash report", () => {
+    expect(() => validateReserveMetadataPayload({ name: "X" + "\u0000" + "Y", ticker: "X" })).to.throw(/null byte/);
+    expect(() => validateReserveMetadataPayload({ name: "X", ticker: "X", description: "d" + "\u0000" })).to.throw(/null byte/);
+  });
+
   it("rejects a payload whose JSON exceeds MAX_PAYLOAD_JSON_BYTES -- bounds the public POST endpoint against abuse", () => {
     const huge = { name: "X", ticker: "X", description: "y".repeat(MAX_PAYLOAD_JSON_BYTES + 1), category: "", buyTaxPct: 0, sellTaxPct: 0 };
     expect(() => validateReserveMetadataPayload(huge)).to.throw(/exceeding/);
