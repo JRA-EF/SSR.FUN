@@ -20,6 +20,7 @@ import {
   isWalletRejectionError,
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
+  MAX_ASSETS_PER_RESERVE,
   rawToUiAmount,
   uploadReserveMetadata,
   estimateNetSeedReserveTokens,
@@ -850,10 +851,16 @@ export function CreateDTR() {
   const handleBack = () => setStep((s) => Math.max(1, s - 1));
 
   const addAsset = (symbol: string, assetName: string) => {
+    // Mirrors the deployed program's own per-Reserve asset limit (see
+    // MAX_ASSETS_PER_RESERVE) -- refusing here, before anything is
+    // submitted, is what keeps an over-limit basket from starting a
+    // deployment the program would reject partway through registration.
+    if (assets.length >= MAX_ASSETS_PER_RESERVE) return;
     if (!assets.some(a => a.symbol === symbol)) {
       setAssets([...assets, { symbol, name: assetName, weight: 0.1 }]);
     }
   };
+  const atAssetLimit = assets.length >= MAX_ASSETS_PER_RESERVE;
 
   const removeAsset = (symbol: string) => {
     setAssets(assets.filter(a => a.symbol !== symbol));
@@ -1427,11 +1434,16 @@ export function CreateDTR() {
                             <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{asset.symbol}</span>
                             <div className="text-xs text-muted-foreground font-merge-mono">{asset.mint.slice(0, 4)}...{asset.mint.slice(-4)}</div>
                           </div>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => addAsset(asset.symbol, asset.name)}>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" disabled={atAssetLimit} onClick={() => addAsset(asset.symbol, asset.name)}>
                             <Plus className="w-4 h-4 text-primary" />
                           </Button>
                         </div>
                       ))}
+                      {atAssetLimit && (
+                        <div className="p-3 text-center text-sm text-muted-foreground">
+                          This Reserve holds the maximum of {MAX_ASSETS_PER_RESERVE} assets. Remove one to add a different asset.
+                        </div>
+                      )}
                       {(() => {
                         const remaining = SELECTABLE_ASSETS.filter(a => !assets.some(selected => selected.symbol === a.symbol));
                         if (remaining.length === 0) {

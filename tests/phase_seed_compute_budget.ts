@@ -12,7 +12,7 @@
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_seed_compute_budget.ts
 import { expect } from "chai";
 import { Keypair, TransactionInstruction, PublicKey } from "@solana/web3.js";
-import { seedComputeUnitLimit, PRIORITY_FEE_IX_RESERVED_BYTES, packInstructionsBySize, estimateSingleSignerTxBytes } from "../src/merge/lib/createReserveClient";
+import { seedComputeUnitLimit, MAX_ASSETS_PER_RESERVE, PRIORITY_FEE_IX_RESERVED_BYTES, packInstructionsBySize, estimateSingleSignerTxBytes } from "../src/merge/lib/createReserveClient";
 import { describeOnChainError } from "../packages/sdk/src/errors";
 
 /** Real, measured Mainnet datapoints -- see DEC-0166's evidence list. */
@@ -37,6 +37,14 @@ describe("seedComputeUnitLimit -- DEC-0166 compute-budget model", () => {
     for (let n = 1; n <= 12; n++) {
       expect(seedComputeUnitLimit(n)).to.be.at.most(1_400_000);
     }
+  });
+
+  it("MAX_ASSETS_PER_RESERVE mirrors the deployed ProtocolConfig.max_reserve_assets (12, DEC-0167) and every layer holds at that count: compute budget under the 1.4M cap", () => {
+    expect(MAX_ASSETS_PER_RESERVE).to.equal(12);
+    expect(seedComputeUnitLimit(MAX_ASSETS_PER_RESERVE)).to.be.at.most(1_400_000);
+    // The measured model (~53k + 16.7k*n) at 12 assets, with the same 1.5x
+    // headroom demanded for the real datapoints.
+    expect(seedComputeUnitLimit(MAX_ASSETS_PER_RESERVE)).to.be.at.least(Math.ceil((53_000 + 16_700 * 12) * 1.5));
   });
 
   it("is monotonic in asset count and floors a degenerate count at 1", () => {

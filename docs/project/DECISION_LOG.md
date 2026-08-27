@@ -5159,3 +5159,31 @@
   ]
 }
 ```
+
+
+## DEC-0167
+
+```json
+{
+  "id": "DEC-0167",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "12 assets per Reserve is the product standard, and the Create flow now enforces it client-side: new MAX_ASSETS_PER_RESERVE = 12 (createReserveClient.ts), mirroring the DEPLOYED Mainnet ProtocolConfig.max_reserve_assets (verified live: 12; reserveCount 17 at read time). CreateDTR's asset picker refuses a 13th asset before anything is submitted (add buttons disabled + plain-language notice), so an over-limit basket can never start a deployment the program is guaranteed to reject mid-registration with ReserveAssetLimitReached. NOTHING in the DEC-0165/0166 launch/resume machinery was touched -- per the Creator's explicit instruction, this is purely an additive cap on basket construction.",
+  "context": "Creator decision immediately after DELTA (the first 10-asset Mainnet inception, DEC-0166) proved the pipeline: 'ok let's do 12 for now and keep it as the current standard', with instructions not to change the newly-working implementation. The audit had already established that no client-side asset cap existed at all -- 'up to 10' was advertised copy only, and the sole enforcement was the on-chain rejection of the 13th registration, which would strand a creator mid-deployment.",
+  "rationale": "Every layer is evidence-proven at 12: on-chain validation allows it (DEFAULT_MAX_RESERVE_ASSETS = 12, live config read confirms); compute fits (measured model ~253k CU at 12; seedComputeUnitLimit(12) = 580k, well under Solana's 1.4M cap); transaction size is solved by the DEC-0161 address-lookup-table seed path. 12 needs no program change; anything beyond 12 would require an update_protocol_config governance action (absolute ceiling 24) and is out of scope.",
+  "alternativesConsidered": [
+    "Keeping the cap at the live-proven 10 -- rejected by the Creator: 11-12 differ from 10 only in per-asset loop count on already-proven paths, and the client-side cap prevents the genuinely dangerous case (13+).",
+    "Reading protocolConfig.maxReserveAssets live in the Create flow instead of a mirrored constant -- rejected for now: adds an RPC dependency to a static form gate; the mirror is asserted in tests and documented to be updated with any on-chain config change."
+  ],
+  "impact": "936/936 offline tests passing (1 new: the mirror equals 12 and the compute budget holds at that count). tsc -b, oxlint, npm run build clean. Deployed to production. A ~$24+ seed (~$2/asset, the DELTA-proven floor) is the practical minimum for a full 12-asset basket.",
+  "affectedAreas": ["src/merge/lib/createReserveClient.ts", "src/merge/pages/CreateDTR.tsx", "tests/phase_seed_compute_budget.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live Mainnet ProtocolConfig read via packages/sdk fetchProtocolConfig: maxReserveAssets 12, reserveCount 17.",
+    "programs/ssr_protocol/src/instructions/initialize_reserve_asset.rs:74-77 and add_reserve_asset_active.rs:100: both enforce asset_count < protocol_config.max_reserve_assets (ReserveAssetLimitReached).",
+    "DEC-0166's measured compute model and simulation: CU(12) ~= 253k vs. seedComputeUnitLimit(12) = 580k vs. 1.4M cap.",
+    "Pre-change grep: no client-side asset-count cap existed anywhere in src/ -- addAsset accepted unlimited entries."
+  ]
+}
+```

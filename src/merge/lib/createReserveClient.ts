@@ -578,6 +578,21 @@ export function seedComputeUnitLimit(assetCount: number): number {
 }
 
 /**
+ * The maximum assets one Reserve may hold -- the product standard as of
+ * DEC-0167, and a client-side mirror of the DEPLOYED Mainnet
+ * ProtocolConfig.max_reserve_assets (12, set at initialize_protocol;
+ * initialize_reserve_asset / add_reserve_asset_active reject the 13th with
+ * SsrError::ReserveAssetLimitReached). Enforced in the Create flow BEFORE
+ * anything is submitted, so a larger basket can never start a deployment
+ * the program is guaranteed to reject mid-registration. Every layer is
+ * proven for this count: seedComputeUnitLimit(12) = 580k CU (measured model
+ * ~253k, far under Solana's 1.4M cap) and the address-lookup-table seed
+ * path removes the transaction-size ceiling. If the on-chain config is
+ * ever raised, update this mirror in the same pass.
+ */
+export const MAX_ASSETS_PER_RESERVE = 12;
+
+/**
  * Submits already-signed transaction bytes and keeps re-sending them every
  * few seconds while the bounded status poll runs -- the direct fix for the
  * observed silent drops (see the section comment above). The poll window is
