@@ -45,6 +45,8 @@ export interface ApiResponse {
 
 export const ALLOWED_METHODS = new Set([
   "getLatestBlockhash",
+  // Priority-fee bidding for app-built transactions (2026-08-27 DELTA-launch incident fix -- see createReserveClient.ts's "Priority fees + rebroadcast" section). Read-only fee-market view; no account data exposure.
+  "getRecentPrioritizationFees",
   "getBalance",
   "getAccountInfo",
   "getMultipleAccounts",

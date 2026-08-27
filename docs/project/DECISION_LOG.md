@@ -5098,3 +5098,33 @@
   ]
 }
 ```
+
+
+## DEC-0165
+
+```json
+{
+  "id": "DEC-0165",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "Priority fees + same-signature rebroadcast for every app-built transaction, fixing the DELTA-launch silent-drop incident: (1) signAndSend (createReserveClient + managementClient) and the versioned ALT seed path now prepend a ComputeBudget setComputeUnitPrice instruction, bid from the RPC's getRecentPrioritizationFees (p75 of NONZERO observations, clamped 10k-500k microlamports, 100k fallback, 15s per-endpoint cache); (2) submission re-sends the SAME signed bytes every 3s while the bounded status poll runs (signature-idempotent -- can never double-execute), replacing the old submit-exactly-once (maxRetries:0) behavior, and the poll window widened 40s -> 90s so a dropped transaction resolves as definitive 'expired' instead of ambiguous; (3) packInstructionsBySize and the ALT over-limit check reserve 48 bytes of headroom for the prepended instruction so a batch near 1232 bytes can't overflow at signing time; (4) getRecentPrioritizationFees added to BOTH rpc-proxy allowlists (the self-auditing allowlist regression test caught its absence).",
+  "context": "Creator's 10-asset DELTA Mainnet launch failed at Step 2/2 (Seeding): signature Zehb5... 'could not confirm within the verification window'. On-chain reconstruction: create+register (2 tx), 8 Jupiter funding swaps, and ALT create + 3 extends ALL finalized OK (11:24-11:29 UTC); the final versioned seed_reserve was submitted once and NEVER landed -- no ledger record. The Resume attempt was worse: its new ALT transactions also all dropped; balance comparison proved the wallet paid ZERO for the Resume attempt (the '0.004 SOL' seen was the wallet popup's rent estimate for transactions that never landed).",
+  "rationale": "Established from Mainnet history, not guessed: the landed app-built create transaction paid exactly 5000 lamports -- base fee, zero priority -- while the landed Jupiter swaps and (wallet-rewritten) ALT transactions carried injected priority fees. A zero-priority transaction submitted exactly once with skipPreflight and no rebroadcast is the textbook silent-drop profile under Mainnet fee-market load; conditions tightened between 11:24 (fee-less legacy txs still landing) and the Resume attempt (nothing landing). Phantom's transaction rewriting (Lighthouse + ComputeBudget observed on some transactions) does not cover the versioned/ALT path, so the app cannot rely on the wallet to price its transactions.",
+  "alternativesConsidered": [
+    "Relying on the wallet to inject priority fees -- rejected: observed to be selective (absent on the app's legacy create tx AND unavailable for the v0/ALT seed path, the exact transaction that dropped).",
+    "maxRetries > 0 on sendRawTransaction (RPC-side rebroadcast) -- rejected as sole fix: opaque, provider-dependent behavior; explicit client-side rebroadcast of the same signed bytes is observable and bounded by the blockhash lifetime.",
+    "Re-signing with a fresh blockhash on ambiguity -- rejected: re-signing creates a genuinely different transaction while the first may still land (the exact duplicate-Reserve hazard the skipPreflight header comment documents); rebroadcasting the same signature is idempotent by construction.",
+    "A fixed hardcoded fee -- rejected: overpays in quiet markets, underbids in loaded ones; the clamped p75 of the RPC's live view tracks conditions with a bounded worst case (~0.0007 SOL at 1.4M CU)."
+  ],
+  "impact": "927/927 offline tests passing (7 new: fee-bid selection percentile/clamps/garbage-tolerance, packing headroom invariant, allowlist self-audit now covers the new RPC method). tsc -b, oxlint, npm run build clean. Deployed to production. Creator unblocked: DELTA (created, registered, funded, unseeded -- nothing lost, seed_reserve is atomic and never ran) resumes via Resume Deployment; the abandoned lookup tables' rent (~0.004 SOL from attempt 1 only; attempt 2 never paid anything) is reclaimable later via deactivate+close as table authority.",
+  "affectedAreas": ["src/merge/lib/createReserveClient.ts", "src/merge/lib/managementClient.ts", "api/devnet/rpc-proxy.ts", "api/mainnet/rpc-proxy.ts", "tests/phase_priority_fee_and_rebroadcast.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Mainnet history for wallet 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen: 15 finalized ok transactions 11:24:05-11:29:13 UTC (create/register/8 swaps/ALT create+3 extends), then NOTHING -- the Zehb5... seed and the entire Resume attempt have no ledger record.",
+    "Landed app-built create tx 4wrmyYaam3TU...: fee exactly 5000 lamports (zero priority), no ComputeBudget/Lighthouse instructions; landed ALT txs show wallet-injected ComputeBudget + Lighthouse.",
+    "Balance proof the Resume paid nothing: 1.171056917 SOL both immediately after 11:29:13 and at investigation time (difference 0).",
+    "927/927 offline tests; the pre-existing rpc-proxy allowlist self-audit failed on the new method until both allowlists were extended -- working exactly as designed."
+  ]
+}
+```

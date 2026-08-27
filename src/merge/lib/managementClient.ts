@@ -13,7 +13,7 @@
 // account. See ManageDTR.tsx / onChainPermissions.ts's hasOnChainPermission
 // for how the frontend now gates each button on the real permission instead
 // of hard-locking to root.
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, Connection, PublicKey, Transaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
   buildReadOnlyProgram,
@@ -38,21 +38,23 @@ import {
   validateMetadataUri,
   type RecipientInput,
 } from "@ssr/sdk";
-import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
+import { AmbiguousConfirmationError } from "./rpcResilience";
+import { fetchPriorityFeeMicroLamports, submitAndConfirmWithRebroadcast } from "./createReserveClient";
 import { SSR_PROGRAM_ID, IS_MAINNET } from "./solana-config";
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
-/** Signs, submits (once -- never auto-retried), and confirms via bounded signature-status polling instead of `connection.confirmTransaction`'s websocket subscription -- see zapClient.ts's signSubmitAndConfirm, which this mirrors. Never resubmits on an ambiguous result; throws AmbiguousConfirmationError (carrying the real signature) instead. */
+/** Signs, submits, and confirms via bounded signature-status polling instead of `connection.confirmTransaction`'s websocket subscription. Prepends a priority-fee bid and re-sends the same signed bytes while polling (signature-idempotent) -- see createReserveClient.ts's signAndSend and its 2026-08-27 DELTA-incident section comment, which this mirrors. Never re-signs on an ambiguous result; throws AmbiguousConfirmationError (carrying the real signature) instead. */
 async function signAndSend(connection: Connection, wallet: WalletContextState, tx: Transaction): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+  const microLamports = await fetchPriorityFeeMicroLamports(connection);
+  tx.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports }));
   tx.feePayer = wallet.publicKey;
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   const signed = await wallet.signTransaction(tx);
   // skipPreflight -- see createReserveClient.ts's signAndSend for why.
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+  const { signature, outcome } = await submitAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   // describeOnChainError decodes a real ssr_protocol custom-error code
   // against the deployed IDL instead of surfacing a raw, undecoded blob --

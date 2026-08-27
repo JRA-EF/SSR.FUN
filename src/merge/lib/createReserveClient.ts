@@ -28,6 +28,7 @@
 // see git history -- and the confirmed root cause of the "UI tells the user
 // to create another Reserve despite one already existing" report).
 import {
+  ComputeBudgetProgram,
   Connection,
   PublicKey,
   SystemProgram,
@@ -494,6 +495,95 @@ export async function estimateCreateReserveCost(
  */
 const SOLANA_MAX_TX_BYTES = 1232;
 
+// --- Priority fees + rebroadcast (2026-08-27 DELTA launch incident) --------
+// Root cause, established from Mainnet history: every app-built transaction
+// here was submitted with NO priority fee (base 5000 lamports only --
+// confirmed on the landed create transaction), exactly ONCE (`maxRetries: 0`,
+// `skipPreflight: true`), and never rebroadcast. Under Mainnet fee-market
+// load, the 10-asset DELTA seed transaction (and the subsequent Resume's
+// lookup-table transactions) were silently dropped -- no ledger record at
+// all, surfacing as AmbiguousConfirmationError after the bounded poll. The
+// fix is the standard pair: (1) every transaction carries an explicit
+// compute-unit price sourced from the RPC's recent-prioritization-fee view,
+// and (2) the signed transaction is re-sent every few seconds until the
+// chain gives a definitive answer or its blockhash genuinely expires.
+// Re-sending the SAME signed bytes is idempotent by construction -- the
+// signature IS the dedupe key, so this can never double-execute.
+
+/** Never bid below this (µLamports/CU) -- even a quiet fee market ignores literal-zero bids under load. Cost at the default 200k CU budget: 2,000 lamports (~$0.0004). */
+export const PRIORITY_FEE_FLOOR_MICROLAMPORTS = 10_000;
+/** Never bid above this -- bounds the worst-case fee for a 1.4M-CU transaction to ~0.0007 SOL, so a manipulated/outlier RPC fee view can't make a launch expensive. */
+export const PRIORITY_FEE_CEILING_MICROLAMPORTS = 500_000;
+/** Used when the RPC cannot answer getRecentPrioritizationFees at all. */
+export const PRIORITY_FEE_FALLBACK_MICROLAMPORTS = 100_000;
+
+/**
+ * Picks the compute-unit price to bid from the RPC's recent per-slot
+ * prioritization fees: the 75th percentile of the NONZERO observations
+ * (zero-fee slots say "there was room", not "zero wins under load"),
+ * clamped to [floor, ceiling]. Pure and exported for offline tests.
+ */
+export function pickPriorityFeeMicroLamports(
+  recentFees: number[],
+  floor: number = PRIORITY_FEE_FLOOR_MICROLAMPORTS,
+  ceiling: number = PRIORITY_FEE_CEILING_MICROLAMPORTS,
+): number {
+  const nonzero = recentFees.filter((f) => Number.isFinite(f) && f > 0).sort((a, b) => a - b);
+  if (nonzero.length === 0) return floor;
+  const p75 = nonzero[Math.min(nonzero.length - 1, Math.floor(nonzero.length * 0.75))];
+  return Math.min(ceiling, Math.max(floor, p75));
+}
+
+/** Cached briefly (per endpoint) so a multi-transaction flow (create batches, lookup-table steps, seed) prices from one consistent read instead of hammering the RPC once per transaction. Exported for managementClient.ts, which applies the same fix to every Manage action. */
+export async function fetchPriorityFeeMicroLamports(connection: Connection): Promise<number> {
+  return getCached(`priority-fee:${connection.rpcEndpoint}`, 15_000, async () => {
+    try {
+      const fees = await connection.getRecentPrioritizationFees();
+      return pickPriorityFeeMicroLamports(fees.map((f) => f.prioritizationFee));
+    } catch {
+      return PRIORITY_FEE_FALLBACK_MICROLAMPORTS;
+    }
+  });
+}
+
+/**
+ * Wire bytes reserved for the prepended setComputeUnitPrice instruction
+ * (ComputeBudget program key 32 + instruction header ~4 + 9 data bytes,
+ * rounded up) -- packInstructionsBySize and the over-limit check subtract
+ * this so a batch measured near the cap can't overflow once the priority
+ * instruction is actually added at signing time.
+ */
+export const PRIORITY_FEE_IX_RESERVED_BYTES = 48;
+
+/**
+ * Submits already-signed transaction bytes and keeps re-sending them every
+ * few seconds while the bounded status poll runs -- the direct fix for the
+ * observed silent drops (see the section comment above). The poll window is
+ * widened past the blockhash's own lifetime so a dropped transaction
+ * resolves as a definitive "expired" (safe to retry from scratch) instead
+ * of the ambiguous "may still land".
+ */
+export async function submitAndConfirmWithRebroadcast(
+  connection: Connection,
+  serialized: Uint8Array,
+  lastValidBlockHeight: number,
+): Promise<{ signature: string; outcome: Awaited<ReturnType<typeof confirmSignatureBounded>> }> {
+  const signature = await connection.sendRawTransaction(serialized, { skipPreflight: true, maxRetries: 0 });
+  const rebroadcast = setInterval(() => {
+    void connection.sendRawTransaction(serialized, { skipPreflight: true, maxRetries: 0 }).catch(() => {
+      // An "already processed" rejection here means it landed -- the poll
+      // below reports that; any other transient send failure just waits for
+      // the next tick.
+    });
+  }, 3_000);
+  try {
+    const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight, { maxAttempts: 45 });
+    return { signature, outcome };
+  } finally {
+    clearInterval(rebroadcast);
+  }
+}
+
 /**
  * Greedily packs instructions into the fewest legacy transactions that each
  * stay under SOLANA_MAX_TX_BYTES, WITHOUT ever reordering them (the caller's
@@ -541,7 +631,7 @@ export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInst
   let current: TransactionInstruction[] = [];
   for (const ix of ixs) {
     const candidate = [...current, ix];
-    if (current.length > 0 && estimateSingleSignerTxBytes(feePayer, candidate) > SOLANA_MAX_TX_BYTES) {
+    if (current.length > 0 && estimateSingleSignerTxBytes(feePayer, candidate) > SOLANA_MAX_TX_BYTES - PRIORITY_FEE_IX_RESERVED_BYTES) {
       batches.push(current);
       current = [ix];
     } else {
@@ -553,10 +643,11 @@ export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInst
 }
 
 /**
- * Signs, submits (once -- never auto-retried), and confirms via bounded
- * signature-status polling instead of `connection.confirmTransaction`'s
- * websocket subscription -- see zapClient.ts's signSubmitAndConfirm, which
- * this mirrors. Never resubmits on an ambiguous result; throws
+ * Signs, submits, and confirms via bounded signature-status polling instead
+ * of `connection.confirmTransaction`'s websocket subscription. Prepends a
+ * priority-fee bid and re-sends the SAME signed bytes while polling (see
+ * submitAndConfirmWithRebroadcast -- signature-idempotent, never a second
+ * distinct transaction). Never re-signs on an ambiguous result; throws
  * AmbiguousConfirmationError (carrying the real signature) instead.
  *
  * Submits with `skipPreflight: true`. A live-observed failure ("Deployment
@@ -587,7 +678,8 @@ export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInst
  */
 async function signAndSend(connection: Connection, wallet: WalletContextState, ixs: TransactionInstruction[], clusterLabel: string = "DevNet"): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
-  const tx = new Transaction().add(...ixs);
+  const microLamports = await fetchPriorityFeeMicroLamports(connection);
+  const tx = new Transaction().add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports }), ...ixs);
   tx.feePayer = wallet.publicKey;
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
@@ -597,8 +689,7 @@ async function signAndSend(connection: Connection, wallet: WalletContextState, i
   // classify it downstream as "nothing was ever sent," never something
   // requiring on-chain reconciliation.
   const signed = await wallet.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+  const { signature, outcome } = await submitAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   // describeOnChainError decodes a real ssr_protocol custom-error code
   // (e.g. UnexpectedReserveStatus) against the deployed IDL when present, or
@@ -628,8 +719,7 @@ async function signSubmitConfirmVersioned(
 ): Promise<string> {
   if (!wallet.signTransaction) throw new Error("This wallet does not support transaction signing.");
   const signed = await wallet.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+  const { signature, outcome } = await submitAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
@@ -672,7 +762,7 @@ async function signAndSendPossiblyOverLimit(
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const feePayer = wallet.publicKey;
 
-  if (estimateSingleSignerTxBytes(feePayer, [ix]) <= SOLANA_MAX_TX_BYTES) {
+  if (estimateSingleSignerTxBytes(feePayer, [ix]) <= SOLANA_MAX_TX_BYTES - PRIORITY_FEE_IX_RESERVED_BYTES) {
     onProgress?.("submitting");
     return signAndSend(connection, wallet, [ix], clusterLabel);
   }
@@ -731,8 +821,16 @@ async function signAndSendPossiblyOverLimit(
   }
 
   onProgress?.("submitting");
+  const microLamports = await fetchPriorityFeeMicroLamports(connection);
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-  const message = new TransactionMessage({ payerKey: feePayer, recentBlockhash: blockhash, instructions: [ix] }).compileToV0Message([lookupTableAccount]);
+  const message = new TransactionMessage({
+    payerKey: feePayer,
+    recentBlockhash: blockhash,
+    // The priority-fee bid matters MOST here: this versioned path carries the
+    // largest transaction of the whole launch (the atomic seed), the exact
+    // one observed dropped fee-less in the 2026-08-27 DELTA incident.
+    instructions: [ComputeBudgetProgram.setComputeUnitPrice({ microLamports }), ix],
+  }).compileToV0Message([lookupTableAccount]);
   const versionedTx = new VersionedTransaction(message);
   return signSubmitConfirmVersioned(connection, wallet, versionedTx, lastValidBlockHeight, clusterLabel);
 }
