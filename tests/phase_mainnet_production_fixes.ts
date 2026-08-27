@@ -469,7 +469,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     expect(res.statusCode).to.equal(200);
   });
 
-  it("bounds retries at 3 attempts, and never claims 'no route' for an unparseable-body failure -- reports a network-error message instead, which classifyCreateReserveError already treats as retryable", async () => {
+  it("bounds retries at 4 attempts (DEC-0162: one more attempt, escalating 429 backoff), and never claims 'no route' for an unparseable-body failure -- reports a network-error message instead, which classifyCreateReserveError already treats as retryable", async () => {
     let quoteCalls = 0;
     global.fetch = (async () => {
       quoteCalls += 1;
@@ -477,7 +477,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
-    expect(quoteCalls).to.equal(3);
+    expect(quoteCalls).to.equal(4);
     expect(res.statusCode).to.equal(502);
     const body = res.body as { error?: string };
     expect(body.error).to.include("network error");
@@ -558,7 +558,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
-    expect(quoteCalls).to.equal(3);
+    expect(quoteCalls).to.equal(4);
     expect(res.statusCode).to.equal(429);
     const body = res.body as { error?: string };
     expect(body.error!.toLowerCase()).to.include("too many");
@@ -582,7 +582,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     expect(res.statusCode).to.equal(200);
   });
 
-  it("bounds swap-transaction-build retries at 3 attempts, reporting a network-error message never the old generic 'Failed to build' wording", async () => {
+  it("bounds swap-transaction-build retries at 4 attempts (DEC-0162), reporting a network-error message never the old generic 'Failed to build' wording", async () => {
     let swapCalls = 0;
     global.fetch = (async (url: string) => {
       if (String(url).includes("/quote")) return { ok: true, json: async () => ({ inAmount: "1000000", outAmount: "5000000", priceImpactPct: "0" }) };
@@ -591,7 +591,7 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     }) as unknown as typeof fetch;
     const res = new FakeRes();
     await jupiterSwapHandler(makeValidReq() as never, res as never);
-    expect(swapCalls).to.equal(3);
+    expect(swapCalls).to.equal(4);
     expect(res.statusCode).to.equal(502);
     const body = res.body as { error?: string };
     expect(body.error).to.include("network error");

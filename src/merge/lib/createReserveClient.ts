@@ -235,6 +235,8 @@ export interface ReserveMetadataInput {
   category: string;
   buyTaxPct: number;
   sellTaxPct: number;
+  /** Optional HTTPS URL of the Reserve's profile picture (the reserve-image store's permanent URL -- see reserveImageClient.ts). Omit entirely when the Reserve has none; the server also drops an empty value, keeping pre-existing payloads' content-addressed ids unchanged. */
+  imageUrl?: string;
 }
 
 /**
@@ -967,29 +969,44 @@ async function fundSeedAssetsIdempotent(
         continue;
       }
       const usdcBudgetRaw = BigInt(Math.round(usdBudget * 1_000_000));
-      // A live quote for the FULL budget is also the correct, price-aware
-      // TARGET amount for this asset -- replacing the $1-peg placeholder
-      // seedAmounts[i] was computed with, which is only ever correct for
-      // real USDC itself. This does not mean the full budget gets SWAPPED
-      // below -- see the deficit calculation immediately after. Cached for
-      // a short window (getCached, shared with every other "don't ask
-      // twice within a few seconds" caller in this app) keyed by
-      // mint+budget -- ONLY used here to determine targetRaw for the
-      // already-holds-enough/dust/tolerance checks below, never as the
-      // actual swap quote executed (that's a fresh, uncached call further
-      // down), so a short-lived cached value is safe. Confirmed live
-      // (2026-08-25, real Mainnet Reserve "DELTA", 9 swap-eligible assets):
-      // every Resume click re-fetches this for EVERY asset regardless of
-      // outcome, so a Creator retrying Resume a few times in quick
-      // succession while debugging a DIFFERENT failure was genuinely
-      // driving up to 9+ requests per click against this app's own
-      // 12-requests/60s per-IP proxy limit (api/mainnet/jupiter-swap.ts) --
-      // a real, self-inflicted contributor to "Too many swap requests",
-      // not only Jupiter-side congestion.
-      const fullQuote = await getCached(`jupiter-full-quote:${asset.mint}:${usdcBudgetRaw.toString()}`, 20_000, () =>
-        fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58()),
-      );
-      const targetRaw = fullQuote.outAmount;
+      // The price-aware TARGET amount for this asset, replacing the $1-peg
+      // placeholder seedAmounts[i] was computed with (only ever correct for
+      // real USDC itself). Source, in preference order:
+      //
+      // 1. An asset a previous attempt already verified as ready_to_seed
+      //    reuses its PERSISTED target -- no Jupiter call at all. The asset
+      //    was authoritatively balance-verified against that exact target;
+      //    re-quoting it on every Resume only re-answers an
+      //    already-answered question, and (confirmed live, 10-asset Mainnet
+      //    Reserve "DELTA", 2026-08-25 and again 2026-08-27) the resulting
+      //    burst of one quote per asset in quick succession is precisely
+      //    what trips Jupiter's per-key rate limit and fails the Resume
+      //    before it reaches the assets that genuinely need work. Reusing
+      //    the persisted target also stops a verified asset from flapping
+      //    back to "needs funding" just because the live price moved since
+      //    it was funded. The wallet's REAL current balance is still
+      //    re-read fresh (top of this function) and still gates
+      //    ready_to_seed below -- if the tokens actually left the wallet,
+      //    this asset falls through to a live re-quote and re-swap.
+      // 2. Otherwise a live quote for the FULL budget. This does not mean
+      //    the full budget gets SWAPPED below -- see the deficit
+      //    calculation immediately after. Cached (getCached, keyed by
+      //    mint+budget) so rapid Resume clicks within the TTL don't re-ask;
+      //    ONLY used to determine targetRaw for the already-holds-enough/
+      //    dust/tolerance checks below, never as the actual swap quote
+      //    executed (that's a fresh, uncached call further down), so a
+      //    cached value is safe -- target drift within the TTL is exactly
+      //    what the shortfall-tolerance machinery already absorbs.
+      const persistedTarget = funding[asset.mint];
+      let targetRaw: bigint;
+      if (persistedTarget?.status === "ready_to_seed" && persistedTarget.targetRaw) {
+        targetRaw = BigInt(persistedTarget.targetRaw);
+      } else {
+        const fullQuote = await getCached(`jupiter-full-quote:${asset.mint}:${usdcBudgetRaw.toString()}`, 60_000, () =>
+          fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58()),
+        );
+        targetRaw = fullQuote.outAmount;
+      }
       finalSeedAmounts[i] = targetRaw;
 
       const existingRaw = balances[i]; // real balance already read at the top of this function, BEFORE any swap this call performs -- may already include tokens from an earlier attempt/session, not just this one.

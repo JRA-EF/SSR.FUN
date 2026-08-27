@@ -23,6 +23,7 @@ interface ApiRequest {
 interface ApiResponse {
   status(code: number): ApiResponse;
   json(body: unknown): void;
+  setHeader(name: string, value: string): void;
 }
 
 const MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -71,7 +72,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const ip = clientIp(req);
-  if (!checkRateWindow(`mainnet-jupiter-swap:${ip}`, 60_000, 12)) {
+  // 20/60s per IP: sized so ONE legitimate many-asset launch/resume fits.
+  // A 10-asset launch costs up to ~2 calls per swapped asset (target quote
+  // + fresh execution quote), but the client now paces its own calls
+  // (jupiterSwapClient.ts's paceJupiterProxyCall) and no longer re-quotes
+  // already-verified assets on Resume, so 20 comfortably covers real use
+  // while still blunting a hammering client. Retry-After tells the paced
+  // client exactly how long to back off instead of guessing.
+  if (!checkRateWindow(`mainnet-jupiter-swap:${ip}`, 60_000, 20)) {
+    res.setHeader("Retry-After", "15");
     res.status(429).json({ error: "Too many swap requests from this client -- wait a moment and try again." });
     return;
   }
@@ -245,7 +254,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   let quote: JupiterQuote | null = null;
   let lastTransientStatus: number | null = null;
-  const MAX_QUOTE_ATTEMPTS = 3;
+  // 4 attempts with ESCALATING 429 waits (2s, 4s, 6s): flat 2s retries were
+  // observed (2026-08-27, the same "DELTA" Resume) to keep landing inside
+  // the same per-key rate window when several assets' quotes had just
+  // preceded this one. Requires the explicit maxDuration in vercel.json --
+  // worst case here is ~12s of waiting plus the fetches themselves.
+  const MAX_QUOTE_ATTEMPTS = 4;
   for (let attempt = 0; attempt < MAX_QUOTE_ATTEMPTS && !quote; attempt++) {
     const result = await attemptQuote();
     if (result.kind === "ok") {
@@ -260,7 +274,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } else {
       lastTransientStatus = result.status;
       if (attempt < MAX_QUOTE_ATTEMPTS - 1) {
-        const delayMs = result.status === 429 ? (result.retryAfterMs ?? 2_000) : 400 * (attempt + 1);
+        const delayMs = result.status === 429 ? (result.retryAfterMs ?? 2_000 * (attempt + 1)) : 400 * (attempt + 1);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
@@ -274,6 +288,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     // ... requests" / "network error") -- consistent with every other
     // transient-failure message in this app.
     if (lastTransientStatus === 429) {
+      // Retry-After: the client (jupiterSwapClient.ts) honors this with a
+      // real pause before its own bounded retry -- 10s is long enough to
+      // exit a per-minute rate window that this endpoint's in-request
+      // waits could not outlast.
+      res.setHeader("Retry-After", "10");
       res.status(429).json({ error: "Jupiter's API answered with too many requests for this key right now (a burst of quotes in quick succession) -- wait a few seconds and try again." });
     } else {
       res.status(502).json({ error: "Jupiter's swap-quote service had a network error and is temporarily unavailable for this asset -- wait a moment and try again." });
@@ -367,7 +386,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   let built: Record<string, unknown> | null = null;
   let lastBuildTransientStatus: number | null = null;
-  const MAX_SWAP_BUILD_ATTEMPTS = 3;
+  // Same escalating-429-backoff rationale as MAX_QUOTE_ATTEMPTS above.
+  const MAX_SWAP_BUILD_ATTEMPTS = 4;
   for (let attempt = 0; attempt < MAX_SWAP_BUILD_ATTEMPTS && !built; attempt++) {
     const result = await attemptBuildSwap();
     if (result.kind === "ok") {
@@ -378,13 +398,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } else {
       lastBuildTransientStatus = result.status;
       if (attempt < MAX_SWAP_BUILD_ATTEMPTS - 1) {
-        const delayMs = result.status === 429 ? (result.retryAfterMs ?? 2_000) : 400 * (attempt + 1);
+        const delayMs = result.status === 429 ? (result.retryAfterMs ?? 2_000 * (attempt + 1)) : 400 * (attempt + 1);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
   }
   if (!built) {
     if (lastBuildTransientStatus === 429) {
+      // See the quote step's identical Retry-After note above.
+      res.setHeader("Retry-After", "10");
       res.status(429).json({ error: "Jupiter's API answered with too many requests for this key right now (a burst of quotes in quick succession) -- wait a few seconds and try again." });
     } else {
       res.status(502).json({ error: "Jupiter's swap-transaction service had a network error and is temporarily unavailable -- wait a moment and try again." });
