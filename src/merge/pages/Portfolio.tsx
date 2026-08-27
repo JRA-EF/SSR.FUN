@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import {
   calcHoldingValue,
@@ -19,8 +20,178 @@ import { Badge } from "@/components/ui/badge";
 import { DevnetOnboarding } from "../components/DevnetOnboarding";
 import { IS_MAINNET } from "@/lib/solana-config";
 
-/** Categorical swatch cycled across allocation rows -- same palette as the native charts. */
+/** Categorical swatches for allocation slices -- same palette as the native charts, assigned in fixed order by descending value. */
 const ALLOCATION_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
+
+/** A pie only reads at a glance up to ~6 segments; smaller positions fold into "Other". */
+const MAX_PIE_SLICES = 6;
+
+const PIE_C = 100; // viewBox center
+const PIE_RO = 96; // outer radius
+const PIE_RI = 62; // inner radius
+const PIE_GAP = 2 / PIE_RO; // ~2px of surface between slices at the rim
+
+function polarPoint(r: number, angle: number) {
+  return `${(PIE_C + r * Math.cos(angle)).toFixed(2)} ${(PIE_C + r * Math.sin(angle)).toFixed(2)}`;
+}
+
+function sliceArcPath(a0: number, a1: number) {
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return [
+    `M ${polarPoint(PIE_RO, a0)}`,
+    `A ${PIE_RO} ${PIE_RO} 0 ${large} 1 ${polarPoint(PIE_RO, a1)}`,
+    `L ${polarPoint(PIE_RI, a1)}`,
+    `A ${PIE_RI} ${PIE_RI} 0 ${large} 0 ${polarPoint(PIE_RI, a0)}`,
+    "Z",
+  ].join(" ");
+}
+
+type AllocationEntry = { dtr: { id: string; name: string; ticker: string }; value: number };
+
+function AllocationCard({ allocation }: { allocation: AllocationEntry[] }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const total = allocation.reduce((sum, a) => sum + a.value, 0);
+  if (total <= 0) return null;
+
+  const folded = allocation.length > MAX_PIE_SLICES;
+  const top = folded ? allocation.slice(0, MAX_PIE_SLICES - 1) : allocation;
+  const rest = folded ? allocation.slice(MAX_PIE_SLICES - 1) : [];
+  const restValue = rest.reduce((sum, a) => sum + a.value, 0);
+
+  const slices = [
+    ...top.map((a, i) => ({
+      key: a.dtr.id,
+      name: a.dtr.name,
+      ticker: a.dtr.ticker,
+      value: a.value,
+      color: ALLOCATION_COLORS[i],
+      detail: undefined as string | undefined,
+    })),
+    ...(rest.length > 0
+      ? [{
+          key: "other",
+          name: `Other (${rest.length} Reserves)`,
+          ticker: "",
+          value: restValue,
+          color: "var(--s-other)",
+          detail: rest.map((a) => a.dtr.ticker).join(", ") as string | undefined,
+        }]
+      : []),
+  ];
+
+  const hoveredSlice = slices.find((s) => s.key === hovered);
+  const pct = (v: number) => `${((v / total) * 100).toFixed(1)}%`;
+
+  let angle = -Math.PI / 2; // start at 12 o'clock, clockwise
+  const arcs = slices.map((s) => {
+    const sweep = (s.value / total) * 2 * Math.PI;
+    const gap = slices.length > 1 ? Math.min(PIE_GAP, sweep / 2) : 0;
+    let a0 = angle + gap / 2;
+    let a1 = angle + sweep - gap / 2;
+    angle += sweep;
+    if (a1 - a0 < 0.008) {
+      // keep dust-sized positions visible and hoverable
+      const mid = (a0 + a1) / 2;
+      a0 = mid - 0.004;
+      a1 = mid + 0.004;
+    }
+    return { ...s, a0, a1 };
+  });
+
+  return (
+    <Card className="bg-card/40 border-border/50 mb-8">
+      <CardHeader className="pb-4">
+        <CardTitle className="text-lg">Allocation by Reserve</CardTitle>
+        <CardDescription>Share of your Reserve Token holdings, by current value.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col sm:flex-row items-center gap-8">
+          <svg viewBox="0 0 200 200" className="w-44 h-44 shrink-0" role="img" aria-label="Pie chart of your Reserve Token holdings by current value">
+            {slices.length === 1 ? (
+              <circle
+                cx={PIE_C}
+                cy={PIE_C}
+                r={(PIE_RO + PIE_RI) / 2}
+                fill="none"
+                stroke={slices[0].color}
+                strokeWidth={PIE_RO - PIE_RI}
+                onMouseEnter={() => setHovered(slices[0].key)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <title>{`${slices[0].name} — ${pct(slices[0].value)} · ${formatUsdc(slices[0].value)}`}</title>
+              </circle>
+            ) : (
+              arcs.map((s) => (
+                <path
+                  key={s.key}
+                  d={sliceArcPath(s.a0, s.a1)}
+                  fill={s.color}
+                  opacity={hovered !== null && hovered !== s.key ? 0.4 : 1}
+                  onMouseEnter={() => setHovered(s.key)}
+                  onMouseLeave={() => setHovered(null)}
+                >
+                  <title>{`${s.name}${s.detail ? `: ${s.detail}` : ""} — ${pct(s.value)} · ${formatUsdc(s.value)}`}</title>
+                </path>
+              ))
+            )}
+            <text
+              x={PIE_C}
+              y={hoveredSlice ? 88 : 92}
+              textAnchor="middle"
+              className="font-merge-mono text-foreground"
+              fill="currentColor"
+              fontSize="17"
+              fontWeight="600"
+              pointerEvents="none"
+            >
+              {hoveredSlice ? pct(hoveredSlice.value) : formatUsdc(total)}
+            </text>
+            <text
+              x={PIE_C}
+              y={hoveredSlice ? 106 : 110}
+              textAnchor="middle"
+              className="text-muted-foreground"
+              fill="currentColor"
+              fontSize="10.5"
+              pointerEvents="none"
+            >
+              {hoveredSlice ? hoveredSlice.ticker || "Other" : "Reserve Holdings"}
+            </text>
+            {hoveredSlice && (
+              <text
+                x={PIE_C}
+                y={122}
+                textAnchor="middle"
+                className="font-merge-mono text-muted-foreground"
+                fill="currentColor"
+                fontSize="10.5"
+                pointerEvents="none"
+              >
+                {formatUsdc(hoveredSlice.value)}
+              </text>
+            )}
+          </svg>
+
+          <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-1 self-center">
+            {slices.map((s) => (
+              <div
+                key={s.key}
+                className={`flex items-center gap-2.5 text-sm min-w-0 rounded-md px-2 py-1.5 transition-colors ${hovered === s.key ? "bg-muted/30" : ""}`}
+                onMouseEnter={() => setHovered(s.key)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: s.color }} />
+                <span className="truncate font-medium">{s.name}</span>
+                {s.ticker && <span className="font-merge-mono text-muted-foreground text-xs shrink-0">{s.ticker}</span>}
+                <span className="font-merge-mono ml-auto shrink-0">{pct(s.value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function PnlText({ value, pct, className = "" }: { value: number; pct?: number; className?: string }) {
   const isProfit = value >= 0;
@@ -161,35 +332,7 @@ export function Portfolio() {
 
       {!IS_MAINNET && <DevnetOnboarding />}
 
-      {allocation.length > 0 && (
-        <Card className="bg-card/40 border-border/50 mb-8">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Allocation by Reserve</CardTitle>
-            <CardDescription>Share of your Reserve Token holdings, by current value.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex h-2.5 rounded-full overflow-hidden mb-5 bg-muted/40">
-              {allocation.map((a, i) => (
-                <div
-                  key={a.dtr.id}
-                  style={{ width: `${(a.value / totalDtrValue) * 100}%`, background: ALLOCATION_COLORS[i % ALLOCATION_COLORS.length] }}
-                  title={`${a.dtr.ticker} ${((a.value / totalDtrValue) * 100).toFixed(1)}%`}
-                />
-              ))}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3">
-              {allocation.map((a, i) => (
-                <div key={a.dtr.id} className="flex items-center gap-2.5 text-sm min-w-0">
-                  <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: ALLOCATION_COLORS[i % ALLOCATION_COLORS.length] }} />
-                  <span className="truncate font-medium">{a.dtr.name}</span>
-                  <span className="font-merge-mono text-muted-foreground text-xs shrink-0">{a.dtr.ticker}</span>
-                  <span className="font-merge-mono ml-auto shrink-0">{((a.value / totalDtrValue) * 100).toFixed(1)}%</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {allocation.length > 0 && <AllocationCard allocation={allocation} />}
 
       <div className="space-y-6 mb-8">
         <h2 className="text-2xl font-merge-display font-bold">Reserve Holdings</h2>
