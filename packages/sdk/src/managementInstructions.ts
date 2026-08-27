@@ -20,6 +20,30 @@ import type { Program } from "@anchor-lang/core";
 import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority, findMintAuthority, findManagerFeeRecipients } from "./pda";
 import type { RecipientInput } from "./feeMath";
 
+/**
+ * Points `reserve.metadata_uri` at a new off-chain metadata URL (this app's
+ * own content-addressed reserve-metadata store -- see
+ * src/merge/lib/createReserveClient.ts's uploadReserveMetadata). Gated
+ * on-chain by require_reserve_permission(UPDATE_METADATA): the Reserve's
+ * root manager, or a delegate holding that permission (see
+ * update_metadata.rs). `delegate` is the signer's OWN Delegate PDA (via
+ * findDelegate) -- only deserialized on-chain when signer != manager, same
+ * contract as every other builder here. The caller MUST have already run
+ * metadataUri.ts's validateMetadataUri on `newMetadataUri`.
+ */
+export async function buildUpdateMetadataInstruction(
+  program: Program<anchor.Idl>,
+  reserve: PublicKey,
+  signer: PublicKey,
+  delegate: PublicKey,
+  newMetadataUri: string,
+): Promise<TransactionInstruction> {
+  return program.methods
+    .updateMetadata(newMetadataUri)
+    .accounts({ reserve, delegate, signer })
+    .instruction();
+}
+
 /** reserve.asset_count ReserveAsset PDAs, in order_index order -- see common.rs::load_reserve_asset_configs. */
 export async function buildUpdateTargetsInstruction(
   program: Program<anchor.Idl>,

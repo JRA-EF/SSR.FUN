@@ -13,6 +13,15 @@ export interface ReserveMetadataPayload {
   category: string;
   buyTaxPct: number;
   sellTaxPct: number;
+  /**
+   * Optional HTTPS URL of the Reserve's profile picture (this app's own
+   * content-addressed /api/<cluster>/reserve-image?id=... store, or any
+   * other permanent HTTPS image URL). OMITTED -- never stored as "" -- when
+   * the Reserve has no picture, so every payload minted before this field
+   * existed keeps its exact JSON bytes and therefore its content-addressed
+   * id; an absent picture can never silently re-key existing rows.
+   */
+  imageUrl?: string;
 }
 
 /**
@@ -27,6 +36,9 @@ export const MAX_PAYLOAD_JSON_BYTES = 4_000;
 
 /** Tax percentages are stored and later consumed as literal percentages (0-100) by downstream fee math -- a value outside this range (e.g. -25 or 500) is never economically meaningful, so it's treated the same as a non-finite value below: normalized to 0 rather than persisted as garbage. */
 const MAX_TAX_PCT = 100;
+
+/** Generous cap on the stored profile-picture URL. This app's own content-addressed image store produces ~85-byte URLs; the bound exists (like MAX_PAYLOAD_JSON_BYTES) to reject a pathological/abusive value on this public endpoint, not as a realistic ceiling. */
+export const MAX_IMAGE_URL_BYTES = 500;
 
 function isValidTaxPct(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_TAX_PCT;
@@ -56,6 +68,19 @@ export function validateReserveMetadataPayload(body: unknown): ReserveMetadataPa
     buyTaxPct: isValidTaxPct(p.buyTaxPct) ? p.buyTaxPct : 0,
     sellTaxPct: isValidTaxPct(p.sellTaxPct) ? p.sellTaxPct : 0,
   };
+
+  // Assigned AFTER the fixed fields above so it always serializes last --
+  // key order is what keeps computeMetadataId deterministic across callers.
+  const imageUrl = typeof p.imageUrl === "string" ? p.imageUrl.trim() : "";
+  if (imageUrl) {
+    if (!/^https:\/\//i.test(imageUrl)) {
+      throw new Error("The profile picture link must be a permanent HTTPS URL.");
+    }
+    if (new TextEncoder().encode(imageUrl).length > MAX_IMAGE_URL_BYTES) {
+      throw new Error(`The profile picture link exceeds the ${MAX_IMAGE_URL_BYTES}-byte limit -- use a shorter permanent URL.`);
+    }
+    payload.imageUrl = imageUrl;
+  }
 
   // Postgres' UTF-8 column type rejects a literal null byte outright (a raw
   // driver-level exception, not a validation error) -- reject it here, at

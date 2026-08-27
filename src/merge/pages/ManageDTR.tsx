@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -28,6 +28,7 @@ import {
   fetchReserveOnChain,
   fetchManagerFeeRecipients,
   discoverDelegatesForReserve,
+  resolveReserveMetadata,
   DEVNET_FIXTURES,
   DEVUSDC,
   findReserve,
@@ -48,8 +49,11 @@ import {
   executeRemoveReserveAsset,
   executeSubmitRebalance,
   executeUpdateDelegatePermissions,
+  executeUpdateMetadata,
   type RebalanceAssetPlan,
 } from "@/lib/managementClient";
+import { uploadReserveMetadata } from "@/lib/createReserveClient";
+import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { applySliderWeightChange, type SliderAsset } from "@/lib/rebalanceSlider";
 
 /**
@@ -220,7 +224,7 @@ function OnChainDelegateRow({
 
 export function ManageDTR() {
   const { dtrId } = useParams();
-  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates } = useAppStore();
+  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates, setReserveProfileImage } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const { toast } = useToast();
@@ -366,6 +370,13 @@ export function ManageDTR() {
   // right), separate from Delegates tab's own search-less list.
   const [rebalanceAssetSearch, setRebalanceAssetSearch] = useState("");
   const [onChainTxPending, setOnChainTxPending] = useState<string | null>(null); // which action is in flight, for button disabling
+
+  // Profile-picture editor (Overview tab's Reserve Identity card). The
+  // picked file is normalized to a small data URL locally (see
+  // reserveImageClient.ts) and held here for preview until saved.
+  const [pendingProfileImage, setPendingProfileImage] = useState<string | null>(null);
+  const [profileImageError, setProfileImageError] = useState<string | null>(null);
+  const profileImageInputRef = useRef<HTMLInputElement | null>(null);
 
   // DEC-0094: multi-recipient Manager fees. `feeRecipientsData` is refetched
   // independently of the main Reserve poll (it lives in a separate
@@ -706,6 +717,7 @@ export function ManageDTR() {
   // fail-closed contract). Only meaningful for a genuinely on-chain Reserve;
   // the !dtr.onChain branches above (hasManageDelegates/hasRebalance) keep
   // using the local-simulated system for a purely local/demo Reserve.
+  const canUpdateMetadataOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_METADATA);
   const canUpdateTargetsOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_TARGETS);
   const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
   const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
@@ -714,6 +726,81 @@ export function ManageDTR() {
   // Unified gate for the rebalance-edit table, shared by both the on-chain
   // (real permission) and simulated (local permission) branches.
   const canEditRebalance = dtr.onChain ? canUpdateTargetsOnChain : hasRebalance;
+
+  // Handlers: Profile picture (Reserve Identity card). Whether the current
+  // signer may change it: for a real on-chain Reserve, the root manager or a
+  // delegate holding the update-metadata permission (the same gate
+  // update_metadata enforces on-chain); a purely local/simulated Reserve has
+  // no on-chain gate -- the page's own manager-or-delegate access check
+  // above is the only meaningful one.
+  const canEditProfilePicture = dtr.onChain ? canUpdateMetadataOnChain : true;
+
+  const handlePickProfileImage = async (file: File | undefined) => {
+    if (!file) return;
+    setProfileImageError(null);
+    try {
+      setPendingProfileImage(await fileToProfileImageDataUrl(file));
+    } catch (e) {
+      setPendingProfileImage(null);
+      setProfileImageError(e instanceof Error ? e.message : "This file could not be read as an image -- try a different one.");
+    }
+  };
+
+  const handleSaveProfileImage = () => {
+    if (!pendingProfileImage) return;
+    setProfileImageError(null);
+    const onChainMeta = dtr.onChain;
+    if (!onChainMeta) {
+      // Purely local/simulated Reserve: nothing on-chain to update.
+      setReserveProfileImage(dtr.id, pendingProfileImage);
+      setPendingProfileImage(null);
+      toast({ title: "Profile picture updated", description: "This Reserve now shows the new picture." });
+      return;
+    }
+    void runOnChainAction("Update Profile Picture", async () => {
+      const origin = window.location.origin;
+      const cluster = IS_MAINNET ? ("mainnet" as const) : ("devnet" as const);
+      // 1. Store the picture itself (content-addressed, idempotent) and get
+      //    its short permanent URL -- never the image bytes on-chain.
+      const imageUrl = await uploadReserveImage(origin, pendingProfileImage, cluster);
+      // 2. Re-read the Reserve's CURRENT published details fresh from its
+      //    own on-chain metadata link as the base payload -- never from
+      //    possibly-stale/placeholder local display state, which for an
+      //    unresolvable-metadata Reserve holds honest "Unnamed Reserve"
+      //    placeholders that must never get baked into real metadata.
+      const fresh = await fetchReserveOnChain(
+        connection,
+        new PublicKey(onChainMeta.programId),
+        new PublicKey(onChainMeta.reserve),
+        onChainMeta.assets.map((a) => new PublicKey(a.mint)),
+      );
+      const current = fresh ? await resolveReserveMetadata(fresh.metadataUri) : null;
+      if (!current) {
+        throw new Error("This Reserve's current public details could not be read, so the picture was not changed. Try again in a moment.");
+      }
+      // 3. Publish the same details plus the new picture, then point the
+      //    Reserve at the new payload (one wallet approval).
+      const newMetadataUri = await uploadReserveMetadata(
+        origin,
+        {
+          name: current.name,
+          ticker: current.ticker,
+          description: current.description,
+          category: current.category,
+          buyTaxPct: current.buyTaxPct,
+          sellTaxPct: current.sellTaxPct,
+          imageUrl,
+        },
+        cluster,
+      );
+      const signature = await executeUpdateMetadata(connection, walletCtx, onChainMeta.reserve, newMetadataUri);
+      // Show it immediately; RealReserveSync's next discovery pass re-derives
+      // the same value from the updated metadata.
+      setReserveProfileImage(dtr.id, imageUrl);
+      setPendingProfileImage(null);
+      return signature;
+    });
+  };
 
   // Handlers: Delegates
   const handleAddDelegate = () => {
@@ -969,6 +1056,55 @@ export function ManageDTR() {
                   <CardTitle className="text-xl font-merge-display">Reserve Identity</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground mb-2">Profile Picture</p>
+                    <div className="flex items-start gap-4">
+                      <Avatar className="h-16 w-16 border-2 border-border shadow-md">
+                        {(pendingProfileImage ?? dtr.logoUrl) && <AvatarImage src={pendingProfileImage ?? dtr.logoUrl} alt={dtr.ticker} />}
+                        <AvatarFallback className="bg-primary/10 text-primary text-xl font-merge-display font-bold">
+                          {dtr.ticker.slice(0, 2)}
+                        </AvatarFallback>
+                      </Avatar>
+                      {canEditProfilePicture ? (
+                        <div className="space-y-2">
+                          <input
+                            ref={profileImageInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            className="hidden"
+                            onChange={(e) => {
+                              void handlePickProfileImage(e.target.files?.[0]);
+                              e.target.value = "";
+                            }}
+                          />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button variant="outline" size="sm" disabled={onChainTxPending !== null} onClick={() => profileImageInputRef.current?.click()}>
+                              Choose Image
+                            </Button>
+                            {pendingProfileImage && (
+                              <>
+                                <Button size="sm" disabled={onChainTxPending !== null} onClick={handleSaveProfileImage}>
+                                  {onChainTxPending === "Update Profile Picture" ? "Saving..." : "Save Picture"}
+                                </Button>
+                                <Button variant="ghost" size="sm" disabled={onChainTxPending !== null} onClick={() => setPendingProfileImage(null)}>
+                                  Cancel
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Shown next to this Reserve everywhere in the app. PNG, JPEG, WebP, or GIF -- large images are resized automatically.
+                            {dtr.onChain ? " Saving publishes the picture as part of this Reserve's public details and will ask your wallet to approve." : ""}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Only the Root Manager, or a delegate granted the "Update Metadata" permission, can change this Reserve's picture.
+                        </p>
+                      )}
+                    </div>
+                    {profileImageError && <p className="text-sm text-destructive mt-2">{profileImageError}</p>}
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Name</p>

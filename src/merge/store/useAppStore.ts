@@ -139,6 +139,8 @@ interface AppState {
   registerRealReserve: (dtr: DTR) => void;
   /** Writes a freshly-resolved on-chain delegate list (see packages/sdk/src/discovery.ts's discoverDelegatesForReserve) onto a real DTR's onChain.delegatesOnChain -- read-only, verified data; never touches the fully-local, simulated `delegates` array. */
   setOnChainDelegates: (dtrId: string, delegates: OnChainDelegateMeta[], delegateCountOnChain: number) => void;
+  /** Immediately shows a just-published Reserve profile picture (ManageDTR's editor) without waiting for RealReserveSync's next metadata resolution -- the next discovery pass re-derives the same value from the Reserve's own updated metadata (see onChainReserve.ts's fresh-first logoUrl merge). */
+  setReserveProfileImage: (dtrId: string, logoUrl: string) => void;
   /** Mirrors the connected wallet's REAL Reserve Token balance for an on-chain DTR into `holdings` -- see RealReserveSync.tsx. */
   syncRealHolding: (dtrId: string, tokenBalanceRaw: string, nav: number) => void;
   /**
@@ -240,6 +242,12 @@ export const useAppStore = create<AppState>()(
           dtrs: state.dtrs.map((d) =>
             d.id === dtrId && d.onChain ? { ...d, onChain: { ...d.onChain, delegatesOnChain: delegates, delegateCountOnChain } } : d,
           ),
+        }));
+      },
+
+      setReserveProfileImage: (dtrId, logoUrl) => {
+        set((state) => ({
+          dtrs: state.dtrs.map((d) => (d.id === dtrId ? { ...d, logoUrl } : d)),
         }));
       },
 

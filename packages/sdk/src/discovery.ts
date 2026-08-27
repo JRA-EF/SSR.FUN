@@ -426,6 +426,16 @@ export interface ParsedReserveMetadata {
    */
   buyTaxPct: number;
   sellTaxPct: number;
+  /**
+   * Optional HTTPS URL of the Reserve's profile picture, set/changed by the
+   * Manager (or a delegate holding the update-metadata permission) via the
+   * Manage page -- see lib/reserve-metadata/payload.ts's field of the same
+   * name. Absent for every Reserve that has never had one set; only ever an
+   * https:// URL (anything else in the fetched JSON is ignored below, so a
+   * hostile payload can never smuggle a javascript:/data: value into an
+   * <img src>).
+   */
+  imageUrl?: string;
 }
 
 /** Shared by parseReserveMetadataUri (inline data: URI) and resolveReserveMetadata (a fetched HTTPS payload) -- the ONE place a raw JSON value becomes a ParsedReserveMetadata, so the two never drift. Returns null -- never a fabricated guess -- when neither name nor ticker is present. */
@@ -435,6 +445,7 @@ function metadataFromJson(json: unknown): ParsedReserveMetadata | null {
   const name = typeof j.name === "string" ? j.name : "";
   const ticker = typeof j.ticker === "string" ? j.ticker : "";
   if (!name && !ticker) return null;
+  const imageUrl = typeof j.imageUrl === "string" && /^https:\/\//i.test(j.imageUrl) ? j.imageUrl : undefined;
   return {
     name,
     ticker,
@@ -442,6 +453,7 @@ function metadataFromJson(json: unknown): ParsedReserveMetadata | null {
     category: typeof j.category === "string" ? j.category : "",
     buyTaxPct: typeof j.buyTaxPct === "number" && Number.isFinite(j.buyTaxPct) ? j.buyTaxPct : 0,
     sellTaxPct: typeof j.sellTaxPct === "number" && Number.isFinite(j.sellTaxPct) ? j.sellTaxPct : 0,
+    ...(imageUrl ? { imageUrl } : {}),
   };
 }
 

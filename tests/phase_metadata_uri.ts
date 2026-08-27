@@ -19,7 +19,7 @@
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_metadata_uri.ts
 import { expect } from "chai";
 import { MAX_METADATA_URI_LEN, metadataUriByteLength, isMetadataUriWithinLimit, validateMetadataUri } from "../packages/sdk/src/metadataUri";
-import { validateReserveMetadataPayload, computeMetadataId, MAX_PAYLOAD_JSON_BYTES, type ReserveMetadataPayload } from "../lib/reserve-metadata/payload";
+import { validateReserveMetadataPayload, computeMetadataId, MAX_PAYLOAD_JSON_BYTES, MAX_IMAGE_URL_BYTES, type ReserveMetadataPayload } from "../lib/reserve-metadata/payload";
 
 describe("metadataUri.ts -- MAX_METADATA_URI_LEN mirrors programs/ssr_protocol/src/constants.rs", () => {
   it("is 200, matching the on-chain MAX_METADATA_URI_LEN exactly -- update both by hand together if this ever changes", () => {
@@ -223,5 +223,47 @@ describe("lib/reserve-metadata/payload.ts -- computeMetadataId (content-addresse
   it("is exactly 16 lowercase hex characters -- fixed-length regardless of input size, which is what keeps the resulting URL short even for a long description", () => {
     const id = computeMetadataId(payload);
     expect(id).to.match(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("lib/reserve-metadata/payload.ts -- optional imageUrl (Reserve profile picture)", () => {
+  const base = { name: "X", ticker: "X" };
+
+  it("stores a valid HTTPS imageUrl, trimmed", () => {
+    const url = "https://strategic-super-reserve.fun/api/devnet/reserve-image?id=0123456789abcdef";
+    const p = validateReserveMetadataPayload({ ...base, imageUrl: ` ${url} ` });
+    expect(p.imageUrl).to.equal(url);
+  });
+
+  it("OMITS the field entirely (never stores \"\") when imageUrl is absent, empty, or not a string -- what keeps every pre-existing payload's content-addressed id byte-identical", () => {
+    expect("imageUrl" in validateReserveMetadataPayload(base)).to.equal(false);
+    expect("imageUrl" in validateReserveMetadataPayload({ ...base, imageUrl: "" })).to.equal(false);
+    expect("imageUrl" in validateReserveMetadataPayload({ ...base, imageUrl: "   " })).to.equal(false);
+    expect("imageUrl" in validateReserveMetadataPayload({ ...base, imageUrl: 42 })).to.equal(false);
+  });
+
+  it("a payload without imageUrl hashes exactly as it did before the field existed", () => {
+    const before: ReserveMetadataPayload = { name: "A", ticker: "A", description: "d", category: "c", buyTaxPct: 0, sellTaxPct: 0 };
+    expect(computeMetadataId(validateReserveMetadataPayload({ name: "A", ticker: "A", description: "d", category: "c", buyTaxPct: 0, sellTaxPct: 0 }))).to.equal(computeMetadataId(before));
+  });
+
+  it("adding/changing the imageUrl changes the content-addressed id -- a picture update mints a NEW metadata URL for update_metadata to point at", () => {
+    const without = validateReserveMetadataPayload(base);
+    const withImage = validateReserveMetadataPayload({ ...base, imageUrl: "https://example.com/a.png" });
+    expect(computeMetadataId(without)).to.not.equal(computeMetadataId(withImage));
+  });
+
+  it("rejects a non-HTTPS imageUrl (http:, data:, javascript:) -- the stored value must be a permanent link, never inline bytes or a scriptable scheme", () => {
+    expect(() => validateReserveMetadataPayload({ ...base, imageUrl: "http://example.com/a.png" })).to.throw(/HTTPS/);
+    expect(() => validateReserveMetadataPayload({ ...base, imageUrl: "data:image/png;base64,AAAA" })).to.throw(/HTTPS/);
+    expect(() => validateReserveMetadataPayload({ ...base, imageUrl: "javascript:alert(1)" })).to.throw(/HTTPS/);
+  });
+
+  it("rejects an imageUrl exceeding MAX_IMAGE_URL_BYTES", () => {
+    expect(() => validateReserveMetadataPayload({ ...base, imageUrl: `https://example.com/${"a".repeat(MAX_IMAGE_URL_BYTES)}` })).to.throw(/limit/);
+  });
+
+  it("rejects an imageUrl containing a null byte via the shared null-byte gate", () => {
+    expect(() => validateReserveMetadataPayload({ ...base, imageUrl: "https://example.com/a\u0000.png" })).to.throw(/null byte/);
   });
 });

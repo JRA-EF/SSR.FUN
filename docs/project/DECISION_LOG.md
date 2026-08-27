@@ -5020,3 +5020,81 @@
   ]
 }
 ```
+
+## DEC-0162
+
+```json
+{
+  "id": "DEC-0162",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "Jupiter per-key rate-limit hardening, four parts, after the 10-asset DELTA launch's Resume failed AGAIN on Jupiter's per-key 429 (2026-08-27, second live occurrence after 2026-08-25): (1) NO RE-QUOTING VERIFIED ASSETS: fundSeedAssetsIdempotent now reuses the PERSISTED targetRaw for any asset already ready_to_seed instead of re-fetching a live full-budget quote on every Resume -- the asset was authoritatively balance-verified against that exact target, so re-quoting only re-answered an answered question while producing exactly the one-quote-per-asset burst that trips the per-key cap before Resume ever reaches the assets needing work; the wallet's real balance is still re-read fresh and still gates ready_to_seed (tokens actually leaving the wallet falls through to a live re-quote and re-swap). Full-budget quote cache TTL raised 20s -> 60s (target-determination only; execution quotes remain always-fresh). (2) CLIENT-SIDE PACING: every call to the jupiter-swap proxy (launch funding, composed/sequential Buy, Sell) is paced through a shared reservation gate at >= 1.5s spacing (jupiterSwapClient.ts paceJupiterProxyCall). (3) CLIENT-SIDE 429 RETRY: a rate-limited proxy response is retried up to twice, honoring the server's Retry-After (capped 30s) or waiting an escalating 10s/20s -- long enough to actually EXIT a per-minute rate window, unlike the sub-second/2s in-request retries that were observed landing inside the same window. (4) SERVER: quote and swap-build retries go 3 -> 4 attempts with ESCALATING 429 backoff (2s/4s/6s, Retry-After still honored), every 429 response now carries a Retry-After header (10s for Jupiter-key limits, 15s for the proxy's own per-IP window), the per-IP window rises 12 -> 20 per 60s (sized so ONE legitimate many-asset launch fits now that the client paces itself and never re-quotes verified assets), and api/mainnet/jupiter-swap.ts gets an explicit maxDuration: 60 in vercel.json so the longer in-request backoff can never be killed by a shorter platform default.",
+  "context": "Creator deploying the 10-asset DELTA Reserve on Mainnet hit 'Jupiter's API answered with too many requests for this key right now (a burst of quotes in quick succession)' during Resume's fund-seed-assets step -- the exact failure DEC-0159-era comments predicted: every Resume click re-fetched a target quote for EVERY swap-eligible asset back-to-back, and the server-side bounded retry alone (added 2026-08-25) could not outlast a per-minute rate window the client kept re-entering. Declared a major launch blocker by the Creator.",
+  "rationale": "The burst was structural, not congestion: N quotes with zero spacing on every Resume, repeated on every click. Removing the redundant quotes (verified assets), spacing the necessary ones, and making both client and server waits long enough to exit -- not re-enter -- the rate window addresses the mechanism rather than the symptom. Reusing the persisted target also stops a verified asset from flapping back to needs-funding because the live price moved after it was funded. If limits are still hit at scale, the money lever is upgrading the JUPITER_API_KEY plan tier on portal.jup.ag (higher per-key RPM) -- recorded here as the known next step, deliberately not taken while the code-level fix suffices.",
+  "alternativesConsidered": [
+    "Only upgrading the Jupiter API key tier -- rejected as first move: the client was objectively wasteful (re-quoting verified assets every click), so paying to keep the waste would just move the ceiling.",
+    "Server-side global pacing of upstream Jupiter calls -- rejected: serverless instances share no memory, so a per-instance gate cannot enforce a per-key rate across concurrent invocations; client pacing plus longer client-side waits achieves the effect where the burst actually originates.",
+    "Persisting and reusing full execution quotes across Resumes -- rejected: execution quotes must stay fresh immediately before each swap (staleness is exactly what the fresh-quote invariant exists to prevent); only the already-verified TARGET is safe to reuse."
+  ],
+  "impact": "A Resume of a mostly-funded many-asset Reserve now costs quotes only for the assets genuinely needing work (previously ~1 per asset per click); remaining quotes are paced and rate-limited responses are absorbed by bounded waiting instead of failing the Resume. Deployed to production from a dedicated clean worktree (jupiter-429-hotfix branch) because the main working tree carried an unrelated in-progress reserve-profile-image feature that must not ship early; the same four-file fix remains in the main working tree so the next regular deploy retains it.",
+  "affectedAreas": ["src/merge/lib/jupiterSwapClient.ts", "src/merge/lib/createReserveClient.ts", "api/mainnet/jupiter-swap.ts", "vercel.json", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0159-era server-only 429 retry behavior in api/mainnet/jupiter-swap.ts (flat 2s waits, 3 attempts, no Retry-After header, 12/60s per-IP window)",
+  "supersededBy": null,
+  "evidence": [
+    "Live failure 2026-08-27: DELTA Resume failed at fund-seed-assets with the per-key 429 message despite the 2026-08-25 server-side retry fix.",
+    "Code archaeology: createReserveClient.ts's own 2026-08-25 comment documented every Resume re-fetching quotes for every asset; api/mainnet/jupiter-swap.ts's comment documented flat short retries landing inside the same rate window.",
+    "Offline suite + npm run build run in the clean hotfix worktree before deploying (results recorded in PROJECT_STATUS.md)."
+  ]
+}
+```
+
+## DEC-0163
+
+```json
+{
+  "id": "DEC-0163",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "Portfolio's 'Allocation by Reserve' visual changed from the thin stacked horizontal bar to an SVG donut-style pie: total Reserve Holdings value in the ring's center, per-slice hover (slice highlight, center swaps to that Reserve's share/value, legend row highlight syncs), ~2px surface gaps between slices, and positions beyond the 5 largest folded into a neutral 'Other' slice so the pie never exceeds 6 segments. Legend sits beside the pie with the same name/ticker/percent rows as before.",
+  "context": "User requested replacing the allocation bar with a pie chart in the Portfolio section. The previous bar cycled the 8 categorical swatches across unbounded rows (i % 8), so a 9th holding would have repeated a hue.",
+  "rationale": "Part-to-whole reads at a glance as a pie only up to ~6 segments, so the tail folds into 'Other' (--s-other, deliberately neutral) instead of cycling hues; colors stay the existing validated categorical tokens (--s1..--s5) assigned in fixed order by descending value, per-theme steps already defined in src/index.css. Donut center carries the total that the bar form had no room for; hover replaces the bar's title-attribute-only tooltip.",
+  "alternativesConsidered": [
+    "Plain full pie (no center hole) -- rejected: the center total and hover detail would need a separate readout; the donut keeps them inside the chart.",
+    "Charting library (recharts is already a dependency for AreaChart) -- rejected: a single static-geometry donut is ~60 lines of inline SVG; pulling PieChart into the bundle adds weight for no capability this needs."
+  ],
+  "impact": "tsc -b, oxlint, npm run build clean. UI-only; no data, store, or on-chain path touched. Not yet committed/deployed in this session (the working tree also carries the separate in-progress reserve-image work).",
+  "affectedAreas": ["src/merge/pages/Portfolio.tsx"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Build output: vite build clean, 3224 modules transformed; oxlint and tsc -b no findings."]
+}
+```
+
+
+## DEC-0164
+
+```json
+{
+  "id": "DEC-0164",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "Reserve profile pictures, editable by the Root Manager or any delegate holding the update-metadata permission, riding entirely on the EXISTING deployed program (no on-chain change): (1) NEW RESERVE IMAGE STORE -- lib/reserve-image (pure validation/hashing: PNG/JPEG/WebP/GIF allowlist, 400KB decoded cap, 16-hex content-addressed id) behind api/devnet/reserve-image.ts + api/mainnet/reserve-image.ts (same deliberate cluster-route-pair convention as reserve-metadata; GET serves the bytes with immutable caching, POST is idempotent via on-conflict-do-nothing), table created by scripts/migrate-reserve-image.mjs (applied to production Neon this pass). (2) METADATA PAYLOAD gains an OPTIONAL imageUrl field (HTTPS-only, 500-byte cap, OMITTED when absent so every pre-existing payload's content-addressed id is byte-identical). (3) SDK: ParsedReserveMetadata.imageUrl (metadataFromJson accepts https:// only -- a hostile payload can never smuggle javascript:/data: into an img src) and buildUpdateMetadataInstruction wrapping the already-deployed update_metadata instruction; managementClient.executeUpdateMetadata validates the URI before ever prompting a signature. (4) MANAGE UI: a Profile Picture editor in the Overview tab's Reserve Identity card -- picks a file, downscales it client-side to <=512px WebP/PNG via canvas (also strips EXIF), uploads it, re-reads the Reserve's CURRENT published metadata fresh from chain as the base payload (refuses -- rather than baking placeholder/unresolvable values -- when it cannot be read), publishes the new payload, and submits one update_metadata approval. (5) DISPLAY: buildDtrFromDiscoveredReserve maps metadata imageUrl to the DTR's existing logoUrl (already rendered by ReserveCard/DTRDetail/Portfolio/ManageDTR with ticker-initial fallback); the discovery merge's logoUrl precedence FLIPPED to fresh-first so a published picture can replace a stale local placeholder -- the old existing-first order would have masked every metadata picture change forever.",
+  "context": "Feature request: Reserves need an editable profile picture, changeable by the Reserve Manager and/or delegates. The on-chain program already had everything needed (update_metadata + the UPDATE_METADATA delegate permission flag, live on Mainnet) but no SDK builder, no client, no UI, and no image storage existed; metadata payloads had no image field; on-chain Reserves always fell back to generated avatars.",
+  "rationale": "The picture rides the existing metadata_uri pointer: image bytes go in a content-addressed Postgres store (same proven reserve-metadata pattern -- idempotent retries, permanent short URLs ~85 bytes, far under the 200-byte on-chain URI limit), the metadata JSON carries only the URL, and one update_metadata transaction re-points the Reserve. Authorization is enforced where it must be -- on-chain by require_reserve_permission -- with the UI gating via the existing hasOnChainPermission(UPDATE_METADATA). Omitting an absent imageUrl (never storing \"\") keeps every historical payload's hash stable.",
+  "alternativesConsidered": [
+    "Storing the image in the metadata JSON as a data URI -- rejected: MAX_PAYLOAD_JSON_BYTES (4000) cannot hold an image, and the store is designed for short text payloads.",
+    "Accepting an arbitrary user-pasted image URL only -- rejected: worse UX than picking a file, and external hosts rot; the app's own content-addressed store gives permanence. (An https URL in the payload from other tooling still validates.)",
+    "Vercel Blob or Neon object storage -- rejected for now: a new infrastructure dependency when the existing Postgres + content-addressing pattern already fits a <=400KB profile picture.",
+    "SVG support -- rejected: scriptable format served from the app's own origin; allowlist stays PNG/JPEG/WebP/GIF."
+  ],
+  "impact": "919/919 offline tests passing on the final full-suite re-run (an interim run showed 3 failures, all from the concurrent session's separately-owned jupiter-swap retry hotfix, whose tests that session then updated -- none from this pass). 19 new tests (image-store validation/hashing, payload imageUrl rules + hash stability, SDK imageUrl parsing incl. scheme hardening). tsc -b and oxlint clean. reserve_image table created in production Neon. NOT deployed: the working tree carries that unrelated in-progress jupiter-swap work and vercel.json deploys require a clean tree.",
+  "affectedAreas": ["lib/reserve-image/*", "lib/reserve-metadata/payload.ts", "api/devnet/reserve-image.ts", "api/mainnet/reserve-image.ts", "scripts/migrate-reserve-image.mjs", "packages/sdk/src/discovery.ts", "packages/sdk/src/managementInstructions.ts", "src/merge/lib/managementClient.ts", "src/merge/lib/createReserveClient.ts", "src/merge/lib/reserveImageClient.ts", "src/merge/lib/onChainReserve.ts", "src/merge/store/useAppStore.ts", "src/merge/pages/ManageDTR.tsx", "tsconfig.node.json", "tests/phase_metadata_uri.ts", "tests/phase_reserve_profile_image.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b clean; oxlint clean on all new/changed files.",
+    "Offline suite: 919 passing, 0 failing on the final re-run (after the concurrent hotfix session updated its own retry-bound tests; the interim 3 failures were all in tests/phase_mainnet_production_fixes.ts's jupiter-swap retry bounds).",
+    "scripts/migrate-reserve-image.mjs output: 'Confirmed tables present: reserve_image' against the production Neon host."
+  ]
+}
+```

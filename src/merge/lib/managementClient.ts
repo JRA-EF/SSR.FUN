@@ -30,10 +30,12 @@ import {
   buildRemoveDelegateInstruction,
   buildRemoveReserveAssetInstruction,
   buildUpdateDelegatePermissionsInstruction,
+  buildUpdateMetadataInstruction,
   buildUpdateTargetsInstruction,
   describeOnChainError,
   findDelegate,
   fetchProtocolConfig,
+  validateMetadataUri,
   type RecipientInput,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
@@ -86,6 +88,33 @@ export async function executeUpdateTargets(
     assetMintsInOrder.map((m) => new PublicKey(m)),
     newTargetWeightsBps,
   );
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
+/**
+ * Points the Reserve's on-chain metadata link at a new uploaded metadata
+ * payload (name/ticker/description/category/taxes/profile picture -- see
+ * uploadReserveMetadata in createReserveClient.ts, which must have run
+ * FIRST; only its short permanent URL is submitted on-chain, never the
+ * payload). Permitted for the root manager or a delegate holding the
+ * update-metadata permission -- enforced on-chain by
+ * require_reserve_permission, and surfaced in the UI via
+ * hasOnChainPermission(PERMISSION_FLAGS.UPDATE_METADATA).
+ */
+export async function executeUpdateMetadata(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  newMetadataUri: string,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  // Fail fast on a data:/blob:/overlong URI before ever prompting a wallet
+  // signature -- see validateMetadataUri's contract.
+  validateMetadataUri(newMetadataUri);
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildUpdateMetadataInstruction(program, reservePk, wallet.publicKey, actingDelegate, newMetadataUri);
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
 

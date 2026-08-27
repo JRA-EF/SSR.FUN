@@ -530,6 +530,11 @@ export function buildDtrFromDiscoveredReserve(
     category: meta.category,
     tags: [meta.category, clusterOverride, "real"],
     logoSeed: id,
+    // The Reserve's own published profile picture, from its on-chain-linked
+    // metadata (set via ManageDTR's profile-picture editor). Absent for any
+    // Reserve that has never set one -- the UI falls back to the
+    // ticker-initial avatar, never a fabricated image.
+    logoUrl: parsedMetadata?.imageUrl,
     dtrAddress: discovered.reserve,
     managerAddress: discovered.manager,
     // Locally-simulated delegate CRUD (see useAppStore's addDelegate/etc) is
@@ -644,7 +649,12 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
       change24h: series.change24h,
       change7d: series.change7d,
       trades: existing.trades,
-      logoUrl: existing.logoUrl ?? fresh.logoUrl,
+      // fresh first: a picture published in the Reserve's own metadata is
+      // chain-authoritative and must be able to replace a locally-assigned
+      // placeholder logo (or an older picture) on the next discovery pass --
+      // the old `existing ?? fresh` order made a stale local value mask
+      // every later metadata change forever.
+      logoUrl: fresh.logoUrl ?? existing.logoUrl,
     };
   });
   const discoveredAddresses = new Set(discovered.map((d) => d.onChain?.reserve).filter(Boolean));
