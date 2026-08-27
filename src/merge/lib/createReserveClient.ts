@@ -547,13 +547,35 @@ export async function fetchPriorityFeeMicroLamports(connection: Connection): Pro
 }
 
 /**
- * Wire bytes reserved for the prepended setComputeUnitPrice instruction
- * (ComputeBudget program key 32 + instruction header ~4 + 9 data bytes,
- * rounded up) -- packInstructionsBySize and the over-limit check subtract
- * this so a batch measured near the cap can't overflow once the priority
- * instruction is actually added at signing time.
+ * Wire bytes reserved for the prepended ComputeBudget instructions --
+ * setComputeUnitPrice always (program key 32 + header ~4 + 9 data bytes)
+ * plus, for transactions that carry one, setComputeUnitLimit (~14 more
+ * bytes; the ComputeBudget program key is already in the account list by
+ * then). packInstructionsBySize and the over-limit check subtract this so
+ * a batch measured near the cap can't overflow once the real instructions
+ * are added at signing time.
  */
-export const PRIORITY_FEE_IX_RESERVED_BYTES = 48;
+export const PRIORITY_FEE_IX_RESERVED_BYTES = 64;
+
+/**
+ * Explicit compute-unit limit for a seed_reserve transaction of `assetCount`
+ * assets. THE DEC-0166 ROOT-CAUSE FIX: seed_reserve was always submitted
+ * without a setComputeUnitLimit instruction, so it ran under the runtime's
+ * default ~200k budget -- measured real consumption is CU(n) ~= 53k + 16.7k*n
+ * (CHARLI 4-asset seed: 119,408 CU; DELTA 10-asset seed, simulation-proven:
+ * 219,754 CU), meaning a 10-asset seed can NEVER fit the default and died
+ * deterministically at "exceeded CUs meter". This budgets ~2x the measured
+ * model (headroom for init_if_needed ATA-creation variance, ~13.5k each),
+ * capped at Solana's 1.4M per-transaction maximum. At the program's own
+ * 12-asset validation cap this is 580k -- comfortably under the cap, which
+ * is what makes 10-asset Reserves supportable with NO program change.
+ * Priority-fee cost scales with the requested limit (price x limit), so this
+ * stays deliberately proportional rather than a flat 1.4M.
+ */
+export function seedComputeUnitLimit(assetCount: number): number {
+  const count = Math.max(1, Math.ceil(assetCount));
+  return Math.min(1_400_000, 100_000 + 40_000 * count);
+}
 
 /**
  * Submits already-signed transaction bytes and keeps re-sending them every
@@ -676,10 +698,23 @@ export function packInstructionsBySize(feePayer: PublicKey, ixs: TransactionInst
  * AmbiguousConfirmationError). CreateDTR.tsx passes its own real
  * CLUSTER_LABEL down through createReserveOnChain/resumeReserveDeploymentOnChain.
  */
-async function signAndSend(connection: Connection, wallet: WalletContextState, ixs: TransactionInstruction[], clusterLabel: string = "DevNet"): Promise<string> {
+async function signAndSend(
+  connection: Connection,
+  wallet: WalletContextState,
+  ixs: TransactionInstruction[],
+  clusterLabel: string = "DevNet",
+  // When set, an explicit setComputeUnitLimit is prepended too (DEC-0166:
+  // required for seed_reserve, whose real cost exceeds the runtime default
+  // beyond ~8 assets). When omitted, the runtime's per-instruction default
+  // applies exactly as before -- deliberately unchanged for every other
+  // caller, since a blanket high limit would inflate priority-fee cost.
+  computeUnitLimit?: number,
+): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
   const microLamports = await fetchPriorityFeeMicroLamports(connection);
-  const tx = new Transaction().add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports }), ...ixs);
+  const budgetIxs = [ComputeBudgetProgram.setComputeUnitPrice({ microLamports })];
+  if (computeUnitLimit !== undefined) budgetIxs.push(ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }));
+  const tx = new Transaction().add(...budgetIxs, ...ixs);
   tx.feePayer = wallet.publicKey;
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
@@ -758,13 +793,15 @@ async function signAndSendPossiblyOverLimit(
   ix: TransactionInstruction,
   onProgress?: (phase: "creating-lookup-table" | "waiting-for-lookup-table" | "submitting") => void,
   clusterLabel: string = "DevNet",
+  // See signAndSend -- threaded to whichever submission shape is used.
+  computeUnitLimit?: number,
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const feePayer = wallet.publicKey;
 
   if (estimateSingleSignerTxBytes(feePayer, [ix]) <= SOLANA_MAX_TX_BYTES - PRIORITY_FEE_IX_RESERVED_BYTES) {
     onProgress?.("submitting");
-    return signAndSend(connection, wallet, [ix], clusterLabel);
+    return signAndSend(connection, wallet, [ix], clusterLabel, computeUnitLimit);
   }
 
   onProgress?.("creating-lookup-table");
@@ -823,13 +860,17 @@ async function signAndSendPossiblyOverLimit(
   onProgress?.("submitting");
   const microLamports = await fetchPriorityFeeMicroLamports(connection);
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  const budgetIxs = [ComputeBudgetProgram.setComputeUnitPrice({ microLamports })];
+  // DEC-0166: this versioned path carries the atomic seed -- the exact
+  // instruction proven to exceed the runtime's default compute budget at
+  // 10 assets ("exceeded CUs meter", consumed 202,850 of 202,850). The
+  // explicit limit is what makes it executable at all; the priority-fee
+  // bid (DEC-0165) is what makes it land.
+  if (computeUnitLimit !== undefined) budgetIxs.push(ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }));
   const message = new TransactionMessage({
     payerKey: feePayer,
     recentBlockhash: blockhash,
-    // The priority-fee bid matters MOST here: this versioned path carries the
-    // largest transaction of the whole launch (the atomic seed), the exact
-    // one observed dropped fee-less in the 2026-08-27 DELTA incident.
-    instructions: [ComputeBudgetProgram.setComputeUnitPrice({ microLamports }), ix],
+    instructions: [...budgetIxs, ix],
   }).compileToV0Message([lookupTableAccount]);
   const versionedTx = new VersionedTransaction(message);
   return signSubmitConfirmVersioned(connection, wallet, versionedTx, lastValidBlockHeight, clusterLabel);
@@ -1523,7 +1564,7 @@ export async function createReserveOnChain(params: {
     assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
     validateSeedPlan(finalSeedAmounts, initialReserveTokens);
     const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-    seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel);
+    seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel, seedComputeUnitLimit(params.assets.length));
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses, e);
   }
@@ -1732,6 +1773,20 @@ export async function resumeReserveDeploymentOnChain(params: {
   // the expected assets registered. Fund any real shortfall, then seed.
   const seedAmounts = pending.assets.map((a) => seedRawAmountForAsset(a, pending.seedTotalUsd * a.seedWeightFraction, solPriceUsd));
 
+  // DEC-0166: re-read the AUTHORITATIVE Reserve status immediately before
+  // funding begins, not only before seeding. The resumePoint decision above
+  // was made from an earlier read -- if a prior attempt's seed actually
+  // landed in the meantime (or that read hit a lagging RPC node), the wallet
+  // balances are already deposited (near zero) and re-running funding here
+  // would compute false deficits and buy the whole basket AGAIN, then fail
+  // seeding on tiny amounts (the observed SeedAmountTooLow-after-success
+  // class). An already-Active Reserve is a completed deployment, full stop.
+  const statusBeforeFunding = await fetchReserveOnChain(connection, programId, reserveAddress, candidateMints);
+  if (statusBeforeFunding && statusBeforeFunding.status !== "assetsInitializing") {
+    params.onProgress("done");
+    return buildResult({ createAndRegister: null, fundSeedAssets: null, seed: null });
+  }
+
   params.onProgress("fund-seed-assets");
   let fundSeedAssetsSig: string | null = null;
   let finalSeedAmounts = seedAmounts;
@@ -1772,7 +1827,7 @@ export async function resumeReserveDeploymentOnChain(params: {
       assertSeedAmountsMeetMinimum(pending.assets, finalSeedAmounts);
       validateSeedPlan(finalSeedAmounts, initialReserveTokens);
       const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-      seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel);
+      seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel, seedComputeUnitLimit(pending.assets.length));
     } catch (e) {
       throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses, e);
     }

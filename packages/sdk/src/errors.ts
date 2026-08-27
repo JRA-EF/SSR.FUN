@@ -89,6 +89,15 @@ export function extractCustomErrorCode(err: unknown): number | null {
  */
 export function describeOnChainError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
+  // ProgramFailedToComplete is a runtime wrapper, not a program error code --
+  // in every live occurrence in this project it has meant compute-budget
+  // exhaustion ("exceeded CUs meter": DEC-0166, the 10-asset DELTA seed run
+  // under the default ~200k budget with no setComputeUnitLimit requested).
+  // Decode it into the real explanation instead of surfacing the bare
+  // wrapper, which reads like an inscrutable program crash.
+  if (raw.includes("ProgramFailedToComplete")) {
+    return `${raw} -- the program ran out of compute budget mid-instruction (the transaction did not request a compute-unit limit large enough for this operation). Nothing was changed on-chain: a failed Solana transaction rolls back atomically. Retrying the identical transaction will fail identically; it must be rebuilt with an explicit, sufficient compute-unit limit.`;
+  }
   const code = extractCustomErrorCode(err);
   if (code === null) return raw;
   const decoded = decodeSsrProtocolError(code);
