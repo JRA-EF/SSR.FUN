@@ -11,6 +11,7 @@
 import { expect } from "chai";
 import { summarizeActivityEvent } from "../packages/sdk/src/activityLog";
 import { monthKey, dayKey, sumBigStrings, bucketReservesCreatedByMonth, computeMonthlyAvgAssets, csvField, csvRow } from "../lib/reserve-activity/kpis";
+import { ACTIVITY_CLUSTERS, MAINNET_PROGRAM_ID, clustersForFilter, parseClusterFilter } from "../lib/reserve-activity/clusters";
 
 describe("activityLog.ts summarizeActivityEvent -- structured amounts (KPI dashboard support)", () => {
   it("reserveTokensMinted: amountRaw is the GROSS amount (net + fee), tagged mintVolume", () => {
@@ -148,5 +149,52 @@ describe("lib/reserve-activity/kpis.ts -- pure bucketing/formatting helpers", ()
 
   it("csvRow joins fields with commas and terminates with CRLF (RFC 4180)", () => {
     expect(csvRow(["a", "b,c", 3])).to.equal('a,"b,c",3\r\n');
+  });
+});
+
+// DEC-0175: cluster-awareness for the activity pipeline. Only the pure
+// filter/target-selection logic is offline-testable (buildClusterTargets
+// constructs live RPC Connections; discovery/SQL are covered by the same
+// no-live-IO rationale as the rest of this file's exclusions).
+describe("lib/reserve-activity/clusters.ts -- pure cluster-filter logic (DEC-0175)", () => {
+  it("parseClusterFilter accepts the three valid values verbatim", () => {
+    expect(parseClusterFilter("all")).to.equal("all");
+    expect(parseClusterFilter("mainnet-beta")).to.equal("mainnet-beta");
+    expect(parseClusterFilter("devnet")).to.equal("devnet");
+  });
+
+  it("parseClusterFilter treats an absent/empty value as 'all' (the default view)", () => {
+    expect(parseClusterFilter(undefined)).to.equal("all");
+    expect(parseClusterFilter(null)).to.equal("all");
+    expect(parseClusterFilter("")).to.equal("all");
+  });
+
+  it("parseClusterFilter rejects anything unrecognized with null (caller 400s), never guessing", () => {
+    expect(parseClusterFilter("mainnet")).to.equal(null);
+    expect(parseClusterFilter("MAINNET-BETA")).to.equal(null);
+    expect(parseClusterFilter(["devnet"])).to.equal(null);
+    expect(parseClusterFilter(42)).to.equal(null);
+    expect(parseClusterFilter("testnet")).to.equal(null);
+  });
+
+  it("clustersForFilter expands 'all' to every cluster with Mainnet FIRST (sweep-order guarantee: the live protocol is never starved by a failing DevNet)", () => {
+    expect(clustersForFilter("all")).to.deep.equal(["mainnet-beta", "devnet"]);
+    expect(clustersForFilter("all")).to.deep.equal(ACTIVITY_CLUSTERS);
+  });
+
+  it("clustersForFilter maps a single cluster to exactly that cluster", () => {
+    expect(clustersForFilter("mainnet-beta")).to.deep.equal(["mainnet-beta"]);
+    expect(clustersForFilter("devnet")).to.deep.equal(["devnet"]);
+  });
+
+  it("clustersForFilter('all') returns a fresh array, never the shared ACTIVITY_CLUSTERS instance (a caller mutating its copy must not corrupt the module constant)", () => {
+    const copy = clustersForFilter("all");
+    expect(copy).to.not.equal(ACTIVITY_CLUSTERS);
+    copy.pop();
+    expect(ACTIVITY_CLUSTERS).to.deep.equal(["mainnet-beta", "devnet"]);
+  });
+
+  it("MAINNET_PROGRAM_ID pins the deployed Mainnet program (DEC-0115), byte-identical to api/mainnet/landing-stats.ts's literal", () => {
+    expect(MAINNET_PROGRAM_ID).to.equal("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
   });
 });

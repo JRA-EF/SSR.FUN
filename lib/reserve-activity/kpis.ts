@@ -9,6 +9,7 @@
 //     for the monthly-avg-assets metric, which the log alone can't answer
 //     since assetCount is current state, not an emitted amount).
 import { getSql } from "./db";
+import { ACTIVITY_CLUSTERS, type ActivityCluster } from "./clusters";
 
 /** "YYYY-MM" in UTC from a Unix-seconds timestamp -- stable, sortable, no locale/timezone ambiguity. */
 export function monthKey(unixSeconds: number): string {
@@ -125,7 +126,13 @@ export interface LiveReserveState {
   assetCount: number;
 }
 
-export async function computeProtocolKpis(liveReserves: LiveReserveState[]): Promise<ProtocolKpis> {
+/**
+ * `clusters` scopes every SQL aggregate to rows indexed from those clusters
+ * (DEC-0175); callers pass the result of clustersForFilter. Live reserve
+ * state is the caller's responsibility to pre-filter the same way (kpis.ts
+ * the endpoint only discovers the selected clusters in the first place).
+ */
+export async function computeProtocolKpis(liveReserves: LiveReserveState[], clusters: ActivityCluster[] = [...ACTIVITY_CLUSTERS]): Promise<ProtocolKpis> {
   const sql = getSql();
 
   const lifecycleMap = new Map<string, number>();
@@ -139,14 +146,14 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[]): Pro
         coalesce(sum(amount_raw::numeric) filter (where amount_kind = 'mintVolume'), 0)::text as mint_volume,
         coalesce(sum(amount_raw::numeric) filter (where amount_kind = 'redeemVolume'), 0)::text as redeem_volume
       from reserve_activity_log
-      where amount_kind in ('mintVolume', 'redeemVolume')
+      where amount_kind in ('mintVolume', 'redeemVolume') and cluster = any(${clusters})
       group by 1 order by 1
     `,
     sql`
       with amounts as (
-        select ts, amount_kind as k, amount_raw::numeric as v from reserve_activity_log where amount_kind in ('protocolFee', 'managerFee')
+        select ts, amount_kind as k, amount_raw::numeric as v from reserve_activity_log where amount_kind in ('protocolFee', 'managerFee') and cluster = any(${clusters})
         union all
-        select ts, amount_kind_2 as k, amount_raw_2::numeric as v from reserve_activity_log where amount_kind_2 in ('protocolFee', 'managerFee')
+        select ts, amount_kind_2 as k, amount_raw_2::numeric as v from reserve_activity_log where amount_kind_2 in ('protocolFee', 'managerFee') and cluster = any(${clusters})
       )
       select
         to_char(to_timestamp(ts), 'YYYY-MM') as month,
@@ -155,25 +162,25 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[]): Pro
       from amounts
       group by 1 order by 1
     `,
-    sql`select kind, count(*)::int as count from reserve_activity_log group by 1 order by 2 desc`,
+    sql`select kind, count(*)::int as count from reserve_activity_log where cluster = any(${clusters}) group by 1 order by 2 desc`,
     sql`
       select reserve, sum(amount_raw::numeric)::text as total_volume
       from reserve_activity_log
-      where amount_kind in ('mintVolume', 'redeemVolume')
+      where amount_kind in ('mintVolume', 'redeemVolume') and cluster = any(${clusters})
       group by reserve
       order by sum(amount_raw::numeric) desc nulls last
       limit 10
     `,
-    sql`select reserve, ts from reserve_activity_log where kind = 'reserveCreated' order by ts`,
-    sql`select count(*) filter (where backfill_complete) as complete, count(*) filter (where not backfill_complete) as incomplete from reserve_activity_cursor`,
+    sql`select reserve, ts from reserve_activity_log where kind = 'reserveCreated' and cluster = any(${clusters}) order by ts`,
+    sql`select count(*) filter (where backfill_complete) as complete, count(*) filter (where not backfill_complete) as incomplete from reserve_activity_cursor where cluster = any(${clusters})`,
   ]);
 
   const totalsRow = (
     await sql`
       with amounts as (
-        select amount_kind as k, amount_raw::numeric as v from reserve_activity_log where amount_kind is not null
+        select amount_kind as k, amount_raw::numeric as v from reserve_activity_log where amount_kind is not null and cluster = any(${clusters})
         union all
-        select amount_kind_2 as k, amount_raw_2::numeric as v from reserve_activity_log where amount_kind_2 is not null
+        select amount_kind_2 as k, amount_raw_2::numeric as v from reserve_activity_log where amount_kind_2 is not null and cluster = any(${clusters})
       )
       select
         coalesce(sum(v) filter (where k = 'mintVolume'), 0)::text as mint_volume,
@@ -225,17 +232,18 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[]): Pro
 /** Streams the FULL raw activity log as CSV -- every indexed event, every column -- the "one big file" export. Ordered oldest-first so a re-export is stably diffable. */
 export async function* streamActivityLogCsv(): AsyncGenerator<string> {
   const sql = getSql();
-  yield csvRow(["reserve", "signature", "kind", "ts", "iso_time", "actor", "summary", "amount_raw", "amount_kind", "amount_raw_2", "amount_kind_2"]);
+  yield csvRow(["reserve", "cluster", "signature", "kind", "ts", "iso_time", "actor", "summary", "amount_raw", "amount_kind", "amount_raw_2", "amount_kind_2"]);
   const pageSize = 5000;
   let offset = 0;
   for (;;) {
     const rows = (await sql`
-      select reserve, signature, kind, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2
+      select reserve, cluster, signature, kind, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2
       from reserve_activity_log
       order by ts asc, id asc
       limit ${pageSize} offset ${offset}
     `) as {
       reserve: string;
+      cluster: string;
       signature: string;
       kind: string;
       ts: number;
@@ -248,7 +256,7 @@ export async function* streamActivityLogCsv(): AsyncGenerator<string> {
     }[];
     if (rows.length === 0) break;
     for (const r of rows) {
-      yield csvRow([r.reserve, r.signature, r.kind, r.ts, new Date(Number(r.ts) * 1000).toISOString(), r.actor, r.summary, r.amount_raw, r.amount_kind, r.amount_raw_2, r.amount_kind_2]);
+      yield csvRow([r.reserve, r.cluster, r.signature, r.kind, r.ts, new Date(Number(r.ts) * 1000).toISOString(), r.actor, r.summary, r.amount_raw, r.amount_kind, r.amount_raw_2, r.amount_kind_2]);
     }
     if (rows.length < pageSize) break;
     offset += pageSize;

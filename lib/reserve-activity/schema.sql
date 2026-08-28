@@ -56,3 +56,18 @@ create table if not exists reserve_activity_cursor (
   backfill_complete         boolean not null default false,
   updated_at                timestamptz not null default now()
 );
+
+-- Cluster awareness (docs/project/DECISION_LOG.md DEC-0175): the activity
+-- pipeline originally indexed DevNet only; the protocol has been live on
+-- Mainnet since 2026-08-19 (DEC-0115), so every row now records WHICH
+-- cluster it was indexed from. Additive and defaulted to 'devnet' because
+-- every pre-existing row genuinely came from DevNet indexing. A Reserve
+-- address exists on exactly one cluster in practice (distinct programs,
+-- distinct PDAs), so the existing (reserve, signature, kind) uniqueness and
+-- the reserve primary key stay correct as-is; `cluster` is a queryable tag,
+-- not a new identity component. Values: 'devnet' | 'mainnet-beta'.
+alter table reserve_activity_log add column if not exists cluster text not null default 'devnet';
+alter table reserve_activity_cursor add column if not exists cluster text not null default 'devnet';
+
+create index if not exists reserve_activity_log_cluster_idx
+  on reserve_activity_log (cluster);

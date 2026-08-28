@@ -4,20 +4,33 @@
 // this function re-verifies independently -- same pattern as
 // api/dashboard/content.ts and api/road-to-mainnet/*.ts).
 //
-// Two things happen on every call: (1) one bounded discoverAllReserves()
-// read for live lifecycle status + assetCount (fast, a handful of batched
-// RPC calls, not per-Reserve), (2) the real aggregate SQL in
-// lib/reserve-activity/kpis.ts against whatever reserve_activity_log
-// currently holds. This endpoint does NOT run a backfill sweep itself --
-// that's a separate, much slower operation (see kpis-refresh.ts and the
-// cron) so a dashboard page load stays fast regardless of backfill state;
-// `backfillStatus` in the response tells the frontend how complete the
-// underlying data currently is.
-import { Connection, PublicKey } from "@solana/web3.js";
-import { discoverAllReserves, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
+// Cluster-aware since DEC-0175 (the protocol has been live on Mainnet since
+// 2026-08-19, DEC-0115): live Reserve state is discovered per cluster from
+// lib/reserve-activity/clusters.ts's targets, and ?cluster=all|mainnet-beta|
+// devnet scopes both the live state and the SQL aggregates. Each cluster's
+// discovery is isolated -- a failure (live 2026-08-28: DevNet's upgraded
+// program no longer decodes with the SDK's deployed-Mainnet-shape IDL,
+// "Invalid bool: 87") is reported in that cluster's summary instead of
+// failing the whole page, which is exactly how the pre-cluster version
+// broke: one DevNet decode error 503'd every load of /internal/kpis.
+//
+// This endpoint does NOT run a backfill sweep itself -- that's a separate,
+// much slower operation (see kpis-refresh.ts and the cron) so a dashboard
+// page load stays fast regardless of backfill state; `backfillStatus` in
+// the response tells the frontend how complete the underlying data
+// currently is.
 import { type DashboardRequest, type DashboardResponse, isAuthenticated, unauthorized } from "./_session";
 import { computeProtocolKpis, type LiveReserveState } from "../../lib/reserve-activity/kpis.js";
-import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc.js";
+import { buildClusterTargets, clustersForFilter, parseClusterFilter, type ActivityCluster } from "../../lib/reserve-activity/clusters.js";
+import { discoverAllReserves } from "@ssr/sdk";
+import { redactRpcSecrets } from "../devnet/_lib/rpc.js";
+
+interface ClusterSummary {
+  cluster: ActivityCluster;
+  reservesDiscovered: number;
+  /** Non-null when this cluster's live discovery failed; SQL aggregates still include its recorded history. */
+  discoveryError: string | null;
+}
 
 export default async function handler(req: DashboardRequest, res: DashboardResponse) {
   // Deliberately wraps the ENTIRE handler, including the auth check itself
@@ -38,29 +51,35 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
       return;
     }
 
+    const filter = parseClusterFilter((req as { query?: Record<string, unknown> }).query?.cluster);
+    if (!filter) {
+      res.status(400).json({ error: "cluster must be one of: all, mainnet-beta, devnet." });
+      return;
+    }
+    const clusters = clustersForFilter(filter);
+
     res.setHeader("Cache-Control", "no-store");
 
-    let liveReserves: LiveReserveState[];
-    try {
-      const connection = new Connection(resolveRpcUrl(), "confirmed");
-      const programId = new PublicKey(DEVNET_FIXTURES.programId);
-      const candidateMints = [
-        new PublicKey(DEVNET_FIXTURES.mints.mintX.address),
-        new PublicKey(DEVNET_FIXTURES.mints.mintY.address),
-        new PublicKey(DEVNET_FIXTURES.mints.mintZ.address),
-        WRAPPED_SOL_MINT,
-        DEVUSDC_MINT,
-      ];
-      const { reserves } = await discoverAllReserves(connection, programId, candidateMints);
-      liveReserves = reserves.map((r) => ({ reserve: r.reserve, status: r.status, assetCount: r.assetCount }));
-    } catch (e) {
-      res.status(503).json({ stage: "discover", error: redactRpcSecrets(e instanceof Error ? e.message : "Failed to read live Reserve state.") });
-      return;
+    const liveReserves: LiveReserveState[] = [];
+    const clusterSummaries: ClusterSummary[] = [];
+    for (const target of buildClusterTargets(clusters)) {
+      try {
+        const candidateMints = await target.candidateMints();
+        const { reserves } = await discoverAllReserves(target.connection, target.programId, candidateMints);
+        for (const r of reserves) liveReserves.push({ reserve: r.reserve, status: r.status, assetCount: r.assetCount });
+        clusterSummaries.push({ cluster: target.cluster, reservesDiscovered: reserves.length, discoveryError: null });
+      } catch (e) {
+        clusterSummaries.push({
+          cluster: target.cluster,
+          reservesDiscovered: 0,
+          discoveryError: redactRpcSecrets(e instanceof Error ? e.message : "Failed to read live Reserve state."),
+        });
+      }
     }
 
     try {
-      const kpis = await computeProtocolKpis(liveReserves);
-      res.status(200).json(kpis);
+      const kpis = await computeProtocolKpis(liveReserves, clusters);
+      res.status(200).json({ ...kpis, clusterFilter: filter, clusters: clusterSummaries });
     } catch (e) {
       res.status(503).json({ stage: "compute", error: e instanceof Error ? e.message : "Failed to compute protocol KPIs.", stack: e instanceof Error ? e.stack : undefined });
     }

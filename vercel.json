@@ -18,7 +18,8 @@
       "maxDuration": 60
     },
     "api/kpis/*.ts": {
-      "includeFiles": "packages/sdk/**"
+      "includeFiles": "packages/sdk/**",
+      "maxDuration": 60
     },
     "api/ledger/*.ts": {
       "includeFiles": "packages/sdk/**"

@@ -81,7 +81,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     const connection = new Connection(RPC_URL, "confirmed");
     const program = buildReadOnlyProgram(connection);
-    const result = await syncReserveActivity(connection, program, reservePk);
+    const result = await syncReserveActivity(connection, program, reservePk, "devnet");
     syncError = result.syncError ? redactRpcSecrets(result.syncError) : null;
   } catch (e) {
     // syncReserveActivity itself never throws, but guard the connection/

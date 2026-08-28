@@ -48,6 +48,19 @@ interface ProtocolKpiTotals {
   totalManagerFeeClaimedRaw: string
 }
 
+type ClusterFilter = 'all' | 'mainnet-beta' | 'devnet'
+
+const CLUSTER_LABELS: Record<string, string> = {
+  'mainnet-beta': 'Mainnet',
+  devnet: 'DevNet',
+}
+
+interface ClusterSummary {
+  cluster: string
+  reservesDiscovered: number
+  discoveryError: string | null
+}
+
 interface ProtocolKpis {
   generatedAt: string
   totals: ProtocolKpiTotals
@@ -59,6 +72,8 @@ interface ProtocolKpis {
   topReservesByVolume: { reserve: string; totalVolumeRaw: string }[]
   eventKindCounts: { kind: string; count: number }[]
   backfillStatus: { reservesFullyBackfilled: number; reservesStillIncomplete: number }
+  clusterFilter: ClusterFilter
+  clusters: ClusterSummary[]
 }
 
 interface BackfillResult {
@@ -69,6 +84,7 @@ interface BackfillResult {
   errors: string[]
   timedOut: boolean
   durationMs: number
+  clusters: { cluster: string; reservesDiscovered: number; discoveryError: string | null }[]
 }
 
 /** Raw Reserve Token base units -> human units (RESERVE_TOKEN_DECIMALS=6, matching every other display-layer conversion in this app). Display-only precision, never used for accounting. */
@@ -121,10 +137,11 @@ export function KpiDashboard() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
+  const [cluster, setCluster] = useState<ClusterFilter>('all')
 
   const load = useCallback(() => {
     setState({ kind: 'loading' })
-    fetch('/api/kpis/kpis', { credentials: 'same-origin' })
+    fetch(`/api/kpis/kpis?cluster=${cluster}`, { credentials: 'same-origin' })
       .then(async (res) => {
         if (!res.ok) {
           // Surface the real backend error body (stage/error/stack -- see
@@ -139,7 +156,7 @@ export function KpiDashboard() {
       })
       .then((kpis: ProtocolKpis) => setState({ kind: 'ready', kpis }))
       .catch((e: Error) => setState({ kind: 'error', message: e.message }))
-  }, [])
+  }, [cluster])
 
   useEffect(() => { load() }, [load])
 
@@ -152,10 +169,12 @@ export function KpiDashboard() {
         return res.json()
       })
       .then((result: BackfillResult) => {
+        const failed = (result.clusters ?? []).filter((c) => c.discoveryError !== null)
         setRefreshMsg(
           `Swept ${result.reservesDiscovered} Reserve(s), ${result.reservesFullyBackfilled} fully indexed` +
             (result.reservesStillIncomplete > 0 ? `, ${result.reservesStillIncomplete} still catching up` : '') +
             (result.timedOut ? ' (time budget reached, resumable -- run again)' : '') +
+            (failed.length > 0 ? `; ${failed.map((c) => CLUSTER_LABELS[c.cluster] ?? c.cluster).join(', ')} unreachable` : '') +
             '.',
         )
         load()
@@ -182,6 +201,11 @@ export function KpiDashboard() {
 
   const { kpis } = state
   const totalVolume = (Number(kpis.totals.totalMintVolumeRaw) + Number(kpis.totals.totalRedeemVolumeRaw)).toString()
+  const clusterCounts = kpis.clusters
+    .filter((c) => c.discoveryError === null)
+    .map((c) => `${CLUSTER_LABELS[c.cluster] ?? c.cluster} ${c.reservesDiscovered}`)
+    .join(', ')
+  const failedClusters = kpis.clusters.filter((c) => c.discoveryError !== null)
 
   return (
     <div className="dash-shell dash-fade-in">
@@ -190,13 +214,23 @@ export function KpiDashboard() {
           <div className="dash-header-text">
             <span className="dash-phase">Protocol KPIs</span>
             <span className="dash-muted dash-small">
-              Generated {new Date(kpis.generatedAt).toLocaleString()} &middot; {kpis.totals.reservesDiscovered} Reserve(s) discovered live &middot;{' '}
+              Generated {new Date(kpis.generatedAt).toLocaleString()} &middot; {kpis.totals.reservesDiscovered} Reserve(s) discovered live{clusterCounts ? ` (${clusterCounts})` : ''} &middot;{' '}
               {kpis.backfillStatus.reservesFullyBackfilled}/{kpis.backfillStatus.reservesFullyBackfilled + kpis.backfillStatus.reservesStillIncomplete} fully backfilled
             </span>
           </div>
         </div>
         <div className="kpi-toolbar">
           {refreshMsg && <span className="kpi-refresh-msg dash-muted">{refreshMsg}</span>}
+          <select
+            className="dash-btn dash-btn-sm"
+            value={cluster}
+            onChange={(e) => setCluster(e.target.value as ClusterFilter)}
+            aria-label="Choose which network's activity to show"
+          >
+            <option value="all">All networks</option>
+            <option value="mainnet-beta">Mainnet</option>
+            <option value="devnet">DevNet</option>
+          </select>
           <button className="dash-btn dash-btn-sm" onClick={handleRefresh} disabled={refreshing}>
             {refreshing ? 'Refreshing...' : 'Refresh data'}
           </button>
@@ -208,6 +242,15 @@ export function KpiDashboard() {
           </a>
         </div>
       </div>
+
+      {failedClusters.map((c) => (
+        <div className="dash-card" key={c.cluster} style={{ marginBottom: 16 }}>
+          <p className="dash-error" style={{ margin: 0 }}>
+            Live {CLUSTER_LABELS[c.cluster] ?? c.cluster} Reserve state could not be read just now, so the live counts and lifecycle chart leave it out. Recorded history below still includes everything already indexed from it.
+          </p>
+          <p className="dash-muted dash-small dash-mono" style={{ marginTop: 6, marginBottom: 0 }}>{c.discoveryError}</p>
+        </div>
+      ))}
 
       <div className="dash-section">
         <h3 className="dash-section-title">Totals (Reserve Token units, all-time)</h3>

@@ -13,10 +13,10 @@
 // runs the real sweep -- there is no destructive/side-effect-only mode to
 // skip here, unlike accrue-fees-cron's real-transaction dry-run split,
 // since this endpoint never submits a transaction in the first place.
-import { Connection } from "@solana/web3.js";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes.js";
-import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc.js";
+import { redactRpcSecrets } from "../devnet/_lib/rpc.js";
 import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll.js";
+import { ACTIVITY_CLUSTERS, buildClusterTargets } from "../../lib/reserve-activity/clusters.js";
 
 function getHeader(req: ApiRequest, name: string): string | undefined {
   const value = req.headers[name] ?? req.headers[name.toLowerCase()];
@@ -44,8 +44,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const connection = new Connection(resolveRpcUrl(), "confirmed");
-    const result = await backfillAllReserveActivity(connection, { budgetMs: 50_000 });
+    // Both clusters, Mainnet first (see clusters.ts) -- a cluster whose
+    // discovery fails is reported inside the result, never a 503 here.
+    const result = await backfillAllReserveActivity(buildClusterTargets([...ACTIVITY_CLUSTERS]), { budgetMs: 50_000 });
     res.status(200).json(result);
   } catch (e) {
     res.status(503).json({ error: redactRpcSecrets(e instanceof Error ? e.message : "Backfill sweep failed.") });

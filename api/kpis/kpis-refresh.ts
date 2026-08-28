@@ -4,10 +4,10 @@
 // on demand. Auth + same-origin CSRF check (road-to-mainnet/auth.ts's
 // pattern) since this is state-changing (writes to Postgres), unlike
 // kpis.ts's read-only GET.
-import { Connection } from "@solana/web3.js";
 import { type DashboardRequest, type DashboardResponse, isAuthenticated, isSameOriginRequest, unauthorized } from "./_session";
 import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll.js";
-import { resolveRpcUrl, redactRpcSecrets } from "../devnet/_lib/rpc.js";
+import { ACTIVITY_CLUSTERS, buildClusterTargets } from "../../lib/reserve-activity/clusters.js";
+import { redactRpcSecrets } from "../devnet/_lib/rpc.js";
 
 export default async function handler(req: DashboardRequest, res: DashboardResponse) {
   // See kpis.ts's matching comment: wraps the whole handler so any failure,
@@ -30,8 +30,9 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
     res.setHeader("Cache-Control", "no-store");
 
     try {
-      const connection = new Connection(resolveRpcUrl(), "confirmed");
-      const result = await backfillAllReserveActivity(connection, { budgetMs: 45_000 });
+      // Both clusters, Mainnet first (see clusters.ts) -- a cluster whose
+      // discovery fails is reported inside the result, never a 503 here.
+      const result = await backfillAllReserveActivity(buildClusterTargets([...ACTIVITY_CLUSTERS]), { budgetMs: 45_000 });
       res.status(200).json(result);
     } catch (e) {
       res.status(503).json({ error: redactRpcSecrets(e instanceof Error ? e.message : "Backfill sweep failed.") });
