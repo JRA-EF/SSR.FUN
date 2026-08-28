@@ -72,6 +72,33 @@ export function buildReserveAltAddresses(params: ReserveAltParams): PublicKey[] 
   });
 }
 
+/**
+ * How many addresses fit alongside createLookupTable in the FIRST
+ * transaction, and per extend-only transaction after it. Measured, not
+ * guessed: a real create+extend carrying 24 addresses serialized to 1,090
+ * bytes (ECHO's table, 2026-08-27), leaving ~140 spare -- 26 stays safely
+ * under the 1232-byte wire limit; an extend-only transaction saves the
+ * create instruction's bytes, so 28 fits there. A 3-asset Reserve (24
+ * addresses) stays one approval; the 12-asset maximum (51 addresses)
+ * needs one follow-up extend.
+ */
+export const ALT_FIRST_TX_MAX_ADDRESSES = 26;
+export const ALT_EXTEND_TX_MAX_ADDRESSES = 28;
+
+/** Pure: splits a table's addresses into the create-transaction chunk plus follow-up extend-transaction chunks, order preserved, nothing dropped. */
+export function chunkAltAddresses(
+  addresses: PublicKey[],
+  firstMax: number = ALT_FIRST_TX_MAX_ADDRESSES,
+  extendMax: number = ALT_EXTEND_TX_MAX_ADDRESSES,
+): PublicKey[][] {
+  if (addresses.length === 0) return [];
+  const chunks: PublicKey[][] = [addresses.slice(0, firstMax)];
+  for (let i = firstMax; i < addresses.length; i += extendMax) {
+    chunks.push(addresses.slice(i, i + extendMax));
+  }
+  return chunks;
+}
+
 const altCache = new Map<string, { alt: string | null; at: number }>();
 const ALT_CACHE_TTL_MS = 5 * 60_000;
 
@@ -91,10 +118,17 @@ export async function fetchReserveAltAddress(reserve: string): Promise<string | 
 }
 
 /**
- * One-time creation flow (Manage's "Enable one-approval trading"): creates
- * the table and extends it with the Reserve's fixed addresses in ONE wallet
- * approval, confirms it, then registers it server-side so every trader
- * benefits. The wallet pays the table's one-time rent (~0.002 SOL).
+ * One-time creation flow (Manage's "Enable one-approval trading", and the
+ * automatic paths added by DEC-0171: Reserve creation and a first trade on
+ * a table-less Reserve): creates the table and extends it with the
+ * Reserve's fixed addresses -- one wallet approval for up to
+ * ALT_FIRST_TX_MAX_ADDRESSES addresses (every Reserve up to ~3 assets),
+ * with follow-up extend approvals only for larger tables (the 12-asset
+ * maximum needs one). Confirms each transaction, waits for the table to
+ * become genuinely usable (a just-extended table can't be referenced until
+ * the chain advances past its extension slot), then registers it
+ * server-side so every trader benefits. The wallet pays the table's
+ * one-time rent (~0.002-0.004 SOL).
  */
 export async function createAndRegisterReserveAlt(
   connection: Connection,
@@ -104,25 +138,49 @@ export async function createAndRegisterReserveAlt(
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Connect a wallet first.");
   const payer = wallet.publicKey;
   const addresses = buildReserveAltAddresses(params);
+  const chunks = chunkAltAddresses(addresses);
   const recentSlot = await connection.getSlot("finalized");
   const [createIx, tableAddress] = AddressLookupTableProgram.createLookupTable({ authority: payer, payer, recentSlot });
-  const extendIx = AddressLookupTableProgram.extendLookupTable({
-    lookupTable: tableAddress,
-    authority: payer,
-    payer,
-    addresses,
-  });
-  const ixs: TransactionInstruction[] = [createIx, extendIx];
-  const tx = new Transaction().add(...ixs);
-  tx.feePayer = payer;
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-  tx.recentBlockhash = blockhash;
-  const signed = await wallet.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
-  if (outcome.status === "failed") throw new Error(`Creating the lookup table failed on-chain (${outcome.error}). Signature: ${signature}.`);
-  if (outcome.status === "expired") throw new Error(`Creating the lookup table expired before confirmation -- nothing should have changed. Signature: ${signature}.`);
-  if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
+
+  const signAndConfirm = async (ixs: TransactionInstruction[], label: string) => {
+    const tx = new Transaction().add(...ixs);
+    tx.feePayer = payer;
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    const signed = await wallet.signTransaction!(tx);
+    const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
+    const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+    if (outcome.status === "failed") throw new Error(`${label} failed on-chain (${outcome.error}). Signature: ${signature}.`);
+    if (outcome.status === "expired") throw new Error(`${label} expired before confirmation -- nothing should have changed. Signature: ${signature}.`);
+    if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
+    return signature;
+  };
+
+  await signAndConfirm(
+    [createIx, AddressLookupTableProgram.extendLookupTable({ lookupTable: tableAddress, authority: payer, payer, addresses: chunks[0] })],
+    "Creating the lookup table",
+  );
+  for (const chunk of chunks.slice(1)) {
+    await signAndConfirm(
+      [AddressLookupTableProgram.extendLookupTable({ lookupTable: tableAddress, authority: payer, payer, addresses: chunk })],
+      "Extending the lookup table",
+    );
+  }
+
+  // A lookup table only becomes referenceable once the chain has advanced
+  // past the slot of its last extension -- wait (bounded) for it to be
+  // fully readable so a trade composed immediately after enabling doesn't
+  // fail with an invalid-table error. Confirmation above already took real
+  // time, so this almost always passes on the first check.
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const slotNow = await connection.getSlot("confirmed").catch(() => recentSlot);
+    if (slotNow > recentSlot) {
+      const table = await connection.getAddressLookupTable(tableAddress).catch(() => null);
+      if (table?.value && table.value.state.addresses.length >= addresses.length && table.value.isActive()) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 
   // Register (the server re-verifies the table on-chain before storing).
   const res = await fetch("/api/mainnet/reserve-alt", {

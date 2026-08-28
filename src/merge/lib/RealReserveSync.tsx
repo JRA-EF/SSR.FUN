@@ -33,6 +33,7 @@ import { PublicKey } from "@solana/web3.js";
 import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, registerDynamicSupportedAssetMints, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve, type AssetPriceInfo } from "./onChainReserve";
+import { fetchReserveImagePointers } from "./reserveImageClient";
 import { fetchAssetPricesUsd } from "./assetPricing";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
@@ -184,6 +185,17 @@ export function RealReserveSync() {
           );
         }
 
+        // The mutable reserve -> picture pointer map (signature-free picture
+        // changes -- see reserveImageClient.ts's fetchReserveImagePointers).
+        // One small request per pass, briefly cached; a pointer always wins
+        // over the Reserve's metadata-embedded imageUrl below, because the
+        // pointer is exactly what a picture EDIT moves (editing no longer
+        // republishes metadata or touches the chain). Best-effort: {} on any
+        // failure, falling back to the metadata picture.
+        const imagePointers = await getCached(`reserve-image-pointers:${SOLANA_CLUSTER}`, DISCOVERY_CACHE_TTL_MS, () =>
+          fetchReserveImagePointers(window.location.origin, IS_MAINNET ? "mainnet" : "devnet"),
+        ).catch(() => ({}) as Record<string, string>);
+
         const dtrs = await Promise.all(
           reserves.map(async (reserve) => {
             const delegates = await withReadConcurrencyLimit(() =>
@@ -198,7 +210,9 @@ export function RealReserveSync() {
             const parsedMetadata = await getCached(`reserve-metadata:${reserve.metadataUri}`, METADATA_CACHE_TTL_MS, () => resolveReserveMetadata(reserve.metadataUri)).catch(
               () => null,
             );
-            return buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER, mainnetMintMeta, priceByMint);
+            const dtr = buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER, mainnetMintMeta, priceByMint);
+            const pointedImageUrl = imagePointers[reserve.reserve];
+            return pointedImageUrl ? { ...dtr, logoUrl: pointedImageUrl } : dtr;
           }),
         );
         if (cancelled) return;

@@ -28,7 +28,6 @@ import {
   fetchReserveOnChain,
   fetchManagerFeeRecipients,
   discoverDelegatesForReserve,
-  resolveReserveMetadata,
   DEVNET_FIXTURES,
   DEVUSDC,
   findReserve,
@@ -49,10 +48,8 @@ import {
   executeRemoveReserveAsset,
   executeSubmitRebalance,
   executeUpdateDelegatePermissions,
-  executeUpdateMetadata,
   type RebalanceAssetPlan,
 } from "@/lib/managementClient";
-import { uploadReserveMetadata } from "@/lib/createReserveClient";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { applySliderWeightChange, type SliderAsset } from "@/lib/rebalanceSlider";
 
@@ -376,6 +373,10 @@ export function ManageDTR() {
   // reserveImageClient.ts) and held here for preview until saved.
   const [pendingProfileImage, setPendingProfileImage] = useState<string | null>(null);
   const [profileImageError, setProfileImageError] = useState<string | null>(null);
+  // True while a picked picture is uploading/saving -- its own flag (not
+  // onChainTxPending) because saving a picture no longer submits any
+  // transaction at all.
+  const [savingProfileImage, setSavingProfileImage] = useState(false);
   const profileImageInputRef = useRef<HTMLInputElement | null>(null);
 
   // DEC-0094: multi-recipient Manager fees. `feeRecipientsData` is refetched
@@ -729,10 +730,12 @@ export function ManageDTR() {
 
   // Handlers: Profile picture (Reserve Identity card). Whether the current
   // signer may change it: for a real on-chain Reserve, the root manager or a
-  // delegate holding the update-metadata permission (the same gate
-  // update_metadata enforces on-chain); a purely local/simulated Reserve has
-  // no on-chain gate -- the page's own manager-or-delegate access check
-  // above is the only meaningful one.
+  // delegate holding the update-metadata permission. Since the
+  // signature-free pointer flow, saving submits NO transaction, so this is
+  // UI policy only (kept aligned with the permission update_metadata would
+  // enforce), not an on-chain gate -- see the DECISION_LOG entry for the
+  // accepted trade-off. A purely local/simulated Reserve has no gate beyond
+  // the page's own manager-or-delegate access check above.
   const canEditProfilePicture = dtr.onChain ? canUpdateMetadataOnChain : true;
 
   const handlePickProfileImage = async (file: File | undefined) => {
@@ -757,49 +760,26 @@ export function ManageDTR() {
       toast({ title: "Profile picture updated", description: "This Reserve now shows the new picture." });
       return;
     }
-    void runOnChainAction("Update Profile Picture", async () => {
-      const origin = window.location.origin;
-      const cluster = IS_MAINNET ? ("mainnet" as const) : ("devnet" as const);
-      // 1. Store the picture itself (content-addressed, idempotent) and get
-      //    its short permanent URL -- never the image bytes on-chain.
-      const imageUrl = await uploadReserveImage(origin, pendingProfileImage, cluster);
-      // 2. Re-read the Reserve's CURRENT published details fresh from its
-      //    own on-chain metadata link as the base payload -- never from
-      //    possibly-stale/placeholder local display state, which for an
-      //    unresolvable-metadata Reserve holds honest "Unnamed Reserve"
-      //    placeholders that must never get baked into real metadata.
-      const fresh = await fetchReserveOnChain(
-        connection,
-        new PublicKey(onChainMeta.programId),
-        new PublicKey(onChainMeta.reserve),
-        onChainMeta.assets.map((a) => new PublicKey(a.mint)),
-      );
-      const current = fresh ? await resolveReserveMetadata(fresh.metadataUri) : null;
-      if (!current) {
-        throw new Error("This Reserve's current public details could not be read, so the picture was not changed. Try again in a moment.");
+    // Real on-chain Reserve: store the picture (content-addressed,
+    // idempotent) and repoint this Reserve's mutable picture pointer in the
+    // same upload -- no metadata republish, no update_metadata transaction,
+    // no wallet approval (see reserveImageClient.ts's pointer notes; the
+    // previous flow's one-wallet-approval metadata republish is in git
+    // history). Shown immediately; RealReserveSync's next discovery pass
+    // re-derives the same value from the pointer map for every viewer.
+    setSavingProfileImage(true);
+    void (async () => {
+      try {
+        const imageUrl = await uploadReserveImage(window.location.origin, pendingProfileImage, IS_MAINNET ? "mainnet" : "devnet", onChainMeta.reserve);
+        setReserveProfileImage(dtr.id, imageUrl);
+        setPendingProfileImage(null);
+        toast({ title: "Profile picture updated", description: "This Reserve now shows the new picture everywhere in the app." });
+      } catch (e) {
+        setProfileImageError(e instanceof Error ? e.message : "Failed to save the profile picture. Please try again.");
+      } finally {
+        setSavingProfileImage(false);
       }
-      // 3. Publish the same details plus the new picture, then point the
-      //    Reserve at the new payload (one wallet approval).
-      const newMetadataUri = await uploadReserveMetadata(
-        origin,
-        {
-          name: current.name,
-          ticker: current.ticker,
-          description: current.description,
-          category: current.category,
-          buyTaxPct: current.buyTaxPct,
-          sellTaxPct: current.sellTaxPct,
-          imageUrl,
-        },
-        cluster,
-      );
-      const signature = await executeUpdateMetadata(connection, walletCtx, onChainMeta.reserve, newMetadataUri);
-      // Show it immediately; RealReserveSync's next discovery pass re-derives
-      // the same value from the updated metadata.
-      setReserveProfileImage(dtr.id, imageUrl);
-      setPendingProfileImage(null);
-      return signature;
-    });
+    })();
   };
 
   // Handlers: Delegates
@@ -1078,23 +1058,22 @@ export function ManageDTR() {
                             }}
                           />
                           <div className="flex flex-wrap items-center gap-2">
-                            <Button variant="outline" size="sm" disabled={onChainTxPending !== null} onClick={() => profileImageInputRef.current?.click()}>
+                            <Button variant="outline" size="sm" disabled={savingProfileImage} onClick={() => profileImageInputRef.current?.click()}>
                               Choose Image
                             </Button>
                             {pendingProfileImage && (
                               <>
-                                <Button size="sm" disabled={onChainTxPending !== null} onClick={handleSaveProfileImage}>
-                                  {onChainTxPending === "Update Profile Picture" ? "Saving..." : "Save Picture"}
+                                <Button size="sm" disabled={savingProfileImage} onClick={handleSaveProfileImage}>
+                                  {savingProfileImage ? "Saving..." : "Save Picture"}
                                 </Button>
-                                <Button variant="ghost" size="sm" disabled={onChainTxPending !== null} onClick={() => setPendingProfileImage(null)}>
+                                <Button variant="ghost" size="sm" disabled={savingProfileImage} onClick={() => setPendingProfileImage(null)}>
                                   Cancel
                                 </Button>
                               </>
                             )}
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            Shown next to this Reserve everywhere in the app. PNG, JPEG, WebP, or GIF -- large images are resized automatically.
-                            {dtr.onChain ? " Saving publishes the picture as part of this Reserve's public details and will ask your wallet to approve." : ""}
+                            Shown next to this Reserve everywhere in the app. PNG, JPEG, WebP, or GIF -- large images are resized automatically. Saving updates the picture immediately for everyone.
                           </p>
                         </div>
                       ) : (

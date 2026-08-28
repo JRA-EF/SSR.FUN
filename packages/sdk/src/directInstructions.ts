@@ -168,6 +168,17 @@ export interface BuildDirectMultiAssetMintParams {
   reserveTokensRequested: bigint;
   /** Fractional slippage buffer applied on top of each leg's exact required amount (e.g. 0.02 = 2%) -- the on-chain instruction enforces this as a hard per-leg cap (transfer_checked can never move more), so the whole transaction reverts safely (nothing partially moves) if the real requirement ever exceeds it. */
   slippageBps?: number;
+  /**
+   * On-chain minimum NET Reserve Tokens out (`min_reserve_tokens_out` --
+   * enforced by the deployed handler as `net_shares_out >= min`, error
+   * SlippageMinOutputNotMet). The net output is deterministic given
+   * `reserveTokensRequested` and the Reserve's effective mint-fee bps
+   * (computeNetMintOutput mirrors the on-chain math exactly), so callers
+   * SHOULD pass that exact expected net amount -- the previous hardcoded
+   * `1` left minimum-output protection effectively disabled. Defaults to
+   * 1n only for backward compatibility with callers that predate this.
+   */
+  minReserveTokensOut?: bigint;
 }
 
 export interface BuildDirectMultiAssetMintResult extends DirectInstructionResult {
@@ -234,7 +245,7 @@ export async function buildDirectMultiAssetMintInstructions(params: BuildDirectM
   const mintIx = await program.methods
     .mintReserveTokensInKind(
       new BN(reserveTokensRequested.toString()),
-      new BN(1),
+      new BN((params.minReserveTokensOut ?? 1n).toString()),
       maxAssetAmounts.map((a) => new BN(a.toString())),
     )
     .accounts({

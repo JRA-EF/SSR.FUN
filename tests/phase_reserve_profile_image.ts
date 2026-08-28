@@ -11,7 +11,7 @@
 // Run in isolation:
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_reserve_profile_image.ts
 import { expect } from "chai";
-import { validateReserveImageDataUrl, computeImageId, MAX_IMAGE_BYTES, ALLOWED_IMAGE_CONTENT_TYPES } from "../lib/reserve-image/payload";
+import { validateReserveImageDataUrl, validateReserveAddress, computeImageId, MAX_IMAGE_BYTES, ALLOWED_IMAGE_CONTENT_TYPES } from "../lib/reserve-image/payload";
 import { parseReserveMetadataUri } from "../packages/sdk/src/discovery";
 
 /** A tiny but genuine 1x1 transparent PNG. */
@@ -84,6 +84,31 @@ describe("lib/reserve-image/payload.ts -- computeImageId (content-addressed, ret
 
   it("is exactly 16 lowercase hex characters -- same short-URL format as computeMetadataId", () => {
     expect(computeImageId(validateReserveImageDataUrl(TINY_PNG_DATA_URL))).to.match(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("lib/reserve-image/payload.ts -- validateReserveAddress (the pointer key every signature-free picture change goes through)", () => {
+  it("accepts well-formed Solana account addresses at both length extremes", () => {
+    // A real deployed program id (44 chars) and the system program (32 chars).
+    expect(validateReserveAddress("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9")).to.equal("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
+    expect(validateReserveAddress("11111111111111111111111111111111")).to.equal("11111111111111111111111111111111");
+  });
+
+  it("rejects a non-string / empty value", () => {
+    expect(() => validateReserveAddress(undefined)).to.throw(/missing/);
+    expect(() => validateReserveAddress("")).to.throw(/missing/);
+    expect(() => validateReserveAddress(42)).to.throw(/missing/);
+  });
+
+  it("rejects characters outside the base58 alphabet -- including SQL/URL metacharacters, so a hostile 'reserve' value can never reach the database as anything but a rejected request", () => {
+    for (const bad of ["0OIl0OIl0OIl0OIl0OIl0OIl0OIl0OIl", "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBB'--", "reserve; drop table reserve_image_pointer", "8hTW7fHwn8t8hcg TVeyAhHMiCTHGUP3783NWUTBB"]) {
+      expect(() => validateReserveAddress(bad), bad).to.throw(/not a valid Solana account address/);
+    }
+  });
+
+  it("rejects lengths outside the 32-44 range of a base58-encoded 32-byte key", () => {
+    expect(() => validateReserveAddress("1".repeat(31))).to.throw(/not a valid Solana account address/);
+    expect(() => validateReserveAddress("1".repeat(45))).to.throw(/not a valid Solana account address/);
   });
 });
 

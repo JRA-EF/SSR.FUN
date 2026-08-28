@@ -35,13 +35,16 @@ import {
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
 import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, type LaunchAssetPlan } from "@/lib/launchFunding";
-import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT } from "@/lib/solana-config";
+import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
+import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
+import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Rocket } from "lucide-react";
@@ -346,6 +349,29 @@ export function CreateDTR() {
   const [ticker, setTicker] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<string>(DEFAULT_RESERVE_CATEGORY);
+  // Optional profile picture, picked in Step 1 (Identity): the normalized
+  // data URL (see fileToProfileImageDataUrl -- downscaled/re-encoded
+  // locally, EXIF stripped) held until the metadata-upload effect below
+  // stores it and embeds the resulting permanent URL in this Reserve's
+  // metadata payload; launch then also points the Reserve's mutable picture
+  // pointer at it (see reserveImageClient.ts's pointer notes).
+  const [profileImageDataUrl, setProfileImageDataUrl] = useState<string | null>(null);
+  const [profileImageError, setProfileImageError] = useState<string | null>(null);
+  // The stored picture's permanent URL from the latest metadata upload --
+  // what the just-created Reserve's local registration shows immediately
+  // (RealReserveSync re-derives the same value on its next pass).
+  const [uploadedProfileImageUrl, setUploadedProfileImageUrl] = useState<string | null>(null);
+  const profileImageInputRef = useRef<HTMLInputElement | null>(null);
+  const handlePickProfileImage = async (file: File | undefined) => {
+    if (!file) return;
+    setProfileImageError(null);
+    try {
+      setProfileImageDataUrl(await fileToProfileImageDataUrl(file));
+    } catch (e) {
+      setProfileImageDataUrl(null);
+      setProfileImageError(e instanceof Error ? e.message : "This file could not be read as an image -- try a different one.");
+    }
+  };
   
   const [assets, setAssets] = useState<CreateDTRAssetInput[]>([]);
   const [assetSearch, setAssetSearch] = useState("");
@@ -441,7 +467,7 @@ export function CreateDTR() {
         const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
         return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeightForCost) * 10_000), seedWeightFraction: a.weight / totalWeightForCost };
       });
-      estimateCreateReserveCost(connection, realAssets, seedUsd, IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD)
+      estimateCreateReserveCost(connection, realAssets, seedUsd, IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD, IS_MAINNET)
         .then((est) => {
           if (!cancelled) {
             setCostEstimate(est);
@@ -470,7 +496,8 @@ export function CreateDTR() {
   }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection, REAL_ASSET_BY_SYMBOL, solPriceUsd]);
 
   // Uploads this Reserve's off-chain metadata (name/ticker/description/
-  // category/buyTaxPct/sellTaxPct) and resolves the resulting permanent URL
+  // category/buyTaxPct/sellTaxPct, plus the Step-1 profile picture's
+  // permanent URL when one was picked) and resolves the resulting permanent URL
   // BEFORE the user ever reaches Launch -- Review below displays it, and
   // Launch is disabled until it's ready, so an oversized/failed URI is
   // caught long before Phantom would ever open. Debounced the same way as
@@ -490,18 +517,29 @@ export function CreateDTR() {
     let cancelled = false;
     setMetadataUploading(true);
     const debounceHandle = setTimeout(() => {
-      uploadReserveMetadata(
-        window.location.origin,
-        {
-          name,
-          ticker,
-          description,
-          category,
-          buyTaxPct: managerBuyTaxPct,
-          sellTaxPct: managerSellTaxPct,
-        },
-        IS_MAINNET ? "mainnet" : "devnet",
-      )
+      (async () => {
+        const origin = window.location.origin;
+        const cluster = IS_MAINNET ? ("mainnet" as const) : ("devnet" as const);
+        // Store the Step-1 picture first (content-addressed, idempotent --
+        // a debounced re-upload of the same picture is a no-op server-side)
+        // so its permanent URL rides inside the metadata payload below,
+        // exactly like a Manage-page picture used to.
+        const imageUrl = profileImageDataUrl ? await uploadReserveImage(origin, profileImageDataUrl, cluster) : undefined;
+        if (!cancelled) setUploadedProfileImageUrl(imageUrl ?? null);
+        return uploadReserveMetadata(
+          origin,
+          {
+            name,
+            ticker,
+            description,
+            category,
+            buyTaxPct: managerBuyTaxPct,
+            sellTaxPct: managerSellTaxPct,
+            ...(imageUrl ? { imageUrl } : {}),
+          },
+          cluster,
+        );
+      })()
         .then((uri) => {
           if (cancelled) return;
           setMetadataUri(uri);
@@ -520,7 +558,7 @@ export function CreateDTR() {
       cancelled = true;
       clearTimeout(debounceHandle);
     };
-  }, [realDeploymentCandidate, name, ticker, description, category, managerBuyTaxPct, managerSellTaxPct]);
+  }, [realDeploymentCandidate, name, ticker, description, category, managerBuyTaxPct, managerSellTaxPct, profileImageDataUrl]);
 
   // Recovers from a page reload (or a return visit, hours or days later --
   // see PendingReserveDeploy's no-expiry note) that happened mid-deployment:
@@ -1087,6 +1125,15 @@ export function CreateDTR() {
       });
       clearPendingReserveDeploy();
 
+      // Point the new Reserve's mutable picture pointer at the Step-1
+      // picture so later signature-free edits and the pointer-map display
+      // path both start out consistent. Best-effort: the metadata payload
+      // submitted on-chain above already embeds the same picture's
+      // content-addressed URL, so a failure here changes nothing visible.
+      if (profileImageDataUrl) {
+        void uploadReserveImage(window.location.origin, profileImageDataUrl, IS_MAINNET ? "mainnet" : "devnet", result.reserve).catch(() => {});
+      }
+
       // Must match RealReserveSync.tsx's own `${SOLANA_CLUSTER}-${reserveId}`
       // id scheme exactly (see onChainReserve.ts's buildDtrFromDiscoveredReserve)
       // -- a mismatched prefix here would register this freshly-created
@@ -1124,6 +1171,7 @@ export function CreateDTR() {
         category,
         tags: [category, SOLANA_CLUSTER, "real"],
         logoSeed: dtrId,
+        logoUrl: uploadedProfileImageUrl ?? undefined,
         dtrAddress: result.reserve,
         managerAddress: walletCtx.publicKey.toBase58(),
         delegates: [],
@@ -1169,6 +1217,37 @@ export function CreateDTR() {
       // immediately, before api/ledger/known-asset-mints.ts's daily-refreshed
       // list would otherwise catch up -- see useAppStore.mainnetKnownAssetMints.
       if (IS_MAINNET) addKnownAssetMints(realAssets.map((a) => a.mint));
+
+      // One-approval trading from day one (DEC-0171): create + register the
+      // Reserve's trading lookup table as the deployment's final step, so
+      // this Reserve's very first Buy/Sell composes into a single wallet
+      // approval instead of falling back to the multi-approval flow (the
+      // exact gap behind the live 2026-08-27 four-approval ECHO purchase:
+      // no Reserve had a table registered). Best-effort by design: the
+      // Reserve is already fully deployed at this point, so a declined
+      // popup or a transient failure loses nothing -- trading falls back
+      // exactly as before, and the table can be added later from Manage or
+      // automatically on the first trade that needs it.
+      if (IS_MAINNET) {
+        try {
+          setCreateStep(null);
+          await createAndRegisterReserveAlt(connection, walletCtx, {
+            ssrProgramId: SSR_PROGRAM_ID,
+            reserve: new PublicKey(result.reserve),
+            reserveTokenMint: new PublicKey(result.reserveTokenMint),
+            mintAuthority: new PublicKey(result.mintAuthority),
+            vaultAuthority: new PublicKey(result.vaultAuthority),
+            protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
+            assets: result.assets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
+          });
+          toast({ title: "One-approval trading enabled", description: "Buys and Sells of this Reserve complete in a single wallet approval for every trader." });
+        } catch {
+          toast({
+            title: "One-approval trading not enabled yet",
+            description: "Your Reserve is fully deployed. This optional setup was skipped -- it can be enabled any time from the Manage page, and the first trade that needs it will offer it again.",
+          });
+        }
+      }
 
       toast({
         title: `Reserve deployed on Solana ${IS_MAINNET ? "Mainnet" : "DevNet"}`,
@@ -1338,6 +1417,44 @@ export function CreateDTR() {
               <CardDescription>Define the basic information for your new reserve.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <Label>Profile Picture (optional)</Label>
+                <div className="flex items-start gap-4">
+                  <Avatar className="h-16 w-16 border-2 border-border shadow-md">
+                    {profileImageDataUrl && <AvatarImage src={profileImageDataUrl} alt={ticker || "Reserve"} />}
+                    <AvatarFallback className="bg-primary/10 text-primary text-xl font-merge-display font-bold">
+                      {ticker.slice(0, 2) || "?"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="space-y-2">
+                    <input
+                      ref={profileImageInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="hidden"
+                      onChange={(e) => {
+                        void handlePickProfileImage(e.target.files?.[0]);
+                        e.target.value = "";
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => profileImageInputRef.current?.click()}>
+                        Choose Image
+                      </Button>
+                      {profileImageDataUrl && (
+                        <Button variant="ghost" size="sm" onClick={() => setProfileImageDataUrl(null)}>
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Shown next to this Reserve everywhere in the app. PNG, JPEG, WebP, or GIF -- large images are resized automatically. You can also add or change it later from the Manage page.
+                    </p>
+                  </div>
+                </div>
+                {profileImageError && <p className="text-sm text-destructive">{profileImageError}</p>}
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="name">Reserve Name</Label>
@@ -2076,7 +2193,6 @@ export function CreateDTR() {
                       );
                     })()}
                     <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
-                      <p className="font-semibold text-foreground">This will request {costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets)} wallet approvals:</p>
                       {(() => {
                         // Registering many assets can take more than one transaction --
                         // Solana caps a single transaction's size, and a large asset
@@ -2088,6 +2204,16 @@ export function CreateDTR() {
                         // real count in the popups below may differ slightly.
                         const registerBatches = Math.max(1, Math.ceil(assets.length / 6));
                         const needsSolWrap = assets.some((a) => a.symbol === "SOL");
+                        // Mainnet only: one wallet-approved Jupiter swap per non-USDC,
+                        // non-SOL asset -- the same per-mint filter
+                        // estimateCreateReserveCost's jupiterSwapCount uses, so the
+                        // steps listed here always add up to the headline count. An
+                        // asset the wallet already holds enough of skips its swap at
+                        // launch time, which is why the headline says "up to".
+                        const swapCount = IS_MAINNET ? assets.filter((a) => a.symbol !== "SOL" && REAL_ASSET_BY_SYMBOL.get(a.symbol)?.mint !== MAINNET_USDC_MINT).length : 0;
+                        // +1 on Mainnet: the optional one-approval-trading
+                        // setup that runs as deployment's final step (DEC-0171).
+                        const approvals = (costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets) + swapCount) + (IS_MAINNET ? 1 : 0);
                         let step = 1;
                         const lines: ReactNode[] = [];
                         if (registerBatches === 1) {
@@ -2104,16 +2230,44 @@ export function CreateDTR() {
                           );
                         }
                         if (needsSolWrap) lines.push(<p key="wrap">{step++}. Wrap your SOL for the seed deposit</p>);
-                        lines.push(<p key="seed">{step}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>);
-                        return lines;
+                        if (swapCount > 0) {
+                          lines.push(
+                            <p key="swaps">
+                              {swapCount > 1 ? `${step}-${step + swapCount - 1}` : step}. Swap your USDC for {swapCount === 1 ? "the other reserve asset" : `each of the other ${swapCount} reserve assets`} (one approval per
+                              swap; an asset your wallet already holds enough of is skipped)
+                            </p>,
+                          );
+                          step += swapCount;
+                        }
+                        lines.push(<p key="seed">{step++}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>);
+                        if (IS_MAINNET) {
+                          lines.push(
+                            <p key="alt">
+                              {step}. Enable one-approval trading (optional one-time setup, ~0.002 SOL -- future buys and sells of this Reserve then need a single wallet approval; skipping it changes nothing else)
+                            </p>,
+                          );
+                        }
+                        return (
+                          <>
+                            <p className="font-semibold text-foreground">
+                              This will request {swapCount > 0 ? "up to " : ""}
+                              {approvals} wallet approvals:
+                            </p>
+                            {lines}
+                          </>
+                        );
                       })()}
                       {(() => {
                         const grossSeedTokens = Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10));
                         const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
                         const netSeedTokens = estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
+                        // On Mainnet, any non-SOL asset is paid for in USDC (directly
+                        // for the USDC holding, via Jupiter swaps for the rest) -- say
+                        // so, rather than describing only the SOL side of the spend.
+                        const spendsUsdc = IS_MAINNET && assets.some((a) => a.symbol !== "SOL");
                         return (
                           <p className="pt-1">
-                            Expected result: you'll spend the SOL above and receive{" "}
+                            Expected result: you'll spend the {spendsUsdc ? "SOL and USDC" : "SOL"} above and receive{" "}
                             <span className="font-merge-mono text-foreground">
                               ~{netSeedTokens.toLocaleString(undefined, { maximumFractionDigits: 6 })} {ticker || "Reserve"}
                             </span>{" "}

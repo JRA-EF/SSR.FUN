@@ -432,6 +432,13 @@ export async function estimateCreateReserveCost(
   assets: CreateReserveAssetInput[],
   seedTotalUsd: number,
   solPriceUsd: number,
+  // Whether the funding step buys non-USDC assets via Jupiter swaps
+  // (Mainnet's flow, one wallet-approved transaction per swap). DevNet
+  // funds seed assets via the server-signed faucet instead -- no wallet
+  // transaction at all -- so its caller passes false and the estimate
+  // no longer counts swap transactions/fees that can never happen there
+  // (they inflated DevNet's numTransactions/fee figures before this flag).
+  includeJupiterSwaps: boolean = true,
 ): Promise<CreateReserveCostEstimate> {
   const { reserveRent, mintRent, assetRent, vaultRent } = await getRentConstants(connection);
 
@@ -452,7 +459,7 @@ export async function estimateCreateReserveCost(
   // count at launch time may be lower (an asset the wallet already holds
   // enough of needs no swap at all), so this is an upper bound, never an
   // underestimate.
-  const jupiterSwapCount = assets.filter((a) => !isWrappedSol(a.mint) && a.mint !== MAINNET_USDC_MINT).length;
+  const jupiterSwapCount = includeJupiterSwaps ? assets.filter((a) => !isWrappedSol(a.mint) && a.mint !== MAINNET_USDC_MINT).length : 0;
 
   // Registering many assets can now span more than one transaction (see
   // createReserveClient.ts's packInstructionsBySize -- a real 10-asset

@@ -60,6 +60,32 @@ export function validateReserveImageDataUrl(dataUrl: unknown): ReserveImagePaylo
 }
 
 /**
+ * Base58 shape of a Solana account address (32-44 chars of the Bitcoin
+ * base58 alphabet -- no 0, O, I, or l). Deliberately a shape check, not a
+ * full base58 decode: this module stays dependency-free beyond node:crypto
+ * (see header), and the pointer table only ever KEYS on the string -- a
+ * well-shaped-but-nonexistent address can only ever point a picture at a
+ * Reserve nobody will ever render, never corrupt another Reserve's row.
+ */
+const RESERVE_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * Validates the `reserve` field of a pointer-setting upload (the Reserve's
+ * on-chain account address, used as the reserve_image_pointer primary key)
+ * or throws a plain-language error. The one place every pointer write's
+ * key goes through, mirroring validateReserveImageDataUrl for the bytes.
+ */
+export function validateReserveAddress(reserve: unknown): string {
+  if (typeof reserve !== "string" || !reserve) {
+    throw new Error("The profile picture update is missing its Reserve address.");
+  }
+  if (!RESERVE_ADDRESS_RE.test(reserve)) {
+    throw new Error("The profile picture update's Reserve address is not a valid Solana account address.");
+  }
+  return reserve;
+}
+
+/**
  * Deterministic, content-addressed id for a validated image: identical
  * bytes always produce the same id, so a retried upload reuses the exact
  * same stored row and URL instead of writing a duplicate (the insert is

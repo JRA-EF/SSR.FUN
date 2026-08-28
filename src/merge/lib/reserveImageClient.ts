@@ -59,13 +59,20 @@ export async function fileToProfileImageDataUrl(file: File): Promise<string> {
  * its short permanent HTTPS URL. Idempotent server-side (content-hashed id,
  * `on conflict do nothing` insert -- see lib/reserve-image/payload.ts), so
  * a retry after a transient failure reuses the same stored row and URL.
+ *
+ * When `reserve` (the Reserve's on-chain address) is given, the upload ALSO
+ * repoints that Reserve's currently-shown picture to this image server-side
+ * (the reserve_image_pointer upsert -- see api/*\/reserve-image.ts's
+ * pointer-flow header). This is the whole signature-free edit flow: no new
+ * metadata payload, no update_metadata transaction, no wallet approval --
+ * RealReserveSync's pointer merge makes every viewer pick it up.
  */
-export async function uploadReserveImage(origin: string, dataUrl: string, cluster: "devnet" | "mainnet"): Promise<string> {
+export async function uploadReserveImage(origin: string, dataUrl: string, cluster: "devnet" | "mainnet", reserve?: string): Promise<string> {
   const path = `/api/${cluster}/reserve-image`;
   const response = await fetch(`${origin}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataUrl }),
+    body: JSON.stringify(reserve ? { dataUrl, reserve } : { dataUrl }),
   });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -75,4 +82,30 @@ export async function uploadReserveImage(origin: string, dataUrl: string, cluste
     throw new Error("The profile picture upload did not return a valid id.");
   }
   return `${origin}${path}?id=${body.id}`;
+}
+
+/**
+ * Fetches the full reserve-address -> picture-URL pointer map (see
+ * api/*\/reserve-image.ts's GET ?pointers=1). The returned URLs are the
+ * store's permanent content-addressed `?id=` form, so the browser's
+ * immutable caching still applies to the bytes -- only this small map is
+ * refetched. Best-effort by design: any failure returns an empty map, so a
+ * pointer-service hiccup can only ever fall back to each Reserve's
+ * metadata-embedded picture, never fail a discovery pass.
+ */
+export async function fetchReserveImagePointers(origin: string, cluster: "devnet" | "mainnet"): Promise<Record<string, string>> {
+  const path = `/api/${cluster}/reserve-image`;
+  try {
+    const response = await fetch(`${origin}${path}?pointers=1`);
+    if (!response.ok) return {};
+    const body = (await response.json().catch(() => null)) as { pointers?: Record<string, unknown> } | null;
+    if (!body || typeof body.pointers !== "object" || body.pointers === null) return {};
+    const result: Record<string, string> = {};
+    for (const [reserve, id] of Object.entries(body.pointers)) {
+      if (typeof id === "string" && /^[0-9a-f]{16}$/.test(id)) result[reserve] = `${origin}${path}?id=${id}`;
+    }
+    return result;
+  } catch {
+    return {};
+  }
 }

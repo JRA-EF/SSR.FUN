@@ -858,6 +858,9 @@ export function DTRDetail() {
           if (e.phase === "single-transaction") {
             setMultiAssetBuyStep("One transaction: your USDC is swapped, deposited, and your Reserve Tokens minted -- a single wallet approval.");
             setBuyPhase("preparing");
+          } else if (e.phase === "enabling-one-approval-trading") {
+            setMultiAssetBuyStep("One-time setup: enabling one-approval trading for this Reserve (a small separate approval), then your purchase completes in a single transaction.");
+            setBuyPhase("awaiting-wallet");
           } else if (e.phase === "swapping") {
             setMultiAssetBuyStep(`Swapping your USDC into Reserve asset ${e.index + 1} of ${e.total}...`);
             setBuyPhase("awaiting-wallet");

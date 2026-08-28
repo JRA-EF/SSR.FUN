@@ -148,6 +148,50 @@ export async function fetchLookupTables(connection: Connection, addresses: strin
   return tables;
 }
 
+/**
+ * Pure: would this instruction list fit Solana's wire limit if the
+ * Reserve's trading lookup table EXISTED with `reserveAltAddresses` as its
+ * contents? Compiles against a locally-constructed table object (identical
+ * wire cost to a real one: the table's key costs the same 32 bytes in the
+ * message header either way, and each matched account compresses to the
+ * same 1-byte index) -- so the answer is exact WITHOUT creating anything
+ * on-chain. Used by the buy path's auto-enable step (DEC-0171) to spend
+ * the table's one-time rent only when the table genuinely buys a
+ * one-approval purchase; a composition that can't fit regardless (many-leg
+ * Reserves) goes straight to the sequential fallback instead.
+ */
+export function wouldFitWithReserveAlt(params: {
+  payer: PublicKey;
+  instructions: TransactionInstruction[];
+  reserveAltAddresses: PublicKey[];
+  swapLookupTables: AddressLookupTableAccount[];
+}): boolean {
+  const hypotheticalTable = new AddressLookupTableAccount({
+    // Placeholder key, size-equivalent to any real table address; the
+    // compiled message is measured, never submitted.
+    key: new PublicKey("Sysvar1111111111111111111111111111111111111"),
+    state: {
+      deactivationSlot: BigInt("18446744073709551615"),
+      lastExtendedSlot: 0,
+      lastExtendedSlotStartIndex: 0,
+      authority: undefined,
+      addresses: params.reserveAltAddresses,
+    },
+  });
+  try {
+    compileSingleBuyTransaction({
+      payer: params.payer,
+      recentBlockhash: SystemProgram.programId.toBase58(), // valid-length stand-in, sizing only
+      instructions: params.instructions,
+      lookupTables: [hypotheticalTable, ...params.swapLookupTables],
+    });
+    return true;
+  } catch (e) {
+    if (e instanceof SingleTxTooLargeError) return false;
+    throw e;
+  }
+}
+
 /** Compiles the assembled instructions into ONE v0 transaction (unsigned), enforcing Solana's wire-size limit -- throws SingleTxTooLargeError when the purchase genuinely cannot fit in one transaction. */
 export function compileSingleBuyTransaction(params: {
   payer: PublicKey;
@@ -155,11 +199,21 @@ export function compileSingleBuyTransaction(params: {
   instructions: TransactionInstruction[];
   lookupTables: AddressLookupTableAccount[];
 }): VersionedTransaction {
-  const message = new TransactionMessage({
-    payerKey: params.payer,
-    recentBlockhash: params.recentBlockhash,
-    instructions: params.instructions,
-  }).compileToV0Message(params.lookupTables);
+  let message;
+  try {
+    message = new TransactionMessage({
+      payerKey: params.payer,
+      recentBlockhash: params.recentBlockhash,
+      instructions: params.instructions,
+    }).compileToV0Message(params.lookupTables);
+  } catch {
+    // web3.js asserts its own structural ceilings during compilation (e.g.
+    // "Max static account keys length exceeded" once uncompressed accounts
+    // pass the message format's limit) BEFORE any size can be measured --
+    // the same verdict as an over-limit serialization, typed the same way
+    // so every caller's fallback logic engages identically.
+    throw new SingleTxTooLargeError(null);
+  }
   const tx = new VersionedTransaction(message);
   let bytes: number;
   try {

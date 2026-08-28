@@ -20,7 +20,20 @@
 // read in this app) it needs no dashboard auth: it must be resolvable by
 // anyone/anything rendering the Reserve later. Content-addressed ids never
 // change meaning, so the response is cacheable as immutable.
-import { validateReserveImageDataUrl, computeImageId, ALLOWED_IMAGE_CONTENT_TYPES } from "../../lib/reserve-image/payload";
+//
+// Pointer flow (signature-free picture changes -- see
+// docs/project/DECISION_LOG.md's entry for this change): a POST may also
+// carry `reserve` (the Reserve's on-chain address); the upload then ALSO
+// upserts reserve_image_pointer so that Reserve's currently-shown picture
+// becomes this image -- no update_metadata transaction, no wallet
+// signature. GET ?pointers=1 returns every pointer as
+// `{ pointers: { <reserve>: <image id> } }` -- RealReserveSync merges it
+// over each Reserve's metadata-embedded imageUrl once per discovery pass.
+// DELIBERATE TRADE-OFF: like the image store itself, the pointer write is
+// public and unauthenticated (the product decision was to drop the wallet
+// approval entirely); the on-chain metadata's own imageUrl is untouched by
+// pointer writes, so wiping a bad pointer row restores the signed state.
+import { validateReserveImageDataUrl, validateReserveAddress, computeImageId, ALLOWED_IMAGE_CONTENT_TYPES } from "../../lib/reserve-image/payload";
 import { getSql } from "../../lib/reserve-image/db";
 import { parseJsonBody } from "../devnet/_lib/apiTypes";
 
@@ -44,8 +57,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method === "POST") {
     res.setHeader?.("Cache-Control", "no-store");
     let payload;
+    let reserve: string | null = null;
     try {
-      payload = validateReserveImageDataUrl(parseJsonBody(req).dataUrl);
+      const body = parseJsonBody(req);
+      payload = validateReserveImageDataUrl(body.dataUrl);
+      // Optional: when present, this upload also repoints the named
+      // Reserve's currently-shown picture (see the pointer-flow header).
+      if (body.reserve !== undefined && body.reserve !== null && body.reserve !== "") {
+        reserve = validateReserveAddress(body.reserve);
+      }
     } catch (e) {
       res.status(400).json({ error: e instanceof Error ? e.message : "Invalid profile picture upload." });
       return;
@@ -58,6 +78,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         values (${id}, ${payload.contentType}, ${payload.dataBase64})
         on conflict (id) do nothing
       `;
+      if (reserve) {
+        await sql`
+          insert into reserve_image_pointer (reserve, image_id, updated_at)
+          values (${reserve}, ${id}, now())
+          on conflict (reserve) do update set image_id = excluded.image_id, updated_at = now()
+        `;
+      }
       res.status(200).json({ id });
     } catch (e) {
       res.status(503).json({ error: e instanceof Error ? e.message : "Failed to store the profile picture." });
@@ -67,6 +94,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   if (req.method === "GET") {
     const url = new URL(req.url ?? "", "http://internal");
+    if (url.searchParams.get("pointers") !== null) {
+      // The full reserve -> image-id pointer map (small by construction:
+      // one row per Reserve that has ever had its picture changed). Served
+      // uncached -- this is exactly the mutable state whose freshness the
+      // signature-free edit flow depends on.
+      try {
+        const sql = getSql();
+        const rows = (await sql`select reserve, image_id from reserve_image_pointer`) as { reserve: string; image_id: string }[];
+        res.setHeader?.("Cache-Control", "no-store");
+        res.status(200).json({ pointers: Object.fromEntries(rows.map((r) => [r.reserve, r.image_id])) });
+      } catch (e) {
+        res.setHeader?.("Cache-Control", "no-store");
+        res.status(503).json({ error: e instanceof Error ? e.message : "Failed to read the profile picture pointers." });
+      }
+      return;
+    }
     const id = url.searchParams.get("id");
     if (!id) {
       res.status(400).json({ error: "Missing required 'id' query param." });

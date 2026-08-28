@@ -40,7 +40,7 @@ async function main() {
   console.log('Schema applied.')
 
   const tables = await sql.query(
-    `select table_name from information_schema.tables where table_schema = 'public' and table_name = 'reserve_image'`,
+    `select table_name from information_schema.tables where table_schema = 'public' and table_name in ('reserve_image', 'reserve_image_pointer')`,
   )
   console.log(`Confirmed tables present: ${tables.map(t => t.table_name).join(', ') || '(none found!)'}`)
   console.log('Done.')

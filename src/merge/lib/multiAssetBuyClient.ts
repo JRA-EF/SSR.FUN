@@ -44,7 +44,7 @@
 //  - Never custodies funds: every transaction is signed by the buyer's own
 //    wallet; acquired assets live in the buyer's own ATAs until the mint
 //    deposits them.
-import { Connection, PublicKey, Transaction, type TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, type TransactionInstruction, type VersionedTransaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
@@ -54,6 +54,7 @@ import {
   computeMintRequirements,
   computeNetMintOutput,
   describeOnChainError,
+  findVaultAuthority,
   MAINNET_USDC_MINT,
   type ZapAssetLeg,
 } from "@ssr/sdk";
@@ -63,6 +64,7 @@ import {
   buildWrapRecoveredSolInstructions,
   compileSingleBuyTransaction,
   fetchLookupTables,
+  wouldFitWithReserveAlt,
   SingleTxTooLargeError,
   SINGLE_TX_SWAP_MAX_ACCOUNTS,
 } from "./singleTxBuy";
@@ -82,7 +84,7 @@ import {
 } from "./multiAssetBuyPlan";
 import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
 import { withRateLimitRetry } from "./rpcResilience";
-import { fetchReserveAltAddress } from "./reserveAltClient";
+import { buildReserveAltAddresses, createAndRegisterReserveAlt, fetchReserveAltAddress } from "./reserveAltClient";
 
 /** Same threshold createReserveClient.ts's seed funding uses -- routine slippage below this is never reported as a shortfall worth warning about. */
 const SHORTFALL_WARN_PCT = 0.05;
@@ -104,6 +106,8 @@ export function usdToReserveTokensRequested(usdAmount: number, nav: number, rese
 export type MultiAssetBuyProgressEvent =
   /** The whole purchase (swaps + deposit + mint) is going through as ONE wallet-signed atomic transaction (DEC-0156) -- the normal path. */
   | { phase: "single-transaction" }
+  /** One-time setup (DEC-0171): this Reserve has no trading lookup table yet and the purchase can't fit one transaction without it -- creating and registering the table (its own wallet approval) before retrying the single-transaction purchase. */
+  | { phase: "enabling-one-approval-trading" }
   | { phase: "swapping"; mint: string; index: number; total: number }
   | { phase: "minting" }
   | { phase: "awaiting-wallet" };
@@ -445,6 +449,11 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
         reserveTokenSupplyRaw: params.reserveTokenSupplyRaw,
         reserveTokensRequested: params.reserveTokensRequested,
         slippageBps: params.slippageBps,
+        // Real on-chain minimum-output protection (DEC-0171): the deployed
+        // handler enforces net_shares_out >= this, and the net output is
+        // deterministic from the requested amount and fee bps -- the
+        // previous hardcoded 1 left the check effectively disabled.
+        minReserveTokensOut: expectedNetRaw,
       });
       const mintIx = mintPrelude[mintPrelude.length - 1];
       const ixs = assembleSingleBuyInstructions({
@@ -457,9 +466,50 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       // exists) compresses the protocol's fixed accounts -- often the
       // difference between one approval and the sequential fallback.
       const reserveAlt = await fetchReserveAltAddress(reserveBase58);
-      const lookupTables = await fetchLookupTables(params.connection, [...(reserveAlt ? [reserveAlt] : []), ...swapSets.flatMap((s) => s.addressLookupTableAddresses)]);
-      const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
-      const tx = compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
+      const swapTableAddresses = swapSets.flatMap((s) => s.addressLookupTableAddresses);
+      let lookupTables = await fetchLookupTables(params.connection, [...(reserveAlt ? [reserveAlt] : []), ...swapTableAddresses]);
+      let { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
+      let tx: VersionedTransaction;
+      try {
+        tx = compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
+      } catch (compileError) {
+        // AUTO-ENABLE (DEC-0171): the exact condition behind the live
+        // 2026-08-27 four-approval ECHO purchase -- no trading table
+        // registered, composition overruns the wire limit. If a table
+        // would make this purchase fit (proven by compiling against its
+        // exact would-be contents, no on-chain action), create + register
+        // it now (one extra approval, once per Reserve, ~0.002 SOL rent,
+        // benefits every future trader) and retry the single transaction.
+        // If it can't help (many-leg Reserves), or its creation is
+        // declined/fails, fall back sequentially exactly as before.
+        if (!(compileError instanceof SingleTxTooLargeError) || reserveAlt) throw compileError;
+        const altParams = {
+          ssrProgramId: program.programId as PublicKey,
+          reserve: params.reserve,
+          reserveTokenMint: params.reserveTokenMint,
+          mintAuthority: params.mintAuthority,
+          vaultAuthority: findVaultAuthority(params.reserve, program.programId)[0],
+          protocolFeeDestination: params.protocolFeeDestination,
+          assets: params.assets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
+        };
+        const swapTables = await fetchLookupTables(params.connection, swapTableAddresses);
+        if (!wouldFitWithReserveAlt({ payer: owner, instructions: ixs, reserveAltAddresses: buildReserveAltAddresses(altParams), swapLookupTables: swapTables })) {
+          throw compileError;
+        }
+        log("no trading table registered and the purchase can't fit without one -- enabling one-approval trading (one-time table), then retrying the single transaction");
+        currentStage = "enabling one-approval trading for this Reserve (a one-time setup, its own wallet approval)";
+        params.onProgress?.({ phase: "enabling-one-approval-trading" });
+        let newAlt: string;
+        try {
+          newAlt = await createAndRegisterReserveAlt(params.connection, params.wallet, altParams);
+        } catch (altError) {
+          log("enabling one-approval trading did not complete -- falling back to the step-by-step flow", { error: altError instanceof Error ? altError.message : String(altError) });
+          throw compileError;
+        }
+        lookupTables = await fetchLookupTables(params.connection, [newAlt, ...swapTableAddresses]);
+        ({ blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed"));
+        tx = compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
+      }
       log("single-tx composed", { instructions: ixs.length, bytes: tx.serialize().length, lookupTables: lookupTables.length });
 
       // Read-only simulation BEFORE the wallet signature -- a doomed
@@ -623,6 +673,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       reserveTokenSupplyRaw: params.reserveTokenSupplyRaw,
       reserveTokensRequested: params.reserveTokensRequested,
       slippageBps: params.slippageBps,
+      minReserveTokensOut: expectedNetRaw, // same real minimum as the single-transaction path (DEC-0171)
     });
     log("mint instruction built", {
       fixedAndRemainingKeys: instructions[instructions.length - 1].keys.length,

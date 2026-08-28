@@ -5187,3 +5187,114 @@
   ]
 }
 ```
+
+## DEC-0168
+
+```json
+{
+  "id": "DEC-0168",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "Reserve profile pictures: (1) the Create flow's Step 1 (Reserve Identity) now offers the same optional profile-picture picker the Manage page already had -- the picked image is normalized locally, stored content-addressed, embedded as `imageUrl` in the Reserve's creation metadata payload, and shown immediately on the just-created Reserve; and (2) changing a Reserve's picture NO LONGER requires a wallet signature. The edit flow's previous shape (republish full metadata payload + one update_metadata transaction, DEC's profile-picture feature) is replaced by a mutable server-side pointer: new table reserve_image_pointer (reserve address -> content-addressed image id) in the existing Reserve Image Store, upserted by the same POST /api/{devnet,mainnet}/reserve-image upload when it carries a `reserve` field, and served as a whole map via GET ?pointers=1. RealReserveSync fetches the map once per discovery pass and a pointer always wins over the metadata-embedded imageUrl. Launch also sets the pointer for the new Reserve so both display paths start consistent.",
+  "context": "Creator instruction this session: 'earlier in the project we allowed reserve picture edits. but we didn't activate this function in the create a reserve part. please include it in the first step. also ... let's remove the need for wallet signature on the reserve edit picture function.' The previous edit flow was ManageDTR-only and cost one wallet approval per picture change because the imageUrl lived inside the immutable, content-addressed metadata payload the Reserve points at on-chain.",
+  "rationale": "The pointer design removes the signature requirement without touching the chain or the metadata store's immutability guarantees: stored images stay content-addressed and permanently cacheable; only the small reserve->id pointer moves. The on-chain metadata_uri and its payload are never modified by an edit, so the signed, on-chain-anchored state remains intact and a bad pointer row can simply be deleted to restore it. Creation still embeds the picture in the signed metadata payload, so external consumers of metadata_uri see the creation-time picture even though they never read the pointer map.",
+  "alternativesConsidered": [
+    "Keeping a signature but making it a free off-chain signMessage proof of manager identity -- rejected: the mandate was to remove the wallet-signature step entirely, and a signMessage popup is still a wallet approval from the user's point of view.",
+    "Making the metadata imageUrl itself a mutable ?reserve= URL -- rejected: it would make the signed metadata payload's meaning mutable and break the store's content-addressed immutable-caching model; the pointer overlay keeps signed state and mutable state cleanly separated.",
+    "An authenticated pointer write (server-verified manager check via RPC) -- rejected as false security: without any signature the claimed wallet is spoofable, so it adds an RPC dependency without adding real authorization."
+  ],
+  "impact": "ACCEPTED SECURITY TRADE-OFF (explicit product decision): the pointer write, like the image upload it rides on, is public and unauthenticated -- anyone who crafts the POST can repoint any Reserve's picture (image content is still validated: allowlisted raster formats, 400KB decoded cap, base58-shape-validated reserve key; the Manage UI still gates the editor to the root manager / update-metadata delegates, and CreateDTR/ManageDTR are unchanged for everyone else). Recovery from abuse is deleting the pointer row (metadata-embedded picture then shows again). executeUpdateMetadata (managementClient.ts) now has no callers but is kept as the on-chain capability wrapper. reserve_image_pointer created in the shared Neon DB via scripts/migrate-reserve-image.mjs (applied 2026-08-27, both tables confirmed). 940/940 offline tests passing (4 new: validateReserveAddress). tsc -b, oxlint, npm run build clean. Not yet deployed to production at the time of this entry.",
+  "affectedAreas": ["lib/reserve-image/schema.sql", "lib/reserve-image/payload.ts", "api/devnet/reserve-image.ts", "api/mainnet/reserve-image.ts", "scripts/migrate-reserve-image.mjs", "src/merge/lib/reserveImageClient.ts", "src/merge/lib/RealReserveSync.tsx", "src/merge/pages/CreateDTR.tsx", "src/merge/pages/ManageDTR.tsx", "tests/phase_reserve_profile_image.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "The update_metadata-transaction picture-edit flow introduced with the Reserve profile-picture feature (ManageDTR) -- its metadata-republish + one-wallet-approval path is replaced by the pointer flow; update_metadata itself remains deployed and unchanged on-chain.",
+  "supersededBy": null,
+  "evidence": [
+    "scripts/migrate-reserve-image.mjs run output 2026-08-27: 'Confirmed tables present: reserve_image, reserve_image_pointer' against the production Neon host.",
+    "Full offline suite after the change: 940 passing (tests/phase_reserve_profile_image.ts extended with validateReserveAddress coverage incl. SQL/URL-metacharacter rejection).",
+    "Pre-change flow requiring the signature: ManageDTR.tsx handleSaveProfileImage called executeUpdateMetadata after uploadReserveMetadata (see git history of this commit).",
+    "Pointer-over-metadata precedence: RealReserveSync.tsx discovery pass merges fetchReserveImagePointers over buildDtrFromDiscoveredReserve's metadata-derived logoUrl."
+  ]
+}
+```
+
+## DEC-0169
+
+```json
+{
+  "id": "DEC-0169",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "Wallet Cost Summary approval-list accuracy fix (Review & Deploy step). (1) The numbered wallet-approval list now includes the Mainnet Jupiter-swap step(s) -- one approval per non-USDC/non-SOL asset, shown as a numbered range and marked skippable for an asset the wallet already holds enough of -- so the listed steps always add up to the headline count, which previously said e.g. '5 wallet approvals' and then listed only 3 steps. The headline says 'up to N' whenever swaps are involved, since a swap can be skipped at launch time. (2) 'Expected result: you'll spend the SOL above' now says 'the SOL and USDC above' on Mainnet whenever any non-SOL asset is selected -- the flow genuinely spends USDC (directly and via swaps), and the old sentence described only the SOL side. (3) estimateCreateReserveCost gained an includeJupiterSwaps flag (default true, single caller passes IS_MAINNET): on DevNet the funding step is the server-signed faucet with zero wallet transactions, but the estimator's per-mint filter (mint != MAINNET_USDC_MINT) counted every DevNet fixture asset as a Jupiter swap, inflating DevNet's displayed transaction count and network-fee estimate.",
+  "context": "Creator pasted the live Mainnet Review-step copy for a 3-asset (SOL + 2 swap-funded assets) Reserve: 'This will request 5 wallet approvals:' followed by only 3 numbered steps, with 'Requested as ... across 5 transactions' above it. The count itself was correct (1 create+register, 1 SOL wrap, 2 Jupiter swaps, 1 seed) -- the swap approvals were simply never rendered in the list, a gap dating from when the list was written before the Mainnet Jupiter funding path existed.",
+  "rationale": "The list and the headline now derive their swap component from the same per-mint filter estimateCreateReserveCost uses, so they cannot disagree again for any composition. Copy stays in plain language per the Interface Copy Standards -- no internal function or instruction names.",
+  "alternativesConsidered": [
+    "Dropping the headline count and letting the list speak for itself -- rejected: the count is what sets the user's expectation for how many Phantom popups are coming, exactly the number they watch for.",
+    "Counting swaps out of the headline (list-only) -- rejected: swaps ARE wallet approvals; hiding them would understate what the user is about to click through."
+  ],
+  "impact": "Display/estimate accuracy only -- no change to what is actually submitted on-chain. DevNet's Review step now shows the true (lower) transaction count and fee estimate. 940/940 offline tests passing; tsc -b, oxlint, npm run build clean. Not yet deployed to production (rides with DEC-0168's pending deploy).",
+  "affectedAreas": ["src/merge/pages/CreateDTR.tsx", "src/merge/lib/createReserveClient.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0153 (partially: its Mainnet Wallet Cost Summary's approval list, which predated the Jupiter funding steps being listed)",
+  "supersededBy": null,
+  "evidence": [
+    "Creator-pasted live copy: 'This will request 5 wallet approvals:' followed by exactly 3 numbered steps (create+register, wrap SOL, seed) for a 3-asset SOL+2-swap-asset composition.",
+    "estimateCreateReserveCost's numTransactions = seed + registerBatches + wrap + jupiterSwapCount (createReserveClient.ts) vs. the pre-fix list rendering only register/wrap/seed lines.",
+    "Pre-fix DevNet inflation: jupiterSwapCount filtered only on mint != MAINNET_USDC_MINT, which every DevNet fixture mint passes, despite DevNet funding being the server-signed faucet with zero wallet transactions."
+  ]
+}
+```
+
+
+## DEC-0170
+
+```json
+{
+  "id": "DEC-0170",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "Homepage KPI section redesigned from a full-width bordered strip to a centered row of four individual KPI cards (Total Reserve Market Cap, 24h Volume, Active Reserves, Reserve Token Holders), aligned to the same --maxw container as the hero, Featured Reserves, and How It Works. Each KPI is its own card: --r-lg rounded corners, 1px --line border, a soft top-edge tint derived from --accent-soft, and a restrained purple-tinted shadow. Desktop shows four equal-width columns; <=1000px a 2x2 grid; <=640px keeps the 2x2 grid with tighter padding and a smaller value size. The band pulls up 16px into the hero's bottom padding so the gap above the cards matches the 64px section rhythm below. Live KPI calculations and data sources are unchanged; loading/error callouts render in the same band.",
+  "context": "User-requested visual correction (with screenshot): the full-width kpi-strip band read as a white strip across the page in light theme, leaving large empty areas either side of the four KPIs and breaking the page background's continuity between the hero and Featured Reserves.",
+  "rationale": "Container-width cards keep the page background continuous and match the established card language (fcard: surface background, --line border, rounded corners, purple-tinted hover shadow). All colors/radii/spacing come from existing :root tokens per the DEC-0080 UI-baseline rule; this is an explicitly requested redesign of the KPI section only.",
+  "alternativesConsidered": [
+    "Keeping the full-width strip but tinting its background to match the page -- rejected: still a full-bleed band with dead side areas, the exact complaint.",
+    "Single horizontal scroll row on mobile -- rejected: the native design system stacks grids at breakpoints (fcards/rcards); a compact 2x2 grid fits it better and avoids hidden off-screen KPIs."
+  ],
+  "impact": "Visual only; Home.tsx KPI markup renamed kpi-strip/kpi-grid/kpi-cell to kpi-band/kpi-cards/kpi-card (used nowhere else). No change to KPI computation (computeMarketCap sum, useLandingStats volume/holders, active count) or any protocol functionality. tsc -b, oxlint, npm run build clean; 940/940 offline tests passing.",
+  "affectedAreas": ["src/pages/Home.tsx", "src/index.css"],
+  "supersedes": "DEC-0080 (partially: the approved baseline's full-width KPI strip appearance on the homepage; the baseline rule itself stands)",
+  "supersededBy": null,
+  "evidence": [
+    "User screenshot showing the full-width white KPI band with empty side areas in light theme.",
+    "src/index.css: .kpi-band/.kpi-cards/.kpi-card replacing .kpi-strip/.kpi-grid/.kpi-cell, including the 1000px and 640px media-query updates.",
+    "Validation: tsc exit 0, oxlint exit 0 (pre-existing warnings only, none in changed files), 940 passing offline tests, vite build exit 0."
+  ]
+}
+```
+## DEC-0171
+
+```json
+{
+  "id": "DEC-0171",
+  "date": "2026-08-27",
+  "status": "confirmed-implemented",
+  "decision": "One-approval Reserve purchases made real (Tier 1 of the one-approval architecture mandate; no program change). Root cause established by full on-chain reconstruction of the Creator's 4-approval $10 ECHO purchase (final tx 23ta8kFQ...): the DEC-0156 composed single-transaction path was falling back to the sequential flow for EVERY trade because NO Reserve had a DEC-0161 trading lookup table registered (registry returned alt:null for ECHO and CHARLI alike) -- without the table the composition overruns Solana's 1232-byte wire limit. Shipped: (1) ECHO's trading table created on Mainnet and registered (2nNx3zSkv5qVKVdQ7iMZSLXQUyYKX5ZjVsZCTymu3iRk, 24 addresses, one create+extend tx paid by the Protocol Admin wallet); (2) Reserve creation now auto-creates+registers the trading table as its final (optional, decline-safe) step so every new Reserve trades one-approval from day one, with the Review step's approvals list updated truthfully; (3) the buy path auto-heals table-less Reserves: on a too-large composition it first PREDICTS whether a table would make the purchase fit (pure compile against the table's exact would-be contents -- wouldFitWithReserveAlt -- so rent is never spent on a table that can't help, e.g. many-leg Reserves), then creates+registers it (its own clearly-labeled approval) and retries the single transaction; (4) createAndRegisterReserveAlt now chunks table extension (26 first tx / 28 per follow-up, measured capacities) so the 12-asset product-standard table (51 addresses) is buildable, and waits for the table to become referenceable before returning; (5) REAL on-chain minimum-output protection: buildDirectMultiAssetMintInstructions accepts minReserveTokensOut and the buy passes its exact expected net output -- min_reserve_tokens_out was previously hardcoded to 1 (protection disabled) despite the deployed handler enforcing net_shares_out >= min (SlippageMinOutputNotMet); (6) compileSingleBuyTransaction converts web3.js's own structural assertion (Max static account keys length exceeded) into SingleTxTooLargeError so the fallback engages identically for extreme compositions.",
+  "context": "Creator mandate this session: a purchase must be one genuine approval, USDC-only, with a truthful Phantom preview (-USDC / +Reserve Token), never cosmetic popup manipulation. Phase-1 reconstruction of the ECHO purchase (buyer 6BjT...WZen): 3 sequential Jupiter swaps (USDC->wSOL 2EfNWK..., USDC->ETH 13ju7t..., USDC->HYPE 4CqJtJ...) then the separate deposit+mint (23ta8kFQ..., +9.891228 ECHO) -- 4 signatures, 3,205 bytes, 328,262 CU, 424,742 lamports fees, 65 distinct accounts. Architecture evaluation measured: 3-asset composed WITH trading table fits (fresh maxAccounts=24 routes: 1,163B synthetic table / 990B real table); without a table it overruns; 5-asset overruns with real routes (40+24+25+40-account route instructions); 10-asset overruns even with routes still missing -- physically impossible in one transaction, ALTs cannot help (per-instruction data + 1-byte indexes alone exceed the format). Jupiter-CPI-in-program rejected (size limit binds identically, CPI depth 3 routes hit the limit of 4 when nested, large audit surface). Intent-escrow + permissionless keeper identified as the only >4-asset one-approval design -- deferred as Tier 2 (program upgrade + audit), explicitly NOT started.",
+  "rationale": "The composed path and the table registry already existed (DEC-0156/0161) -- the gap was purely that nothing ever created the tables. Auto-creating at Reserve creation and auto-healing on first trade close the gap permanently without touching the deployed program or the guarded sequential fallback (which remains as the safety net and for many-leg Reserves until Tier 2).",
+  "alternativesConsidered": [
+    "One SSR instruction executing Jupiter routes by CPI -- rejected: does not solve the binding 1232-byte constraint (route accounts still ride in the transaction), risks the CPI depth-4 limit (routes measured at depth 3), and adds a large program-side validation/audit surface.",
+    "Signed intent + USDC escrow + permissionless keeper settlement -- the correct design for >4-asset Reserves and the only one meeting one-approval at the 12-asset standard; deferred to its own Tier-2 pass (new instructions, real audit) rather than rushed here. Phantom would truthfully show only -USDC at approval time under it.",
+    "Bounded USDC delegation / session keys -- rejected: the popup shows a delegation (not the economic result), the standing allowance outlives the purchase, and it needs a superset of the keeper machinery without escrow's program-enforced guarantees.",
+    "Batch signAllTransactions for the sequential flow -- rejected: not atomic, and the mandate is one approval with a truthful net preview, which only genuine same-transaction execution provides."
+  ],
+  "impact": "PROVEN by read-only Mainnet simulation with the real registered table: the exact ECHO purchase composes to 990 bytes, 1 signature, err:null, 312,153 CU, simulated net result -10.200018 USDC / +9.891228 ECHO in ONE transaction -- precisely the truthful Phantom preview mandated. (The minted token renders by mint address, not as ECHO, until Metaplex metadata exists -- a recorded Tier-2/program-upgrade item, DEC-0161 follow-up.) Because the DEPLOYED production client already fetches the table registry (DEC-0161 shipped), ECHO buys and sells become one-approval on live production IMMEDIATELY from this pass's table registration alone; the auto-create/auto-heal/min-out improvements activate with the next deploy. Practical one-transaction boundary measured at ~3 swap legs (occasionally 4 with compact routes); larger Reserves keep the guarded sequential fallback until Tier 2. 948/948 offline tests (8 new in tests/phase_one_approval_buy.ts); tsc -b, oxlint (no new findings), npm run build clean; packages/sdk dist rebuilt. Client code NOT yet deployed to production (rides with DEC-0168/0169's pending deploy).",
+  "affectedAreas": ["packages/sdk/src/directInstructions.ts", "src/merge/lib/reserveAltClient.ts", "src/merge/lib/singleTxBuy.ts", "src/merge/lib/multiAssetBuyClient.ts", "src/merge/pages/CreateDTR.tsx", "src/merge/pages/DTRDetail.tsx", "tests/phase_one_approval_buy.ts", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "ECHO purchase reconstruction: swaps 2EfNWK.../13ju7t.../4CqJtJ... (-3.435992/-3.417108/-3.346918 USDC), mint 23ta8kFQ... (+9,891,228 raw ECHO; 1,077B; 90,745 CU; 26 static keys; no lookup table).",
+    "Registry state at investigation time: GET /api/mainnet/reserve-alt returned alt:null for both ECHO (D6juoQ...) and CHARLI (6FN24Z...).",
+    "Table creation tx 4QnPbCS4KgT3UouZd3kFikZzXyxukPLeJL6HqoQMBSgxL5tteank4eTCS6pS2Js41xvAs91dxWPCZgatpBn2HZNW (create+extend, 24 addresses, 1,090 bytes) -- every PDA cross-checked against the real mint transaction's accounts before submission; registry POST answered ok:true.",
+    "Composed-purchase proof (read-only simulation, real table): 990 bytes, numRequiredSignatures=1, err:null, unitsConsumed 312,153, buyer USDC 203592476->193392458 and ECHO 0->9891228.",
+    "Size measurements: 3-asset without table = overrun; 5-asset (DELTA mints, real routes) = overrun; 10-asset = overrun with 8/9 routes; empirical CU sum of the real 4-tx purchase = 328,262.",
+    "programs/ssr_protocol/src/instructions/mint_reserve_tokens_in_kind.rs:203-206: net_shares_out >= min_reserve_tokens_out (SlippageMinOutputNotMet) -- the check the hardcoded 1 left toothless."
+  ]
+}
+```
