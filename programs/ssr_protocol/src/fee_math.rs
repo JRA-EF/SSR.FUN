@@ -133,6 +133,24 @@ pub fn apportion_to_recipients(
     Ok(increments)
 }
 
+/// DEC-0173 (USDC on mint and redeem): Protocol/Manager attribution of the
+/// redemption fee. UNLIKE [`split_configured_bps`], this NEVER raises the
+/// total above `configured_bps` -- the deployed program has always charged
+/// redeemers exactly `redemption_fee_bps`, and routing that fee to the fee
+/// vault (instead of the old burn-for-holders mechanic) must not change
+/// what a redeemer pays. The Protocol's share follows the same convention
+/// as the mint fee (floored at `protocol_min_bps`, half-split above it) but
+/// capped at the configured total; the Manager gets the remainder.
+/// `protocol_bps + manager_bps == configured_bps` always.
+pub fn split_redemption_bps(configured_bps: u16, protocol_min_bps: u16) -> (u16, u16) {
+    if configured_bps == 0 {
+        return (0, 0);
+    }
+    let (protocol_uncapped, _) = split_configured_bps(configured_bps, protocol_min_bps);
+    let protocol_bps = protocol_uncapped.min(configured_bps);
+    (protocol_bps, configured_bps - protocol_bps)
+}
+
 /// USDC fee-settlement pipeline (2026-08-21 pass): splits `amount` between
 /// Protocol and Manager proportionally to their CURRENT weights -- e.g.
 /// `FeeSettlement.protocol_shares_in_vault` vs `manager_shares_in_vault` at
@@ -262,6 +280,42 @@ mod tests {
                     "configured={configured} requested={reserve_tokens_requested}"
                 );
             }
+        }
+    }
+
+    // --- DEC-0173: split_redemption_bps (attribution only, total never raised) ---
+
+    #[test]
+    fn split_redemption_bps_never_exceeds_configured_total() {
+        // (configured, expected_protocol, expected_manager) -- the sum is
+        // ALWAYS exactly the configured bps, unlike split_configured_bps.
+        let cases = [
+            (0u16, 0u16, 0u16),
+            (10, 10, 0),   // below the floor: protocol takes it all, total unchanged
+            (30, 30, 0),
+            (50, 50, 0),
+            (95, 50, 45),
+            (100, 50, 50),
+            (200, 100, 100),
+            (500, 250, 250),
+        ];
+        for (configured, expected_protocol, expected_manager) in cases {
+            let (protocol_bps, manager_bps) = split_redemption_bps(configured, 50);
+            assert_eq!(protocol_bps, expected_protocol, "configured={configured}");
+            assert_eq!(manager_bps, expected_manager, "configured={configured}");
+            assert_eq!(
+                protocol_bps + manager_bps,
+                configured,
+                "total must equal configured exactly -- configured={configured}"
+            );
+        }
+    }
+
+    #[test]
+    fn split_redemption_bps_sweep_total_always_exact() {
+        for configured in 0u16..=1_000 {
+            let (p, m) = split_redemption_bps(configured, 50);
+            assert_eq!(p + m, configured, "configured={configured}");
         }
     }
 

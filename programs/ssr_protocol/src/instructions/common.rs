@@ -15,11 +15,48 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, Mint, TokenAccount};
 
-use crate::constants::{BPS_DENOMINATOR, MAX_FEE_RECIPIENTS, RESERVE_ASSET_SEED, RESERVE_VAULT_SEED};
+use crate::constants::{
+    BPS_DENOMINATOR, FEE_VAULT_AUTHORITY_SEED, MAX_FEE_RECIPIENTS, RESERVE_ASSET_SEED,
+    RESERVE_VAULT_SEED, SCHEMA_VERSION, SETTLEMENT_AUTHORITY_SEED,
+};
 use crate::errors::SsrError;
 use crate::events::{ManagerFeeAccrualSource, ManagerFeeShareAccrued};
 use crate::fee_math::apportion_to_recipients;
-use crate::state::{Delegate, FeeRecipientInput, ManagerFeeRecipients, Reserve, ReserveAsset};
+use crate::state::{
+    Delegate, FeeRecipientInput, FeeSettlement, ManagerFeeRecipients, Reserve, ReserveAsset,
+};
+
+/// DEC-0173: one-time identity initialization for a Reserve's `FeeSettlement`
+/// PDA, shared by every instruction that credits the fee vault
+/// (`mint_reserve_tokens_in_kind`, `seed_reserve`,
+/// `redeem_reserve_tokens_in_kind`). `init_if_needed` zero-fills a freshly
+/// created account, but `redeem_fee_vault_shares`/`distribute_fee_usdc` gate
+/// on `fee_settlement.reserve == reserve.key()` and sign with the STORED
+/// authority bumps -- without this lazy init (same pattern as
+/// `checkpoint_tvl_accrual`'s), the settlement pipeline could never run for
+/// a vault first credited here (a real bug in the original 2026-08-21 pass,
+/// caught during DEC-0173's implementation). Idempotent: a non-default
+/// `reserve` field means an earlier call already initialized it.
+pub fn init_fee_settlement_if_needed<'info>(
+    fee_settlement: &mut Account<'info, FeeSettlement>,
+    reserve: Pubkey,
+    bump: u8,
+    program_id: &Pubkey,
+) -> Result<()> {
+    if fee_settlement.reserve != Pubkey::default() {
+        return Ok(());
+    }
+    let (_, fee_vault_authority_bump) =
+        Pubkey::find_program_address(&[FEE_VAULT_AUTHORITY_SEED, reserve.as_ref()], program_id);
+    let (_, settlement_authority_bump) =
+        Pubkey::find_program_address(&[SETTLEMENT_AUTHORITY_SEED, reserve.as_ref()], program_id);
+    fee_settlement.schema_version = SCHEMA_VERSION;
+    fee_settlement.reserve = reserve;
+    fee_settlement.fee_vault_authority_bump = fee_vault_authority_bump;
+    fee_settlement.settlement_authority_bump = settlement_authority_bump;
+    fee_settlement.bump = bump;
+    Ok(())
+}
 
 /// Returns Ok(()) iff `signer` is either the Reserve's root manager, or a
 /// registered `Delegate` for this Reserve holding `flag`. The root manager

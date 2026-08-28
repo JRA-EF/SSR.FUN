@@ -3,7 +3,9 @@ use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
 use super::accrue_fees::checkpoint_tvl_accrual;
-use super::common::{load_asset_legs, mul_div_ceil, transfer_into_vault};
+use super::common::{
+    init_fee_settlement_if_needed, load_asset_legs, mul_div_ceil, transfer_into_vault,
+};
 use crate::constants::{
     BPS_DENOMINATOR, FEE_SETTLEMENT_SEED, FEE_VAULT_AUTHORITY_SEED, MINT_AUTHORITY_SEED,
     PROTOCOL_CONFIG_SEED, PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
@@ -265,6 +267,12 @@ pub fn handler<'info>(
         token::mint_to(vault_cpi_ctx, mint_fee_shares)?;
 
         let fee_settlement = &mut ctx.accounts.fee_settlement;
+        init_fee_settlement_if_needed(
+            fee_settlement,
+            reserve_key,
+            ctx.bumps.fee_settlement,
+            ctx.program_id,
+        )?;
         fee_settlement.protocol_shares_in_vault = fee_settlement
             .protocol_shares_in_vault
             .checked_add(protocol_fee_shares)
