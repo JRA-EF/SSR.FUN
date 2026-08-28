@@ -5354,3 +5354,32 @@
   ]
 }
 ```
+
+## DEC-0174
+
+```json
+{
+  "id": "DEC-0174",
+  "date": "2026-08-28",
+  "status": "confirmed",
+  "decision": "Grant an external developer (GitHub user ceedeepee) collaborator access to the repository, gated behind a validated pre-access checkpoint of production main: branch AND annotated tag `main-pre-developer-access-checkpoint-2026-08-28`, both created at origin/main commit f09eda9c528a0c7d93fbffd9af32d081acb751a8 and pushed to origin. The checkpoint was created strictly read-only with respect to everything else: no commit to main (this record commit came only after explicit Creator approval), no stash/discard of any work, no deployment, no Vercel configuration change, no DevNet/Mainnet transaction.",
+  "context": "First time an external developer gets direct access to the production repository. At checkpoint time: working tree clean, HEAD = local main = origin/main = f09eda9 (verified before and after a normal git fetch). Live production deployment dpl_Eo6t9AZeMCHpYH1uW38oVwaJn2AT (READY, target production) was built from commit 7e00ce5 -- 3 commits behind the origin/main tip, but the full diff 7e00ce5..f09eda9 touches ONLY docs/project/DECISION_LOG.md (+28) and docs/project/PROJECT_STATUS.md (+6): post-deploy record-keeping with zero application/API/SDK/program code, and one of those commits itself records dpl_Eo6t9AZe as the production deployment. Judged the expected relationship (the deployment-id record commit can only exist after the deploy), not a blocking discrepancy; surfaced to the Creator in the same report rather than silently assumed.",
+  "rationale": "A named, immutable, validated restore point on origin means any regression the developer introduces can be rolled back to a known-good state without archaeology: the tag pins the exact commit, the branch makes it visible/checkout-able, and the tag message records the deployment id and validation results. Validating BEFORE creating the refs ensures the checkpoint provably passes the standard suite rather than merely being assumed good.",
+  "alternativesConsidered": [
+    "Tag only, no branch (rejected: the repo's existing checkpoint convention -- main-devnet-checkpoint-2026-08-17, main-pre-mainnet-checkpoint-2026-08-17 -- uses both, and a branch is more discoverable in everyday tooling)",
+    "Fork or repo copy for the developer instead of direct access (not this decision's scope: access model chosen by the Creator; the checkpoint hedges it)",
+    "Checkpoint at the production deployment commit 7e00ce5 instead of origin/main f09eda9 (rejected: would exclude the DEC-0173 decision records; the delta is docs-only, so f09eda9 is a strict superset of the deployed code)"
+  ],
+  "impact": "Rollback path if the developer introduces a regression (recorded, NOT executed): code -- git push origin main-pre-developer-access-checkpoint-2026-08-28:main --force-with-lease (never plain --force), or git revert of the specific bad commits when identifiable; running production -- instant Vercel rollback to dpl_Eo6t9AZeMCHpYH1uW38oVwaJn2AT (isRollbackCandidate: true), independent of git. Explicit limitation: the checkpoint covers the repository and the Vercel deployment only -- the deployed Mainnet program (8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9), the upgrade authority, and the Neon database are NOT protected by it; if the developer is ever given program-upgrade authority or DB credentials, those need their own safeguards.",
+  "affectedAreas": ["origin refs: refs/heads/main-pre-developer-access-checkpoint-2026-08-28, refs/tags/main-pre-developer-access-checkpoint-2026-08-28 (tag object 152f84ce57d3b7b59669dfea949d6b1761ffbd31)", "GitHub repository collaborators (ceedeepee added by the Creator)", "docs/project/PROJECT_STATUS.md", "no source code touched"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Validation at f09eda9 with a clean working tree, all passing: npx tsc -b exit 0; npx oxlint exit 0 (39 pre-existing warnings, zero errors); offline suite npx ts-mocha -p ./tests/tsconfig.json \"tests/phase_*.ts\" 953/953 passing (matches the DEC-0172 recorded count exactly); npm run build exit 0. tests/ssr_protocol.ts (live-DevNet Anchor suite) deliberately excluded -- it submits real transactions.",
+    "git ls-remote after push: refs/heads/main f09eda9 (untouched at checkpoint time), refs/heads/main-pre-developer-access-checkpoint-2026-08-28 f09eda9, refs/tags/main-pre-developer-access-checkpoint-2026-08-28 152f84ce (annotated tag object -> commit f09eda9).",
+    "Vercel list_deployments (read-only): dpl_Eo6t9AZeMCHpYH1uW38oVwaJn2AT READY/production, githubCommitSha 7e00ce5, newest production deployment.",
+    "git diff --stat 7e00ce5..f09eda9: docs/project/DECISION_LOG.md +28, docs/project/PROJECT_STATUS.md +6, nothing else.",
+    "Post-checkpoint state verification: branch main, git status --short empty, HEAD = main = origin/main = f09eda9."
+  ]
+}
+```
