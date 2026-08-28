@@ -69,7 +69,7 @@ export function Home() {
         </div>
       </section>
 
-      <div className="kpi-strip">
+      <div className="kpi-band">
         <div className="container">
           {stillDiscovering ? (
             <div className="callout">Checking Solana {CLUSTER_LABEL} for live Reserves…</div>
@@ -78,12 +78,12 @@ export function Home() {
               Live Reserve data is temporarily unavailable on Solana {CLUSTER_LABEL} ({chainDiscoveryError ?? 'unknown error'}).
             </div>
           ) : (
-            <div className="kpi-grid">
-              <div className="kpi-cell">
+            <div className="kpi-cards">
+              <div className="kpi-card">
                 <div className="k">Total Reserve Market Cap</div>
                 <div className="v">{fmtUsd(totalMarketCap)}</div>
               </div>
-              <div className="kpi-cell">
+              <div className="kpi-card">
                 <div className="k">24h Volume</div>
                 <div className="v">
                   {landingStats.status === 'loading' && '…'}
@@ -91,11 +91,11 @@ export function Home() {
                   {landingStats.status === 'ready' && landingStats.data && fmtUsd(landingStats.data.volume24hUsd)}
                 </div>
               </div>
-              <div className="kpi-cell">
+              <div className="kpi-card">
                 <div className="k">Active Reserves</div>
                 <div className="v">{activeCount}</div>
               </div>
-              <div className="kpi-cell">
+              <div className="kpi-card">
                 <div className="k">Reserve Token Holders</div>
                 <div className="v">
                   {landingStats.status === 'loading' && '…'}
