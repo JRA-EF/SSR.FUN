@@ -50,7 +50,7 @@ import {
   formatUsdcOrUnavailable,
   formatTokenAmount,
   sampleLinePoints,
-  calcReserveAssetPnlPct,
+  calcAssetPnlPct,
 } from "@/lib/calculations";
 import { normalizeReserveCategory, type ChartTimeframe, type OnChainReserveMeta } from "@/lib/types";
 import {
@@ -1621,7 +1621,20 @@ export function DTRDetail() {
                             : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
                         const balance = onChainAsset ? Number(dtr.onChain!.vaultBalancesRaw[onChainAsset.mint] ?? "0") / 10 ** onChainAsset.decimals : null;
                         const valueUsd = onChainAsset ? (unitPriceUsd !== null ? balance! * unitPriceUsd : null) : asset.weight * dtr.aum;
-                        const pnlPct = onChainAsset ? calcReserveAssetPnlPct(onChainAsset.mint) : null;
+                        // P&L baseline: the asset's ENTRY price -- on Mainnet
+                        // the server-captured price it had when it was first
+                        // seen inside this Reserve (assetEntryPricesUsd, see
+                        // entryPriceClient.ts); on DevNet the same fixture
+                        // table as the current price, so 0.00% is genuine
+                        // there (fixture prices never move). calcAssetPnlPct
+                        // returns null (rendered "--") when either side is
+                        // missing -- never a fabricated 0%.
+                        const entryPriceUsd = !onChainAsset
+                          ? null
+                          : IS_MAINNET
+                            ? (dtr.onChain!.assetEntryPricesUsd?.[onChainAsset.mint] ?? null)
+                            : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
+                        const pnlPct = calcAssetPnlPct(unitPriceUsd, entryPriceUsd);
                         return (
                           <TableRow key={asset.symbol} className="border-border/50">
                             <TableCell className="font-medium">

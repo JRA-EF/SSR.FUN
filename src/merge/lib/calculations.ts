@@ -2,7 +2,6 @@
 // Kept pure and deterministic so the store stays a thin wrapper around these.
 
 import type { ChartTimeframe, DTR, DTRAsset, Holding, OrderBookLevel, PricePoint, SimulatedOrderBook, TradeQuote } from "./types";
-import { TEST_ASSET_PRICES_USD } from "./onChainReserve";
 
 /** Fixed SSR.FUN-routed secondary-market fee, applied on both buy and sell. */
 export const TRADING_FEE_RATE = 0.001; // 10 basis points
@@ -442,29 +441,26 @@ export function calc24hPnl(holding: Holding, dtr: DTR | undefined): number {
 }
 
 /**
- * Asset-level P&L % for a Reserve's OWN underlying holding (e.g. the mockX
+ * Asset-level P&L % for a Reserve's OWN underlying holding (e.g. an asset
  * sitting in a Reserve's vault) -- distinct from calcUnrealizedPnlPct above,
- * which is a USER's Reserve Token position. Compares the asset's current
- * price against a reference ("entry") price: today, referenceAssetPriceUsd
- * and the current price both read the same DevNet fixed TEST_ASSET_PRICES_USD
- * table (see onChainReserve.ts), since no live oracle or historical
- * entry-price snapshot exists for a reserve asset yet -- see
- * PROJECT_STATUS.md's Mainnet-Readiness Gaps ("Oracle/pricing": Mainnet
- * needs Pyth or similar for any displayed USD value). Reporting exactly
- * 0.00% here is therefore correct, not a placeholder -- the formula is real
- * and mainnet-ready: the day referenceAssetPriceUsd is backed by a genuine
- * price captured when the asset entered the Reserve, this same function
- * starts returning real P&L with no further changes.
+ * which is a USER's Reserve Token position. Compares the asset's current USD
+ * price against its fixed ENTRY price (the price it had when it was first
+ * seen inside the Reserve -- see the Reserve Asset Entry Price Store,
+ * api/mainnet/reserve-entry-prices.ts / entryPriceClient.ts). Returns null,
+ * never a fabricated 0%, when either side is missing or invalid -- the
+ * caller renders that honestly as "no P&L available". On DevNet both sides
+ * come from the same fixed TEST_ASSET_PRICES_USD fixture table, so 0.00% is
+ * the genuine answer there (fixture prices never move).
+ *
+ * This replaces calcReserveAssetPnlPct/referenceAssetPriceUsd, which
+ * compared TEST_ASSET_PRICES_USD against itself and therefore reported a
+ * structural 0.00% for every Mainnet asset forever -- the "P&L is not
+ * updating" bug reported live on DELTA (mainnet-beta-16).
  */
-export function referenceAssetPriceUsd(mint: string): number {
-  return TEST_ASSET_PRICES_USD[mint] ?? 0;
-}
-
-export function calcReserveAssetPnlPct(mint: string): number {
-  const reference = referenceAssetPriceUsd(mint);
-  if (reference <= 0) return 0;
-  const current = TEST_ASSET_PRICES_USD[mint] ?? 0;
-  return ((current - reference) / reference) * 100;
+export function calcAssetPnlPct(currentPriceUsd: number | null | undefined, entryPriceUsd: number | null | undefined): number | null {
+  if (typeof currentPriceUsd !== "number" || !Number.isFinite(currentPriceUsd) || currentPriceUsd <= 0) return null;
+  if (typeof entryPriceUsd !== "number" || !Number.isFinite(entryPriceUsd) || entryPriceUsd <= 0) return null;
+  return ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100;
 }
 
 /** Total value of all DTR Token holdings, in USDC. */

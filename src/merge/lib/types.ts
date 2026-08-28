@@ -304,6 +304,17 @@ export interface OnChainReserveMeta {
    * this pass -- absent (never a fabricated 0) for anything unpriced.
    */
   assetPricesUsd?: Record<string, number>;
+  /**
+   * Per-asset USD ENTRY price (mint -> price at the moment the asset was
+   * first seen inside this Reserve) -- the fixed baseline the Reserve
+   * Composition table's "P&L %" column compares assetPricesUsd against.
+   * Server-captured only (api/mainnet/reserve-entry-prices.ts prices the
+   * mint itself; never client-supplied), fetched once per discovery pass by
+   * RealReserveSync like the picture-pointer map. Only ever set for a
+   * Mainnet Reserve; a mint missing here simply shows no P&L yet (never a
+   * fabricated 0%).
+   */
+  assetEntryPricesUsd?: Record<string, number>;
 }
 
 export type WalletProviderId = "phantom" | "solflare" | "backpack";

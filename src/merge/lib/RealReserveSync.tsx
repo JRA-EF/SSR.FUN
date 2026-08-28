@@ -34,6 +34,7 @@ import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadat
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve, type AssetPriceInfo } from "./onChainReserve";
 import { fetchReserveImagePointers } from "./reserveImageClient";
+import { ensureReserveEntryPrices, fetchReserveEntryPrices } from "./entryPriceClient";
 import { fetchAssetPricesUsd } from "./assetPricing";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
@@ -196,6 +197,24 @@ export function RealReserveSync() {
           fetchReserveImagePointers(window.location.origin, IS_MAINNET ? "mainnet" : "devnet"),
         ).catch(() => ({}) as Record<string, string>);
 
+        // Mainnet only: the server-captured reserve -> (mint -> entry USD
+        // price) map behind the Composition table's per-asset P&L (see
+        // entryPriceClient.ts). Best-effort like the pointer map: {} on any
+        // failure only blanks the P&L column, never fails the pass. Any
+        // (reserve, mint) pair still missing an entry price is reported to
+        // the server below, which prices it ITSELF (never client-supplied)
+        // and has it ready for a later pass.
+        let entryPrices: Record<string, Record<string, number>> = {};
+        if (IS_MAINNET && reserves.length > 0) {
+          entryPrices = await getCached("reserve-entry-prices", DISCOVERY_CACHE_TTL_MS, () => fetchReserveEntryPrices(window.location.origin)).catch(
+            () => ({}) as Record<string, Record<string, number>>,
+          );
+          const missingPairs = reserves.flatMap((r) =>
+            r.assets.filter((a) => entryPrices[r.reserve]?.[a.assetMint] === undefined).map((a) => ({ reserve: r.reserve, mint: a.assetMint, decimals: a.decimals })),
+          );
+          if (missingPairs.length > 0) void ensureReserveEntryPrices(window.location.origin, missingPairs);
+        }
+
         const dtrs = await Promise.all(
           reserves.map(async (reserve) => {
             const delegates = await withReadConcurrencyLimit(() =>
@@ -210,7 +229,7 @@ export function RealReserveSync() {
             const parsedMetadata = await getCached(`reserve-metadata:${reserve.metadataUri}`, METADATA_CACHE_TTL_MS, () => resolveReserveMetadata(reserve.metadataUri)).catch(
               () => null,
             );
-            const dtr = buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER, mainnetMintMeta, priceByMint);
+            const dtr = buildDtrFromDiscoveredReserve(reserve, delegates, walletKey, parsedMetadata, programId, SOLANA_CLUSTER, mainnetMintMeta, priceByMint, entryPrices[reserve.reserve] ?? {});
             const pointedImageUrl = imagePointers[reserve.reserve];
             return pointedImageUrl ? { ...dtr, logoUrl: pointedImageUrl } : dtr;
           }),

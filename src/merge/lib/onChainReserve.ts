@@ -341,6 +341,10 @@ export function mergeOnChainIntoDTR(
     priceAsOf: isMainnet ? aumResult.priceAsOf : undefined,
     unpricedAssetMints: isMainnet ? aumResult.unpricedAssetMints : undefined,
     assetPricesUsd: isMainnet ? extractAssetPricesUsd(priceByMint) : undefined,
+    // Like delegates above, this targeted refresh has no fresh entry-price
+    // data (only RealReserveSync's discovery pass fetches the entry-price
+    // map) -- preserve what was last resolved rather than clobbering it.
+    assetEntryPricesUsd: isMainnet ? prev.onChain?.assetEntryPricesUsd : undefined,
   };
 
   // Real 24h/7d performance + a growing price history, refreshed on every
@@ -434,6 +438,13 @@ export function buildDtrFromDiscoveredReserve(
   // never passes this and keeps using TEST_ASSET_PRICES_USD below, exactly
   // as before this pass.
   priceByMint: Record<string, AssetPriceInfo> = {},
+  // Mainnet-only: mint -> USD entry price for THIS Reserve's assets (the
+  // price each asset had when it was first seen inside the Reserve), from
+  // the server-captured Reserve Asset Entry Price Store -- RealReserveSync
+  // fetches the whole map once per discovery pass and passes this Reserve's
+  // slice through (see entryPriceClient.ts). Defaults to {} so every
+  // existing caller (tests, DevNet) is unaffected.
+  entryPricesUsd: Record<string, number> = {},
 ): DTR {
   const meta =
     parsedMetadata ??
@@ -520,6 +531,7 @@ export function buildDtrFromDiscoveredReserve(
     priceAsOf: isMainnet ? aumResult.priceAsOf : undefined,
     unpricedAssetMints: isMainnet ? aumResult.unpricedAssetMints : undefined,
     assetPricesUsd: isMainnet ? extractAssetPricesUsd(priceByMint) : undefined,
+    assetEntryPricesUsd: isMainnet ? entryPricesUsd : undefined,
   };
 
   return {

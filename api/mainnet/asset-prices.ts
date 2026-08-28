@@ -75,7 +75,7 @@ function parseRequestedAssets(body: Record<string, unknown>): RequestedAsset[] |
   return out.length > 0 ? out : null;
 }
 
-async function fetchPythPrices(feedIds: string[]): Promise<Map<string, RawPythPrice>> {
+export async function fetchPythPrices(feedIds: string[]): Promise<Map<string, RawPythPrice>> {
   const out = new Map<string, RawPythPrice>();
   if (feedIds.length === 0) return out;
   const qs = feedIds.map((id) => `ids[]=${id}`).join("&");
