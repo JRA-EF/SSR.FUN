@@ -11,16 +11,16 @@ import { computeTopUpCursorUpdate, computeBackfillCursorUpdate, type CursorState
 
 describe("computeTopUpCursorUpdate (lib/reserve-activity/cursorLogic.ts)", () => {
   it("seeds the backfill starting point from this walk on the very first sync (no prior cursor)", () => {
-    const update = computeTopUpCursorUpdate(null, { newestSignature: "sigNewest", oldestSignatureWalked: "sigOldestOfPage", reachedRealEnd: false });
+    const update = computeTopUpCursorUpdate(null, { newestSignature: "sigNewest", oldestSignatureWalked: "sigOldestOfPage", reachedRealEnd: false, reachedKnownSignature: false });
     expect(update).to.deep.equal({
       newest_signature_indexed: "sigNewest",
       oldest_signature_indexed: "sigOldestOfPage",
     });
   });
 
-  it("does NOT touch oldest_signature_indexed on a routine top-up when a cursor already exists -- would otherwise discard real backfill progress", () => {
+  it("does NOT touch oldest_signature_indexed on a routine top-up that CONNECTED with known history -- would otherwise discard real backfill progress", () => {
     const existing: CursorState = { newest_signature_indexed: "sigA", oldest_signature_indexed: "sigVeryOld", backfill_complete: false };
-    const update = computeTopUpCursorUpdate(existing, { newestSignature: "sigNewer", oldestSignatureWalked: "sigOfThisPage", reachedRealEnd: false });
+    const update = computeTopUpCursorUpdate(existing, { newestSignature: "sigNewer", oldestSignatureWalked: "sigOfThisPage", reachedRealEnd: false, reachedKnownSignature: true });
     expect(update.newest_signature_indexed).to.equal("sigNewer");
     expect(update.oldest_signature_indexed).to.equal(undefined); // "leave alone" -- must not clobber sigVeryOld
     expect(update.backfill_complete).to.equal(undefined);
@@ -28,15 +28,29 @@ describe("computeTopUpCursorUpdate (lib/reserve-activity/cursorLogic.ts)", () =>
 
   it("leaves newest_signature_indexed alone (falls back to the existing value) when the top-up found nothing new", () => {
     const existing: CursorState = { newest_signature_indexed: "sigA", oldest_signature_indexed: "sigOld", backfill_complete: false };
-    const update = computeTopUpCursorUpdate(existing, { newestSignature: null, oldestSignatureWalked: undefined, reachedRealEnd: false });
+    const update = computeTopUpCursorUpdate(existing, { newestSignature: null, oldestSignatureWalked: undefined, reachedRealEnd: false, reachedKnownSignature: false });
     expect(update.newest_signature_indexed).to.equal("sigA");
+    expect(update.backfill_complete).to.equal(undefined); // nothing walked -> no gap regression either
   });
 
   it("marks backfill_complete=true when this single top-up page already covers the Reserve's ENTIRE history, regardless of any prior partial backfill progress", () => {
     const existing: CursorState = { newest_signature_indexed: "sigA", oldest_signature_indexed: "sigSomewhatOld", backfill_complete: false };
-    const update = computeTopUpCursorUpdate(existing, { newestSignature: "sigNewest", oldestSignatureWalked: "sigVeryFirstEver", reachedRealEnd: true });
+    const update = computeTopUpCursorUpdate(existing, { newestSignature: "sigNewest", oldestSignatureWalked: "sigVeryFirstEver", reachedRealEnd: true, reachedKnownSignature: false });
     expect(update.backfill_complete).to.equal(true);
     expect(update.oldest_signature_indexed).to.equal("sigVeryFirstEver");
+  });
+
+  it("GAP DETECTION (DEC-0176): regresses backfill_complete to false and repoints the backfill cursor when a top-up with a prior cursor neither connected with known history nor reached the real end -- unindexed transactions sit in between", () => {
+    const existing: CursorState = { newest_signature_indexed: "sigA", oldest_signature_indexed: "sigVeryFirstEver", backfill_complete: true };
+    const update = computeTopUpCursorUpdate(existing, { newestSignature: "sigBurstNewest", oldestSignatureWalked: "sigBurstOldestWalked", reachedRealEnd: false, reachedKnownSignature: false });
+    expect(update.backfill_complete).to.equal(false);
+    expect(update.oldest_signature_indexed).to.equal("sigBurstOldestWalked");
+    expect(update.newest_signature_indexed).to.equal("sigBurstNewest");
+  });
+
+  it("never falsely flags a gap on the FIRST sync of a Reserve (no prior cursor means nothing to connect with)", () => {
+    const update = computeTopUpCursorUpdate(null, { newestSignature: "sigNewest", oldestSignatureWalked: "sigOldest", reachedRealEnd: false, reachedKnownSignature: false });
+    expect(update.backfill_complete).to.equal(undefined);
   });
 });
 

@@ -71,3 +71,21 @@ alter table reserve_activity_cursor add column if not exists cluster text not nu
 
 create index if not exists reserve_activity_log_cluster_idx
   on reserve_activity_log (cluster);
+
+-- Per-event identity + frozen USD valuation (DEC-0176). event_index is the
+-- 0-based ordinal of an event among SAME-KIND events within one transaction:
+-- one transaction genuinely emits the same kind several times (live-proven
+-- on Mainnet: 5x ReserveAssetInitialized per create-Reserve transaction),
+-- and the original (reserve, signature, kind) uniqueness silently collapsed
+-- them (83 real events -> 25 rows). The old 3-column constraint is replaced
+-- by the 4-column unique index below; pre-existing rows keep event_index 0
+-- (each was the first-of-kind row the old dedup kept, re-walks fill in the
+-- rest idempotently). amount_usd/amount_usd_2 are the USD value of
+-- amount_raw/amount_raw_2 AT INDEXING TIME -- written once, never re-priced
+-- (see indexer.ts's on-conflict), null when genuinely unpriceable.
+alter table reserve_activity_log add column if not exists event_index integer not null default 0;
+alter table reserve_activity_log add column if not exists amount_usd double precision;
+alter table reserve_activity_log add column if not exists amount_usd_2 double precision;
+alter table reserve_activity_log drop constraint if exists reserve_activity_log_reserve_signature_kind_key;
+create unique index if not exists reserve_activity_log_reserve_sig_kind_ordinal_key
+  on reserve_activity_log (reserve, signature, kind, event_index);

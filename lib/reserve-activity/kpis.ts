@@ -99,6 +99,12 @@ export interface ProtocolKpiTotals {
   totalProtocolFeeRaw: string;
   totalManagerFeeRaw: string;
   totalManagerFeeClaimedRaw: string;
+  /** USD sums of the rows' frozen at-indexing valuations (DEC-0176). A row indexed without a valuation contributes 0 here while still counting in the Raw totals. */
+  totalMintVolumeUsd: number;
+  totalRedeemVolumeUsd: number;
+  totalProtocolFeeUsd: number;
+  totalManagerFeeUsd: number;
+  totalManagerFeeClaimedUsd: number;
 }
 
 export interface ProtocolKpis {
@@ -106,10 +112,10 @@ export interface ProtocolKpis {
   totals: ProtocolKpiTotals;
   lifecycleCounts: { status: string; count: number }[];
   reservesCreatedByMonth: ReservesCreatedByMonth[];
-  dailyVolume: { day: string; mintVolumeRaw: string; redeemVolumeRaw: string }[];
-  monthlyFees: { month: string; protocolFeeRaw: string; managerFeeRaw: string }[];
+  dailyVolume: { day: string; mintVolumeRaw: string; redeemVolumeRaw: string; mintVolumeUsd: number; redeemVolumeUsd: number }[];
+  monthlyFees: { month: string; protocolFeeRaw: string; managerFeeRaw: string; protocolFeeUsd: number; managerFeeUsd: number }[];
   monthlyAvgAssetsPerReserve: MonthlyAvgAssets[];
-  topReservesByVolume: { reserve: string; totalVolumeRaw: string }[];
+  topReservesByVolume: { reserve: string; totalVolumeRaw: string; totalVolumeUsd: number }[];
   eventKindCounts: { kind: string; count: number }[];
   backfillStatus: { reservesFullyBackfilled: number; reservesStillIncomplete: number };
 }
@@ -144,27 +150,31 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
       select
         to_char(to_timestamp(ts), 'YYYY-MM-DD') as day,
         coalesce(sum(amount_raw::numeric) filter (where amount_kind = 'mintVolume'), 0)::text as mint_volume,
-        coalesce(sum(amount_raw::numeric) filter (where amount_kind = 'redeemVolume'), 0)::text as redeem_volume
+        coalesce(sum(amount_raw::numeric) filter (where amount_kind = 'redeemVolume'), 0)::text as redeem_volume,
+        coalesce(sum(amount_usd) filter (where amount_kind = 'mintVolume'), 0)::float8 as mint_volume_usd,
+        coalesce(sum(amount_usd) filter (where amount_kind = 'redeemVolume'), 0)::float8 as redeem_volume_usd
       from reserve_activity_log
       where amount_kind in ('mintVolume', 'redeemVolume') and cluster = any(${clusters})
       group by 1 order by 1
     `,
     sql`
       with amounts as (
-        select ts, amount_kind as k, amount_raw::numeric as v from reserve_activity_log where amount_kind in ('protocolFee', 'managerFee') and cluster = any(${clusters})
+        select ts, amount_kind as k, amount_raw::numeric as v, amount_usd as u from reserve_activity_log where amount_kind in ('protocolFee', 'managerFee') and cluster = any(${clusters})
         union all
-        select ts, amount_kind_2 as k, amount_raw_2::numeric as v from reserve_activity_log where amount_kind_2 in ('protocolFee', 'managerFee') and cluster = any(${clusters})
+        select ts, amount_kind_2 as k, amount_raw_2::numeric as v, amount_usd_2 as u from reserve_activity_log where amount_kind_2 in ('protocolFee', 'managerFee') and cluster = any(${clusters})
       )
       select
         to_char(to_timestamp(ts), 'YYYY-MM') as month,
         coalesce(sum(v) filter (where k = 'protocolFee'), 0)::text as protocol_fee,
-        coalesce(sum(v) filter (where k = 'managerFee'), 0)::text as manager_fee
+        coalesce(sum(v) filter (where k = 'managerFee'), 0)::text as manager_fee,
+        coalesce(sum(u) filter (where k = 'protocolFee'), 0)::float8 as protocol_fee_usd,
+        coalesce(sum(u) filter (where k = 'managerFee'), 0)::float8 as manager_fee_usd
       from amounts
       group by 1 order by 1
     `,
     sql`select kind, count(*)::int as count from reserve_activity_log where cluster = any(${clusters}) group by 1 order by 2 desc`,
     sql`
-      select reserve, sum(amount_raw::numeric)::text as total_volume
+      select reserve, sum(amount_raw::numeric)::text as total_volume, coalesce(sum(amount_usd), 0)::float8 as total_volume_usd
       from reserve_activity_log
       where amount_kind in ('mintVolume', 'redeemVolume') and cluster = any(${clusters})
       group by reserve
@@ -178,19 +188,35 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
   const totalsRow = (
     await sql`
       with amounts as (
-        select amount_kind as k, amount_raw::numeric as v from reserve_activity_log where amount_kind is not null and cluster = any(${clusters})
+        select amount_kind as k, amount_raw::numeric as v, amount_usd as u from reserve_activity_log where amount_kind is not null and cluster = any(${clusters})
         union all
-        select amount_kind_2 as k, amount_raw_2::numeric as v from reserve_activity_log where amount_kind_2 is not null and cluster = any(${clusters})
+        select amount_kind_2 as k, amount_raw_2::numeric as v, amount_usd_2 as u from reserve_activity_log where amount_kind_2 is not null and cluster = any(${clusters})
       )
       select
         coalesce(sum(v) filter (where k = 'mintVolume'), 0)::text as mint_volume,
         coalesce(sum(v) filter (where k = 'redeemVolume'), 0)::text as redeem_volume,
         coalesce(sum(v) filter (where k = 'protocolFee'), 0)::text as protocol_fee,
         coalesce(sum(v) filter (where k = 'managerFee'), 0)::text as manager_fee,
-        coalesce(sum(v) filter (where k = 'managerFeeClaimed'), 0)::text as manager_fee_claimed
+        coalesce(sum(v) filter (where k = 'managerFeeClaimed'), 0)::text as manager_fee_claimed,
+        coalesce(sum(u) filter (where k = 'mintVolume'), 0)::float8 as mint_volume_usd,
+        coalesce(sum(u) filter (where k = 'redeemVolume'), 0)::float8 as redeem_volume_usd,
+        coalesce(sum(u) filter (where k = 'protocolFee'), 0)::float8 as protocol_fee_usd,
+        coalesce(sum(u) filter (where k = 'managerFee'), 0)::float8 as manager_fee_usd,
+        coalesce(sum(u) filter (where k = 'managerFeeClaimed'), 0)::float8 as manager_fee_claimed_usd
       from amounts
     `
-  )[0] as { mint_volume: string; redeem_volume: string; protocol_fee: string; manager_fee: string; manager_fee_claimed: string };
+  )[0] as {
+    mint_volume: string;
+    redeem_volume: string;
+    protocol_fee: string;
+    manager_fee: string;
+    manager_fee_claimed: string;
+    mint_volume_usd: number;
+    redeem_volume_usd: number;
+    protocol_fee_usd: number;
+    manager_fee_usd: number;
+    manager_fee_claimed_usd: number;
+  };
 
   const liveAssetCounts = new Map(liveReserves.map((r) => [r.reserve, r.assetCount]));
   const creationEvents = (creationRows as { reserve: string; ts: number }[]).map((r) => ({ reserve: r.reserve, ts: Number(r.ts) }));
@@ -206,21 +232,34 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
       totalProtocolFeeRaw: totalsRow?.protocol_fee ?? "0",
       totalManagerFeeRaw: totalsRow?.manager_fee ?? "0",
       totalManagerFeeClaimedRaw: totalsRow?.manager_fee_claimed ?? "0",
+      totalMintVolumeUsd: totalsRow?.mint_volume_usd ?? 0,
+      totalRedeemVolumeUsd: totalsRow?.redeem_volume_usd ?? 0,
+      totalProtocolFeeUsd: totalsRow?.protocol_fee_usd ?? 0,
+      totalManagerFeeUsd: totalsRow?.manager_fee_usd ?? 0,
+      totalManagerFeeClaimedUsd: totalsRow?.manager_fee_claimed_usd ?? 0,
     },
     lifecycleCounts,
     reservesCreatedByMonth: bucketReservesCreatedByMonth(creationEvents.map((e) => e.ts)),
-    dailyVolume: (dailyVolumeRows as { day: string; mint_volume: string; redeem_volume: string }[]).map((r) => ({
+    dailyVolume: (dailyVolumeRows as { day: string; mint_volume: string; redeem_volume: string; mint_volume_usd: number; redeem_volume_usd: number }[]).map((r) => ({
       day: r.day,
       mintVolumeRaw: r.mint_volume,
       redeemVolumeRaw: r.redeem_volume,
+      mintVolumeUsd: r.mint_volume_usd,
+      redeemVolumeUsd: r.redeem_volume_usd,
     })),
-    monthlyFees: (monthlyFeeRows as { month: string; protocol_fee: string; manager_fee: string }[]).map((r) => ({
+    monthlyFees: (monthlyFeeRows as { month: string; protocol_fee: string; manager_fee: string; protocol_fee_usd: number; manager_fee_usd: number }[]).map((r) => ({
       month: r.month,
       protocolFeeRaw: r.protocol_fee,
       managerFeeRaw: r.manager_fee,
+      protocolFeeUsd: r.protocol_fee_usd,
+      managerFeeUsd: r.manager_fee_usd,
     })),
     monthlyAvgAssetsPerReserve: computeMonthlyAvgAssets(creationEvents, liveAssetCounts),
-    topReservesByVolume: (topReserveRows as { reserve: string; total_volume: string }[]).map((r) => ({ reserve: r.reserve, totalVolumeRaw: r.total_volume })),
+    topReservesByVolume: (topReserveRows as { reserve: string; total_volume: string; total_volume_usd: number }[]).map((r) => ({
+      reserve: r.reserve,
+      totalVolumeRaw: r.total_volume,
+      totalVolumeUsd: r.total_volume_usd,
+    })),
     eventKindCounts: (eventKindRows as { kind: string; count: number }[]).map((r) => ({ kind: r.kind, count: r.count })),
     backfillStatus: {
       reservesFullyBackfilled: Number(cursor?.complete ?? 0),
@@ -229,16 +268,17 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
   };
 }
 
-/** Streams the FULL raw activity log as CSV -- every indexed event, every column -- the "one big file" export. Ordered oldest-first so a re-export is stably diffable. */
-export async function* streamActivityLogCsv(): AsyncGenerator<string> {
+/** Streams the FULL raw activity log as CSV -- every indexed event, every column -- the "one big file" export, scoped to `clusters` (Mainnet by default at the endpoint). Ordered oldest-first so a re-export is stably diffable. */
+export async function* streamActivityLogCsv(clusters: ActivityCluster[] = [...ACTIVITY_CLUSTERS]): AsyncGenerator<string> {
   const sql = getSql();
-  yield csvRow(["reserve", "cluster", "signature", "kind", "ts", "iso_time", "actor", "summary", "amount_raw", "amount_kind", "amount_raw_2", "amount_kind_2"]);
+  yield csvRow(["reserve", "cluster", "signature", "kind", "event_index", "ts", "iso_time", "actor", "summary", "amount_raw", "amount_kind", "amount_raw_2", "amount_kind_2", "amount_usd", "amount_usd_2"]);
   const pageSize = 5000;
   let offset = 0;
   for (;;) {
     const rows = (await sql`
-      select reserve, cluster, signature, kind, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2
+      select reserve, cluster, signature, kind, event_index, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2, amount_usd, amount_usd_2
       from reserve_activity_log
+      where cluster = any(${clusters})
       order by ts asc, id asc
       limit ${pageSize} offset ${offset}
     `) as {
@@ -246,6 +286,7 @@ export async function* streamActivityLogCsv(): AsyncGenerator<string> {
       cluster: string;
       signature: string;
       kind: string;
+      event_index: number;
       ts: number;
       actor: string | null;
       summary: string;
@@ -253,10 +294,12 @@ export async function* streamActivityLogCsv(): AsyncGenerator<string> {
       amount_kind: string | null;
       amount_raw_2: string | null;
       amount_kind_2: string | null;
+      amount_usd: number | null;
+      amount_usd_2: number | null;
     }[];
     if (rows.length === 0) break;
     for (const r of rows) {
-      yield csvRow([r.reserve, r.cluster, r.signature, r.kind, r.ts, new Date(Number(r.ts) * 1000).toISOString(), r.actor, r.summary, r.amount_raw, r.amount_kind, r.amount_raw_2, r.amount_kind_2]);
+      yield csvRow([r.reserve, r.cluster, r.signature, r.kind, r.event_index, r.ts, new Date(Number(r.ts) * 1000).toISOString(), r.actor, r.summary, r.amount_raw, r.amount_kind, r.amount_raw_2, r.amount_kind_2, r.amount_usd, r.amount_usd_2]);
     }
     if (rows.length < pageSize) break;
     offset += pageSize;

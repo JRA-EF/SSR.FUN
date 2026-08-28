@@ -9,9 +9,9 @@
 // here, same rationale as db.ts/indexer.ts not being unit-tested: no live
 // DB in this offline suite.
 import { expect } from "chai";
-import { summarizeActivityEvent } from "../packages/sdk/src/activityLog";
+import { summarizeActivityEvent, valueActivityEventUsd } from "../packages/sdk/src/activityLog";
 import { monthKey, dayKey, sumBigStrings, bucketReservesCreatedByMonth, computeMonthlyAvgAssets, csvField, csvRow } from "../lib/reserve-activity/kpis";
-import { ACTIVITY_CLUSTERS, MAINNET_PROGRAM_ID, clustersForFilter, parseClusterFilter } from "../lib/reserve-activity/clusters";
+import { ACTIVITY_CLUSTERS, MAINNET_PROGRAM_ID, clustersForFilter, parseClusterFilter, computeReserveValuations } from "../lib/reserve-activity/clusters";
 
 describe("activityLog.ts summarizeActivityEvent -- structured amounts (KPI dashboard support)", () => {
   it("reserveTokensMinted: amountRaw is the GROSS amount (net + fee), tagged mintVolume", () => {
@@ -163,10 +163,10 @@ describe("lib/reserve-activity/clusters.ts -- pure cluster-filter logic (DEC-017
     expect(parseClusterFilter("devnet")).to.equal("devnet");
   });
 
-  it("parseClusterFilter treats an absent/empty value as 'all' (the default view)", () => {
-    expect(parseClusterFilter(undefined)).to.equal("all");
-    expect(parseClusterFilter(null)).to.equal("all");
-    expect(parseClusterFilter("")).to.equal("all");
+  it("parseClusterFilter treats an absent/empty value as 'mainnet-beta' -- the KPIs surface is Mainnet by default (DEC-0176, Creator directive)", () => {
+    expect(parseClusterFilter(undefined)).to.equal("mainnet-beta");
+    expect(parseClusterFilter(null)).to.equal("mainnet-beta");
+    expect(parseClusterFilter("")).to.equal("mainnet-beta");
   });
 
   it("parseClusterFilter rejects anything unrecognized with null (caller 400s), never guessing", () => {
@@ -196,5 +196,115 @@ describe("lib/reserve-activity/clusters.ts -- pure cluster-filter logic (DEC-017
 
   it("MAINNET_PROGRAM_ID pins the deployed Mainnet program (DEC-0115), byte-identical to api/mainnet/landing-stats.ts's literal", () => {
     expect(MAINNET_PROGRAM_ID).to.equal("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
+  });
+});
+
+// DEC-0176: at-indexing USD valuation of activity events, per-event
+// identity (eventIndex), and the fee-settlement event coverage added ahead
+// of the DEC-0173 Mainnet upgrade.
+describe("activityLog.ts valueActivityEventUsd + new event coverage (DEC-0176)", () => {
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const SSR = "SSRmintAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const valuation = {
+    pricing: {
+      [USDC]: { decimals: 6, priceUsd: 1 },
+      [SSR]: { decimals: 9, priceUsd: 0.5 },
+    },
+    navUsdPerRtRawUnit: 0.000001, // $1.00 per whole 6-decimal Reserve Token
+  };
+
+  it("values a mint from the event's OWN asset legs -- exact for the USDC leg, live price for the other", () => {
+    const usd = valueActivityEventUsd(
+      "reserveTokensMinted",
+      { assetMints: [USDC, SSR], assetAmountsIn: ["5000000", "2000000000"] }, // 5 USDC + 2 SSR@$0.50
+      valuation,
+    );
+    expect(usd.amountUsd).to.be.closeTo(6.0, 1e-9);
+    expect(usd.amountUsd2).to.equal(undefined);
+  });
+
+  it("values a redeem from assetAmountsOut and a seed from assetAmounts", () => {
+    expect(valueActivityEventUsd("reserveTokensRedeemed", { assetMints: [USDC], assetAmountsOut: ["2500000"] }, valuation).amountUsd).to.be.closeTo(2.5, 1e-9);
+    expect(valueActivityEventUsd("reserveSeeded", { assetMints: [USDC], assetAmounts: ["10000000"] }, valuation).amountUsd).to.be.closeTo(10, 1e-9);
+  });
+
+  it("values share-denominated fee amounts via the Reserve Token NAV", () => {
+    expect(valueActivityEventUsd("protocolMintFeeTransferred", { amount: "50000" }, valuation).amountUsd).to.be.closeTo(0.05, 1e-9);
+    const tvl = valueActivityEventUsd("tvlFeeSettled", { protocolFeeShares: "100000", managerFeeShares: "300000" }, valuation);
+    expect(tvl.amountUsd).to.be.closeTo(0.1, 1e-9);
+    expect(tvl.amountUsd2).to.be.closeTo(0.3, 1e-9);
+  });
+
+  it("NEVER fabricates: a null NAV leaves share amounts unvalued (undefined), and unknown events value to nothing", () => {
+    const noNav = { pricing: valuation.pricing, navUsdPerRtRawUnit: null };
+    expect(valueActivityEventUsd("protocolMintFeeTransferred", { amount: "50000" }, noNav).amountUsd).to.equal(undefined);
+    expect(valueActivityEventUsd("delegateAdded", { delegate: "X" }, valuation)).to.deep.equal({});
+  });
+
+  it("feeUsdcDistributed is exact USDC (6 decimals), no NAV involved", () => {
+    const usd = valueActivityEventUsd("feeUsdcDistributed", { protocolUsdc: "1250000", managerUsdc: "750000" }, { pricing: {}, navUsdPerRtRawUnit: null });
+    expect(usd.amountUsd).to.be.closeTo(1.25, 1e-9);
+    expect(usd.amountUsd2).to.be.closeTo(0.75, 1e-9);
+  });
+
+  it("feeVaultCredited (the DEC-0173 fee assessment event) is tagged protocolFee/managerFee like tvlFeeSettled, so post-upgrade fees keep aggregating", () => {
+    const decoded = summarizeActivityEvent("feeVaultCredited", { protocolShares: "40000", managerShares: "60000", source: { mintFee: {} } });
+    expect(decoded?.amountRaw).to.equal("40000");
+    expect(decoded?.amountKind).to.equal("protocolFee");
+    expect(decoded?.amountRaw2).to.equal("60000");
+    expect(decoded?.amountKind2).to.equal("managerFee");
+  });
+
+  it("feeSharesRedeemed and feeUsdcDistributed carry NO amountKind -- settlement mechanics of already-counted fee revenue must never double-count", () => {
+    const redeemed = summarizeActivityEvent("feeSharesRedeemed", { sharesRedeemed: "100", protocolSharesRedeemed: "40", managerSharesRedeemed: "60", redeemedBy: "K" });
+    expect(redeemed?.amountKind).to.equal(undefined);
+    const distributed = summarizeActivityEvent("feeUsdcDistributed", { protocolUsdc: "1", managerUsdc: "2", managerRecipients: [], distributedBy: "K" });
+    expect(distributed?.amountKind).to.equal(undefined);
+  });
+
+  it("the remaining settlement/protocol events decode to real summaries instead of being silently dropped", () => {
+    expect(summarizeActivityEvent("settlementSwapApproved", { amount: "5", assetMint: "M", keeper: "K" })).to.not.equal(null);
+    expect(summarizeActivityEvent("feeSettlementKeeperSet", { authority: "A", oldKeeper: "O", newKeeper: "N" })).to.not.equal(null);
+    expect(summarizeActivityEvent("protocolPausedSet", { authority: "A", paused: true })?.summary).to.contain("pause");
+  });
+});
+
+describe("clusters.ts computeReserveValuations (DEC-0176)", () => {
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const OTHER = "OtherMintAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const baseReserve = {
+    reserveId: "0",
+    reserve: "R1",
+    manager: "M",
+    reserveTokenMint: "RT",
+    status: "active",
+    assetCount: 2,
+    resolvedAssetCount: 2,
+    totalTargetWeightBps: 10000,
+    mintFeeBps: 0, redemptionFeeBps: 0, annualTvlFeeBps: 0, managerFeeShareBps: 0, protocolFeeShareBps: 0,
+    feeDestination: "F", pendingManagerFeeShares: "0", pendingProtocolFeeShares: "0", lastFeeAccrualTs: "0",
+    effectiveMintFeeProtocolBps: 0, effectiveMintFeeManagerBps: 0, effectiveMintFeeTotalBps: 0,
+    effectiveTvlFeeProtocolBps: 0, effectiveTvlFeeManagerBps: 0, effectiveTvlFeeTotalBps: 0,
+    metadataUri: "", reserveTokenSupplyRaw: "10000000", delegateCount: 0,
+    assets: [
+      { assetMint: USDC, reserveAsset: "RA1", vault: "V1", decimals: 6, targetWeightBps: 5000, enabled: true, orderIndex: 0, vaultBalanceRaw: "5000000" },
+      { assetMint: OTHER, reserveAsset: "RA2", vault: "V2", decimals: 9, targetWeightBps: 5000, enabled: true, orderIndex: 1, vaultBalanceRaw: "10000000000" },
+    ],
+  };
+
+  it("computes NAV per raw Reserve Token unit from vault balances x live prices / raw supply", () => {
+    // 5 USDC ($5) + 10 OTHER @ $0.50 ($5) = $10 TVL over 10.000000 RT -> $1/RT -> 1e-6 per raw unit
+    const valuations = computeReserveValuations([baseReserve], new Map([[OTHER, { usdPrice: 0.5 }]]));
+    expect(valuations.get("R1")?.navUsdPerRtRawUnit).to.be.closeTo(0.000001, 1e-12);
+    expect(valuations.get("R1")?.pricing[USDC].priceUsd).to.equal(1);
+  });
+
+  it("returns a null NAV (never a guess) for zero supply, incomplete asset resolution, or an unpriced asset with a real balance", () => {
+    const zeroSupply = { ...baseReserve, reserveTokenSupplyRaw: "0" };
+    const underResolved = { ...baseReserve, resolvedAssetCount: 1 };
+    const priced = new Map([[OTHER, { usdPrice: 0.5 }]]);
+    expect(computeReserveValuations([zeroSupply], priced).get("R1")?.navUsdPerRtRawUnit).to.equal(null);
+    expect(computeReserveValuations([underResolved], priced).get("R1")?.navUsdPerRtRawUnit).to.equal(null);
+    expect(computeReserveValuations([baseReserve], new Map()).get("R1")?.navUsdPerRtRawUnit).to.equal(null);
   });
 });

@@ -18,8 +18,9 @@ export interface CursorUpdate {
 }
 
 /**
- * After an incremental top-up walk (always one fresh page from the newest
- * signature, see indexer.ts's syncReserveActivity):
+ * After an incremental top-up walk (a bounded fresh walk from the newest
+ * signature that stops at the previously-indexed newest signature, see
+ * indexer.ts's syncReserveActivity):
  *  - newest_signature_indexed always advances to the top-up's own newest
  *    entry (or is left alone if the top-up found nothing new).
  *  - oldest_signature_indexed is only seeded from THIS walk the very first
@@ -27,13 +28,24 @@ export interface CursorUpdate {
  *    top-up would yank an already-further-back backfill cursor forward to
  *    this page's boundary, discarding real backfill progress.
  *  - backfill_complete flips true, regardless of prior cursor state,
- *    whenever this single top-up page already covers the Reserve's ENTIRE
+ *    whenever this single top-up walk already covers the Reserve's ENTIRE
  *    history (reachedRealEnd) -- there's nothing left to backfill either
- *    way. It never regresses an already-true value back to false.
+ *    way.
+ *  - GAP DETECTION (DEC-0176): when there WAS a prior cursor and the walk
+ *    neither connected with the previously-indexed newest signature
+ *    (reachedKnownSignature) nor reached the real end of history, the walk
+ *    ran out of budget with unindexed transactions still sitting between
+ *    where it stopped and what was indexed before. backfill_complete is
+ *    explicitly REGRESSED to false and the backfill cursor pointed at the
+ *    walk's own oldest boundary, so the normal backfill loop re-walks from
+ *    there and closes the gap (already-indexed rows re-insert as no-ops).
+ *    This is the one case where backfill_complete legitimately goes
+ *    true -> false; before this, >ACTIVITY_MAX page-budget of new activity
+ *    between two syncs would have been skipped silently forever.
  */
 export function computeTopUpCursorUpdate(
   before: CursorState | null,
-  topUp: { newestSignature: string | null; oldestSignatureWalked: string | undefined; reachedRealEnd: boolean },
+  topUp: { newestSignature: string | null; oldestSignatureWalked: string | undefined; reachedRealEnd: boolean; reachedKnownSignature: boolean },
 ): CursorUpdate {
   const update: CursorUpdate = {
     newest_signature_indexed: topUp.newestSignature ?? before?.newest_signature_indexed ?? null,
@@ -44,6 +56,9 @@ export function computeTopUpCursorUpdate(
   if (topUp.reachedRealEnd) {
     update.oldest_signature_indexed = topUp.oldestSignatureWalked ?? null;
     update.backfill_complete = true;
+  } else if (before && !topUp.reachedKnownSignature && topUp.oldestSignatureWalked) {
+    update.oldest_signature_indexed = topUp.oldestSignatureWalked;
+    update.backfill_complete = false;
   }
   return update;
 }

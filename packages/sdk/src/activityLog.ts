@@ -8,7 +8,7 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { EventParser, type Program } from "@anchor-lang/core";
 import type { SsrProtocol } from "../idl/ssr_protocol";
-import { withRateLimitRetryGeneric } from "./readOnly";
+import { withRateLimitRetryGeneric, valueAssetLegsUsd, type AssetPricing } from "./readOnly";
 
 /**
  * How an event's structured amount(s) classify for KPI aggregation
@@ -23,6 +23,15 @@ export type ActivityAmountKind = "mintVolume" | "redeemVolume" | "protocolFee" |
 
 export interface ActivityLogEntry {
   signature: string;
+  /**
+   * 0-based ordinal of this event among SAME-KIND events within its one
+   * transaction (DEC-0176). One transaction can genuinely emit the same
+   * event kind several times -- live-proven on Mainnet: create-Reserve
+   * transactions emit up to 5 ReserveAssetInitialized events each, and the
+   * old (reserve, signature, kind) dedup collapsed 83 real events into 25
+   * rows. This ordinal restores a stable per-event identity.
+   */
+  eventIndex: number;
   /** Unix seconds, from the event's own `ts` field (chain-authoritative) -- falls back to the transaction's blockTime only if the event carried none. */
   ts: number;
   /** Anchor's camelCase event name (e.g. "delegateAdded") -- see events.rs for the full set. */
@@ -37,6 +46,64 @@ export interface ActivityLogEntry {
   /** A SECOND independent amount, only for events that report two separate totals in one record (currently just `tvlFeeSettled`'s protocol+manager split and legacy `feesAccrued`'s combined event). */
   amountRaw2?: string;
   amountKind2?: ActivityAmountKind;
+  /** USD value of amountRaw at the moment this event was INDEXED (DEC-0176) -- frozen once stored, never re-priced. Undefined when no valuation context was supplied or the value genuinely could not be priced (never a fabricated guess). */
+  amountUsd?: number;
+  amountUsd2?: number;
+}
+
+/**
+ * Per-Reserve valuation context for pricing an event's amounts in USD at
+ * indexing time (DEC-0176). Built by the caller (the backfill sweep) from
+ * live discovery state + live asset prices; this module only does pure
+ * math with it.
+ */
+export interface ActivityValuation {
+  /** USD price + decimals per asset mint (USDC fixed at $1). An absent mint prices as 0 in leg valuations -- landing-stats' convention. */
+  pricing: Record<string, AssetPricing>;
+  /** USD value of ONE raw Reserve Token base unit (current NAV / supply), or null when it genuinely can't be computed (zero supply, or an unpriced asset would misstate it). */
+  navUsdPerRtRawUnit: number | null;
+}
+
+/**
+ * Pure: USD value(s) for one decoded event, using the event's OWN asset
+ * legs where it carries them (mint/redeem/seed -- exact for USDC legs) and
+ * the Reserve Token NAV for share-denominated fee amounts. Returns {} for
+ * events with nothing to value; never fabricates -- a null NAV leaves a
+ * share amount unvalued rather than guessing.
+ */
+export function valueActivityEventUsd(name: string, data: Record<string, unknown>, valuation: ActivityValuation): { amountUsd?: number; amountUsd2?: number } {
+  const pkStr = (v: unknown): string => (v && typeof (v as { toBase58?: () => string }).toBase58 === "function" ? (v as { toBase58(): string }).toBase58() : String(v));
+  const legs = (mints: unknown, amounts: unknown): number | undefined =>
+    Array.isArray(mints) && Array.isArray(amounts) ? valueAssetLegsUsd(mints.map(pkStr), (amounts as unknown[]).map((a) => String(a ?? 0)), valuation.pricing) : undefined;
+  const nav = valuation.navUsdPerRtRawUnit;
+  const shares = (v: unknown): number | undefined => (nav === null || v === undefined || v === null ? undefined : Number(String(v)) * nav);
+  const sumShares = (v: unknown): number | undefined => (Array.isArray(v) ? shares((v as unknown[]).reduce((s: bigint, x) => s + BigInt(String(x ?? 0)), 0n).toString()) : undefined);
+
+  switch (name) {
+    case "reserveTokensMinted":
+      return { amountUsd: legs(data.assetMints, data.assetAmountsIn) };
+    case "reserveTokensRedeemed":
+      return { amountUsd: legs(data.assetMints, data.assetAmountsOut) };
+    case "reserveSeeded":
+      return { amountUsd: legs(data.assetMints, data.assetAmounts) };
+    case "protocolMintFeeTransferred":
+    case "protocolFeeCollected":
+    case "managerFeeShareCollected":
+      return { amountUsd: shares(data.amount) };
+    case "managerFeeShareAccrued":
+      return { amountUsd: sumShares(data.amounts) };
+    case "tvlFeeSettled":
+      return { amountUsd: shares(data.protocolFeeShares), amountUsd2: shares(data.managerFeeShares) };
+    case "feesAccrued":
+      return { amountUsd: shares(data.managerFeeSharesAccrued), amountUsd2: shares(data.protocolFeeSharesAccrued) };
+    case "feeVaultCredited":
+      return { amountUsd: shares(data.protocolShares), amountUsd2: shares(data.managerShares) };
+    case "feeUsdcDistributed":
+      // USDC amounts are exact by definition (6 decimals) -- no NAV needed.
+      return { amountUsd: Number(String(data.protocolUsdc ?? 0)) / 1e6, amountUsd2: Number(String(data.managerUsdc ?? 0)) / 1e6 };
+    default:
+      return {};
+  }
 }
 
 /**
@@ -190,6 +257,55 @@ export function summarizeActivityEvent(
         actor: pk(data.authority),
         summary: `Protocol config updated by ${pk(data.authority)}: default fee destination ${pk(data.oldDefaultProtocolFeeDestination)} -> ${pk(data.newDefaultProtocolFeeDestination)}, default fee ${String(data.oldDefaultProtocolFeeBps)}bps -> ${String(data.newDefaultProtocolFeeBps)}bps`,
       };
+    // DEC-0176: the DEC-0133/DEC-0173 fee-settlement events. The deployed
+    // Mainnet binary (2026-08-19 build) cannot emit these yet, but they are
+    // in this SDK's IDL and WILL flow the moment the DEC-0173 program
+    // upgrade ships -- without these cases the parser would silently drop
+    // them (`default: return null`), exactly the class of gap the 2026-08-28
+    // recount audit was run to rule out.
+    case "feeVaultCredited": {
+      const source = typeof data.source === "object" && data.source ? Object.keys(data.source as object)[0] : String(data.source);
+      // Tagged protocolFee/managerFee: post-DEC-0173 this event IS the fee
+      // assessment (it replaces the instant-mint/pending paths), matching
+      // tvlFeeSettled's existing protocol-as-amountRaw convention.
+      return {
+        actor: null,
+        summary: `Fee crystallized into the fee vault (${source === "annualTvlFee" ? "TVL fee" : "mint fee"}): ${String(data.protocolShares)} protocol-share + ${String(data.managerShares)} manager-share Reserve Token units`,
+        amountRaw: addBig(data.protocolShares),
+        amountKind: "protocolFee",
+        amountRaw2: addBig(data.managerShares),
+        amountKind2: "managerFee",
+      };
+    }
+    case "feeSharesRedeemed":
+      // Deliberately NO amountKind: this is fee-vault shares converting into
+      // staged assets for settlement -- the fee revenue itself was already
+      // counted when credited (feeVaultCredited); counting again would
+      // double-count.
+      return {
+        actor: pk(data.redeemedBy),
+        summary: `${String(data.sharesRedeemed)} fee-vault Reserve Token shares redeemed for underlying assets, staged for settlement (${String(data.protocolSharesRedeemed)} protocol + ${String(data.managerSharesRedeemed)} manager)`,
+      };
+    case "settlementSwapApproved":
+      return {
+        actor: pk(data.keeper),
+        summary: `Fee-settlement swap approved: ${String(data.amount)} raw of ${pk(data.assetMint)} released to the settlement keeper for conversion to USDC`,
+      };
+    case "feeUsdcDistributed":
+      // Deliberately NO amountKind (same no-double-count rationale as
+      // feeSharesRedeemed) -- the exact USDC delivered is still recorded via
+      // valueActivityEventUsd's amountUsd/amountUsd2.
+      return {
+        actor: pk(data.distributedBy),
+        summary: `Fee settlement delivered in USDC: ${String(data.protocolUsdc)} raw to the treasury, ${String(data.managerUsdc)} raw across ${Array.isArray(data.managerRecipients) ? (data.managerRecipients as unknown[]).length : 0} manager recipient(s)`,
+      };
+    case "feeSettlementKeeperSet":
+      return { actor: pk(data.authority), summary: `Fee-settlement keeper changed: ${pk(data.oldKeeper)} -> ${pk(data.newKeeper)}` };
+    case "protocolPausedSet":
+      // Protocol-wide (not tied to one Reserve account) -- like
+      // protocolInitialized above, unreachable from a per-Reserve walk but
+      // decodable from a program-wide one.
+      return { actor: pk(data.authority), summary: data.paused ? "Protocol-wide pause ENABLED" : "Protocol-wide pause lifted" };
     default:
       return null;
   }
@@ -204,6 +320,18 @@ export interface ActivityLogWalkOptions {
   before?: string;
   /** Caps how many pages of ACTIVITY_SIGNATURES_PER_PAGE signatures this call will walk -- keeps a single call's RPC cost bounded regardless of how much real history a Reserve has. Defaults to ACTIVITY_DEFAULT_MAX_PAGES. */
   maxPages?: number;
+  /**
+   * DEC-0176: stop the walk the moment this already-indexed signature is
+   * reached (it is NOT re-processed). Lets an incremental top-up implement
+   * its documented "stop early once already-seen history is reached"
+   * behavior for real: the caller passes its newest indexed signature, and
+   * `reachedKnownSignature` in the result reports whether the walk actually
+   * connected with known history -- if it didn't (and didn't reach the real
+   * end either), there is a GAP the caller must re-backfill.
+   */
+  stopAtSignature?: string;
+  /** Per-Reserve USD valuation context (DEC-0176) -- when supplied, each entry carries amountUsd/amountUsd2 valued at this moment. */
+  valuation?: ActivityValuation;
 }
 
 export interface ActivityLogWalkResult {
@@ -213,6 +341,8 @@ export interface ActivityLogWalkResult {
   oldestSignatureWalked: string | undefined;
   /** True once a page came back shorter than ACTIVITY_SIGNATURES_PER_PAGE -- i.e. this walk genuinely reached the very first transaction in the Reserve's history, not just its own page/entry cap. */
   reachedRealEnd: boolean;
+  /** True when the walk encountered `stopAtSignature` (always false when that option wasn't passed). */
+  reachedKnownSignature: boolean;
 }
 
 /**
@@ -238,26 +368,41 @@ export async function fetchReserveActivityLog(
   let before = options.before;
   let oldestSignatureWalked: string | undefined;
   let reachedRealEnd = false;
+  let reachedKnownSignature = false;
 
-  for (let page = 0; page < maxPages && entries.length < ACTIVITY_MAX_ENTRIES; page++) {
+  for (let page = 0; page < maxPages && entries.length < ACTIVITY_MAX_ENTRIES && !reachedKnownSignature; page++) {
     const sigInfos = await withRateLimitRetryGeneric(() => connection.getSignaturesForAddress(reserveAddress, { limit: ACTIVITY_SIGNATURES_PER_PAGE, before }));
     if (sigInfos.length === 0) break;
 
     for (const sigInfo of sigInfos) {
+      if (options.stopAtSignature && sigInfo.signature === options.stopAtSignature) {
+        // Already indexed from here on down -- connect, don't re-process.
+        reachedKnownSignature = true;
+        break;
+      }
       oldestSignatureWalked = sigInfo.signature;
       if (sigInfo.err) continue; // a failed transaction changed nothing worth logging
       const tx = await withRateLimitRetryGeneric(() => connection.getTransaction(sigInfo.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
       const logs = tx?.meta?.logMessages;
       if (!logs) continue;
 
+      // Per-transaction ordinal per event KIND (DEC-0176) -- one transaction
+      // can emit the same kind several times (live-proven: 5x
+      // ReserveAssetInitialized per create), and each occurrence is its own
+      // entry with a stable identity.
+      const kindOrdinals: Record<string, number> = {};
       for (const event of eventParser.parseLogs(logs)) {
         const decoded = summarizeActivityEvent(event.name, event.data as Record<string, unknown>);
         if (!decoded) continue;
         const ts = typeof (event.data as { ts?: { toNumber?: () => number } }).ts?.toNumber === "function"
           ? (event.data as { ts: { toNumber(): number } }).ts.toNumber()
           : (sigInfo.blockTime ?? 0);
+        const eventIndex = kindOrdinals[event.name] ?? 0;
+        kindOrdinals[event.name] = eventIndex + 1;
+        const usd = options.valuation ? valueActivityEventUsd(event.name, event.data as Record<string, unknown>, options.valuation) : {};
         entries.push({
           signature: sigInfo.signature,
+          eventIndex,
           ts,
           kind: event.name,
           actor: decoded.actor,
@@ -266,12 +411,15 @@ export async function fetchReserveActivityLog(
           amountKind: decoded.amountKind,
           amountRaw2: decoded.amountRaw2,
           amountKind2: decoded.amountKind2,
+          amountUsd: usd.amountUsd,
+          amountUsd2: usd.amountUsd2,
         });
         if (entries.length >= ACTIVITY_MAX_ENTRIES) break;
       }
       if (entries.length >= ACTIVITY_MAX_ENTRIES) break;
     }
 
+    if (reachedKnownSignature) break;
     if (sigInfos.length < ACTIVITY_SIGNATURES_PER_PAGE) {
       reachedRealEnd = true;
       break;
@@ -279,5 +427,5 @@ export async function fetchReserveActivityLog(
     before = sigInfos[sigInfos.length - 1].signature;
   }
 
-  return { entries, oldestSignatureWalked, reachedRealEnd };
+  return { entries, oldestSignatureWalked, reachedRealEnd, reachedKnownSignature };
 }

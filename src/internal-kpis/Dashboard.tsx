@@ -41,14 +41,12 @@ const LIFECYCLE_COLORS: Record<string, string> = {
 
 interface ProtocolKpiTotals {
   reservesDiscovered: number
-  totalMintVolumeRaw: string
-  totalRedeemVolumeRaw: string
-  totalProtocolFeeRaw: string
-  totalManagerFeeRaw: string
-  totalManagerFeeClaimedRaw: string
+  totalMintVolumeUsd: number
+  totalRedeemVolumeUsd: number
+  totalProtocolFeeUsd: number
+  totalManagerFeeUsd: number
+  totalManagerFeeClaimedUsd: number
 }
-
-type ClusterFilter = 'all' | 'mainnet-beta' | 'devnet'
 
 const CLUSTER_LABELS: Record<string, string> = {
   'mainnet-beta': 'Mainnet',
@@ -66,13 +64,12 @@ interface ProtocolKpis {
   totals: ProtocolKpiTotals
   lifecycleCounts: { status: string; count: number }[]
   reservesCreatedByMonth: { month: string; count: number; cumulative: number }[]
-  dailyVolume: { day: string; mintVolumeRaw: string; redeemVolumeRaw: string }[]
-  monthlyFees: { month: string; protocolFeeRaw: string; managerFeeRaw: string }[]
+  dailyVolume: { day: string; mintVolumeUsd: number; redeemVolumeUsd: number }[]
+  monthlyFees: { month: string; protocolFeeUsd: number; managerFeeUsd: number }[]
   monthlyAvgAssetsPerReserve: { month: string; avgAssetCount: number; reserveCount: number }[]
-  topReservesByVolume: { reserve: string; totalVolumeRaw: string }[]
+  topReservesByVolume: { reserve: string; totalVolumeUsd: number }[]
   eventKindCounts: { kind: string; count: number }[]
   backfillStatus: { reservesFullyBackfilled: number; reservesStillIncomplete: number }
-  clusterFilter: ClusterFilter
   clusters: ClusterSummary[]
 }
 
@@ -87,13 +84,9 @@ interface BackfillResult {
   clusters: { cluster: string; reservesDiscovered: number; discoveryError: string | null }[]
 }
 
-/** Raw Reserve Token base units -> human units (RESERVE_TOKEN_DECIMALS=6, matching every other display-layer conversion in this app). Display-only precision, never used for accounting. */
-function humanAmount(raw: string): number {
-  return Number(raw) / 1_000_000
-}
-
-function formatAmount(raw: string): string {
-  return humanAmount(raw).toLocaleString(undefined, { maximumFractionDigits: 2 })
+/** USD display formatting -- fee/volume figures are USDC-denominated (DEC-0176), valued when each event was indexed. Display-only precision, never used for accounting. */
+function formatUsd(usd: number): string {
+  return '$' + usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function shortAddr(addr: string): string {
@@ -137,11 +130,13 @@ export function KpiDashboard() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
-  const [cluster, setCluster] = useState<ClusterFilter>('all')
 
   const load = useCallback(() => {
     setState({ kind: 'loading' })
-    fetch(`/api/kpis/kpis?cluster=${cluster}`, { credentials: 'same-origin' })
+    // Mainnet-only view (DEC-0176) -- the endpoint defaults to Mainnet; the
+    // recorded DevNet history stays reachable via the CSV export's
+    // ?cluster= parameter, never mixed into this page.
+    fetch('/api/kpis/kpis', { credentials: 'same-origin' })
       .then(async (res) => {
         if (!res.ok) {
           // Surface the real backend error body (stage/error/stack -- see
@@ -156,7 +151,7 @@ export function KpiDashboard() {
       })
       .then((kpis: ProtocolKpis) => setState({ kind: 'ready', kpis }))
       .catch((e: Error) => setState({ kind: 'error', message: e.message }))
-  }, [cluster])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -200,11 +195,7 @@ export function KpiDashboard() {
   }
 
   const { kpis } = state
-  const totalVolume = (Number(kpis.totals.totalMintVolumeRaw) + Number(kpis.totals.totalRedeemVolumeRaw)).toString()
-  const clusterCounts = kpis.clusters
-    .filter((c) => c.discoveryError === null)
-    .map((c) => `${CLUSTER_LABELS[c.cluster] ?? c.cluster} ${c.reservesDiscovered}`)
-    .join(', ')
+  const totalVolumeUsd = kpis.totals.totalMintVolumeUsd + kpis.totals.totalRedeemVolumeUsd
   const failedClusters = kpis.clusters.filter((c) => c.discoveryError !== null)
 
   return (
@@ -212,33 +203,20 @@ export function KpiDashboard() {
       <div className="dash-header">
         <div className="dash-header-left">
           <div className="dash-header-text">
-            <span className="dash-phase">Protocol KPIs</span>
+            <span className="dash-phase">Protocol KPIs &middot; Mainnet</span>
             <span className="dash-muted dash-small">
-              Generated {new Date(kpis.generatedAt).toLocaleString()} &middot; {kpis.totals.reservesDiscovered} Reserve(s) discovered live{clusterCounts ? ` (${clusterCounts})` : ''} &middot;{' '}
+              Generated {new Date(kpis.generatedAt).toLocaleString()} &middot; {kpis.totals.reservesDiscovered} Reserve(s) discovered live &middot;{' '}
               {kpis.backfillStatus.reservesFullyBackfilled}/{kpis.backfillStatus.reservesFullyBackfilled + kpis.backfillStatus.reservesStillIncomplete} fully backfilled
             </span>
           </div>
         </div>
         <div className="kpi-toolbar">
           {refreshMsg && <span className="kpi-refresh-msg dash-muted">{refreshMsg}</span>}
-          <select
-            className="dash-btn dash-btn-sm"
-            value={cluster}
-            onChange={(e) => setCluster(e.target.value as ClusterFilter)}
-            aria-label="Choose which network's activity to show"
-          >
-            <option value="all">All networks</option>
-            <option value="mainnet-beta">Mainnet</option>
-            <option value="devnet">DevNet</option>
-          </select>
           <button className="dash-btn dash-btn-sm" onClick={handleRefresh} disabled={refreshing}>
             {refreshing ? 'Refreshing...' : 'Refresh data'}
           </button>
-          <a className="dash-btn dash-btn-sm" href="/api/ledger/export?cluster=devnet" title="Full acquisition-grade export: slot, instruction index, actor role, raw+normalized+USD amounts, compute units, fee, confirmation status, and more -- see docs/protocol/LEDGER_ARCHITECTURE.md">
-            Download full CSV (Ledger)
-          </a>
-          <a className="dash-btn dash-btn-sm dash-btn-ghost" href="/api/kpis/kpis-export" title="The original, simpler per-Reserve summary export (kind/actor/summary/amount only)">
-            Download legacy CSV
+          <a className="dash-btn dash-btn-sm" href="/api/kpis/kpis-export" title="Every indexed Mainnet event, every column, as one CSV file">
+            Download CSV
           </a>
         </div>
       </div>
@@ -253,33 +231,36 @@ export function KpiDashboard() {
       ))}
 
       <div className="dash-section">
-        <h3 className="dash-section-title">Totals (Reserve Token units, all-time)</h3>
+        <h3 className="dash-section-title">Totals (USDC, all-time)</h3>
         <div className="kpi-metrics-grid">
           <div className="dash-metric-tile">
             <span className="dash-metric-value dash-mono">{kpis.totals.reservesDiscovered}</span>
             <span className="dash-metric-label dash-muted dash-small">Reserves (live)</span>
           </div>
           <div className="dash-metric-tile">
-            <span className="dash-metric-value dash-mono">{formatAmount(totalVolume)}</span>
+            <span className="dash-metric-value dash-mono">{formatUsd(totalVolumeUsd)}</span>
             <span className="dash-metric-label dash-muted dash-small">Total volume (mint + redeem)</span>
           </div>
           <div className="dash-metric-tile">
-            <span className="dash-metric-value dash-mono">{formatAmount(kpis.totals.totalMintVolumeRaw)}</span>
+            <span className="dash-metric-value dash-mono">{formatUsd(kpis.totals.totalMintVolumeUsd)}</span>
             <span className="dash-metric-label dash-muted dash-small">Mint volume</span>
           </div>
           <div className="dash-metric-tile">
-            <span className="dash-metric-value dash-mono">{formatAmount(kpis.totals.totalRedeemVolumeRaw)}</span>
+            <span className="dash-metric-value dash-mono">{formatUsd(kpis.totals.totalRedeemVolumeUsd)}</span>
             <span className="dash-metric-label dash-muted dash-small">Redeem volume</span>
           </div>
           <div className="dash-metric-tile">
-            <span className="dash-metric-value dash-mono">{formatAmount(kpis.totals.totalProtocolFeeRaw)}</span>
+            <span className="dash-metric-value dash-mono">{formatUsd(kpis.totals.totalProtocolFeeUsd)}</span>
             <span className="dash-metric-label dash-muted dash-small">Protocol fee revenue</span>
           </div>
           <div className="dash-metric-tile">
-            <span className="dash-metric-value dash-mono">{formatAmount(kpis.totals.totalManagerFeeRaw)}</span>
+            <span className="dash-metric-value dash-mono">{formatUsd(kpis.totals.totalManagerFeeUsd)}</span>
             <span className="dash-metric-label dash-muted dash-small">Manager fee revenue accrued</span>
           </div>
         </div>
+        <p className="dash-muted dash-small" style={{ marginTop: 8 }}>
+          Fee and volume figures are in USDC, valued when each event was indexed. Exact Reserve Token unit amounts are in the CSV export.
+        </p>
       </div>
 
       <div className="kpi-charts-grid">
@@ -326,11 +307,11 @@ export function KpiDashboard() {
         <div className="dash-card kpi-chart-card">
           <div className="dash-card-head">
             <h2>Daily volume</h2>
-            <span className="dash-muted dash-small">Reserve Token units</span>
+            <span className="dash-muted dash-small">USDC</span>
           </div>
           <div className="kpi-chart-body">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={kpis.dailyVolume.map((d) => ({ day: d.day, mint: humanAmount(d.mintVolumeRaw), redeem: humanAmount(d.redeemVolumeRaw) }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart data={kpis.dailyVolume.map((d) => ({ day: d.day, mint: d.mintVolumeUsd, redeem: d.redeemVolumeUsd }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="mintFill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={KPI_COLORS.blue} stopOpacity={0.3} />
@@ -344,7 +325,7 @@ export function KpiDashboard() {
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" vertical={false} />
                 <XAxis dataKey="day" stroke="var(--text-2)" fontSize={11} tickLine={false} />
                 <YAxis stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} />
+                <Tooltip content={<ChartTooltip formatter={formatUsd} />} />
                 <Area type="monotone" dataKey="mint" name="Mint volume" stroke={KPI_COLORS.blue} strokeWidth={2} fill="url(#mintFill)" dot={false} />
                 <Area type="monotone" dataKey="redeem" name="Redeem volume" stroke={KPI_COLORS.orange} strokeWidth={2} fill="url(#redeemFill)" dot={false} />
               </AreaChart>
@@ -356,14 +337,15 @@ export function KpiDashboard() {
         <div className="dash-card kpi-chart-card">
           <div className="dash-card-head">
             <h2>Fee revenue by month</h2>
+            <span className="dash-muted dash-small">USDC</span>
           </div>
           <div className="kpi-chart-body">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={kpis.monthlyFees.map((f) => ({ month: f.month, protocol: humanAmount(f.protocolFeeRaw), manager: humanAmount(f.managerFeeRaw) }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={kpis.monthlyFees.map((f) => ({ month: f.month, protocol: f.protocolFeeUsd, manager: f.managerFeeUsd }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--text-2)" fontSize={11} tickLine={false} />
                 <YAxis stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
+                <Tooltip content={<ChartTooltip formatter={formatUsd} />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
                 <Bar dataKey="protocol" name="Protocol fee" fill={KPI_COLORS.blue} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="manager" name="Manager fee" fill={KPI_COLORS.orange} radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -415,16 +397,17 @@ export function KpiDashboard() {
         <div className="dash-card kpi-chart-card">
           <div className="dash-card-head">
             <h2>Top 10 Reserves by total volume</h2>
+            <span className="dash-muted dash-small">USDC</span>
           </div>
           <div className="kpi-chart-body">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={kpis.topReservesByVolume.map((r) => ({ reserve: shortAddr(r.reserve), full: r.reserve, volume: humanAmount(r.totalVolumeRaw) }))} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+              <BarChart data={kpis.topReservesByVolume.map((r) => ({ reserve: shortAddr(r.reserve), full: r.reserve, volume: r.totalVolumeUsd }))} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
                 <CartesianGrid stroke="var(--line)" strokeDasharray="0" horizontal={false} />
                 <XAxis type="number" stroke="var(--text-2)" fontSize={11} tickLine={false} axisLine={false} />
                 <YAxis type="category" dataKey="reserve" stroke="var(--text-2)" fontSize={11} tickLine={false} width={90} />
-                <Tooltip content={<ChartTooltip formatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 })} />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
+                <Tooltip content={<ChartTooltip formatter={formatUsd} />} cursor={{ fill: 'var(--line)', opacity: 0.4 }} />
                 <Bar dataKey="volume" name="Volume" fill={KPI_COLORS.blue} radius={[0, 4, 4, 0]}>
-                  <LabelList dataKey="volume" position="right" fill="var(--text-1)" fontSize={11} formatter={(v: unknown) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '')} />
+                  <LabelList dataKey="volume" position="right" fill="var(--text-1)" fontSize={11} formatter={(v: unknown) => (typeof v === 'number' ? formatUsd(v) : '')} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -456,7 +439,7 @@ export function KpiDashboard() {
             </table>
           </div>
           <p className="dash-muted dash-small" style={{ marginTop: 10 }}>
-            Full row-level export (every event, every column, every Reserve, including slot/instruction index/actor role/USD valuation) via "Download full CSV (Ledger)" above.
+            Full row-level export (every indexed Mainnet event with its exact Reserve Token amounts and frozen USDC valuations) via "Download CSV" above.
           </p>
         </div>
       </div>

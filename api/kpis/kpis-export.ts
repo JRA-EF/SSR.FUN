@@ -7,10 +7,12 @@
 // into a single string first.
 import { isAuthenticated } from "./_session";
 import { streamActivityLogCsv } from "../../lib/reserve-activity/kpis.js";
+import { clustersForFilter, parseClusterFilter } from "../../lib/reserve-activity/clusters.js";
 
 interface ApiRequest {
   method?: string;
   headers: Record<string, string | string[] | undefined>;
+  query?: Record<string, unknown>;
 }
 
 interface ApiResponse {
@@ -42,13 +44,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
+  // Mainnet by default (DEC-0176); ?cluster=all or ?cluster=devnet still
+  // export the recorded DevNet history explicitly.
+  const filter = parseClusterFilter(req.query?.cluster);
+  if (!filter) {
+    res.status(400).json({ error: "cluster must be one of: all, mainnet-beta, devnet." });
+    return;
+  }
+
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="ssr-fun-activity-log-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader("Content-Disposition", `attachment; filename="ssr-fun-activity-log-${filter}-${new Date().toISOString().slice(0, 10)}.csv"`);
   res.status(200);
 
   try {
-    for await (const chunk of streamActivityLogCsv()) res.write(chunk);
+    for await (const chunk of streamActivityLogCsv(clustersForFilter(filter))) res.write(chunk);
   } catch (e) {
     // Headers are already sent by the time a mid-stream failure can happen
     // (a Postgres error on a later page) -- there is no clean way to report

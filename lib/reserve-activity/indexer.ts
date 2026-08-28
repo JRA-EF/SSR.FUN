@@ -18,7 +18,7 @@
 // reported back as `syncError`, so a caller can still serve whatever is
 // already in Postgres instead of failing the whole read.
 import type { Connection, PublicKey } from "@solana/web3.js";
-import { fetchReserveActivityLog, type ActivityLogEntry } from "@ssr/sdk";
+import { fetchReserveActivityLog, type ActivityLogEntry, type ActivityValuation } from "@ssr/sdk";
 import { getSql } from "./db.js";
 import { computeTopUpCursorUpdate, computeBackfillCursorUpdate, type CursorState, type CursorUpdate } from "./cursorLogic.js";
 import type { ActivityCluster } from "./clusters.js";
@@ -29,6 +29,11 @@ import type { ActivityCluster } from "./clusters.js";
 type ReserveActivityProgram = Parameters<typeof fetchReserveActivityLog>[1];
 
 const BACKFILL_MAX_PAGES_PER_STEP = 2;
+// A top-up may need several pages to CONNECT with already-indexed history
+// (stopAtSignature) when a burst of activity landed since the last sync --
+// 4 pages = 200 signatures of headroom per call; anything beyond that is
+// caught by cursorLogic's gap detection and closed by the backfill loop.
+const TOP_UP_MAX_PAGES = 4;
 
 /**
  * Reads this Reserve's cursor FOR the given cluster. A cursor row recorded
@@ -60,27 +65,32 @@ async function getCursor(reserve: string, cluster: ActivityCluster): Promise<Cur
 async function upsertEntries(reserve: string, cluster: ActivityCluster, entries: ActivityLogEntry[]): Promise<void> {
   const sql = getSql();
   for (const e of entries) {
+    // On conflict (an already-indexed event), the ONLY thing that may change
+    // is a null USD valuation being filled in -- a stored valuation is
+    // frozen at first-indexing and never re-priced (DEC-0176).
     await sql`
-      insert into reserve_activity_log (reserve, cluster, signature, kind, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2)
-      values (${reserve}, ${cluster}, ${e.signature}, ${e.kind}, ${e.ts}, ${e.actor}, ${e.summary}, ${e.amountRaw ?? null}, ${e.amountKind ?? null}, ${e.amountRaw2 ?? null}, ${e.amountKind2 ?? null})
-      on conflict (reserve, signature, kind) do nothing
+      insert into reserve_activity_log (reserve, cluster, signature, kind, event_index, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2, amount_usd, amount_usd_2)
+      values (${reserve}, ${cluster}, ${e.signature}, ${e.kind}, ${e.eventIndex}, ${e.ts}, ${e.actor}, ${e.summary}, ${e.amountRaw ?? null}, ${e.amountKind ?? null}, ${e.amountRaw2 ?? null}, ${e.amountKind2 ?? null}, ${e.amountUsd ?? null}, ${e.amountUsd2 ?? null})
+      on conflict (reserve, signature, kind, event_index) do update set
+        amount_usd = coalesce(reserve_activity_log.amount_usd, excluded.amount_usd),
+        amount_usd_2 = coalesce(reserve_activity_log.amount_usd_2, excluded.amount_usd_2)
     `;
   }
 }
 
-/** `undefined` fields are left untouched on conflict (COALESCEd against the existing row); `backfill_complete` only ever flips true, never regresses. */
+/** `undefined` fields are left untouched on conflict (COALESCEd against the existing row). `backfill_complete` applies EXPLICIT values -- including the gap-detection regression to false (see cursorLogic.ts, DEC-0176) -- and keeps the existing value when undefined. */
 async function upsertCursor(reserve: string, cluster: ActivityCluster, updates: CursorUpdate): Promise<void> {
   const sql = getSql();
   const newest = updates.newest_signature_indexed ?? null;
   const oldest = updates.oldest_signature_indexed ?? null;
-  const complete = updates.backfill_complete ?? false;
+  const complete = updates.backfill_complete === undefined ? null : updates.backfill_complete;
   await sql`
     insert into reserve_activity_cursor (reserve, cluster, newest_signature_indexed, oldest_signature_indexed, backfill_complete)
-    values (${reserve}, ${cluster}, ${newest}, ${oldest}, ${complete})
+    values (${reserve}, ${cluster}, ${newest}, ${oldest}, ${complete ?? false})
     on conflict (reserve) do update set
       newest_signature_indexed = coalesce(${newest}, reserve_activity_cursor.newest_signature_indexed),
       oldest_signature_indexed = coalesce(${oldest}, reserve_activity_cursor.oldest_signature_indexed),
-      backfill_complete = reserve_activity_cursor.backfill_complete or ${complete},
+      backfill_complete = coalesce(${complete}, reserve_activity_cursor.backfill_complete),
       cluster = ${cluster},
       updated_at = now()
   `;
@@ -91,12 +101,21 @@ export async function syncReserveActivity(
   program: ReserveActivityProgram,
   reserveAddress: PublicKey,
   cluster: ActivityCluster,
+  valuation?: ActivityValuation,
 ): Promise<{ syncError: string | null }> {
   const reserve = reserveAddress.toBase58();
   try {
     const before = await getCursor(reserve, cluster);
 
-    const topUp = await fetchReserveActivityLog(connection, program, reserveAddress, { maxPages: 1 });
+    const topUp = await fetchReserveActivityLog(connection, program, reserveAddress, {
+      maxPages: TOP_UP_MAX_PAGES,
+      // Connect with already-indexed history instead of blindly re-walking
+      // one page -- makes a no-new-activity top-up nearly free (the very
+      // first signature matches) and lets cursorLogic detect a genuine gap
+      // when the walk could NOT connect (DEC-0176).
+      stopAtSignature: before?.newest_signature_indexed ?? undefined,
+      valuation,
+    });
     await upsertEntries(reserve, cluster, topUp.entries);
     await upsertCursor(
       reserve,
@@ -105,6 +124,7 @@ export async function syncReserveActivity(
         newestSignature: topUp.entries[0]?.signature ?? null,
         oldestSignatureWalked: topUp.oldestSignatureWalked,
         reachedRealEnd: topUp.reachedRealEnd,
+        reachedKnownSignature: topUp.reachedKnownSignature,
       }),
     );
 
@@ -113,6 +133,7 @@ export async function syncReserveActivity(
       const backfill = await fetchReserveActivityLog(connection, program, reserveAddress, {
         before: after.oldest_signature_indexed ?? undefined,
         maxPages: BACKFILL_MAX_PAGES_PER_STEP,
+        valuation,
       });
       await upsertEntries(reserve, cluster, backfill.entries);
       await upsertCursor(

@@ -17,7 +17,7 @@
 // api/ code (the dependency points the other way everywhere else in this
 // repo). The two-line resolution logic is duplicated knowingly.
 import { Connection, PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, DEVUSDC_MINT, MAINNET_USDC_MINT, WRAPPED_SOL_MINT, enumerateReserveAssetMintsOnChain } from "@ssr/sdk";
+import { DEVNET_FIXTURES, DEVUSDC_MINT, MAINNET_USDC_MINT, WRAPPED_SOL_MINT, enumerateReserveAssetMintsOnChain, type ActivityValuation, type AssetPricing, type DiscoveredReserve } from "@ssr/sdk";
 
 export type ActivityCluster = "mainnet-beta" | "devnet";
 
@@ -26,9 +26,9 @@ export const ACTIVITY_CLUSTERS: ActivityCluster[] = ["mainnet-beta", "devnet"];
 
 export type ClusterFilter = ActivityCluster | "all";
 
-/** Pure: validates a ?cluster= query value. Absent/empty means "all"; anything unrecognized is null (caller should 400). */
+/** Pure: validates a ?cluster= query value. Absent/empty means "mainnet-beta" -- the KPIs surface is Mainnet by default per the Creator's 2026-08-28 directive (DEC-0176); "all"/"devnet" remain available explicitly. Anything unrecognized is null (caller should 400). */
 export function parseClusterFilter(value: unknown): ClusterFilter | null {
-  if (value === undefined || value === null || value === "") return "all";
+  if (value === undefined || value === null || value === "") return "mainnet-beta";
   if (value === "all" || value === "mainnet-beta" || value === "devnet") return value;
   return null;
 }
@@ -49,9 +49,59 @@ export interface ClusterTarget {
   programId: PublicKey;
   /** Discovery hint mints -- resolved lazily because Mainnet's list needs a live chain scan. */
   candidateMints(): Promise<PublicKey[]>;
+  /**
+   * Per-Reserve USD valuation contexts from live discovery state + live
+   * asset prices (DEC-0176) -- present only where a price source exists
+   * (Mainnet with a fetchPricesUsd supplied). Best-effort: a pricing
+   * failure yields null and events index unvalued rather than blocking.
+   */
+  buildValuations?(reserves: DiscoveredReserve[]): Promise<Map<string, ActivityValuation> | null>;
 }
 
-export function buildClusterTargets(clusters: ActivityCluster[]): ClusterTarget[] {
+export interface ClusterTargetOptions {
+  /** Live USD price source for Mainnet asset mints (the caller passes api/mainnet/asset-prices.ts's fetchJupiterPrices -- lib/ must not import api/). */
+  fetchPricesUsd?(mints: string[]): Promise<Map<string, { usdPrice?: number | null }>>;
+}
+
+/**
+ * Pure math over discovered state + fetched prices: per-Reserve
+ * ActivityValuation. NAV per raw Reserve Token unit = (sum of vault
+ * balances x asset USD price) / raw supply; null (never a guess) when
+ * supply is zero, resolution is incomplete, or any resolved asset with a
+ * real balance has no price -- a partial NAV would misstate every fee
+ * valuation derived from it.
+ */
+export function computeReserveValuations(reserves: DiscoveredReserve[], priceByMint: Map<string, { usdPrice?: number | null }>): Map<string, ActivityValuation> {
+  const pricing: Record<string, AssetPricing> = {};
+  for (const r of reserves) {
+    for (const a of r.assets) {
+      if (pricing[a.assetMint]) continue;
+      const fixed = a.assetMint === MAINNET_USDC_MINT ? 1 : undefined;
+      const live = priceByMint.get(a.assetMint)?.usdPrice;
+      pricing[a.assetMint] = { decimals: a.decimals, priceUsd: fixed ?? (Number.isFinite(live) && (live as number) > 0 ? (live as number) : 0) };
+    }
+  }
+  const valuations = new Map<string, ActivityValuation>();
+  for (const r of reserves) {
+    let navUsdPerRtRawUnit: number | null = null;
+    const supplyRaw = Number(r.reserveTokenSupplyRaw);
+    if (supplyRaw > 0 && r.resolvedAssetCount === r.assetCount) {
+      let tvlUsd = 0;
+      let unpriced = false;
+      for (const a of r.assets) {
+        const p = pricing[a.assetMint];
+        const balance = Number(a.vaultBalanceRaw);
+        if (balance > 0 && (!p || p.priceUsd <= 0)) unpriced = true;
+        if (p) tvlUsd += (balance / 10 ** p.decimals) * p.priceUsd;
+      }
+      if (!unpriced) navUsdPerRtRawUnit = tvlUsd / supplyRaw;
+    }
+    valuations.set(r.reserve, { pricing, navUsdPerRtRawUnit });
+  }
+  return valuations;
+}
+
+export function buildClusterTargets(clusters: ActivityCluster[], options: ClusterTargetOptions = {}): ClusterTarget[] {
   return clusters.map((cluster) => {
     if (cluster === "mainnet-beta") {
       const connection = new Connection(process.env.HELIUS_MAINNET_RPC_URL || "https://api.mainnet-beta.solana.com", "confirmed");
@@ -67,6 +117,17 @@ export function buildClusterTargets(clusters: ActivityCluster[]): ClusterTarget[
           const known = await enumerateReserveAssetMintsOnChain(connection).catch(() => [] as string[]);
           return [new PublicKey(MAINNET_USDC_MINT), ...known.filter((m) => m !== MAINNET_USDC_MINT).map((m) => new PublicKey(m))];
         },
+        buildValuations: options.fetchPricesUsd
+          ? async (reserves) => {
+              try {
+                const mints = [...new Set(reserves.flatMap((r) => r.assets.map((a) => a.assetMint)))].filter((m) => m !== MAINNET_USDC_MINT);
+                const prices = mints.length > 0 ? await options.fetchPricesUsd!(mints) : new Map<string, { usdPrice?: number | null }>();
+                return computeReserveValuations(reserves, prices);
+              } catch {
+                return null;
+              }
+            }
+          : undefined,
       };
     }
     const connection = new Connection(process.env.HELIUS_RPC_URL || process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com", "confirmed");

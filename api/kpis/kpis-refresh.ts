@@ -8,6 +8,7 @@ import { type DashboardRequest, type DashboardResponse, isAuthenticated, isSameO
 import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll.js";
 import { ACTIVITY_CLUSTERS, buildClusterTargets } from "../../lib/reserve-activity/clusters.js";
 import { redactRpcSecrets } from "../devnet/_lib/rpc.js";
+import { fetchJupiterPrices } from "../mainnet/asset-prices.js";
 
 export default async function handler(req: DashboardRequest, res: DashboardResponse) {
   // See kpis.ts's matching comment: wraps the whole handler so any failure,
@@ -32,7 +33,9 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
     try {
       // Both clusters, Mainnet first (see clusters.ts) -- a cluster whose
       // discovery fails is reported inside the result, never a 503 here.
-      const result = await backfillAllReserveActivity(buildClusterTargets([...ACTIVITY_CLUSTERS]), { budgetMs: 45_000 });
+      // fetchJupiterPrices supplies the live USD prices the sweep uses to
+      // freeze each event's at-indexing valuation (DEC-0176).
+      const result = await backfillAllReserveActivity(buildClusterTargets([...ACTIVITY_CLUSTERS], { fetchPricesUsd: fetchJupiterPrices }), { budgetMs: 45_000 });
       res.status(200).json(result);
     } catch (e) {
       res.status(503).json({ error: redactRpcSecrets(e instanceof Error ? e.message : "Backfill sweep failed.") });

@@ -79,7 +79,7 @@ export async function backfillAllReserveActivity(
     clusterResults.push(clusterResult);
     if (Date.now() - startedAt > budgetMs) continue;
 
-    let reserves: { reserve: string }[];
+    let reserves: Awaited<ReturnType<typeof discoverAllReserves>>["reserves"];
     try {
       const candidateMints = await target.candidateMints();
       ({ reserves } = await discoverAllReserves(target.connection, target.programId, candidateMints));
@@ -91,6 +91,12 @@ export async function backfillAllReserveActivity(
     clusterResult.reservesDiscovered = reserves.length;
     totalDiscovered += reserves.length;
     const program = buildReadOnlyProgram(target.connection);
+
+    // Per-Reserve USD valuation contexts (DEC-0176) -- best-effort: pricing
+    // being unavailable indexes events unvalued (never blocks the sweep,
+    // never fabricates); the on-conflict upsert fills a null valuation in on
+    // a later sweep.
+    const valuations = target.buildValuations ? await target.buildValuations(reserves) : null;
 
     // Order by LEAST-RECENTLY-ATTEMPTED first (never-attempted = oldest of
     // all, via COALESCE to the epoch), not discovery order. Without this, a
@@ -113,7 +119,7 @@ export async function backfillAllReserveActivity(
       const reserveAddress = new PublicKey(r.reserve);
       for (let step = 0; step < maxStepsPerReserve; step++) {
         if (Date.now() - startedAt > budgetMs) break;
-        const { syncError } = await syncReserveActivity(target.connection, program, reserveAddress, target.cluster);
+        const { syncError } = await syncReserveActivity(target.connection, program, reserveAddress, target.cluster, valuations?.get(r.reserve));
         syncCallsMade++;
         clusterResult.syncCallsMade++;
         if (syncError) {
