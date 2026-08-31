@@ -23,19 +23,21 @@ interface TileDef {
   /** Parallax/lag factor. 0 marks the anchor platform. */
   depth: number
   connector?: number
+  /** Brand mark rendered floating on the platform's top face. */
+  logo?: string
 }
 
 const TILES: TileDef[] = [
-  { size: 248, cx: 310, cy: 330, depth: 0 },
-  { size: 64, cx: 300, cy: 58, depth: 1.6, connector: 48 },
-  { size: 56, cx: 152, cy: 98, depth: 1.2, connector: 40 },
-  { size: 66, cx: 424, cy: 96, depth: 1.5, connector: 44 },
-  { size: 54, cx: 84, cy: 192, depth: 0.9, connector: 34 },
-  { size: 84, cx: 232, cy: 162, depth: 1.1, connector: 46 },
-  { size: 74, cx: 392, cy: 210, depth: 1.4, connector: 44 },
-  { size: 60, cx: 514, cy: 158, depth: 1.8, connector: 50 },
-  { size: 52, cx: 148, cy: 264, depth: 0.75, connector: 30 },
-  { size: 58, cx: 502, cy: 270, depth: 1.3, connector: 36 },
+  { size: 248, cx: 310, cy: 330, depth: 0, logo: '/ssr-seal.png' },
+  { size: 64, cx: 300, cy: 58, depth: 1.6, connector: 48, logo: '/logo-robinhood.svg' },
+  { size: 56, cx: 152, cy: 98, depth: 1.2, connector: 40, logo: '/logo-ethereum.svg' },
+  { size: 66, cx: 424, cy: 96, depth: 1.5, connector: 44, logo: '/logo-apple.svg' },
+  { size: 54, cx: 84, cy: 192, depth: 0.9, connector: 34, logo: '/logo-spacex.svg' },
+  { size: 84, cx: 232, cy: 162, depth: 1.1, connector: 46, logo: '/logo-solana.png' },
+  { size: 74, cx: 392, cy: 210, depth: 1.4, connector: 44, logo: '/logo-base.svg' },
+  { size: 60, cx: 514, cy: 158, depth: 1.8, connector: 50, logo: '/logo-binance.svg' },
+  { size: 52, cx: 148, cy: 264, depth: 0.75, connector: 30, logo: '/logo-bitcoin.svg' },
+  { size: 58, cx: 502, cy: 270, depth: 1.3, connector: 36, logo: '/logo-uniswap.svg' },
 ]
 
 /** Displacement limits per tile so nothing leaves the stage. */
@@ -132,7 +134,7 @@ function DotStream({
    Gradient angles are local-space: 135deg maps to screen-vertical, 45deg to
    screen-horizontal; local corners 0%/0% and 100%/100% map to the screen
    left/right diamond points. */
-function TileFaces({ size }: { size: number }) {
+function TileFaces({ size, logo }: { size: number; logo?: string }) {
   const depthPx = size * 0.12
   return (
     <>
@@ -173,6 +175,46 @@ function TileFaces({ size }: { size: number }) {
           boxShadow: 'inset 0 0 0 2px rgba(255, 255, 255, 0.9)',
         }}
       />
+      {/* Brand mark wrapped onto the top face: same rotate+squash transform as
+          the face itself, so the image lies in the platform's isometric plane
+          like a printed surface. */}
+      {logo && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            borderRadius: '26%',
+            transform: `scaleY(${SQUASH}) rotate(45deg)`,
+            overflow: 'hidden',
+            border: '1px solid rgba(65, 85, 166, 0.3)',
+            pointerEvents: 'none',
+          }}
+        >
+          <img
+            src={logo}
+            alt=""
+            draggable={false}
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: '50%',
+              // The SSR seal on the flagship platform runs 15% larger than
+              // the partner marks.
+              width: logo === '/ssr-seal.png' ? '67%' : '58%',
+              height: logo === '/ssr-seal.png' ? '67%' : '58%',
+              transform: 'translate(-50%, -50%)',
+              objectFit: 'contain',
+              display: 'block',
+              // The Solana token mark is a hard black square — soften it into
+              // a rounded chip; other marks keep their native silhouettes.
+              borderRadius: logo === '/logo-solana.png' ? '22%' : undefined,
+              // Faded into the surface — reads as part of the material,
+              // receding with the isometric perspective.
+              opacity: 0.5,
+            }}
+          />
+        </div>
+      )}
     </>
   )
 }
@@ -448,7 +490,7 @@ export function HeroPlatforms() {
                     />
                   ))
                 })()}
-              <TileFaces size={t.size} />
+              <TileFaces size={t.size} logo={t.logo} />
             </div>
           ))}
         </div>

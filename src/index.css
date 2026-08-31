@@ -1570,24 +1570,8 @@ input, select, textarea {
   flex-wrap: wrap;
 }
 
-/* Marketing-look: the hero's primary CTA is the site's signature yellow
-   pill (btn-yellow), reserved for this one launch moment. */
-.hero-ctas .btn-primary {
-  background: #ede871;
-  color: #070429;
-}
-
-.hero-ctas .btn-primary:hover {
-  background: #f2ed85;
-  box-shadow: 0 6px 18px rgba(237, 232, 113, 0.45);
-}
-
-.hero-ctas .btn-primary:active { background: #d9d45e; }
-
-.hero-ctas .btn-primary::after,
-.hero-ctas .btn-primary::before {
-  border-color: #ede871;
-}
+/* The hero CTA follows the standard action ramp (indigo in light, SSR
+   yellow in dark) — a yellow pill on the light ground didn't hold up. */
 
 .hero-stage {
   position: relative;
