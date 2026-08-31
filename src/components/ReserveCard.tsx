@@ -60,7 +60,17 @@ export function ReserveCard({
 }: ReserveCardProps) {
   const up = changePct >= 0
   return (
-    <div className="fcard">
+    <div
+      className="fcard fcard-clickable"
+      // The whole card opens the Reserve: any click that isn't on a real
+      // interactive element delegates to the card's own CTA link, so this
+      // works identically under both routers without knowing the target URL.
+      onClick={(e) => {
+        const el = e.target as HTMLElement
+        if (el.closest('a, button, input')) return
+        el.closest('.fcard')?.querySelector<HTMLAnchorElement>('a.btn-trade')?.click()
+      }}
+    >
       <div className="fcard-head">
         <div className="fcard-name">
           <span className="favatar" style={avatarStyle}>

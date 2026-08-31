@@ -185,7 +185,7 @@ export function ReserveSearch() {
         <SearchIcon />
         <input
           ref={inputRef}
-          placeholder="Search Reserves..."
+          placeholder="Search..."
           value={q}
           onChange={e => {
             setQ(e.target.value)

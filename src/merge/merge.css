@@ -74,7 +74,8 @@
   --radius-2xl: 1.75rem;
 
   --shadow-xs: 0 1px 2px 0 rgba(30, 20, 64, 0.04);
-  --shadow-sm: 0 1px 2px 0 rgba(30, 20, 64, 0.04), 0 2px 6px -2px rgba(30, 20, 64, 0.05);
+  /* Ambient card elevation for the gray ground: contact + soft wide shadow. */
+  --shadow-sm: 0 1px 2px 0 rgba(9, 9, 20, 0.04), 0 10px 28px -10px rgba(9, 9, 20, 0.1);
   --shadow-md: 0 4px 10px -2px rgba(30, 20, 64, 0.07), 0 2px 6px -3px rgba(30, 20, 64, 0.05);
   --shadow-lg: 0 16px 32px -12px rgba(30, 20, 64, 0.14), 0 4px 10px -4px rgba(30, 20, 64, 0.06);
   --shadow-glow: 0 12px 28px -8px rgba(65, 85, 166, 0.28), 0 2px 8px -2px rgba(65, 85, 166, 0.16);
@@ -147,12 +148,14 @@
 :root[data-theme='light'] .merge-scope {
   color-scheme: light;
 
-  --background: 228 60% 96%;
+  /* Light "Apple gray" ground (experiment 2026-08-31) — neutral background,
+     white cards pop. */
+  --background: 240 9% 96%;
   --foreground: 245 82% 9%;
 
   --card: 0 0% 100%;
   --card-foreground: 245 82% 9%;
-  --card-border: 228 40% 91%;
+  --card-border: 240 8% 90%;
 
   --popover: 0 0% 100%;
   --popover-foreground: 245 82% 9%;
@@ -161,10 +164,10 @@
   --primary: 227 76% 54%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 228 47% 94%;
+  --secondary: 240 6% 94%;
   --secondary-foreground: 245 60% 12%;
 
-  --muted: 228 47% 94%;
+  --muted: 240 6% 94%;
   --muted-foreground: 231 24% 37%;
 
   --merge-accent: 227 76% 54%;
@@ -183,8 +186,8 @@
   --positive: 152 68% 30%;
   --positive-foreground: 0 0% 98%;
 
-  --border: 228 40% 91%;
-  --input: 228 40% 89%;
+  --border: 240 8% 90%;
+  --input: 240 8% 88%;
   --ring: 227 76% 54%;
 
   --chart-1: 227 76% 54%;
@@ -216,12 +219,9 @@
 
 :root[data-theme='light'] .merge-scope {
   background-color: hsl(var(--background));
-  background-image:
-    linear-gradient(180deg, hsla(228, 60%, 96%, 0) 0%, hsla(0, 0%, 100%, 0.6) 100%),
-    radial-gradient(38% 34% at 96% -6%, hsla(226, 73%, 76%, 0.1), transparent 70%),
-    radial-gradient(30% 30% at 84% 6%, hsla(228, 60%, 80%, 0.08), transparent 72%),
-    radial-gradient(34% 36% at 6% 96%, hsla(226, 60%, 82%, 0.07), transparent 72%),
-    radial-gradient(26% 26% at -4% 40%, hsla(240, 50%, 84%, 0.06), transparent 70%);
+  /* Flat neutral ground — the periwinkle washes are gone in light mode;
+     the chart is the page's periwinkle moment now. */
+  background-image: linear-gradient(180deg, hsla(0, 0%, 100%, 0) 0%, hsla(0, 0%, 100%, 0.55) 100%);
 }
 
 .merge-scope :is(h1, h2, h3, h4, h5, h6) {
@@ -248,12 +248,27 @@
    design systems share the same interaction motif. Unlayered on purpose:
    these rules are purely additive (a pseudo-element and a position context)
    and must win over the layered Tailwind utilities on the same element. */
-.merge-scope button:is([class*='bg-primary'], [class*='bg-action']) {
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action']),
+.merge-scope .trade-pill {
   position: relative;
 }
 
+/* Button-shaped links never underline; the Trade pill answers hover with a
+   full contrast flip to the indigo action fill instead. */
+.merge-scope a[class*='bg-']:hover,
+.merge-scope .trade-pill:hover {
+  text-decoration: none;
+}
+
+.merge-scope .trade-pill:hover {
+  background: hsl(var(--merge-action));
+  color: hsl(var(--merge-action-foreground));
+}
+
 .merge-scope button:is([class*='bg-primary'], [class*='bg-action'])::after,
-.merge-scope button:is([class*='bg-primary'], [class*='bg-action'])::before {
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action'])::before,
+.merge-scope .trade-pill::after,
+.merge-scope .trade-pill::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -263,12 +278,14 @@
   pointer-events: none;
 }
 
-.merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::after {
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::after,
+.merge-scope .trade-pill:hover::after {
   animation: merge-btn-ripple 0.9s cubic-bezier(0.2, 0.6, 0.35, 1) forwards;
 }
 
 /* Second ring, staggered — matches the marketing site's layered ripple. */
-.merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::before {
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::before,
+.merge-scope .trade-pill:hover::before {
   animation: merge-btn-ripple 0.9s cubic-bezier(0.2, 0.6, 0.35, 1) 0.22s forwards;
 }
 
@@ -285,9 +302,23 @@
 
 @media (prefers-reduced-motion: reduce) {
   .merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::after,
-  .merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::before {
+  .merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::before,
+  .merge-scope .trade-pill:hover::after,
+  .merge-scope .trade-pill:hover::before {
     animation: none;
   }
+}
+
+/* Dark mode: the selected Buy tab reads in SSR action yellow (matching the
+   dark theme's yellow action pills). Light mode keeps the primary blue —
+   dark tokens live on bare .merge-scope, light under [data-theme='light'],
+   so these two unlayered rules mirror that split. */
+.merge-scope .buy-tab[data-state='active'] {
+  color: #ede871;
+}
+
+:root[data-theme='light'] .merge-scope .buy-tab[data-state='active'] {
+  color: hsl(var(--primary));
 }
 
 @layer utilities {

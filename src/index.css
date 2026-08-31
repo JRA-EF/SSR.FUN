@@ -80,14 +80,16 @@
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --bg: #eff1fb;
-  --bg-raise: #e7ebf8;
+  /* Light "Apple gray" ground (experiment 2026-08-31): neutral instead of
+     the periwinkle-tinted paper, so white cards visibly lift off the page. */
+  --bg: #f3f3f5;
+  --bg-raise: #eaeaee;
   --surface: #ffffff;
-  --surface-2: #f0f2fa;
-  --surface-3: #e4e9f6;
+  --surface-2: #f4f4f6;
+  --surface-3: #e8e8ec;
   --line: rgba(7, 4, 41, 0.08);
   --line-strong: rgba(7, 4, 41, 0.16);
-  --nav-bg: rgba(239, 241, 251, 0.85);
+  --nav-bg: rgba(243, 243, 245, 0.85);
   --scrim: rgba(7, 4, 41, 0.45);
 
   --text: #070429;
@@ -125,8 +127,8 @@
   --s-unalloc: #aca4bf;
   --s-other: #c7c0d6;
 
-  --grid: #e4e8f4;
-  --axis: #c8cfe6;
+  --grid: #e9e9ec;
+  --axis: #cfcfd6;
 
   --shadow-pop: 0 12px 32px rgba(28, 20, 101, 0.12), 0 2px 8px rgba(28, 20, 101, 0.07);
 }
@@ -153,8 +155,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3, h4, p {
-  margin: 0;
+/* Layered (like the button reset below, and for the same reason): Tailwind
+   v4's space-y-*/mt-*/mb-* utilities set margins on headings and paragraphs,
+   and utilities only win if this reset sits in an earlier layer. Unlayered,
+   this rule silently zeroed every such margin in .merge-scope pages (the
+   wallet-gate spacing bugs, the section-heading gaps). Native pages are
+   unaffected: nothing there relies on beating this reset with a layered rule. */
+@layer base {
+  h1, h2, h3, h4, p {
+    margin: 0;
+  }
 }
 
 img, svg {
@@ -1460,7 +1470,13 @@ input, select, textarea {
 }
 
 :root[data-theme='light'] .hero {
-  background: linear-gradient(180deg, #eff1fb 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #f3f3f5 0%, #ffffff 100%);
+}
+
+/* Ambient card elevation on the gray ground (light only): a tight contact
+   shadow plus a soft wide one, the Apple-marketing-card treatment. */
+:root[data-theme='light'] :is(.card, .kpi-card, .fcard) {
+  box-shadow: 0 1px 2px rgba(9, 9, 20, 0.04), 0 10px 28px -10px rgba(9, 9, 20, 0.1);
 }
 
 .hero::before {
@@ -1756,8 +1772,10 @@ input, select, textarea {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 12px;
+  /* No wrap: the Trade button stays pinned to the right of the metrics row
+     (it used to drop to its own line when the row got tight). */
+  flex-wrap: nowrap;
   border-top: 1px solid var(--line);
   padding-top: 14px;
   margin-top: auto;
@@ -1765,9 +1783,15 @@ input, select, textarea {
 
 .fcard-metrics {
   display: flex;
-  gap: 18px;
+  gap: 14px;
   flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
 }
+
+.fcard-foot .btn-trade { flex-shrink: 0; }
+
+.fcard-clickable { cursor: pointer; }
 
 .fcard-foot .cell .k {
   font-family: var(--font-mono);
