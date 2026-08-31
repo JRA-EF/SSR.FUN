@@ -5499,3 +5499,29 @@
   ]
 }
 ```
+
+## DEC-0179
+
+```json
+{
+  "id": "DEC-0179",
+  "date": "2026-08-31",
+  "status": "confirmed-executed-verified",
+  "decision": "EXECUTED the Mainnet program upgrade-authority handover: ssr_protocol (8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9) upgrade authority transferred from the Creator's solo deployer wallet CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8 to HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW -- vault[0] of the CONTROLLED 1-of-3 Squads multisig G8pgvV8wGrscorppA3VrcAWrV6QGP4TvTps1czaejzH8 (members: Creator EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq, Boss PSpQGPvw..., Developer 52b7pBNF...; threshold 1; config_authority = EME96... alone). The Creator explicitly chose the controlled multisig ('do yours i.e HFmqpPVV...') over their own Squads-app-created autonomous one (C1YuwBBUqXCWAEVPLRSBdoGYcmut65uBQtaev11eEBJC, vault 9tnq9vTSBF72VMNDgG3khpDts3ojgv251UfeAHL5KQGg) after a full comparison: identical members/threshold, but the autonomous one lets ANY single member alone change membership (the developer could eject Creator+Boss irreversibly), while the controlled one accepts membership changes only from the Creator's EME96 wallet directly. The autonomous C1YuwBB... squad is left unused for this purpose; the earlier GjEAq7... squad (DEC-0178) remains abandoned.",
+  "context": "Completes DEC-0177/0178. The Creator initially believed the controlled squad was one they had created by mistake in the Squads app -- clarified: it was created from this machine by scripts/create-upgrade-authority-multisig.mjs when the Creator sent the member list (an instruction-vs-information ambiguity, acknowledged); the Squads app can only create autonomous squads (it never sets config_authority), which is why the Creator 'didn't do anything different' yet got a different kind. The controlled/autonomous distinction was demonstrated with raw on-chain reads of both accounts' config_authority fields and is independently checkable via the creation tx MfbDQ78X...'s multisigCreateV2 args on any explorer.",
+  "rationale": "As recorded in DEC-0177: threshold 1 gives the developer fully autonomous shipping (the requirement), Creator's equal membership gives immediate revert power over any bad upgrade, and Creator-only config authority gives unilateral revocation. The autonomous alternative would have made the developer's seizure of permanent program control possible in a single transaction.",
+  "alternativesConsidered": [
+    "Vault 9tnq9... of the Creator's autonomous squad (rejected by the Creator after the risk was laid out side-by-side)",
+    "Keeping CgHFxD4... solo and deferring (superseded by the Creator's explicit go)"
+  ],
+  "impact": "IMMEDIATE: CgHFxD4... can no longer upgrade the program directly; ALL program deploys -- including the pending DEC-0173 fee-denomination upgrade -- now go through the Squads flow: write-buffer with any funded wallet, set-buffer-authority to HFmqpPVV..., then propose+approve+execute in the Squads app (any one of the three members completes it alone; the DEC-0173 prerequisite 'upgrade-authority keypair available' is now satisfied by ANY member + this flow). The developer needs nothing 'sent': his membership is on-chain; sharing the multisig address G8pgvV8w... is only for locating/verifying the squad in the app. Revocation: the Creator's EME96 wallet removes the developer from the multisig directly (or rotates the authority away entirely via a 1-of-3 vault transaction) at any time. Protocol admin (pause/fee-destination/keeper) remains CgHFxD4 + PSpQ on-chain, unchanged -- the developer still holds no admin rights.",
+  "affectedAreas": ["Mainnet program 8hTW7fH... (upgrade authority)", "future deploy procedure (all program upgrades via Squads)", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0178's 'handover pending' state",
+  "supersededBy": null,
+  "evidence": [
+    "solana program set-upgrade-authority output: Account Type: Program, Authority: HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW (signed by the CgHFxD4 keypair, public mainnet RPC).",
+    "Independent verification via a second RPC (Helius) at FINALIZED commitment: programdata 2YF7aofg... authority field = HFmqpPVV... exactly.",
+    "Controlled-vs-autonomous determination: raw config_authority reads of both squads (G8pgvV8w... -> EME96...; C1YuwBB... -> zero/none), and Squads' generated ConfigAction type set confirming autonomous squads can never gain a config authority (no SetConfigAuthority action exists)."
+  ]
+}
+```
