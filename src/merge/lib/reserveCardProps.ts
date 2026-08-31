@@ -4,6 +4,7 @@
 // they can never drift back out of sync with each other.
 import { isReserveTradable } from "@ssr/sdk";
 import { formatUsdc, formatUsdcOrUnavailable, buildLineSeries } from "./calculations";
+import { applyDesignDemo } from "./designDemo";
 import { computeMarketCap } from "./onChainReserve";
 import { normalizeReserveCategory, type DTR } from "./types";
 
@@ -53,7 +54,11 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 3)
     .map((a) => a.symbol);
-  const recentHistory = buildLineSeries(dtr.priceHistory, "7d", validNav);
+  // Design-preview overlay (?demo=1, DevNet-only): flat fixture Reserves get a
+  // synthetic sparkline/change so chart styling can be reviewed -- see designDemo.ts.
+  const demo = applyDesignDemo(dtr, isMainnet);
+  const change24h = demo ? demo.change24h : dtr.change24h;
+  const recentHistory = buildLineSeries(demo ? demo.priceHistory : dtr.priceHistory, "7d", validNav);
   const pricingUnavailable = isMainnet && dtr.onChain?.priceSource === "unavailable";
   const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
 
@@ -68,8 +73,8 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
       ? { label: `Live on Solana ${clusterLabel}`, tone: "onchain" }
       : { label: "Simulated Demo", tone: "simulated" },
     priceFormatted: formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable),
-    changePct: dtr.change24h,
-    changeFormatted: `${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`,
+    changePct: change24h,
+    changeFormatted: `${change24h >= 0 ? "+" : ""}${change24h.toFixed(2)}%`,
     sparkline: recentHistory.unavailable ? [] : recentHistory.points.map((p) => p.price),
     sparklineTimestamps: recentHistory.unavailable ? [] : recentHistory.points.map((p) => p.t),
     sparklineValueFmt: formatUsdc,
@@ -77,7 +82,7 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
     topAssets,
     metrics: [
       { key: "price", label: "Price", value: formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable) },
-      { key: "24h", label: "24h", value: `${dtr.change24h >= 0 ? "+" : ""}${dtr.change24h.toFixed(2)}%`, tone: dtr.change24h >= 0 ? "up" : "down" },
+      { key: "24h", label: "24h", value: `${change24h >= 0 ? "+" : ""}${change24h.toFixed(2)}%`, tone: change24h >= 0 ? "up" : "down" },
       { key: "mcap", label: "Market Cap", value: formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true }) },
       {
         key: "prem",
