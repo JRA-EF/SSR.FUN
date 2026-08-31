@@ -314,10 +314,11 @@ input, select, textarea {
 
 .page-head h1 {
   font-family: var(--font-display);
-  font-size: 26px;
+  font-size: 21px;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
 }
 
 .page-head .sub {
@@ -470,6 +471,15 @@ input, select, textarea {
   .testing-badge {
     display: none;
   }
+}
+
+/* Narrow desktop: compact the whole nav row before anything can clip. */
+@media (max-width: 1140px) {
+  .nav-inner { gap: 10px; }
+  .nav-link { padding: 6px 7px; font-size: 12.5px; }
+  .nav-search input { width: 110px; }
+  .nav-search input:focus { width: 150px; }
+  .sim-badge { font-size: 10px; padding: 3px 9px; }
 }
 
 .nav-search-close {
@@ -717,9 +727,14 @@ input, select, textarea {
   justify-content: center;
   gap: 8px;
   border-radius: 999px;
-  padding: 9px 20px;
-  font-size: 14px;
+  padding: 10px 22px;
+  /* Marketing-look experiment: buttons speak Lexend Giga uppercase, exactly
+     like the ssr-reserve-style .btn. */
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.08em;
   border: 1px solid transparent;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
   white-space: nowrap;
@@ -812,13 +827,13 @@ input, select, textarea {
 .btn-danger:hover { background: rgba(229, 88, 106, 0.1); }
 
 .btn-lg {
-  padding: 13px 28px;
-  font-size: 15px;
+  padding: 15px 30px;
+  font-size: 13px;
 }
 
 .btn-sm {
-  padding: 5px 12px;
-  font-size: 13px;
+  padding: 6px 14px;
+  font-size: 10.5px;
 }
 
 .btn-block { width: 100%; }
@@ -1481,11 +1496,13 @@ input, select, textarea {
 .hero-badge {
   display: inline-flex;
   align-items: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
+  /* Marketing-look eyebrow: Giga, wide-tracked, like .eyebrow on the site. */
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--text-2);
   margin-bottom: 22px;
 }
 
@@ -1493,12 +1510,13 @@ input, select, textarea {
   font-family: var(--font-display);
   /* Lexend Giga peaks at 700; anything heavier would synthesize a fake bold. */
   font-weight: 600;
-  /* Lexend Giga runs ~40% wider than a standard grotesk — this scale is sized
-     so the longest line ("Infinite possibilities.") never overflows its
-     half-width hero column. Do not raise it without re-measuring. */
-  font-size: clamp(24px, 2.6vw, 38px);
-  line-height: 1.14;
-  letter-spacing: -0.01em;
+  /* Marketing-look: uppercase like the ssr-reserve-style hero. Uppercase Giga
+     is wider still, so the scale drops a notch to keep the longest line
+     ("INFINITE POSSIBILITIES.") inside its half-width column. */
+  text-transform: uppercase;
+  font-size: clamp(19px, 2.15vw, 31px);
+  line-height: 1.24;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
@@ -1534,6 +1552,25 @@ input, select, textarea {
   gap: 12px;
   margin-top: 32px;
   flex-wrap: wrap;
+}
+
+/* Marketing-look: the hero's primary CTA is the site's signature yellow
+   pill (btn-yellow), reserved for this one launch moment. */
+.hero-ctas .btn-primary {
+  background: #ede871;
+  color: #070429;
+}
+
+.hero-ctas .btn-primary:hover {
+  background: #f2ed85;
+  box-shadow: 0 6px 18px rgba(237, 232, 113, 0.45);
+}
+
+.hero-ctas .btn-primary:active { background: #d9d45e; }
+
+.hero-ctas .btn-primary::after,
+.hero-ctas .btn-primary::before {
+  border-color: #ede871;
 }
 
 .hero-stage {
@@ -1788,8 +1825,9 @@ input, select, textarea {
 .section-head h2 {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 19px;
-  letter-spacing: -0.01em;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2228,12 +2266,28 @@ input, select, textarea {
 
 /* ---------------------------------- footer ---------------------------------- */
 
+/* Marketing-look: the footer is a full navy band, like the site's. Fixed
+   colors on purpose — it stays navy in both themes. */
 .footer {
-  border-top: 1px solid var(--line);
+  background: #070429;
+  border-top: 1px solid rgba(151, 171, 239, 0.18);
   margin-top: 40px;
-  padding: 36px 0 48px;
+  padding: 44px 0 56px;
   font-size: 13px;
-  color: var(--text-3);
+  color: #a7b2dc;
+}
+
+.footer a { color: #c9d3f7; }
+
+.footer a:hover { color: #eef1fc; }
+
+.footer h4 {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #97abef;
 }
 
 .footer-grid {
@@ -2247,8 +2301,9 @@ input, select, textarea {
   font-family: var(--font-display);
   font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #eef1fc;
 }
 
 .footer p { max-width: 60ch; margin-top: 8px; }

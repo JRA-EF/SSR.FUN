@@ -225,7 +225,22 @@
 }
 
 .merge-scope :is(h1, h2, h3, h4, h5, h6) {
-  @apply font-merge-display tracking-tight;
+  @apply font-merge-display;
+  /* Marketing-look: headings run uppercase and wide-tracked like the
+     ssr-reserve-style site (replaces the old tracking-tight). */
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Marketing-look: filled action/primary/destructive buttons speak Lexend
+   Giga uppercase, matching the site's .btn. Unlayered on purpose so the
+   type treatment wins over per-button Tailwind text utilities. */
+.merge-scope button:is([class*='bg-action'], [class*='bg-primary'], [class*='bg-destructive']) {
+  font-family: 'Lexend Giga', 'Lexend', sans-serif;
+  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
 }
 
 /* Pill-contour ripple on hover for primary action buttons (Buy/Sell zaps,

@@ -127,7 +127,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <button
               type="button"
               className="btn btn-primary"
-              style={{ padding: '8px 18px', fontSize: 13 }}
+              style={{ padding: '8px 16px', fontSize: 10.5 }}
               onClick={() => setWalletModalOpen(true)}
             >
               Connect Wallet
