@@ -57,7 +57,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const path = usePath()
   const { toasts } = useStore()
   const { wallet } = useAppStore()
-  const [walletModalOpen, setWalletModalOpen] = useState(false)
+  const walletModalOpen = useAppStore(s => s.walletModalOpen)
+  const setWalletModalOpen = useAppStore(s => s.setWalletModalOpen)
   const [walletPanelOpen, setWalletPanelOpen] = useState(false)
 
   useEffect(() => {

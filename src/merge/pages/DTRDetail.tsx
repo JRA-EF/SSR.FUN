@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -57,15 +57,15 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  ComposedChart,
+  Bar,
+  ReferenceLine,
   XAxis,
   YAxis,
   Tooltip as RechartsTooltip,
-  PieChart as RechartsPieChart,
-  Pie,
-  Cell,
 } from "recharts";
 import { format } from "date-fns";
-import { ChevronLeft, ArrowUpRight, ArrowDownRight, Layers, BarChart3, Activity } from "lucide-react";
+import { ChevronLeft, Layers, BarChart3, Activity, PenLine } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -78,14 +78,182 @@ import { InfoTip } from "@/components/InfoTip";
 import { useToast } from "@/hooks/use-toast";
 import { useLandingStats } from "@/hooks/useLandingStats";
 import { ChartTimeframeSelector, DEFAULT_CHART_TIMEFRAME } from "@/components/ChartTimeframeSelector";
+import { applyDesignDemo, demoPriceHistory } from "@/lib/designDemo";
+import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
+import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
 
-const CHART_COLORS = [
-  "hsl(var(--chart-1))",
-  "hsl(var(--chart-2))",
-  "hsl(var(--chart-3))",
-  "hsl(var(--chart-4))",
-  "hsl(var(--chart-5))",
-];
+/* Candlestick glyph for the Recharts range-Bar: the bar's y/height map the
+   candle's [low, high] band, so open/close are interpolated inside it. A
+   flat candle (high === low) renders as a doji tick instead of vanishing. */
+function CandleShape(props: {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  payload?: Candle;
+}) {
+  const { x = 0, y = 0, width = 0, height = 0, payload } = props;
+  if (!payload) return null;
+  const { open, close, high, low, up } = payload;
+  const color = up ? "hsl(var(--positive))" : "hsl(var(--destructive))";
+  const cx = x + width / 2;
+  const span = high - low;
+  const yAt = (v: number) => (span > 0 ? y + ((high - v) / span) * height : y);
+  const bodyTop = yAt(Math.max(open, close));
+  const bodyH = Math.max(yAt(Math.min(open, close)) - bodyTop, 1.5);
+  const bodyW = Math.max(Math.min(width * 0.62, 13), 3);
+  return (
+    <g>
+      <line x1={cx} x2={cx} y1={y} y2={y + Math.max(height, 1)} stroke={color} strokeWidth={1.5} strokeLinecap="round" />
+      <rect x={cx - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH} rx={1.5} fill={color} />
+    </g>
+  );
+}
+
+function CandleTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: Candle & { dateStr: string } }> }) {
+  if (!active || !payload?.length) return null;
+  const c = payload[0].payload;
+  return (
+    <div className="rounded-xl border border-card-border bg-card px-3 py-2 shadow-md text-xs">
+      <p className="text-muted-foreground mb-1">{c.dateStr}</p>
+      {([["Open", c.open], ["High", c.high], ["Low", c.low], ["Close", c.close]] as const).map(([k, v]) => (
+        <p key={k} className="flex justify-between gap-4">
+          <span className="text-muted-foreground">{k}</span>
+          <span className={`font-merge-mono font-semibold ${c.up ? "text-positive" : "text-destructive"}`}>{formatUsdc(v)}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/* Inline per-asset chart for the expandable composition rows: the same clean
+   line treatment as Price History's Line view (thin primary line over a soft
+   fading fill) — no candles, no EMA — sized for an expanded table row. */
+function AssetMiniChart({ seed, endPrice, synthetic }: { seed: string; endPrice: number; synthetic: boolean }) {
+  const data = useMemo(() => {
+    const now = Date.now();
+    const points = synthetic
+      ? demoPriceHistory(seed, endPrice, now)
+      : [
+          { t: now - 30 * 86_400_000, price: endPrice },
+          { t: now, price: endPrice },
+        ];
+    return sampleLinePoints(points, 140).map((p) => ({ ...p, dateStr: format(new Date(p.t), "MMM d") }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed, endPrice, synthetic]);
+  if (data.length < 2) return null;
+  const lo = Math.min(...data.map((d) => d.price));
+  const hi = Math.max(...data.map((d) => d.price));
+  const pad = Math.max((hi - lo) * 0.06, hi * 0.005);
+  const gradId = `miniPriceGradient-${seed.replace(/[^a-zA-Z0-9]/g, "")}`;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data} margin={{ top: 12, right: 8, bottom: 8, left: 16 }}>
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.16} />
+            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <XAxis dataKey="dateStr" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} minTickGap={44} />
+        <YAxis
+          orientation="right"
+          domain={[lo - pad, hi + pad]}
+          stroke="hsl(var(--muted-foreground))"
+          fontSize={11}
+          tickCount={3}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(v: number) => formatAssetPriceUsd(v)}
+          width={70}
+        />
+        <Area
+          type="monotone"
+          dataKey="price"
+          stroke="hsl(var(--primary))"
+          strokeWidth={2}
+          fill={`url(#${gradId})`}
+          dot={false}
+          activeDot={false}
+          isAnimationActive={false}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* Chart event marker: a subtle pill riding a dashed reference line where a
+   creator note landed (fee change, rebalance, …). Clicking it jumps to the
+   "Notes from the Creator" section at the bottom of the page. */
+function NoteMarkerLabel(props: { viewBox?: { x: number; y: number; height: number }; text?: string; level?: number }) {
+  const { viewBox, text = "", level = 0 } = props;
+  if (!viewBox) return null;
+  const width = text.length * 6.4 + 18;
+  const cy = viewBox.y + viewBox.height - 12 - level * 26;
+  return (
+    <g
+      style={{ cursor: "pointer" }}
+      onClick={() => document.getElementById("section-notes")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      role="link"
+      aria-label={`${text} — jump to Notes from the Creator`}
+    >
+      <rect x={viewBox.x - width / 2} y={cy - 11} rx={11} ry={11} width={width} height={22} fill="hsl(var(--card))" stroke="hsl(var(--border))" />
+      <text x={viewBox.x} y={cy + 3.5} textAnchor="middle" fontSize={10.5} fontWeight={600} fill="hsl(var(--muted-foreground))">
+        {text}
+      </text>
+    </g>
+  );
+}
+
+/* Section navigation: one long light pill spanning the chart column, holding
+   a small pill per page section. A rounded highlight slides between items as
+   the cursor moves across them (fading out on leave), and clicking scrolls
+   smoothly to that section. */
+const SECTION_NAV_ITEMS = [
+  { id: "section-chart", label: "Chart" },
+  { id: "section-about", label: "About" },
+  { id: "section-composition", label: "Composition" },
+  { id: "section-addresses", label: "Addresses" },
+  { id: "section-market", label: "Market" },
+  { id: "section-notes", label: "Notes" },
+] as const;
+
+function SectionNav() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [highlight, setHighlight] = useState({ left: 0, width: 0, visible: false });
+  const moveTo = (el: HTMLElement) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const r = el.getBoundingClientRect();
+    const cr = container.getBoundingClientRect();
+    setHighlight({ left: r.left - cr.left, width: r.width, visible: true });
+  };
+  return (
+    <nav
+      ref={containerRef}
+      aria-label="Page sections"
+      onMouseLeave={() => setHighlight((h) => ({ ...h, visible: false }))}
+      className="relative flex items-center flex-1 min-w-0 h-10 px-1.5 rounded-full bg-card/70 border border-border/50"
+    >
+      <div
+        aria-hidden="true"
+        className="absolute top-1.5 bottom-1.5 rounded-full bg-secondary pointer-events-none transition-all duration-200 ease-out"
+        style={{ left: highlight.left, width: highlight.width, opacity: highlight.visible ? 1 : 0 }}
+      />
+      {SECTION_NAV_ITEMS.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onMouseEnter={(e) => moveTo(e.currentTarget)}
+          onClick={() => document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          className="relative z-10 flex-1 h-7 rounded-full text-xs font-medium text-muted-foreground hover:text-foreground whitespace-nowrap transition-colors"
+        >
+          {item.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 /** Axis tick label, chosen by how fine the selected timeframe's resolution is. */
 function timeframeTickFormat(t: number, timeframe: ChartTimeframe): string {
@@ -125,7 +293,7 @@ function resolveBuyAsset(_onChain: OnChainReserveMeta | undefined): { mint: Publ
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade, setWalletModalOpen } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
@@ -356,8 +524,16 @@ export function DTRDetail() {
 
   // Derived chart/market data. Kept above the "not found" early return (and fed safe
   // fallbacks when dtr is undefined) so hook call order never changes between renders.
-  const priceHistory = dtr?.priceHistory ?? [];
+  // Design-preview overlay (?demo=1, DevNet-only): a flat fixture Reserve charts a
+  // synthetic series instead, disclosed beside the chart -- see designDemo.ts.
+  const designDemo = dtr ? applyDesignDemo(dtr, IS_MAINNET) : null;
+  const priceHistory = designDemo?.priceHistory ?? dtr?.priceHistory ?? [];
+  const displayChange24h = designDemo ? designDemo.change24h : (dtr?.change24h ?? 0);
+  const displayChange7d = designDemo ? designDemo.change7d : (dtr?.change7d ?? 0);
   const trades = dtr?.trades ?? [];
+  // Creator change log: illustrative entries in design preview; real Reserves
+  // have no recorded notes yet, so they render the honest empty state.
+  const creatorNotes = designDemo?.creatorNotes ?? [];
 
   // Flatlines at the last known REAL price when a timeframe's own window has no
   // point strictly inside it (anchored to a genuine prior observation -- "nothing
@@ -376,9 +552,73 @@ export function DTRDetail() {
   );
 
   const chartData = useMemo(
-    () => sampleLinePoints(lineSeries.points, 300).map((p) => ({ ...p, dateStr: timeframeTickFormat(p.t, timeframe) })),
+    () =>
+      sampleLinePoints(lineSeries.points, 300).map((p, i) => ({
+        ...p,
+        dateStr: timeframeTickFormat(p.t, timeframe),
+        // Unique per point: duplicate category values break ReferenceLine's
+        // x lookup, so the axis key carries an invisible index suffix that
+        // the tick formatter strips back off.
+        xKey: `${timeframeTickFormat(p.t, timeframe)}\u200b${i}`,
+      })),
     [lineSeries, timeframe],
   );
+
+  // Candles view: same windowed series, bucketed to OHLC. Chart style is a
+  // per-page toggle (Line | Candles) defaulting to candles whenever the
+  // window has genuine movement to show.
+  const [chartStyle, setChartStyle] = useState<"line" | "candles">("candles");
+  // Composition rows expand in place (click toggles) to reveal a per-asset
+  // line chart; clicking the open row again collapses it.
+  const [expandedAsset, setExpandedAsset] = useState<string | null>(null);
+  const candleData = useMemo(() => {
+    const candles = buildCandleSeries(lineSeries.points, 36);
+    const ema8 = ema(candles.map((c) => c.close), 8);
+    return candles.map((c, i) => ({
+      ...c,
+      ema8: ema8[i],
+      dateStr: timeframeTickFormat(c.t, timeframe),
+      xKey: `${timeframeTickFormat(c.t, timeframe)}\u200b${i}`,
+    }));
+  }, [lineSeries, timeframe]);
+  const candlesUsable = candleData.length > 1 && !lineSeries.isFallback;
+  const showCandles = chartStyle === "candles" && candlesUsable;
+  // First genuinely recorded observation, marked on the chart when the design
+  // preview's synthetic backfill extends further into the past than the real
+  // series does (the same "launch" annotation Reserve-style charts carry).
+  // Creator-note markers within the current chart window: dashed line + pill
+  // per note, hyperlinking down to the Notes section.
+  const noteMarkers = useMemo(() => {
+    if (!designDemo || creatorNotes.length === 0) return [];
+    const source = showCandles ? candleData : chartData;
+    if (source.length < 2) return [];
+    const start = source[0].t;
+    const markers: Array<{ key: number; xKey: string; tag: string; level: number }> = [];
+    for (const note of creatorNotes) {
+      if (note.t < start || note.t > source[source.length - 1].t) continue;
+      let best: { xKey: string } | null = null;
+      for (const p of source) {
+        if (p.t <= note.t) best = p;
+        else break;
+      }
+      if (best) markers.push({ key: note.t, xKey: best.xKey, tag: note.tag, level: markers.length % 2 });
+    }
+    return markers;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [designDemo, creatorNotes, showCandles, candleData, chartData]);
+
+  const launchMarker = useMemo(() => {
+    if (!designDemo || !dtr || dtr.priceHistory.length === 0) return null;
+    const t = dtr.priceHistory[0].t;
+    const source = showCandles ? candleData : chartData;
+    if (!source.length) return null;
+    let best: { xKey: string } | null = null;
+    for (const p of source) {
+      if (p.t <= t) best = p;
+      else break;
+    }
+    return best && best !== source[source.length - 1] ? best.xKey : null;
+  }, [designDemo, dtr?.priceHistory, showCandles, candleData, chartData]);
 
   const recentTrades = useMemo(() => [...trades].reverse(), [trades]);
 
@@ -442,8 +682,16 @@ export function DTRDetail() {
     return `${Math.floor(ageSec / 3600)}h ago`;
   })();
 
-  const chartMin = chartData.length ? Math.min(...chartData.map((d) => d.price)) : 0;
-  const chartMax = chartData.length ? Math.max(...chartData.map((d) => d.price)) : 1;
+  const chartMin = showCandles
+    ? Math.min(...candleData.map((c) => c.low))
+    : chartData.length
+      ? Math.min(...chartData.map((d) => d.price))
+      : 0;
+  const chartMax = showCandles
+    ? Math.max(...candleData.map((c) => c.high))
+    : chartData.length
+      ? Math.max(...chartData.map((d) => d.price))
+      : 1;
   // A flatlined series has chartMin === chartMax; pad by at least a cent so the line
   // still renders inside the plot instead of collapsing onto an axis.
   const yPad = Math.max((chartMax - chartMin) * 0.05, chartMax * 0.01, 0.01);
@@ -456,13 +704,9 @@ export function DTRDetail() {
   // card's pie slice/row. Filters the DISPLAY only; dtr.composition itself
   // (used elsewhere, e.g. ManageDTR.tsx's Rebalance tab, which needs to show
   // a 0%-weight asset so it can be edited) is untouched.
-  const compositionDisplay = dtr.composition.filter((a) => a.weight > 0);
-
-  // Pie chart data
-  const pieData = compositionDisplay.map(a => ({
-    name: a.symbol,
-    value: a.weight
-  }));
+  // Design preview (?demo=1): a flat fixture Reserve shows the illustrative
+  // 7-asset basket instead, disclosed on the card -- see designDemo.ts.
+  const compositionDisplay = designDemo ? designDemo.composition : dtr.composition.filter((a) => a.weight > 0);
 
   // Trading Calculations
   const numBuyAmount = parseFloat(buyAmount) || 0;
@@ -1290,29 +1534,330 @@ export function DTRDetail() {
 
   return (
     <div className="container mx-auto px-4 md:px-8 py-8">
-      <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-primary mb-6 transition-colors">
-        <ChevronLeft className="w-4 h-4 mr-1" /> Back to Directory
-      </Link>
+      {/* Top row mirrors the page grid so the section-nav pill's right edge
+          lines up exactly with the chart card's. Sticky just below the main
+          nav (60px tall) so the section pills stay reachable while scrolling;
+          top is inline because FABLE's unlayered resets outrank layered
+          Tailwind utilities on some elements. */}
+      <div
+        className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-6 sticky z-30 py-2.5 -mx-2 px-2 rounded-b-2xl bg-background/85 backdrop-blur-md"
+        style={{ top: 60 }}
+      >
+        <div className="lg:col-span-2 flex items-center gap-4">
+          <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-primary transition-colors shrink-0">
+            <ChevronLeft className="w-4 h-4 mr-1" /> Back to Directory
+          </Link>
+          <SectionNav />
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Details & Charts */}
         <div className="lg:col-span-2 space-y-8">
-          
-          {/* Header Section */}
-          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-            <div className="flex items-start gap-5">
-              <Avatar className="h-20 w-20 border-2 border-border shadow-md">
-                {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
-                <AvatarFallback className="bg-primary/10 text-primary text-2xl font-merge-display font-bold">
-                  {dtr.ticker.slice(0, 2)}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <h1 className="text-4xl font-merge-display font-bold tracking-tight">{dtr.name}</h1>
-                  <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
+          {/* Chart + stat sheets: one visual unit — the stat cards tuck
+              under the chart card like pages sliding out of a folder. */}
+          <div id="section-chart" className="scroll-mt-32">
+            {/* Chart Section */}
+            <Card className="relative z-10 bg-card border-card-border hover:shadow-md transition-shadow duration-300">
+              <CardHeader className="flex flex-col gap-3 pb-2">
+                {/* Reserve identity lives in the chart card (top-left) now that
+                    the chart leads the page, in line with the Buy/Sell panel. */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-2.5">
+                    <Avatar className="h-8 w-8 border border-border">
+                      {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
+                      <AvatarFallback className="bg-primary/10 text-primary text-xs font-merge-display font-bold">
+                        {dtr.ticker.slice(0, 2)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <h1 className="text-2xl font-merge-display font-bold tracking-tight">{dtr.name}</h1>
+                    <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>
+                    <div className="flex items-baseline justify-end gap-1.5">
+                      <span className={`font-merge-mono font-semibold text-foreground ${pricingUnavailable ? "text-sm" : "text-base"}`}>
+                        {formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable)}
+                      </span>
+                      {!pricingUnavailable && (
+                        <span className={`text-xs font-merge-mono ${displayChange24h >= 0 ? "text-positive" : "text-destructive"}`}>
+                          {displayChange24h >= 0 ? "+" : ""}{displayChange24h.toFixed(2)}%
+                        </span>
+                      )}
+                    </div>
+                    {isOnChain && IS_MAINNET && priceSourceLabel && (
+                      <p className="text-[11px] text-muted-foreground/70 mt-1">
+                        via {priceSourceLabel}{priceAgeLabel ? ` · updated ${priceAgeLabel}` : ""}
+                        {dtr.onChain?.priceSource === "mixed" && " (per-asset)"}
+                      </p>
+                    )}
+                    {pricingUnavailable && dtr.onChain?.unpricedAssetMints && dtr.onChain.unpricedAssetMints.length > 0 && (
+                      <p className="text-[11px] text-muted-foreground/70 mt-1">
+                        No verified Pyth or Jupiter price for {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "this Reserve's asset"} right now.
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 text-sm text-muted-foreground mb-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <CardTitle className="text-lg font-merge-display flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-primary" /> Price History
+                </CardTitle>
+                <div className="flex flex-wrap items-center gap-3">
+                  <ChartTimeframeSelector timeframe={timeframe} onChange={setTimeframe} />
+                  <div className="flex items-center gap-1" role="group" aria-label="Chart style">
+                    {(["line", "candles"] as const).map((style) => (
+                      <button
+                        key={style}
+                        type="button"
+                        onClick={() => setChartStyle(style)}
+                        aria-pressed={chartStyle === style}
+                        disabled={style === "candles" && !candlesUsable}
+                        className={`inline-flex h-7 items-center rounded-md px-2 text-xs font-medium capitalize transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                          (style === "candles") === showCandles
+                            ? "text-foreground font-semibold"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {style}
+                      </button>
+                    ))}
+                  </div>
+                  {showCandles && (
+                    <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                      <span className="inline-block w-4 h-[2px] rounded-full border border-border/60" style={{ background: "#eff1fb" }} aria-hidden="true" />
+                      EMA 8
+                    </span>
+                  )}
+                </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0 sm:p-6 sm:pt-0 h-[350px] w-full relative">
+                {lineSeries.unavailable ? (
+                  <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6">
+                    <p className="text-sm font-semibold text-muted-foreground">Price unavailable</p>
+                    <p className="text-xs text-muted-foreground/80 max-w-xs">
+                      This Reserve's current NAV could not be read. Its price chart will appear once a valid NAV is available.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {designDemo ? (
+                      <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
+                        Design preview — synthetic data, not recorded trades.
+                      </p>
+                    ) : lineSeries.isFallback && (
+                      <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
+                        No price movement recorded yet.
+                      </p>
+                    )}
+                    <ResponsiveContainer width="100%" height="100%">
+                    {showCandles ? (
+                      <ComposedChart data={candleData} margin={{ top: 20, right: 8, bottom: 20, left: 20 }}>
+                        <XAxis
+                          dataKey="xKey"
+                          stroke="hsl(var(--muted-foreground))"
+                          fontSize={12}
+                          tickLine={false}
+                          axisLine={false}
+                          minTickGap={40}
+                          tickFormatter={(v: string) => v.split("\u200b")[0]}
+                        />
+                        <YAxis
+                          orientation="right"
+                          domain={yDomain}
+                          stroke="hsl(var(--muted-foreground))"
+                          fontSize={12}
+                          tickCount={4}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(value) => `$${value.toFixed(2)}`}
+                          width={62}
+                        />
+                        <RechartsTooltip content={<CandleTooltip />} cursor={{ stroke: "hsl(var(--muted-foreground))", strokeDasharray: "4 4" }} />
+                        {noteMarkers.map((m) => (
+                          <ReferenceLine
+                            key={m.key}
+                            x={m.xKey}
+                            ifOverflow="visible"
+                            stroke="hsl(var(--muted-foreground))"
+                            strokeDasharray="4 4"
+                            strokeOpacity={0.5}
+                            label={<NoteMarkerLabel text={m.tag} level={m.level} />}
+                          />
+                        ))}
+                        {launchMarker && (
+                          <ReferenceLine
+                            x={launchMarker}
+                            stroke="hsl(var(--muted-foreground))"
+                            strokeDasharray="4 4"
+                            label={{ value: "Reserve Launch", position: "insideBottomRight", fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          />
+                        )}
+                        <defs>
+                          {/* Line fades out toward the left: full periwinkle at the
+                              recent (right) edge, dissolving into the chart's past. */}
+                          <linearGradient id="emaStroke" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#eff1fb" stopOpacity={0} />
+                            <stop offset="55%" stopColor="#eff1fb" stopOpacity={0.6} />
+                            <stop offset="100%" stopColor="#eff1fb" stopOpacity={1} />
+                          </linearGradient>
+                          {/* Soft vertical wash under the line: page-paper #eff1fb at the
+                              top fading into the card's white below. */}
+                          <linearGradient id="emaFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#eff1fb" stopOpacity={0.9} />
+                            <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        {/* Declared before the candles so the whole EMA layer renders
+                            BENEATH them — a backdrop guide, not a foreground series. */}
+                        <Area
+                          type="monotone"
+                          dataKey="ema8"
+                          stroke="url(#emaStroke)"
+                          strokeWidth={1.75}
+                          fill="url(#emaFill)"
+                          dot={false}
+                          activeDot={false}
+                          connectNulls={false}
+                          isAnimationActive={false}
+                        />
+                        <Bar dataKey="range" shape={<CandleShape />} isAnimationActive={false} />
+                      </ComposedChart>
+                    ) : (
+                    <AreaChart data={chartData} margin={{ top: 20, right: 8, bottom: 20, left: 20 }}>
+                      <defs>
+                        <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.16} />
+                          <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <XAxis
+                        dataKey="xKey"
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={30}
+                        tickFormatter={(v: string) => v.split("\u200b")[0]}
+                      />
+                      <YAxis
+                        orientation="right"
+                        domain={yDomain}
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickCount={4}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value) => `$${value.toFixed(2)}`}
+                        width={62}
+                      />
+                      <RechartsTooltip
+                        contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--card-border))', borderRadius: '0.75rem', boxShadow: 'var(--shadow-md)', color: 'hsl(var(--foreground))' }}
+                        itemStyle={{ color: 'hsl(var(--primary))', fontWeight: 'bold' }}
+                        labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
+                        formatter={(value) => [formatUsdc(Number(value)), "Price"]}
+                      />
+                      {noteMarkers.map((m) => (
+                        <ReferenceLine
+                          key={m.key}
+                          x={m.xKey}
+                          ifOverflow="visible"
+                          stroke="hsl(var(--muted-foreground))"
+                          strokeDasharray="4 4"
+                          strokeOpacity={0.5}
+                          label={<NoteMarkerLabel text={m.tag} level={m.level} />}
+                        />
+                      ))}
+                      {launchMarker && (
+                        <ReferenceLine
+                          x={launchMarker}
+                          stroke="hsl(var(--muted-foreground))"
+                          strokeDasharray="4 4"
+                          label={{ value: "Reserve Launch", position: "insideBottomRight", fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                        />
+                      )}
+                      <Area
+                        type="monotone"
+                        dataKey="price"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={2}
+                        fill="url(#priceGradient)"
+                        dot={false}
+                        isAnimationActive={false}
+                        activeDot={{ r: 6, fill: "hsl(var(--primary))", stroke: "hsl(var(--background))", strokeWidth: 2 }}
+                      />
+                    </AreaChart>
+                    )}
+                    </ResponsiveContainer>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+            {/* Stats Grid -- AUM and Prem/Discount removed per explicit request
+                (2026-08-24, road-to-mainnet MCR-01): Market Cap already showed
+                the same number as AUM (both are Circulating Supply x Token
+                Price today -- there's no secondary market yet, so Token Price
+                IS NAV, per Market Cap's own InfoTip), and Prem/Discount is
+                always ~0% for the same reason -- neither carried information
+                Market Cap didn't already show. */}
+            {/* One full-width periwinkle band flowing out from under the chart
+                card: its top 16px hide behind the (opaque, z-10) card, only its
+                rounded bottom shows — a sheet sliding out of the folder. */}
+            <div
+              className="-mt-4 rounded-b-xl px-6 pt-9 pb-4"
+              style={{ background: "linear-gradient(180deg, hsl(var(--secondary) / 0.7) 0%, hsl(var(--card)) 100%)" }}
+            >
+              <div className="grid grid-cols-2 md:grid-cols-3 md:divide-x md:divide-foreground/10">
+                <div className="md:pr-6">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
+                    Market Cap
+                    <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price. Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every Buy/Sell executes at NAV.</InfoTip>
+                  </div>
+                  <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-lg'}`}>{formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true })}</p>
+                </div>
+                <div className="md:px-6">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
+                    7D Performance
+                  </div>
+                  <p className={`text-lg font-merge-mono font-semibold ${displayChange7d >= 0 ? 'text-positive' : 'text-destructive'}`}>
+                    {displayChange7d >= 0 ? '+' : ''}{displayChange7d.toFixed(2)}%
+                  </p>
+                </div>
+                <div className="md:px-6">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
+                    24h Volume
+                    <InfoTip label="More information about 24h Volume">Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours{IS_MAINNET ? "." : ", valued at fixed DevNet test prices."}</InfoTip>
+                  </div>
+                  <p className="text-lg font-merge-mono font-semibold">
+                    {isOnChain ? (
+                      reserveStats ? (
+                        <>
+                          {formatUsdc(reserveStats.volume24hUsd, { compact: true })}
+                          {landingStats.stale && <span className="text-xs text-muted-foreground font-normal"> (stale)</span>}
+                        </>
+                      ) : landingStats.status === "loading" ? (
+                        <span className="text-sm text-muted-foreground font-normal">Loading…</span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground font-normal">Unavailable</span>
+                      )
+                    ) : (
+                      formatUsdc(0, { compact: true })
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {/* About Section — the Reserve's name/avatar moved into the chart
+              card above; this block keeps the badges, holders, and description.
+              px-6 aligns its text with the inner padding of the cards around
+              it (it has no card chrome of its own). */}
+          <div id="section-about" className="flex flex-col md:flex-row md:items-start justify-between gap-6 px-6 scroll-mt-32">
+            <div className="flex items-start gap-5">
+              <div>
+                <h2 className="text-lg font-merge-display font-semibold tracking-tight mb-5">About this Reserve</h2>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground mb-5">
                   <Badge variant="outline" className="bg-background/50 border-border">{normalizeReserveCategory(dtr.category)}</Badge>
                   {isWindingDown && (
                     <Badge variant="outline" className="uppercase text-[10px] tracking-wide border-amber-500/50 text-amber-600 dark:text-amber-400">
@@ -1339,39 +1884,13 @@ export function DTRDetail() {
                     )}
                   </span>
                 </div>
-                <p className="text-muted-foreground max-w-xl leading-relaxed">
+                <p className="text-muted-foreground leading-relaxed">
                   {dtr.description}
                 </p>
               </div>
             </div>
             
             <div className="flex flex-col items-end gap-3 shrink-0">
-              <div className="bg-card border border-card-border shadow-sm rounded-xl p-4 min-w-[200px]">
-                <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider font-semibold">Token Price</p>
-                <div className="flex items-baseline gap-2 mb-1">
-                  <span className={`font-merge-mono font-bold text-foreground ${pricingUnavailable ? 'text-lg' : 'text-3xl'}`}>
-                    {formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable)}
-                  </span>
-                </div>
-                {!pricingUnavailable && (
-                  <p className={`text-sm font-merge-mono flex items-center ${dtr.change24h >= 0 ? 'text-positive' : 'text-destructive'}`}>
-                    {dtr.change24h >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />}
-                    {Math.abs(dtr.change24h).toFixed(2)}% <span className="text-muted-foreground ml-1">(24h)</span>
-                  </p>
-                )}
-                {isOnChain && IS_MAINNET && priceSourceLabel && (
-                  <p className="text-[11px] text-muted-foreground/70 mt-1">
-                    via {priceSourceLabel}{priceAgeLabel ? ` · updated ${priceAgeLabel}` : ""}
-                    {dtr.onChain?.priceSource === "mixed" && " (per-asset)"}
-                  </p>
-                )}
-                {pricingUnavailable && dtr.onChain?.unpricedAssetMints && dtr.onChain.unpricedAssetMints.length > 0 && (
-                  <p className="text-[11px] text-muted-foreground/70 mt-1">
-                    No verified Pyth or Jupiter price for {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "this Reserve's asset"} right now.
-                  </p>
-                )}
-              </div>
-              
               {isManagerOrDelegate(dtr, wallet.address) && (
                 <Button asChild variant="outline" className="w-full border-primary/50 text-primary hover:bg-primary/10">
                   <Link href={`/dtr/${dtr.id}/manage`}>Manage Reserve</Link>
@@ -1381,7 +1900,7 @@ export function DTRDetail() {
           </div>
 
           {isOnChain && dtr.onChain && (
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground px-6">
               <span className="font-semibold">View on Solana Explorer:</span>
               <a href={explorerUrl("address", dtr.onChain.reserve)} target="_blank" rel="noreferrer" className="underline hover:text-primary">Reserve</a>
               <span aria-hidden="true">·</span>
@@ -1415,170 +1934,26 @@ export function DTRDetail() {
             </div>
           )}
 
-          {/* Stats Grid -- AUM and Prem/Discount removed per explicit request
-              (2026-08-24, road-to-mainnet MCR-01): Market Cap already showed
-              the same number as AUM (both are Circulating Supply x Token
-              Price today -- there's no secondary market yet, so Token Price
-              IS NAV, per Market Cap's own InfoTip), and Prem/Discount is
-              always ~0% for the same reason -- neither carried information
-              Market Cap didn't already show. */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <Card className="bg-secondary/40 border-transparent shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  Market Cap
-                  <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price. Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every Buy/Sell executes at NAV.</InfoTip>
-                </div>
-                <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-xl'}`}>{formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true })}</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-secondary/40 border-transparent shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  7D Performance
-                </div>
-                <p className={`text-xl font-merge-mono font-semibold ${dtr.change7d >= 0 ? 'text-positive' : 'text-destructive'}`}>
-                  {dtr.change7d >= 0 ? '+' : ''}{dtr.change7d.toFixed(2)}%
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="bg-secondary/40 border-transparent shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  24h Volume
-                  <InfoTip label="More information about 24h Volume">Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours{IS_MAINNET ? "." : ", valued at fixed DevNet test prices."}</InfoTip>
-                </div>
-                <p className="text-xl font-merge-mono font-semibold">
-                  {isOnChain ? (
-                    reserveStats ? (
-                      <>
-                        {formatUsdc(reserveStats.volume24hUsd, { compact: true })}
-                        {landingStats.stale && <span className="text-xs text-muted-foreground font-normal"> (stale)</span>}
-                      </>
-                    ) : landingStats.status === "loading" ? (
-                      <span className="text-sm text-muted-foreground font-normal">Loading…</span>
-                    ) : (
-                      <span className="text-sm text-muted-foreground font-normal">Unavailable</span>
-                    )
-                  ) : (
-                    formatUsdc(0, { compact: true })
-                  )}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
 
-          {/* Chart Section */}
-          <Card className="bg-card border-card-border hover:shadow-md transition-shadow duration-300">
-            <CardHeader className="flex flex-col gap-3 pb-2 lg:flex-row lg:items-center lg:justify-between">
-              <CardTitle className="text-lg font-merge-display flex items-center gap-2">
-                <Activity className="w-5 h-5 text-primary" /> Price History
-              </CardTitle>
-              <div className="flex flex-wrap items-center gap-2">
-                <ChartTimeframeSelector timeframe={timeframe} onChange={setTimeframe} />
-              </div>
-            </CardHeader>
-            <CardContent className="p-0 sm:p-6 sm:pt-0 h-[350px] w-full relative">
-              {lineSeries.unavailable ? (
-                <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6">
-                  <p className="text-sm font-semibold text-muted-foreground">Price unavailable</p>
-                  <p className="text-xs text-muted-foreground/80 max-w-xs">
-                    This Reserve's current NAV could not be read. Its price chart will appear once a valid NAV is available.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {lineSeries.isFallback && (
-                    <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
-                      No price movement recorded yet.
-                    </p>
-                  )}
-                  <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                    <defs>
-                      <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.16} />
-                        <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis
-                      dataKey="dateStr"
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                      minTickGap={30}
-                    />
-                    <YAxis
-                      domain={yDomain}
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(value) => `$${value.toFixed(2)}`}
-                      width={60}
-                    />
-                    <RechartsTooltip
-                      contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--card-border))', borderRadius: '0.75rem', boxShadow: 'var(--shadow-md)', color: 'hsl(var(--foreground))' }}
-                      itemStyle={{ color: 'hsl(var(--primary))', fontWeight: 'bold' }}
-                      labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
-                      formatter={(value) => [formatUsdc(Number(value)), "Price"]}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="price"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth={2}
-                      fill="url(#priceGradient)"
-                      dot={false}
-                      isAnimationActive
-                      animationDuration={350}
-                      animationEasing="ease-out"
-                      activeDot={{ r: 6, fill: "hsl(var(--primary))", stroke: "hsl(var(--background))", strokeWidth: 2 }}
-                    />
-                  </AreaChart>
-                  </ResponsiveContainer>
-                </>
-              )}
-            </CardContent>
-          </Card>
 
           {/* Composition Section */}
-          <Card className="bg-card border-card-border hover:shadow-md transition-shadow duration-300">
+          <Card id="section-composition" className="bg-card border-card-border hover:shadow-md transition-shadow duration-300 scroll-mt-32">
             <CardHeader>
               <CardTitle className="text-lg font-merge-display flex items-center gap-2">
                 <Layers className="w-5 h-5 text-primary" /> Reserve Composition
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col md:flex-row gap-8 items-center">
-                <div className="w-[200px] h-[200px] shrink-0">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RechartsPieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={2}
-                        dataKey="value"
-                        stroke="none"
-                      >
-                        {pieData.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <RechartsTooltip
-                        formatter={(value) => [`${(Number(value) * 100).toFixed(1)}%`, "Weight"]}
-                        contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--card-border))', borderRadius: '0.75rem', boxShadow: 'var(--shadow-md)', color: 'hsl(var(--foreground))' }}
-                        itemStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold' }}
-                        labelStyle={{ color: 'hsl(var(--foreground))', marginBottom: '4px' }}
-                      />
-                    </RechartsPieChart>
-                  </ResponsiveContainer>
+              <div className="flex flex-col gap-5">
+                <div className="w-full">
+                  <WeightPill items={compositionDisplay.map((a) => ({ symbol: a.symbol, weight: a.weight }))} />
+                  {designDemo && (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground/70">
+                      Design preview — illustrative composition.
+                    </p>
+                  )}
                 </div>
-                
+
                 <div className="flex-1 w-full overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -1593,7 +1968,16 @@ export function DTRDetail() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {compositionDisplay.map((asset, index) => {
+                      {compositionDisplay.map((asset) => {
+                        // Row dot matches the asset's treemap tile: colors are
+                        // assigned by descending-weight rank in both places.
+                        const weightRank = [...compositionDisplay]
+                          .sort((a, b) => b.weight - a.weight)
+                          .findIndex((s) => s.symbol === asset.symbol);
+                        const tileColor = SSR_TILE_COLORS[weightRank % SSR_TILE_COLORS.length].bg;
+                        // Design preview rows carry their own illustrative
+                        // price/value/P&L (see designDemo.ts).
+                        const demoAsset = designDemo?.composition.find((d) => d.symbol === asset.symbol);
                         // Real on-chain assets carry a mint (matched by
                         // symbol against dtr.onChain.assets), which is what
                         // both the real balance-based value and the P&L %
@@ -1614,13 +1998,19 @@ export function DTRDetail() {
                         // AUM/Token Price/the Buy estimate elsewhere on this
                         // page. `unitPriceUsd` is null (never fabricated 0)
                         // when this pass genuinely couldn't price the asset.
-                        const unitPriceUsd = !onChainAsset
-                          ? null
-                          : IS_MAINNET
-                            ? (dtr.onChain!.assetPricesUsd?.[onChainAsset.mint] ?? null)
-                            : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
+                        const unitPriceUsd = demoAsset
+                          ? demoAsset.priceUsd
+                          : !onChainAsset
+                            ? null
+                            : IS_MAINNET
+                              ? (dtr.onChain!.assetPricesUsd?.[onChainAsset.mint] ?? null)
+                              : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
                         const balance = onChainAsset ? Number(dtr.onChain!.vaultBalancesRaw[onChainAsset.mint] ?? "0") / 10 ** onChainAsset.decimals : null;
-                        const valueUsd = onChainAsset ? (unitPriceUsd !== null ? balance! * unitPriceUsd : null) : asset.weight * dtr.aum;
+                        const valueUsd = demoAsset
+                          ? demoAsset.valueUsd
+                          : onChainAsset
+                            ? (unitPriceUsd !== null ? balance! * unitPriceUsd : null)
+                            : asset.weight * dtr.aum;
                         // P&L baseline: the asset's ENTRY price -- on Mainnet
                         // the server-captured price it had when it was first
                         // seen inside this Reserve (assetEntryPricesUsd, see
@@ -1634,20 +2024,26 @@ export function DTRDetail() {
                           : IS_MAINNET
                             ? (dtr.onChain!.assetEntryPricesUsd?.[onChainAsset.mint] ?? null)
                             : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
-                        const pnlPct = calcAssetPnlPct(unitPriceUsd, entryPriceUsd);
+                        const pnlPct = demoAsset ? demoAsset.pnlPct : calcAssetPnlPct(unitPriceUsd, entryPriceUsd);
+                        const isExpanded = expandedAsset === asset.symbol;
                         return (
-                          <TableRow key={asset.symbol} className="border-border/50">
+                          <Fragment key={asset.symbol}>
+                          <TableRow
+                            className={`border-border/50 cursor-pointer transition-colors ${isExpanded ? "bg-secondary/40" : "hover:bg-secondary/30"}`}
+                            onClick={() => setExpandedAsset((cur) => (cur === asset.symbol ? null : asset.symbol))}
+                            aria-expanded={isExpanded}
+                          >
                             <TableCell className="font-medium">
                               <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: tileColor }} />
                                 {asset.name} <span className="text-muted-foreground font-normal ml-1">{asset.symbol}</span>
                               </div>
                             </TableCell>
-                            <TableCell className="text-right font-merge-mono">
+                            <TableCell className="text-right font-merge-mono font-semibold text-primary">
                               {(asset.weight * 100).toFixed(2)}%
                             </TableCell>
                             <TableCell className="text-right font-merge-mono text-muted-foreground hidden sm:table-cell">
-                              {onChainAsset ? formatAssetPriceUsd(unitPriceUsd) : "—"}
+                              {onChainAsset || demoAsset ? formatAssetPriceUsd(unitPriceUsd) : "—"}
                             </TableCell>
                             <TableCell className="text-right font-merge-mono text-muted-foreground hidden sm:table-cell">
                               {valueUsd === null ? "Price unavailable" : formatUsdc(valueUsd, { compact: true })}
@@ -1662,6 +2058,59 @@ export function DTRDetail() {
                               )}
                             </TableCell>
                           </TableRow>
+                          {isExpanded && (
+                            <TableRow className="border-border/50 hover:bg-transparent">
+                              <TableCell colSpan={5} className="p-0">
+                                <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                                  <div className="h-[220px] py-2">
+                                    <AssetMiniChart
+                                      seed={`asset:${dtr.id}:${asset.symbol}`}
+                                      endPrice={unitPriceUsd ?? 1}
+                                      synthetic={Boolean(designDemo)}
+                                    />
+                                  </div>
+                                  {/* Same stat trio as the main chart's band, scoped to this asset. */}
+                                  <div
+                                    className="px-6 pt-3 pb-4"
+                                    style={{ background: "linear-gradient(180deg, hsl(var(--secondary) / 0.7) 0%, hsl(var(--card)) 100%)" }}
+                                  >
+                                    <div className="grid grid-cols-2 md:grid-cols-3 md:divide-x md:divide-foreground/10">
+                                      <div className="md:pr-6">
+                                        <p className="text-xs text-muted-foreground mb-1">Market Cap</p>
+                                        <p className="text-base font-merge-mono font-semibold">
+                                          {demoAsset ? formatUsdc(demoAsset.marketCapUsd, { compact: true }) : "—"}
+                                        </p>
+                                      </div>
+                                      <div className="md:px-6">
+                                        <p className="text-xs text-muted-foreground mb-1">7D Performance</p>
+                                        {demoAsset ? (
+                                          <p className={`text-base font-merge-mono font-semibold ${demoAsset.change7dPct >= 0 ? "text-positive" : "text-destructive"}`}>
+                                            {demoAsset.change7dPct >= 0 ? "+" : ""}{demoAsset.change7dPct.toFixed(2)}%
+                                          </p>
+                                        ) : (
+                                          <p className="text-base font-merge-mono font-semibold text-muted-foreground">+0.00%</p>
+                                        )}
+                                      </div>
+                                      <div className="md:px-6">
+                                        <p className="text-xs text-muted-foreground mb-1">24h Volume</p>
+                                        <p className="text-base font-merge-mono font-semibold">
+                                          {demoAsset ? formatUsdc(demoAsset.volume24hUsd, { compact: true }) : (
+                                            <span className="text-sm text-muted-foreground font-normal">Unavailable</span>
+                                          )}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {designDemo && (
+                                    <p className="pb-2 text-center text-[11px] text-muted-foreground/70">
+                                      Design preview — synthetic {asset.symbol} data, not recorded prices.
+                                    </p>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          </Fragment>
                         );
                       })}
                     </TableBody>
@@ -1672,17 +2121,17 @@ export function DTRDetail() {
           </Card>
 
           {/* Info Table */}
-          <Card className="bg-card border-card-border hover:shadow-md transition-shadow duration-300">
+          <Card id="section-addresses" className="bg-card border-card-border hover:shadow-md transition-shadow duration-300 scroll-mt-32">
              <CardContent className="p-0">
                <Table>
                  <TableBody>
                    <TableRow className="border-border/50">
-                     <TableCell className="py-4 text-muted-foreground">Contract Address</TableCell>
-                     <TableCell className="text-right font-merge-mono text-xs">{dtr.dtrAddress}</TableCell>
+                     <TableCell className="py-4 pl-6 text-muted-foreground">Contract Address</TableCell>
+                     <TableCell className="text-right pr-6 font-merge-mono text-xs">{dtr.dtrAddress}</TableCell>
                    </TableRow>
                    <TableRow className="border-border/50">
-                     <TableCell className="py-4 text-muted-foreground">Manager Address</TableCell>
-                     <TableCell className="text-right font-merge-mono text-xs">{dtr.managerAddress}</TableCell>
+                     <TableCell className="py-4 pl-6 text-muted-foreground">Manager Address</TableCell>
+                     <TableCell className="text-right pr-6 font-merge-mono text-xs">{dtr.managerAddress}</TableCell>
                    </TableRow>
                  </TableBody>
                </Table>
@@ -1869,15 +2318,18 @@ export function DTRDetail() {
                     )}
 
                     <Button
-                      className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20"
-                      onClick={onBuyClick}
+                      className="w-full h-12 text-lg font-bold rounded-full shadow-lg shadow-action/20"
+                      // Disconnected is NOT a disabled state: the CTA reads
+                      // "Connect Wallet to Trade" and genuinely starts the
+                      // connect flow at full action-color strength.
+                      onClick={!wallet.connected ? () => setWalletModalOpen(true) : onBuyClick}
                       disabled={
-                        !wallet.connected ||
-                        buyProcessing ||
-                        numBuyAmount <= 0 ||
-                        buyInsufficientBalance ||
-                        (isOnChain && !isSettlementBuySupported) ||
-                        (isOnChain && estReserveTokensOut === null)
+                        wallet.connected &&
+                        (buyProcessing ||
+                          numBuyAmount <= 0 ||
+                          buyInsufficientBalance ||
+                          (isOnChain && !isSettlementBuySupported) ||
+                          (isOnChain && estReserveTokensOut === null))
                       }
                     >
                       {txPhaseShortLabel(buyPhase) ? (
@@ -2080,14 +2532,15 @@ export function DTRDetail() {
 
                     <Button
                       variant="destructive"
-                      className="w-full h-12 text-lg font-bold shadow-lg shadow-destructive/20"
-                      onClick={onSellClick}
+                      className="w-full h-12 text-lg font-bold rounded-full shadow-lg shadow-destructive/20"
+                      // Same rule as Buy: disconnected opens the connect flow.
+                      onClick={!wallet.connected ? () => setWalletModalOpen(true) : onSellClick}
                       disabled={
-                        !wallet.connected ||
-                        sellProcessing ||
-                        numSellAmount <= 0 ||
-                        numSellAmount > (holding?.tokenBalance || 0) ||
-                        (isOnChain && !isSettlementSellSupported)
+                        wallet.connected &&
+                        (sellProcessing ||
+                          numSellAmount <= 0 ||
+                          numSellAmount > (holding?.tokenBalance || 0) ||
+                          (isOnChain && !isSettlementSellSupported))
                       }
                     >
                       {txPhaseShortLabel(sellPhase) ? (
@@ -2159,7 +2612,7 @@ export function DTRDetail() {
       </div>
 
       {/* Market Section: Recent Trades */}
-      <div className="mt-12 space-y-4">
+      <div id="section-market" className="mt-12 space-y-4 scroll-mt-32">
         <div className="flex items-center gap-2">
           <BarChart3 className="w-5 h-5 text-primary" />
           <h2 className="text-2xl font-merge-display font-bold">Market</h2>
@@ -2205,6 +2658,43 @@ export function DTRDetail() {
             </CardContent>
           </Card>
         </div>
+      </div>
+
+      {/* Notes from the Creator: the Reserve's change log — what the Creator
+          changed and why (rebalances, composition changes, fee updates). */}
+      <div id="section-notes" className="mt-12 space-y-4 scroll-mt-32">
+        <div className="flex items-center gap-2">
+          <PenLine className="w-5 h-5 text-primary" />
+          <h2 className="text-2xl font-merge-display font-bold">Notes from the Creator</h2>
+        </div>
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-6">
+            {creatorNotes.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">
+                No notes from the Creator yet. Changes to this Reserve — rebalances, composition updates, fee
+                adjustments — will be logged here with the reasoning behind them.
+              </p>
+            ) : (
+              <ol className="relative space-y-8 list-none pl-0 ml-0">
+                {/* timeline spine */}
+                <div aria-hidden="true" className="absolute left-[5px] top-2 bottom-2 w-px bg-border" />
+                {creatorNotes.map((note) => (
+                  <li key={note.t} className="relative pl-6">
+                    <span aria-hidden="true" className="absolute left-0 top-1.5 w-[11px] h-[11px] rounded-full bg-primary border-2 border-card" />
+                    <p className="text-xs font-merge-mono text-muted-foreground mb-1">{format(new Date(note.t), "MMM d, yyyy")}</p>
+                    <p className="font-semibold mb-0.5">{note.title}</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">{note.body}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {designDemo && creatorNotes.length > 0 && (
+              <p className="mt-6 text-[11px] text-muted-foreground/70">
+                Design preview — illustrative notes, not a real change history.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

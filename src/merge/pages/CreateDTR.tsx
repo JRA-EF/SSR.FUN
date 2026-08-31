@@ -106,7 +106,7 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 
 export function CreateDTR() {
   const [, setLocation] = useLocation();
-  const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints } = useAppStore();
+  const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints, setWalletModalOpen } = useAppStore();
   const { toast } = useToast();
   const { connection } = useConnection();
   const walletCtx = useWallet();
@@ -877,9 +877,9 @@ export function CreateDTR() {
           <p className="text-muted-foreground">
             You need to connect a wallet to deploy and manage a Reserve.
           </p>
-          <div className="p-4 bg-muted/50 rounded-lg border border-border">
-            <p className="text-sm font-medium">Use the "Connect Wallet" button in the navigation bar to proceed.</p>
-          </div>
+          <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
+            Connect Wallet
+          </Button>
         </div>
       </div>
     );

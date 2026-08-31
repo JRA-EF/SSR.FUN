@@ -205,7 +205,7 @@ function PnlText({ value, pct, className = "" }: { value: number; pct?: number; 
 }
 
 export function Portfolio() {
-  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, txInFlight } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, txInFlight, setWalletModalOpen } = useAppStore();
   // Distinct from "genuinely empty": a fresh mount whose first discovery
   // pass hasn't resolved yet, an in-flight Buy/Sell/deployment, or a
   // discovery pass that failed and is showing last-known state (see
@@ -222,14 +222,14 @@ export function Portfolio() {
           <Wallet className="w-10 h-10 text-muted-foreground" />
         </div>
         <h1 className="text-3xl font-merge-display font-bold mb-4">Wallet Not Connected</h1>
-        <p className="text-muted-foreground text-center max-w-md mb-8">
+        {/* Inline margins: FABLE's unlayered element reset zeroes <p> margins
+            with higher cascade priority than Tailwind's layered mt-*/}
+        <p className="text-muted-foreground text-center max-w-md" style={{ marginTop: 15, marginBottom: 12 }}>
           Connect a wallet to view your SSR.FUN portfolio, simulated balances, and Reserve Token holdings.
         </p>
-        {/* We can't trigger the modal directly from here without a global state for the modal,
-            so we'll just encourage them to use the nav button */}
-        <p className="text-sm font-medium px-4 py-2 bg-primary/10 text-primary rounded-md">
-          Use the Connect Wallet button in the navigation bar.
-        </p>
+        <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
+          Connect Wallet
+        </Button>
       </div>
     );
   }

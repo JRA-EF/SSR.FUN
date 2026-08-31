@@ -8,11 +8,12 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { Shield } from "lucide-react";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
+import { Button } from "@/components/ui/button";
 import { MergeParamsContext } from "@/lib/wouter-shim";
 import { ManageDTR } from "./ManageDTR";
 
 export function Manage() {
-  const { wallet, dtrs } = useAppStore();
+  const { wallet, dtrs, setWalletModalOpen } = useAppStore();
   const managed = dtrs.filter((d) => isManagerOrDelegate(d, wallet.address));
   const [selected, setSelected] = useState<string | null>(null);
   const activeId = selected && managed.some((d) => d.id === selected) ? selected : managed[0]?.id;
@@ -24,9 +25,9 @@ export function Manage() {
           <Shield className="w-16 h-16 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Connect Wallet</h1>
           <p className="text-muted-foreground">Connect a wallet to manage your Reserves.</p>
-          <div className="p-4 bg-muted/50 rounded-lg border border-border">
-            <p className="text-sm font-medium">Use the "Connect Wallet" button in the navigation bar to proceed.</p>
-          </div>
+          <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
+            Connect Wallet
+          </Button>
         </div>
       </div>
     );
