@@ -44,6 +44,13 @@ As of commit `993b764` (see `docs/project/DECISION_LOG.md` DEC-0080, tag `ui-bas
 
 **Future functional work must preserve this visual system unless a redesign is explicitly requested.** Reuse the existing shared components (`ChartTimeframeSelector`, `InfoTip`, the shadcn `Button`/`Tabs`/`Tooltip` primitives under `src/merge/components/ui`) and the existing design tokens (`src/index.css`'s `:root` tokens for native pages, `src/merge/merge.css`'s `@theme`/CSS-variable tokens for merge-scoped pages) as the source of truth for any new or modified control — do not introduce new colors, spacing values, radii, or component patterns ad hoc. See DEC-0079 (`docs/project/DECISION_LOG.md`) for why a shared, layered `src/index.css` button reset — not per-component styling — is what keeps merge-scoped controls looking like this baseline instead of falling back to native browser chrome; that mechanism must stay intact.
 
+## The `design` branch (Boss's UI sandbox)
+
+`origin/design` is the Boss's design-editing branch: their local clone (`~/SSRdotFun/SSR.FUN` on their machine, running the panel dev server) tracks it, so they can edit UI without touching `main`. Two standing rules (2026-08-31, Creator directive):
+
+- **After pushing any `main` change that affects the UI** (pages, components, styles, copy, or anything the dev server renders), **also fast-forward `design`** in the same session: `git push origin origin/main:refs/heads/design`. If the push is rejected as non-fast-forward, the Boss has committed design work — merge `main` INTO `design` instead (never rebase or force-push their branch) and resolve conflicts preserving their design intent.
+- Design work flows back by merging `design` into `main` only when the Creator asks for it.
+
 ## Project Status and Decision Logging
 
 This repo has an internal, password-protected project dashboard at `/internal/status`, rendered server-side from two source-of-truth files:
