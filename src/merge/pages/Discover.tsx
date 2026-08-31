@@ -84,8 +84,23 @@ export function Discover() {
   const isFiltered = searchFilter.trim() !== "" || categoryFilter !== "all";
 
   return (
-    <div className="container mx-auto px-4 md:px-8 py-10 space-y-8">
-      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-4 border-b border-border">
+    <div className="container mx-auto px-4 md:px-8 py-10 space-y-8 relative">
+      {/* Full-bleed hero art behind the page top (public/discover-hero.jpg) —
+          the shared mascot-hero treatment: left scrim for the title, bottom
+          fade into the ground, hides itself if the file is absent. */}
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[340px] overflow-hidden pointer-events-none -z-10">
+        <img
+          src="/discover-hero.jpg"
+          alt=""
+          className="w-full h-full object-cover"
+          style={{ objectPosition: "center 20%" }}
+          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+        />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.78) 0%, hsl(var(--background) / 0.25) 45%, hsl(var(--background) / 0.05) 100%)" }} />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0.05) 0%, hsl(var(--background) / 0.25) 55%, hsl(var(--background)) 98%)" }} />
+      </div>
+
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-4 border-b border-border/60">
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-primary" />
           <h2 className="text-2xl font-merge-display font-bold">Discover Reserves</h2>

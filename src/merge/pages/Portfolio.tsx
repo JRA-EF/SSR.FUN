@@ -19,16 +19,19 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { DevnetOnboarding } from "../components/DevnetOnboarding";
 import { IS_MAINNET } from "@/lib/solana-config";
+import { isDesignDemoEnabled } from "@/lib/designDemo";
 
-/** Categorical swatches for allocation slices -- same palette as the native charts, assigned in fixed order by descending value. */
-const ALLOCATION_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
+/** Categorical swatches for allocation slices -- softened, Apple-style pastel
+ * steps of the SSR family (dominant slice = periwinkle), assigned in fixed
+ * order by descending value. */
+const ALLOCATION_COLORS = ["#8ba1ec", "#efb09a", "#8fd0b2", "#ecd18b", "#eea9bf", "#94c78f", "#a99ff0", "#eb9a99"];
 
 /** A pie only reads at a glance up to ~6 segments; smaller positions fold into "Other". */
 const MAX_PIE_SLICES = 6;
 
 const PIE_C = 100; // viewBox center
 const PIE_RO = 96; // outer radius
-const PIE_RI = 62; // inner radius
+const PIE_RI = 78; // inner radius -- thin, pill-like ring
 const PIE_GAP = 2 / PIE_RO; // ~2px of surface between slices at the rim
 
 function polarPoint(r: number, angle: number) {
@@ -107,6 +110,11 @@ function AllocationCard({ allocation }: { allocation: AllocationEntry[] }) {
       <CardContent>
         <div className="flex flex-col sm:flex-row items-center gap-8">
           <svg viewBox="0 0 200 200" className="w-44 h-44 shrink-0" role="img" aria-label="Pie chart of your Reserve Token holdings by current value">
+            {/* Inset track + emboss hairlines: the ring reads as slightly
+                embedded in the card, Apple-style. */}
+            <circle cx={PIE_C} cy={PIE_C} r={(PIE_RO + PIE_RI) / 2} fill="none" stroke="#ececf0" strokeWidth={PIE_RO - PIE_RI} />
+            <circle cx={PIE_C} cy={PIE_C} r={PIE_RO - 0.5} fill="none" stroke="rgba(7, 4, 41, 0.1)" strokeWidth="1" />
+            <circle cx={PIE_C} cy={PIE_C} r={PIE_RI + 0.5} fill="none" stroke="rgba(7, 4, 41, 0.06)" strokeWidth="1" />
             {slices.length === 1 ? (
               <circle
                 cx={PIE_C}
@@ -136,7 +144,7 @@ function AllocationCard({ allocation }: { allocation: AllocationEntry[] }) {
             )}
             <text
               x={PIE_C}
-              y={hoveredSlice ? 88 : 92}
+              y={hoveredSlice ? 94 : 98}
               textAnchor="middle"
               className="font-merge-mono text-foreground"
               fill="currentColor"
@@ -148,7 +156,7 @@ function AllocationCard({ allocation }: { allocation: AllocationEntry[] }) {
             </text>
             <text
               x={PIE_C}
-              y={hoveredSlice ? 106 : 110}
+              y={hoveredSlice ? 112 : 116}
               textAnchor="middle"
               className="text-muted-foreground"
               fill="currentColor"
@@ -160,7 +168,7 @@ function AllocationCard({ allocation }: { allocation: AllocationEntry[] }) {
             {hoveredSlice && (
               <text
                 x={PIE_C}
-                y={122}
+                y={128}
                 textAnchor="middle"
                 className="font-merge-mono text-muted-foreground"
                 fill="currentColor"
@@ -193,10 +201,13 @@ function AllocationCard({ allocation }: { allocation: AllocationEntry[] }) {
   );
 }
 
-function PnlText({ value, pct, className = "" }: { value: number; pct?: number; className?: string }) {
+function PnlText({ value, pct, className = "", dark = false }: { value: number; pct?: number; className?: string; dark?: boolean }) {
   const isProfit = value >= 0;
   return (
-    <span className={`inline-flex items-center gap-1 font-merge-mono ${isProfit ? "text-positive" : "text-destructive"} ${className}`}>
+    <span
+      className={`inline-flex items-center gap-1 font-merge-mono ${dark ? "" : isProfit ? "text-positive" : "text-destructive"} ${className}`}
+      style={dark ? { color: isProfit ? "#4fe3a3" : "#ff8598" } : undefined}
+    >
       {isProfit ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
       {formatUsdc(Math.abs(value))}
       {pct !== undefined && <span className="opacity-80">({formatPercent(pct)})</span>}
@@ -263,45 +274,73 @@ export function Portfolio() {
     .slice(0, 8);
 
   return (
-    <div className="container mx-auto px-4 md:px-8 py-10">
-      <div className="flex items-center gap-3 mb-8">
-        <PieChart className="w-8 h-8 text-primary" />
-        <h1 className="text-4xl font-merge-display font-bold tracking-tight">Portfolio</h1>
+    <div className="container mx-auto px-4 md:px-8 py-10 relative">
+      {/* Full-bleed hero art behind the page top (drop the graphic at
+          public/portfolio-hero.jpg — decorative, hides itself if absent).
+          Two washes keep the header readable: a left-edge scrim under the
+          title and a bottom fade into the page ground. */}
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[440px] overflow-hidden pointer-events-none -z-10">
+        <img
+          src="/portfolio-hero.jpg"
+          alt=""
+          className="w-full h-full object-cover"
+          style={{ objectPosition: "32% 4%" }}
+          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+        />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.78) 0%, hsl(var(--background) / 0.25) 45%, hsl(var(--background) / 0.05) 100%)" }} />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0.05) 0%, hsl(var(--background) / 0.25) 55%, hsl(var(--background)) 98%)" }} />
+      </div>
+
+      <div className="mb-8 relative">
+        <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground mb-2">
+          Your Reserves &amp; Balances
+        </p>
+        <div className="flex items-center gap-3">
+          <PieChart className="w-8 h-8 text-primary" />
+          <h1 className="text-4xl font-merge-display font-bold tracking-tight">Portfolio</h1>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <Card className="bg-card/40 border-border/50 col-span-1 md:col-span-3 lg:col-span-1">
+        {/* The page's hero: Total Net Value on the SSR navy gradient, the same
+            "important card" treatment as the trade panel's Your Position. */}
+        <Card
+          className="col-span-1 md:col-span-3 lg:col-span-1 border-transparent shadow-sm"
+          style={{ background: "linear-gradient(135deg, rgba(7, 4, 41, 0.87) 0%, rgba(28, 20, 101, 0.87) 60%, rgba(46, 63, 146, 0.87) 100%)" }}
+        >
           <CardHeader className="pb-2">
-            <CardDescription className="text-sm">Total Net Value</CardDescription>
-            <CardTitle className="text-4xl font-merge-mono">{formatUsdc(portfolioValue)}</CardTitle>
+            <CardDescription className="font-merge-display text-[10px] font-medium uppercase tracking-[0.2em]" style={{ color: "#97abef" }}>
+              Total Net Value
+            </CardDescription>
+            <CardTitle className="text-4xl font-merge-mono" style={{ color: "#ffffff" }}>{formatUsdc(portfolioValue)}</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="mt-4 pt-4 border-t border-border/30 grid grid-cols-2 gap-4">
+            <div className="mt-4 pt-4 grid grid-cols-2 gap-4" style={{ borderTop: "1px solid rgba(151, 171, 239, 0.25)" }}>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Total P&L</p>
+                <p className="text-xs mb-1" style={{ color: "#a7b2dc" }}>Total P&L</p>
                 {holdings.length > 0 ? (
-                  <PnlText value={totalUnrealizedPnl} pct={totalUnrealizedPnlPct} className="text-base font-semibold" />
+                  <PnlText dark value={totalUnrealizedPnl} pct={totalUnrealizedPnlPct} className="text-base font-semibold" />
                 ) : (
-                  <p className="font-merge-mono text-muted-foreground">—</p>
+                  <p className="font-merge-mono" style={{ color: "#a7b2dc" }}>—</p>
                 )}
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">24h P&L</p>
+                <p className="text-xs mb-1" style={{ color: "#a7b2dc" }}>24h P&L</p>
                 {holdings.length > 0 ? (
-                  <PnlText value={total24hPnl} pct={total24hPnlPct} className="text-base font-semibold" />
+                  <PnlText dark value={total24hPnl} pct={total24hPnlPct} className="text-base font-semibold" />
                 ) : (
-                  <p className="font-merge-mono text-muted-foreground">—</p>
+                  <p className="font-merge-mono" style={{ color: "#a7b2dc" }}>—</p>
                 )}
               </div>
             </div>
-            <div className="mt-4 pt-4 border-t border-border/30 grid grid-cols-2 gap-4">
+            <div className="mt-4 pt-4 grid grid-cols-2 gap-4" style={{ borderTop: "1px solid rgba(151, 171, 239, 0.25)" }}>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Wallet Assets</p>
-                <p className="font-merge-mono text-lg">{formatUsdc(totalWalletValue)}</p>
+                <p className="text-xs mb-1" style={{ color: "#a7b2dc" }}>Wallet Assets</p>
+                <p className="font-merge-mono text-lg" style={{ color: "#eef1fc" }}>{formatUsdc(totalWalletValue)}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Reserve Holdings</p>
-                <p className="font-merge-mono text-lg">{formatUsdc(totalDtrValue)}</p>
+                <p className="text-xs mb-1" style={{ color: "#a7b2dc" }}>Reserve Holdings</p>
+                <p className="font-merge-mono text-lg" style={{ color: "#eef1fc" }}>{formatUsdc(totalDtrValue)}</p>
               </div>
             </div>
           </CardContent>
@@ -312,10 +351,10 @@ export function Portfolio() {
             <CardTitle className="text-lg">Wallet Balances</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-4">
-              <div className="p-4 bg-muted/30 rounded-lg border border-border/50 flex flex-col justify-center">
+            <div className={`grid grid-cols-1 ${isDesignDemoEnabled() && !IS_MAINNET ? "sm:grid-cols-2" : ""} gap-4`}>
+              <div className="p-4 bg-muted/30 rounded-2xl border border-border/50 flex flex-col justify-center">
                 <div className="flex items-center gap-2 mb-2">
-                  <div className="w-6 h-6 rounded-full bg-purple-500/20 text-purple-500 flex items-center justify-center text-xs font-bold">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: "rgba(151, 171, 239, 0.25)", color: "#4155a6" }}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
                       <path d="M4 17.5l14-3.5 2.5 3.5-14 3.5zm2.5-11L20.5 3l-2.5-3.5L4 3zM4 10.5l14-3.5 2.5 3.5-14 3.5z"/>
                     </svg>
@@ -325,6 +364,16 @@ export function Portfolio() {
                 <div className="font-merge-mono text-xl">{wallet.sol.toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>
                 <p className="text-xs text-muted-foreground mt-1">Real balance, read from Solana {IS_MAINNET ? "Mainnet" : "DevNet"}</p>
               </div>
+              {isDesignDemoEnabled() && !IS_MAINNET && (
+                <div className="p-4 bg-muted/30 rounded-2xl border border-border/50 flex flex-col justify-center">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ background: "rgba(47, 91, 226, 0.15)", color: "#2f5be2" }}>$</div>
+                    <span className="font-semibold">devUSDC</span>
+                  </div>
+                  <div className="font-merge-mono text-xl">{wallet.usdc.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Design preview — illustrative balance.</p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -477,9 +526,11 @@ export function Portfolio() {
                           <PnlText value={pnl} pct={pnlPct} className="justify-end" />
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button asChild size="sm" variant="secondary" className="font-semibold">
-                            <Link href={`/dtr/${dtr.id}`}>Trade</Link>
-                          </Button>
+                          <div className="flex justify-end">
+                            <Button asChild size="sm" variant="secondary" className="font-semibold trade-pill">
+                              <Link href={`/dtr/${dtr.id}`}>Trade</Link>
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

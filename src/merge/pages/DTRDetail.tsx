@@ -78,7 +78,7 @@ import { InfoTip } from "@/components/InfoTip";
 import { useToast } from "@/hooks/use-toast";
 import { useLandingStats } from "@/hooks/useLandingStats";
 import { ChartTimeframeSelector, DEFAULT_CHART_TIMEFRAME } from "@/components/ChartTimeframeSelector";
-import { applyDesignDemo, demoPriceHistory } from "@/lib/designDemo";
+import { applyDesignDemo, demoPriceHistory, isDesignDemoEnabled } from "@/lib/designDemo";
 import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
 import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
 
@@ -151,8 +151,8 @@ function AssetMiniChart({ seed, endPrice, synthetic }: { seed: string; endPrice:
       <AreaChart data={data} margin={{ top: 12, right: 8, bottom: 8, left: 16 }}>
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.16} />
-            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+            <stop offset="0%" stopColor="#97abef" stopOpacity={0.3} />
+            <stop offset="100%" stopColor="#97abef" stopOpacity={0} />
           </linearGradient>
         </defs>
         <XAxis dataKey="dateStr" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} minTickGap={44} />
@@ -349,6 +349,10 @@ export function DTRDetail() {
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
+  // Which percentage pill (0.25/0.5/0.75/1) is currently selected per side —
+  // stays highlighted after the click; cleared when the amount is typed by hand.
+  const [buyPctSelected, setBuyPctSelected] = useState<number | null>(null);
+  const [sellPctSelected, setSellPctSelected] = useState<number | null>(null);
   // SETTLEMENT_MINT is the settlement asset for mint (Buy) -- a real
   // balance read from chain, never simulated. See SETTLEMENT_MINT's own
   // header comment above for the DevNet/Mainnet split.
@@ -496,6 +500,13 @@ export function DTRDetail() {
   // request instead of each firing its own for the same (mint, owner).
   useEffect(() => {
     if (!walletCtx.publicKey) {
+      // Design preview: no real wallet adapter is present, so seed a playable
+      // 10,000 devUSDC balance for styling the populated panel states.
+      if (isDesignDemoEnabled()) {
+        setSettlementBalanceRaw(BigInt(10_000 * 10 ** SETTLEMENT_DECIMALS));
+        setSettlementBalanceStatus("ready");
+        return;
+      }
       setSettlementBalanceRaw(0n);
       setSettlementBalanceStatus("loading");
       return;
@@ -729,7 +740,7 @@ export function DTRDetail() {
    * means a genuine "Quote unavailable" (not yet seeded, or no deposit
    * asset resolved) -- never silently shown as 0.
    */
-  const estReserveTokensOut: number | null = (() => {
+  const estReserveTokensOutReal: number | null = (() => {
     if (numBuyAmount <= 0) return 0; // Nothing typed yet -- a neutral "0," never the alarming "Quote unavailable."
     if (!isOnChain || !dtr.onChain) return isOnChain ? null : 0;
     const supply = BigInt(dtr.onChain.reserveTokenSupplyRaw || "0");
@@ -764,6 +775,17 @@ export function DTRDetail() {
       return null;
     }
   })();
+  // Design preview (?demo=1): the flat fixtures can't produce a genuine
+  // quote (no NAV / vault data), so substitute an illustrative estimate at
+  // token price with the 0.50% mint fee applied — the panel styles the
+  // populated state instead of "Quote unavailable". Real mode is untouched:
+  // null still means genuinely unavailable.
+  const estReserveTokensOut: number | null =
+    estReserveTokensOutReal !== null
+      ? estReserveTokensOutReal
+      : designDemo && numBuyAmount > 0
+        ? (numBuyAmount * 0.995) / (dtr.tokenPrice > 0 ? dtr.tokenPrice : 1)
+        : null;
 
   const numSellAmount = parseFloat(sellAmount) || 0;
   const sellQuote = calcUsdcReceived(numSellAmount, dtr.tokenPrice, dtr.liquidityUsdc);
@@ -775,7 +797,7 @@ export function DTRDetail() {
   // NOT a fixed synthetic SOL price. See
   // docs/project/DEVNET_IMPLEMENTATION_PLAN_2026-07-29.md item 8/9 for why
   // this replaced the old blended "~X SOL" headline.
-  const sellEntitlements = (() => {
+  const sellEntitlementsReal = (() => {
     if (!isOnChain || !dtr.onChain || numSellAmount <= 0) return [];
     const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
     const supply = BigInt(dtr.onChain.reserveTokenSupplyRaw || "0");
@@ -796,6 +818,18 @@ export function DTRDetail() {
       return [];
     }
   })();
+  // Design preview: fabricate the in-kind redemption preview from the
+  // illustrative composition when the real math has nothing to show.
+  const sellEntitlements =
+    sellEntitlementsReal.length > 0
+      ? sellEntitlementsReal
+      : designDemo && numSellAmount > 0
+        ? designDemo.composition.map((a) => ({
+            mint: a.symbol,
+            symbol: a.symbol,
+            amount: (numSellAmount * (dtr.tokenPrice > 0 ? dtr.tokenPrice : 1) * a.weight * 0.995) / a.priceUsd,
+          }))
+        : sellEntitlementsReal;
   // DevNet only: for a mixed-composition Reserve, Sell redeems in-kind for
   // real then converts every non-settlement leg's DevNet test-price USD
   // value into freshly-minted devUSDC (see
@@ -807,7 +841,9 @@ export function DTRDetail() {
   // estimate only (the real amount is computed server-side from live vault
   // balances at execution time), shown as an explicitly secondary figure,
   // never implied to be a real market quote.
-  const estSettlementOut = isOnChain ? numSellAmount * dtr.nav : 0;
+  const estSettlementOut = isOnChain
+    ? numSellAmount * (dtr.nav > 0 ? dtr.nav : designDemo ? (dtr.tokenPrice > 0 ? dtr.tokenPrice : 1) : 0)
+    : 0;
 
   /** One-shot reconciliation for an ambiguous ("unresolved") outcome: does the trader's REAL, freshly-read settlement-asset balance actually show the spend this Buy would have made? If so, report success based on that observed on-chain state -- never based on an assumption. Used both automatically right after an AmbiguousConfirmationError and from the pending-verification banner's manual "Check status" button. */
   async function reconcileBuy(signature: string) {
@@ -1523,12 +1559,14 @@ export function DTRDetail() {
   const setBuyPct = (pct: number) => {
     if (wallet.connected && settlementBalanceStatus === "ready") {
       setBuyAmount((buyAvailable * pct).toString());
+      setBuyPctSelected(pct);
     }
   };
 
   const setSellPct = (pct: number) => {
     if (wallet.connected && holding) {
       setSellAmount((holding.tokenBalance * pct).toString());
+      setSellPctSelected(pct);
     }
   };
 
@@ -1540,8 +1578,11 @@ export function DTRDetail() {
           top is inline because FABLE's unlayered resets outrank layered
           Tailwind utilities on some elements. */}
       <div
-        className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-6 sticky z-30 py-2.5 -mx-2 px-2 rounded-b-2xl bg-background/85 backdrop-blur-md"
-        style={{ top: 60 }}
+        className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-6 sticky z-30 py-2.5 -mx-2 px-2 rounded-b-2xl"
+        // top = the main nav's full height (60px row + 1px border) so the bar
+        // stays flush against it while scrolling; opaque page-ground background
+        // so it never reads as a separate translucent band.
+        style={{ top: 61, background: "hsl(var(--background))" }}
       >
         <div className="lg:col-span-2 flex items-center gap-4">
           <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-primary transition-colors shrink-0">
@@ -1624,7 +1665,7 @@ export function DTRDetail() {
                   </div>
                   {showCandles && (
                     <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                      <span className="inline-block w-4 h-[2px] rounded-full border border-border/60" style={{ background: "#eff1fb" }} aria-hidden="true" />
+                      <span className="inline-block w-4 h-[2px] rounded-full" style={{ background: "#97abef" }} aria-hidden="true" />
                       EMA 8
                     </span>
                   )}
@@ -1673,7 +1714,9 @@ export function DTRDetail() {
                           tickFormatter={(value) => `$${value.toFixed(2)}`}
                           width={62}
                         />
-                        <RechartsTooltip content={<CandleTooltip />} cursor={{ stroke: "hsl(var(--muted-foreground))", strokeDasharray: "4 4" }} />
+                        {/* isAnimationActive off: the tooltip snaps to the cursor
+                            instead of flying between candles. */}
+                        <RechartsTooltip content={<CandleTooltip />} isAnimationActive={false} cursor={{ stroke: "hsl(var(--muted-foreground))", strokeDasharray: "4 4" }} />
                         {noteMarkers.map((m) => (
                           <ReferenceLine
                             key={m.key}
@@ -1697,15 +1740,15 @@ export function DTRDetail() {
                           {/* Line fades out toward the left: full periwinkle at the
                               recent (right) edge, dissolving into the chart's past. */}
                           <linearGradient id="emaStroke" x1="0" y1="0" x2="1" y2="0">
-                            <stop offset="0%" stopColor="#eff1fb" stopOpacity={0} />
-                            <stop offset="55%" stopColor="#eff1fb" stopOpacity={0.6} />
-                            <stop offset="100%" stopColor="#eff1fb" stopOpacity={1} />
+                            <stop offset="0%" stopColor="#97abef" stopOpacity={0} />
+                            <stop offset="55%" stopColor="#97abef" stopOpacity={0.55} />
+                            <stop offset="100%" stopColor="#97abef" stopOpacity={0.95} />
                           </linearGradient>
-                          {/* Soft vertical wash under the line: page-paper #eff1fb at the
+                          {/* Soft vertical wash under the line: page-paper #f0f2f8 at the
                               top fading into the card's white below. */}
                           <linearGradient id="emaFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#eff1fb" stopOpacity={0.9} />
-                            <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+                            <stop offset="0%" stopColor="#97abef" stopOpacity={0.22} />
+                            <stop offset="100%" stopColor="#97abef" stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         {/* Declared before the candles so the whole EMA layer renders
@@ -1752,6 +1795,7 @@ export function DTRDetail() {
                         width={62}
                       />
                       <RechartsTooltip
+                        isAnimationActive={false}
                         contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--card-border))', borderRadius: '0.75rem', boxShadow: 'var(--shadow-md)', color: 'hsl(var(--foreground))' }}
                         itemStyle={{ color: 'hsl(var(--primary))', fontWeight: 'bold' }}
                         labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
@@ -2142,12 +2186,14 @@ export function DTRDetail() {
 
         {/* Right Column: Trading Panel */}
         <div className="lg:col-span-1">
-          <div className="sticky top-24">
+          {/* z-20 beats the chart card's z-10 so button ripples expanding past
+              the panel animate OVER the chart, not behind it. */}
+          <div className="sticky top-24 z-20">
             <Card className="border-border shadow-xl bg-card">
               <Tabs value={isWindingDown ? "sell" : tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
                 <CardHeader className="pb-4">
                   <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="buy" disabled={isWindingDown} className="font-bold data-[state=active]:text-primary disabled:opacity-40 disabled:cursor-not-allowed" title={isWindingDown ? "This Reserve is winding down -- new Buys are disabled." : undefined}>
+                    <TabsTrigger value="buy" disabled={isWindingDown} className="buy-tab font-bold data-[state=active]:text-primary disabled:opacity-40 disabled:cursor-not-allowed" title={isWindingDown ? "This Reserve is winding down -- new Buys are disabled." : undefined}>
                       Buy
                     </TabsTrigger>
                     <TabsTrigger value="sell" className="font-bold data-[state=active]:text-destructive">Sell</TabsTrigger>
@@ -2182,6 +2228,7 @@ export function DTRDetail() {
                         value={buyAmount}
                         onChange={(e) => {
                           setBuyAmount(e.target.value);
+                          setBuyPctSelected(null);
                           if (canSubmitNewTransaction(buyPhase) && buyPhase !== "idle") {
                             setBuyPhase("idle");
                             setBuyPendingSignature(null);
@@ -2197,7 +2244,12 @@ export function DTRDetail() {
                           key={pct}
                           variant="outline"
                           size="sm"
-                          className="h-7 rounded-full border-border bg-background text-xs font-medium text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                          aria-pressed={buyPctSelected === pct}
+                          className={`h-7 rounded-full text-xs font-medium ${
+                            buyPctSelected === pct
+                              ? "border-primary bg-primary/10 text-primary font-semibold"
+                              : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                          }`}
                           onClick={() => setBuyPct(pct)}
                           disabled={!wallet.connected || buyProcessing || !!buyPctUnavailableReason}
                           title={buyPctUnavailableReason ?? undefined}
@@ -2235,9 +2287,13 @@ export function DTRDetail() {
                         </div>
                         <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
                           <span>Est. You Receive</span>
-                          <span className="font-merge-mono text-primary">
-                            {estReserveTokensOut === null ? "Quote unavailable" : `~${formatTokenAmount(estReserveTokensOut)} ${dtr.ticker}`}
-                          </span>
+                          {/* A numeric estimate reads as data (mono, primary); the
+                              unavailable state is prose — body font, muted, not bold. */}
+                          {estReserveTokensOut === null ? (
+                            <span className="font-sans font-normal text-muted-foreground">Quote unavailable</span>
+                          ) : (
+                            <span className="font-merge-mono text-primary">{`~${formatTokenAmount(estReserveTokensOut)} ${dtr.ticker}`}</span>
+                          )}
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Slippage tolerance</span>
@@ -2393,6 +2449,7 @@ export function DTRDetail() {
                         value={sellAmount}
                         onChange={(e) => {
                           setSellAmount(e.target.value);
+                          setSellPctSelected(null);
                           if (canSubmitNewTransaction(sellPhase) && sellPhase !== "idle") {
                             setSellPhase("idle");
                             setSellPendingSignature(null);
@@ -2408,7 +2465,12 @@ export function DTRDetail() {
                           key={pct}
                           variant="outline"
                           size="sm"
-                          className="h-7 rounded-full border-border bg-background text-xs font-medium text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                          aria-pressed={sellPctSelected === pct}
+                          className={`h-7 rounded-full text-xs font-medium ${
+                            sellPctSelected === pct
+                              ? "border-primary bg-primary/10 text-primary font-semibold"
+                              : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                          }`}
                           onClick={() => setSellPct(pct)}
                           disabled={!wallet.connected || sellProcessing || !holding}
                         >
@@ -2580,26 +2642,35 @@ export function DTRDetail() {
             </Card>
             
             {holding && holding.tokenBalance > 0 && (
-              <Card className="mt-4 bg-secondary/40 border-transparent shadow-none">
+              /* Your Position is the panel's most important card — it runs on
+                 the SSR navy→indigo gradient (the marketing site's dark-band
+                 treatment) in both themes, with light ink. */
+              <Card
+                className="mt-4 border-transparent shadow-sm"
+                style={{ background: "linear-gradient(135deg, #070429 0%, #1c1465 60%, #2e3f92 100%)" }}
+              >
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-semibold">Your Position</CardTitle>
+                  <CardTitle className="text-sm font-semibold" style={{ color: "#eef1fc" }}>Your Position</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Balance</span>
-                    <span className="font-merge-mono font-semibold">{formatTokenAmount(holding.tokenBalance)}</span>
+                    <span style={{ color: "#a7b2dc" }}>Balance</span>
+                    <span className="font-merge-mono font-semibold" style={{ color: "#ffffff" }}>{formatTokenAmount(holding.tokenBalance)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Value</span>
-                    <span className="font-merge-mono font-semibold">{formatUsdc(holding.tokenBalance * dtr.tokenPrice)}</span>
+                    <span style={{ color: "#a7b2dc" }}>Value</span>
+                    <span className="font-merge-mono font-semibold" style={{ color: "#ffffff" }}>{formatUsdc(holding.tokenBalance * dtr.tokenPrice)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Avg Entry</span>
-                    <span className="font-merge-mono text-muted-foreground">{formatUsdc(holding.avgPurchasePrice)}</span>
+                    <span style={{ color: "#a7b2dc" }}>Avg Entry</span>
+                    <span className="font-merge-mono" style={{ color: "#c9d3f7" }}>{formatUsdc(holding.avgPurchasePrice)}</span>
                   </div>
-                  <div className="pt-2 border-t border-border/50 flex justify-between text-sm">
-                    <span className="text-muted-foreground">Unrealized P&L</span>
-                    <span className={`font-merge-mono font-semibold ${dtr.tokenPrice >= holding.avgPurchasePrice ? 'text-primary' : 'text-destructive'}`}>
+                  <div className="pt-2 flex justify-between text-sm" style={{ borderTop: "1px solid rgba(151, 171, 239, 0.25)" }}>
+                    <span style={{ color: "#a7b2dc" }}>Unrealized P&L</span>
+                    <span
+                      className="font-merge-mono font-semibold"
+                      style={{ color: dtr.tokenPrice >= holding.avgPurchasePrice ? "#4fe3a3" : "#ff8598" }}
+                    >
                       {dtr.tokenPrice >= holding.avgPurchasePrice ? '+' : ''}
                       {formatUsdc((dtr.tokenPrice - holding.avgPurchasePrice) * holding.tokenBalance)}
                     </span>

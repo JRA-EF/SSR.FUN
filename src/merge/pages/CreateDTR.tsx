@@ -873,9 +873,11 @@ export function CreateDTR() {
       <div className="container mx-auto px-4 py-24 text-center">
         <div className="max-w-md mx-auto space-y-6">
           <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
-          <h1 className="text-3xl font-merge-display font-bold">Connect Wallet to Deploy</h1>
-          <p className="text-muted-foreground">
-            You need to connect a wallet to deploy and manage a Reserve.
+          <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
+          {/* Inline margins: FABLE's unlayered element reset zeroes <p> margins
+              with higher cascade priority than Tailwind's layered spacing. */}
+          <p className="text-muted-foreground" style={{ marginTop: 15, marginBottom: 12 }}>
+            You need to connect a wallet to deploy<br />and manage a Reserve.
           </p>
           <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
             Connect Wallet
@@ -1375,7 +1377,22 @@ export function CreateDTR() {
   const handleSubmit = handleSubmitReal;
 
   return (
-    <div className="container max-w-4xl mx-auto px-4 py-12">
+    <div className="container max-w-4xl mx-auto px-4 py-12 relative">
+      {/* Full-bleed hero art behind the page top (public/create-hero.jpg) —
+          the shared mascot-hero treatment: left scrim for the title, bottom
+          fade into the ground, hides itself if the file is absent. */}
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[460px] overflow-hidden pointer-events-none -z-10">
+        <img
+          src="/create-hero.jpg"
+          alt=""
+          className="w-full h-full object-cover"
+          style={{ objectPosition: "center 9%" }}
+          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+        />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.78) 0%, hsl(var(--background) / 0.25) 45%, hsl(var(--background) / 0.05) 100%)" }} />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
+      </div>
+
       <div className="mb-8">
         <h1 className="text-4xl font-merge-display font-bold mb-2">Launch a Reserve</h1>
         <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN, live on Solana {CLUSTER_LABEL}.</p>

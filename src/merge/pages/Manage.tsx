@@ -24,7 +24,8 @@ export function Manage() {
         <div className="max-w-md mx-auto space-y-6">
           <Shield className="w-16 h-16 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Connect Wallet</h1>
-          <p className="text-muted-foreground">Connect a wallet to manage your Reserves.</p>
+          {/* Inline margins: same unlayered <p> reset workaround as the other gates. */}
+          <p className="text-muted-foreground" style={{ marginTop: 15, marginBottom: 12 }}>Connect a wallet to manage your Reserves.</p>
           <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
             Connect Wallet
           </Button>
