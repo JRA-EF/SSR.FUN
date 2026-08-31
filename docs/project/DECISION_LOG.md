@@ -5473,3 +5473,29 @@
   ]
 }
 ```
+
+## DEC-0178
+
+```json
+{
+  "id": "DEC-0178",
+  "date": "2026-08-31",
+  "status": "confirmed-multisig-created-handover-pending",
+  "decision": "Revised member set for the 1-of-3 controlled upgrade-authority multisig (DEC-0177's structure, new membership): the legacy deployer/authority wallet CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8 is SET ASIDE per the Creator's directive -- it is neither a member nor the config authority. Members: Creator's wallet EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq, Boss PSpQGPvw7tZedKJvN21dJkh3vdDQeXkwA5n9DKBRZw5, Developer 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa; threshold 1; timelock 0; config_authority = EME96... (Creator alone controls membership). CREATED ON MAINNET and verified by account read-back: multisig PDA G8pgvV8wGrscorppA3VrcAWrV6QGP4TvTps1czaejzH8, vault PDA HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW (the intended new upgrade authority), creation tx MfbDQ78XsyAWVZFB8w5f6F8H3kbz6s3uYBVumoPzBcPsoCNRL6JqPjiTVbgvNPiPD7qdb7jZJ41F99gP1F12581 (payer CgHFxD4..., fee-payer role only, no rights). The program upgrade authority itself is NOT yet transferred -- still CgHFxD4... solo until the Creator approves the set-upgrade-authority handover to the vault PDA.",
+  "context": "Sequence: under DEC-0177's original spec (members CgHFxD4 + Boss + Dev, config authority CgHFxD4) a first multisig was created at the Creator's 'lets create the multisig now' instruction -- tx 5smUTF7s... finalized at GjEAq7XgPaSSBQMfxpjNKtKmTm4uFpv3XR9Dk4qmAeMP before the Creator's interrupt arrived; that account is ABANDONED UNUSED (inert, never an authority for anything, ~0.005 SOL rent sunk -- disclosed immediately). The Creator then redefined the member set: 'we're going to put CgHFxD4... aside for now. ms is going to be EME96... (me), PSpQ... (my boss), 52b7... (the dev)'. Config authority maps to EME96... because that is now the wallet the Creator identifies as 'me' -- flagged explicitly in the same message so it could be corrected before any handover binds anything.",
+  "rationale": "Same rationale as DEC-0177 (1-of-3 ships alone; controlled config prevents any member from ejecting the others under threshold 1; developer still gets NO protocol admin). Setting the legacy hot deployer wallet aside and anchoring both membership and config authority on the Creator's EME96... wallet separates day-to-day machine keys from authority-holding keys.",
+  "alternativesConsidered": [
+    "Reuse the first multisig GjEAq7... (rejected by the Creator's revised membership: it has CgHFxD4... as member AND config authority, exactly the wallet being set aside; membership there could only be fixed by CgHFxD4... acting as config authority -- cleaner to create fresh and abandon it)",
+    "Config authority = CgHFxD4... while membership excludes it (rejected: contradicts 'put it aside'; would leave membership control on the legacy key)"
+  ],
+  "impact": "The multisig exists and is inert until the handover. REMAINING STEP (Creator approval + signature, executable from this machine since the CgHFxD4... keypair is local): solana program set-upgrade-authority 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 --new-upgrade-authority HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW --skip-new-upgrade-authority-signer-check. After that: all program deploys (incl. pending DEC-0173) go through the Squads flow, any of the three members alone; CgHFxD4... retains ON-CHAIN PROTOCOL ADMIN (ProtocolConfig.authority, unchangeable without a program upgrade -- DEC-0177 finding) and remains the local deploy/ops keypair, but loses upgrade authority once handed over. NOTE for the future: since CgHFxD4... is 'aside', consider whether protocol-admin ops should also migrate to EME96... one day -- that WOULD require the admin-rotation program upgrade DEC-0177 deferred.",
+  "affectedAreas": ["Mainnet Squads multisig G8pgvV8wGrscorppA3VrcAWrV6QGP4TvTps1czaejzH8 (created)", "abandoned multisig GjEAq7XgPaSSBQMfxpjNKtKmTm4uFpv3XR9Dk4qmAeMP", "Mainnet program 8hTW7fH... upgrade authority (handover pending)", "scripts/create-upgrade-authority-multisig.mjs (member set updated)"],
+  "supersedes": "DEC-0177 (membership/config-authority spec only; its structure, rationale, honest-limits analysis, and the no-protocol-admin tier stand)",
+  "supersededBy": null,
+  "evidence": [
+    "Creation tx MfbDQ78XsyAWVZFB8w5f6F8H3kbz6s3uYBVumoPzBcPsoCNRL6JqPjiTVbgvNPiPD7qdb7jZJ41F99gP1F12581; on-chain read-back: threshold 1, timeLock 0, configAuthority EME96..., members exactly {EME96..., PSpQ..., 52b7...} all permissions mask 7.",
+    "First multisig's creation tx 5smUTF7s... (finalized before the interrupt; account GjEAq7... verified existing with the old spec, then abandoned).",
+    "Program upgrade authority re-verified unchanged pre-handover: programdata 2YF7aofg... authority = CgHFxD4..."
+  ]
+}
+```

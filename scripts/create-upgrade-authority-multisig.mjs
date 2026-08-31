@@ -27,7 +27,13 @@ import * as multisig from '@sqds/multisig'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 
-const CREATOR = new PublicKey('CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8') // Protocol authority + current upgrade authority
+// Member set per the Creator's 2026-08-31 directive (DEC-0178): the legacy
+// deployer/authority wallet CgHFxD4X... is deliberately set aside -- it is
+// NOT a member and NOT the config authority of this multisig (it may still
+// act as the throwaway fee payer, which grants no rights). The first
+// multisig created under the old spec (GjEAq7XgPaSSBQMfxpjNKtKmTm4uFpv3XR9Dk4qmAeMP,
+// with CgHFxD4X as member + config authority) is abandoned unused.
+const CREATOR = new PublicKey('EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq') // the Creator's wallet
 const BOSS = new PublicKey('PSpQGPvw7tZedKJvN21dJkh3vdDQeXkwA5n9DKBRZw5') // admin_2 (DEC-0112)
 const DEVELOPER = new PublicKey('52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa') // confirmed by the Creator, 2026-08-30
 const THRESHOLD = 1
