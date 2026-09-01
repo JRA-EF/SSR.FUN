@@ -310,7 +310,7 @@ export async function uploadReserveMetadata(origin: string, input: ReserveMetada
 export function seedRawAmountForAsset(asset: Pick<CreateReserveAssetInput, "mint" | "decimals">, usd: number, solPriceUsd: number): bigint {
   if (isWrappedSol(asset.mint)) {
     if (!(solPriceUsd > 0)) {
-      throw new Error("A real current SOL/USD price is required to compute how much SOL to wrap for this Reserve, but none is available right now. Try again shortly.");
+      throw new Error("A real current SOL/USD price is required to compute how much of your SOL becomes this Reserve's SOL holding, but none is available right now. Try again shortly.");
     }
     return BigInt(Math.floor((usd / solPriceUsd) * 1_000_000_000));
   }
