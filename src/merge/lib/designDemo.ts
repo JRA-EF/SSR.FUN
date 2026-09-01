@@ -38,6 +38,46 @@ export function isDesignDemoEnabled(): boolean {
   }
 }
 
+const DEMO_WALLET_KEY = "ssr-design-demo-wallet";
+
+/** Cosmetic base58-alphabet address for the simulated design-preview wallet.
+ *  Nothing ever parses the store's wallet.address into a PublicKey (real
+ *  on-chain reads all use the adapter's publicKey, which stays null), so this
+ *  only has to LOOK like an address in the navbar chip / wallet panel. */
+export const DEMO_WALLET_ADDRESS = "DES1GNPreviewWa11etDemo1111111111111111111";
+
+/** True when the user "connected" a wallet through the design-preview
+ *  simulated flow (WalletModal). Persisted so a reload keeps them signed in;
+ *  only meaningful while design preview itself is on. */
+export function isDemoWalletConnected(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return isDesignDemoEnabled() && window.localStorage.getItem(DEMO_WALLET_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+export function setDemoWalletConnected(on: boolean, provider = "phantom"): void {
+  try {
+    if (on) window.localStorage.setItem(DEMO_WALLET_KEY, provider);
+    else window.localStorage.removeItem(DEMO_WALLET_KEY);
+  } catch {
+    /* storage unavailable -- the simulated connection just won't persist */
+  }
+}
+
+/** Which wallet the simulated session was "connected" with (e.g. "phantom"), or null. */
+export function getDemoWalletProvider(): string | null {
+  if (typeof window === "undefined" || !isDesignDemoEnabled()) return null;
+  try {
+    const v = window.localStorage.getItem(DEMO_WALLET_KEY);
+    return v === "1" ? "phantom" : v;
+  } catch {
+    return null;
+  }
+}
+
 /** Deterministic PRNG so a given Reserve always draws the same curve. */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;

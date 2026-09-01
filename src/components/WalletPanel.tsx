@@ -11,6 +11,7 @@ import {
 } from '@/lib/rpcResilience'
 import { IS_MAINNET } from '@/lib/solana-config'
 import { Addr } from './ui'
+import { isDemoWalletConnected, setDemoWalletConnected } from '@/lib/designDemo'
 
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
@@ -129,6 +130,10 @@ export function WalletPanel({ open, onClose }: { open: boolean; onClose: () => v
         type="button"
         className="btn btn-ghost btn-sm wallet-panel-disconnect"
         onClick={() => {
+          if (isDemoWalletConnected()) {
+            setDemoWalletConnected(false)
+            useAppStore.getState().disconnectWallet()
+          }
           disconnect()
           onClose()
         }}

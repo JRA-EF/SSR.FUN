@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useAppStore } from "@/store/useAppStore";
 import type { WalletProviderId } from "@/lib/types";
+import { DEMO_WALLET_ADDRESS, getDemoWalletProvider, isDemoWalletConnected } from "@/lib/designDemo";
 
 const BALANCE_POLL_MS = 20_000;
 
@@ -27,7 +28,20 @@ export function WalletSync() {
 
   useEffect(() => {
     if (!connected) {
-      if (!connecting) resetWallet();
+      // A design-preview simulated connection lives only in the store (the
+      // real adapter stays disconnected) -- don't let this mirror wipe it,
+      // and re-seed it on a fresh load so the session survives reloads.
+      if (isDemoWalletConnected()) {
+        syncWalletFromChain({
+          connected: true,
+          connecting: false,
+          address: DEMO_WALLET_ADDRESS,
+          provider: (getDemoWalletProvider() ?? "phantom") as WalletProviderId,
+          solLamports: 5_000_000_000,
+        });
+      } else if (!connecting) {
+        resetWallet();
+      }
       return;
     }
     syncWalletFromChain({
