@@ -20,6 +20,8 @@ export interface PerReserveStats {
 export interface LandingStatsData {
   holders: number;
   volume24hUsd: number;
+  /** All-time USD trade volume since deployment (DEC-0180) -- the Home page's KPI reads this; the per-Reserve DTRDetail view still reads the rolling volume24hUsd above. null when the server's Ledger read failed (render as "Unavailable", never 0). Optional so a cached response from before this field shipped still parses. */
+  volumeAllTimeUsd?: number | null;
   computedAt: number;
   reservesCounted: number;
   perReserve: Record<string, PerReserveStats>;

@@ -84,11 +84,15 @@ export function Home() {
                 <div className="v">{fmtUsd(totalMarketCap)}</div>
               </div>
               <div className="kpi-card">
-                <div className="k">24h Volume</div>
+                <div className="k">All-Time Volume</div>
                 <div className="v">
                   {landingStats.status === 'loading' && '…'}
                   {landingStats.status === 'unavailable' && <span className="faint">Unavailable</span>}
-                  {landingStats.status === 'ready' && landingStats.data && fmtUsd(landingStats.data.volume24hUsd)}
+                  {landingStats.status === 'ready' && landingStats.data && (
+                    landingStats.data.volumeAllTimeUsd == null
+                      ? <span className="faint">Unavailable</span>
+                      : fmtUsd(landingStats.data.volumeAllTimeUsd)
+                  )}
                 </div>
               </div>
               <div className="kpi-card">

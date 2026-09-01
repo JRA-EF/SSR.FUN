@@ -5525,3 +5525,64 @@
   ]
 }
 ```
+
+## DEC-0180
+
+```json
+{
+  "id": "DEC-0180",
+  "date": "2026-09-01",
+  "status": "confirmed-implemented",
+  "decision": "The homepage KPI strip's volume tile changed from '24h Volume' to 'All-Time Volume', sourced from the Ledger's frozen at-indexing USD valuations (reserve_activity_log, cluster 'mainnet-beta') via a new lib/reserve-activity/kpis.ts export fetchAllTimeTradeVolumeUsd -- the SAME source and definition as /internal/kpis' totalMintVolumeUsd + totalRedeemVolumeUsd, summed over mint + redeem legs in both structured amount slots. 'All-time' == 'since the cluster's first indexed event' == since Mainnet deployment (2026-08-19, DEC-0115), so no separate deployment-timestamp cutoff is needed. Deliberately NOT computed by widening fetchReserve24hVolumeUsd's RPC signature-walk (bounded to VOLUME_MAX_SIGNATURE_PAGES x VOLUME_SIGNATURES_PER_PAGE = 250 recent signatures per Reserve -- correct and cheap for a 24h window, structurally unable to reach back to deployment without becoming unbounded-expensive). The per-Reserve rolling 24h volume the merge DTRDetail page shows (perReserve[...].volume24hUsd) is UNCHANGED -- both landing-stats endpoints still compute and return it; only the global homepage tile was re-pointed.",
+  "context": "Creator directive: 'change the 24hr volume to all time volume on the front page ... backfill ofc since mainnet deployment, you have the data.' The data referenced is the Ledger (reserve_activity_log), which already stores every confirmed mint/redeem event with a frozen USD value (DEC-0176) and is swept for both DevNet and Mainnet (DEC-0175). Front page = src/pages/Home.tsx's native KPI band (IS_MAINNET picks the Mainnet vs DevNet landing-stats endpoint via useLandingStats).",
+  "rationale": "An all-time figure must aggregate the full history since deployment; the existing RPC transaction-history walk is intentionally capped and is the wrong tool for that. The Ledger is the authoritative, O(1)-to-query, already-valued source of exactly this number, and reusing its definition guarantees the homepage and /internal/kpis can never silently disagree. A row indexed without a USD valuation contributes 0 (never a fabricated guess); a Ledger read failure yields null, rendered 'Unavailable', never a false 0.",
+  "alternativesConsidered": [
+    "Widen fetchReserve24hVolumeUsd's page/signature caps and pass sinceUnixSec = deployment time (rejected: reintroduces exactly the unbounded per-Reserve RPC cost the bound was added to prevent, and still duplicates a volume definition the Ledger already owns)",
+    "Add a second homepage tile and keep 24h too (rejected: the Creator asked to CHANGE the existing tile, not add one)",
+    "Rename volume24hUsd everywhere to an all-time field (rejected: DTRDetail's per-Reserve view legitimately still wants rolling 24h; kept as a separate, additive field instead)"
+  ],
+  "impact": "Homepage 'All-Time Volume' now reflects cumulative USD mint+redeem volume since Mainnet deployment. Completeness of the figure depends on the Mainnet activity backfill being finished (reserve_activity_cursor.backfill_complete for 'mainnet-beta'); until then it reflects whatever has been indexed so far, the same caveat every Ledger-derived KPI already carries. New optional field volumeAllTimeUsd (number | null) added to both landing-stats endpoints and the shared LandingStatsData; the DevNet endpoint mirrors it for shape parity but it is typically ~0 there (DevNet rows are largely indexed without frozen USD valuations, a Mainnet-only pass per DEC-0176). scripts/verify_landing_stats.ts still passes (volume24hUsd retained). No on-chain, program, or authority change.",
+  "affectedAreas": [
+    "src/pages/Home.tsx (KPI label + value source)",
+    "src/merge/hooks/useLandingStats.ts (LandingStatsData.volumeAllTimeUsd)",
+    "api/mainnet/landing-stats.ts + api/devnet/landing-stats.ts (compute + return volumeAllTimeUsd)",
+    "lib/reserve-activity/kpis.ts (new fetchAllTimeTradeVolumeUsd)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b: clean (exit 0).",
+    "tests/phase_kpis.ts: 36 passing (the module fetchAllTimeTradeVolumeUsd was added to).",
+    "oxlint on all five changed files: clean (exit 0).",
+    "fetchAllTimeTradeVolumeUsd reuses computeProtocolKpis' exact mint/redeem-leg USD summation (both amount_usd and amount_usd_2 slots), scoped by cluster."
+  ]
+}
+```
+
+## DEC-0181
+
+```json
+{
+  "id": "DEC-0181",
+  "date": "2026-09-01",
+  "status": "confirmed-implemented",
+  "decision": "Restructured the Mainnet Wallet Cost Summary (CreateDTR.tsx Review & Deploy) per the Creator's follow-up to DEC-0153: (1) 'Goes into your Reserve' is now a per-token list -- one row per selected asset showing its USD amount, annotated with how it's funded ('your USDC, deposited directly' for USDC, 'bought with your USDC' for swap-funded assets, and the exact SOL amount 'from your wallet' for a SOL holding) -- followed by the subtotal and a single footnote giving the wallet-should-hold USDC figure (buffer explanation moved into its tooltip); (2) fees & overhead unchanged in structure (rent + network fees in SOL with USD approximations, protocol fees $0 now); (3) all 'wrap'/'wrapping' language removed from user-facing copy: the approval-steps line now reads 'Set aside the SOL from your wallet that becomes the Reserve's SOL holding', and the summary tooltip plus createReserveClient.ts's missing-SOL-price error were reworded to match. Verified (not changed): the client already wraps SOL only when the composition includes a SOL asset, and only the shortfall -- 'never wrap unless needed' was already the behavior; the Reserve's SOL holding must technically be SPL wrapped SOL (on-chain vaults are token accounts), so the fix is presentational.",
+  "context": "Creator revisited the DEC-0153 layout ('Paid in USDC' / 'Paid by wrapping your SOL' rows) and found the payment-currency split confusing, asking instead for: a description of the reserve assets -- which tokens and how much USD/USDC each; a separate fees section in native currency; and never wrapping SOL unless needed, presenting SOL as simply going into the Reserve.",
+  "rationale": "Each asset row's USD amount uses seedTotalUsd x (weight / totalWeight) -- the identical derivation seedRawAmountForAsset and the Jupiter swap budgets use (seedWeightFraction), so the rows always sum to the subtotal and can never disagree with what's actually funded. The single hold-about USDC footnote still reuses DEFAULT_FEE_BUFFER_FRACTION so the displayed figure and the preflight-enforced figure stay identical (DEC-0153's invariant). Removing 'wrapping' from copy also aligns with CLAUDE.md's Interface Copy Standards (no transaction-mechanics phrasing in UI).",
+  "alternativesConsidered": [
+    "Actually stop wrapping SOL and hold native SOL in the Reserve -- impossible without an on-chain change: vaults are SPL token accounts, so a SOL holding is necessarily wrapped SOL; wrapping is already conditional on a SOL asset being selected and shortfall-only, so only the presentation needed fixing.",
+    "Show each asset's normalized seed share percentage on its row -- rejected: the Target Composition section immediately below already lists weights, and a normalized share would visibly disagree with those raw weights whenever they sum to under 100%.",
+    "Keep the 'Paid in USDC' aggregate row alongside the new per-asset list -- rejected: redundant with the footnote's single hold-about USDC figure, and re-introduces the currency-split framing the Creator found confusing."
+  ],
+  "impact": "Display/copy-only change; no funding, preflight, or transaction logic altered. 972/972 offline tests passing; tsc -b, oxlint, npm run build clean. Not yet deployed -- the shared working tree holds another session's uncommitted DEC-0180 work, so commit/deploy is deferred for coordination.",
+  "affectedAreas": ["src/merge/pages/CreateDTR.tsx", "src/merge/lib/createReserveClient.ts (one error-message rewording)", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0153 (partially: its section-1 'paid in' currency-split rows; its fees/total sections and buffer-figure invariant are retained)",
+  "supersededBy": null,
+  "evidence": [
+    "Creator's verbatim follow-up request pasting the live DEC-0153 layout and calling out 'Paid by wrapping your SOL' as confusing.",
+    "createReserveClient.ts fundSeedAssetsIdempotent: wrapAssets = shortfalls filtered to isWrappedSol && amount > 0n -- wrap is already conditional and shortfall-only.",
+    "972/972 offline tests passing (npx ts-mocha tests/phase_*.ts)."
+  ]
+}
+```

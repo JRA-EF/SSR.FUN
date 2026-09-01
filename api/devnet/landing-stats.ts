@@ -31,6 +31,7 @@ import {
 } from "@ssr/sdk";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
+import { fetchAllTimeTradeVolumeUsd } from "../../lib/reserve-activity/kpis";
 
 interface ApiRequest {
   method?: string;
@@ -67,6 +68,8 @@ interface LandingStats {
   holders: number;
   /** Sum of every displayable Reserve's own 24h volume -- each Reserve's volume is walked from its OWN transaction history (getSignaturesForAddress on its own PDA), so no single transaction can ever be double-counted across two Reserves' totals. */
   volume24hUsd: number;
+  /** All-time USD trade volume from the Ledger (DEC-0180), scoped to the 'devnet' cluster -- mirrors the Mainnet endpoint's field so the shared hook/UI has one shape across clusters. null on a Ledger read failure (surfaced as "Unavailable"). NOTE: DevNet activity rows are largely indexed WITHOUT a USD valuation (frozen valuations are a Mainnet-only pass, DEC-0176), so this figure is typically small/zero on DevNet -- it exists for shape parity and local testing, not as a meaningful DevNet metric. */
+  volumeAllTimeUsd: number | null;
   computedAt: number;
   reservesCounted: number;
   /** Same source of truth as the aggregate fields above, keyed by Reserve address -- this is what the Reserve detail page reads for its own holder count/24h volume, so the per-Reserve and global numbers can never disagree with each other. */
@@ -107,6 +110,11 @@ async function computeLandingStats(): Promise<LandingStats> {
   const globalOwners = new Set<string>();
   let volume24hUsd = 0;
 
+  // All-time volume from the Ledger, best-effort (null on failure), started
+  // in parallel with the per-Reserve RPC walks -- see the Mainnet endpoint's
+  // identical rationale. Scoped to 'devnet' so it never sums in Mainnet rows.
+  const volumeAllTimePromise = fetchAllTimeTradeVolumeUsd(["devnet"]).catch(() => null);
+
   await Promise.all(
     displayable.map((reserve) =>
       withReadConcurrencyLimit(async () => {
@@ -134,7 +142,9 @@ async function computeLandingStats(): Promise<LandingStats> {
     ),
   );
 
-  return { holders: globalOwners.size, volume24hUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
+  const volumeAllTimeUsd = await volumeAllTimePromise;
+
+  return { holders: globalOwners.size, volume24hUsd, volumeAllTimeUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {

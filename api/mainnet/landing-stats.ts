@@ -36,6 +36,7 @@ import {
 import { fetchJupiterPrices } from "./asset-prices";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
+import { fetchAllTimeTradeVolumeUsd } from "../../lib/reserve-activity/kpis";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 
@@ -81,6 +82,16 @@ interface PerReserveStats {
 interface LandingStats {
   holders: number;
   volume24hUsd: number;
+  /**
+   * All-time USD trade volume since Mainnet deployment (DEC-0180) -- summed
+   * from the Ledger's frozen at-indexing valuations (fetchAllTimeTradeVolumeUsd,
+   * the same source /internal/kpis totals use), NOT the bounded 24h RPC
+   * signature-walk that produces volume24hUsd (that walk is capped at a few
+   * hundred recent signatures per Reserve and is deliberately unsuitable for
+   * an all-history figure). null (rendered "Unavailable", never a fabricated
+   * 0) when the Ledger read fails, so a DB hiccup can't turn into a false stat.
+   */
+  volumeAllTimeUsd: number | null;
   computedAt: number;
   reservesCounted: number;
   perReserve: Record<string, PerReserveStats>;
@@ -143,6 +154,17 @@ async function computeLandingStats(): Promise<LandingStats> {
   const globalOwners = new Set<string>();
   let volume24hUsd = 0;
 
+  // All-time volume comes from the Ledger (one cheap SQL aggregate over
+  // reserve_activity_log), started in parallel with the per-Reserve RPC walks
+  // below. Best-effort: a Ledger failure yields null (surfaced as
+  // "Unavailable"), never taking down the holder/24h reads that don't depend
+  // on it. Scoped to 'mainnet-beta' so this Mainnet endpoint can never sum in
+  // DevNet activity (the same isolation rationale as this file's existence).
+  const volumeAllTimePromise = fetchAllTimeTradeVolumeUsd(["mainnet-beta"]).catch((e) => {
+    console.error("api/mainnet/landing-stats: all-time volume read failed:", e);
+    return null;
+  });
+
   // Live USD prices for every asset any displayable Reserve holds -- one
   // batched Jupiter Price read, best-effort per mint (an unpriced mint's
   // volume counts as 0, never a guess).
@@ -176,7 +198,9 @@ async function computeLandingStats(): Promise<LandingStats> {
     ),
   );
 
-  return { holders: globalOwners.size, volume24hUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
+  const volumeAllTimeUsd = await volumeAllTimePromise;
+
+  return { holders: globalOwners.size, volume24hUsd, volumeAllTimeUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
 }
 
 function clientIp(req: ApiRequest): string {

@@ -268,6 +268,33 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
   };
 }
 
+/**
+ * All-time USD trade volume (mint + redeem legs, both structured amount
+ * slots) for the given clusters, summed from the frozen at-indexing USD
+ * valuations in reserve_activity_log (DEC-0176) -- the exact same source and
+ * definition as computeProtocolKpis's totalMintVolumeUsd + totalRedeemVolumeUsd,
+ * exposed as a single number for the public landing KPI strip so the front
+ * page and /internal/kpis can never disagree. "All-time" means "since the
+ * cluster's first indexed event", which for 'mainnet-beta' is Mainnet
+ * deployment (2026-08-19, DEC-0115) -- so the figure is complete only when
+ * the mainnet backfill is (reserve_activity_cursor.backfill_complete). A row
+ * indexed without a USD valuation contributes 0 here, never a fabricated
+ * guess -- the same honesty convention every other USD sum in this module uses.
+ */
+export async function fetchAllTimeTradeVolumeUsd(clusters: ActivityCluster[]): Promise<number> {
+  const sql = getSql();
+  const [row] = await sql`
+    with amounts as (
+      select amount_kind as k, amount_usd as u from reserve_activity_log where amount_kind is not null and cluster = any(${clusters})
+      union all
+      select amount_kind_2 as k, amount_usd_2 as u from reserve_activity_log where amount_kind_2 is not null and cluster = any(${clusters})
+    )
+    select coalesce(sum(u) filter (where k in ('mintVolume', 'redeemVolume')), 0)::float8 as volume_usd
+    from amounts
+  `;
+  return (row as { volume_usd: number } | undefined)?.volume_usd ?? 0;
+}
+
 /** Streams the FULL raw activity log as CSV -- every indexed event, every column -- the "one big file" export, scoped to `clusters` (Mainnet by default at the endpoint). Ordered oldest-first so a re-export is stably diffable. */
 export async function* streamActivityLogCsv(clusters: ActivityCluster[] = [...ACTIVITY_CLUSTERS]): AsyncGenerator<string> {
   const sql = getSql();
