@@ -1600,10 +1600,10 @@ export function DTRDetail() {
           <div id="section-chart" className="scroll-mt-32">
             {/* Chart Section */}
             <Card className="relative z-10 bg-card border-card-border hover:shadow-md transition-shadow duration-300">
-              <CardHeader className="flex flex-col gap-3 pb-2">
+              <CardHeader className="flex flex-col gap-3 pb-2 max-sm:p-4 max-sm:gap-2 max-sm:pb-1">
                 {/* Reserve identity lives in the chart card (top-left) now that
                     the chart leads the page, in line with the Buy/Sell panel. */}
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5">
                   <div className="flex items-center gap-2.5">
                     <Avatar className="h-8 w-8 border border-border">
                       {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
@@ -1611,12 +1611,12 @@ export function DTRDetail() {
                         {dtr.ticker.slice(0, 2)}
                       </AvatarFallback>
                     </Avatar>
-                    <h1 className="text-2xl font-merge-display font-bold tracking-tight">{dtr.name}</h1>
+                    <h1 className="text-2xl max-sm:text-lg font-merge-display font-bold tracking-tight">{dtr.name}</h1>
                     <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
                   </div>
-                  <div className="text-right shrink-0">
+                  <div className="text-right max-sm:text-left shrink-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>
-                    <div className="flex items-baseline justify-end gap-1.5">
+                    <div className="flex items-baseline justify-end max-sm:justify-start gap-1.5">
                       <span className={`font-merge-mono font-semibold text-foreground ${pricingUnavailable ? "text-sm" : "text-base"}`}>
                         {formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable)}
                       </span>
@@ -1639,9 +1639,9 @@ export function DTRDetail() {
                     )}
                   </div>
                 </div>
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <CardTitle className="text-lg font-merge-display flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-primary" /> Price History
+                <div className="flex flex-col gap-3 max-sm:gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <CardTitle className="text-lg max-sm:text-base font-merge-display flex items-center gap-2">
+                  <Activity className="w-5 h-5 max-sm:w-4 max-sm:h-4 text-primary" /> Price History
                 </CardTitle>
                 <div className="flex flex-wrap items-center gap-3">
                   <ChartTimeframeSelector timeframe={timeframe} onChange={setTimeframe} />
@@ -1733,7 +1733,7 @@ export function DTRDetail() {
                             x={launchMarker}
                             stroke="hsl(var(--muted-foreground))"
                             strokeDasharray="4 4"
-                            label={{ value: "Reserve Launch", position: "insideBottomRight", fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                            label={<NoteMarkerLabel text="Reserve Launch" level={2} />}
                           />
                         )}
                         <defs>
@@ -1817,7 +1817,7 @@ export function DTRDetail() {
                           x={launchMarker}
                           stroke="hsl(var(--muted-foreground))"
                           strokeDasharray="4 4"
-                          label={{ value: "Reserve Launch", position: "insideBottomRight", fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          label={<NoteMarkerLabel text="Reserve Launch" level={2} />}
                         />
                       )}
                       <Area
@@ -2118,6 +2118,28 @@ export function DTRDetail() {
                                     className="px-6 pt-3 pb-4"
                                     style={{ background: "linear-gradient(180deg, hsl(var(--secondary) / 0.7) 0%, hsl(var(--card)) 100%)" }}
                                   >
+                                    {/* Mobile only: the table hides its Price / Value / P&L columns
+                                        below sm, so the expanded panel surfaces them here. */}
+                                    <div className="sm:hidden grid grid-cols-2 gap-x-4 gap-y-3 pb-3 mb-3" style={{ borderBottom: "1px solid hsl(var(--foreground) / 0.08)" }}>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground mb-1">Price</p>
+                                        <p className="text-base font-merge-mono font-semibold">{onChainAsset || demoAsset ? formatAssetPriceUsd(unitPriceUsd) : "—"}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground mb-1">Value in Reserve</p>
+                                        <p className="text-base font-merge-mono font-semibold">{valueUsd === null ? "—" : formatUsdc(valueUsd, { compact: true })}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground mb-1">P&L %</p>
+                                        {pnlPct === null ? (
+                                          <p className="text-base font-merge-mono font-semibold text-muted-foreground">—</p>
+                                        ) : (
+                                          <p className={`text-base font-merge-mono font-semibold ${pnlPct > 0 ? "text-positive" : pnlPct < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                                            {pnlPct > 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
                                     <div className="grid grid-cols-2 md:grid-cols-3 md:divide-x md:divide-foreground/10">
                                       <div className="md:pr-6">
                                         <p className="text-xs text-muted-foreground mb-1">Market Cap</p>

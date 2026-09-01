@@ -976,7 +976,7 @@ export function ManageDTR() {
       {/* Full-bleed hero art behind the page top (public/manage-hero.jpg) —
           same treatment as the Portfolio hero: left scrim for the title,
           bottom fade into the page ground, hides itself if the file is absent. */}
-      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[400px] overflow-hidden pointer-events-none -z-10">
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
         <img
           src="/manage-hero.jpg"
           alt=""

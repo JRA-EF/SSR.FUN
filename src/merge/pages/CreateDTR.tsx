@@ -870,7 +870,21 @@ export function CreateDTR() {
 
   if (!wallet.connected) {
     return (
-      <div className="container mx-auto px-4 py-24 text-center">
+      <div className="container mx-auto px-4 py-24 text-center relative">
+        {/* Full-bleed hero art behind the gate (public/create-gate-hero.jpg) —
+            same treatment as Manage's gate screens: centered radial wash for
+            the center-aligned text, bottom fade, hides itself if absent. */}
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+          <img
+            src="/create-gate-hero.jpg"
+            alt=""
+            className="w-full h-full object-cover"
+            style={{ objectPosition: "center 30%", transform: "translateX(-14%) scale(1.3)" }}
+            onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+          />
+          <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
+        </div>
         <div className="max-w-md mx-auto space-y-6">
           <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
@@ -1381,7 +1395,7 @@ export function CreateDTR() {
       {/* Full-bleed hero art behind the page top (public/create-hero.jpg) —
           the shared mascot-hero treatment: left scrim for the title, bottom
           fade into the ground, hides itself if the file is absent. */}
-      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[460px] overflow-hidden pointer-events-none -z-10">
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[260px] sm:h-[460px] overflow-hidden pointer-events-none -z-10">
         <img
           src="/create-hero.jpg"
           alt=""
@@ -1981,50 +1995,54 @@ export function CreateDTR() {
                     <p className="text-sm">{description || "No description provided."}</p>
                   </div>
                   
-                  <div className="space-y-2">
+                  <div>
                     <p className="text-sm font-semibold text-muted-foreground mb-2">Economics</p>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Initial Reserve Value</span>
-                      <span className="font-merge-mono font-medium">
-                        {formatUsdc(parseFloat(initialSeedUsdc) || 0)}
-                        {isRealDeployment && (
-                          <span className="text-muted-foreground"> (see Wallet Cost Summary below for the exact {IS_MAINNET ? "USDC and SOL" : "SOL"} requested)</span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Mint Fee (configured)</span>
-                      <span className="font-merge-mono font-medium">{mintFeePct.toFixed(2)}%</span>
-                    </div>
-                    {realDeploymentCandidate && (() => {
-                      const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
-                      return (
-                        <div className="flex justify-between text-xs pl-3">
-                          <span className="text-muted-foreground">↳ Protocol / Manager (effective)</span>
-                          <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>
-                        </div>
-                      );
-                    })()}
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">TVL Fee (configured, annualized)</span>
-                      <span className="font-merge-mono font-medium">{tvlFeePct.toFixed(2)}%</span>
-                    </div>
-                    {realDeploymentCandidate && (() => {
-                      const split = computeEffectiveFeeSplit(BigInt(Math.round(tvlFeePct * 100)), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
-                      return (
-                        <div className="flex justify-between text-xs pl-3">
-                          <span className="text-muted-foreground">↳ Protocol / Manager (effective)</span>
-                          <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>
-                        </div>
-                      );
-                    })()}
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Buy Tax (future secondary market)</span>
-                      <span className="font-merge-mono font-medium">{managerBuyTaxPct.toFixed(2)}%</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Sell Tax (future secondary market)</span>
-                      <span className="font-merge-mono font-medium">{managerSellTaxPct.toFixed(2)}%</span>
+                    {/* Bounded summary box with zebra rows: alternating page-tint
+                        and white, one stripe per line item. */}
+                    <div className="rounded-2xl border border-border/60 overflow-hidden">
+                      {(() => {
+                        const rows: Array<{ label: ReactNode; value: ReactNode; sub?: boolean }> = [];
+                        rows.push({
+                          label: "Initial Reserve Value",
+                          value: (
+                            <span className="font-merge-mono font-medium">
+                              {formatUsdc(parseFloat(initialSeedUsdc) || 0)}
+                              {isRealDeployment && (
+                                <span className="text-muted-foreground font-sans"> (see Wallet Cost Summary below for the exact {IS_MAINNET ? "USDC and SOL" : "SOL"} requested)</span>
+                              )}
+                            </span>
+                          ),
+                        });
+                        rows.push({ label: "Mint Fee (configured)", value: <span className="font-merge-mono font-medium">{mintFeePct.toFixed(2)}%</span> });
+                        if (realDeploymentCandidate) {
+                          const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                          rows.push({
+                            sub: true,
+                            label: "↳ Protocol / Manager (effective)",
+                            value: <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>,
+                          });
+                        }
+                        rows.push({ label: "TVL Fee (configured, annualized)", value: <span className="font-merge-mono font-medium">{tvlFeePct.toFixed(2)}%</span> });
+                        if (realDeploymentCandidate) {
+                          const split = computeEffectiveFeeSplit(BigInt(Math.round(tvlFeePct * 100)), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
+                          rows.push({
+                            sub: true,
+                            label: "↳ Protocol / Manager (effective)",
+                            value: <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>,
+                          });
+                        }
+                        rows.push({ label: "Buy Tax (future secondary market)", value: <span className="font-merge-mono font-medium">{managerBuyTaxPct.toFixed(2)}%</span> });
+                        rows.push({ label: "Sell Tax (future secondary market)", value: <span className="font-merge-mono font-medium">{managerSellTaxPct.toFixed(2)}%</span> });
+                        return rows.map((row, i) => (
+                          <div
+                            key={i}
+                            className={`flex justify-between gap-6 px-4 py-2.5 ${row.sub ? "text-xs" : "text-sm"} ${i % 2 === 0 ? "bg-secondary/50" : "bg-card"} ${row.sub ? "pl-7" : ""}`}
+                          >
+                            <span className="text-muted-foreground">{row.label}</span>
+                            <span className="text-right">{row.value}</span>
+                          </div>
+                        ));
+                      })()}
                     </div>
                   </div>
                 </div>

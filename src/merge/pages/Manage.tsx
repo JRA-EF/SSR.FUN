@@ -12,6 +12,27 @@ import { Button } from "@/components/ui/button";
 import { MergeParamsContext } from "@/lib/wouter-shim";
 import { ManageDTR } from "./ManageDTR";
 
+function ManageGateHero() {
+  return (
+    /* Full-bleed hero art behind the gate screens (public/manage-gate-hero.jpg)
+       — the shared mascot-hero treatment: scrim for legibility, bottom fade
+       into the ground, hides itself if the file is absent. */
+    <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+      <img
+        src="/manage-gate-hero.jpg"
+        alt=""
+        className="w-full h-full object-cover"
+        style={{ objectPosition: "center 30%" }}
+        onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+      />
+      {/* Centered wash (not the left scrim other heroes use): this gate's
+          text is center-aligned, so legibility needs the middle calmed. */}
+      <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
+      <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
+    </div>
+  );
+}
+
 export function Manage() {
   const { wallet, dtrs, setWalletModalOpen } = useAppStore();
   const managed = dtrs.filter((d) => isManagerOrDelegate(d, wallet.address));
@@ -20,7 +41,8 @@ export function Manage() {
 
   if (!wallet.connected) {
     return (
-      <div className="container mx-auto px-4 py-24 text-center">
+      <div className="container mx-auto px-4 py-24 text-center relative">
+        <ManageGateHero />
         <div className="max-w-md mx-auto space-y-6">
           <Shield className="w-16 h-16 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Connect Wallet</h1>
@@ -36,7 +58,8 @@ export function Manage() {
 
   if (managed.length === 0) {
     return (
-      <div className="container mx-auto px-4 py-24 text-center">
+      <div className="container mx-auto px-4 py-24 text-center relative">
+        <ManageGateHero />
         <div className="max-w-md mx-auto space-y-6">
           <Shield className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Reserve Manager</h1>

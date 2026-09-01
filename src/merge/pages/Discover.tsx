@@ -88,7 +88,7 @@ export function Discover() {
       {/* Full-bleed hero art behind the page top (public/discover-hero.jpg) —
           the shared mascot-hero treatment: left scrim for the title, bottom
           fade into the ground, hides itself if the file is absent. */}
-      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[340px] overflow-hidden pointer-events-none -z-10">
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[220px] sm:h-[340px] overflow-hidden pointer-events-none -z-10">
         <img
           src="/discover-hero.jpg"
           alt=""

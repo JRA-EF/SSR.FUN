@@ -228,7 +228,21 @@ export function Portfolio() {
 
   if (!isConnected) {
     return (
-      <div className="container mx-auto px-4 py-24 flex flex-col items-center justify-center min-h-[70vh]">
+      <div className="container mx-auto px-4 py-24 flex flex-col items-center justify-center min-h-[70vh] relative">
+        {/* Full-bleed hero art behind the gate (public/portfolio-gate-hero.jpg)
+            — same treatment as the Manage/Create gates: centered radial wash
+            for the center-aligned text, bottom fade, hides itself if absent. */}
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+          <img
+            src="/portfolio-gate-hero.jpg"
+            alt=""
+            className="w-full h-full object-cover"
+            style={{ objectPosition: "55% 26%" }}
+            onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+          />
+          <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
+        </div>
         <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mb-6">
           <Wallet className="w-10 h-10 text-muted-foreground" />
         </div>
@@ -279,7 +293,7 @@ export function Portfolio() {
           public/portfolio-hero.jpg — decorative, hides itself if absent).
           Two washes keep the header readable: a left-edge scrim under the
           title and a bottom fade into the page ground. */}
-      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[440px] overflow-hidden pointer-events-none -z-10">
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[260px] sm:h-[440px] overflow-hidden pointer-events-none -z-10">
         <img
           src="/portfolio-hero.jpg"
           alt=""

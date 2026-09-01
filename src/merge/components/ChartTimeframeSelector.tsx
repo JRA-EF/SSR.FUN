@@ -33,6 +33,8 @@ export function ChartTimeframeSelector({
           // inherits muted color) would shift widths, so a fixed font weight
           // plus color-only changes keeps layout from moving by a pixel.
           className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+            tf === "1s" || tf === "1m" ? "max-sm:hidden " : ""
+          }${
             timeframe === tf
               ? "text-foreground"
               : "text-muted-foreground/70 hover:text-foreground"

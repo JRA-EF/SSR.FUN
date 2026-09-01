@@ -126,11 +126,11 @@ export function Shell({ children }: { children: ReactNode }) {
           ) : (
             <button
               type="button"
-              className="btn btn-primary"
-              style={{ padding: '8px 16px', fontSize: 10.5 }}
+              className="btn btn-primary nav-cta"
               onClick={() => setWalletModalOpen(true)}
             >
-              Connect Wallet
+              <span className="cw-full">Connect Wallet</span>
+              <span className="cw-short">Connect</span>
             </button>
           )}
         </div>

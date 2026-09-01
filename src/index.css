@@ -483,6 +483,25 @@ input, select, textarea {
   }
 }
 
+.nav-cta { padding: 8px 16px; font-size: 10.5px; }
+
+.nav-cta .cw-short { display: none; }
+
+/* Phones: seal-only logo, search flexes to fill, short wallet label —
+   replaces the old collapse-behind-a-toggle behavior (toggle removed
+   2026-08-31), which was what used to keep this row inside the viewport. */
+@media (max-width: 640px) {
+  .nav-inner { gap: 8px; }
+  .nav-logo > span { display: none; }
+  .nav-search-wrap { flex: 1; min-width: 0; }
+  .nav-search { width: 100%; }
+  .nav-search input { width: 100%; }
+  .nav-search input:focus { width: 100%; }
+  .nav-cta { padding: 8px 12px; }
+  .nav-cta .cw-full { display: none; }
+  .nav-cta .cw-short { display: inline; }
+}
+
 /* Narrow desktop: compact the whole nav row before anything can clip. */
 @media (max-width: 1140px) {
   .nav-inner { gap: 10px; }
@@ -1244,9 +1263,10 @@ input, select, textarea {
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  /* Pills, like every other control (standing design rule). */
+  border-radius: 999px;
   background: var(--bg-raise);
-  padding: 12px 14px;
+  padding: 10px 20px 10px 12px;
   text-align: left;
   transition: border-color 0.15s, background 0.15s, transform 0.15s;
 }
@@ -1608,9 +1628,12 @@ input, select, textarea {
 
 /* KPI cards */
 .kpi-band {
-  /* Pulls the card row up into part of the hero's 80px bottom padding so the
-     gap above the cards matches the 64px section rhythm below them. */
-  margin-top: -16px;
+  /* Sits fully below the hero with clear breathing room — no overlap, no
+     touching (design direction 2026-08-31/09-01; the old -16px tuck-under
+     is gone). */
+  margin-top: 32px;
+  position: relative;
+  z-index: 2;
 }
 
 .kpi-cards {

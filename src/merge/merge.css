@@ -243,6 +243,31 @@
   letter-spacing: 0.08em;
 }
 
+/* Phones: the section-nav pill scrolls horizontally instead of cramming
+   six labels into 375px. */
+@media (max-width: 640px) {
+  .merge-scope nav[aria-label='Page sections'] {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .merge-scope nav[aria-label='Page sections']::-webkit-scrollbar { display: none; }
+  .merge-scope nav[aria-label='Page sections'] button {
+    flex: 0 0 auto;
+    padding: 0 14px;
+  }
+}
+
+/* Narrow screens: Giga's width + tracking makes long CTAs ("Connect Wallet
+   to Trade") crowd the pill's rounded caps — step the type down so the
+   label always clears them. */
+@media (max-width: 520px) {
+  .merge-scope button:is([class*='bg-action'], [class*='bg-primary'], [class*='bg-destructive']) {
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+  }
+}
+
 /* Pill-contour ripple on hover for primary action buttons (Buy/Sell zaps,
    wallet CTAs) — mirrors the .btn-primary ripple in ../index.css so both
    design systems share the same interaction motif. Unlayered on purpose:
