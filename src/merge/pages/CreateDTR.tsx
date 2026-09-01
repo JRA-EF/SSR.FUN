@@ -2084,7 +2084,7 @@ export function CreateDTR() {
                       Wallet Cost Summary
                       <InfoTip label="More information about the wallet cost summary">
                         {IS_MAINNET
-                          ? "Everything this wallet will be asked to spend, shown before Phantom does: your Reserve's assets are paid in USDC (plus wrapped SOL for a SOL holding), while account rent and network fees are paid in SOL. Totals are across every transaction below -- Phantom shows one popup per transaction, so any single popup will show less than the total."
+                          ? "Everything this wallet will be asked to spend, shown before Phantom does: each asset going into your Reserve is paid for with your USDC, except a SOL holding, which comes directly from your wallet's SOL. Account rent and network fees are paid in SOL. Totals are across every transaction below -- Phantom shows one popup per transaction, so any single popup will show less than the total."
                           : "Every SOL this wallet will actually be asked to spend, shown before Phantom does. This is the TOTAL across every transaction below -- Phantom shows one popup per transaction, so any single popup will show less than this total, not the same number."}
                       </InfoTip>
                     </h3>
@@ -2157,34 +2157,41 @@ export function CreateDTR() {
                       return (
                         <>
                           <p className="text-xs font-semibold text-foreground">Goes into your Reserve (its actual holdings)</p>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground flex items-center gap-1">
-                              Paid in USDC
-                              <InfoTip label="More information about the USDC-funded portion">
-                                Funds this Reserve's USDC holding and buys each other asset for you via a real Jupiter swap. Your wallet should hold about {fmtUsd(usdcToHoldUsd)} USDC -- the extra {(DEFAULT_FEE_BUFFER_FRACTION * 100).toFixed(0)}% covers swap fees and price movement, and whatever the swaps don't use stays in your wallet. This is checked before anything is created.
-                              </InfoTip>
-                            </span>
-                            <span className="font-merge-mono">
-                              {fmtUsd(usdcCapitalUsd)}
-                              {usdcCapitalUsd > 0 && <span className="text-muted-foreground"> (hold &asymp; {fmtUsd(usdcToHoldUsd)} USDC)</span>}
-                            </span>
-                          </div>
-                          {solLegUsd > 0 && (
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground flex items-center gap-1">
-                                Paid by wrapping your SOL
-                                <InfoTip label="More information about the SOL-funded portion">This Reserve holds SOL, and that holding is funded by wrapping your own SOL directly -- no USDC is spent for it.</InfoTip>
-                              </span>
-                              <span className="font-merge-mono">
-                                {fmtUsd(solLegUsd)}
-                                <span className="text-muted-foreground"> ({(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL)</span>
-                              </span>
-                            </div>
-                          )}
+                          {assets.map((a) => {
+                            // Same per-asset split the funding code itself uses
+                            // (seedRawAmountForAsset / Jupiter swap budgets):
+                            // seedTotalUsd x this asset's share of total weight.
+                            const assetUsd = totalWeight > 0 ? seedTotalUsdUi * (a.weight / totalWeight) : 0;
+                            const isSol = a.symbol === "SOL";
+                            const isUsdc = REAL_ASSET_BY_SYMBOL.get(a.symbol)?.mint === MAINNET_USDC_MINT;
+                            return (
+                              <div key={a.symbol} className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">{a.symbol}</span>
+                                <span className="font-merge-mono">
+                                  {fmtUsd(assetUsd)}
+                                  {isSol ? (
+                                    <span className="text-muted-foreground"> ({(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL from your wallet)</span>
+                                  ) : (
+                                    <span className="text-muted-foreground"> ({isUsdc ? "your USDC, deposited directly" : "bought with your USDC"})</span>
+                                  )}
+                                </span>
+                              </div>
+                            );
+                          })}
                           <div className="flex justify-between text-sm font-semibold">
                             <span>Reserve assets subtotal</span>
                             <span className="font-merge-mono">${seedTotalUsdUi.toFixed(2)}</span>
                           </div>
+                          {usdcCapitalUsd > 0 && (
+                            <p className="text-xs text-muted-foreground flex items-start gap-1">
+                              <span>
+                                Everything above except SOL is paid for with your USDC -- your wallet should hold about {fmtUsd(usdcToHoldUsd)} USDC.
+                              </span>
+                              <InfoTip label="More information about the USDC needed">
+                                Funds this Reserve's USDC holding directly and buys each other non-SOL asset for you via a real Jupiter swap. The extra {(DEFAULT_FEE_BUFFER_FRACTION * 100).toFixed(0)}% over the {fmtUsd(usdcCapitalUsd)} of assets covers swap fees and price movement, and whatever the swaps don't use stays in your wallet. This is checked before anything is created.
+                              </InfoTip>
+                            </p>
+                          )}
 
                           <p className="pt-3 border-t border-border/50 text-xs font-semibold text-foreground">Fees &amp; overhead (paid in SOL)</p>
                           <div className="flex justify-between text-sm">
@@ -2264,7 +2271,7 @@ export function CreateDTR() {
                             </p>,
                           );
                         }
-                        if (needsSolWrap) lines.push(<p key="wrap">{step++}. Wrap your SOL for the seed deposit</p>);
+                        if (needsSolWrap) lines.push(<p key="wrap">{step++}. Set aside the SOL from your wallet that becomes the Reserve's SOL holding</p>);
                         if (swapCount > 0) {
                           lines.push(
                             <p key="swaps">
