@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use super::common::{require_reserve_permission, require_root_manager};
+use super::common::{require_grantable_permissions, require_reserve_permission, require_root_manager};
 use crate::constants::{DELEGATE_SEED, RESERVE_SEED};
 use crate::errors::SsrError;
 use crate::events::DelegateAdded;
@@ -58,6 +58,16 @@ pub fn handler<'info>(
             &ctx.accounts.acting_delegate,
             &ctx.accounts.signer.key(),
             permission_flags::ADD_RESTRICTED_DELEGATE,
+            ctx.program_id,
+        )?;
+        // Containment: a delegate may only grant permissions it holds itself.
+        require_grantable_permissions(
+            &ctx.accounts.reserve,
+            &reserve_key,
+            &ctx.accounts.acting_delegate,
+            &ctx.accounts.signer.key(),
+            &ctx.accounts.delegate_account.key(),
+            permissions,
             ctx.program_id,
         )?;
     } else {

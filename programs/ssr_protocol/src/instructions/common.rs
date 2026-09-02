@@ -19,7 +19,7 @@ use crate::constants::{BPS_DENOMINATOR, MAX_FEE_RECIPIENTS, RESERVE_ASSET_SEED, 
 use crate::errors::SsrError;
 use crate::events::{ManagerFeeAccrualSource, ManagerFeeShareAccrued};
 use crate::fee_math::apportion_to_recipients;
-use crate::state::{Delegate, FeeRecipientInput, ManagerFeeRecipients, Reserve, ReserveAsset};
+use crate::state::{Delegate, FeeRecipientInput, ManagerFeeRecipients, Reserve, ReserveAsset, TokenProgramKind};
 
 /// Returns Ok(()) iff `signer` is either the Reserve's root manager, or a
 /// registered `Delegate` for this Reserve holding `flag`. The root manager
@@ -87,6 +87,155 @@ pub fn require_reserve_permission<'r, 'd>(
     );
 
     Ok(())
+}
+
+/// Enforces the two containment rules on any delegate-granted permission
+/// bitmask. `require_reserve_permission` above proves the caller is *allowed
+/// to grant at all* (it holds ADD_RESTRICTED_DELEGATE); this proves it is not
+/// granting *more than it has*, and is not editing its own record.
+///
+/// Without these, a delegate holding only ADD_RESTRICTED_DELEGATE could call
+/// `update_delegate_permissions` on its OWN record and set
+/// `permissions = ALL_V1_FLAGS`, acquiring MANAGE_FEES, EXECUTE_REBALANCE,
+/// PAUSE/UNPAUSE and UPDATE_TARGETS -- falsifying stated invariant INV-13
+/// ("Delegates cannot exceed their permissions"). The pre-existing
+/// `new_permissions & !ALL_V1_FLAGS == 0` check only rejects *reserved* bits;
+/// it never compared the grant against the granter's own authority.
+///
+/// The root Reserve Manager is deliberately unconstrained here -- they already
+/// hold every power over the Reserve by definition, so a subset test against
+/// them is meaningless (they have no `Delegate` record to read).
+///
+/// `target_delegate_key` is the record being written. For `add_delegate` it is
+/// a freshly `init`ed PDA (self-targeting is already impossible there, since
+/// the PDA is seeded by the new wallet and `init` would collide), but the
+/// check is applied uniformly rather than relying on that reasoning holding
+/// forever.
+pub fn require_grantable_permissions<'r, 'd>(
+    reserve: &Account<'r, Reserve>,
+    reserve_key: &Pubkey,
+    acting_delegate_info: &'d AccountInfo<'d>,
+    signer: &Pubkey,
+    target_delegate_key: &Pubkey,
+    new_permissions: u16,
+    _program_id: &Pubkey,
+) -> Result<()> {
+    // The root manager may grant anything within ALL_V1_FLAGS.
+    if *signer == reserve.manager {
+        return Ok(());
+    }
+
+    // A delegate may never edit its own record -- the self-escalation path.
+    require_keys_neq!(
+        *target_delegate_key,
+        acting_delegate_info.key(),
+        SsrError::DelegateSelfModification
+    );
+
+    // Re-derive the acting delegate from its account data. This mirrors
+    // `require_reserve_permission`'s validation exactly; that function has
+    // already run at every call site, so this cannot pass a record it would
+    // have rejected.
+    let acting = Account::<Delegate>::try_from(acting_delegate_info)
+        .map_err(|_| error!(SsrError::DelegateNotFound))?;
+    require_keys_eq!(acting.reserve, *reserve_key, SsrError::DelegateNotFound);
+    require_keys_eq!(acting.wallet, *signer, SsrError::DelegateNotFound);
+
+    // Every granted bit must be one the granter itself holds.
+    require!(
+        permissions_are_subset(new_permissions, acting.permissions),
+        SsrError::DelegatePermissionEscalation
+    );
+
+    Ok(())
+}
+
+/// True iff every bit set in `granted` is also set in `held`.
+///
+/// Extracted as a pure function so the containment rule itself is unit-testable
+/// without a validator -- the bitmask logic is the security-critical part of
+/// `require_grantable_permissions`, and it previously did not exist at all.
+#[inline]
+pub fn permissions_are_subset(granted: u16, held: u16) -> bool {
+    granted & !held == 0
+}
+
+#[cfg(test)]
+mod permission_containment_tests {
+    use super::permissions_are_subset;
+    use crate::state::permission_flags as pf;
+
+    #[test]
+    fn identical_permissions_are_a_subset() {
+        assert!(permissions_are_subset(pf::MANAGE_FEES, pf::MANAGE_FEES));
+    }
+
+    #[test]
+    fn granting_nothing_is_always_allowed() {
+        assert!(permissions_are_subset(0, 0));
+        assert!(permissions_are_subset(0, pf::ALL_V1_FLAGS));
+    }
+
+    #[test]
+    fn a_strict_subset_is_allowed() {
+        let held = pf::MANAGE_FEES | pf::PAUSE_RESERVE | pf::ADD_RESTRICTED_DELEGATE;
+        assert!(permissions_are_subset(pf::PAUSE_RESERVE, held));
+        assert!(permissions_are_subset(pf::MANAGE_FEES | pf::PAUSE_RESERVE, held));
+    }
+
+    /// The exact live-mainnet escalation this guard was written to stop: a
+    /// delegate holding ONLY ADD_RESTRICTED_DELEGATE (bit 8) attempting to
+    /// grant itself the full v1 flag set.
+    #[test]
+    fn the_reported_escalation_is_rejected() {
+        let held = pf::ADD_RESTRICTED_DELEGATE;
+        assert!(!permissions_are_subset(pf::ALL_V1_FLAGS, held));
+        assert!(!permissions_are_subset(pf::MANAGE_FEES, held));
+        assert!(!permissions_are_subset(pf::EXECUTE_REBALANCE, held));
+        assert!(!permissions_are_subset(pf::UNPAUSE_RESERVE, held));
+    }
+
+    /// Holding one bit must never imply holding a neighbouring bit.
+    #[test]
+    fn every_single_flag_is_rejected_by_every_other_single_flag() {
+        let flags = [
+            pf::UPDATE_METADATA,
+            pf::UPDATE_TARGETS,
+            pf::INITIATE_REBALANCE,
+            pf::EXECUTE_REBALANCE,
+            pf::MANAGE_FEES,
+            pf::MANAGE_LIQUIDITY_CONFIG,
+            pf::PAUSE_RESERVE,
+            pf::UNPAUSE_RESERVE,
+            pf::ADD_RESTRICTED_DELEGATE,
+            pf::REMOVE_RESTRICTED_DELEGATE,
+        ];
+        for granted in flags {
+            for held in flags {
+                assert_eq!(
+                    permissions_are_subset(granted, held),
+                    granted == held,
+                    "granted={granted:#x} held={held:#x}"
+                );
+            }
+        }
+    }
+
+    /// Exhaustive over the whole v1 flag space -- containment must be exactly
+    /// bitwise subset for all 1024 x 1024 combinations, with no gaps.
+    #[test]
+    fn exhaustive_over_v1_flag_space() {
+        let n = pf::ALL_V1_FLAGS as u32 + 1;
+        for granted in 0..n {
+            for held in 0..n {
+                let (g, h) = (granted as u16, held as u16);
+                if !(g & pf::ALL_V1_FLAGS == g && h & pf::ALL_V1_FLAGS == h) {
+                    continue;
+                }
+                assert_eq!(permissions_are_subset(g, h), (g | h) == h);
+            }
+        }
+    }
 }
 
 /// Only the root Reserve Manager -- never a delegate -- may perform this
@@ -209,6 +358,21 @@ pub fn load_asset_legs<'r, 'info>(
         require_keys_eq!(
             owner_token_account.mint,
             config.asset_mint,
+            SsrError::ReserveAssetMismatch
+        );
+
+        // The token program is supplied by the caller via `remaining_accounts`
+        // and was previously trusted verbatim, then used as the CPI target for
+        // `transfer_into_vault`/`transfer_out_of_vault`. `ReserveAsset` records
+        // which program owns the mint at registration time; bind the two so a
+        // caller cannot nominate a different program for an asset's transfers.
+        let expected_token_program = match config.token_program {
+            TokenProgramKind::SplToken => anchor_spl::token::ID,
+            TokenProgramKind::Token2022 => anchor_spl::token_2022::ID,
+        };
+        require_keys_eq!(
+            *token_program_info.key,
+            expected_token_program,
             SsrError::ReserveAssetMismatch
         );
 
