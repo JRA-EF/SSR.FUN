@@ -156,7 +156,7 @@ body {
 }
 
 /* Layered (like the button reset below, and for the same reason): Tailwind
-   v4's space-y-*/mt-*/mb-* utilities set margins on headings and paragraphs,
+   v4's "space-y-", "mt-" and "mb-" utilities set margins on headings and paragraphs,
    and utilities only win if this reset sits in an earlier layer. Unlayered,
    this rule silently zeroed every such margin in .merge-scope pages (the
    wallet-gate spacing bugs, the section-heading gaps). Native pages are
