@@ -31,6 +31,8 @@
 //      load.
 import { resolveRpcUrl, FALLBACK_RPC_URL } from "./_lib/rpc";
 import { checkRateWindow } from "./_lib/rateLimit";
+import { checkDurableRateWindow } from "../../lib/rate-limit/durableRateWindow";
+import { getSql } from "../../lib/rate-limit/db";
 
 export interface ApiRequest {
   method?: string;
@@ -146,6 +148,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const ip = clientIp(req);
+  // L1: cheap per-instance burst guard (in-memory, per warm serverless
+  // instance) -- blunts a single client hammering one instance, not a global
+  // limit. See lib/rate-limit/durableRateWindow.ts.
   if (!checkRateWindow(`rpc-proxy:${ip}`, THROTTLE_WINDOW_MS, THROTTLE_MAX_PER_WINDOW)) {
     // Best-effort secondary throttle only -- returned as a 429 so the
     // client's existing rate-limit detection (isRateLimitError) treats this
@@ -198,7 +203,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // never retried against a second endpoint under any circumstance.
   const containsSend = toForward.some((r) => r.method === "sendTransaction");
 
-  if (containsSend && !checkRateWindow(SEND_TRANSACTION_THROTTLE_KEY, SEND_TRANSACTION_THROTTLE_WINDOW_MS, SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW)) {
+  // sendTransaction must be globally limited (shared provider budget); the
+  // in-memory counter cannot do that across warm instances. Consult the
+  // durable limiter first, failing OPEN to the in-memory L1 on any DB error.
+  let sendThrottled = false;
+  if (containsSend) {
+    let durableAllowed: boolean | null = null;
+    try {
+      const durable = await checkDurableRateWindow(
+        getSql() as unknown as Parameters<typeof checkDurableRateWindow>[0],
+        SEND_TRANSACTION_THROTTLE_KEY,
+        SEND_TRANSACTION_THROTTLE_WINDOW_MS,
+        SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW,
+      );
+      durableAllowed = durable.durable ? durable.allowed : null;
+    } catch {
+      durableAllowed = null;
+    }
+    sendThrottled = durableAllowed !== null
+      ? !durableAllowed
+      : !checkRateWindow(SEND_TRANSACTION_THROTTLE_KEY, SEND_TRANSACTION_THROTTLE_WINDOW_MS, SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW);
+  }
+  if (sendThrottled) {
     // A SEPARATE, GLOBAL (not per-IP) throttle -- the per-IP one above
     // exists to blunt one client hammering the proxy, but Helius's paid
     // plan caps sendTransaction specifically at a shared rate across every
