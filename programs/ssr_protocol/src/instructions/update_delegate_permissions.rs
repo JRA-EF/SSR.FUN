@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use super::common::{require_reserve_permission, require_root_manager};
+use super::common::{require_grantable_permissions, require_reserve_permission, require_root_manager};
 use crate::constants::{DELEGATE_SEED, RESERVE_SEED};
 use crate::errors::SsrError;
 use crate::events::DelegatePermissionsUpdated;
@@ -50,6 +50,17 @@ pub fn handler<'info>(
             &ctx.accounts.acting_delegate,
             &signer_key,
             permission_flags::ADD_RESTRICTED_DELEGATE,
+            ctx.program_id,
+        )?;
+        // Containment: the grant must be a subset of the granter's own
+        // permissions, and must not target the granter's own record.
+        require_grantable_permissions(
+            &ctx.accounts.reserve,
+            &reserve_key,
+            &ctx.accounts.acting_delegate,
+            &signer_key,
+            &ctx.accounts.delegate_account.key(),
+            new_permissions,
             ctx.program_id,
         )?;
     } else {
