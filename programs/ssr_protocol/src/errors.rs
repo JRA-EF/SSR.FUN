@@ -167,4 +167,14 @@ pub enum SsrError {
     // Appended at the end deliberately -- same append-only rule as above.
     #[msg("The two Protocol Admin wallets must be distinct.")]
     DuplicateProtocolAdmin,
+
+    // --- Delegate privilege-escalation fix ---
+    // Appended at the end deliberately (same append-only rule): inserting a
+    // variant anywhere earlier would renumber every subsequent error code and
+    // silently break every client that decodes them.
+    #[msg("A delegate cannot grant permissions it does not itself hold.")]
+    DelegatePermissionEscalation,
+
+    #[msg("A delegate cannot modify its own delegate record.")]
+    DelegateSelfModification,
 }
