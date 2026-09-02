@@ -5586,3 +5586,32 @@
   ]
 }
 ```
+
+## DEC-0182
+
+```json
+{
+  "id": "DEC-0182",
+  "date": "2026-09-02",
+  "status": "confirmed-implemented-deployed",
+  "decision": "Integrated the Boss's full visual redesign (origin/design @ merge d447464, 10 design commits fd964fd..8ee8a94) into main and deployed it to production, with two integration fixes applied on the way in: (1) the design branch's simulated wallet-connect flow (?demo=1 design preview) is now refused on Mainnet at every call site -- WalletModal's simulated connect + all-wallets-detected shortcut, WalletSync's store re-seed, and DTRDetail's seeded 10,000 devUSDC settlement balance all gate on !IS_MAINNET, mirroring applyDesignDemo's existing contract (the designDemo.ts helpers stay import-light for ts-mocha, so callers carry the gate; contract documented in the module header); (2) a CSS comment in src/index.css that named Tailwind utilities as space-y-*/mt-*/mb-* was reworded -- its literal */ terminated the comment early and broke every production build (lightningcss: Unexpected token Delim('*')) while vite dev, which does not minify, rendered fine. Redesign scope: marketing-grade rebrand (new hero art/typography, isometric ecosystem-mark platforms, mascot hero art on Discover/Create/Portfolio/Manage gates), redesigned Reserve detail page (OHLC candles + EMA via new pure candles.ts, creator-note chart markers, restyled Buy/Sell panel, section nav, WeightTreemap), in-page wallet-connect CTAs (walletModalOpen moved to the app store), and the DevNet-only ?demo=1 design-preview mode (synthetic chart/composition overlay, always disclosed, refuses on Mainnet and on genuine price movement).",
+  "context": "The Boss completed the redesign on origin/design (handoff commit d447464, itself a clean auto-merge of the design work with main's DEC-0180/0181 tip ae03c6b -- verified byte-identical to git merge-tree's auto-merge, so no hand-edited resolutions). Creator directed: bring the visual redesign onto the real application, preserve every functional/security/on-chain/API behavior from main, keep DEC-0074 terminology (explicitly reaffirmed: 'always use Reserve and the md terminology' -- the task brief's mention of 'Decentralized Token Reserve' as approved wording is superseded by that reaffirmation and DEC-0074 stands). Assessment, preview approval, and ship order all given by the Creator in-session.",
+  "rationale": "The design diff is frontend-only (39 files, +2,272/-613, all src/ + public/): api/, lib/, middleware.ts, programs/, migrations/, packages/, vercel.json, package.json untouched; transaction builders, fee math, and RPC plumbing unchanged (sole trade-panel behavior change: disconnected users' Buy/Sell opens the wallet modal instead of a dead button). The one production hazard was the un-gated simulated wallet: on the live real-funds site, /?demo=1 would have shown a fabricated connected wallet (cosmetic address, 5 SOL, 10,000 USDC settlement balance). No funds were reachable -- the adapter never engages and all on-chain paths use its still-null publicKey -- but fabricated connection state on a real-money app is misleading UI and a scam vector, so Mainnet-gating it was made a merge precondition.",
+  "alternativesConsidered": [
+    "Gate inside designDemo.ts itself by importing IS_MAINNET -- rejected: solana-config pulls @solana/web3.js and import.meta.env, which designDemo.ts deliberately avoids so ts-mocha's CommonJS loader can keep loading reserveCardProps' dependency chain; caller-side gating preserves that constraint.",
+    "Strip the design-preview/simulated-wallet tooling out of the production merge entirely -- rejected: it is legitimately useful on DevNet/local for design iteration, already opt-in and disclosed, and the Boss's design workflow depends on it; gating is sufficient.",
+    "Rebuild the redesign commit-by-commit on a fresh branch instead of merging d447464 -- rejected: the merge was verified a clean auto-merge and conflict-free against main (only docs-only ee326a3 differed), so re-authoring history added risk, not safety."
+  ],
+  "impact": "Production (strategic-super-reserve.fun) now serves the redesign with all live protocol state intact (post-deploy live check: Solana Mainnet badge, 7 Active Reserves, $72.62 Total Reserve Market Cap, $199.89 All-Time Volume, 4 holders, real Reserve cards incl. FOXTROT's profile picture; /?demo=1 on production produces no simulated behavior). No program, database, environment-variable, or API change shipped. origin/design fast-forwarded d447464 -> ee6edc8 per the standing UI-sync rule, so the Boss's branch contains exactly what production runs.",
+  "affectedAreas": ["src/components/* (Shell, WalletModal, WalletPanel, HeroPlatforms, ReserveCard, ReserveSearch)", "src/merge/pages/* (DTRDetail, CreateDTR, Discover, Manage, ManageDTR, Portfolio)", "src/merge/lib/ (designDemo.ts new, candles.ts new, WalletSync, reserveCardProps)", "src/merge/components/ (WeightTreemap new, ChartTimeframeSelector, ui/button)", "src/merge/store/useAppStore.ts (walletModalOpen)", "src/index.css + src/merge/merge.css", "src/main.tsx (DEV-only __ssrStore handle)", "public/ (16 new hero/logo assets)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Integration branch integrate/design-2026-09-02: merge 8327523 + gate fix 1359781 + build fix ee6edc8; fast-forwarded into main and pushed to origin and SSR.FUN-BACKUP.",
+    "Gate verified behaviorally on production builds pre-deploy: with the demo localStorage flags seeded, a devnet build shows the simulated DES1..1111 wallet chip (control), a mainnet-beta build shows the normal Connect Wallet state.",
+    "Verification suite: oxlint clean (pre-existing warnings only), tsc -b + vite build clean in both devnet and mainnet-beta configs; the CSS comment bug reproduced on the unfixed tree (lightningcss Unexpected token Delim('*')) and gone after the reword.",
+    "Preview deployment dpl_AqqocVwknJ9n8eMH2QruijtAc9eN (Mainnet mode, real KPIs) approved by the Creator before ship.",
+    "Production deployment dpl_EF2QmcnJvZaoJgCi1HmerUFdbAVo (READY, target production, main @ ee6edc8, aliased to strategic-super-reserve.fun/www/ssr-fun.vercel.app); both domains return 200 post-deploy."
+  ]
+}
+```
