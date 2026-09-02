@@ -250,7 +250,7 @@ export function Portfolio() {
         {/* Inline margins: FABLE's unlayered element reset zeroes <p> margins
             with higher cascade priority than Tailwind's layered mt-*/}
         <p className="text-muted-foreground text-center max-w-md" style={{ marginTop: 15, marginBottom: 12 }}>
-          Connect a wallet to view your SSR.FUN portfolio, simulated balances, and Reserve Token holdings.
+          Connect a wallet to view your SSR.FUN portfolio and Reserve Token holdings.
         </p>
         <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
           Connect Wallet
