@@ -166,11 +166,6 @@ export function Shell({ children }: { children: ReactNode }) {
               <div style={{ color: 'var(--text-2)', marginBottom: 8, fontWeight: 600 }}>Understand</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Link to="/#how" className="faint">How it works</Link>
-              </div>
-            </div>
-            <div>
-              <div style={{ color: 'var(--text-2)', marginBottom: 8, fontWeight: 600 }}>Legal</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Link to="/legal/terms" className="faint">Terms</Link>
                 <Link to="/legal/disclosures" className="faint">Disclosures</Link>
                 <Link to="/legal/privacy" className="faint">Privacy</Link>
