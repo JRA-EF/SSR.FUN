@@ -11,6 +11,11 @@
  * - Opt-in only: enabled with ?demo=1 in the URL (persisted to localStorage,
  *   cleared with ?demo=0). Never on by default.
  * - Never on Mainnet: callers pass their IS_MAINNET and the overlay refuses.
+ *   The simulated-wallet helpers below cannot import IS_MAINNET themselves
+ *   (that would pull import.meta-dependent modules into ts-mocha loads, see
+ *   the note at the end of this header), so every call site of
+ *   isDemoWalletConnected()/the WalletModal simulated-connect path MUST gate
+ *   on !IS_MAINNET itself -- as WalletModal, WalletSync, and DTRDetail do.
  * - Never replaces genuine data: if a Reserve has real price movement, the
  *   overlay declines and the real series renders.
  * - Always disclosed: consumers must surface `active` as a visible

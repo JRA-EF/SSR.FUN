@@ -8,6 +8,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useAppStore } from "@/store/useAppStore";
 import type { WalletProviderId } from "@/lib/types";
 import { DEMO_WALLET_ADDRESS, getDemoWalletProvider, isDemoWalletConnected } from "@/lib/designDemo";
+import { IS_MAINNET } from "@/lib/solana-config";
 
 const BALANCE_POLL_MS = 20_000;
 
@@ -31,7 +32,9 @@ export function WalletSync() {
       // A design-preview simulated connection lives only in the store (the
       // real adapter stays disconnected) -- don't let this mirror wipe it,
       // and re-seed it on a fresh load so the session survives reloads.
-      if (isDemoWalletConnected()) {
+      // Never on Mainnet: there the store must only ever mirror the real
+      // adapter, even if a stale ?demo=1 flag survives in localStorage.
+      if (!IS_MAINNET && isDemoWalletConnected()) {
         syncWalletFromChain({
           connected: true,
           connecting: false,
