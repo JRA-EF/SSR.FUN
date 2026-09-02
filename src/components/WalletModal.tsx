@@ -6,6 +6,7 @@ import { useAppStore } from '@/store/useAppStore'
 import type { WalletProviderId } from '@/lib/types'
 import { useStore } from '../state/store'
 import { IS_MAINNET } from '@/lib/solana-config'
+import { DEMO_WALLET_ADDRESS, isDesignDemoEnabled, setDemoWalletConnected } from '@/lib/designDemo'
 
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
@@ -86,6 +87,9 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
 
   function isDetected(opt: WalletOption): boolean {
     if (opt.id === 'metamask') return hasGlobal('ethereum')
+    // Design preview: every Solana wallet reads as available, since choosing
+    // one performs a simulated connection instead of reaching an extension.
+    if (isDesignDemoEnabled()) return true
     const found = findAdapter(opt.id)
     return found?.readyState === WalletReadyState.Installed || found?.readyState === WalletReadyState.Loadable
   }
@@ -101,6 +105,29 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
         wallet: opt,
         reason: "MetaMask doesn't support Solana yet. Choose a Solana wallet like Phantom, Solflare, or Backpack instead.",
       })
+      return
+    }
+
+    // Design preview: simulate the whole connect flow in the store. The real
+    // wallet adapter never engages (no extension popup, no keys), so this is
+    // safe even when a real Phantom/Solflare is installed in the browser.
+    if (isDesignDemoEnabled()) {
+      setStep({ kind: 'connecting', wallet: opt })
+      pendingRef.current = opt
+      window.setTimeout(() => {
+        if (pendingRef.current !== opt) return
+        pendingRef.current = null
+        setDemoWalletConnected(true, opt.id)
+        useAppStore.getState().syncWalletFromChain({
+          connected: true,
+          connecting: false,
+          address: DEMO_WALLET_ADDRESS,
+          provider: opt.id as WalletProviderId,
+          solLamports: 5_000_000_000,
+        })
+        setStep({ kind: 'connected', wallet: opt })
+        toast('Wallet connected', `Simulated ${opt.name} connection — design preview, no real wallet involved.`)
+      }, 900)
       return
     }
 
@@ -160,7 +187,14 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
             {step.wallet.initial}
           </span>
           <p className="wm-status-text">Connecting to {step.wallet.name}…</p>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setStep({ kind: 'select' })}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              pendingRef.current = null
+              setStep({ kind: 'select' })
+            }}
+          >
             Cancel
           </button>
         </div>

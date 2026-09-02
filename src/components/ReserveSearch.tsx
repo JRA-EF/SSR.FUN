@@ -173,25 +173,6 @@ export function ReserveSearch() {
 
   return (
     <div className={`nav-search-wrap${mobileOpen ? ' nav-search-wrap--mobile-open' : ''}`} ref={containerRef}>
-      <button
-        type="button"
-        className="theme-btn nav-search-toggle"
-        aria-label="Search Reserves"
-        aria-expanded={mobileOpen}
-        onClick={() => {
-          setMobileOpen(v => {
-            const next = !v
-            if (next) {
-              setOpen(true)
-              window.setTimeout(() => inputRef.current?.focus(), 0)
-            }
-            return next
-          })
-        }}
-      >
-        <SearchIcon />
-      </button>
-
       <form
         className="nav-search"
         role="search"
@@ -204,7 +185,7 @@ export function ReserveSearch() {
         <SearchIcon />
         <input
           ref={inputRef}
-          placeholder="Search Reserves..."
+          placeholder="Search..."
           value={q}
           onChange={e => {
             setQ(e.target.value)

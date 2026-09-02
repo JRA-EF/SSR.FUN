@@ -16,7 +16,7 @@
  * font-mono -> font-merge-mono) across the copied page/component files.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Lexend:wght@300;400;500;600;700&family=Lexend+Giga:wght@400;500;600;700&display=swap');
 
 @layer theme, base, components, utilities;
 @import 'tailwindcss/theme.css' layer(theme);
@@ -52,15 +52,19 @@
   --color-accent: hsl(var(--merge-accent));
   --color-accent-foreground: hsl(var(--merge-accent-foreground));
 
+  --color-action: hsl(var(--merge-action));
+  --color-action-foreground: hsl(var(--merge-action-foreground));
+  --color-action-hover: hsl(var(--merge-action-hover));
+
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
 
   --color-positive: hsl(var(--positive));
   --color-positive-foreground: hsl(var(--positive-foreground));
 
-  --font-sans: 'Inter', sans-serif;
-  --font-merge-display: 'Geist', sans-serif;
-  --font-accent: 'Inter', sans-serif;
+  --font-sans: 'Lexend', sans-serif;
+  --font-merge-display: 'Lexend Giga', 'Lexend', sans-serif;
+  --font-accent: 'Lexend', sans-serif;
   --font-merge-mono: 'Geist Mono', monospace;
 
   --radius-sm: 0.375rem;
@@ -70,10 +74,11 @@
   --radius-2xl: 1.75rem;
 
   --shadow-xs: 0 1px 2px 0 rgba(30, 20, 64, 0.04);
-  --shadow-sm: 0 1px 2px 0 rgba(30, 20, 64, 0.04), 0 2px 6px -2px rgba(30, 20, 64, 0.05);
+  /* Ambient card elevation for the gray ground: contact + soft wide shadow. */
+  --shadow-sm: 0 1px 2px 0 rgba(9, 9, 20, 0.04), 0 10px 28px -10px rgba(9, 9, 20, 0.1);
   --shadow-md: 0 4px 10px -2px rgba(30, 20, 64, 0.07), 0 2px 6px -3px rgba(30, 20, 64, 0.05);
   --shadow-lg: 0 16px 32px -12px rgba(30, 20, 64, 0.14), 0 4px 10px -4px rgba(30, 20, 64, 0.06);
-  --shadow-glow: 0 12px 28px -8px rgba(124, 58, 237, 0.28), 0 2px 8px -2px rgba(124, 58, 237, 0.16);
+  --shadow-glow: 0 12px 28px -8px rgba(65, 85, 166, 0.28), 0 2px 8px -2px rgba(65, 85, 166, 0.16);
 }
 
 /* Color tokens are scoped to .merge-scope (not :root) so they never override
@@ -91,44 +96,51 @@
 .merge-scope {
   color-scheme: dark;
 
-  --background: 257 24% 6%;
-  --foreground: 270 24% 96%;
+  --background: 245 82% 9%;
+  --foreground: 228 60% 97%;
 
-  --card: 258 22% 9%;
-  --card-foreground: 270 24% 96%;
-  --card-border: 260 11% 15%;
+  --card: 244 66% 14%;
+  --card-foreground: 228 60% 97%;
+  --card-border: 246 50% 24%;
 
-  --popover: 258 22% 9%;
-  --popover-foreground: 270 24% 96%;
-  --popover-border: 260 11% 15%;
+  --popover: 244 66% 14%;
+  --popover-foreground: 228 60% 97%;
+  --popover-border: 246 50% 24%;
 
-  --primary: 258 100% 66%;
-  --primary-foreground: 270 24% 96%;
+  --primary: 226 82% 79%;
+  --primary-foreground: 245 82% 9%;
 
-  --secondary: 260 11% 15%;
-  --secondary-foreground: 270 24% 96%;
+  --secondary: 246 56% 24%;
+  --secondary-foreground: 228 60% 97%;
 
-  --muted: 260 11% 15%;
-  --muted-foreground: 260 11% 62%;
+  --muted: 246 56% 24%;
+  --muted-foreground: 227 42% 76%;
 
-  --merge-accent: 258 100% 66%;
-  --merge-accent-foreground: 270 24% 96%;
+  --merge-accent: 226 82% 79%;
+  --merge-accent-foreground: 245 82% 9%;
+
+  /* Dark surfaces invert the ramp — indigo would vanish on navy, so actions
+     use the SSR brand yellow (#EDE871) with navy ink, matching the
+     marketing site's navy-section buttons. */
+  --merge-action: 57 77% 69%;
+  --merge-action-foreground: 245 82% 9%;
+  --merge-action-hover: 57 82% 76%;
 
   --destructive: 354 82% 67%;
-  --destructive-foreground: 270 24% 96%;
+  --destructive-foreground: 228 60% 97%;
 
   --positive: 155 58% 50%;
-  --positive-foreground: 257 24% 6%;
+  --positive-foreground: 245 82% 9%;
 
-  --border: 260 11% 15%;
-  --input: 260 11% 15%;
-  --ring: 258 100% 66%;
+  --border: 246 50% 24%;
+  --input: 246 50% 24%;
+  --ring: 226 73% 76%;
 
-  --chart-1: 258 100% 66%;
+  --chart-1: 226 73% 76%;
   --chart-2: 155 58% 50%;
   --chart-3: 38 92% 60%;
   --chart-4: 199 89% 62%;
-  --chart-5: 330 81% 68%;
+  --chart-5: 246 53% 60%;
 
   --radius: 0.625rem;
 }
@@ -136,44 +148,53 @@
 :root[data-theme='light'] .merge-scope {
   color-scheme: light;
 
-  --background: 260 32% 99%;
-  --foreground: 256 28% 12%;
+  /* Light "Apple gray" ground (experiment 2026-08-31) — neutral background,
+     white cards pop. */
+  --background: 240 9% 96%;
+  --foreground: 245 82% 9%;
 
   --card: 0 0% 100%;
-  --card-foreground: 256 28% 12%;
-  --card-border: 258 24% 92%;
+  --card-foreground: 245 82% 9%;
+  --card-border: 240 8% 90%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 256 28% 12%;
-  --popover-border: 258 24% 92%;
+  --popover-foreground: 245 82% 9%;
+  --popover-border: 228 40% 91%;
 
-  --primary: 258 88% 58%;
-  --primary-foreground: 270 30% 99%;
+  --primary: 227 76% 54%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 258 28% 95.5%;
-  --secondary-foreground: 256 28% 14%;
+  --secondary: 240 6% 94%;
+  --secondary-foreground: 245 60% 12%;
 
-  --muted: 258 28% 95.5%;
-  --muted-foreground: 258 12% 45%;
+  --muted: 240 6% 94%;
+  --muted-foreground: 231 24% 37%;
 
-  --merge-accent: 258 88% 58%;
-  --merge-accent-foreground: 270 30% 99%;
+  --merge-accent: 227 76% 54%;
+  --merge-accent-foreground: 0 0% 100%;
+
+  /* Action pills run darker than the link/data accent (SSR indigo family).
+     (An all-yellow light-mode experiment on 2026-08-31 was reverted same-day;
+     yellow actions live in dark mode only.) */
+  --merge-action: 246 67% 24%;
+  --merge-action-foreground: 0 0% 100%;
+  --merge-action-hover: 230 52% 38%;
 
   --destructive: 354 75% 52%;
-  --destructive-foreground: 270 24% 98%;
+  --destructive-foreground: 0 0% 98%;
 
-  --positive: 155 60% 32%;
-  --positive-foreground: 270 24% 98%;
+  --positive: 152 68% 30%;
+  --positive-foreground: 0 0% 98%;
 
-  --border: 258 22% 91%;
-  --input: 258 22% 90%;
-  --ring: 258 88% 58%;
+  --border: 240 8% 90%;
+  --input: 240 8% 88%;
+  --ring: 227 76% 54%;
 
-  --chart-1: 258 88% 58%;
+  --chart-1: 227 76% 54%;
   --chart-2: 155 58% 38%;
   --chart-3: 32 92% 48%;
   --chart-4: 199 89% 45%;
-  --chart-5: 330 75% 52%;
+  --chart-5: 246 53% 47%;
 }
 
 .merge-scope,
@@ -187,26 +208,142 @@
   isolation: isolate;
   background-color: hsl(var(--background));
   background-image:
-    radial-gradient(60% 50% at 105% -10%, hsla(268, 85%, 55%, 0.5), transparent 68%),
-    radial-gradient(46% 60% at 88% 8%, hsla(280, 70%, 40%, 0.45), transparent 70%),
-    radial-gradient(38% 42% at 118% 32%, hsla(258, 90%, 48%, 0.38), transparent 72%),
-    radial-gradient(55% 48% at 78% -6%, hsla(300, 55%, 35%, 0.28), transparent 65%),
-    radial-gradient(32% 38% at 96% 46%, hsla(250, 65%, 30%, 0.32), transparent 70%);
+    radial-gradient(60% 50% at 105% -10%, hsla(246, 67%, 30%, 0.55), transparent 68%),
+    radial-gradient(46% 60% at 88% 8%, hsla(228, 55%, 35%, 0.4), transparent 70%),
+    radial-gradient(38% 42% at 118% 32%, hsla(226, 60%, 45%, 0.3), transparent 72%),
+    radial-gradient(55% 48% at 78% -6%, hsla(245, 60%, 25%, 0.35), transparent 65%),
+    radial-gradient(32% 38% at 96% 46%, hsla(240, 50%, 22%, 0.3), transparent 70%);
   background-repeat: no-repeat;
   background-attachment: local, local, local, local, local;
 }
 
 :root[data-theme='light'] .merge-scope {
   background-color: hsl(var(--background));
-  background-image:
-    radial-gradient(38% 34% at 96% -6%, hsla(262, 82%, 74%, 0.1), transparent 70%),
-    radial-gradient(30% 30% at 84% 6%, hsla(276, 70%, 78%, 0.08), transparent 72%),
-    radial-gradient(34% 36% at 6% 96%, hsla(258, 70%, 80%, 0.07), transparent 72%),
-    radial-gradient(26% 26% at -4% 40%, hsla(250, 60%, 82%, 0.06), transparent 70%);
+  /* Flat neutral ground — the periwinkle washes are gone in light mode;
+     the chart is the page's periwinkle moment now. */
+  background-image: linear-gradient(180deg, hsla(0, 0%, 100%, 0) 0%, hsla(0, 0%, 100%, 0.55) 100%);
 }
 
 .merge-scope :is(h1, h2, h3, h4, h5, h6) {
-  @apply font-merge-display tracking-tight;
+  @apply font-merge-display;
+  /* Marketing-look: headings run uppercase and wide-tracked like the
+     ssr-reserve-style site (replaces the old tracking-tight). */
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Marketing-look: filled action/primary/destructive buttons speak Lexend
+   Giga uppercase, matching the site's .btn. Unlayered on purpose so the
+   type treatment wins over per-button Tailwind text utilities. */
+.merge-scope button:is([class*='bg-action'], [class*='bg-primary'], [class*='bg-destructive']) {
+  font-family: 'Lexend Giga', 'Lexend', sans-serif;
+  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+/* Phones: the section-nav pill scrolls horizontally instead of cramming
+   six labels into 375px. */
+@media (max-width: 640px) {
+  .merge-scope nav[aria-label='Page sections'] {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .merge-scope nav[aria-label='Page sections']::-webkit-scrollbar { display: none; }
+  .merge-scope nav[aria-label='Page sections'] button {
+    flex: 0 0 auto;
+    padding: 0 14px;
+  }
+}
+
+/* Narrow screens: Giga's width + tracking makes long CTAs ("Connect Wallet
+   to Trade") crowd the pill's rounded caps — step the type down so the
+   label always clears them. */
+@media (max-width: 520px) {
+  .merge-scope button:is([class*='bg-action'], [class*='bg-primary'], [class*='bg-destructive']) {
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+  }
+}
+
+/* Pill-contour ripple on hover for primary action buttons (Buy/Sell zaps,
+   wallet CTAs) — mirrors the .btn-primary ripple in ../index.css so both
+   design systems share the same interaction motif. Unlayered on purpose:
+   these rules are purely additive (a pseudo-element and a position context)
+   and must win over the layered Tailwind utilities on the same element. */
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action']),
+.merge-scope .trade-pill {
+  position: relative;
+}
+
+/* Button-shaped links never underline; the Trade pill answers hover with a
+   full contrast flip to the indigo action fill instead. */
+.merge-scope a[class*='bg-']:hover,
+.merge-scope .trade-pill:hover {
+  text-decoration: none;
+}
+
+.merge-scope .trade-pill:hover {
+  background: hsl(var(--merge-action));
+  color: hsl(var(--merge-action-foreground));
+}
+
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action'])::after,
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action'])::before,
+.merge-scope .trade-pill::after,
+.merge-scope .trade-pill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid hsl(var(--merge-action-hover));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::after,
+.merge-scope .trade-pill:hover::after {
+  animation: merge-btn-ripple 0.9s cubic-bezier(0.2, 0.6, 0.35, 1) forwards;
+}
+
+/* Second ring, staggered — matches the marketing site's layered ripple. */
+.merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::before,
+.merge-scope .trade-pill:hover::before {
+  animation: merge-btn-ripple 0.9s cubic-bezier(0.2, 0.6, 0.35, 1) 0.22s forwards;
+}
+
+@keyframes merge-btn-ripple {
+  from {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::after,
+  .merge-scope button:is([class*='bg-primary'], [class*='bg-action']):hover:not(:disabled)::before,
+  .merge-scope .trade-pill:hover::after,
+  .merge-scope .trade-pill:hover::before {
+    animation: none;
+  }
+}
+
+/* Dark mode: the selected Buy tab reads in SSR action yellow (matching the
+   dark theme's yellow action pills). Light mode keeps the primary blue —
+   dark tokens live on bare .merge-scope, light under [data-theme='light'],
+   so these two unlayered rules mirror that split. */
+.merge-scope .buy-tab[data-state='active'] {
+  color: #ede871;
+}
+
+:root[data-theme='light'] .merge-scope .buy-tab[data-state='active'] {
+  color: hsl(var(--primary));
 }
 
 @layer utilities {

@@ -91,6 +91,15 @@ interface AppState {
   setChainDiscoveryStatus: (status: "loading" | "ready" | "error", error?: string | null) => void;
 
   /**
+   * Whether the wallet-connect modal (Shell.tsx renders it) is open. Lives in
+   * the store -- not Shell-local state -- so in-page CTAs ("Connect Wallet to
+   * Trade" on the Reserve detail Buy/Sell panel) can start the connect flow
+   * instead of sitting disabled behind the nav's own button.
+   */
+  walletModalOpen: boolean;
+  setWalletModalOpen: (open: boolean) => void;
+
+  /**
    * Mainnet only: Reserve Asset mints this BROWSER has itself just used to
    * create/seed a Reserve. RealReserveSync.tsx merges this into its
    * discovery candidate-mint list so this browser's own just-created
@@ -201,6 +210,8 @@ export const useAppStore = create<AppState>()(
       chainDiscoveryStatus: "loading",
       chainDiscoveryError: null,
       setChainDiscoveryStatus: (status, error) => set({ chainDiscoveryStatus: status, chainDiscoveryError: error ?? null }),
+      walletModalOpen: false,
+      setWalletModalOpen: (open) => set({ walletModalOpen: open }),
       mainnetKnownAssetMints: [],
       addKnownAssetMints: (mints) =>
         set((state) => {

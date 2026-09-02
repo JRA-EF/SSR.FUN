@@ -972,7 +972,22 @@ export function ManageDTR() {
     : false;
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-6xl">
+    <div className="container mx-auto px-4 py-8 max-w-6xl relative">
+      {/* Full-bleed hero art behind the page top (public/manage-hero.jpg) —
+          same treatment as the Portfolio hero: left scrim for the title,
+          bottom fade into the page ground, hides itself if the file is absent. */}
+      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+        <img
+          src="/manage-hero.jpg"
+          alt=""
+          className="w-full h-full object-cover"
+          style={{ objectPosition: "55% 26%" }}
+          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+        />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.78) 0%, hsl(var(--background) / 0.25) 45%, hsl(var(--background) / 0.05) 100%)" }} />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0.05) 0%, hsl(var(--background) / 0.25) 55%, hsl(var(--background)) 98%)" }} />
+      </div>
+
       <div className="mb-8">
         <Link href={`/dtr/${dtr.id}`} className="inline-flex items-center text-sm text-muted-foreground hover:text-primary mb-4 transition-colors">
           <ChevronLeft className="w-4 h-4 mr-1" /> Back to Reserve
@@ -1031,7 +1046,12 @@ export function ManageDTR() {
         <div className="md:col-span-3">
           {activeTab === "overview" && (
             <div className="space-y-6">
-              <Card>
+              {/* Apple-glass: slightly translucent + frosted so the hero art
+                  ghosts through where the card overlaps it. */}
+              <Card
+                className="border-white/40"
+                style={{ background: "hsl(var(--card) / 0.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}
+              >
                 <CardHeader>
                   <CardTitle className="text-xl font-merge-display">Reserve Identity</CardTitle>
                 </CardHeader>

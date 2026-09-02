@@ -57,7 +57,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const path = usePath()
   const { toasts } = useStore()
   const { wallet } = useAppStore()
-  const [walletModalOpen, setWalletModalOpen] = useState(false)
+  const walletModalOpen = useAppStore(s => s.walletModalOpen)
+  const setWalletModalOpen = useAppStore(s => s.setWalletModalOpen)
   const [walletPanelOpen, setWalletPanelOpen] = useState(false)
 
   useEffect(() => {
@@ -125,11 +126,11 @@ export function Shell({ children }: { children: ReactNode }) {
           ) : (
             <button
               type="button"
-              className="btn btn-primary"
-              style={{ padding: '8px 18px', fontSize: 13 }}
+              className="btn btn-primary nav-cta"
               onClick={() => setWalletModalOpen(true)}
             >
-              Connect Wallet
+              <span className="cw-full">Connect Wallet</span>
+              <span className="cw-short">Connect</span>
             </button>
           )}
         </div>

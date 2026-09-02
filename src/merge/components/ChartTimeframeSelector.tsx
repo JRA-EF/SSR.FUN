@@ -28,12 +28,16 @@ export function ChartTimeframeSelector({
           type="button"
           onClick={() => onChange(tf)}
           aria-pressed={timeframe === tf}
-          // A border is present in BOTH states (only its colour changes), so
-          // hovering/selecting never shifts layout by a pixel.
-          className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+          // Reserve-style text row: no chrome, the active range simply reads
+          // bolder/darker. font-semibold on BOTH states (inactive just
+          // inherits muted color) would shift widths, so a fixed font weight
+          // plus color-only changes keeps layout from moving by a pixel.
+          className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+            tf === "1s" || tf === "1m" ? "max-sm:hidden " : ""
+          }${
             timeframe === tf
-              ? "border-primary bg-primary text-primary-foreground shadow-sm"
-              : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+              ? "text-foreground"
+              : "text-muted-foreground/70 hover:text-foreground"
           }`}
         >
           {tf}
