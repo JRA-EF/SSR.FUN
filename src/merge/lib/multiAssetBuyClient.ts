@@ -44,7 +44,7 @@
 //  - Never custodies funds: every transaction is signed by the buyer's own
 //    wallet; acquired assets live in the buyer's own ATAs until the mint
 //    deposits them.
-import { Connection, PublicKey, Transaction, type TransactionInstruction, type VersionedTransaction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, VersionedTransaction, type TransactionInstruction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
@@ -58,7 +58,7 @@ import {
   MAINNET_USDC_MINT,
   type ZapAssetLeg,
 } from "@ssr/sdk";
-import { fetchJupiterSwapQuote, executeJupiterSwap, fetchJupiterSwapInstructions, type JupiterSwapInstructionsResult } from "./jupiterSwapClient";
+import { fetchJupiterSwapQuote, executeJupiterSwap, submitSignedJupiterSwap, fetchJupiterSwapInstructions, type JupiterSwapInstructionsResult, type JupiterSwapQuote } from "./jupiterSwapClient";
 import {
   assembleSingleBuyInstructions,
   buildWrapRecoveredSolInstructions,
@@ -593,38 +593,85 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     }
 
     // --- Per-leg funding: USDC -> Jupiter -> Reserve asset, one swap per
-    // --- genuinely-deficient leg, freshly quoted immediately before each.
+    // --- genuinely-deficient leg.
     const swapActions = swapActionList;
-    for (let s = 0; s < swapActions.length; s++) {
-      const action = swapActions[s];
-      if (action.kind !== "jupiter-swap") continue;
-      const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
-      currentStage = `swapping your USDC for one of the Reserve's assets (${action.mint.slice(0, 4)}...${action.mint.slice(-4)})`;
 
-      params.onProgress?.({ phase: "swapping", mint: action.mint, index: s, total: swapActions.length });
-      advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
-      const quote = await fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol);
-      log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
-      // The leg balance immediately before this swap -- the baseline the
-      // swap's actual delivered output is measured against.
-      const preSwapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
-      advanceLeg(action.mint, "awaiting_signature");
-      await executeJupiterSwap(params.connection, params.wallet, quote, (sig) => advanceLeg(action.mint, "submitted", { lastSignature: sig }));
-      advanceLeg(action.mint, "confirmed");
-      const newBalance = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(action.mint), owner, preSwapRaw);
+    // Reconcile ONE confirmed swap: measure its real delivered output against
+    // the pre-swap baseline and advance the leg state machine. Identical
+    // whether the swap was signed one-at-a-time or as part of a signAll batch.
+    const reconcileSwappedLeg = async (mint: string, legIndex: number, preSwapRaw: bigint): Promise<void> => {
+      advanceLeg(mint, "confirmed");
+      const newBalance = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(mint), owner, preSwapRaw);
       heldRaw[legIndex] = newBalance;
       const gained = newBalance > preSwapRaw ? newBalance - preSwapRaw : 0n;
-      const newAcquired = acquiredRawOf(action.mint) + gained;
-      advanceLeg(action.mint, "ready_to_seed", { verifiedBalanceRaw: newBalance.toString(), acquiredRaw: newAcquired.toString() });
+      const newAcquired = acquiredRawOf(mint) + gained;
+      advanceLeg(mint, "ready_to_seed", { verifiedBalanceRaw: newBalance.toString(), acquiredRaw: newAcquired.toString() });
       log("leg funded and output measured", {
-        mint: action.mint,
+        mint,
         deliveredRaw: gained.toString(),
         totalAcquiredRaw: newAcquired.toString(),
         requiredRaw: requiredAmountsRaw[legIndex].toString(),
       });
       const shortfallPct = computeSwapShortfallPct(requiredAmountsRaw[legIndex], newAcquired);
       if (shortfallPct > SHORTFALL_WARN_PCT) {
-        params.onSwapShortfall?.({ mint: action.mint, targetRaw: requiredAmountsRaw[legIndex], actualRaw: newAcquired, shortfallPct });
+        params.onSwapShortfall?.({ mint, targetRaw: requiredAmountsRaw[legIndex], actualRaw: newAcquired, shortfallPct });
+      }
+    };
+
+    // ONE-APPROVAL SWAP BATCH: when the wallet supports signAllTransactions and
+    // there is more than one leg to fund, quote every leg, then sign ALL swap
+    // transactions in a SINGLE wallet prompt (N approvals -> 1). Each swap is
+    // still submitted, confirmed, and reconciled sequentially afterward, so the
+    // downstream funding-verification, mint, and double-mint guards below are
+    // completely unchanged -- only the prompt count drops. A leg that underfills
+    // (or a wSOL ATA a sibling swap's cleanup closed -- the live 2026-08-26
+    // failure) is caught by the same "verifying every Reserve asset was acquired
+    // before the final mint" block below, which triggers the persistent state
+    // machine's deficit-only resume. Falls back to per-swap signing when the
+    // wallet lacks signAllTransactions or there is only a single leg.
+    const canBatchSwaps = typeof params.wallet.signAllTransactions === "function" && swapActions.length > 1;
+    if (canBatchSwaps) {
+      currentStage = "preparing all of this Reserve's asset swaps for a single approval";
+      const legs: { mint: string; legIndex: number; preSwapRaw: bigint; quote: JupiterSwapQuote; tx: VersionedTransaction }[] = [];
+      for (const action of swapActions) {
+        if (action.kind !== "jupiter-swap") continue;
+        const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
+        advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
+        const quote = await fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol);
+        log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
+        // Baseline BEFORE any swap in the batch lands. Legs are distinct mints,
+        // so no swap in the batch changes another leg's measured output.
+        const preSwapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
+        const tx = VersionedTransaction.deserialize(Buffer.from(quote.swapTransaction, "base64"));
+        legs.push({ mint: action.mint, legIndex, preSwapRaw, quote, tx });
+        advanceLeg(action.mint, "awaiting_signature");
+      }
+      params.onProgress?.({ phase: "awaiting-wallet" });
+      const signedTxs = await params.wallet.signAllTransactions!(legs.map((l) => l.tx));
+      for (let s = 0; s < legs.length; s++) {
+        const leg = legs[s];
+        currentStage = `submitting the swap for one of the Reserve's assets (${leg.mint.slice(0, 4)}...${leg.mint.slice(-4)})`;
+        params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: legs.length });
+        await submitSignedJupiterSwap(params.connection, signedTxs[s], leg.quote.lastValidBlockHeight, (sig) => advanceLeg(leg.mint, "submitted", { lastSignature: sig }));
+        await reconcileSwappedLeg(leg.mint, leg.legIndex, leg.preSwapRaw);
+      }
+    } else {
+      for (let s = 0; s < swapActions.length; s++) {
+        const action = swapActions[s];
+        if (action.kind !== "jupiter-swap") continue;
+        const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
+        currentStage = `swapping your USDC for one of the Reserve's assets (${action.mint.slice(0, 4)}...${action.mint.slice(-4)})`;
+
+        params.onProgress?.({ phase: "swapping", mint: action.mint, index: s, total: swapActions.length });
+        advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
+        const quote = await fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol);
+        log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
+        // The leg balance immediately before this swap -- the baseline the
+        // swap's actual delivered output is measured against.
+        const preSwapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
+        advanceLeg(action.mint, "awaiting_signature");
+        await executeJupiterSwap(params.connection, params.wallet, quote, (sig) => advanceLeg(action.mint, "submitted", { lastSignature: sig }));
+        await reconcileSwappedLeg(action.mint, legIndex, preSwapRaw);
       }
     }
 
