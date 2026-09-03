@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SSR.FUN — Coming Soon</title>
+  <meta name="description" content="One token. Infinite possibilities. SSR.FUN — decentralized tokenized reserves on Solana. Get ready to launch." />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lexend+Giga:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0e0b2e;
+      --ink-2: #343863;
+      --ink-3: #6a6f93;
+      --navy: #191266;
+      --blue-1: #2f3480;
+      --blue-2: #5561bb;
+      --blue-3: #8fa0e8;
+      --lav: #e6e8fa;
+      --lav-line: #d7daf2;
+      --bg: #f4f4fa;
+      --card: #ffffff;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      font-family: 'Lexend Giga', system-ui, sans-serif;
+      background:
+        radial-gradient(900px 600px at 85% 12%, rgba(143, 160, 232, 0.22), transparent 60%),
+        radial-gradient(700px 500px at 8% 90%, rgba(85, 97, 187, 0.14), transparent 60%),
+        linear-gradient(180deg, #f7f7fc 0%, var(--bg) 55%, #ededf6 100%);
+      color: var(--ink);
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* faint dotted rain, echoing the landing tiles */
+    .dots {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: radial-gradient(rgba(47, 52, 128, 0.10) 1px, transparent 1px);
+      background-size: 26px 26px;
+      mask-image: radial-gradient(700px 520px at 78% 40%, #000 0%, transparent 70%);
+      -webkit-mask-image: radial-gradient(700px 520px at 78% 40%, #000 0%, transparent 70%);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 26px clamp(20px, 5vw, 56px);
+    }
+
+    .seal { width: 42px; height: 42px; border-radius: 50%; }
+
+    .wordmark {
+      font-weight: 800;
+      font-size: 19px;
+      letter-spacing: 0.06em;
+      color: var(--navy);
+    }
+    .wordmark span { color: var(--blue-3); }
+
+    .net-pill {
+      margin-left: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      color: #4653c6;
+      background: var(--lav);
+      border: 1px solid var(--lav-line);
+      padding: 7px 14px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      align-items: center;
+      gap: clamp(28px, 5vw, 72px);
+      padding: clamp(12px, 3vh, 40px) clamp(20px, 5vw, 56px) clamp(24px, 4vh, 48px);
+      max-width: 1360px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .eyebrow {
+      font-size: clamp(10px, 1.1vw, 12px);
+      font-weight: 500;
+      letter-spacing: 0.42em;
+      color: var(--ink-3);
+      text-transform: uppercase;
+      margin-bottom: 26px;
+    }
+
+    h1 {
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: clamp(24px, 3.4vw, 44px);
+      line-height: 1.22;
+      letter-spacing: 0.06em;
+    }
+
+    h1 .l1 { color: var(--ink); display: block; }
+    h1 .l2 {
+      display: block;
+      background: linear-gradient(90deg, var(--blue-1) 0%, var(--blue-2) 55%, var(--blue-3) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .launchline {
+      margin-top: 34px;
+      font-size: clamp(13px, 1.5vw, 18px);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.28em;
+      background: linear-gradient(90deg, var(--ink) 0%, var(--blue-2) 40%, #7c8ade 50%, var(--blue-2) 60%, var(--ink) 100%);
+      background-size: 220% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: shimmer 5s linear infinite;
+    }
+
+    @keyframes shimmer {
+      from { background-position: 220% 0; }
+      to { background-position: -20% 0; }
+    }
+
+    .soon {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 40px;
+      background: var(--navy);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      padding: 16px 30px 16px 24px;
+      border-radius: 999px;
+      box-shadow: 0 14px 34px rgba(25, 18, 102, 0.32);
+    }
+
+    .soon .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #8fe8b0;
+      box-shadow: 0 0 0 0 rgba(143, 232, 176, 0.55);
+      animation: pulse 2.2s ease-out infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(143, 232, 176, 0.55); }
+      70% { box-shadow: 0 0 0 12px rgba(143, 232, 176, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(143, 232, 176, 0); }
+    }
+
+    .blurb {
+      margin-top: 34px;
+      max-width: 46ch;
+      font-weight: 300;
+      font-size: clamp(11px, 1.15vw, 13px);
+      line-height: 1.9;
+      color: var(--ink-2);
+      letter-spacing: 0.02em;
+    }
+
+    .hero {
+      position: relative;
+      justify-self: center;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    .hero .frame {
+      border-radius: 30px;
+      overflow: hidden;
+      background: var(--card);
+      padding: 10px;
+      box-shadow:
+        0 30px 70px rgba(25, 18, 102, 0.28),
+        0 6px 18px rgba(25, 18, 102, 0.12);
+      animation: float 7s ease-in-out infinite;
+    }
+
+    .hero img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 22px;
+    }
+
+    .hero .caption {
+      position: absolute;
+      left: 50%;
+      bottom: -16px;
+      transform: translateX(-50%);
+      background: var(--card);
+      border: 1px solid var(--lav-line);
+      color: var(--ink-2);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.26em;
+      text-transform: uppercase;
+      padding: 10px 20px;
+      border-radius: 999px;
+      white-space: nowrap;
+      box-shadow: 0 10px 26px rgba(25, 18, 102, 0.14);
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-12px); }
+    }
+
+    footer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 26px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px clamp(20px, 5vw, 56px) 30px;
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+    }
+
+    @media (max-width: 900px) {
+      main {
+        grid-template-columns: minmax(0, 1fr);
+        text-align: center;
+        gap: 48px;
+        padding-top: 8px;
+      }
+      .eyebrow { letter-spacing: 0.26em; }
+      h1 { font-size: clamp(17px, 4.9vw, 34px); letter-spacing: 0.04em; }
+      .launchline { letter-spacing: 0.18em; }
+      .blurb { margin-left: auto; margin-right: auto; max-width: 100%; }
+      .hero { max-width: min(440px, 100%); }
+      header { justify-content: center; }
+      footer { justify-content: center; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .launchline, .soon .dot, .hero .frame { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="dots" aria-hidden="true"></div>
+
+  <header>
+    <img class="seal" src="/ssr-seal.png" alt="" />
+    <div class="wordmark">SSR<span>.FUN</span></div>
+    <div class="net-pill">SOLANA</div>
+  </header>
+
+  <main>
+    <section>
+      <p class="eyebrow">Tokenized Reserve Protocol</p>
+      <h1>
+        <span class="l1">One token.</span>
+        <span class="l2">Infinite possibilities.</span>
+      </h1>
+      <p class="launchline">Get ready to launch.</p>
+      <div class="soon" role="status"><span class="dot"></span>Coming Soon</div>
+      <p class="blurb">
+        SSR.fun is where anyone can create, launch, and trade decentralized tokenized
+        reserves — baskets of Solana assets backed by transparent, on-chain holdings.
+      </p>
+    </section>
+
+    <aside class="hero" aria-hidden="true">
+      <div class="frame">
+        <img src="/coming-soon-eagle.jpg" alt="" />
+      </div>
+      <div class="caption">The Reserve is being prepared</div>
+    </aside>
+  </main>
+
+  <footer>
+    <span>© 2026 SSR.FUN</span>
+    <span>Decentralized Tokenized Reserves · Solana</span>
+  </footer>
+</body>
+</html>
