@@ -7,6 +7,9 @@
 // DevNet endpoint or vice versa.
 import { resolveRpcUrl, FALLBACK_RPC_URL } from "./_lib/rpc";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
+import { checkDurableRateWindow } from "../../lib/rate-limit/durableRateWindow";
+import { getSql } from "../../lib/rate-limit/db";
+import { CACHEABLE_METHODS, cacheKey, coalesce, getCached, isRpcErrorBody, setCached, withRpcId } from "../devnet/_lib/rpcCache";
 
 export interface ApiRequest {
   method?: string;
@@ -124,6 +127,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const ip = clientIp(req);
+  // L1: cheap per-instance burst guard. NOT global (in-memory, per warm
+  // serverless instance) -- it blunts a single client hammering one
+  // instance in a tight loop; sustained cross-instance read volume is
+  // bounded by Helius's API-key quota and (recommended) a Vercel WAF rule,
+  // never by this line. See lib/rate-limit/durableRateWindow.ts.
   if (!checkRateWindow(`mainnet-rpc-proxy:${ip}`, THROTTLE_WINDOW_MS, THROTTLE_MAX_PER_WINDOW)) {
     res.status(429).json({ jsonrpc: "2.0", id: null, error: { code: -32005, message: "Too many requests to the Mainnet RPC proxy from this client." } });
     return;
@@ -170,7 +178,34 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   const containsSend = toForward.some((r) => r.method === "sendTransaction");
 
-  if (containsSend && !checkRateWindow(SEND_TRANSACTION_THROTTLE_KEY, SEND_TRANSACTION_THROTTLE_WINDOW_MS, SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW)) {
+  // sendTransaction is the one limit that MUST be global (a shared,
+  // provider-billed write budget). The in-memory counter cannot enforce that
+  // across warm instances, so consult the durable, cross-instance limiter
+  // first; it fails OPEN to the in-memory L1 if the DB is unavailable, so a
+  // transient DB blip degrades to per-instance limiting rather than blocking
+  // all trading.
+  let sendThrottled = false;
+  if (containsSend) {
+    // Acquiring the DB client can itself throw if DATABASE_URL is unset -- do
+    // NOT let that crash the proxy; treat it exactly like a DB error and fall
+    // back to the in-memory L1.
+    let durableAllowed: boolean | null = null;
+    try {
+      const durable = await checkDurableRateWindow(
+        getSql() as unknown as Parameters<typeof checkDurableRateWindow>[0],
+        SEND_TRANSACTION_THROTTLE_KEY,
+        SEND_TRANSACTION_THROTTLE_WINDOW_MS,
+        SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW,
+      );
+      durableAllowed = durable.durable ? durable.allowed : null;
+    } catch {
+      durableAllowed = null;
+    }
+    sendThrottled = durableAllowed !== null
+      ? !durableAllowed
+      : !checkRateWindow(SEND_TRANSACTION_THROTTLE_KEY, SEND_TRANSACTION_THROTTLE_WINDOW_MS, SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW);
+  }
+  if (sendThrottled) {
     res.status(429).json(
       isBatch
         ? toForward.map((r) => ({ jsonrpc: "2.0", id: r.id, error: { code: -32005, message: "Mainnet RPC sendTransaction is temporarily rate-limited (shared provider budget)." } }))
@@ -180,6 +215,47 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const primaryUrl = resolveRpcUrl();
+
+  // --- Read cache + in-flight coalescing (single cacheable read requests) ---
+  // Collapses the client's high-volume duplicate account reads to at most one
+  // upstream call per key per TTL window. Skipped for batches, rejected-mixed
+  // requests, non-cacheable methods, and any request carrying x-ssr-rpc-fresh.
+  const wantsFresh = req.headers["x-ssr-rpc-fresh"] === "1";
+  const singleReq =
+    !isBatch && rejected.size === 0 && toForward.length === 1
+      ? (toForward[0] as JsonRpcRequest)
+      : null;
+  if (
+    singleReq &&
+    !wantsFresh &&
+    typeof singleReq.method === "string" &&
+    CACHEABLE_METHODS.has(singleReq.method)
+  ) {
+    const key = cacheKey(singleReq.method, singleReq.params);
+    const hit = getCached(key);
+    if (hit !== null) {
+      res.status(200).json(withRpcId(hit, singleReq.id));
+      return;
+    }
+    const fetched = await coalesce(key, async () => {
+      let up = await postJsonRpc(primaryUrl, singleReq);
+      if (up === null) up = await postJsonRpc(FALLBACK_RPC_URL, singleReq);
+      return up;
+    });
+    if (fetched === null) {
+      res.status(502).json({
+        jsonrpc: "2.0",
+        id: singleReq.id,
+        error: { code: -32003, message: "Mainnet RPC endpoint unreachable." },
+      });
+      return;
+    }
+    if (fetched.status === 200 && !isRpcErrorBody(fetched.body)) {
+      setCached(key, fetched.body);
+    }
+    res.status(fetched.status).json(withRpcId(fetched.body, singleReq.id));
+    return;
+  }
 
   const forwardPayload = isBatch ? toForward : toForward[0];
   let upstream = toForward.length > 0 ? await postJsonRpc(primaryUrl, forwardPayload) : { status: 200, body: [] };
