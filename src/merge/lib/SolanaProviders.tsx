@@ -2,6 +2,7 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import type { WalletError } from "@solana/wallet-adapter-base";
 import { SOLANA_RPC_URL } from "./solana-config";
+import { coalescingRpcFetch } from "./clientRpcCache";
 import { useAppStore } from "@/store/useAppStore";
 
 /**
@@ -26,7 +27,7 @@ export function SolanaProviders({ children }: { children: ReactNode }) {
   );
 
   return (
-    <ConnectionProvider endpoint={SOLANA_RPC_URL}>
+    <ConnectionProvider endpoint={SOLANA_RPC_URL} config={{ commitment: "confirmed", fetch: coalescingRpcFetch }}>
       <WalletProvider wallets={wallets} autoConnect onError={onError}>
         {children}
       </WalletProvider>
