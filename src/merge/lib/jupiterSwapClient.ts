@@ -170,9 +170,26 @@ export async function executeJupiterSwap(connection: Connection, wallet: WalletC
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
   const tx = VersionedTransaction.deserialize(Buffer.from(quote.swapTransaction, "base64"));
   const signed = await wallet.signTransaction(tx);
+  return submitSignedJupiterSwap(connection, signed, quote.lastValidBlockHeight, onSubmitted);
+}
+
+/**
+ * Submits and confirms an ALREADY-SIGNED Jupiter swap transaction. Extracted
+ * from executeJupiterSwap so the multi-asset buy fallback can sign every leg's
+ * swap together via wallet.signAllTransactions (ONE approval) and then submit
+ * each here sequentially. The confirm/error/expiry contract is identical to a
+ * single-swap execution -- callers get the same reconcile-after-each-leg
+ * behavior; only the wallet prompt count changes (N -> 1).
+ */
+export async function submitSignedJupiterSwap(
+  connection: Connection,
+  signed: VersionedTransaction,
+  lastValidBlockHeight: number,
+  onSubmitted?: (signature: string) => void,
+): Promise<string> {
   const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
   onSubmitted?.(signature);
-  const outcome = await confirmSignatureBounded(connection, signature, quote.lastValidBlockHeight);
+  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(`${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
   if (outcome.status === "expired") throw new Error(`Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
