@@ -746,7 +746,18 @@ export function resolveDtrPageState(
  */
 export function parseOnChainReserveId(dtrId: string | undefined): bigint | null {
   if (!dtrId) return null;
-  const match = /^devnet-(\d+)$/.exec(dtrId);
+  // Accept BOTH cluster id shapes this app mints:
+  //   `devnet-<id>`  and  `mainnet-beta-<id>`
+  // buildDtrFromDiscoveredReserve builds ids as `${cluster}-${reserveId}`, so a
+  // Mainnet Reserve's id is `mainnet-beta-<id>`. Matching only `devnet-<id>`
+  // here returned null for every Mainnet Reserve, which disabled DTRDetail's
+  // bounded direct on-chain fallback read AND its still-indexing guard -- so a
+  // real, freshly-created Mainnet Reserve that discovery had not yet merged
+  // rendered the terminal "Legacy Reserve / not supported" page instead of
+  // resolving. The numeric on-chain reserveId is cluster-independent; the
+  // caller pairs it with the correct (cluster-aware) program id (SSR_PROGRAM_ID)
+  // when deriving the Reserve PDA, so returning it for either prefix is correct.
+  const match = /^(?:devnet|mainnet-beta)-(\d+)$/.exec(dtrId);
   if (!match) return null;
   try {
     return BigInt(match[1]);
