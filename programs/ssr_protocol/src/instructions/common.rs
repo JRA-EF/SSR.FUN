@@ -15,11 +15,14 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, Mint, TokenAccount};
 
-use crate::constants::{BPS_DENOMINATOR, MAX_FEE_RECIPIENTS, RESERVE_ASSET_SEED, RESERVE_VAULT_SEED};
+use crate::constants::{
+    BPS_DENOMINATOR, FEE_VAULT_AUTHORITY_SEED, MAX_FEE_RECIPIENTS, RESERVE_ASSET_SEED,
+    RESERVE_VAULT_SEED, SCHEMA_VERSION, SETTLEMENT_AUTHORITY_SEED,
+};
 use crate::errors::SsrError;
 use crate::events::{ManagerFeeAccrualSource, ManagerFeeShareAccrued};
 use crate::fee_math::apportion_to_recipients;
-use crate::state::{Delegate, FeeRecipientInput, ManagerFeeRecipients, Reserve, ReserveAsset};
+use crate::state::{Delegate, FeeRecipientInput, FeeSettlement, ManagerFeeRecipients, Reserve, ReserveAsset};
 
 /// Returns Ok(()) iff `signer` is either the Reserve's root manager, or a
 /// registered `Delegate` for this Reserve holding `flag`. The root manager
@@ -51,6 +54,121 @@ use crate::state::{Delegate, FeeRecipientInput, ManagerFeeRecipients, Reserve, R
 /// shared lifetime, and doing so is exactly what caused
 /// "lifetime may not live long enough" errors here before this fix, since
 /// `Account`/`AccountInfo` are invariant over their lifetime parameter.
+/// Initialise a `FeeSettlement` account's IDENTITY fields the first time it is
+/// touched. `init_if_needed` zero-fills a freshly-created account, and the
+/// crediting instructions (mint/accrue) only ever wrote the two share
+/// counters -- so `reserve` and the three bumps stayed `Pubkey::default()`/0
+/// forever. That left `redeem_fee_vault_shares` and `distribute_fee_usdc`
+/// UNABLE to run at all: their `constraint = fee_settlement.reserve == reserve`
+/// and `bump = fee_settlement.*_bump` checks compared against zeroed fields.
+/// Fees would crystallise into the vault and be permanently stranded, and any
+/// Reserve that ever minted could never be closed (its fee-vault shares keep
+/// supply != 0). This makes the crediting instructions self-initialise the
+/// identity fields exactly once, idempotently -- see DEC-0133/DEC-0173.
+///
+/// Idempotent: returns immediately once `reserve` is set, so repeated
+/// mint/accrue calls after the first are a no-op here.
+pub fn init_fee_settlement_if_needed(
+    fee_settlement: &mut Account<FeeSettlement>,
+    reserve: Pubkey,
+    bump: u8,
+    program_id: &Pubkey,
+) -> Result<()> {
+    if fee_settlement.reserve != Pubkey::default() {
+        return Ok(());
+    }
+    let (_, fee_vault_authority_bump) =
+        Pubkey::find_program_address(&[FEE_VAULT_AUTHORITY_SEED, reserve.as_ref()], program_id);
+    let (_, settlement_authority_bump) =
+        Pubkey::find_program_address(&[SETTLEMENT_AUTHORITY_SEED, reserve.as_ref()], program_id);
+    apply_fee_settlement_identity(
+        fee_settlement,
+        reserve,
+        fee_vault_authority_bump,
+        settlement_authority_bump,
+        bump,
+    );
+    Ok(())
+}
+
+/// Pure identity-field writer, split out of `init_fee_settlement_if_needed` so
+/// the "set exactly these fields, only when uninitialised" behaviour is
+/// unit-testable without a runtime `Account`/validator. Idempotent: a no-op
+/// once `reserve` is set. Returns true iff it actually initialised.
+pub fn apply_fee_settlement_identity(
+    fs: &mut FeeSettlement,
+    reserve: Pubkey,
+    fee_vault_authority_bump: u8,
+    settlement_authority_bump: u8,
+    bump: u8,
+) -> bool {
+    if fs.reserve != Pubkey::default() {
+        return false;
+    }
+    fs.schema_version = SCHEMA_VERSION;
+    fs.reserve = reserve;
+    fs.fee_vault_authority_bump = fee_vault_authority_bump;
+    fs.settlement_authority_bump = settlement_authority_bump;
+    fs.bump = bump;
+    true
+}
+
+#[cfg(test)]
+mod fee_settlement_init_tests {
+    use super::apply_fee_settlement_identity;
+    use crate::constants::SCHEMA_VERSION;
+    use crate::state::FeeSettlement;
+    use anchor_lang::prelude::Pubkey;
+
+    fn zeroed() -> FeeSettlement {
+        FeeSettlement {
+            schema_version: 0,
+            reserve: Pubkey::default(),
+            fee_vault_authority_bump: 0,
+            settlement_authority_bump: 0,
+            protocol_shares_in_vault: 0,
+            manager_shares_in_vault: 0,
+            protocol_shares_pending_settlement: 0,
+            manager_shares_pending_settlement: 0,
+            bump: 0,
+        }
+    }
+
+    #[test]
+    fn initialises_identity_fields_on_first_touch() {
+        // The P1-1 bug: crediting instructions left these fields zeroed, so
+        // redeem_fee_vault_shares / distribute_fee_usdc could never satisfy
+        // their `fee_settlement.reserve == reserve` and `bump = *_bump`
+        // constraints. After this, they are populated.
+        let mut fs = zeroed();
+        let reserve = Pubkey::new_unique();
+        let did = apply_fee_settlement_identity(&mut fs, reserve, 251, 252, 253);
+        assert!(did, "should initialise a zeroed account");
+        assert_eq!(fs.reserve, reserve);
+        assert_eq!(fs.fee_vault_authority_bump, 251);
+        assert_eq!(fs.settlement_authority_bump, 252);
+        assert_eq!(fs.bump, 253);
+        assert_eq!(fs.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn is_idempotent_and_never_overwrites_an_initialised_account() {
+        let mut fs = zeroed();
+        let reserve = Pubkey::new_unique();
+        apply_fee_settlement_identity(&mut fs, reserve, 251, 252, 253);
+        // simulate later credits accumulating shares
+        fs.protocol_shares_in_vault = 1_000;
+        fs.manager_shares_in_vault = 500;
+        // a second touch (e.g. next mint) must NOT reset identity or shares
+        let did = apply_fee_settlement_identity(&mut fs, Pubkey::new_unique(), 9, 9, 9);
+        assert!(!did, "must be a no-op once initialised");
+        assert_eq!(fs.reserve, reserve, "reserve must not be overwritten");
+        assert_eq!(fs.fee_vault_authority_bump, 251);
+        assert_eq!(fs.protocol_shares_in_vault, 1_000, "shares untouched");
+        assert_eq!(fs.manager_shares_in_vault, 500);
+    }
+}
+
 pub fn require_reserve_permission<'r, 'd>(
     reserve: &Account<'r, Reserve>,
     reserve_key: &Pubkey,
