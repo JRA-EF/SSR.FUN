@@ -33,6 +33,7 @@ import { resolveRpcUrl, FALLBACK_RPC_URL } from "./_lib/rpc";
 import { checkRateWindow } from "./_lib/rateLimit";
 import { checkDurableRateWindow } from "../../lib/rate-limit/durableRateWindow";
 import { getSql } from "../../lib/rate-limit/db";
+import { CACHEABLE_METHODS, cacheKey, coalesce, getCached, isRpcErrorBody, setCached, withRpcId } from "./_lib/rpcCache";
 
 export interface ApiRequest {
   method?: string;
@@ -247,6 +248,47 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const primaryUrl = resolveRpcUrl();
+
+  // --- Read cache + in-flight coalescing (single cacheable read requests) ---
+  // Collapses the client's high-volume duplicate account reads to at most one
+  // upstream call per key per TTL window. Skipped for batches, rejected-mixed
+  // requests, non-cacheable methods, and any request carrying x-ssr-rpc-fresh.
+  const wantsFresh = req.headers["x-ssr-rpc-fresh"] === "1";
+  const singleReq =
+    !isBatch && rejected.size === 0 && toForward.length === 1
+      ? (toForward[0] as JsonRpcRequest)
+      : null;
+  if (
+    singleReq &&
+    !wantsFresh &&
+    typeof singleReq.method === "string" &&
+    CACHEABLE_METHODS.has(singleReq.method)
+  ) {
+    const key = cacheKey(singleReq.method, singleReq.params);
+    const hit = getCached(key);
+    if (hit !== null) {
+      res.status(200).json(withRpcId(hit, singleReq.id));
+      return;
+    }
+    const fetched = await coalesce(key, async () => {
+      let up = await postJsonRpc(primaryUrl, singleReq);
+      if (up === null) up = await postJsonRpc(FALLBACK_RPC_URL, singleReq);
+      return up;
+    });
+    if (fetched === null) {
+      res.status(502).json({
+        jsonrpc: "2.0",
+        id: singleReq.id,
+        error: { code: -32003, message: "DevNet RPC endpoint unreachable." },
+      });
+      return;
+    }
+    if (fetched.status === 200 && !isRpcErrorBody(fetched.body)) {
+      setCached(key, fetched.body);
+    }
+    res.status(fetched.status).json(withRpcId(fetched.body, singleReq.id));
+    return;
+  }
 
   const forwardPayload = isBatch ? toForward : toForward[0];
   let upstream = toForward.length > 0 ? await postJsonRpc(primaryUrl, forwardPayload) : { status: 200, body: [] };
