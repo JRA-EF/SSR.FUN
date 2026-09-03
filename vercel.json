@@ -48,6 +48,7 @@
     }
   ],
   "rewrites": [
+    { "source": "/", "destination": "/coming-soon.html" },
     { "source": "/internal/status", "destination": "/internal-status.html" },
     { "source": "/internal/feedback", "destination": "/internal-feedback.html" },
     { "source": "/internal/kpis", "destination": "/internal-kpis.html" },
