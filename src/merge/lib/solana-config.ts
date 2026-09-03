@@ -32,9 +32,35 @@ const DEFAULT_RPC_URL = import.meta.env.PROD && typeof window !== "undefined"
 
 export const SOLANA_RPC_URL = (import.meta.env.VITE_SOLANA_RPC_URL as string) || DEFAULT_RPC_URL;
 
-export const SSR_PROGRAM_ID = new PublicKey(
-  (import.meta.env.VITE_SSR_PROGRAM_ID as string) ||
-    (IS_MAINNET ? "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9" : "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW"),
+/** Base58 shape check (Solana pubkeys are 32-44 base58 chars). */
+const BASE58_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * Construct a PublicKey from an UNTRUSTED string (an env var, or API/localStorage
+ * data), falling back to `fallback` when it is not valid base58. A misconfigured
+ * env must DEGRADE, never throw at module load and white-screen the whole app.
+ *
+ * 2026-09-03 incident: `VITE_SSR_PROGRAM_ID` was marked "Secret" in Vercel, so a
+ * client build baked the literal placeholder string "[SENSITIVE]" for it. That
+ * string is truthy, so the `|| <default>` fallback below never fired, and
+ * `new PublicKey("[SENSITIVE]")` threw "Non-base58 character" on load -> blank
+ * site. This guard makes any such value (placeholder, typo, wrong length) fall
+ * back to the correct default instead of crashing.
+ */
+export function safePublicKey(value: string | undefined | null, fallback: string): PublicKey {
+  if (value && BASE58_ADDRESS_RE.test(value)) {
+    try {
+      return new PublicKey(value);
+    } catch {
+      // valid base58 chars but not a valid 32-byte key -> fall through
+    }
+  }
+  return new PublicKey(fallback);
+}
+
+export const SSR_PROGRAM_ID = safePublicKey(
+  import.meta.env.VITE_SSR_PROGRAM_ID as string | undefined,
+  IS_MAINNET ? "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9" : "2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW",
 );
 
 /** Mainnet only: the Squads Treasury vault, the protocol-fee destination. Never the Squads Multisig Account address -- see docs/project/PROJECT_STATUS.md's Authority & Treasury Structure section. */

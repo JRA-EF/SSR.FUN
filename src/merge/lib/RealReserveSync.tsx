@@ -106,7 +106,20 @@ export function RealReserveSync() {
   }, [mergedMainnetMints]);
 
   const candidateAssetMints = useMemo(
-    () => (IS_MAINNET ? mergedMainnetMints.map((m) => new PublicKey(m)) : DEVNET_CANDIDATE_ASSET_MINTS),
+    // Defense-in-depth: mergedMainnetMints includes mints from the Ledger API and
+    // this browser's persisted store. A single malformed mint string must NOT
+    // white-screen discovery (new PublicKey throws on non-base58) -- drop the bad
+    // entry and keep the rest as candidates.
+    () =>
+      IS_MAINNET
+        ? mergedMainnetMints.flatMap((m) => {
+            try {
+              return [new PublicKey(m)];
+            } catch {
+              return [];
+            }
+          })
+        : DEVNET_CANDIDATE_ASSET_MINTS,
     [mergedMainnetMints],
   );
 
