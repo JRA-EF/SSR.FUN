@@ -180,36 +180,160 @@
       letter-spacing: 0.02em;
     }
 
+    /* email capture */
+    .beta {
+      margin-top: 36px;
+      max-width: 520px;
+    }
+
+    .beta-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--navy);
+      margin-bottom: 14px;
+    }
+
+    .beta-row { display: flex; gap: 10px; }
+
+    .beta-row input {
+      flex: 1;
+      min-width: 0;
+      font-family: 'Lexend Giga', system-ui, sans-serif;
+      font-size: 12px;
+      font-weight: 300;
+      color: var(--ink);
+      padding: 15px 20px;
+      border: 1.5px solid var(--lav-line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.85);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .beta-row input::placeholder { color: var(--ink-3); }
+
+    .beta-row input:focus {
+      border-color: var(--blue-2);
+      box-shadow: 0 0 0 4px rgba(85, 97, 187, 0.16);
+    }
+
+    .beta-row button {
+      font-family: 'Lexend Giga', system-ui, sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #fff;
+      padding: 0 26px;
+      border: 0;
+      border-radius: 999px;
+      cursor: pointer;
+      background: var(--navy);
+      box-shadow: 0 10px 26px rgba(25, 18, 102, 0.28);
+      transition: transform 0.15s, filter 0.2s;
+      white-space: nowrap;
+    }
+
+    .beta-row button:hover { transform: translateY(-1px); filter: brightness(1.15); }
+    .beta-row button:active { transform: translateY(0); }
+
+    .beta-note {
+      margin-top: 12px;
+      font-size: 10px;
+      font-weight: 300;
+      letter-spacing: 0.06em;
+      color: var(--ink-3);
+    }
+
+    /* circular eagle visual */
     .hero {
       position: relative;
       justify-self: center;
+      align-self: center;
       width: 100%;
-      max-width: 560px;
+      max-width: 470px;
+      aspect-ratio: 1 / 1;
+      display: grid;
+      place-items: center;
+      /* keep the outer dashed halo (116% of the circle) clear of the text column */
+      margin: 40px;
     }
 
-    .hero .frame {
-      border-radius: 30px;
+    .hero .shell {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 50%;
       overflow: hidden;
-      background: var(--card);
-      padding: 10px;
-      box-shadow:
-        0 30px 70px rgba(25, 18, 102, 0.28),
-        0 6px 18px rgba(25, 18, 102, 0.12);
+      position: relative;
+      z-index: 2;
+      box-shadow: 0 35px 100px rgba(25, 18, 102, 0.28);
       animation: float 7s ease-in-out infinite;
     }
 
-    .hero img {
-      display: block;
+    .hero .shell img {
       width: 100%;
-      height: auto;
-      border-radius: 22px;
+      height: 100%;
+      object-fit: cover;
+      object-position: 38% center;
+      filter: saturate(0.85);
+      display: block;
     }
+
+    .hero .wash {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: linear-gradient(140deg, rgba(255, 255, 255, 0.16), transparent 40%, rgba(47, 52, 128, 0.16));
+    }
+
+    .halo {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid rgba(85, 97, 187, 0.22);
+    }
+
+    .halo-one { width: 108%; aspect-ratio: 1; }
+
+    .halo-two {
+      width: 116%;
+      aspect-ratio: 1;
+      border-style: dashed;
+      animation: spin 35s linear infinite;
+    }
+
+    .orbit {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid rgba(85, 97, 187, 0.18);
+      z-index: 1;
+    }
+
+    .orbit-one { width: 112%; aspect-ratio: 1; transform: rotate(-20deg) scaleY(0.55); }
+    .orbit-two { width: 103%; aspect-ratio: 1; transform: rotate(38deg) scaleY(0.7); }
+
+    .orbit span {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      background: #647fdf;
+      box-shadow: 0 0 22px #6e87e2;
+      left: 12%;
+      top: 18%;
+    }
+
+    .orbit-two span { left: auto; right: 7%; top: 66%; width: 7px; height: 7px; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     .hero .caption {
       position: absolute;
       left: 50%;
-      bottom: -16px;
+      bottom: -34px;
       transform: translateX(-50%);
+      z-index: 3;
       background: var(--card);
       border: 1px solid var(--lav-line);
       color: var(--ink-2);
@@ -253,13 +377,20 @@
       h1 { font-size: clamp(17px, 4.9vw, 34px); letter-spacing: 0.04em; }
       .launchline { letter-spacing: 0.18em; }
       .blurb { margin-left: auto; margin-right: auto; max-width: 100%; }
-      .hero { max-width: min(440px, 100%); }
+      .beta { margin-left: auto; margin-right: auto; }
+      .beta-label, .beta-note { text-align: center; }
+      .hero { max-width: min(360px, calc(100% - 48px)); margin: 20px auto 48px; }
       header { justify-content: center; }
       footer { justify-content: center; }
     }
 
+    @media (max-width: 560px) {
+      .beta-row { flex-direction: column; }
+      .beta-row button { padding: 15px 26px; }
+    }
+
     @media (prefers-reduced-motion: reduce) {
-      .launchline, .soon .dot, .hero .frame { animation: none; }
+      .launchline, .soon .dot, .hero .shell, .halo-two { animation: none; }
     }
   </style>
 </head>
@@ -285,11 +416,24 @@
         SSR.fun is where anyone can create, launch, and trade decentralized tokenized
         reserves — baskets of Solana assets backed by transparent, on-chain holdings.
       </p>
+      <form class="beta" action="https://app.kit.com/forms/9878615/subscriptions" method="post">
+        <p class="beta-label">Become a beta tester &amp; one of the first creators</p>
+        <div class="beta-row">
+          <input type="email" name="email_address" placeholder="you@email.com" required autocomplete="email" aria-label="Email address" />
+          <button type="submit">Join the beta</button>
+        </div>
+        <p class="beta-note">Early access. No spam — confirm by email.</p>
+      </form>
     </section>
 
     <aside class="hero" aria-hidden="true">
-      <div class="frame">
+      <div class="halo halo-one"></div>
+      <div class="halo halo-two"></div>
+      <div class="orbit orbit-one"><span></span></div>
+      <div class="orbit orbit-two"><span></span></div>
+      <div class="shell">
         <img src="/coming-soon-eagle.jpg" alt="" />
+        <div class="wash"></div>
       </div>
       <div class="caption">The Reserve is being prepared</div>
     </aside>
