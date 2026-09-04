@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SSR.FUN — Coming Soon</title>
-  <meta name="description" content="One token. Infinite possibilities. SSR.FUN — decentralized tokenized reserves on Solana. Get ready to launch." />
+  <meta name="description" content="One token. Infinite possibilities. SSR.FUN — decentralized tokenized reserves on Solana." />
   <link rel="icon" type="image/png" href="/favicon-seal.png" />
   <link rel="apple-touch-icon" href="/apple-touch-seal.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -82,15 +82,6 @@
       margin: 0 auto;
     }
 
-    .eyebrow {
-      font-size: clamp(10px, 1.1vw, 12px);
-      font-weight: 500;
-      letter-spacing: 0.42em;
-      color: var(--ink-3);
-      text-transform: uppercase;
-      margin-bottom: 26px;
-    }
-
     h1 {
       font-weight: 800;
       text-transform: uppercase;
@@ -106,25 +97,6 @@
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
-    }
-
-    .launchline {
-      margin-top: 34px;
-      font-size: clamp(13px, 1.5vw, 18px);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.28em;
-      background: linear-gradient(90deg, var(--ink) 0%, var(--blue-2) 40%, #7c8ade 50%, var(--blue-2) 60%, var(--ink) 100%);
-      background-size: 220% 100%;
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      animation: shimmer 5s linear infinite;
-    }
-
-    @keyframes shimmer {
-      from { background-position: 220% 0; }
-      to { background-position: -20% 0; }
     }
 
     .soon {
@@ -316,25 +288,6 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .hero .caption {
-      position: absolute;
-      left: 50%;
-      bottom: -34px;
-      transform: translateX(-50%);
-      z-index: 3;
-      background: var(--card);
-      border: 1px solid var(--lav-line);
-      color: var(--ink-2);
-      font-size: 10px;
-      font-weight: 500;
-      letter-spacing: 0.26em;
-      text-transform: uppercase;
-      padding: 10px 20px;
-      border-radius: 999px;
-      white-space: nowrap;
-      box-shadow: 0 10px 26px rgba(25, 18, 102, 0.14);
-    }
-
     @keyframes float {
       0%, 100% { transform: translateY(0); }
       50% { transform: translateY(-12px); }
@@ -361,9 +314,7 @@
         gap: 48px;
         padding-top: 8px;
       }
-      .eyebrow { letter-spacing: 0.26em; }
       h1 { font-size: clamp(17px, 4.9vw, 34px); letter-spacing: 0.04em; }
-      .launchline { letter-spacing: 0.18em; }
       .blurb { margin-left: auto; margin-right: auto; max-width: 100%; }
       .beta { margin-left: auto; margin-right: auto; }
       .beta-label, .beta-note { text-align: center; }
@@ -378,7 +329,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .launchline, .soon .dot, .hero .shell, .halo-two { animation: none; }
+      .soon .dot, .hero .shell, .halo-two { animation: none; }
     }
   </style>
 </head>
@@ -392,12 +343,10 @@
 
   <main>
     <section>
-      <p class="eyebrow">Tokenized Reserve Protocol</p>
       <h1>
         <span class="l1">One token.</span>
         <span class="l2">Infinite possibilities.</span>
       </h1>
-      <p class="launchline">Get ready to launch.</p>
       <div class="soon" role="status"><span class="dot"></span>Coming Soon</div>
       <p class="blurb">
         SSR.fun is where anyone can create, launch, and trade decentralized tokenized
@@ -422,7 +371,6 @@
         <img src="/coming-soon-eagle.jpg" alt="" />
         <div class="wash"></div>
       </div>
-      <div class="caption">The Reserve is being prepared</div>
     </aside>
   </main>
 
