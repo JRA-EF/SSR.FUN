@@ -5646,3 +5646,32 @@
   ]
 }
 ```
+
+## DEC-0184
+
+```json
+{
+  "id": "DEC-0184",
+  "date": "2026-09-04",
+  "status": "confirmed-implemented-deployed",
+  "decision": "Re-enabled the site-wide password gate (Gate 1, middleware.ts) on strategic-super-reserve.fun at the Creator's request ('lets password gate strategic-super-reserve.fun again', then 'nevermind the again just password gate it'), with a new site password supplied by the Creator in-session. Purely an env-var change on the ssr-fun Vercel project: SSR_SITE_GATE_ENABLED set from 'false' back to 'true' (the DEC-0129 toggle) and SSR_SITE_PASSWORD replaced with the new value, followed by a production redeploy. No code changed. The internal dashboard gate (Gate 2, SSR_DASHBOARD_PASSWORD) was not touched -- it keeps its existing, separate password, so the two are independent again (reversing the DEC-0119 same-value state for the site side only). The password value itself is deliberately not recorded here.",
+  "context": "Gate 1 had been disabled since DEC-0129 (2026-08-20) via SSR_SITE_GATE_ENABLED=false. The Creator asked to gate the public site again and provided the password to use. The ssr.fun domain is on the separate ssr-fun-final placeholder project (coming-soon page) and is unaffected; strategic-super-reserve.fun and www.strategic-super-reserve.fun are the ssr-fun project's domains (confirmed via vercel domains inspect).",
+  "rationale": "DEC-0129 built the gate as a reversible toggle precisely so that re-enabling would be an env change plus redeploy, not a code revert. Routing Middleware reads env at build/deploy time, so a fresh vercel --prod was required for the new values to take effect (same lesson as DEC-0119). Both vars were replaced via vercel env rm + vercel env add (Sensitive type, so values cannot be read back; correctness confirmed by live login instead).",
+  "alternativesConsidered": [
+    "Also set SSR_DASHBOARD_PASSWORD to the same new value (as DEC-0119 did) -- not done: the Creator only asked to gate the site, and the internal dashboard password was not mentioned. Easy to do separately if wanted.",
+    "Vercel native Deployment Protection (password) -- rejected: the application-level gate already exists, has a branded login page, and exempts the cron paths; native protection would have gated the cron triggers and the login endpoint too."
+  ],
+  "impact": "Every route on strategic-super-reserve.fun (pages and /api/*, except /api/site/login and the 5 CRON_SECRET-authenticated cron paths) now requires the new site password again. Existing browser sessions signed against the old password are invalidated because the session cookie is verified against the current SSR_SITE_PASSWORD. /road-to-mainnet and /internal/* still additionally require the unchanged internal dashboard password. ssr.fun (coming-soon page) unaffected.",
+  "affectedAreas": ["Vercel Production env on project ssr-fun (SSR_SITE_GATE_ENABLED -> true, SSR_SITE_PASSWORD replaced)", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": "DEC-0129",
+  "supersededBy": null,
+  "evidence": [
+    "`vercel env rm` + `vercel env add` for SSR_SITE_GATE_ENABLED and SSR_SITE_PASSWORD (production, Sensitive); `vercel env ls production` shows both refreshed.",
+    "`vercel --prod --yes` deployment dpl_5v9CHR6atn5KpJAsz3TwrMn6QecA (ssr-fevxlcsm8-ssr14.vercel.app), target production, READY.",
+    "Live GET https://strategic-super-reserve.fun/ (no cookie): 200, login page ('SSR.fun - Sign in', 'Password required'), not the app shell.",
+    "Live GET https://strategic-super-reserve.fun/api/mainnet/landing-stats (no cookie): 401 JSON.",
+    "Live POST /api/site/login with a wrong password: 401 {\"error\":\"Incorrect password.\"}; with the new password: 200 {\"ok\":true} + session cookie.",
+    "Live GET / with that session cookie: 200, real app shell (title 'SSR.fun — a launchpad for tokenized reserves')."
+  ]
+}
+```
