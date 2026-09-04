@@ -42,7 +42,7 @@ import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from ".
 import { useMainnetKnownAssetMints } from "../hooks/useMainnetKnownAssetMints";
 import { useMainnetAssetCatalogue } from "../hooks/useMainnetAssetCatalogue";
 
-const BASE_POLL_MS = 15_000;
+const BASE_POLL_MS = 30_000; // was 15_000 -- reserve data changes rarely; halves steady-state discovery load (see rpcResilience rate-limit fix)
 const MAX_POLL_MS = 120_000;
 /** Bounded so a manual "refresh now" moments after a poll tick reuses that tick's result instead of re-asking the RPC -- see refreshRealReserveNow in DTRDetail.tsx, which reads through the same cache key space for the balance half of this. */
 const DISCOVERY_CACHE_TTL_MS = 5_000;
