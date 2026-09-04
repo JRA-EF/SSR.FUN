@@ -30,6 +30,32 @@ interface CacheEntry {
   bodyObj: Record<string, unknown>;
 }
 
+// Rate cap for ACTUAL network reads (applied at the fetch chokepoint below,
+// AFTER cache hits and in-flight coalescing are subtracted). The same-origin
+// rpc-proxy throttles 40 req/1s per IP; a cold-load discovery burst (~126
+// account reads fired near-instantly) clips that momentarily and gets ~6
+// auto-recovering 429s (measured live 2026-09-04). withReadConcurrencyLimit's
+// 25/s cap only covers the discovery code path; this chokepoint sees EVERY
+// rpc-proxy read (discovery, balances, anything through the Connection), so a
+// conservative 18/s here keeps the total under 40/s even during cold load and
+// eliminates the burst 429. Sends/blockhash/etc. are non-cacheable and skip
+// this path entirely (see parseCacheable), so submission is never throttled.
+const MAX_NETWORK_READS_PER_SECOND = 18;
+const READ_RATE_WINDOW_MS = 1_000;
+const networkReadTimes: number[] = [];
+
+async function acquireNetworkReadSlot(): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    while (networkReadTimes.length > 0 && now - networkReadTimes[0] >= READ_RATE_WINDOW_MS) networkReadTimes.shift();
+    if (networkReadTimes.length < MAX_NETWORK_READS_PER_SECOND) {
+      networkReadTimes.push(now);
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, READ_RATE_WINDOW_MS - (now - networkReadTimes[0]) + 5));
+  }
+}
+
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<{ status: number; bodyObj: Record<string, unknown> }>>();
 
@@ -99,6 +125,9 @@ export function coalescingRpcFetch(input: RequestInfo | URL, init?: RequestInit)
   }
 
   const shared = (async () => {
+    // Only genuine network reads reach here (cache hits + coalesced joins
+    // already returned above), so this paces exactly the real read volume.
+    await acquireNetworkReadSlot();
     const res = await fetch(input, init);
     const text = await res.text();
     let bodyObj: Record<string, unknown>;
