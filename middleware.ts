@@ -39,6 +39,7 @@ const CRON_PATHS = new Set([
   '/api/ledger/ingest-cron',
   '/api/ledger/reclassify-actors-cron',
   '/api/ledger/jupiter-snapshot-cron',
+  '/api/mainnet/warm-cache-cron',
 ])
 
 const SITE_LOGIN_PATH = '/api/site/login'

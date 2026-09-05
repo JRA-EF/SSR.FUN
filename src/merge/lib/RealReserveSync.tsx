@@ -248,7 +248,19 @@ export function RealReserveSync() {
           }),
         );
         if (cancelled) return;
-        applyDiscoveredReserves(dtrs, issues.length === 0);
+        // A pass is only AUTHORITATIVE (allowed to prune Reserves it didn't
+        // return) when it was actually capable of resolving multi-asset
+        // Reserves. On Mainnet the candidate-mint list loads asynchronously
+        // (useMainnetKnownAssetMints); until it arrives, mergedMainnetMints is
+        // just [USDC], so this pass can only resolve USDC-only Reserves and
+        // silently drops every multi-asset one as "unresolved". Marking such an
+        // incomplete pass fullyVerified would PRUNE the complete backend warm-
+        // cache seed (ReserveSnapshotHydrator) down to the 1 USDC Reserve, then
+        // climb back a minute later -- the exact 7->1->7 flip observed. So on
+        // Mainnet, only prune once the mint list has loaded past USDC; before
+        // that the pass is additive and preserves the instant snapshot seed.
+        const mintsReady = !IS_MAINNET || mergedMainnetMints.length > 1;
+        applyDiscoveredReserves(dtrs, issues.length === 0 && mintsReady);
         setChainDiscoveryStatus("ready");
 
         if (walletKey && publicKey) {
