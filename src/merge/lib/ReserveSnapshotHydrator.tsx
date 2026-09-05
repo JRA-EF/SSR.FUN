@@ -8,6 +8,7 @@
 // behaves exactly as before (the live poll fills it in).
 import { useEffect } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { registerDynamicSupportedAssetMints } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { IS_MAINNET } from "./solana-config";
 import { fetchReserveSnapshot, buildDtrsFromSnapshot } from "./reserveSnapshotClient";
@@ -22,6 +23,14 @@ export function ReserveSnapshotHydrator() {
     void (async () => {
       const snapshot = await fetchReserveSnapshot(window.location.origin);
       if (cancelled || !snapshot) return;
+      // Register every asset mint the snapshot's Reserves hold BEFORE seeding,
+      // so isReserveTradable() passes immediately. Without this the multi-asset
+      // Reserves seed but fail the Home page's Featured filter (which requires
+      // isReserveTradable) until the async useMainnetKnownAssetMints hook loads
+      // -- i.e. "Active Reserves 7" but "Featured: none". The snapshot already
+      // carries the full mint set, so we don't wait on the hook.
+      const snapshotMints = [...new Set(snapshot.reserves.flatMap((r) => r.assets.map((a) => a.assetMint)))];
+      if (snapshotMints.length > 0) registerDynamicSupportedAssetMints(snapshotMints);
       let dtrs;
       try {
         dtrs = buildDtrsFromSnapshot(snapshot, publicKey ? publicKey.toBase58() : null);
