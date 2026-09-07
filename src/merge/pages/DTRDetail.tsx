@@ -52,7 +52,7 @@ import {
   sampleLinePoints,
   calcAssetPnlPct,
 } from "@/lib/calculations";
-import { normalizeReserveCategory, type ChartTimeframe, type OnChainReserveMeta } from "@/lib/types";
+import { normalizeReserveCategory, type PricePoint, type ChartTimeframe, type OnChainReserveMeta } from "@/lib/types";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -65,7 +65,7 @@ import {
   Tooltip as RechartsTooltip,
 } from "recharts";
 import { format } from "date-fns";
-import { ChevronLeft, Layers, BarChart3, Activity, PenLine, Play } from "lucide-react";
+import { ChevronLeft, Layers, BarChart3, Activity, PenLine, Play, Share2, Send, Link2, Check, Copy, Download } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -186,6 +186,273 @@ function AssetMiniChart({ seed, endPrice, synthetic }: { seed: string; endPrice:
 /* Chart event marker: a subtle pill riding a dashed reference line where a
    creator note landed (fee change, rebalance, …). Clicking it jumps to the
    "Notes from the Creator" section at the bottom of the page. */
+/** X and Facebook marks -- the installed lucide-react build has no brand icons. */
+function XMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z" />
+    </svg>
+  );
+}
+function FacebookMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z" />
+    </svg>
+  );
+}
+
+/** Draws the social share card (1200x675 PNG): reserve identity, about
+ *  snippet, price + 24h change, the price chart, and the link back --
+ *  everything a post needs even where share intents only carry text. */
+function drawShareCard(
+  canvas: HTMLCanvasElement,
+  opts: { name: string; ticker: string; description: string; price: number; change24h: number; points: PricePoint[]; url: string; clusterLabel: string },
+): void {
+  const W = 1200;
+  const H = 675;
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  // SSR navy world ground
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#070429");
+  bg.addColorStop(0.6, "#0d0940");
+  bg.addColorStop(1, "#1c1465");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Chart behind the lower half
+  const pts = opts.points.length > 1 ? opts.points : [{ t: 0, price: opts.price }, { t: 1, price: opts.price }];
+  const chartTop = 330;
+  const chartBottom = 585;
+  const min = Math.min(...pts.map((p) => p.price));
+  const max = Math.max(...pts.map((p) => p.price));
+  const span = max - min || 1;
+  const px = (i: number) => (i / (pts.length - 1)) * W;
+  const py = (v: number) => chartBottom - ((v - min) / span) * (chartBottom - chartTop);
+  ctx.beginPath();
+  pts.forEach((pt, i) => (i === 0 ? ctx.moveTo(px(i), py(pt.price)) : ctx.lineTo(px(i), py(pt.price))));
+  const line = ctx.strokeStyle;
+  ctx.strokeStyle = "#97abef";
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  const fill = ctx.createLinearGradient(0, chartTop, 0, H);
+  fill.addColorStop(0, "rgba(151, 171, 239, 0.35)");
+  fill.addColorStop(1, "rgba(151, 171, 239, 0)");
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = line;
+
+  const giga = "'Lexend Giga', 'Lexend', sans-serif";
+  const lexend = "'Lexend', sans-serif";
+
+  // Identity
+  ctx.fillStyle = "#eef1fc";
+  ctx.font = `700 58px ${giga}`;
+  ctx.fillText(opts.name.toUpperCase().slice(0, 24), 64, 132);
+  // Ticker pill
+  ctx.font = `600 26px ${giga}`;
+  const tickerW = ctx.measureText(opts.ticker).width + 48;
+  ctx.strokeStyle = "#97abef";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(64, 160, tickerW, 52, 26);
+  ctx.stroke();
+  ctx.fillStyle = "#97abef";
+  ctx.fillText(opts.ticker, 88, 196);
+  // Cluster chip text
+  ctx.font = `500 20px ${lexend}`;
+  ctx.fillStyle = "#a7b2dc";
+  ctx.fillText(`Solana ${opts.clusterLabel}`, 88 + tickerW, 194);
+
+  // About snippet, wrapped to two lines
+  ctx.font = `300 26px ${lexend}`;
+  ctx.fillStyle = "#c9d3f7";
+  const words = opts.description.split(/\s+/);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(test).width > W - 480 && cur) {
+      lines.push(cur);
+      cur = w;
+      if (lines.length === 2) break;
+    } else {
+      cur = test;
+    }
+  }
+  if (lines.length < 2 && cur) lines.push(cur);
+  if (lines.length === 2 && cur && !lines.includes(cur)) lines[1] = `${lines[1]}…`;
+  lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, 64, 262 + i * 38));
+
+  // Price block, top right
+  ctx.textAlign = "right";
+  ctx.font = `600 30px ${lexend}`;
+  ctx.fillStyle = "#a7b2dc";
+  ctx.fillText("Token Price", W - 64, 96);
+  ctx.font = `700 64px ${giga}`;
+  ctx.fillStyle = "#eef1fc";
+  ctx.fillText(`$${opts.price.toFixed(2)}`, W - 64, 168);
+  ctx.font = `600 32px ${lexend}`;
+  ctx.fillStyle = opts.change24h >= 0 ? "#4fe3a3" : "#ff8598";
+  ctx.fillText(`${opts.change24h >= 0 ? "+" : ""}${opts.change24h.toFixed(2)}% 24h`, W - 64, 214);
+  ctx.textAlign = "left";
+
+  // Link back, bottom bar
+  ctx.font = `600 26px ${giga}`;
+  ctx.fillStyle = "#ede871";
+  ctx.fillText("SSR.FUN", 64, H - 40);
+  ctx.font = `400 24px ${lexend}`;
+  ctx.fillStyle = "#a7b2dc";
+  ctx.fillText(opts.url.replace(/^https?:\/\//, ""), 210, H - 40);
+}
+
+/** Share pill in the Reserve page's sticky top row. The popover renders a
+ *  branded card (identity, about, chart, link back) that travels with the
+ *  post: attached directly where the browser's share sheet supports files,
+ *  otherwise copied/downloaded to attach by hand; X/Telegram intents carry
+ *  the about text and link. */
+function ShareMenu({ name, ticker, description, price, change24h, points, compact }: { name: string; ticker: string; description: string; price: number; change24h: number; points: PricePoint[]; compact?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<"link" | "image" | null>(null);
+  const [cardUrl, setCardUrl] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const shareUrl = typeof window !== "undefined" ? window.location.href : "";
+  const aboutSnippet = description.length > 120 ? `${description.slice(0, 117)}...` : description;
+  const shareText = `${name} ($${ticker}) on SSR.fun -- ${aboutSnippet}`;
+  const enc = encodeURIComponent;
+  const rowClass = "flex w-full items-center gap-2.5 px-3 py-2 rounded-xl text-sm hover:bg-muted transition-colors";
+
+  // Render the card when the popover opens (fonts are already loaded by then).
+  useEffect(() => {
+    if (!open) return;
+    const canvas = document.createElement("canvas");
+    const render = () => {
+      drawShareCard(canvas, { name, ticker, description, price, change24h, points, url: shareUrl, clusterLabel: CLUSTER_LABEL });
+      setCardUrl(canvas.toDataURL("image/png"));
+    };
+    if (typeof document !== "undefined" && document.fonts?.ready) {
+      void document.fonts.ready.then(render);
+    } else {
+      render();
+    }
+  }, [open, name, ticker, description, price, change24h, points, shareUrl]);
+
+  const cardBlob = async (): Promise<Blob | null> => {
+    if (!cardUrl) return null;
+    return (await fetch(cardUrl)).blob();
+  };
+
+  const flash = (kind: "link" | "image") => {
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 2000);
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      flash("link");
+    } catch { /* clipboard unavailable */ }
+  };
+
+  const copyImage = async () => {
+    try {
+      const blob = await cardBlob();
+      if (!blob) return;
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      flash("image");
+    } catch { /* image clipboard unsupported -- Download still works */ }
+  };
+
+  const nativeShare = async () => {
+    setOpen(false);
+    try {
+      const blob = await cardBlob();
+      const file = blob ? new File([blob], `${ticker.toLowerCase()}-ssr-fun.png`, { type: "image/png" }) : null;
+      if (file && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ title: shareText, text: `${shareText} ${shareUrl}`, files: [file] });
+      } else {
+        await navigator.share({ title: shareText, text: shareText, url: shareUrl });
+      }
+    } catch { /* user dismissed the sheet */ }
+  };
+
+  const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Share ${name}`}
+        className={`inline-flex items-center justify-center gap-2 rounded-full border border-border bg-card text-xs font-semibold hover:bg-muted transition-colors h-9 ${compact ? "w-9" : "px-4"}`}
+      >
+        <Share2 className="w-3.5 h-3.5" />
+        {!compact && "Share"}
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-2 w-80 rounded-2xl border border-border bg-card shadow-xl p-2.5 z-50">
+          {cardUrl && (
+            <div className="mb-2">
+              <img src={cardUrl} alt={`Share card for ${name}`} className="w-full rounded-xl border border-border" />
+              <p className="text-[11px] text-muted-foreground mt-1.5 px-1">
+                Your share card -- copy or download it to attach to your post. Posts link back to this Reserve.
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-1 mb-1">
+            <button role="menuitem" type="button" onClick={() => void copyImage()} className={rowClass}>
+              {copied === "image" ? <Check className="w-4 h-4 text-positive" /> : <Copy className="w-4 h-4" />}
+              {copied === "image" ? "Copied!" : "Copy card"}
+            </button>
+            <a role="menuitem" href={cardUrl ?? "#"} download={`${ticker.toLowerCase()}-ssr-fun.png`} className={rowClass} style={{ color: "inherit" }}>
+              <Download className="w-4 h-4" /> Download
+            </a>
+          </div>
+          <div style={{ borderTop: "1px solid hsl(var(--foreground) / 0.08)" }} className="pt-1">
+            <a role="menuitem" href={`https://twitter.com/intent/tweet?text=${enc(shareText)}&url=${enc(shareUrl)}`} target="_blank" rel="noreferrer" className={rowClass} style={{ color: "inherit" }} onClick={() => setOpen(false)}>
+              <XMark className="w-4 h-4" /> Share on X
+            </a>
+            <a role="menuitem" href={`https://t.me/share/url?url=${enc(shareUrl)}&text=${enc(shareText)}`} target="_blank" rel="noreferrer" className={rowClass} style={{ color: "inherit" }} onClick={() => setOpen(false)}>
+              <Send className="w-4 h-4" /> Share on Telegram
+            </a>
+            <a role="menuitem" href={`https://www.facebook.com/sharer/sharer.php?u=${enc(shareUrl)}`} target="_blank" rel="noreferrer" className={rowClass} style={{ color: "inherit" }} onClick={() => setOpen(false)}>
+              <FacebookMark className="w-4 h-4" /> Share on Facebook
+            </a>
+            <button role="menuitem" type="button" onClick={() => void copyLink()} className={rowClass}>
+              {copied === "link" ? <Check className="w-4 h-4 text-positive" /> : <Link2 className="w-4 h-4" />}
+              {copied === "link" ? "Link copied!" : "Copy link"}
+            </button>
+            {canNativeShare && (
+              <button role="menuitem" type="button" onClick={() => void nativeShare()} className={rowClass}>
+                <Share2 className="w-4 h-4" /> More options...
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Minimal YouTube mark -- the installed lucide-react build has no brand icons. */
 function YoutubeMark({ className }: { className?: string }) {
   return (
@@ -560,9 +827,11 @@ export function DTRDetail() {
   // their featured video takes the top slot. The design-preview overlay
   // fills the preview list underneath.
   const creatorChannel = useMemo(() => {
-    const base = designDemo?.creatorChannel ?? null;
+    // Strictly creator-opt-in: no saved channel, no panel -- the demo overlay
+    // only fills out the preview list once a channel exists.
     const cfg = dtr?.youtube;
-    if (!cfg?.channelUrl) return base;
+    if (!cfg?.channelUrl) return null;
+    const base = designDemo?.creatorChannel ?? null;
     const handleFromUrl = (u: string): string => {
       try {
         const parsed = new URL(u);
@@ -1643,6 +1912,12 @@ export function DTRDetail() {
             <ChevronLeft className="w-4 h-4 mr-1" /> Back to Directory
           </Link>
           <SectionNav />
+          <div className="ml-auto lg:hidden">
+            <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} compact />
+          </div>
+        </div>
+        <div className="hidden lg:flex items-center justify-end">
+          <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} />
         </div>
       </div>
 
