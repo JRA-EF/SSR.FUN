@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -72,6 +72,10 @@ const ADDABLE_ASSETS = IS_MAINNET
 // The rebalance slider model's permanent cash slot -- real USDC on Mainnet,
 // devUSDC on DevNet (see the effect below that seeds proposedWeightsBps).
 const CASH_SLOT_MINT = IS_MAINNET ? MAINNET_USDC_MINT : DEVUSDC.mint;
+
+// Segment colours for the Rebalance tab's "Current Composition" stacked bar
+// and legend (indexed by the asset's order_index position; wraps past 8).
+const COMPOSITION_BAR_COLORS = ["bg-primary", "bg-amber-500", "bg-sky-500", "bg-emerald-500", "bg-rose-500", "bg-violet-500", "bg-orange-500", "bg-teal-500"];
 const CASH_SLOT_SYMBOL = IS_MAINNET ? "USDC" : DEVUSDC.symbol;
 const CASH_SLOT_DECIMALS = IS_MAINNET ? 6 : DEVUSDC.decimals;
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
@@ -903,12 +907,47 @@ export function ManageDTR() {
       ]
     : [];
   const totalProposedBps = proposedAssetRows.reduce((sum, r) => sum + (proposedWeightsBps[r.mint] ?? 0), 0);
+  // Real per-asset USD price: the live Mainnet prices RealReserveSync already
+  // attached to this Reserve (onChain.assetPricesUsd), falling back to the
+  // DevNet fixture table. This panel used to read ONLY the fixture table, so
+  // on Mainnet every non-fixture asset (any pump token, PENGU, ...) priced at
+  // $0 -- balances read "$0.00", the Reserve total was wrong, and the current
+  // composition effectively did not display (tester item 5, 2026-09-07).
+  const assetPriceUsd = (mint: string): number | null => {
+    const live = dtr.onChain?.assetPricesUsd?.[mint];
+    if (typeof live === "number" && Number.isFinite(live) && live > 0) return live;
+    const fixture = TEST_ASSET_PRICES_USD[mint];
+    return typeof fixture === "number" && fixture > 0 ? fixture : null;
+  };
   const totalReserveUsd = dtr.onChain
     ? dtr.onChain.assets.reduce((sum, a) => {
         const balanceHuman = Number(dtr.onChain!.vaultBalancesRaw[a.mint] ?? "0") / 10 ** a.decimals;
-        return sum + balanceHuman * (TEST_ASSET_PRICES_USD[a.mint] ?? 0);
+        return sum + balanceHuman * (assetPriceUsd(a.mint) ?? 0);
       }, 0)
     : 0;
+  // The Reserve's REAL composition right now -- each asset's share of the
+  // live USD value actually held in the vaults (not its target) -- displayed
+  // in full beside the sliders so every rebalance is proposed against the
+  // true starting point. `priced` is false when no live price is available
+  // for a held asset; its share is then honestly shown as unknown, never 0%.
+  const currentCompositionRows = dtr.onChain
+    ? [...dtr.onChain.assets]
+        .sort((a, b) => a.orderIndex - b.orderIndex)
+        .map((a) => {
+          const balanceHuman = Number(dtr.onChain!.vaultBalancesRaw[a.mint] ?? "0") / 10 ** a.decimals;
+          const price = assetPriceUsd(a.mint);
+          const balanceUsd = balanceHuman * (price ?? 0);
+          return {
+            mint: a.mint,
+            symbol: a.symbol,
+            balanceHuman,
+            balanceUsd,
+            priced: price !== null || balanceHuman === 0,
+            actualPct: totalReserveUsd > 0 ? (balanceUsd / totalReserveUsd) * 100 : 0,
+            targetPct: a.weightBps / 100,
+          };
+        })
+    : [];
 
   /**
    * Applies one slider/input edit via the devUSDC-priority cash-bucket model
@@ -1897,7 +1936,8 @@ export function ManageDTR() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-6">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Right column gets the larger share: it carries the full current composition AND every slider. */}
+                    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-8">
                       {/* Left: search + add a new reserve asset -- one click, purely local */}
                       <div className="space-y-4">
                         <h4 className="font-semibold text-sm">Add a Reserve Asset</h4>
@@ -1936,8 +1976,58 @@ export function ManageDTR() {
                         </p>
                       </div>
 
-                      {/* Right: proposed composition -- one slider per asset, yellow marker at its real current on-chain weight */}
+                      {/* Right: the FULL current composition (real holdings by live value, next to each on-chain target), then the proposed composition -- one slider per asset, yellow marker at its real current on-chain weight */}
                       <div className="space-y-4">
+                        <div className="p-3 border border-border rounded-lg bg-muted/20 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-semibold text-sm">Current Composition</h4>
+                            <span className="text-xs text-muted-foreground font-merge-mono">{formatUsdc(totalReserveUsd, { compact: true })} held</span>
+                          </div>
+                          {/* Stacked bar of what the vaults actually hold, by live USD value */}
+                          <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden>
+                            {currentCompositionRows.map((r, i) =>
+                              r.actualPct > 0 ? (
+                                <div
+                                  key={r.mint}
+                                  className={COMPOSITION_BAR_COLORS[i % COMPOSITION_BAR_COLORS.length]}
+                                  style={{ width: `${r.actualPct}%` }}
+                                  title={`${r.symbol}: ${r.actualPct.toFixed(1)}% of holdings`}
+                                />
+                              ) : null,
+                            )}
+                          </div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 text-xs">
+                            <span className="text-muted-foreground">Asset</span>
+                            <span className="text-muted-foreground text-right">Held now</span>
+                            <span className="text-muted-foreground text-right">On-chain target</span>
+                            {currentCompositionRows.map((r, i) => (
+                              <Fragment key={r.mint}>
+                                <span className="flex items-center gap-1.5 min-w-0">
+                                  <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${COMPOSITION_BAR_COLORS[i % COMPOSITION_BAR_COLORS.length]}`} />
+                                  <span className="font-semibold font-merge-mono truncate">{r.symbol}</span>
+                                </span>
+                                <span className="text-right font-merge-mono">
+                                  {r.priced ? (
+                                    <>
+                                      {r.actualPct.toFixed(1)}%
+                                      <span className="text-muted-foreground"> ({formatUsdc(r.balanceUsd, { compact: true })})</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground" title={`${r.balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${r.symbol} held -- no live USD price available`}>
+                                      price unavailable
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="text-right font-merge-mono">{r.targetPct.toFixed(1)}%</span>
+                              </Fragment>
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">
+                            "Held now" is each asset's share of the Reserve's live USD value; "On-chain target" is the weight the Reserve is
+                            currently set to. Sliders below propose new targets against this.
+                          </p>
+                        </div>
+
                         <div className="flex items-center justify-between">
                           <h4 className="font-semibold text-sm">Proposed Composition</h4>
                           <span className={`font-merge-mono text-xs font-bold ${totalProposedBps === 10_000 ? "text-primary" : "text-destructive"}`}>
@@ -1954,7 +2044,7 @@ export function ManageDTR() {
                               const vaultBalanceRaw = dtr.onChain!.vaultBalancesRaw[row.mint] ?? "0";
                               const isEmpty = vaultBalanceRaw === "0";
                               const balanceHuman = Number(vaultBalanceRaw) / 10 ** row.decimals;
-                              const balanceUsd = balanceHuman * (TEST_ASSET_PRICES_USD[row.mint] ?? 0);
+                              const balanceUsd = balanceHuman * (assetPriceUsd(row.mint) ?? 0);
                               const projectedUsd = (proposedBps / 10_000) * totalReserveUsd;
                               const isDrivenToZero = proposedBps === 0 && row.benchmarkBps > 0;
                               const canRemoveOnChain = !row.isNew && isEmpty && row.mint === lastOnChainMint;
