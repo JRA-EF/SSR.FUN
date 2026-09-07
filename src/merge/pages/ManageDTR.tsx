@@ -3,6 +3,8 @@ import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
+import { normalizeYouTubeChannelUrl, parseYouTubeVideoId } from "@/lib/youtube";
+import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered, computeMarketCap, type AssetPriceInfo } from "@/lib/onChainReserve";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
@@ -221,7 +223,7 @@ function OnChainDelegateRow({
 
 export function ManageDTR() {
   const { dtrId } = useParams();
-  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates, setReserveProfileImage } = useAppStore();
+  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates, setReserveProfileImage, setReserveYoutube, setReserveHeaderImage } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const { toast } = useToast();
@@ -737,6 +739,49 @@ export function ManageDTR() {
   // accepted trade-off. A purely local/simulated Reserve has no gate beyond
   // the page's own manager-or-delegate access check above.
   const canEditProfilePicture = dtr.onChain ? canUpdateMetadataOnChain : true;
+  // Creator YouTube links (video panel on the Reserve page). Same permission
+  // gate as the profile picture: metadata-shaping, local-only state.
+  const [youtubeChannelDraft, setYoutubeChannelDraft] = useState(dtr.youtube?.channelUrl ?? "");
+  const [youtubeFeaturedDraft, setYoutubeFeaturedDraft] = useState(dtr.youtube?.featuredVideoUrl ?? "");
+  const [youtubeSavedTick, setYoutubeSavedTick] = useState(false);
+  const youtubeFeaturedInvalid = youtubeFeaturedDraft.trim() !== "" && !parseYouTubeVideoId(youtubeFeaturedDraft);
+  const handleSaveYoutube = () => {
+    const channel = youtubeChannelDraft.trim();
+    if (!channel) {
+      setReserveYoutube(dtr.id, null);
+    } else {
+      setReserveYoutube(dtr.id, {
+        channelUrl: normalizeYouTubeChannelUrl(channel),
+        featuredVideoUrl: youtubeFeaturedDraft.trim() || undefined,
+      });
+    }
+    setYoutubeSavedTick(true);
+    window.setTimeout(() => setYoutubeSavedTick(false), 2500);
+  };
+
+  // Header banner (full-width art across the top of the Reserve's page).
+  // Same permission gate as the profile picture; stored locally for now.
+  const headerImageInputRef = useRef<HTMLInputElement>(null);
+  const [pendingHeaderImage, setPendingHeaderImage] = useState<string | null>(null);
+  const [headerImageError, setHeaderImageError] = useState<string | null>(null);
+  const [headerSavedTick, setHeaderSavedTick] = useState(false);
+  const handlePickHeaderImage = async (file: File | undefined) => {
+    if (!file) return;
+    setHeaderImageError(null);
+    try {
+      setPendingHeaderImage(await fileToHeaderImageDataUrl(file));
+    } catch (e) {
+      setPendingHeaderImage(null);
+      setHeaderImageError(e instanceof Error ? e.message : "This file could not be read as an image -- try a different one.");
+    }
+  };
+  const handleSaveHeaderImage = () => {
+    if (!pendingHeaderImage) return;
+    setReserveHeaderImage(dtr.id, pendingHeaderImage);
+    setPendingHeaderImage(null);
+    setHeaderSavedTick(true);
+    window.setTimeout(() => setHeaderSavedTick(false), 2500);
+  };
 
   const handlePickProfileImage = async (file: File | undefined) => {
     if (!file) return;
@@ -1113,6 +1158,95 @@ export function ManageDTR() {
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Ticker</p>
                       <p className="font-merge-mono font-medium">{dtr.ticker}</p>
                     </div>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground mb-2">YouTube</p>
+                    {canEditProfilePicture ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label htmlFor="manage-youtube-channel" className="text-xs">Channel link</Label>
+                            <Input
+                              id="manage-youtube-channel"
+                              placeholder="e.g. youtube.com/@yourchannel"
+                              value={youtubeChannelDraft}
+                              onChange={(e) => setYoutubeChannelDraft(e.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="manage-youtube-featured" className="text-xs">Featured video link</Label>
+                            <Input
+                              id="manage-youtube-featured"
+                              placeholder="e.g. youtube.com/watch?v=..."
+                              value={youtubeFeaturedDraft}
+                              onChange={(e) => setYoutubeFeaturedDraft(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        {youtubeFeaturedInvalid && (
+                          <p className="text-xs text-destructive">That doesn't look like a YouTube video link -- paste the full link to one video.</p>
+                        )}
+                        <div className="flex items-center gap-3">
+                          <Button size="sm" onClick={handleSaveYoutube} disabled={youtubeFeaturedInvalid}>
+                            Save YouTube Links
+                          </Button>
+                          {youtubeSavedTick && <span className="text-xs text-positive">Saved -- your Reserve's page now shows these.</span>}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Your channel appears in the video panel on this Reserve's page, and the featured video plays at the top of it. Clear the channel field and save to remove the panel's links.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Only the Root Manager, or a delegate granted the "Update Metadata" permission, can change this Reserve's YouTube links.
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground mb-2">Header Image</p>
+                    {canEditProfilePicture ? (
+                      <div className="space-y-3">
+                        {(pendingHeaderImage ?? dtr.headerImageUrl) && (
+                          <div className="relative h-24 sm:h-32 rounded-xl overflow-hidden border border-border">
+                            <img src={pendingHeaderImage ?? dtr.headerImageUrl} alt="Header preview" className="w-full h-full object-cover" style={{ objectPosition: "center 30%" }} />
+                            <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 55%, hsl(var(--background) / 0.9) 100%)" }} />
+                          </div>
+                        )}
+                        <input
+                          ref={headerImageInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          className="hidden"
+                          onChange={(e) => {
+                            void handlePickHeaderImage(e.target.files?.[0]);
+                            e.target.value = "";
+                          }}
+                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => headerImageInputRef.current?.click()}>
+                            Choose Image
+                          </Button>
+                          {pendingHeaderImage && (
+                            <>
+                              <Button size="sm" onClick={handleSaveHeaderImage}>Save Header</Button>
+                              <Button size="sm" variant="ghost" onClick={() => setPendingHeaderImage(null)}>Cancel</Button>
+                            </>
+                          )}
+                          {!pendingHeaderImage && dtr.headerImageUrl && (
+                            <Button size="sm" variant="ghost" onClick={() => setReserveHeaderImage(dtr.id, null)}>Remove Header</Button>
+                          )}
+                          {headerSavedTick && <span className="text-xs text-positive">Saved -- your Reserve's page now shows this header.</span>}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Shown full-width across the top of this Reserve's page, softly faded at the bottom. JPG or PNG (WebP and GIF work too). Ideal size: a wide landscape image, 1800 x 600 pixels or larger -- about a 3:1 crop. Keep the subject near the center; the bottom third fades into the page, and phones show a tighter middle slice. Large files are resized to 1800 pixels wide automatically.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Only the Root Manager, or a delegate granted the "Update Metadata" permission, can change this Reserve's header image.
+                      </p>
+                    )}
+                    {headerImageError && <p className="text-sm text-destructive mt-2">{headerImageError}</p>}
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-muted-foreground mb-1">Root Manager</p>

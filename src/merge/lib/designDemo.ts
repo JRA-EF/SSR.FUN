@@ -216,6 +216,39 @@ function demoCreatorNotes(now: number): DemoCreatorNote[] {
   ];
 }
 
+export interface DemoCreatorVideo {
+  title: string;
+  /** YouTube video id for in-panel playback. Demo entries share a
+   *  public-domain placeholder (Big Buck Bunny) until real uploads exist. */
+  videoId: string;
+  duration: string;
+  /** Local art stand-in for a real YouTube thumbnail. */
+  thumbnail: string;
+  views: string;
+  age: string;
+}
+
+export interface DemoCreatorChannel {
+  name: string;
+  handle: string;
+  url: string;
+  videos: DemoCreatorVideo[];
+}
+
+function demoCreatorChannel(): DemoCreatorChannel {
+  return {
+    name: "Devnet Reserve One",
+    handle: "@devnetreserveone",
+    url: "https://www.youtube.com/",
+    videos: [
+      { title: "Why I launched this Reserve — strategy & goals", videoId: "aqz-KE-bpKQ", duration: "12:47", thumbnail: "/create-hero.jpg", views: "18K views", age: "2 days ago" },
+      { title: "Inside the basket: all 12 assets explained", videoId: "aqz-KE-bpKQ", duration: "9:31", thumbnail: "/portfolio-hero.jpg", views: "11K views", age: "1 week ago" },
+      { title: "September rebalance walkthrough", videoId: "aqz-KE-bpKQ", duration: "7:04", thumbnail: "/manage-hero.jpg", views: "8.2K views", age: "2 weeks ago" },
+      { title: "Fee cut explained: what changes for holders", videoId: "aqz-KE-bpKQ", duration: "5:22", thumbnail: "/discover-hero.jpg", views: "14K views", age: "3 weeks ago" },
+    ],
+  };
+}
+
 export interface DesignDemoOverlay {
   active: true;
   priceHistory: PricePoint[];
@@ -225,6 +258,8 @@ export interface DesignDemoOverlay {
   composition: DemoCompositionAsset[];
   /** Illustrative creator changelog for the "Notes from the Creator" section. */
   creatorNotes: DemoCreatorNote[];
+  /** Illustrative creator YouTube channel for the videos panel under Buy/Sell. */
+  creatorChannel: DemoCreatorChannel;
 }
 
 /* One overlay per Reserve per session, so timestamps/curve stay stable
@@ -257,6 +292,7 @@ export function applyDesignDemo(dtr: DTR, isMainnet: boolean): DesignDemoOverlay
     change7d: changeSince(priceAt(7 * DAY_MS)),
     composition: DEMO_COMPOSITION,
     creatorNotes: demoCreatorNotes(now),
+    creatorChannel: demoCreatorChannel(),
   };
   cache.set(key, overlay);
   return overlay;

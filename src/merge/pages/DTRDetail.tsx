@@ -65,7 +65,7 @@ import {
   Tooltip as RechartsTooltip,
 } from "recharts";
 import { format } from "date-fns";
-import { ChevronLeft, Layers, BarChart3, Activity, PenLine } from "lucide-react";
+import { ChevronLeft, Layers, BarChart3, Activity, PenLine, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -79,6 +79,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLandingStats } from "@/hooks/useLandingStats";
 import { ChartTimeframeSelector, DEFAULT_CHART_TIMEFRAME } from "@/components/ChartTimeframeSelector";
 import { applyDesignDemo, demoPriceHistory, isDesignDemoEnabled } from "@/lib/designDemo";
+import { parseYouTubeVideoId, youTubeThumbnailUrl } from "@/lib/youtube";
 import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
 import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
 
@@ -185,6 +186,16 @@ function AssetMiniChart({ seed, endPrice, synthetic }: { seed: string; endPrice:
 /* Chart event marker: a subtle pill riding a dashed reference line where a
    creator note landed (fee change, rebalance, …). Clicking it jumps to the
    "Notes from the Creator" section at the bottom of the page. */
+/** Minimal YouTube mark -- the installed lucide-react build has no brand icons. */
+function YoutubeMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="#FF0033" aria-hidden="true">
+      <path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.5 3.55 12 3.55 12 3.55s-7.5 0-9.38.5A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14c1.88.5 9.38.5 9.38.5s7.5 0 9.38-.5a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81z" />
+      <path d="M9.55 15.57V8.43L15.82 12l-6.27 3.57z" fill="#ffffff" />
+    </svg>
+  );
+}
+
 function NoteMarkerLabel(props: { viewBox?: { x: number; y: number; height: number }; text?: string; level?: number }) {
   const { viewBox, text = "", level = 0 } = props;
   if (!viewBox) return null;
@@ -347,6 +358,10 @@ export function DTRDetail() {
 
   // Trading state
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
+  // Creator-videos mini player: which video holds the featured slot, and
+  // whether it is currently playing in the panel (embedded, not a redirect).
+  const [featuredVideoIdx, setFeaturedVideoIdx] = useState(0);
+  const [videoPlaying, setVideoPlaying] = useState(false);
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
   // Which percentage pill (0.25/0.5/0.75/1) is currently selected per side —
@@ -538,6 +553,38 @@ export function DTRDetail() {
   // Design-preview overlay (?demo=1, DevNet-only): a flat fixture Reserve charts a
   // synthetic series instead, disclosed beside the chart -- see designDemo.ts.
   const designDemo = dtr ? applyDesignDemo(dtr, IS_MAINNET) : null;
+  // Creator's YouTube channel for the videos panel under Buy/Sell. The
+  // creator's own saved links (Launch step 1 / Manager Dashboard > Reserve
+  // Identity) take priority: their channel becomes the outbound link and
+  // their featured video takes the top slot. The design-preview overlay
+  // fills the preview list underneath.
+  const creatorChannel = useMemo(() => {
+    const base = designDemo?.creatorChannel ?? null;
+    const cfg = dtr?.youtube;
+    if (!cfg?.channelUrl) return base;
+    const handleFromUrl = (u: string): string => {
+      try {
+        const parsed = new URL(u);
+        return parsed.pathname.split("/").find((seg) => seg.startsWith("@")) ?? parsed.hostname;
+      } catch {
+        return u;
+      }
+    };
+    const videos = [...(base?.videos ?? [])];
+    const featuredId = parseYouTubeVideoId(cfg.featuredVideoUrl);
+    if (featuredId) {
+      videos.unshift({
+        title: "Featured by the creator",
+        videoId: featuredId,
+        duration: "",
+        thumbnail: youTubeThumbnailUrl(featuredId),
+        views: "",
+        age: "",
+      });
+    }
+    if (videos.length === 0) return null;
+    return { name: dtr?.name ?? "", handle: handleFromUrl(cfg.channelUrl), url: cfg.channelUrl, videos };
+  }, [designDemo, dtr]);
   const priceHistory = designDemo?.priceHistory ?? dtr?.priceHistory ?? [];
   const displayChange24h = designDemo ? designDemo.change24h : (dtr?.change24h ?? 0);
   const displayChange7d = designDemo ? designDemo.change7d : (dtr?.change7d ?? 0);
@@ -1571,7 +1618,7 @@ export function DTRDetail() {
   };
 
   return (
-    <div className="container mx-auto px-4 md:px-8 py-8">
+    <div className="container mx-auto px-4 md:px-8 py-8 relative">
       {/* Top row mirrors the page grid so the section-nav pill's right edge
           lines up exactly with the chart card's. Sticky just below the main
           nav (60px tall) so the section pills stay reachable while scrolling;
@@ -1582,7 +1629,13 @@ export function DTRDetail() {
         // top = the main nav's full height (60px row + 1px border) so the bar
         // stays flush against it while scrolling; opaque page-ground background
         // so it never reads as a separate translucent band.
-        style={{ top: 61, background: "hsl(var(--background))" }}
+        style={{
+          top: 61,
+          // Solid page ground normally; over a creator header image a solid
+          // strip would cut the art, so it goes frosted-glass instead.
+          background: dtr.headerImageUrl ? "hsl(var(--background) / 0.55)" : "hsl(var(--background))",
+          backdropFilter: dtr.headerImageUrl ? "blur(12px)" : undefined,
+        }}
       >
         <div className="lg:col-span-2 flex items-center gap-4">
           <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-primary transition-colors shrink-0">
@@ -1591,6 +1644,19 @@ export function DTRDetail() {
           <SectionNav />
         </div>
       </div>
+
+      {dtr.headerImageUrl && (
+        /* Creator-uploaded header: the same treatment as the app's own page
+           heroes -- absolutely positioned BEHIND the top of the page (content
+           does not move down), soft wash + bottom fade into the ground.
+           -z-10 is safe here for the same reason as Portfolio's hero: the
+           .merge-scope wrapper isolates stacking. */
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+          <img src={dtr.headerImageUrl} alt="" className="w-full h-full object-cover" style={{ objectPosition: "center 30%" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.5) 0%, hsl(var(--background) / 0.15) 45%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.2) 68%, hsl(var(--background)) 100%)" }} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Details & Charts */}
@@ -2210,7 +2276,7 @@ export function DTRDetail() {
         <div className="lg:col-span-1">
           {/* z-20 beats the chart card's z-10 so button ripples expanding past
               the panel animate OVER the chart, not behind it. */}
-          <div className="sticky top-24 z-20">
+          <div id="section-trade" className="sticky top-24 z-20 scroll-mt-28">
             <Card className="border-border shadow-xl bg-card">
               <Tabs value={isWindingDown ? "sell" : tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
                 <CardHeader className="pb-4">
@@ -2700,8 +2766,143 @@ export function DTRDetail() {
                 </CardContent>
               </Card>
             )}
+
+            {creatorChannel && creatorChannel.videos.length > 0 && (() => {
+              /* Creator videos mini player: pressing play embeds the video in
+                 the panel (no redirect); pressing a preview promotes it to the
+                 featured slot and plays it there. Only the explicit
+                 "Watch on YouTube" link leaves the page. Inline color:inherit
+                 beats FABLE's unlayered `a` accent rule. */
+              const vids = creatorChannel.videos;
+              const safeIdx = featuredVideoIdx < vids.length ? featuredVideoIdx : 0;
+              const featured = vids[safeIdx];
+              const rest = vids.map((v, i) => ({ v, i })).filter(({ i }) => i !== safeIdx).slice(0, 3);
+              return (
+              <Card className="mt-4 bg-card border-card-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-merge-display flex items-center gap-2">
+                    <YoutubeMark className="w-4 h-4" /> From the Creator
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    <a href={creatorChannel.url} target="_blank" rel="noreferrer" style={{ color: "inherit" }} className="hover:underline">
+                      {creatorChannel.handle} on YouTube
+                    </a>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0">
+                  <div>
+                    <div className="relative aspect-video rounded-xl overflow-hidden border border-border bg-black">
+                      {videoPlaying ? (
+                        <iframe
+                          key={`${featured.videoId}-${safeIdx}`}
+                          src={`https://www.youtube-nocookie.com/embed/${featured.videoId}?autoplay=1&rel=0&modestbranding=1`}
+                          title={featured.title}
+                          className="absolute inset-0 w-full h-full"
+                          style={{ border: 0 }}
+                          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                          allowFullScreen
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setVideoPlaying(true)}
+                          className="group block w-full h-full text-left"
+                          aria-label={`Play video: ${featured.title}`}
+                        >
+                          <img src={featured.thumbnail} alt="" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+                          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(7,4,41,0) 55%, rgba(7,4,41,0.55) 100%)" }} />
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            <span className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-transform duration-200 group-hover:scale-110" style={{ background: "rgba(255,255,255,0.92)" }}>
+                              <Play className="w-5 h-5 ml-0.5" style={{ color: "#070429", fill: "#070429" }} />
+                            </span>
+                          </span>
+                          {featured.duration && (
+                            <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-merge-mono" style={{ background: "rgba(7,4,41,0.8)", color: "#ffffff" }}>
+                              {featured.duration}
+                            </span>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-2 text-sm font-medium leading-snug">{featured.title}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] text-muted-foreground">{featured.views && featured.age ? `${featured.views} · ${featured.age}` : "From the creator's channel"}</p>
+                      <a
+                        href={creatorChannel.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] font-medium hover:underline shrink-0"
+                        style={{ color: "hsl(var(--primary))" }}
+                      >
+                        Watch on YouTube ↗
+                      </a>
+                    </div>
+                  </div>
+                  <div style={{ borderTop: "1px solid hsl(var(--foreground) / 0.08)" }}>
+                    {rest.map(({ v, i }) => (
+                      <button
+                        key={v.title}
+                        type="button"
+                        onClick={() => { setFeaturedVideoIdx(i); setVideoPlaying(true); }}
+                        className="flex items-start gap-2.5 group pt-2.5 w-full text-left"
+                        style={{ color: "inherit" }}
+                        aria-label={`Play video: ${v.title}`}
+                      >
+                        <div className="relative w-24 shrink-0 aspect-video rounded-lg overflow-hidden border border-border">
+                          <img src={v.thumbnail} alt="" className="w-full h-full object-cover" />
+                          <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.92)" }}>
+                              <Play className="w-3 h-3 ml-px" style={{ color: "#070429", fill: "#070429" }} />
+                            </span>
+                          </span>
+                          {v.duration && (
+                            <span className="absolute bottom-1 right-1 rounded px-1 text-[9px] font-merge-mono" style={{ background: "rgba(7,4,41,0.8)", color: "#ffffff" }}>{v.duration}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium leading-snug line-clamp-2">{v.title}</p>
+                          {v.views && v.age && <p className="text-[10px] text-muted-foreground mt-0.5">{v.views} · {v.age}</p>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              );
+            })()}
           </div>
         </div>
+      </div>
+
+      {/* Mobile sticky Buy/Sell: on small screens the trade panel sits far
+          down the page, so a floating pill bar keeps the primary actions
+          reachable; tapping one jumps to the panel on the right tab. Hidden
+          on lg+ where the sticky trade rail is always in view. */}
+      <div
+        className="lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 p-1.5 rounded-full border border-border shadow-xl"
+        style={{ background: "hsl(var(--card) / 0.92)", backdropFilter: "blur(10px)" }}
+      >
+        <button
+          type="button"
+          disabled={isWindingDown}
+          className="rounded-full px-8 h-10 text-sm font-bold bg-action text-action-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => {
+            setTradeTab("buy");
+            document.getElementById("section-trade")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+        >
+          Buy
+        </button>
+        <button
+          type="button"
+          className="rounded-full px-8 h-10 text-sm font-bold text-destructive"
+          onClick={() => {
+            setTradeTab("sell");
+            document.getElementById("section-trade")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+        >
+          Sell
+        </button>
       </div>
 
       {/* Market Section: Recent Trades */}
