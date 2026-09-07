@@ -45,6 +45,10 @@
     {
       "path": "/api/ledger/jupiter-snapshot-cron",
       "schedule": "0 5 * * 1"
+    },
+    {
+      "path": "/api/mainnet/warm-cache-cron",
+      "schedule": "*/1 * * * *"
     }
   ],
   "rewrites": [
