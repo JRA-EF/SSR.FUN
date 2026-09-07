@@ -5789,3 +5789,37 @@
   ]
 }
 ```
+
+## DEC-0188
+
+```json
+{
+  "id": "DEC-0188",
+  "date": "2026-09-07",
+  "status": "confirmed-implemented-deployed",
+  "decision": "The closed-beta gate (DEC-0187) gains a second key list for the team: Production env SSR_TEAM_KEYS (comma-separated; 10 keys of the form SSR-TEAM-XXXX-XXXX-XXXX issued this pass and handed to the Creator). A team key is redeemed through the same Coming Soon field and endpoint, but its session cookie lasts TEAM_SESSION_TTL_MS = 400 days instead of 30. Everything else is shared: cookie format, signing secret (SSR_SITE_PASSWORD), per-key revocation (remove the key from SSR_TEAM_KEYS and its sessions die), rate limiting, and Gate 2.",
+  "context": "Creator, right after DEC-0187 shipped: 'give me 10 keys that are forever and for like team etc'. 'Forever' is not literally achievable with a cookie: browsers cap cookie lifetime (Chrome enforces a 400-day maximum on Max-Age/Expires; Safari and Firefox honour server-set HttpOnly cookies but a longer value is still clamped by Chrome). 400 days is therefore the practical ceiling and was chosen as the team TTL.",
+  "rationale": "A separate list rather than a per-key TTL field keeps configuration trivial (two env vars, no schema) and keeps beta and team keys visually distinct (SSR-BETA- vs SSR-TEAM- prefixes). The TTL is decided at redemption from which list matched (sessionTtlForKey), while verification uses the union (configuredAccessKeys) so middleware never needs to know which list a cookie came from -- the cookie already carries the key's digest and its own expiry. A key present in both lists is treated as a beta key (30 days) -- the conservative reading.",
+  "alternativesConsidered": [
+    "Truly non-expiring sessions (no Max-Age, or a 100-year expiry) -- rejected: session cookies without Max-Age die when the browser closes, and Chrome clamps any expiry beyond 400 days to 400 days anyway; the cookie's embedded expiresAt would also have to be trusted for decades. 400 days re-entered once a year is the honest 'forever'.",
+    "Make every key 400 days -- rejected: the Creator chose 30 days for beta testers hours earlier (DEC-0187); team members are the exception.",
+    "Encode 'team' in the cookie instead of relying on the list at verification -- unnecessary: expiry is already in the signed cookie, and revocation still works through the key tag."
+  ],
+  "impact": "Team members sign in once a year per browser. Ten team keys live in Production env SSR_TEAM_KEYS (Sensitive); rotating or removing one is an env edit plus redeploy. No change for beta users, the Coming Soon page, APIs, or the dashboard gate.",
+  "affectedAreas": [
+    "lib/site/session.ts (TEAM_SESSION_TTL_MS, AccessKeyEnv, configuredTeamKeys, configuredAccessKeys, sessionTtlForKey)",
+    "api/site/login.ts (access list + per-key TTL)",
+    "middleware.ts (verifies against the access list)",
+    "tests/phase_beta_gate.mjs (+3 team-key tests, 18 total)",
+    "Vercel Production env: +SSR_TEAM_KEYS",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx mocha tests/phase_beta_gate.mjs` -> 18 passing (team list parsing; union access list; 400-day vs 30-day TTL selection incl. a key in both lists; team cookie verifies against the union, not the beta list alone, and dies when the team key is removed). `npx tsc -b` exit 0.",
+    "Production dpl_4H6v754eMx94UTCiHjjmBJVs8XNB (main @ ded6b95): POST /api/site/login with a team key -> 200 + Set-Cookie ssr_site_session ... Max-Age=34560000 (400 days), embedded expiry ~400 days out, and /api/mainnet/landing-stats 200 with that cookie; a beta key -> Max-Age=2592000 (30 days); unauthenticated / -> 'SSR.FUN — Coming Soon'.",
+    "git: ded6b95 on main pushed to origin; design merged from main and pushed."
+  ]
+}
+```
