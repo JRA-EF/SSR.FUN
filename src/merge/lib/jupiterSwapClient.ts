@@ -191,7 +191,52 @@ export async function submitSignedJupiterSwap(
   onSubmitted?.(signature);
   const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
-  if (outcome.status === "failed") throw new Error(`${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
-  if (outcome.status === "expired") throw new Error(`Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+  if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
+  if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
   throw new AmbiguousConfirmationError(signature, "Mainnet"); // Jupiter swaps are Mainnet-only.
+}
+
+/**
+ * A swap that DEFINITIVELY did not land: either it executed on-chain and
+ * failed (nothing moved, only the network fee was spent) or its blockhash
+ * expired before it was ever included (nothing moved at all). Both are safe
+ * to retry with a fresh quote, which is why they get their own class -- an
+ * AmbiguousConfirmationError (status unknown) must NEVER be auto-retried
+ * (a second swap could land next to a first that quietly succeeded).
+ *
+ * Live motivation (2026-09-07, GOLF, sig 48hDBgg3...vvi5b): a pump-token
+ * route failed inside one DEX hop with custom error 0xe after ~4k CU (an
+ * early pool-state precondition, not slippage); the user's manual retry
+ * with a fresh quote landed on the first try. That retry is now automatic.
+ */
+export class JupiterSwapNotLandedError extends Error {
+  readonly kind: "failed" | "expired";
+  readonly signature: string;
+  constructor(kind: "failed" | "expired", signature: string, message: string) {
+    super(message);
+    this.name = "JupiterSwapNotLandedError";
+    this.kind = kind;
+    this.signature = signature;
+  }
+}
+
+/** How many times a leg whose swap definitively did not land is automatically re-quoted and re-signed before the failure is surfaced to the user. */
+export const SWAP_AUTO_RETRY_LIMIT = 1;
+
+/**
+ * Splits a batch of settled per-leg swap outcomes into the legs that may be
+ * automatically retried (definitively not landed) and the FIRST error that
+ * must stop everything (ambiguous confirmation, RPC/balance-read failure --
+ * anything that is not provably "nothing moved"). Pure, so the retry policy
+ * is unit-testable without a wallet.
+ */
+export function partitionSwapOutcomes<T>(legs: T[], outcomes: PromiseSettledResult<unknown>[]): { retryable: T[]; fatal: unknown | null } {
+  const retryable: T[] = [];
+  let fatal: unknown | null = null;
+  outcomes.forEach((o, i) => {
+    if (o.status !== "rejected") return;
+    if (o.reason instanceof JupiterSwapNotLandedError) retryable.push(legs[i]);
+    else if (fatal === null) fatal = o.reason;
+  });
+  return { retryable, fatal };
 }

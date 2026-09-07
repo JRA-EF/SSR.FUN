@@ -58,7 +58,17 @@ import {
   MAINNET_USDC_MINT,
   type ZapAssetLeg,
 } from "@ssr/sdk";
-import { fetchJupiterSwapQuote, executeJupiterSwap, submitSignedJupiterSwap, fetchJupiterSwapInstructions, type JupiterSwapInstructionsResult, type JupiterSwapQuote } from "./jupiterSwapClient";
+import {
+  fetchJupiterSwapQuote,
+  executeJupiterSwap,
+  submitSignedJupiterSwap,
+  fetchJupiterSwapInstructions,
+  partitionSwapOutcomes,
+  JupiterSwapNotLandedError,
+  SWAP_AUTO_RETRY_LIMIT,
+  type JupiterSwapInstructionsResult,
+  type JupiterSwapQuote,
+} from "./jupiterSwapClient";
 import {
   assembleSingleBuyInstructions,
   buildWrapRecoveredSolInstructions,
@@ -645,37 +655,74 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       // by submission. Promise.all preserves order, so legs[] stays aligned with
       // signAllTransactions'/signedTxs' order. Legs are distinct mints, so no
       // swap in the batch changes another leg's measured baseline.
-      const legs: { mint: string; legIndex: number; preSwapRaw: bigint; quote: JupiterSwapQuote; tx: VersionedTransaction }[] = await Promise.all(
-        swapActions
-          .filter((action) => action.kind === "jupiter-swap")
-          .map(async (action) => {
-            const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
-            advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
-            const [quote, preSwapRawStr] = await Promise.all([
-              fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol),
-              fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner),
-            ]);
-            log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
-            const tx = VersionedTransaction.deserialize(Buffer.from(quote.swapTransaction, "base64"));
-            advanceLeg(action.mint, "awaiting_signature");
-            return { mint: action.mint, legIndex, preSwapRaw: BigInt(preSwapRawStr), quote, tx };
-          }),
-      );
-      params.onProgress?.({ phase: "awaiting-wallet" });
-      const signedTxs = await params.wallet.signAllTransactions!(legs.map((l) => l.tx));
-      currentStage = "submitting all of the Reserve's asset swaps";
+      type SwapLegAction = Extract<(typeof swapActions)[number], { kind: "jupiter-swap" }>;
+      type QuotedLeg = { action: SwapLegAction; mint: string; legIndex: number; preSwapRaw: bigint; quote: JupiterSwapQuote; tx: VersionedTransaction };
+      const quoteLeg = async (action: SwapLegAction): Promise<QuotedLeg> => {
+        const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
+        advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
+        const [quote, preSwapRawStr] = await Promise.all([
+          fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol),
+          fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner),
+        ]);
+        log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
+        const tx = VersionedTransaction.deserialize(Buffer.from(quote.swapTransaction, "base64"));
+        advanceLeg(action.mint, "awaiting_signature");
+        return { action, mint: action.mint, legIndex, preSwapRaw: BigInt(preSwapRawStr), quote, tx };
+      };
       // PARALLEL submit + reconcile. All legs were signed in one approval, so
       // broadcast + confirm them concurrently rather than one-after-another --
       // a slow sequential submit was letting later legs' blockhashes expire
       // before they landed (the observed "Jupiter swap expired" failure).
-      // Distinct mints => each reconcile baseline is independent.
-      await Promise.all(
-        legs.map(async (leg, s) => {
-          params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: legs.length });
-          await submitSignedJupiterSwap(params.connection, signedTxs[s], leg.quote.lastValidBlockHeight, (sig) => advanceLeg(leg.mint, "submitted", { lastSignature: sig }));
-          await reconcileSwappedLeg(leg.mint, leg.legIndex, leg.preSwapRaw);
-        }),
-      );
+      // Distinct mints => each reconcile baseline is independent. allSettled
+      // (not all): every leg runs to its own conclusion so a sibling's
+      // failure never leaves an in-flight leg unreconciled.
+      const submitLegs = (batch: QuotedLeg[], signedTxs: VersionedTransaction[]) =>
+        Promise.allSettled(
+          batch.map(async (leg, s) => {
+            params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: batch.length });
+            await submitSignedJupiterSwap(params.connection, signedTxs[s], leg.quote.lastValidBlockHeight, (sig) => advanceLeg(leg.mint, "submitted", { lastSignature: sig }));
+            await reconcileSwappedLeg(leg.mint, leg.legIndex, leg.preSwapRaw);
+          }),
+        );
+
+      let batch: QuotedLeg[] = await Promise.all(swapActions.filter((action): action is SwapLegAction => action.kind === "jupiter-swap").map(quoteLeg));
+      params.onProgress?.({ phase: "awaiting-wallet" });
+      let signedTxs = await params.wallet.signAllTransactions!(batch.map((l) => l.tx));
+      currentStage = "submitting all of the Reserve's asset swaps";
+      let outcomes = await submitLegs(batch, signedTxs);
+
+      // AUTOMATIC RETRY (once): a leg whose swap DEFINITIVELY did not land
+      // (executed-and-failed, or expired unincluded -- JupiterSwapNotLandedError,
+      // "nothing moved" either way) is re-quoted with a fresh route + blockhash
+      // and re-signed in ONE more approval, instead of failing the whole
+      // purchase and making the user press Buy again to get exactly that. An
+      // ambiguous confirmation is never retried here -- it stops the purchase so
+      // the resume flow can reconcile the real signature status first.
+      for (let attempt = 0; attempt < SWAP_AUTO_RETRY_LIMIT; attempt++) {
+        const { retryable, fatal } = partitionSwapOutcomes(batch, outcomes);
+        if (fatal !== null) throw fatal;
+        if (retryable.length === 0) break;
+        log("swap leg(s) did not land -- automatically re-quoting and re-signing once", {
+          attempt: attempt + 1,
+          mints: retryable.map((l) => l.mint),
+          reasons: outcomes.filter((o): o is PromiseRejectedResult => o.status === "rejected").map((o) => String((o.reason as Error)?.message ?? o.reason)),
+        });
+        currentStage = "re-quoting the Reserve asset swap(s) that did not land, for one more approval";
+        for (const leg of retryable) advanceLeg(leg.mint, "not_started"); // explicit retry reset (launchFunding.ts)
+        batch = await Promise.all(retryable.map((leg) => quoteLeg(leg.action)));
+        params.onProgress?.({ phase: "awaiting-wallet" });
+        signedTxs = await params.wallet.signAllTransactions!(batch.map((l) => l.tx));
+        currentStage = "submitting the re-quoted Reserve asset swap(s)";
+        outcomes = await submitLegs(batch, signedTxs);
+      }
+      {
+        const { retryable, fatal } = partitionSwapOutcomes(batch, outcomes);
+        if (fatal !== null) throw fatal;
+        if (retryable.length > 0) {
+          const first = outcomes.find((o): o is PromiseRejectedResult => o.status === "rejected")!.reason as Error;
+          throw new Error(`${first.message} (This swap was already automatically retried once with a fresh quote and did not land either.)`);
+        }
+      }
     } else {
       for (let s = 0; s < swapActions.length; s++) {
         const action = swapActions[s];
@@ -684,15 +731,32 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
         currentStage = `swapping your USDC for one of the Reserve's assets (${action.mint.slice(0, 4)}...${action.mint.slice(-4)})`;
 
         params.onProgress?.({ phase: "swapping", mint: action.mint, index: s, total: swapActions.length });
-        advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
-        const quote = await fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol);
-        log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
-        // The leg balance immediately before this swap -- the baseline the
-        // swap's actual delivered output is measured against.
-        const preSwapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
-        advanceLeg(action.mint, "awaiting_signature");
-        await executeJupiterSwap(params.connection, params.wallet, quote, (sig) => advanceLeg(action.mint, "submitted", { lastSignature: sig }));
-        await reconcileSwappedLeg(action.mint, legIndex, preSwapRaw);
+        // Same automatic retry-once as the batched path: a swap that
+        // definitively did not land is re-quoted and re-signed one more time
+        // before the failure is surfaced (JupiterSwapNotLandedError only --
+        // an ambiguous confirmation always stops the purchase).
+        for (let attempt = 0; ; attempt++) {
+          advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
+          const quote = await fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol);
+          log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol, attempt });
+          // The leg balance immediately before this swap -- the baseline the
+          // swap's actual delivered output is measured against.
+          const preSwapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
+          advanceLeg(action.mint, "awaiting_signature");
+          try {
+            await executeJupiterSwap(params.connection, params.wallet, quote, (sig) => advanceLeg(action.mint, "submitted", { lastSignature: sig }));
+          } catch (e) {
+            if (e instanceof JupiterSwapNotLandedError && attempt < SWAP_AUTO_RETRY_LIMIT) {
+              log("swap did not land -- automatically re-quoting and re-signing once", { mint: action.mint, kind: e.kind, signature: e.signature });
+              advanceLeg(action.mint, "not_started"); // explicit retry reset (launchFunding.ts)
+              continue;
+            }
+            if (e instanceof JupiterSwapNotLandedError) throw new Error(`${e.message} (This swap was already automatically retried once with a fresh quote and did not land either.)`);
+            throw e;
+          }
+          await reconcileSwappedLeg(action.mint, legIndex, preSwapRaw);
+          break;
+        }
       }
     }
 

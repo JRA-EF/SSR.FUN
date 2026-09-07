@@ -12,15 +12,20 @@
 // read-only-simulated before the wallet is ever asked. All-or-nothing: on
 // failure only the network fee is spent.
 //
-// FALLBACK (SingleTxTooLargeError only -- many-asset Reserves): a
-// sequential flow guarded by a persisted per-sale state machine
-// (ssr_pending_sells_v1, wallet+reserve-keyed map): the redeem signature
-// and every leg's swap signature are recorded when submitted and reconciled
-// against real on-chain status before anything is ever re-submitted -- a
-// confirmed redeem is never repeated (never burns Reserve Tokens twice), a
-// confirmed swap is never repeated, and the sale resumes exactly where it
-// stopped across refresh/reconnect.
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
+// FALLBACK (SingleTxTooLargeError only -- many-asset Reserves): the redeem
+// plus every leg's USDC swap are signed together in ONE wallet approval
+// (signAllTransactions, mirroring multiAssetBuyClient's batch), the redeem
+// is submitted and confirmed first, then every swap is broadcast in
+// parallel; a swap that definitively does not land is automatically
+// re-quoted and re-signed once. The whole flow is guarded by a persisted
+// per-sale state machine (ssr_pending_sells_v1, wallet+reserve-keyed map):
+// the redeem signature and every leg's swap signature are recorded when
+// submitted and reconciled against real on-chain status before anything is
+// ever re-submitted -- a confirmed redeem is never repeated (never burns
+// Reserve Tokens twice), a confirmed swap is never repeated, and the sale
+// resumes exactly where it stopped across refresh/reconnect. A wallet
+// without signAllTransactions takes the same flow one signature at a time.
+import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
@@ -31,7 +36,16 @@ import {
   MAINNET_USDC_MINT,
   type ZapAssetLeg,
 } from "@ssr/sdk";
-import { fetchJupiterSwapInstructions, fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
+import {
+  fetchJupiterSwapInstructions,
+  fetchJupiterSwapQuote,
+  executeJupiterSwap,
+  submitSignedJupiterSwap,
+  partitionSwapOutcomes,
+  JupiterSwapNotLandedError,
+  SWAP_AUTO_RETRY_LIMIT,
+  type JupiterSwapQuote,
+} from "./jupiterSwapClient";
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import {
   compileSingleBuyTransaction,
@@ -334,31 +348,38 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
       redeemDone = true;
     }
   }
-  if (!redeemDone) {
-    params.onProgress?.({ phase: "redeeming" });
-    params.onProgress?.({ phase: "awaiting-wallet" });
-    const tx = new Transaction().add(...redeemPrelude);
-    tx.feePayer = owner;
-    const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
-    tx.recentBlockhash = blockhash;
-    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
-    const signed = await params.wallet.signTransaction(tx);
+  // Submits an already-signed redeem and confirms it; the signature is
+  // persisted the instant it exists so a refresh mid-confirmation reconciles
+  // it instead of burning twice.
+  const submitSignedRedeem = async (signed: Transaction, lastValidBlockHeight: number): Promise<void> => {
     const signature = await params.connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-    pending.redeemSignature = signature;
-    savePendingSell(pending);
+    pending!.redeemSignature = signature;
+    savePendingSell(pending!);
     log("redeem submitted", { signature });
     const outcome = await confirmSignatureBounded(params.connection, signature, lastValidBlockHeight);
     if (outcome.status === "failed") throw new Error(`${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
     if (outcome.status === "expired") throw new Error(`The redeem expired before it could be confirmed -- nothing should have moved. Signature: ${signature}.`);
     if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
-  }
-  pending.redeemConfirmed = true;
-  savePendingSell(pending);
+    pending!.redeemConfirmed = true;
+    savePendingSell(pending!);
+  };
+  const buildRedeemTx = async (): Promise<{ tx: Transaction; lastValidBlockHeight: number }> => {
+    const tx = new Transaction().add(...redeemPrelude);
+    tx.feePayer = owner;
+    const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    return { tx, lastValidBlockHeight };
+  };
 
-  // Step 2: swap each non-USDC leg's redeemed amount into USDC.
-  let lastSignature = pending.redeemSignature ?? "";
-  for (let s = 0; s < nonUsdcLegs.length; s++) {
-    const { leg, entitlementRaw } = nonUsdcLegs[s];
+  // Step 2 prep: decide which legs still need selling -- reconciling any
+  // previously-submitted swap signature FIRST -- before anything is signed.
+  // When the redeem has not landed yet, the amount to sell is the exact
+  // entitlement the redeem will deliver (buildRedeem's floor-rounded figure);
+  // on a resume after a landed redeem it is what the wallet still holds,
+  // never more than that entitlement.
+  type SellLeg = { leg: ZapAssetLeg; entitlementRaw: bigint; amountIn: bigint };
+  const legsToSell: SellLeg[] = [];
+  for (const { leg, entitlementRaw } of nonUsdcLegs) {
     const persisted = pending.legSwaps[leg.mint];
     if (persisted?.confirmed) continue;
     if (persisted?.signature) {
@@ -375,26 +396,127 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
         );
       }
     }
-    params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: nonUsdcLegs.length });
-    // Swap what the redeem actually delivered and the wallet still holds --
-    // never more than the recorded entitlement.
-    const held = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(leg.mint), owner));
-    const amountIn = held < entitlementRaw ? held : entitlementRaw;
-    if (amountIn <= 0n) {
-      log("leg has nothing left to swap (already sold or moved) -- skipping", { mint: leg.mint });
-      pending.legSwaps[leg.mint] = { confirmed: true };
-      savePendingSell(pending);
-      continue;
+    let amountIn = entitlementRaw;
+    if (redeemDone) {
+      const held = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(leg.mint), owner));
+      amountIn = held < entitlementRaw ? held : entitlementRaw;
+      if (amountIn <= 0n) {
+        log("leg has nothing left to swap (already sold or moved) -- skipping", { mint: leg.mint });
+        pending.legSwaps[leg.mint] = { confirmed: true };
+        savePendingSell(pending);
+        continue;
+      }
     }
-    const quote = await fetchJupiterSwapQuote(MAINNET_USDC_MINT, amountIn, ownerBase58, undefined, undefined, leg.mint);
+    legsToSell.push({ leg, entitlementRaw, amountIn });
+  }
+
+  type QuotedSellLeg = SellLeg & { quote: JupiterSwapQuote; tx: VersionedTransaction };
+  const quoteSellLeg = async (l: SellLeg): Promise<QuotedSellLeg> => {
+    const quote = await fetchJupiterSwapQuote(MAINNET_USDC_MINT, l.amountIn, ownerBase58, undefined, undefined, l.leg.mint);
+    log("sell-swap quote", { mint: l.leg.mint, inRaw: l.amountIn.toString(), quotedUsdcOutRaw: quote.outAmount.toString() });
+    return { ...l, quote, tx: VersionedTransaction.deserialize(Buffer.from(quote.swapTransaction, "base64")) };
+  };
+  let lastSignature = pending.redeemSignature ?? "";
+  const recordSwapSubmitted = (mint: string) => (sig: string) => {
+    pending!.legSwaps[mint] = { signature: sig };
+    savePendingSell(pending!);
+  };
+  const recordSwapConfirmed = (l: SellLeg, sig: string) => {
+    pending!.legSwaps[l.leg.mint] = { signature: sig, confirmed: true };
+    savePendingSell(pending!);
+    lastSignature = sig;
+    log("leg sold into USDC", { mint: l.leg.mint, inRaw: l.amountIn.toString(), signature: sig });
+  };
+
+  // ---------------------------------------------------------------------
+  // ONE-APPROVAL FALLBACK: [redeem, swap leg 1..N] signed together in a single
+  // wallet prompt (the live complaint: "redeem still asks for 1 signature per
+  // reserve asset"). Submission ORDER is still strict -- the redeem first,
+  // confirmed, THEN the swaps (their inputs are the redeem's outputs); a
+  // redeem that fails simply discards the signed swaps, which are never
+  // broadcast. The swaps then go out in parallel, and any that definitively
+  // does not land (JupiterSwapNotLandedError: executed-and-failed, or expired
+  // unincluded while the redeem was confirming) is re-quoted and re-signed
+  // once automatically.
+  // ---------------------------------------------------------------------
+  const canBatch = typeof params.wallet.signAllTransactions === "function";
+  if (canBatch && (!redeemDone || legsToSell.length > 0)) {
+    const redeem = redeemDone ? null : await buildRedeemTx();
+    let batch = await Promise.all(legsToSell.map(quoteSellLeg));
     params.onProgress?.({ phase: "awaiting-wallet" });
-    lastSignature = await executeJupiterSwap(params.connection, params.wallet, quote, (sig) => {
-      pending!.legSwaps[leg.mint] = { signature: sig };
-      savePendingSell(pending!);
-    });
-    pending.legSwaps[leg.mint] = { signature: lastSignature, confirmed: true };
-    savePendingSell(pending);
-    log("leg sold into USDC", { mint: leg.mint, inRaw: amountIn.toString(), signature: lastSignature });
+    const toSign: (Transaction | VersionedTransaction)[] = [...(redeem ? [redeem.tx] : []), ...batch.map((q) => q.tx)];
+    log("one-approval sell batch", { redeem: redeem !== null, swaps: batch.length, mints: batch.map((q) => q.leg.mint) });
+    const signedAll = await params.wallet.signAllTransactions!(toSign);
+    let signedSwaps = signedAll.slice(redeem ? 1 : 0) as VersionedTransaction[];
+    if (redeem) {
+      params.onProgress?.({ phase: "redeeming" });
+      await submitSignedRedeem(signedAll[0] as Transaction, redeem.lastValidBlockHeight);
+    }
+
+    const submitSwaps = (legs: QuotedSellLeg[], signed: VersionedTransaction[]) =>
+      Promise.allSettled(
+        legs.map(async (q, s) => {
+          params.onProgress?.({ phase: "swapping", mint: q.leg.mint, index: s, total: legs.length });
+          const sig = await submitSignedJupiterSwap(params.connection, signed[s], q.quote.lastValidBlockHeight, recordSwapSubmitted(q.leg.mint));
+          recordSwapConfirmed(q, sig);
+        }),
+      );
+    let outcomes = await submitSwaps(batch, signedSwaps);
+    for (let attempt = 0; attempt < SWAP_AUTO_RETRY_LIMIT; attempt++) {
+      const { retryable, fatal } = partitionSwapOutcomes(batch, outcomes);
+      if (fatal !== null) throw fatal;
+      if (retryable.length === 0) break;
+      log("sell-swap leg(s) did not land -- automatically re-quoting and re-signing once", {
+        attempt: attempt + 1,
+        mints: retryable.map((q) => q.leg.mint),
+        reasons: outcomes.filter((o): o is PromiseRejectedResult => o.status === "rejected").map((o) => String((o.reason as Error)?.message ?? o.reason)),
+      });
+      batch = await Promise.all(retryable.map((q) => quoteSellLeg({ leg: q.leg, entitlementRaw: q.entitlementRaw, amountIn: q.amountIn })));
+      params.onProgress?.({ phase: "awaiting-wallet" });
+      signedSwaps = await params.wallet.signAllTransactions!(batch.map((q) => q.tx));
+      outcomes = await submitSwaps(batch, signedSwaps);
+    }
+    {
+      const { retryable, fatal } = partitionSwapOutcomes(batch, outcomes);
+      if (fatal !== null) throw fatal;
+      if (retryable.length > 0) {
+        const first = outcomes.find((o): o is PromiseRejectedResult => o.status === "rejected")!.reason as Error;
+        throw new Error(`${first.message} (This swap was already automatically retried once with a fresh quote and did not land either.)`);
+      }
+    }
+    return await verifyDelivery(lastSignature);
+  }
+
+  // ---------------------------------------------------------------------
+  // SEQUENTIAL (wallet without signAllTransactions): the same steps, one
+  // signature each -- redeem once, then each leg with the same retry-once.
+  // ---------------------------------------------------------------------
+  if (!redeemDone) {
+    params.onProgress?.({ phase: "redeeming" });
+    params.onProgress?.({ phase: "awaiting-wallet" });
+    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+    const { tx, lastValidBlockHeight } = await buildRedeemTx();
+    await submitSignedRedeem(await params.wallet.signTransaction(tx), lastValidBlockHeight);
+  }
+  for (let s = 0; s < legsToSell.length; s++) {
+    const l = legsToSell[s];
+    params.onProgress?.({ phase: "swapping", mint: l.leg.mint, index: s, total: legsToSell.length });
+    for (let attempt = 0; ; attempt++) {
+      const quote = await fetchJupiterSwapQuote(MAINNET_USDC_MINT, l.amountIn, ownerBase58, undefined, undefined, l.leg.mint);
+      params.onProgress?.({ phase: "awaiting-wallet" });
+      try {
+        const sig = await executeJupiterSwap(params.connection, params.wallet, quote, recordSwapSubmitted(l.leg.mint));
+        recordSwapConfirmed(l, sig);
+        break;
+      } catch (e) {
+        if (e instanceof JupiterSwapNotLandedError && attempt < SWAP_AUTO_RETRY_LIMIT) {
+          log("sell-swap did not land -- automatically re-quoting and re-signing once", { mint: l.leg.mint, kind: e.kind, signature: e.signature });
+          continue;
+        }
+        if (e instanceof JupiterSwapNotLandedError) throw new Error(`${e.message} (This swap was already automatically retried once with a fresh quote and did not land either.)`);
+        throw e;
+      }
+    }
   }
 
   return await verifyDelivery(lastSignature);

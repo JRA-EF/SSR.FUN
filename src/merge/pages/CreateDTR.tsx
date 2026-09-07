@@ -2211,13 +2211,35 @@ export function CreateDTR() {
                               <span className="text-muted-foreground"> (&asymp; {fmtUsd(solToUsd(costEstimate.networkFeeLamportsEstimate))})</span>
                             </span>
                           </div>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground flex items-center gap-1">
-                              Protocol fees
-                              <InfoTip label="More information about protocol fees">No fee is charged at creation itself -- Mint Fee ({mintFeePct.toFixed(2)}%) and TVL Fee ({tvlFeePct.toFixed(2)}%) apply to future Buy/holding activity, configured above.</InfoTip>
-                            </span>
-                            <span className="font-merge-mono text-muted-foreground">$0.00 now</span>
-                          </div>
+                          {(() => {
+                            // The initial seed IS a mint, so the Protocol + Manager
+                            // mint fee applies to it (the on-chain program takes it
+                            // in Reserve Tokens: you receive gross minus fee). This
+                            // row used to claim "No fee is charged at creation" and
+                            // show $0.00 -- contradicting the Expected-result note
+                            // below and the tester's live experience. Seed tokens
+                            // are 1 per USD at inception, so the fee's USD value is
+                            // the seed total x the effective rate.
+                            const grossSeedTokens = Math.max(1, Math.floor(seedTotalUsdUi));
+                            const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                            const effectivePct = Number(split.effectiveTotalBps) / 100;
+                            const feeTokens = grossSeedTokens - estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
+                            const feeUsd = seedTotalUsdUi * (effectivePct / 100);
+                            return (
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground flex items-center gap-1">
+                                  Mint Fee on the initial seed ({effectivePct.toFixed(2)}%)
+                                  <InfoTip label="More information about the mint fee charged at creation">
+                                    Seeding the Reserve is a mint like any other, so the {effectivePct.toFixed(2)}% Protocol + Manager Mint Fee (your configured {mintFeePct.toFixed(2)}%, floored at the protocol minimum) applies to it. The program takes it in Reserve Tokens, not USDC: you receive ~{feeTokens.toLocaleString(undefined, { maximumFractionDigits: 6 })} fewer {ticker || "Reserve"} tokens than the {grossSeedTokens.toLocaleString()} gross. The TVL Fee ({tvlFeePct.toFixed(2)}%) applies to holding activity over time, not at creation.
+                                  </InfoTip>
+                                </span>
+                                <span className="font-merge-mono">
+                                  ~{feeTokens.toLocaleString(undefined, { maximumFractionDigits: 6 })} {ticker || "Reserve"}
+                                  <span className="text-muted-foreground"> (&asymp; ${feeUsd.toFixed(2)}, taken in Reserve Tokens)</span>
+                                </span>
+                              </div>
+                            );
+                          })()}
 
                           <div className="pt-3 border-t border-border/50 space-y-1.5">
                             <div className="flex justify-between text-sm font-semibold">
