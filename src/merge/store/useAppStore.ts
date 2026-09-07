@@ -351,18 +351,18 @@ export const useAppStore = create<AppState>()(
         const dtr = dtrs.find((d) => d.id === dtrId);
         if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
-          return { success: false, message: "You do not have delegate-management permission." };
+          return { success: false, message: "You do not have co-manager management permission." };
         if (!address.trim()) return { success: false, message: "Enter a wallet address." };
         if (address === dtr.managerAddress)
           return { success: false, message: "That wallet is already the root Manager." };
         if (dtr.delegates.some((d) => d.address === address))
-          return { success: false, message: "That wallet is already a delegate." };
+          return { success: false, message: "That wallet is already a co-manager." };
 
         const delegate: Delegate = { address, permissions, addedAt: Date.now() };
         set({
           dtrs: dtrs.map((d) => (d.id === dtrId ? { ...d, delegates: [...d.delegates, delegate] } : d)),
         });
-        return { success: true, message: "Delegate added." };
+        return { success: true, message: "Co-Manager added." };
       },
 
       updateDelegatePermissions: (dtrId, address, permissions) => {
@@ -370,7 +370,7 @@ export const useAppStore = create<AppState>()(
         const dtr = dtrs.find((d) => d.id === dtrId);
         if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
-          return { success: false, message: "You do not have delegate-management permission." };
+          return { success: false, message: "You do not have co-manager management permission." };
 
         set({
           dtrs: dtrs.map((d) =>
@@ -379,7 +379,7 @@ export const useAppStore = create<AppState>()(
               : d,
           ),
         });
-        return { success: true, message: "Delegate permissions updated." };
+        return { success: true, message: "Co-Manager permissions updated." };
       },
 
       removeDelegate: (dtrId, address) => {
@@ -387,12 +387,12 @@ export const useAppStore = create<AppState>()(
         const dtr = dtrs.find((d) => d.id === dtrId);
         if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
-          return { success: false, message: "You do not have delegate-management permission." };
+          return { success: false, message: "You do not have co-manager management permission." };
 
         set({
           dtrs: dtrs.map((d) => (d.id === dtrId ? { ...d, delegates: d.delegates.filter((del) => del.address !== address) } : d)),
         });
-        return { success: true, message: "Delegate removed." };
+        return { success: true, message: "Co-Manager removed." };
       },
 
       rebalanceDTR: (dtrId, edits, adjustRemaining) => {

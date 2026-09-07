@@ -61,7 +61,7 @@ export function Disclosures() {
         lag or differ from on-chain state; the blockchain is authoritative.
       </p>
 
-      <h2>7. Reserve managers and delegates</h2>
+      <h2>7. Reserve managers and co-managers</h2>
       <p>
         Each Reserve is controlled by its manager, who sets its composition targets, fees, metadata, pause state, and
         wind-down, and may grant limited permissions to delegates. A manager's decisions — changing fees, changing

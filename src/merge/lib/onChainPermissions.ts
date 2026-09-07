@@ -27,8 +27,8 @@ export const ON_CHAIN_PERMISSION_FLAGS: { bit: number; label: string }[] = [
   { bit: 1 << 5, label: "Manage Liquidity Config" },
   { bit: 1 << 6, label: "Pause Reserve" },
   { bit: 1 << 7, label: "Unpause Reserve" },
-  { bit: 1 << 8, label: "Add Restricted Delegate" },
-  { bit: 1 << 9, label: "Remove Restricted Delegate" },
+  { bit: 1 << 8, label: "Add Restricted Co-Manager" },
+  { bit: 1 << 9, label: "Remove Restricted Co-Manager" },
 ];
 
 /** Human-readable capability labels granted by a raw on-chain permissions bitmask. */

@@ -1920,8 +1920,8 @@ export function CreateDTR() {
               </div>
 
               <div className="space-y-4">
-                <h3 className="font-semibold text-lg pb-2">Additional Managers</h3>
-                <p className="text-xs text-muted-foreground">Add other wallets as Reserve Managers. They'll be able to rebalance, manage fees, and pause the reserve, but won't be able to manage other delegates -- only the root Manager (you) can do that.</p>
+                <h3 className="font-semibold text-lg pb-2">Co-Managers</h3>
+                <p className="text-xs text-muted-foreground">Add other wallets as Reserve Managers. They'll be able to rebalance, manage fees, and pause the reserve, but won't be able to manage other co-managers -- only the root Manager (you) can do that.</p>
 
                 {additionalManagers.length > 0 && (
                   <div className="space-y-2">
@@ -2381,12 +2381,12 @@ export function CreateDTR() {
 
               {additionalManagers.length > 0 && (
                 <div>
-                  <p className="text-sm font-semibold text-muted-foreground mb-3">Additional Managers</p>
+                  <p className="text-sm font-semibold text-muted-foreground mb-3">Co-Managers</p>
                   <div className="space-y-2">
                     {additionalManagers.map((address) => (
                       <div key={address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
                         <span className="font-merge-mono text-xs truncate">{address}</span>
-                        <Badge variant="secondary" className="shrink-0">Delegate</Badge>
+                        <Badge variant="secondary" className="shrink-0">Co-Manager</Badge>
                       </div>
                     ))}
                   </div>

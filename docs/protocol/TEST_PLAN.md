@@ -24,7 +24,7 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 - ⏳ `mul_div_ceil`/`mul_div_floor`: zero denominator, overflow at `u64::MAX` boundaries, exact-division cases, non-exact rounding in both directions.
 - ⏳ Target-weight validation: exact 10,000 boundary, one-over-boundary rejection, disabled-asset-with-nonzero-weight rejection.
 - ⏳ Duplicate-asset detection (structural, via `init` on an existing PDA -- more naturally an integration-level test, see below).
-- ⏳ Delegate permission bitmask: every individual flag in isolation, reserved-bit rejection, `ALL_V1_FLAGS` mask correctness.
+- ⏳ Co-Manager permission bitmask: every individual flag in isolation, reserved-bit rejection, `ALL_V1_FLAGS` mask correctness.
 - ⏳ PDA derivation determinism: same inputs always produce the same address (trivial but worth asserting once compiling, to catch a seed-order typo early).
 - ⏳ Zero-supply guard on mint/redeem calculators.
 - ⏳ Overflow handling for every `checked_*` call site (deliberately construct near-`u64::MAX` inputs).
@@ -44,7 +44,7 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 - A second holder redeeming proportionally (partial redemption).
 - Unauthorized pause attempt (random wallet) rejected.
 - Manager pause → unpause round-trip.
-- Restricted delegate granted `UPDATE_TARGETS` only: succeeds at updating targets, fails at pausing (privilege-boundary check).
+- Restricted co-manager granted `UPDATE_TARGETS` only: succeeds at updating targets, fails at pausing (privilege-boundary check).
 - Rejecting re-initialization of the `ProtocolConfig` singleton (repeated `initialize_protocol`).
 - Rejecting redemption of more Reserve Tokens than the caller's actual balance.
 
@@ -56,14 +56,14 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 - Fee collection (`collect_fees`) minting to manager/protocol destinations and resetting pending counters.
 - `update_metadata` happy path.
 - `remove_delegate` happy path (including rent-reclaim assertion).
-- Unrestricted vs. restricted delegate distinction: an unrestricted delegate can add/remove restricted delegates; a restricted delegate cannot grant/revoke an unrestricted one.
+- Unrestricted vs. restricted co-manager distinction: an unrestricted co-manager can add/remove restricted co-managers; a restricted co-manager cannot grant/revoke an unrestricted one.
 - Successful AND failed transactions for every instruction (this plan currently over-indexes on happy paths + a few adversarial cases; a systematic failure-mode sweep per instruction, cross-referenced against each `errors.rs` variant, is still needed).
 
 ## Adversarial tests
 
 ✅ **PASSED** (executed 2026-07-28 against live DevNet):
-- Unauthorized (non-manager, non-delegate) pause attempt.
-- Delegate privilege escalation (delegate without `PAUSE_RESERVE` cannot pause).
+- Unauthorized (non-manager, non-co-manager) pause attempt.
+- Co-Manager privilege escalation (co-manager without `PAUSE_RESERVE` cannot pause).
 - Duplicate Reserve Asset registration.
 
 ⏳ **Planned, not yet written** (mapped to the mission's required scenario list):
@@ -90,7 +90,7 @@ None written yet at the Rust unit level (would live under `programs/ssr_protocol
 
 ## Property / invariant testing
 
-⏳ **Planned, not yet written.** Given the toolchain gap, no Foundry-style `invariant`/fuzz equivalent has been run. Once `litesvm`-based Rust tests are possible, adopt the reference protocol's "Extreme" pattern (RESERVE_REFERENCE_ANALYSIS.md section 17): hand-built parameter sweeps across token decimals (6/9/18 if ever relevant on Solana -- Solana tokens are more commonly 6-9 decimals than EVM's typical 18, so the sweep range should reflect that), amounts, and fee rates, asserting: solvency (vault-value-per-share never decreases outside documented fee mechanics); proportional ownership preserved across sequences of mint/redeem/target-change/fee-accrual; dust stays bounded; no cross-Reserve access is ever achievable; no unauthorized authority escalation survives a sequence of delegate/manager operations.
+⏳ **Planned, not yet written.** Given the toolchain gap, no Foundry-style `invariant`/fuzz equivalent has been run. Once `litesvm`-based Rust tests are possible, adopt the reference protocol's "Extreme" pattern (RESERVE_REFERENCE_ANALYSIS.md section 17): hand-built parameter sweeps across token decimals (6/9/18 if ever relevant on Solana -- Solana tokens are more commonly 6-9 decimals than EVM's typical 18, so the sweep range should reflect that), amounts, and fee rates, asserting: solvency (vault-value-per-share never decreases outside documented fee mechanics); proportional ownership preserved across sequences of mint/redeem/target-change/fee-accrual; dust stays bounded; no cross-Reserve access is ever achievable; no unauthorized authority escalation survives a sequence of co-manager/manager operations.
 
 ## What "done" looks like for Gate 7 (Local Validation)
 

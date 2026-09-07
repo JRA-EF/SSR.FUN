@@ -16,8 +16,8 @@ Persistent, documented fixture state on Solana DevNet for Gate 9/Gate 10, distin
 | Role | Public key |
 |---|---|
 | Root Reserve Manager | `Ef7vbQghn7Fc4LzUnyJsvov1f5f9aRSfWksiaSmWpquj` |
-| Restricted delegate (UPDATE_TARGETS only) | `AKWHGN3EDPfkcpFhkG3EQcHBRY7eBFNCWNbV1osfDu7u` |
-| Restricted delegate (PAUSE_RESERVE + UNPAUSE_RESERVE only) | `68gfCCwZRCXnyQN8MzEKykBhhenMKCqWxDC9oxS7TiBt` |
+| Restricted co-manager (UPDATE_TARGETS only) | `AKWHGN3EDPfkcpFhkG3EQcHBRY7eBFNCWNbV1osfDu7u` |
+| Restricted co-manager (PAUSE_RESERVE + UNPAUSE_RESERVE only) | `68gfCCwZRCXnyQN8MzEKykBhhenMKCqWxDC9oxS7TiBt` |
 | Holder A | `FhPUtAx2qHVDEMw6BevCFGN2cnBaETDFR8g8PUnMSdZK` |
 | Holder B | `8ZwqJHKx5jPBweLJcMfe9NJHntvGn5GPpkWEpaQ9jehF` |
 
@@ -35,7 +35,7 @@ Persistent, documented fixture state on Solana DevNet for Gate 9/Gate 10, distin
 - Reserve Token mint: `EqbWxWncXzXqestskKSNMWPVL58YEr2Z6qRC6Q19imK2`
 - Assets at creation: mintX 60% (`4gdndjBhGSVrv78WmusC1HWNAXXiAPiTGB9QLSs4T3yE`), mintY 40% (`E2wQfVqPWdsFAx9QafC2ZjRUrYEfviTW4vnmxwq8grMu`)
 - Seeded, then Holder A minted proportionally (balance after: 99500 Reserve Tokens).
-- Both restricted delegates were added here; pause -> unpause was exercised via the pause-scoped delegate, demonstrating both Active and Paused states. Left in the **Active** state.
+- Both restricted co-managers were added here; pause -> unpause was exercised via the pause-scoped co-manager, demonstrating both Active and Paused states. Left in the **Active** state.
 - **Note (added 2026-08-04, discovered during DEC-0075's live verification):** this Reserve genuinely has 3 registered assets on-chain today, not 2 -- mintZ was added later (Phase F/G's `add_reserve_asset_active` live verification, DEC-0046/0048, exercised adding/removing/re-adding/funding a 3rd asset against this exact persistent fixture) but this file was never updated to reflect it. Confirm the real current asset count via `fetchReserveOnChain` before assuming this doc's asset list is complete.
 
 ## Reserve Two (3-asset / multi-asset)
