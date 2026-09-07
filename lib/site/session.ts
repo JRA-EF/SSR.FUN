@@ -4,10 +4,14 @@
 // deliberately does NOT modify: the /internal/* dashboard session keeps its
 // own cookie, TTL and format untouched.
 //
-// Model: a visitor redeems one BETA key from a configured LIST. The keys are
-//   SSR_BETA_KEYS   -- comma-separated list of accepted keys (the beta list)
-//   SSR_SITE_PASSWORD -- still accepted as a key (so existing holders keep
-//                        working) AND is the HMAC signing secret for every
+// Model: a visitor redeems one key from a configured LIST. The keys are
+//   SSR_BETA_KEYS   -- comma-separated list of beta-tester keys (30-day sessions)
+//   SSR_TEAM_KEYS   -- comma-separated list of TEAM keys: same gate, but the
+//                      session lasts TEAM_SESSION_TTL_MS (400 days -- the
+//                      longest cookie lifetime browsers honour; Chrome caps
+//                      Max-Age at 400 days), i.e. "forever" in practice
+//   SSR_SITE_PASSWORD -- still accepted as a (30-day) key so existing holders
+//                        keep working, AND is the HMAC signing secret for every
 //                        session cookie, whichever key was redeemed.
 // The cookie is stateless and signed: `${expiresAt}.${keyTag}.${sig}` where
 // keyTag identifies WHICH key was redeemed (first 12 hex chars of its
@@ -18,7 +22,8 @@
 // Creator's 2026-09-07 decision), not the dashboard's 12 hours.
 
 export const SITE_SESSION_COOKIE_NAME = 'ssr_site_session'
-export const SITE_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
+export const SITE_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days (beta keys, site password)
+export const TEAM_SESSION_TTL_MS = 400 * 24 * 60 * 60 * 1000 // 400 days (team keys) -- browsers' practical maximum
 
 const enc = new TextEncoder()
 
@@ -44,15 +49,40 @@ export function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0
 }
 
-/** Every key that currently opens the site: SSR_BETA_KEYS entries (trimmed, non-empty) plus SSR_SITE_PASSWORD. Order is irrelevant; duplicates are harmless. */
-export function configuredBetaKeys(env: { SSR_BETA_KEYS?: string; SSR_SITE_PASSWORD?: string } = process.env): string[] {
-  const keys = (env.SSR_BETA_KEYS ?? '')
+export interface AccessKeyEnv {
+  SSR_BETA_KEYS?: string
+  SSR_TEAM_KEYS?: string
+  SSR_SITE_PASSWORD?: string
+}
+
+function splitKeyList(raw: string | undefined): string[] {
+  return (raw ?? '')
     .split(',')
     .map(k => k.trim())
     .filter(k => k.length > 0)
+}
+
+/** The 30-day keys: SSR_BETA_KEYS entries (trimmed, non-empty) plus SSR_SITE_PASSWORD. Order is irrelevant; duplicates are harmless. */
+export function configuredBetaKeys(env: AccessKeyEnv = process.env): string[] {
+  const keys = splitKeyList(env.SSR_BETA_KEYS)
   const sitePassword = (env.SSR_SITE_PASSWORD ?? '').trim()
   if (sitePassword) keys.push(sitePassword)
   return keys
+}
+
+/** The long-lived TEAM keys: SSR_TEAM_KEYS entries (trimmed, non-empty). */
+export function configuredTeamKeys(env: AccessKeyEnv = process.env): string[] {
+  return splitKeyList(env.SSR_TEAM_KEYS)
+}
+
+/** Every key that currently opens the site -- what both the login endpoint (matching) and the middleware (cookie verification) must use. */
+export function configuredAccessKeys(env: AccessKeyEnv = process.env): string[] {
+  return [...configuredBetaKeys(env), ...configuredTeamKeys(env)]
+}
+
+/** How long a session opened with `key` lasts: 400 days for a team key, 30 days for everything else. */
+export function sessionTtlForKey(key: string, env: AccessKeyEnv = process.env): number {
+  return configuredTeamKeys(env).some(teamKey => timingSafeEqual(key, teamKey)) ? TEAM_SESSION_TTL_MS : SITE_SESSION_TTL_MS
 }
 
 /** The signing secret for session cookies. SSR_SITE_PASSWORD is already the trusted secret this deployment holds; an empty value disables sign-in entirely (login returns 500, middleware rejects every cookie). */
@@ -73,7 +103,7 @@ export async function betaKeyTag(key: string): Promise<string> {
   return (await sha256Hex(`ssr-beta-key:${key}`)).slice(0, 12)
 }
 
-export async function createSiteSessionCookieValue(secret: string, redeemedKey: string, ttlMs: number = SITE_SESSION_TTL_MS): Promise<string> {
+export async function createSiteSessionCookieValue(secret: string, redeemedKey: string, ttlMs: number = sessionTtlForKey(redeemedKey)): Promise<string> {
   const expiresAt = Date.now() + ttlMs
   const keyTag = await betaKeyTag(redeemedKey)
   const sig = await hmacHex(secret, `site-session:${expiresAt}:${keyTag}`)

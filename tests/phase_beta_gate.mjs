@@ -15,17 +15,46 @@ import { expect } from "chai";
 import {
   betaKeyTag,
   buildSiteSetCookie,
+  configuredAccessKeys,
   configuredBetaKeys,
+  configuredTeamKeys,
   createSiteSessionCookieValue,
   matchBetaKey,
+  sessionTtlForKey,
   SITE_SESSION_COOKIE_NAME,
   SITE_SESSION_TTL_MS,
   siteSessionSecret,
+  TEAM_SESSION_TTL_MS,
   verifySiteSessionCookie,
 } from "../lib/site/session.ts";
 
 const SECRET = "site-password-and-signing-secret";
-const ENV = { SSR_BETA_KEYS: " SSR-BETA-AAAA-1111 ,SSR-BETA-BBBB-2222,, ", SSR_SITE_PASSWORD: SECRET };
+const ENV = { SSR_BETA_KEYS: " SSR-BETA-AAAA-1111 ,SSR-BETA-BBBB-2222,, ", SSR_TEAM_KEYS: "SSR-TEAM-CCCC-3333, SSR-TEAM-DDDD-4444 ", SSR_SITE_PASSWORD: SECRET };
+
+describe("Closed-beta gate -- team keys (SSR_TEAM_KEYS, 400-day sessions)", () => {
+  it("parses the team list separately and the access list is beta + password + team", () => {
+    expect(configuredTeamKeys(ENV)).to.deep.equal(["SSR-TEAM-CCCC-3333", "SSR-TEAM-DDDD-4444"]);
+    expect(configuredAccessKeys(ENV)).to.deep.equal(["SSR-BETA-AAAA-1111", "SSR-BETA-BBBB-2222", SECRET, "SSR-TEAM-CCCC-3333", "SSR-TEAM-DDDD-4444"]);
+    expect(configuredAccessKeys({})).to.deep.equal([]);
+  });
+  it("a team key opens a 400-day session; a beta key or the password opens a 30-day one", () => {
+    expect(TEAM_SESSION_TTL_MS).to.equal(400 * 24 * 60 * 60 * 1000);
+    expect(sessionTtlForKey("SSR-TEAM-DDDD-4444", ENV)).to.equal(TEAM_SESSION_TTL_MS);
+    expect(sessionTtlForKey("SSR-BETA-AAAA-1111", ENV)).to.equal(SITE_SESSION_TTL_MS);
+    expect(sessionTtlForKey(SECRET, ENV)).to.equal(SITE_SESSION_TTL_MS);
+    expect(sessionTtlForKey("SSR-TEAM-DDDD-4444", { SSR_BETA_KEYS: "SSR-TEAM-DDDD-4444" })).to.equal(SITE_SESSION_TTL_MS);
+  });
+  it("a team key matches through the access list, its cookie verifies against the access list, and removing it revokes the session", async () => {
+    const keys = configuredAccessKeys(ENV);
+    expect(matchBetaKey("SSR-TEAM-CCCC-3333", keys)).to.equal("SSR-TEAM-CCCC-3333");
+    const value = await createSiteSessionCookieValue(SECRET, "SSR-TEAM-CCCC-3333", sessionTtlForKey("SSR-TEAM-CCCC-3333", ENV));
+    const expiresAt = Number(value.split(".")[0]);
+    expect(expiresAt - Date.now()).to.be.greaterThan(399 * 24 * 60 * 60 * 1000);
+    expect(await verifySiteSessionCookie(value, SECRET, keys)).to.equal(true);
+    expect(await verifySiteSessionCookie(value, SECRET, configuredBetaKeys(ENV))).to.equal(false);
+    expect(await verifySiteSessionCookie(value, SECRET, configuredAccessKeys({ ...ENV, SSR_TEAM_KEYS: "SSR-TEAM-DDDD-4444" }))).to.equal(false);
+  });
+});
 
 describe("Closed-beta gate -- configuredBetaKeys / siteSessionSecret", () => {
   it("parses the comma-separated list, trims entries, drops empties, and appends SSR_SITE_PASSWORD as a key", () => {

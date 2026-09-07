@@ -2,7 +2,7 @@
 //
 // 1. SITE-WIDE closed-beta gate (2026-08-19 DEC-0129/0184; reshaped
 //    2026-09-07 DEC-0187): the entire public site requires a redeemed BETA
-//    key (SSR_BETA_KEYS list, or SSR_SITE_PASSWORD; session cookie
+//    key (SSR_BETA_KEYS list, SSR_TEAM_KEYS list, or SSR_SITE_PASSWORD; session cookie
 //    ssr_site_session, api/site/login.ts, lib/site/session.ts) -- real funds
 //    are involved. A visitor WITHOUT a session is not shown a password form:
 //    every page URL is rewritten to the public Coming Soon page
@@ -29,7 +29,7 @@
 
 import { next, rewrite } from '@vercel/functions'
 import { verifySessionCookie, parseCookie, SESSION_COOKIE_NAME } from './lib/dashboard/session.js'
-import { configuredBetaKeys, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
+import { configuredAccessKeys, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
 
 // SITE_SESSION_COOKIE_NAME is imported from lib/site/session.ts (runtime-
 // agnostic, Web Crypto only), which api/site/login.ts imports too -- one
@@ -204,7 +204,7 @@ export default async function middleware(request: Request): Promise<Response> {
   // set. Re-enable by removing the env var or setting it back to 'true'.
   if (process.env.SSR_SITE_GATE_ENABLED !== 'false') {
     const siteSessionValue = parseCookie(cookieHeader, SITE_SESSION_COOKIE_NAME)
-    const siteAuthenticated = await verifySiteSessionCookie(siteSessionValue, siteSessionSecret(), configuredBetaKeys())
+    const siteAuthenticated = await verifySiteSessionCookie(siteSessionValue, siteSessionSecret(), configuredAccessKeys())
 
     if (!siteAuthenticated) {
       return isApiPath ? unauthorizedJson() : comingSoonResponse(request)
