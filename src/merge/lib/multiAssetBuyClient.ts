@@ -419,18 +419,24 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     try {
       currentStage = "preparing the single combined purchase transaction (nothing submitted yet)";
       params.onProgress?.({ phase: "single-transaction" });
-      const swapSets: JupiterSwapInstructionsResult[] = [];
-      for (const action of swapActionList) {
-        if (action.kind !== "jupiter-swap") continue;
-        // Account-budgeted quote first (DEC-0161) so the composed
-        // transaction actually fits the wire limit; if no route fits the
-        // budget, retry uncapped -- oversize then falls back sequentially.
-        const set = await fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, undefined, SINGLE_TX_SWAP_MAX_ACCOUNTS).catch(
-          () => fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58),
-        );
-        log("single-tx swap instructions fetched", { mint: action.mint, inUsdcRaw: set.inAmount.toString(), quotedOutRaw: set.outAmount.toString(), swapAccounts: set.swapInstruction.accounts.length, lookupTables: set.addressLookupTableAddresses.length });
-        swapSets.push(set);
-      }
+      // PARALLEL fetch of every leg's swap instructions -- Promise.all
+      // preserves order, so swapSets still lines up with the jupiter-swap
+      // actions. Was a sequential await-in-loop (N round-trips back to back),
+      // which is what made the whole prep slow enough to expire the earliest
+      // Jupiter blockhash before submission. Account-budgeted quote first
+      // (DEC-0161) so the composed transaction fits the wire limit; if no route
+      // fits the budget, retry uncapped -- oversize then falls back sequentially.
+      const swapSets: JupiterSwapInstructionsResult[] = await Promise.all(
+        swapActionList
+          .filter((action) => action.kind === "jupiter-swap")
+          .map(async (action) => {
+            const set = await fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, undefined, SINGLE_TX_SWAP_MAX_ACCOUNTS).catch(
+              () => fetchJupiterSwapInstructions(action.mint, action.usdcBudgetRaw, ownerBase58),
+            );
+            log("single-tx swap instructions fetched", { mint: action.mint, inUsdcRaw: set.inAmount.toString(), quotedOutRaw: set.outAmount.toString(), swapAccounts: set.swapInstruction.accounts.length, lookupTables: set.addressLookupTableAddresses.length });
+            return set;
+          }),
+      );
       const wrapIxs = wrapActionList.flatMap((a) => (a.kind === "wrap-recovered-sol" ? buildWrapRecoveredSolInstructions(owner, a.lamports) : []));
       if (wrapActionList.length > 0) {
         log("single-tx re-wrap of recovered purchase SOL included", {
@@ -632,29 +638,44 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     const canBatchSwaps = typeof params.wallet.signAllTransactions === "function" && swapActions.length > 1;
     if (canBatchSwaps) {
       currentStage = "preparing all of this Reserve's asset swaps for a single approval";
-      const legs: { mint: string; legIndex: number; preSwapRaw: bigint; quote: JupiterSwapQuote; tx: VersionedTransaction }[] = [];
-      for (const action of swapActions) {
-        if (action.kind !== "jupiter-swap") continue;
-        const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
-        advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
-        const quote = await fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol);
-        log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
-        // Baseline BEFORE any swap in the batch lands. Legs are distinct mints,
-        // so no swap in the batch changes another leg's measured output.
-        const preSwapRaw = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner));
-        const tx = VersionedTransaction.deserialize(Buffer.from(quote.swapTransaction, "base64"));
-        legs.push({ mint: action.mint, legIndex, preSwapRaw, quote, tx });
-        advanceLeg(action.mint, "awaiting_signature");
-      }
+      // PARALLEL: fetch every leg's Jupiter quote + pre-swap baseline at once,
+      // instead of a sequential await-in-loop (N round-trips back to back). That
+      // serial prep is what made "preparing" feel frozen AND pushed the sign
+      // prompt so late that the earliest quote's blockhash had already expired
+      // by submission. Promise.all preserves order, so legs[] stays aligned with
+      // signAllTransactions'/signedTxs' order. Legs are distinct mints, so no
+      // swap in the batch changes another leg's measured baseline.
+      const legs: { mint: string; legIndex: number; preSwapRaw: bigint; quote: JupiterSwapQuote; tx: VersionedTransaction }[] = await Promise.all(
+        swapActions
+          .filter((action) => action.kind === "jupiter-swap")
+          .map(async (action) => {
+            const legIndex = params.assets.findIndex((a) => a.mint === action.mint);
+            advanceLeg(action.mint, "quoted", { targetRaw: requiredAmountsRaw[legIndex].toString() });
+            const [quote, preSwapRawStr] = await Promise.all([
+              fetchJupiterSwapQuote(action.mint, action.usdcBudgetRaw, ownerBase58, undefined, action.receiveWrappedSol),
+              fetchTokenBalanceRaw(params.connection, new PublicKey(action.mint), owner),
+            ]);
+            log("swap quote", { mint: action.mint, inUsdcRaw: quote.inAmount.toString(), outRaw: quote.outAmount.toString(), receiveWrappedSol: action.receiveWrappedSol });
+            const tx = VersionedTransaction.deserialize(Buffer.from(quote.swapTransaction, "base64"));
+            advanceLeg(action.mint, "awaiting_signature");
+            return { mint: action.mint, legIndex, preSwapRaw: BigInt(preSwapRawStr), quote, tx };
+          }),
+      );
       params.onProgress?.({ phase: "awaiting-wallet" });
       const signedTxs = await params.wallet.signAllTransactions!(legs.map((l) => l.tx));
-      for (let s = 0; s < legs.length; s++) {
-        const leg = legs[s];
-        currentStage = `submitting the swap for one of the Reserve's assets (${leg.mint.slice(0, 4)}...${leg.mint.slice(-4)})`;
-        params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: legs.length });
-        await submitSignedJupiterSwap(params.connection, signedTxs[s], leg.quote.lastValidBlockHeight, (sig) => advanceLeg(leg.mint, "submitted", { lastSignature: sig }));
-        await reconcileSwappedLeg(leg.mint, leg.legIndex, leg.preSwapRaw);
-      }
+      currentStage = "submitting all of the Reserve's asset swaps";
+      // PARALLEL submit + reconcile. All legs were signed in one approval, so
+      // broadcast + confirm them concurrently rather than one-after-another --
+      // a slow sequential submit was letting later legs' blockhashes expire
+      // before they landed (the observed "Jupiter swap expired" failure).
+      // Distinct mints => each reconcile baseline is independent.
+      await Promise.all(
+        legs.map(async (leg, s) => {
+          params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: legs.length });
+          await submitSignedJupiterSwap(params.connection, signedTxs[s], leg.quote.lastValidBlockHeight, (sig) => advanceLeg(leg.mint, "submitted", { lastSignature: sig }));
+          await reconcileSwappedLeg(leg.mint, leg.legIndex, leg.preSwapRaw);
+        }),
+      );
     } else {
       for (let s = 0; s < swapActions.length; s++) {
         const action = swapActions[s];

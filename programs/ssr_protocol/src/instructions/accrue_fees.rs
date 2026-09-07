@@ -10,6 +10,7 @@ use crate::constants::{
 use crate::errors::SsrError;
 use crate::events::{FeeVaultCredited, ManagerFeeAccrualSource};
 use crate::fee_math::split_configured_bps;
+use super::common::init_fee_settlement_if_needed;
 use crate::state::{FeeSettlement, ProtocolConfig, Reserve, TvlAccrual};
 
 /// Permissionless, matching the reference protocol's own `distributeFees`
@@ -198,6 +199,12 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
         );
         token::mint_to(cpi_ctx, total_fee_shares)?;
 
+        init_fee_settlement_if_needed(
+            &mut ctx.accounts.fee_settlement,
+            reserve_key,
+            ctx.bumps.fee_settlement,
+            ctx.program_id,
+        )?;
         let fee_settlement = &mut ctx.accounts.fee_settlement;
         fee_settlement.protocol_shares_in_vault = fee_settlement
             .protocol_shares_in_vault

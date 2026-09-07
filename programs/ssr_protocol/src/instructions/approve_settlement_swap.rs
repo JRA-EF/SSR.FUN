@@ -58,12 +58,15 @@ pub struct ApproveSettlementSwap<'info> {
     #[account(seeds = [SETTLEMENT_AUTHORITY_SEED, reserve.key().as_ref()], bump)]
     pub settlement_authority: UncheckedAccount<'info>,
 
-    /// CHECK: only used as the delegate address for the Approve CPI below;
-    /// verified against `protocol_config.fee_settlement_keeper` in the
-    /// handler. Does NOT need to sign this instruction -- granting a
-    /// delegate approval never requires the delegate's own signature, only
-    /// the token account owner's (`settlement_authority`, a program PDA).
-    pub keeper: UncheckedAccount<'info>,
+        /// The configured fee-settlement keeper. Now a SIGNER: granting an SPL
+    /// delegate allowance over a staging ATA is an authorization the keeper
+    /// itself must make -- previously this was an UncheckedAccount, so ANY
+    /// caller could invoke this and hand the keeper spend authority without
+    /// the keeper's consent (the require_keys_eq below checked the passed
+    /// account equalled the configured keeper, but never that it signed).
+    /// Still cross-checked against SettlementKeeperConfig.keeper in the
+    /// handler, so a wrong signer is rejected.
+    pub keeper: Signer<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,

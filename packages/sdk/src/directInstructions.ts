@@ -38,7 +38,7 @@ import {
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findTvlAccrual, resolveProtocolFeeDestinationTokenAccount } from "./pda";
+import { findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "./pda";
 import type { ZapAssetLeg } from "./zapInstructions";
 import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil } from "./calculations";
 
@@ -99,7 +99,7 @@ export interface BuildDirectMintParams {
 
 /** Single-signer (the connected user), single-instruction (plus idempotent ATA setup) direct in-kind mint -- no swap authority, no server round-trip. */
 export async function buildDirectMintInstructions(params: BuildDirectMintParams): Promise<DirectInstructionResult> {
-  const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user } = params;
+  const { program, protocolConfig, reserve, reserveTokenMint, mintAuthority, user } = params;
   const asset = requireSingleAssetReserve(params.assets);
   const mint = new PublicKey(asset.mint);
   const vaultBalance = BigInt(asset.vaultBalanceRaw);
@@ -114,7 +114,18 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
   const userAssetAta = getAssociatedTokenAddressSync(mint, user);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint));
 
-  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId);
+  // Tier B (DEC-0184 settlement pipeline): mint_reserve_tokens_in_kind's fee
+  // accounts changed shape. The protocol fee no longer goes to a caller-chosen
+  // destination ATA; it is minted into a per-Reserve fee VAULT (owned by a PDA)
+  // whose identity is tracked by the fee_settlement PDA -- see
+  // programs/ssr_protocol/src/instructions/mint_reserve_tokens_in_kind.rs and
+  // the regenerated IDL. So the old {protocolFeeDestination(TokenAccount),
+  // managerFeeRecipients} trio is replaced by {feeSettlement, feeVault,
+  // feeVaultAuthority}. params.protocolFeeDestination is retained on the
+  // interface for caller compatibility but is no longer used here.
+  const [feeSettlement] = findFeeSettlement(reserve, program.programId);
+  const [feeVaultAuthority] = findFeeVaultAuthority(reserve, program.programId);
+  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const mintIx = await program.methods
@@ -130,13 +141,10 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
       mintAuthority,
       depositorReserveTokenAccount: depositorReserveTokenAta,
       depositor: user,
-      protocolFeeDestinationTokenAccount,
-      protocolFeeDestination,
+      feeSettlement,
+      feeVault,
+      feeVaultAuthority,
       tvlAccrual,
-      // "None" sentinel (DEC-0094 convention, see pda.ts's doc comment) --
-      // Mainnet Reserves don't opt into multi-recipient Manager fee routing
-      // for this launch.
-      managerFeeRecipients: program.programId,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -201,7 +209,7 @@ export interface BuildDirectMultiAssetMintResult extends DirectInstructionResult
  * nothing partially deposits.
  */
 export async function buildDirectMultiAssetMintInstructions(params: BuildDirectMultiAssetMintParams): Promise<BuildDirectMultiAssetMintResult> {
-  const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user, assets, reserveTokensRequested } = params;
+  const { program, protocolConfig, reserve, reserveTokenMint, mintAuthority, user, assets, reserveTokensRequested } = params;
   // N >= 1 (DEC-0160): the on-chain mint_reserve_tokens_in_kind has always
   // supported any leg count -- one leg is just the smallest basket, and the
   // USDC-funded buy path serves single-asset Reserves like ALPHA (100% SSR)
@@ -223,7 +231,11 @@ export async function buildDirectMultiAssetMintInstructions(params: BuildDirectM
   const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
 
-  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId);
+  // Tier B fee-vault accounts (see buildDirectMintInstructions above for the
+  // rationale) -- replaces the old protocolFeeDestination/managerFeeRecipients trio.
+  const [feeSettlement] = findFeeSettlement(reserve, program.programId);
+  const [feeVaultAuthority] = findFeeVaultAuthority(reserve, program.programId);
+  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
@@ -255,11 +267,10 @@ export async function buildDirectMultiAssetMintInstructions(params: BuildDirectM
       mintAuthority,
       depositorReserveTokenAccount: depositorReserveTokenAta,
       depositor: user,
-      protocolFeeDestinationTokenAccount,
-      protocolFeeDestination,
+      feeSettlement,
+      feeVault,
+      feeVaultAuthority,
       tvlAccrual,
-      // "None" sentinel (DEC-0094 convention) -- same as the single-asset path above.
-      managerFeeRecipients: program.programId,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
