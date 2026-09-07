@@ -259,8 +259,19 @@ export function RealReserveSync() {
         // climb back a minute later -- the exact 7->1->7 flip observed. So on
         // Mainnet, only prune once the mint list has loaded past USDC; before
         // that the pass is additive and preserves the instant snapshot seed.
-        const mintsReady = !IS_MAINNET || mergedMainnetMints.length > 1;
-        applyDiscoveredReserves(dtrs, issues.length === 0 && mintsReady);
+        // On Mainnet the warm-cache SNAPSHOT is the authoritative source for
+        // WHICH Reserves exist: the server does a complete discovery incl. a
+        // getProgramAccounts asset-mint enumeration the browser CANNOT do on
+        // the public RPC, refreshed ~15s and re-seeded on every load
+        // (ReserveSnapshotHydrator). This client poll therefore resolves only a
+        // SUBSET of Reserves (the ones whose asset mints happen to be in its
+        // ledger-hook candidate list) and must NEVER be treated as
+        // authoritative -- a clean-but-partial pass would PRUNE the snapshot's
+        // full set down to that subset (the "7 -> 1" flip). So on Mainnet the
+        // poll is always ADDITIVE: it adds/updates Reserves + holdings but never
+        // removes one the snapshot vouched for. DevNet has no snapshot, so it
+        // keeps the original authoritative (prune-on-clean-pass) behavior.
+        applyDiscoveredReserves(dtrs, !IS_MAINNET && issues.length === 0);
         setChainDiscoveryStatus("ready");
 
         if (walletKey && publicKey) {
