@@ -1,10 +1,16 @@
 // Pure-logic coverage for the closed-beta site gate (DEC-0187):
 // lib/site/session.ts -- the key list, key matching, and the signed,
 // key-tagged, 30-day session cookie that middleware.ts and api/site/login.ts
-// share. Network-free; the middleware's rewrite and the login handler's
-// rate limiting are exercised live against the deployment instead.
+// share. Network-free; the middleware's rewrite and the login handler's rate
+// limiting are exercised live against the deployment instead.
 //
-//   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_beta_gate.ts
+// Plain ESM mocha (not ts-mocha): lib/site/session.ts is an ES module (root
+// package.json "type": "module") imported by the Edge middleware, so it must
+// NOT get the CommonJS-scoping package.json the other lib/* test targets use
+// -- tsconfig.node.json's verbatimModuleSyntax would reject its exports.
+// Node 24 strips the file's (erasable-only) type syntax natively, so:
+//
+//   npx mocha tests/phase_beta_gate.mjs
 import { expect } from "chai";
 import {
   betaKeyTag,
@@ -16,7 +22,7 @@ import {
   SITE_SESSION_TTL_MS,
   siteSessionSecret,
   verifySiteSessionCookie,
-} from "../lib/site/session";
+} from "../lib/site/session.ts";
 
 const SECRET = "site-password-and-signing-secret";
 const ENV = { SSR_BETA_KEYS: " SSR-BETA-AAAA-1111 ,SSR-BETA-BBBB-2222,, ", SSR_SITE_PASSWORD: SECRET };
