@@ -13,9 +13,16 @@ import { Portfolio } from './merge/pages/Portfolio'
 import { Manage } from './merge/pages/Manage'
 import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
+import { Terms } from './pages/legal/Terms'
+import { Disclosures } from './pages/legal/Disclosures'
+import { Privacy } from './pages/legal/Privacy'
 
 function Routes() {
   const path = usePath()
+
+  if (matchPath('/legal/terms', path)) return <Terms />
+  if (matchPath('/legal/disclosures', path)) return <Disclosures />
+  if (matchPath('/legal/privacy', path)) return <Privacy />
 
   const dtrManage = matchPath('/dtr/:dtrId/manage', path)
   if (dtrManage) {

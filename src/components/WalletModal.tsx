@@ -87,9 +87,10 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
 
   function isDetected(opt: WalletOption): boolean {
     if (opt.id === 'metamask') return hasGlobal('ethereum')
-    // Design preview: every Solana wallet reads as available, since choosing
-    // one performs a simulated connection instead of reaching an extension.
-    if (isDesignDemoEnabled()) return true
+    // Design preview (never on Mainnet): every Solana wallet reads as
+    // available, since choosing one performs a simulated connection instead
+    // of reaching an extension.
+    if (!IS_MAINNET && isDesignDemoEnabled()) return true
     const found = findAdapter(opt.id)
     return found?.readyState === WalletReadyState.Installed || found?.readyState === WalletReadyState.Loadable
   }
@@ -111,7 +112,9 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
     // Design preview: simulate the whole connect flow in the store. The real
     // wallet adapter never engages (no extension popup, no keys), so this is
     // safe even when a real Phantom/Solflare is installed in the browser.
-    if (isDesignDemoEnabled()) {
+    // Never on Mainnet: production users must only ever see real connection
+    // state, so the ?demo=1 flag is ignored there.
+    if (!IS_MAINNET && isDesignDemoEnabled()) {
       setStep({ kind: 'connecting', wallet: opt })
       pendingRef.current = opt
       window.setTimeout(() => {

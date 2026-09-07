@@ -515,9 +515,10 @@ export function DTRDetail() {
   // request instead of each firing its own for the same (mint, owner).
   useEffect(() => {
     if (!walletCtx.publicKey) {
-      // Design preview: no real wallet adapter is present, so seed a playable
-      // 10,000 devUSDC balance for styling the populated panel states.
-      if (isDesignDemoEnabled()) {
+      // Design preview (never on Mainnet): no real wallet adapter is present,
+      // so seed a playable 10,000 devUSDC balance for styling the populated
+      // panel states. On Mainnet only real, chain-read balances may render.
+      if (!IS_MAINNET && isDesignDemoEnabled()) {
         setSettlementBalanceRaw(BigInt(10_000 * 10 ** SETTLEMENT_DECIMALS));
         setSettlementBalanceStatus("ready");
         return;

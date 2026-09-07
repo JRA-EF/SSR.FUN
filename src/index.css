@@ -156,7 +156,7 @@ body {
 }
 
 /* Layered (like the button reset below, and for the same reason): Tailwind
-   v4's space-y-*/mt-*/mb-* utilities set margins on headings and paragraphs,
+   v4's "space-y-", "mt-" and "mb-" utilities set margins on headings and paragraphs,
    and utilities only win if this reset sits in an earlier layer. Unlayered,
    this rule silently zeroed every such margin in .merge-scope pages (the
    wallet-gate spacing bugs, the section-heading gaps). Native pages are
@@ -2401,4 +2401,144 @@ input, select, textarea {
   .alloc-row { grid-template-columns: 1fr 70px 32px; }
   .alloc-row .alloc-slider { display: none; }
   .perm-grid { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------- legal pages ---------------------------------- */
+/* Terms of Use / Disclosures / Privacy (src/pages/legal/*). Native tokens
+   only, per the UI baseline -- no new colors/radii/shadows introduced. */
+
+.legal-page {
+  padding: 48px 0 96px;
+}
+
+.legal-page .container {
+  max-width: 780px;
+}
+
+.legal-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-3);
+  margin-bottom: 24px;
+}
+
+.legal-nav a:hover {
+  color: var(--text);
+}
+
+.legal-page h1 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+
+.legal-updated {
+  color: var(--text-3);
+  font-size: 13px;
+  margin-bottom: 26px;
+}
+
+.legal-page h2 {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  margin: 26px 0 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.legal-page p,
+.legal-page li {
+  color: var(--text-2);
+  font-size: 14.5px;
+  line-height: 1.65;
+  max-width: 72ch;
+}
+
+.legal-page p {
+  margin-bottom: 10px;
+}
+
+.legal-page ul {
+  padding-left: 20px;
+  margin: 6px 0 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.legal-page a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.legal-page .legal-nav a {
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.legal-page strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.legal-intro {
+  color: var(--text-2);
+}
+
+/* ---------------------------------- acceptance modal ---------------------------------- */
+/* First-visit Terms acceptance (src/components/AcceptanceModal.tsx). Reuses
+   the shared .modal-scrim/.modal chrome. */
+
+.accept-modal {
+  max-width: 430px;
+}
+
+.accept-body {
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+
+.accept-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.accept-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 16px 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.accept-check input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.accept-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.accept-declined {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-3);
 }
