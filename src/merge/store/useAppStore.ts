@@ -431,14 +431,21 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "ssrfun-simulation",
-      version: 6,
+      version: 7,
       // txInFlight is purely an in-session UI-coordination flag (RealReserveSync
       // pauses its poll while it's true) -- it must never survive a reload as
       // `true`, or a tab closed mid-transaction would permanently wedge
       // background polling on next load with nothing left to ever clear it.
       partialize: (state) => {
         const { txInFlight: _txInFlight, ...rest } = state;
-        return rest;
+        // On Mainnet, NEVER persist on-chain-discovered Reserves. They are
+        // always re-derived fresh from the warm-cache snapshot (pass-0 in
+        // RealReserveSync) plus the live poll, so a persisted -- and possibly
+        // stale or empty -- copy rehydrating on load can only race and clobber
+        // that fresh seed. That race is the "instant 7 -> flips to none/1 ->
+        // back to 7" bug. Only user-local DTRs (none today; future-proofed)
+        // persist. DevNet behaviour is deliberately unchanged.
+        return IS_MAINNET ? { ...rest, dtrs: rest.dtrs.filter((d) => !d.onChain) } : rest;
       },
       // Backfill fields added after a user's simulation state was already
       // persisted to localStorage -- e.g. DTRs created before the logo-art
@@ -509,6 +516,14 @@ export const useAppStore = create<AppState>()(
           if (state.holdings) {
             state.holdings = state.holdings.filter((h) => !removedIds.has(h.dtrId));
           }
+        }
+        // v7: on Mainnet, drop any on-chain Reserves left in an existing
+        // tester's localStorage from before partialize stopped persisting them.
+        // Without this, the one post-update load would still rehydrate the stale
+        // on-chain set and race the warm-cache snapshot seed (the 7->none/1 flip).
+        // They re-derive instantly from the snapshot. DevNet is left untouched.
+        if (IS_MAINNET && state.dtrs) {
+          state.dtrs = state.dtrs.filter((d) => !d.onChain);
         }
         if (state.wallet) {
           state.wallet = { ...state.wallet, usdc: 0, ssr: 0 };
