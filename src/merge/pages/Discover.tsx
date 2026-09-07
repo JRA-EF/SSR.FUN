@@ -8,6 +8,7 @@ import { Link } from "wouter";
 import { Activity, SearchX } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
 import { RESERVE_CATEGORIES, normalizeReserveCategory, type DTR } from "@/lib/types";
+import { isDesignDemoEnabled } from "@/lib/designDemo";
 import { buildReserveCardProps } from "@/lib/reserveCardProps";
 import { IS_MAINNET } from "@/lib/solana-config";
 import { Input } from "@/components/ui/input";
@@ -138,7 +139,9 @@ export function Discover() {
         </div>
       </div>
 
-      {chainDiscoveryStatus === "error" && (
+      {/* Design preview hides transient RPC-health banners -- demo videos and
+          screenshots should show the design, not environment noise. */}
+      {chainDiscoveryStatus === "error" && !isDesignDemoEnabled() && (
         <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn)", color: "var(--warn)" }}>
           Could not refresh live Solana {CLUSTER_LABEL} Reserves ({chainDiscoveryError ?? "unknown error"}). Showing the last known state --
           on-chain figures below may be stale until the connection recovers.
