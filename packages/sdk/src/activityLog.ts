@@ -195,11 +195,11 @@ export function summarizeActivityEvent(
         amountKind2: "protocolFee",
       };
     case "delegateAdded":
-      return { actor: pk(data.delegate), summary: `Delegate ${pk(data.delegate)} added (${data.restricted ? "restricted" : "unrestricted"})` };
+      return { actor: pk(data.delegate), summary: `Co-Manager ${pk(data.delegate)} added (${data.restricted ? "restricted" : "unrestricted"})` };
     case "delegatePermissionsUpdated":
-      return { actor: pk(data.delegate), summary: `Delegate ${pk(data.delegate)} permissions changed (${data.oldPermissions} -> ${data.newPermissions})` };
+      return { actor: pk(data.delegate), summary: `Co-Manager ${pk(data.delegate)} permissions changed (${data.oldPermissions} -> ${data.newPermissions})` };
     case "delegateRemoved":
-      return { actor: pk(data.delegate), summary: `Delegate ${pk(data.delegate)} removed` };
+      return { actor: pk(data.delegate), summary: `Co-Manager ${pk(data.delegate)} removed` };
     case "targetsUpdated": {
       const mints = pkList(data.assetMints);
       const weights = Array.isArray(data.newTargetWeightsBps) ? (data.newTargetWeightsBps as unknown[]).map(String) : [];

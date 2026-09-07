@@ -22,7 +22,7 @@ graph TD
         RA1b[ReserveAsset: SOL<br/>PDA]
         V1a[Reserve Vault: USDC<br/>token account, owner = VA1]
         V1b[Reserve Vault: SOL<br/>token account, owner = VA1]
-        D1[Delegate<br/>PDA, optional, N per Reserve]
+        D1[Co-Manager<br/>PDA, optional, N per Reserve]
 
         R1 --> RTM1
         RTM1 --> MA1
@@ -74,11 +74,11 @@ graph LR
     end
 
     subgraph "Scoped, revocable authority over ONE Reserve"
-        DEL[Delegate]
+        DEL[Co-Manager]
     end
 
     PCAUTH -->|pause whole program,<br/>set global limits,<br/>set defaults for NEW reserves| PC[(ProtocolConfig)]
-    RM -->|full config, transfer authority,<br/>manage delegates| RES[(Reserve + its Vaults)]
+    RM -->|full config, transfer authority,<br/>manage co-managers| RES[(Reserve + its Vaults)]
     DEL -->|only granted flags:<br/>targets / rebalance / fees / pause / metadata| RES
     FE -.no on-chain authority at all.-x RES
     IDX -.no on-chain authority at all.-x RES
@@ -186,20 +186,20 @@ Because both the vault's own address *and* its owner authority are derived from 
 
 Supply invariant: `reserve_token_mint.supply` must always be fully explained by proportional backing across all `ReserveVault` balances -- enforced not by an on-chain "total value" check (that would require oracle pricing, contrary to the core mandate) but structurally, because the *only* two instructions capable of changing supply (`mint_reserve_tokens_in_kind`'s internal mint CPI, and `redeem_reserve_tokens_in_kind`'s internal burn CPI) always move basket-asset amounts computed from and atomically alongside the exact same supply change -- see `SECURITY_INVARIANTS.md` for the precise proof-sketch and the adversarial tests that verify it.
 
-## Reserve Manager and delegates
+## Reserve Manager and co-managers
 
 The root Reserve Manager is simply `Reserve.manager` (a plain `Pubkey`, no separate account) -- checked via `has_one = manager` on every manager-gated instruction.
 
-### Delegate
+### Co-Manager (on-chain account type `Delegate`)
 
 **Seeds:** `["delegate", reserve.key(), delegate_wallet.key()]`
 
 | Field | Type | Purpose |
 |---|---|---|
 | `reserve` | `Pubkey` | back-reference |
-| `wallet` | `Pubkey` | the delegate's address |
+| `wallet` | `Pubkey` | the co-manager's address |
 | `permissions` | `u16` bitmask | see flag table below |
-| `restricted` | `bool` | `true` for an ordinary scoped delegate; `false` only for an "unrestricted" delegate the root manager has explicitly designated (still cannot touch the root-exclusive powers below, but can itself add/remove *restricted* delegates -- see SSR_ARCHITECTURE.md §7) |
+| `restricted` | `bool` | `true` for an ordinary scoped co-manager; `false` only for an "unrestricted" co-manager the root manager has explicitly designated (still cannot touch the root-exclusive powers below, but can itself add/remove *restricted* co-managers -- see SSR_ARCHITECTURE.md §7) |
 | `added_at` | `i64` | |
 | `bump` | `u8` | |
 
@@ -215,11 +215,11 @@ Permission bitmask flags (each independently grantable, least-privilege default 
 | 5 | `MANAGE_LIQUIDITY_CONFIG` | configure router/liquidity-related settings (future-facing; not exercised by any v1 instruction, kept reserved so the bitmask doesn't need to grow later) |
 | 6 | `PAUSE_RESERVE` | call `pause_reserve` |
 | 7 | `UNPAUSE_RESERVE` | call `unpause_reserve` |
-| 8 | `ADD_RESTRICTED_DELEGATE` | add a new delegate with `restricted = true` only |
-| 9 | `REMOVE_RESTRICTED_DELEGATE` | remove a `restricted = true` delegate |
+| 8 | `ADD_RESTRICTED_DELEGATE` | add a new co-manager with `restricted = true` only |
+| 9 | `REMOVE_RESTRICTED_DELEGATE` | remove a `restricted = true` co-manager |
 | 10-15 | reserved | must be zero in v1; any instruction that reads the bitmask masks these off explicitly so a future flag addition can't be accidentally granted by an old, stale-encoded permission value |
 
-The root Reserve Manager implicitly has every permission (checked as `manager == signer OR delegate.permissions & FLAG != 0`, never by giving the manager their own maxed-out `Delegate` record) and, uniquely, the powers no bitmask flag ever grants to anyone: transferring `Reserve.manager` itself, granting/revoking an **unrestricted** delegate, and any future irreversible action.
+The root Reserve Manager implicitly has every permission (checked as `manager == signer OR delegate.permissions & FLAG != 0`, never by giving the manager their own maxed-out `Delegate` record) and, uniquely, the powers no bitmask flag ever grants to anyone: transferring `Reserve.manager` itself, granting/revoking an **unrestricted** co-manager, and any future irreversible action.
 
 ## USDC fee-settlement pipeline (2026-08-21 pass)
 

@@ -42,7 +42,7 @@ import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from ".
 import { useMainnetKnownAssetMints } from "../hooks/useMainnetKnownAssetMints";
 import { useMainnetAssetCatalogue } from "../hooks/useMainnetAssetCatalogue";
 
-const BASE_POLL_MS = 15_000;
+const BASE_POLL_MS = 30_000; // was 15_000 -- reserve data changes rarely; halves steady-state discovery load (see rpcResilience rate-limit fix)
 const MAX_POLL_MS = 120_000;
 /** Bounded so a manual "refresh now" moments after a poll tick reuses that tick's result instead of re-asking the RPC -- see refreshRealReserveNow in DTRDetail.tsx, which reads through the same cache key space for the balance half of this. */
 const DISCOVERY_CACHE_TTL_MS = 5_000;
@@ -106,7 +106,20 @@ export function RealReserveSync() {
   }, [mergedMainnetMints]);
 
   const candidateAssetMints = useMemo(
-    () => (IS_MAINNET ? mergedMainnetMints.map((m) => new PublicKey(m)) : DEVNET_CANDIDATE_ASSET_MINTS),
+    // Defense-in-depth: mergedMainnetMints includes mints from the Ledger API and
+    // this browser's persisted store. A single malformed mint string must NOT
+    // white-screen discovery (new PublicKey throws on non-base58) -- drop the bad
+    // entry and keep the rest as candidates.
+    () =>
+      IS_MAINNET
+        ? mergedMainnetMints.flatMap((m) => {
+            try {
+              return [new PublicKey(m)];
+            } catch {
+              return [];
+            }
+          })
+        : DEVNET_CANDIDATE_ASSET_MINTS,
     [mergedMainnetMints],
   );
 

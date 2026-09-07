@@ -86,13 +86,13 @@ import { advanceAssetFunding, canEnterSeeding, countReadyToSeed, type AssetFundi
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
 /**
- * Exactly the capability set CreateDTR.tsx's "Additional Managers" copy
+ * Exactly the capability set CreateDTR.tsx's "Co-Managers" copy
  * promises them at creation time ("They'll be able to rebalance, manage
  * fees, and pause the reserve, but won't be able to manage other
- * delegates -- only the root Manager (you) can do that.") -- granted as a
+ * co-managers -- only the root Manager (you) can do that.") -- granted as a
  * RESTRICTED delegate (never unrestricted; add_delegate.rs only allows the
  * root Manager to grant unrestricted, and the whole point here is "won't be
- * able to manage other delegates," which an unrestricted delegate could).
+ * able to manage other co-managers," which an unrestricted delegate could).
  * Deliberately excludes UPDATE_METADATA, MANAGE_LIQUIDITY_CONFIG, and both
  * *_RESTRICTED_DELEGATE flags -- none of those are promised by the copy
  * above, so none are granted.
@@ -180,7 +180,7 @@ export function validateCreateReserveAssets(assets: CreateReserveAssetInput[]): 
   }
 }
 
-/** Validates and de-duplicates the "Additional Managers" list before it's turned into real add_delegate instructions -- never trusts caller-side UI state alone. Returns unique, valid wallet addresses excluding `manager` (which is always the root Manager already, and add_delegate.rs has no "grant yourself a delegate" concept). */
+/** Validates and de-duplicates the "Co-Managers" list before it's turned into real add_delegate instructions -- never trusts caller-side UI state alone. Returns unique, valid wallet addresses excluding `manager` (which is always the root Manager already, and add_delegate.rs has no "grant yourself a delegate" concept). */
 export function validateAdditionalManagers(addresses: string[], manager: PublicKey): PublicKey[] {
   const seen = new Set<string>();
   const result: PublicKey[] = [];
@@ -1415,7 +1415,7 @@ export async function createReserveOnChain(params: {
   /**
    * Wallets to grant as restricted delegates (see ADDITIONAL_MANAGER_PERMISSIONS
    * above) in the SAME create-and-register transaction -- CreateDTR.tsx's
-   * "Additional Managers" step. Bundled here, not as separate post-creation
+   * "Co-Managers" step. Bundled here, not as separate post-creation
    * transactions, for the same reason feeRecipients is (DEC-0031): it shares
    * the reserve/signer/systemProgram accounts already in this transaction,
    * so no extra wallet approval is needed. Was previously collected by the
@@ -1516,7 +1516,7 @@ export async function createReserveOnChain(params: {
       // reading actingDelegate (this self-referential PDA doesn't need to
       // exist on-chain for that check), so this remains correct regardless
       // of which batch it ends up in. Restricted=true always, matching
-      // ADDITIONAL_MANAGER_PERMISSIONS's "can't manage other delegates" promise.
+      // ADDITIONAL_MANAGER_PERMISSIONS's "can't manage other co-managers" promise.
       const [actingDelegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
       const addDelegateIxs = await Promise.all(
         additionalManagerWallets.map((delegateWallet) =>

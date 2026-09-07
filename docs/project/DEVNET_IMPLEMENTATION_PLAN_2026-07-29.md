@@ -37,7 +37,7 @@ design output for Phases B-H, not yet implemented.
 > is real user-created DevNet state, not a nonexistent scenario, and the
 > frontend's dynamic-Reserve-loading mechanism has now been traced, (3) the
 > canonical Sell design decision is confirmed (in-kind redemption is primary,
-> synthetic SOL cash-out is removed from the canonical flow), (4) delegate-name
+> synthetic SOL cash-out is removed from the canonical flow), (4) co-manager-name
 > requirements refined, (5) items 4/5 restructured to separate composition
 > management from trade execution, (6) item 10 restructured around an
 > Active → WindDown → Closed lifecycle, (7) a dependency-ordered delivery-phase
@@ -330,7 +330,7 @@ So "add/remove a Reserve" is itself config-only (it changes what the Reserve *is
 > configuration change, never an executed rebalance — the two must never be
 > labeled interchangeably in any UI copy, decision log entry, or test name.**
 
-**Files:** `programs/ssr_protocol/src/instructions/update_targets.rs` (config-only reweight, real instruction, manager or delegate with `UPDATE_TARGETS`/bit 1), `record_rebalance.rs` (attestation-only, **not a trade**, manager or delegate with `EXECUTE_REBALANCE`/bit 3), `initialize_reserve_asset.rs` (vault creation, pre-Active only), `state/reserve.rs` (`require_not_paused`, status enum), `packages/sdk/src/zapInstructions.ts` / `packages/sdk/src/client.ts` (where new instruction builders would live), `src/merge/pages/ManageDTR.tsx` (execute/preview UI), existing DevNet transaction-status pattern already shipped for Buy/Sell in `src/merge/pages/DTRDetail.tsx` (pending/submitted/confirmed/failed + Explorer link) — **reuse this pattern rather than inventing a new one.**
+**Files:** `programs/ssr_protocol/src/instructions/update_targets.rs` (config-only reweight, real instruction, manager or co-manager with `UPDATE_TARGETS`/bit 1), `record_rebalance.rs` (attestation-only, **not a trade**, manager or co-manager with `EXECUTE_REBALANCE`/bit 3), `initialize_reserve_asset.rs` (vault creation, pre-Active only), `state/reserve.rs` (`require_not_paused`, status enum), `packages/sdk/src/zapInstructions.ts` / `packages/sdk/src/client.ts` (where new instruction builders would live), `src/merge/pages/ManageDTR.tsx` (execute/preview UI), existing DevNet transaction-status pattern already shipped for Buy/Sell in `src/merge/pages/DTRDetail.tsx` (pending/submitted/confirmed/failed + Explorer link) — **reuse this pattern rather than inventing a new one.**
 
 **Confirmed root causes / protocol audit result:**
 - `update_targets` changes configuration only — it never moves a single token. Wiring it to real wallet signing is frontend-only work with no protocol change needed, **but the UI must call it what it is: a target-weight update, not a rebalance.**
@@ -349,7 +349,7 @@ So "add/remove a Reserve" is itself config-only (it changes what the Reserve *is
 - A newly-added, zero-balance Reserve at a nonzero target weight does not retroactively change any holder's existing entitlement — proportional redemption (item 8's traced math) always uses *current* vault balances, so nothing is stranded or diluted by the config change itself; the "gap" between target and actual only closes once a real trade (manual, per the doc comment, in v1) moves tokens in.
 - A disabled Reserve's existing vault balance must remain redeemable (per `ACCOUNT_MODEL.md:158`'s already-documented intent) until it reaches zero — this is the same invariant item 10 needs for wind-down, and should share one security review and one implementation pattern rather than two.
 
-**Authorization (confirmed from code, unchanged, nothing new needed):** manager always allowed; delegate requires the specific bit (`UPDATE_TARGETS` for reweight, `EXECUTE_REBALANCE` for the attestation call). Both instructions already require the Reserve not be `Paused`.
+**Authorization (confirmed from code, unchanged, nothing new needed):** manager always allowed; co-manager requires the specific bit (`UPDATE_TARGETS` for reweight, `EXECUTE_REBALANCE` for the attestation call). Both instructions already require the Reserve not be `Paused`.
 
 **Dependencies/security risks:**
 - Any new "add vault post-Active" or "disable Reserve" instruction needs explicit security-invariant analysis against `SECURITY_INVARIANTS.md` before being written (see item 7/delivery-phases below) — a genuine open design question, not just an engineering task.
@@ -366,51 +366,51 @@ So "add/remove a Reserve" is itself config-only (it changes what the Reserve *is
 
 ---
 
-## 6. Delegate names
+## 6. Co-Manager names
 
 > **2026-07-29, round 2 — confirmed decision, requirements refined.** For
-> the present DevNet version, delegate names are confirmed as **off-chain
-> local labels, keyed by (Reserve, delegate public key)** — no protocol
+> the present DevNet version, co-manager names are confirmed as **off-chain
+> local labels, keyed by (Reserve, co-manager public key)** — no protocol
 > migration for display names. The open question from round 1 (cross-device
 > persistence) is resolved: **not required now**, but must be documented as
 > a known limitation, not silently assumed.
 
 **Files:** `programs/ssr_protocol/src/state/delegate.rs:38-59` (on-chain `Delegate` struct — `reserve, wallet, permissions, restricted, added_at, bump`, **no string/label field, no space allocated for one**), `lib.rs:138-145`/`add_delegate.rs:41-46` (instruction args: `delegate_wallet, permissions, restricted` — **no name parameter**), `src/merge/lib/types.ts:24-28` (frontend `Delegate` type, also no name field today), `src/merge/pages/ManageDTR.tsx:396-440` ("Add New Delegate" form — wallet address + permission checkboxes only). **Precedent (unused/dormant):** `src/domain/types.ts:56-60` already defines a `label: string` field on a differently-shaped, currently-unwired native `Delegate` type — not connected to the live Merge dashboard, but a useful shape reference.
 
-**Root cause:** the chain has no concept of a delegate name — adding one is structurally an off-chain concern. Growing the on-chain `Delegate` account to hold a string would mean a program upgrade (new account size, migration for existing DevNet delegate accounts) purely to store a display label with no protocol logic depending on it — almost certainly not worth a program change.
+**Root cause:** the chain has no concept of a co-manager name — adding one is structurally an off-chain concern. Growing the on-chain `Delegate` account to hold a string would mean a program upgrade (new account size, migration for existing DevNet co-manager accounts) purely to store a display label with no protocol logic depending on it — almost certainly not worth a program change.
 
 **Classification: frontend/off-chain-only — confirmed, no protocol migration.** The name is an off-chain annotation keyed by `(reserve, delegate wallet pubkey)`, stored in the same Zustand-persisted store that already holds all other Manager-Dashboard state (`useAppStore.ts`, `persist` middleware, `localStorage` key `"ssrfun-simulation"`) — no new backend/API infrastructure is introduced solely for this.
 
 **Confirmed requirements (per round-2 decision):**
 - The label is explicitly identified in the UI as a **local label** (e.g. a small "local label" tag/tooltip next to the name, or equivalent copy) — never presented as if it came from the chain.
 - **Wallet address, capabilities, scope, activation/restricted status, and authorization must always be read from verified on-chain state** (the existing `Delegate` account fields — `wallet`, `permissions`, `restricted`, `added_at`) — the local label is purely a display convenience layered on top, never a substitute for or influence on any authorization check.
-- If no local label exists for a given `(reserve, wallet)` key (e.g. a delegate added by someone else's browser, or before this feature existed, or on a fresh device), the UI **must fall back cleanly to the shortened public key** — never show a blank, an error, or a placeholder that looks like missing/broken data.
-- **Delegate functionality (granting, revoking, permission checks, display of capabilities) must not depend on a label being present** — a nameless delegate must work identically to a named one in every functional respect; the label is decorative/organizational only.
+- If no local label exists for a given `(reserve, wallet)` key (e.g. a co-manager added by someone else's browser, or before this feature existed, or on a fresh device), the UI **must fall back cleanly to the shortened public key** — never show a blank, an error, or a placeholder that looks like missing/broken data.
+- **Co-Manager functionality (granting, revoking, permission checks, display of capabilities) must not depend on a label being present** — a nameless co-manager must work identically to a named one in every functional respect; the label is decorative/organizational only.
 - **Documented limitation, not silently assumed:** labels are local to the browser/device that set them and do **not** automatically follow the user across browsers or devices — confirmed acceptable for the present DevNet version. This must be stated in-product (e.g. helper text near the name field) and in `docs/protocol/FRONTEND_INTEGRATION.md`/this plan, not left as an undocumented surprise.
 - **No protocol migration is being introduced** to store display names — the on-chain `Delegate` struct (`state/delegate.rs:38-59`) stays exactly as-is; this closes out round 1's "grow the account to hold a string" option entirely.
 
 **Acceptance criteria:**
-- Adding a delegate requires a non-empty human-readable local label before submission.
-- The label is stored and displayed alongside the delegate's on-chain wallet address, capabilities, scope, and status everywhere a delegate appears (Delegates tab, and the new Overview section in item 7), always clearly marked as a local label.
-- Any delegate lacking a locally-stored label (different browser/device, or pre-dating this feature) falls back to a shortened-address display with full functionality intact — verified by a test that clears local storage and confirms the delegate still renders correctly (address-only) and remains fully manageable.
+- Adding a co-manager requires a non-empty human-readable local label before submission.
+- The label is stored and displayed alongside the co-manager's on-chain wallet address, capabilities, scope, and status everywhere a co-manager appears (Co-Managers tab, and the new Overview section in item 7), always clearly marked as a local label.
+- Any co-manager lacking a locally-stored label (different browser/device, or pre-dating this feature) falls back to a shortened-address display with full functionality intact — verified by a test that clears local storage and confirms the co-manager still renders correctly (address-only) and remains fully manageable.
 - No UI surface implies the label is on-chain-verified or synced across devices.
 
-**Tests:** Form validation test (empty label blocked on add); rendering test confirming the label displays consistently in both the Delegates tab and the new Overview section; a fallback test that simulates a missing local label (empty/cleared `localStorage` for that key) and confirms shortened-address fallback with unimpaired delegate management functionality.
+**Tests:** Form validation test (empty label blocked on add); rendering test confirming the label displays consistently in both the Co-Managers tab and the new Overview section; a fallback test that simulates a missing local label (empty/cleared `localStorage` for that key) and confirms shortened-address fallback with unimpaired co-manager management functionality.
 
 ---
 
-## 7. Delegates section in Manager Overview
+## 7. Co-Managers section in Manager Overview
 
-**Files:** `src/merge/pages/ManageDTR.tsx:218-315` (Overview tab — currently only a bare count, `Total Delegates: {dtr.delegates.length}` at lines 265-266), `src/merge/pages/ManageDTR.tsx:317-442` (existing Delegates tab, source of the real per-delegate data — address, permission badges — to reuse), component set already imported in this file: `Card`/`CardContent`/`CardHeader`/`CardTitle`, `Table`/`TableBody`/`TableRow`/`TableCell`, `Badge`, `Avatar`/`AvatarFallback` (same family `Portfolio.tsx` uses for its holdings table — good precedent for a compact delegate summary table).
+**Files:** `src/merge/pages/ManageDTR.tsx:218-315` (Overview tab — currently only a bare count, `Total Delegates: {dtr.delegates.length}` at lines 265-266), `src/merge/pages/ManageDTR.tsx:317-442` (existing Co-Managers tab, source of the real per-co-manager data — address, permission badges — to reuse), component set already imported in this file: `Card`/`CardContent`/`CardHeader`/`CardTitle`, `Table`/`TableBody`/`TableRow`/`TableCell`, `Badge`, `Avatar`/`AvatarFallback` (same family `Portfolio.tsx` uses for its holdings table — good precedent for a compact co-manager summary table).
 
 **Frontend-only**, and depends on item 6 for the name field to exist in the data model first (build the Overview section to show the name once it exists, rather than shipping a name-less version and reworking it later).
 
 **Acceptance criteria:**
-- Overview tab gains a "Delegates" card/section listing each delegate with: name (item 6), shortened address with a way to reveal/copy the full address, active/inactive-equivalent status, granted capabilities (reuse the existing permission-badge rendering from the Delegates tab), and any scope/restriction indicator (the existing `restricted` boolean).
-- A clear affordance (button/link) from each row navigates to the existing Delegates tab (or a per-delegate management view) to manage that delegate.
+- Overview tab gains a "Delegates" card/section listing each co-manager with: name (item 6), shortened address with a way to reveal/copy the full address, active/inactive-equivalent status, granted capabilities (reuse the existing permission-badge rendering from the Co-Managers tab), and any scope/restriction indicator (the existing `restricted` boolean).
+- A clear affordance (button/link) from each row navigates to the existing Co-Managers tab (or a per-co-manager management view) to manage that co-manager.
 - Uses the same `Card`/`Table`/`Badge`/`Avatar` components already in this file — no new visual language introduced.
 
-**Tests:** Rendering test with 0, 1, and N delegates (empty state, singular, plural); link/navigation test to the management view.
+**Tests:** Rendering test with 0, 1, and N co-managers (empty state, singular, plural); link/navigation test to the management view.
 
 ---
 
@@ -517,9 +517,9 @@ So "add/remove a Reserve" is itself config-only (it changes what the Reserve *is
 > below, and an explicit rule that the manager can never withdraw assets
 > still attributable to outstanding holders.
 
-**Files:** confirmed via full-repo grep — `programs/ssr_protocol/src/` has **no** `close`/`wind`/`shutdown`/`deprecat`/`sunset` instruction except `remove_delegate.rs:20`'s unrelated Delegate-account rent-reclaim `close`. `docs/protocol/SECURITY_INVARIANTS.md:56` documents this as a known, accepted v1 gap (no `close_abandoned_reserve` instruction; a Reserve's rent stays locked indefinitely if abandoned — demonstrated live on DevNet by reserve_id 6, permanently stuck in `AssetsInitializing`). On the frontend, `src/state/store.tsx:29,138-145`, `src/domain/types.ts:62,103`, `src/components/ui.tsx:80` contain **dead, never-dispatched** wind-down scaffolding (a `'wind-down'` action type, a `'winding-down'` status, a CSS badge) attached to the legacy native store that the routed Merge dashboard (`ManageDTR.tsx`/`useAppStore.ts`) doesn't use at all — effectively inert precedent, not a working feature.
+**Files:** confirmed via full-repo grep — `programs/ssr_protocol/src/` has **no** `close`/`wind`/`shutdown`/`deprecat`/`sunset` instruction except `remove_delegate.rs:20`'s unrelated Co-Manager-account rent-reclaim `close`. `docs/protocol/SECURITY_INVARIANTS.md:56` documents this as a known, accepted v1 gap (no `close_abandoned_reserve` instruction; a Reserve's rent stays locked indefinitely if abandoned — demonstrated live on DevNet by reserve_id 6, permanently stuck in `AssetsInitializing`). On the frontend, `src/state/store.tsx:29,138-145`, `src/domain/types.ts:62,103`, `src/components/ui.tsx:80` contain **dead, never-dispatched** wind-down scaffolding (a `'wind-down'` action type, a `'winding-down'` status, a CSS badge) attached to the legacy native store that the routed Merge dashboard (`ManageDTR.tsx`/`useAppStore.ts`) doesn't use at all — effectively inert precedent, not a working feature.
 
-**Confirmed root cause:** there is genuinely no safe way to wind down a Reserve on the current protocol. `pause_reserve` is the closest existing primitive but is explicitly not a wind-down: it blocks new minting/target-updates/delegate-management but **by design never blocks redemption** (`redeem_reserve_tokens_in_kind.rs` deliberately ignores both Reserve-level and protocol-level pause, per DEC-0016/`SECURITY_INVARIANTS.md` invariant 11) — which is actually the right building block to reuse, since "never strand holders" is already this instruction's core guarantee.
+**Confirmed root cause:** there is genuinely no safe way to wind down a Reserve on the current protocol. `pause_reserve` is the closest existing primitive but is explicitly not a wind-down: it blocks new minting/target-updates/co-manager-management but **by design never blocks redemption** (`redeem_reserve_tokens_in_kind.rs` deliberately ignores both Reserve-level and protocol-level pause, per DEC-0016/`SECURITY_INVARIANTS.md` invariant 11) — which is actually the right building block to reuse, since "never strand holders" is already this instruction's core guarantee.
 
 **Classification: requires protocol changes.** Confirmed staged lifecycle (for review, not yet built):
 
@@ -528,7 +528,7 @@ So "add/remove a Reserve" is itself config-only (it changes what the Reserve *is
 **Stage `WindDown`** — treatment of each concern, explicit:
 - **Minting:** blocked. Reuse the same `status == Active`-only guard `mint_reserve_tokens_in_kind.rs:70-73` already enforces — `WindDown` fails it exactly like `Paused` does today, no new logic needed, just extending which non-`Active` statuses exist.
 - **Redemption:** stays fully open, exactly like `Paused` today (`redeem_reserve_tokens_in_kind.rs`'s `require_active_or_paused`-style guard, extended to also accept `WindDown`) — this is the core "never strand holders" guarantee, reused rather than reinvented.
-- **Delegates:** no new delegate grants during `WindDown` (extend the existing pause-style guard already used by `add_delegate`/`update_delegate_permissions`); existing delegates and `remove_delegate` continue to work unchanged — winding down doesn't require forcibly stripping delegates, just freezing new grants.
+- **Co-Managers:** no new co-manager grants during `WindDown` (extend the existing pause-style guard already used by `add_delegate`/`update_delegate_permissions`); existing co-managers and `remove_delegate` continue to work unchanged — winding down doesn't require forcibly stripping co-managers, just freezing new grants.
 - **Fees:** `accrue_fees`/`collect_fees` remain callable during `WindDown` (legitimately pending fee shares up to that point should still be collectible) but must be blocked once `Closed` (nothing left to accrue against). Needs explicit sign-off since this is a judgment call, not derived from an existing invariant.
 - **Remaining Reserves (underlying assets):** must be fully redeemable by holders throughout `WindDown` — no instruction may sweep or move vault balances except via the existing pro-rata `redeem_reserve_tokens_in_kind` path. This is the concrete mechanism behind "never strand assets."
 - **Reserve Token mint authority:** should be handled defensively, not left as a bypass risk — recommend the `WindDown` transition also revokes/burns the Reserve Token mint authority (or reassigns it to a PDA that structurally cannot mint, e.g. one with no signing instruction), so "no new issuance" is enforced at the SPL-token layer itself, not only by an `Active`-only status check in application logic. This is a genuine defense-in-depth design question to review, not yet decided.
@@ -543,16 +543,16 @@ So "add/remove a Reserve" is itself config-only (it changes what the Reserve *is
 **This is a genuine protocol-extension proposal, not an implementation** — needs your review/approval on the state-machine shape (particularly the mint-authority-revocation design question and the accept-indefinite-`WindDown` tradeoff above) before any Rust is written. See Delivery Phases (below) for how this is sequenced against items 4/5.
 
 **Acceptance criteria (once approved and built):**
-- Only the root manager (no delegate flag) can initiate wind-down, unless you decide otherwise.
-- A prominent, hard-to-miss risk warning and consequence preview — explicitly enumerating what happens to minting, buying/selling, direct redemption, delegates, fees, vaults, and remaining Reserves — is shown before the wallet-approval step, matching the level of explicitness in this section.
+- Only the root manager (no co-manager flag) can initiate wind-down, unless you decide otherwise.
+- A prominent, hard-to-miss risk warning and consequence preview — explicitly enumerating what happens to minting, buying/selling, direct redemption, co-managers, fees, vaults, and remaining Reserves — is shown before the wallet-approval step, matching the level of explicitness in this section.
 - Wind-down (`Active`→`WindDown`) and closure (`WindDown`→`Closed`) each require explicit wallet approval and produce a real signed transaction with pending/submitted/confirmed/failed/recoverable states and an Explorer link on confirmation, matching the existing Buy/Sell transaction-status UI pattern.
 - No client-side "wound down" or "closed" state is ever shown without an on-chain-confirmed transition.
 - Redemption remains available to all holders throughout `WindDown` — verified by a DevNet test that redeems from a wound-down Reserve successfully.
-- Minting and new delegate grants are rejected in `WindDown` — verified by DevNet tests expecting explicit on-chain errors.
+- Minting and new co-manager grants are rejected in `WindDown` — verified by DevNet tests expecting explicit on-chain errors.
 - `close_reserve` fails safely (clear error, no partial state) if called while `supply > 0` **or** while any vault balance `> 0`, even if supply reads zero.
 - No instruction anywhere allows the manager to withdraw vault assets while `supply > 0` — verified by an explicit adversarial test attempting exactly that and expecting rejection.
 
-**Tests:** DevNet integration test: initiate wind-down on a fresh fixture-like Reserve, confirm minting/new-delegate-grants are rejected, confirm existing holders can still redeem, confirm fee collection still works pre-closure, confirm `close_reserve` rejects both a nonzero-supply Reserve and a zero-supply-but-nonzero-vault-balance Reserve, and succeeds only once both conditions are met; an adversarial test confirming no code path lets the manager withdraw vault assets before supply reaches zero.
+**Tests:** DevNet integration test: initiate wind-down on a fresh fixture-like Reserve, confirm minting/new-co-manager-grants are rejected, confirm existing holders can still redeem, confirm fee collection still works pre-closure, confirm `close_reserve` rejects both a nonzero-supply Reserve and a zero-supply-but-nonzero-vault-balance Reserve, and succeeds only once both conditions are met; an adversarial test confirming no code path lets the manager withdraw vault assets before supply reaches zero.
 
 ---
 
@@ -649,21 +649,21 @@ decision-log entries and `docs/protocol/FRONTEND_INTEGRATION.md`'s
   figure) — replaced with the real in-kind redemption estimate
   (`computeRedemptionEntitlements` against live vault balances/supply); the
   SOL figure is now an explicitly-disclosed secondary line (DEC-0039).
-- **Delegate-management false-success states for real Reserves** —
-  ManageDTR's add/edit/remove-delegate actions previously produced a
+- **Co-Manager-management false-success states for real Reserves** —
+  ManageDTR's add/edit/remove-co-manager actions previously produced a
   "Delegate Added"/"Permissions Updated" success toast for a real on-chain
   Reserve while only mutating local simulation state, with zero on-chain
   effect. Now gated: real Reserves get a read-only, verified on-chain
-  delegate list with local-label editing only; the mutating UI is only
+  co-manager list with local-label editing only; the mutating UI is only
   reachable for simulated Reserves (clearly labeled "Simulated Demo").
 - **Rebalance false-success for real Reserves** — "Execute Rebalance" is
   now disabled (with an explanatory message) for any `dtr.onChain` Reserve;
   it only executes (against local simulation state, clearly labeled) for
   simulated Reserves.
-- **Bare, unlabeled delegate count / composition on Overview** — now shows
+- **Bare, unlabeled co-manager count / composition on Overview** — now shows
   a verified on-chain count plus an honest "N reported on-chain but
   unresolved" message when discovery's candidate-wallet hints don't cover
-  every granted delegate, rather than presenting a possibly-incomplete
+  every granted co-manager, rather than presenting a possibly-incomplete
   number as if definitive.
 
 ### Mock dependencies intentionally retained (and why)
@@ -696,7 +696,7 @@ decision-log entries and `docs/protocol/FRONTEND_INTEGRATION.md`'s
 Enumerate every Reserve via `ProtocolConfig.reserveCount` + per-`reserveId`
 PDA derivation + direct account fetch (`packages/sdk/src/discovery.ts`) —
 no `getProgramAccounts`, so the public DevNet RPC's confirmed block on that
-method never blocks discovery. Per-Reserve asset mints and delegate wallets
+method never blocks discovery. Per-Reserve asset mints and co-manager wallets
 are resolved via a documented candidate-hint list (verified on-chain before
 being trusted), with `assetCount`/`resolvedAssetCount` and
 `delegateCountOnChain`/`delegatesOnChain.length` exposed so under-resolution
@@ -706,13 +706,13 @@ category without fabrication.
 
 ### Discovery limitation (documented, not worked around)
 Full, guaranteed-complete enumeration of a Reserve's registered asset mints
-and delegate wallets requires either a `getProgramAccounts` memcmp scan
+and co-manager wallets requires either a `getProgramAccounts` memcmp scan
 (blocked on the public DevNet RPC today) or a complete candidate list. The
 current candidate lists (the 4 mints `CreateDTR.tsx` can ever use; the
-Reserve's manager + 2 documented fixture delegate wallets + the connected
+Reserve's manager + 2 documented fixture co-manager wallets + the connected
 wallet) cover every Reserve this app itself can create, so this limitation
 is not expected to hide anything for app-created Reserves — but a Reserve
-composed of an asset mint or delegate wallet from outside this app's own
+composed of an asset mint or co-manager wallet from outside this app's own
 candidate set would show honestly-flagged partial data rather than silently
 wrong data. Smallest future fix: a dedicated/paid DevNet RPC provider
 supporting `getProgramAccounts` memcmp (infrastructure change, not
@@ -756,9 +756,9 @@ via Solana Explorer if not otherwise on hand).
 - Removal of active mock fallbacks: **met** for the ones enumerated above;
   the illustrative demo catalog is retained-but-labeled, not removed (see
   above for why).
-- Delegate local-label fallback behavior: **met and tested**
+- Co-Manager local-label fallback behavior: **met and tested**
   (`tests/phase_a_discovery.ts`).
-- Prevention of fictional success states: **met** for delegate CRUD and
+- Prevention of fictional success states: **met** for co-manager CRUD and
   rebalance-execute on real Reserves.
 - TestLo/MOCX discovery behavior "as far as available addresses permit":
   **implemented generically, not yet independently re-verified against the
@@ -771,7 +771,7 @@ via Solana Explorer if not otherwise on hand).
 - `npx vite build`: passes.
 - `npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_a_discovery.ts`:
   12/12 passing (metadata-URI parsing, on-chain permission decoding,
-  delegate local-label fallback behavior).
+  co-manager local-label fallback behavior).
 - **Not run in this pass:** `npm run test:program` (the live-DevNet Anchor
   test suite, `tests/ssr_protocol.ts`) — it exercises protocol instructions
   unrelated to this pass's frontend/SDK-discovery-layer work, and re-running
@@ -862,7 +862,7 @@ not as "MOCX". This is now empirically confirmed, not just theorized.
 discovery resolved it completely and generically.
 
 **Discovery universality:** candidate-hint-limited for per-Reserve
-*composition* (asset mints, delegate wallets), exactly as documented in
+*composition* (asset mints, co-manager wallets), exactly as documented in
 Phase A's record — several of the 16 reserves (ids 0-5, 7; almost
 certainly artifacts of `tests/ssr_protocol.ts` Anchor test runs, each of
 which mints its own fresh, ad-hoc test tokens not in this app's candidate
@@ -891,7 +891,7 @@ integrity-check calls (a real bug, since fixed — see below); after
 hardening, the second run absorbed every 429 via Solana web3.js's own
 retry/backoff and completed 16/16 reserves with zero unhandled failures.
 `packages/sdk/src/discovery.ts`'s core enumeration loop was already
-resilient by design (per-reserve/per-asset/per-delegate try/catch, added
+resilient by design (per-reserve/per-asset/per-co-manager try/catch, added
 in this same pass) — a malformed/unreachable account at one `reserveId`
 is recorded as an issue and does not abort discovery of any other
 `reserveId`, genuinely exercised live (the first run's reserveId=10 429
@@ -1266,22 +1266,22 @@ accounts in `remaining_accounts`, unfiltered by `enabled`, in strict
   mirrors its account/validation shape (max-asset-count ceiling, total
   target weight ≤ 10,000 bps, Token-2022 extension validation) but is a
   fully separate instruction and PDA-derivation-compatible module. Callable
-  by the root manager or a delegate holding the `MANAGE_LIQUIDITY_CONFIG`
+  by the root manager or a co-manager holding the `MANAGE_LIQUIDITY_CONFIG`
   permission bit — an existing flag defined in `state/delegate.rs` as
   "future-facing, not exercised by any v1 instruction," now given its first
   real use rather than inventing a new bit.
-- **`fund_new_reserve_asset`** — manager-only (kept simple; no delegate
+- **`fund_new_reserve_asset`** — manager-only (kept simple; no co-manager
   path), additive-only transfer of the manager's own tokens directly into a
   target vault. Restricted to only work while that vault's balance is
   exactly zero (one-time bootstrap, not a general top-up). No Reserve Token
   is minted — this is a pure backing increase that benefits every existing
   holder equally and dilutes nobody.
 - **`remove_reserve_asset`** — closes a `ReserveAsset` and its vault
-  (rent reclaimed to the root manager, never to a calling delegate — the
+  (rent reclaimed to the root manager, never to a calling co-manager — the
   `manager` account is validated by address against `reserve.manager`
   regardless of who signs), decrements `asset_count`/
   `total_target_weight_bps`. Requires last-registered + zero balance (see
-  above). Same manager-or-`MANAGE_LIQUIDITY_CONFIG`-delegate authorization
+  above). Same manager-or-`MANAGE_LIQUIDITY_CONFIG`-co-manager authorization
   as add.
 
 New errors: `AssetNotLastRegistered`, `VaultNotEmpty`. New events:
@@ -1297,9 +1297,9 @@ below, done after the batched upgrade.
 ## Phase G: wind-down lifecycle — security analysis + implementation
 
 Scope: one-way `Active -> WindDown -> Closed` lifecycle, root-manager-only
-throughout (no delegate path — matches the existing "root-exclusive unless
+throughout (no co-manager path — matches the existing "root-exclusive unless
 explicitly defined otherwise" boundary already used for authority transfer
-and unrestricted-delegate grant/revoke).
+and unrestricted-co-manager grant/revoke).
 
 **`ReserveStatus` extended** (`state/reserve.rs`) with two new unit variants,
 `WindDown` and `Closed`, appended **after** `Paused`. Confirmed safe:
@@ -1335,7 +1335,7 @@ it already was for `Paused` under DEC-0016.
 **Instructions added:**
 
 - **`initiate_wind_down`** — root-manager-only (`has_one = manager`, no
-  delegate account at all), requires `status == Active`, sets `status =
+  co-manager account at all), requires `status == Active`, sets `status =
   WindDown`. One-way; no reverse instruction exists or is planned.
 - **`close_reserve`** — root-manager-only, requires `status == WindDown`,
   requires `reserve_token_mint.supply == 0`, and requires every registered
@@ -1433,11 +1433,11 @@ Added `packages/sdk/src/managementInstructions.ts` (6 builder functions:
 `src/merge/lib/managementClient.ts` (browser sign-and-send wrapper, same
 `signAndSend` pattern as `createReserveClient.ts`).
 
-Investigated the existing delegate-permission model
+Investigated the existing co-manager-permission model
 (`canManageDelegates`/`canRebalance` in `useAppStore.ts`) before wiring the
 UI and found it only ever checks the fully-local, simulated `dtr.delegates`
 array -- always empty for real on-chain Reserves. **No manager action in
-this app currently supports a real on-chain delegate's signature, not even
+this app currently supports a real on-chain co-manager's signature, not even
 pre-existing ones** (`update_targets`, `pause_reserve`, etc.) -- this is a
 pre-existing gap, not something this pass introduced. Extending it properly
 touches those shared helpers and every gated action, not just the new

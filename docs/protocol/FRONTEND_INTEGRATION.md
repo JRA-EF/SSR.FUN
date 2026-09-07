@@ -133,13 +133,13 @@ call is required**, so the public DevNet RPC's confirmed 403 on that method
 (see `DEVNET_RUNBOOK.md`) never blocks discovery.
 
 **Documented limitation, not silently worked around:** a Reserve's actual
-registered asset mints and delegate wallets are each PDA'd from
+registered asset mints and co-manager wallets are each PDA'd from
 `(reserve, mint)` / `(reserve, wallet)` -- neither is derivable without
 already knowing the mint/wallet. `discoverAllReserves` and
 `discoverDelegatesForReserve` take a candidate-mint / candidate-wallet list
 used *only* as a discovery hint (today: the 3 fixture test mints + wrapped
 SOL, since `CreateDTR.tsx`'s real-deployment path can only ever use those 4
-mints; and the Reserve's manager + the 2 documented fixture delegate
+mints; and the Reserve's manager + the 2 documented fixture co-manager
 wallets + the connected wallet, respectively) -- every hint is still
 independently verified on-chain before being trusted, and the on-chain
 `Reserve.assetCount`/`delegateCount` fields let the frontend honestly
@@ -180,19 +180,19 @@ now visually distinguished everywhere they render (a "Live on Solana
 DevNet" vs. "Simulated Demo" badge, reusing the existing
 `.badge-verified`/`.badge-mock` styles) rather than rendered identically.
 
-**Delegate names remain off-chain-only, confirmed unchanged in
+**Co-Manager names remain off-chain-only, confirmed unchanged in
 substance:** `src/merge/lib/delegateLabels.ts` stores a purely local label
 keyed by `(reserve, wallet)`, explicitly marked "Local label" in the UI,
-falling back cleanly to a shortened address, with delegate
+falling back cleanly to a shortened address, with co-manager
 functionality/display never depending on a label being present. The
-verified on-chain delegate list itself (wallet, capabilities, restricted
+verified on-chain co-manager list itself (wallet, capabilities, restricted
 flag) comes from `discoverDelegatesForReserve`, decoded via
 `src/merge/lib/onChainPermissions.ts` (a read-only mirror of
 `programs/ssr_protocol/src/state/delegate.rs`'s `permission_flags`).
-**Delegate management (add/remove/edit) for a real on-chain Reserve is
+**Co-Manager management (add/remove/edit) for a real on-chain Reserve is
 intentionally not wired to any instruction in this pass** -- doing so
 today would only mutate local simulation state with a fake success toast,
-which Phase A's mandate explicitly rules out; `ManageDTR.tsx`'s Delegates
+which Phase A's mandate explicitly rules out; `ManageDTR.tsx`'s Co-Managers
 tab is read-only for `dtr.onChain` Reserves with an explanatory notice
 pointing at the deferred Phase F work, rather than silently no-oping.
 
@@ -250,7 +250,7 @@ script's own extra integrity-check calls on the first run (an unguarded
 `connection.getAccountInfo` inside the script, not in the shared discovery
 module). Fixed by wrapping every per-reserve verification step in
 try/catch; `packages/sdk/src/discovery.ts` was also hardened at the same
-time (per-reserve/per-asset/per-vault/per-delegate try/catch, a new
+time (per-reserve/per-asset/per-vault/per-co-manager try/catch, a new
 `issues: DiscoveryIssue[]` return field) so a single malformed/unreachable
 account can never abort discovery of any other -- this is additive and
 non-breaking for `RealReserveSync.tsx`, which now also logs (non-fatally)

@@ -31,6 +31,9 @@
 //      load.
 import { resolveRpcUrl, FALLBACK_RPC_URL } from "./_lib/rpc";
 import { checkRateWindow } from "./_lib/rateLimit";
+import { checkDurableRateWindow } from "../../lib/rate-limit/durableRateWindow";
+import { getSql } from "../../lib/rate-limit/db";
+import { CACHEABLE_METHODS, cacheKey, coalesce, getCached, isRpcErrorBody, setCached, withRpcId } from "./_lib/rpcCache";
 
 export interface ApiRequest {
   method?: string;
@@ -146,6 +149,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const ip = clientIp(req);
+  // L1: cheap per-instance burst guard (in-memory, per warm serverless
+  // instance) -- blunts a single client hammering one instance, not a global
+  // limit. See lib/rate-limit/durableRateWindow.ts.
   if (!checkRateWindow(`rpc-proxy:${ip}`, THROTTLE_WINDOW_MS, THROTTLE_MAX_PER_WINDOW)) {
     // Best-effort secondary throttle only -- returned as a 429 so the
     // client's existing rate-limit detection (isRateLimitError) treats this
@@ -198,7 +204,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // never retried against a second endpoint under any circumstance.
   const containsSend = toForward.some((r) => r.method === "sendTransaction");
 
-  if (containsSend && !checkRateWindow(SEND_TRANSACTION_THROTTLE_KEY, SEND_TRANSACTION_THROTTLE_WINDOW_MS, SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW)) {
+  // sendTransaction must be globally limited (shared provider budget); the
+  // in-memory counter cannot do that across warm instances. Consult the
+  // durable limiter first, failing OPEN to the in-memory L1 on any DB error.
+  let sendThrottled = false;
+  if (containsSend) {
+    let durableAllowed: boolean | null = null;
+    try {
+      const durable = await checkDurableRateWindow(
+        getSql() as unknown as Parameters<typeof checkDurableRateWindow>[0],
+        SEND_TRANSACTION_THROTTLE_KEY,
+        SEND_TRANSACTION_THROTTLE_WINDOW_MS,
+        SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW,
+      );
+      durableAllowed = durable.durable ? durable.allowed : null;
+    } catch {
+      durableAllowed = null;
+    }
+    sendThrottled = durableAllowed !== null
+      ? !durableAllowed
+      : !checkRateWindow(SEND_TRANSACTION_THROTTLE_KEY, SEND_TRANSACTION_THROTTLE_WINDOW_MS, SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW);
+  }
+  if (sendThrottled) {
     // A SEPARATE, GLOBAL (not per-IP) throttle -- the per-IP one above
     // exists to blunt one client hammering the proxy, but Helius's paid
     // plan caps sendTransaction specifically at a shared rate across every
@@ -221,6 +248,47 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const primaryUrl = resolveRpcUrl();
+
+  // --- Read cache + in-flight coalescing (single cacheable read requests) ---
+  // Collapses the client's high-volume duplicate account reads to at most one
+  // upstream call per key per TTL window. Skipped for batches, rejected-mixed
+  // requests, non-cacheable methods, and any request carrying x-ssr-rpc-fresh.
+  const wantsFresh = req.headers["x-ssr-rpc-fresh"] === "1";
+  const singleReq =
+    !isBatch && rejected.size === 0 && toForward.length === 1
+      ? (toForward[0] as JsonRpcRequest)
+      : null;
+  if (
+    singleReq &&
+    !wantsFresh &&
+    typeof singleReq.method === "string" &&
+    CACHEABLE_METHODS.has(singleReq.method)
+  ) {
+    const key = cacheKey(singleReq.method, singleReq.params);
+    const hit = getCached(key);
+    if (hit !== null) {
+      res.status(200).json(withRpcId(hit, singleReq.id));
+      return;
+    }
+    const fetched = await coalesce(key, async () => {
+      let up = await postJsonRpc(primaryUrl, singleReq);
+      if (up === null) up = await postJsonRpc(FALLBACK_RPC_URL, singleReq);
+      return up;
+    });
+    if (fetched === null) {
+      res.status(502).json({
+        jsonrpc: "2.0",
+        id: singleReq.id,
+        error: { code: -32003, message: "DevNet RPC endpoint unreachable." },
+      });
+      return;
+    }
+    if (fetched.status === 200 && !isRpcErrorBody(fetched.body)) {
+      setCached(key, fetched.body);
+    }
+    res.status(fetched.status).json(withRpcId(fetched.body, singleReq.id));
+    return;
+  }
 
   const forwardPayload = isBatch ? toForward : toForward[0];
   let upstream = toForward.length > 0 ? await postJsonRpc(primaryUrl, forwardPayload) : { status: 200, body: [] };

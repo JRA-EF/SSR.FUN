@@ -39,7 +39,7 @@ export function Terms() {
       <p>
         The Foundation does not hold your funds and never has access to your private keys. Reserve assets are held in
         on-chain accounts controlled by the SSR Protocol's programs. No function of the currently deployed programs
-        allows the Foundation, a Reserve manager, or a delegate to withdraw reserve assets from a Reserve outside of
+        allows the Foundation, a Reserve manager, or a co-manager to withdraw reserve assets from a Reserve outside of
         the minting and redemption mechanics described below. The programs are upgradeable, and this description
         applies to the code as deployed — see the <Link to="/legal/disclosures">Disclosures</Link>.
       </p>
@@ -60,7 +60,7 @@ export function Terms() {
       </p>
       <p>
         Reserve assets are not the property of the Foundation, of any company or fund, or of any Reserve manager or
-        delegate. They are held on-chain and back the Reserve Tokens of that Reserve's holders. Reserve Tokens are
+        co-manager. They are held on-chain and back the Reserve Tokens of that Reserve's holders. Reserve Tokens are
         created by users through the protocol; they are not issued by the Foundation, do not confer ownership of any
         company, and give you no claim against the Foundation.
       </p>
@@ -73,11 +73,11 @@ export function Terms() {
         Foundation may remove or decline to display content from the Interface.
       </p>
 
-      <h2>9. Managers and delegates</h2>
+      <h2>9. Managers and co-managers</h2>
       <p>
         A Reserve's manager controls that Reserve's settings — its composition targets, fees, metadata, pause state,
-        delegates, and wind-down — within the rules enforced by the protocol. A manager may grant delegates specific,
-        limited permissions, which the programs enforce on-chain. Neither managers nor delegates can withdraw reserve
+        co-managers, and wind-down — within the rules enforced by the protocol. A manager may grant co-managers specific,
+        limited permissions, which the programs enforce on-chain. Neither managers nor co-managers can withdraw reserve
         assets outside of redemption. The Foundation does not vet, endorse, or supervise Reserve managers; any
         "verified" label in the Interface is an interface label only, not an endorsement or audit. See the{' '}
         <Link to="/legal/disclosures">Disclosures</Link> for the risks of relying on a manager.

@@ -130,7 +130,7 @@ function reducer(state: State, action: Action): State {
       const reserves = updateReserve(state.reserves, action.address, x => ({
         ...x,
         delegates: action.delegates,
-        activity: [evt('delegate', MY_WALLET, { note: 'Delegate permissions updated' }), ...x.activity],
+        activity: [evt('delegate', MY_WALLET, { note: 'Co-Manager permissions updated' }), ...x.activity],
       }))
       return { ...state, reserves }
     }

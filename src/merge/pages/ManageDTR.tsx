@@ -160,7 +160,7 @@ function OnChainDelegateRow({
             <Button
               variant="outline" size="sm"
               disabled={!canEditPermissions || busy}
-              title={!canEditPermissions ? "You need the Root Manager or the matching restricted-delegate permission to edit this delegate." : undefined}
+              title={!canEditPermissions ? "You need the Root Manager or the matching restricted co-manager permission to edit this co-manager." : undefined}
               onClick={() => { setPermDraft(permissions); setEditingPerms((v) => !v); }}
               className="gap-1.5"
             >
@@ -171,7 +171,7 @@ function OnChainDelegateRow({
             <Button
               variant="destructive" size="sm"
               disabled={!canRemove || busy}
-              title={!canRemove ? "You need the Root Manager or the matching restricted-delegate permission to remove this delegate." : undefined}
+              title={!canRemove ? "You need the Root Manager or the matching restricted co-manager permission to remove this co-manager." : undefined}
               onClick={onRemove}
               className="gap-1.5"
             >
@@ -214,7 +214,7 @@ function OnChainDelegateRow({
         </div>
       )}
       <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/30">
-        Delegate account: <span className="font-merge-mono break-all">{delegateAccount}</span>. Wallet address, capabilities, scope, and
+        Co-Manager account: <span className="font-merge-mono break-all">{delegateAccount}</span>. Wallet address, capabilities, scope, and
         status above are read live from Solana {CLUSTER_LABEL}; the name is a local label stored only in this browser, never on-chain.
       </p>
     </div>
@@ -702,7 +702,7 @@ export function ManageDTR() {
           <Shield className="w-16 h-16 text-destructive mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Access Denied</h1>
           <p className="text-muted-foreground">
-            You are not the Manager or an authorized Delegate for this reserve.
+            You are not the Manager or an authorized Co-Manager for this reserve.
           </p>
           <Button asChild variant="outline">
             <Link href={`/dtr/${dtr.id}`}>Return to Reserve</Link>
@@ -831,7 +831,7 @@ export function ManageDTR() {
   const handleAddDelegate = () => {
     const res = addDelegate(dtr.id, newDelegateAddress, newDelegatePerms);
     if (res.success) {
-      toast({ title: "Delegate Added", description: res.message });
+      toast({ title: "Co-Manager Added", description: res.message });
       setNewDelegateAddress("");
       setNewDelegatePerms(emptyPermissions());
     } else {
@@ -852,7 +852,7 @@ export function ManageDTR() {
   const handleRemoveDelegate = (address: string) => {
     const res = removeDelegate(dtr.id, address);
     if (res.success) {
-      toast({ title: "Delegate Removed", description: res.message });
+      toast({ title: "Co-Manager Removed", description: res.message });
     } else {
       toast({ variant: "destructive", title: "Error", description: res.message });
     }
@@ -1068,7 +1068,7 @@ export function ManageDTR() {
             onClick={() => setActiveTab("delegates")}
             className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors flex items-center gap-3 ${activeTab === "delegates" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
           >
-            <Users className="w-4 h-4" /> Delegates
+            <Users className="w-4 h-4" /> Co-Managers
           </button>
 
           <button
@@ -1143,7 +1143,7 @@ export function ManageDTR() {
                         </div>
                       ) : (
                         <p className="text-sm text-muted-foreground">
-                          Only the Root Manager, or a delegate granted the "Update Metadata" permission, can change this Reserve's picture.
+                          Only the Root Manager, or a co-manager granted the "Update Metadata" permission, can change this Reserve's picture.
                         </p>
                       )}
                     </div>
@@ -1280,7 +1280,7 @@ export function ManageDTR() {
                       <p className="font-merge-mono font-bold text-lg">{dtr.holders.toLocaleString()}</p>
                     </div>
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
-                      <p className="text-xs text-muted-foreground mb-1">Total Delegates</p>
+                      <p className="text-xs text-muted-foreground mb-1">Total Co-Managers</p>
                       <p className="font-merge-mono font-bold text-lg">
                         {dtr.onChain ? (dtr.onChain.delegateCountOnChain ?? "—") : dtr.delegates.length}
                       </p>
@@ -1318,9 +1318,9 @@ export function ManageDTR() {
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
                   <div>
-                    <CardTitle className="text-xl font-merge-display">Delegates</CardTitle>
+                    <CardTitle className="text-xl font-merge-display">Co-Managers</CardTitle>
                     <CardDescription>
-                      {dtr.onChain ? "Verified on-chain delegates for this Reserve." : "Simulated delegates for this demo Reserve."}
+                      {dtr.onChain ? "Verified on-chain co-managers for this Reserve." : "Simulated co-managers for this demo Reserve."}
                     </CardDescription>
                   </div>
                   <Button variant="ghost" size="sm" onClick={() => setActiveTab("delegates")}>Manage &rarr;</Button>
@@ -1330,8 +1330,8 @@ export function ManageDTR() {
                     (dtr.onChain.delegatesOnChain ?? []).length === 0 ? (
                       <div className="text-center p-6 border border-dashed border-border rounded-lg text-muted-foreground text-sm">
                         {dtr.onChain.delegateCountOnChain
-                          ? `${dtr.onChain.delegateCountOnChain} delegate(s) reported on-chain, but none matched this pass's candidate wallets -- see the Delegates tab.`
-                          : "No delegates found on-chain for this Reserve."}
+                          ? `${dtr.onChain.delegateCountOnChain} co-manager(s) reported on-chain, but none matched this pass's candidate wallets -- see the Co-Managers tab.`
+                          : "No co-managers found on-chain for this Reserve."}
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -1355,7 +1355,7 @@ export function ManageDTR() {
                     )
                   ) : dtr.delegates.length === 0 ? (
                     <div className="text-center p-6 border border-dashed border-border rounded-lg text-muted-foreground text-sm">
-                      No delegates configured. The Root Manager holds all permissions.
+                      No co-managers configured. The Root Manager holds all permissions.
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -1618,15 +1618,15 @@ export function ManageDTR() {
                 <Shield className="w-5 h-5 shrink-0 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
                   Granting, editing, or removing a delegate below asks your wallet to approve a real change on Solana {CLUSTER_LABEL}. An
-                  unrestricted delegate can only be granted, edited, or removed by the Root Manager; a restricted delegate can also be
-                  managed by another delegate holding the matching permission. This list may not show every delegate this Reserve
+                  unrestricted co-manager can only be granted, edited, or removed by the Root Manager; a restricted co-manager can also be
+                  managed by another co-manager holding the matching permission. This list may not show every co-manager this Reserve
                   actually has -- an unresolved wallet still holds its real permissions even if it isn't listed here.
                 </p>
               </div>
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-xl font-merge-display">Active Delegates</CardTitle>
+                  <CardTitle className="text-xl font-merge-display">Active Co-Managers</CardTitle>
                   <CardDescription>
                     Verified on Solana {CLUSTER_LABEL}
                     {dtr.onChain.delegateCountOnChain !== undefined && ` -- ${dtr.onChain.delegateCountOnChain} reported on-chain`}.
@@ -1636,15 +1636,15 @@ export function ManageDTR() {
                   {(dtr.onChain.delegatesOnChain ?? []).length === 0 ? (
                     <div className="text-center p-8 border border-dashed border-border rounded-lg text-muted-foreground">
                       {dtr.onChain.delegateCountOnChain
-                        ? `${dtr.onChain.delegateCountOnChain} delegate(s) reported on-chain, but none matched this discovery pass's candidate wallets.`
-                        : "No delegates found on-chain for this Reserve. The Root Manager holds all permissions."}
+                        ? `${dtr.onChain.delegateCountOnChain} co-manager(s) reported on-chain, but none matched this discovery pass's candidate wallets.`
+                        : "No co-managers found on-chain for this Reserve. The Root Manager holds all permissions."}
                     </div>
                   ) : (
                     <div className="space-y-4">
                       {(dtr.onChain.delegatesOnChain ?? []).map((del) => {
                         const canEditThis = del.restricted ? canAddRestrictedDelegateOnChain : isRoot;
                         const canRemoveThis = del.restricted ? canRemoveRestrictedDelegateOnChain : isRoot;
-                        const busy = onChainTxPending === `Update permissions for ${shortenAddress(del.wallet)}` || onChainTxPending === `Remove delegate ${shortenAddress(del.wallet)}`;
+                        const busy = onChainTxPending === `Update permissions for ${shortenAddress(del.wallet)}` || onChainTxPending === `Remove co-manager ${shortenAddress(del.wallet)}`;
                         return (
                           <OnChainDelegateRow
                             key={del.wallet}
@@ -1663,7 +1663,7 @@ export function ManageDTR() {
                               )
                             }
                             onRemove={() =>
-                              void runOnChainAction(`Remove delegate ${shortenAddress(del.wallet)}`, async () => {
+                              void runOnChainAction(`Remove co-manager ${shortenAddress(del.wallet)}`, async () => {
                                 const sig = await executeRemoveDelegate(connection, walletCtx, dtr.onChain!.reserve, del.wallet);
                                 forgetDelegateWallet(dtr.onChain!.reserve, del.wallet);
                                 return sig;
@@ -1679,18 +1679,18 @@ export function ManageDTR() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-xl font-merge-display">Grant a New Delegate</CardTitle>
+                  <CardTitle className="text-xl font-merge-display">Grant a New Co-Manager</CardTitle>
                   <CardDescription>
                     {isRoot
-                      ? "As Root Manager, you can grant either a restricted or unrestricted delegate."
+                      ? "As Root Manager, you can grant either a restricted or unrestricted co-manager."
                       : canAddRestrictedDelegateOnChain
-                        ? "You can grant a restricted delegate (only the Root Manager can grant an unrestricted one)."
-                        : "You need the Root Manager or a delegate with Add Restricted Delegate permission to grant a new delegate."}
+                        ? "You can grant a restricted co-manager (only the Root Manager can grant an unrestricted one)."
+                        : "You need the Root Manager or a co-manager with Add Restricted Co-Manager permission to grant a new co-manager."}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <Label htmlFor="onchain-new-delegate-wallet">Delegate wallet address</Label>
+                    <Label htmlFor="onchain-new-delegate-wallet">Co-Manager wallet address</Label>
                     <Input
                       id="onchain-new-delegate-wallet"
                       placeholder="Solana wallet address"
@@ -1721,7 +1721,7 @@ export function ManageDTR() {
                       disabled={!isRoot || onChainTxPending !== null}
                     />
                     <label htmlFor="onchain-new-delegate-restricted" className="text-sm font-medium leading-none">
-                      Restricted delegate {!isRoot && "(required -- only the Root Manager can grant an unrestricted delegate)"}
+                      Restricted co-manager {!isRoot && "(required -- only the Root Manager can grant an unrestricted co-manager)"}
                     </label>
                   </div>
                   <Button
@@ -1732,7 +1732,7 @@ export function ManageDTR() {
                       (!isRoot && !onChainNewDelegateRestricted)
                     }
                     onClick={() =>
-                      void runOnChainAction("Grant Delegate", async () => {
+                      void runOnChainAction("Grant Co-Manager", async () => {
                         const grantedWallet = onChainNewDelegateWallet.trim();
                         const sig = await executeAddDelegate(
                           connection,
@@ -1760,7 +1760,7 @@ export function ManageDTR() {
                     }
                     className="gap-2"
                   >
-                    <Plus className="w-4 h-4" /> {onChainTxPending === "Grant Delegate" ? "Confirming..." : "Grant Delegate"}
+                    <Plus className="w-4 h-4" /> {onChainTxPending === "Grant Co-Manager" ? "Confirming..." : "Grant Co-Manager"}
                   </Button>
                 </CardContent>
               </Card>
@@ -1772,7 +1772,7 @@ export function ManageDTR() {
               {!hasManageDelegates && (
                 <div className="bg-destructive/10 text-destructive p-4 rounded-lg flex items-center gap-3 border border-destructive/20">
                   <AlertCircle className="w-5 h-5 shrink-0" />
-                  <p className="font-medium">You do not have permission to manage delegates. This view is read-only.</p>
+                  <p className="font-medium">You do not have permission to manage co-managers. This view is read-only.</p>
                 </div>
               )}
 
@@ -1780,7 +1780,7 @@ export function ManageDTR() {
                 <CardHeader className="flex flex-row items-center justify-between">
                   <div>
                     <CardTitle className="text-xl font-merge-display flex items-center gap-2">
-                      Active Delegates <Badge variant="secondary" className="text-[9px] uppercase">Simulated Demo</Badge>
+                      Active Co-Managers <Badge variant="secondary" className="text-[9px] uppercase">Simulated Demo</Badge>
                     </CardTitle>
                     <CardDescription>Wallets granted specific management permissions.</CardDescription>
                   </div>
@@ -1788,7 +1788,7 @@ export function ManageDTR() {
                 <CardContent>
                   {dtr.delegates.length === 0 ? (
                     <div className="text-center p-8 border border-dashed border-border rounded-lg text-muted-foreground">
-                      No delegates configured. The Root Manager holds all permissions.
+                      No co-managers configured. The Root Manager holds all permissions.
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -1851,7 +1851,7 @@ export function ManageDTR() {
               {hasManageDelegates && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-lg font-merge-display">Add New Delegate</CardTitle>
+                    <CardTitle className="text-lg font-merge-display">Add New Co-Manager</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
@@ -1888,7 +1888,7 @@ export function ManageDTR() {
                       disabled={!newDelegateAddress.trim()} 
                       className="w-full sm:w-auto"
                     >
-                      <Plus className="w-4 h-4 mr-2" /> Add Delegate
+                      <Plus className="w-4 h-4 mr-2" /> Add Co-Manager
                     </Button>
                   </CardContent>
                 </Card>
@@ -2027,7 +2027,7 @@ export function ManageDTR() {
                       Drag a slider to propose a new target weight -- this only records what you intend the Reserve to look like, it
                       doesn't move any assets yet. Adding, adjusting, or removing an asset below never asks your wallet to approve
                       anything; only Submit Rebalance does, and it applies your complete proposal in a single approval.{" "}
-                      {!canUpdateTargetsOnChain && "You need the Root Manager or a delegate with Update Targets permission to submit a rebalance."}
+                      {!canUpdateTargetsOnChain && "You need the Root Manager or a co-manager with Update Targets permission to submit a rebalance."}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-6">
@@ -2053,7 +2053,7 @@ export function ManageDTR() {
                                 <Button
                                   variant="ghost" size="sm" className="h-8 w-8 p-0"
                                   disabled={!canManageLiquidityConfigOnChain}
-                                  title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission to register a new asset." : undefined}
+                                  title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission to register a new asset." : undefined}
                                   onClick={() => handleAddAssetToSession(a)}
                                 >
                                   <Plus className="w-4 h-4 text-primary" />
@@ -2183,7 +2183,7 @@ export function ManageDTR() {
                                         <Button
                                           variant="destructive" size="sm"
                                           disabled={!canManageLiquidityConfigOnChain || onChainTxPending !== null}
-                                          title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a delegate with Manage Liquidity Config permission." : undefined}
+                                          title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission." : undefined}
                                           onClick={() => void runOnChainAction(`Remove ${row.symbol}`, () => executeRemoveReserveAsset(connection, walletCtx, dtr.onChain!.reserve, dtr.onChain!.manager, row.mint))}
                                           className="gap-1 shrink-0"
                                         >
@@ -2221,9 +2221,9 @@ export function ManageDTR() {
                         disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null}
                         title={
                           !canUpdateTargetsOnChain
-                            ? "You need the Root Manager or a delegate with Update Targets permission to submit a rebalance."
+                            ? "You need the Root Manager or a co-manager with Update Targets permission to submit a rebalance."
                             : !canSubmitRebalance
-                              ? "You need the Root Manager or a delegate with Manage Liquidity Config permission to register a new asset."
+                              ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission to register a new asset."
                               : undefined
                         }
                         className="w-full sm:w-auto font-bold gap-2"
@@ -2253,7 +2253,7 @@ export function ManageDTR() {
                   <CardDescription>
                     Every action ever taken on this Reserve -- creation and initial funding, mints and redemptions, instant
                     Protocol fee transfers, weekly TVL fee settlements, Manager fee accrual and claims, fee-routing changes,
-                    delegate grants, target-weight changes, composition edits, pause/unpause, wind-down and closure -- decoded
+                    co-manager grants, target-weight changes, composition edits, pause/unpause, wind-down and closure -- decoded
                     from its real on-chain transaction history and kept here so it loads instantly and reliably, without
                     depending on a live network call every time you open this tab.
                   </CardDescription>

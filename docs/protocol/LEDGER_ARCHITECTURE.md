@@ -147,7 +147,7 @@ specifically; see section 11's gap list).
 | `managerFeeShareAccrued` | Manager fee accrual (revenue realized) | `managerFee` |
 | `managerFeeShareCollected` | Manager fee claim (NOT new revenue -- see below) | `managerFeeClaimed` |
 | `feesAccrued` | Legacy combined accrual (pre-multi-recipient path) | `managerFee` + `protocolFee` |
-| `delegateAdded` / `delegatePermissionsUpdated` / `delegateRemoved` | Delegate lifecycle | -- |
+| `delegateAdded` / `delegatePermissionsUpdated` / `delegateRemoved` | Co-Manager lifecycle | -- |
 | `targetsUpdated` | Target-weight change | -- |
 | `reserveAssetAdded` / `reserveAssetFunded` / `reserveAssetRemoved` | Composition management | -- |
 | `windDownInitiated` / `reserveClosed` | Terminal lifecycle | -- |
