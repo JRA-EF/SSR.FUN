@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SSR.FUN — Coming Soon</title>
   <meta name="description" content="One token. Infinite possibilities. SSR.FUN — decentralized tokenized reserves on Solana." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://ssr.fun/" />
   <link rel="icon" type="image/png" href="/favicon-seal.png" />
   <link rel="apple-touch-icon" href="/apple-touch-seal.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -207,6 +209,30 @@
       color: var(--ink-3);
     }
 
+    /* closed-beta key entry (DEC-0187) */
+    .beta-key {
+      margin-top: 28px;
+      max-width: 520px;
+    }
+
+    .beta-key-form { margin-top: 0; }
+
+    .beta-key-form .beta-row input { font-family: ui-monospace, 'Lexend Giga', monospace; letter-spacing: 0.08em; }
+
+    .beta-key-form .beta-row button:disabled { opacity: 0.6; cursor: wait; transform: none; filter: none; }
+
+    .beta-key-status {
+      margin-top: 12px;
+      min-height: 14px;
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 0.06em;
+      color: var(--ink-3);
+    }
+
+    .beta-key-status.is-error { color: #b3283d; }
+    .beta-key-status.is-ok { color: var(--blue-1); }
+
     /* circular eagle visual */
     .hero {
       position: relative;
@@ -360,6 +386,16 @@
         </div>
         <p class="beta-note">Early access. No spam — confirm by email.</p>
       </form>
+      <div class="beta-key">
+        <p class="beta-label">I have a BETA key, let me in</p>
+        <form class="beta-key-form" id="beta-key-form" novalidate>
+          <div class="beta-row">
+            <input type="text" name="key" id="beta-key-input" placeholder="Enter your BETA key" autocomplete="off" autocapitalize="off" spellcheck="false" required aria-label="BETA key" />
+            <button type="submit" id="beta-key-submit">Let me in</button>
+          </div>
+          <p class="beta-key-status" id="beta-key-status" role="status" aria-live="polite"></p>
+        </form>
+      </div>
     </section>
 
     <aside class="hero" aria-hidden="true">
@@ -378,5 +414,46 @@
     <span>© 2026 SSR.FUN</span>
     <span>Decentralized Tokenized Reserves · Solana</span>
   </footer>
+  <script>
+    (function () {
+      var form = document.getElementById('beta-key-form');
+      var input = document.getElementById('beta-key-input');
+      var submit = document.getElementById('beta-key-submit');
+      var status = document.getElementById('beta-key-status');
+      if (!form || !input || !submit || !status) return;
+      function setStatus(text, kind) {
+        status.textContent = text || '';
+        status.className = 'beta-key-status' + (kind ? ' is-' + kind : '');
+      }
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var key = (input.value || '').trim();
+        if (!key) { setStatus('Enter the BETA key you were given.', 'error'); input.focus(); return; }
+        submit.disabled = true;
+        setStatus('Checking your key\u2026');
+        fetch('/api/site/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ key: key })
+        }).then(function (res) {
+          if (res.ok) {
+            setStatus('Welcome to the beta. Opening SSR.fun\u2026', 'ok');
+            window.location.reload();
+            return;
+          }
+          return res.json().catch(function () { return {}; }).then(function (body) {
+            setStatus(body && body.error ? body.error : 'That BETA key isn\u2019t valid.', 'error');
+            submit.disabled = false;
+            input.focus();
+            input.select();
+          });
+        }).catch(function () {
+          setStatus('Network error. Please try again.', 'error');
+          submit.disabled = false;
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

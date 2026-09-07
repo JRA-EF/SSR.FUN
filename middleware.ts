@@ -1,10 +1,17 @@
 // Vercel Routing Middleware -- TWO independent, stacked gates:
 //
-// 1. SITE-WIDE gate (2026-08-19, see docs/project/DECISION_LOG.md): the
-//    entire public site now requires SSR_SITE_PASSWORD (session cookie
-//    ssr_site_session, api/site/login.ts) for a controlled Mainnet launch --
-//    real funds are now involved. Applies to every route EXCEPT the login
-//    endpoint itself and the 5 CRON_SECRET-authenticated cron paths below
+// 1. SITE-WIDE closed-beta gate (2026-08-19 DEC-0129/0184; reshaped
+//    2026-09-07 DEC-0187): the entire public site requires a redeemed BETA
+//    key (SSR_BETA_KEYS list, or SSR_SITE_PASSWORD; session cookie
+//    ssr_site_session, api/site/login.ts, lib/site/session.ts) -- real funds
+//    are involved. A visitor WITHOUT a session is not shown a password form:
+//    every page URL is rewritten to the public Coming Soon page
+//    (public/coming-soon.html), which carries the "I have a BETA key" entry;
+//    redeeming a key sets the cookie and reloads the ORIGINAL URL, so deep
+//    links shared with beta users land where they pointed. /api/* paths get a
+//    JSON 401 instead. Applies to every route EXCEPT the login endpoint
+//    itself, the Coming Soon page's own static files (PUBLIC_PATHS), and the
+//    CRON_SECRET-authenticated cron paths below
 //    (those are invoked by Vercel's own cron trigger, never a browser, and
 //    carry no session cookie at all -- gating them would break every
 //    scheduled job).
@@ -20,15 +27,13 @@
 // page's static bundle or data endpoint -- a login page (or JSON 401 for
 // /api/* paths) is the only thing an unauthenticated visitor ever gets.
 
-import { next } from '@vercel/functions'
+import { next, rewrite } from '@vercel/functions'
 import { verifySessionCookie, parseCookie, SESSION_COOKIE_NAME } from './lib/dashboard/session.js'
+import { configuredBetaKeys, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
 
-// Kept as a plain literal (not imported from api/site/login.ts) so this
-// Edge-runtime file never pulls in that Node-oriented handler module --
-// matches how SESSION_COOKIE_NAME above is likewise never imported from
-// api/dashboard/login.ts. Must stay in sync with api/site/login.ts's own
-// SITE_SESSION_COOKIE_NAME export by hand if either ever changes.
-const SITE_SESSION_COOKIE_NAME = 'ssr_site_session'
+// SITE_SESSION_COOKIE_NAME is imported from lib/site/session.ts (runtime-
+// agnostic, Web Crypto only), which api/site/login.ts imports too -- one
+// definition, no hand-synced literal.
 
 // Cron paths (see vercel.json's "crons" list) -- authenticated by
 // CRON_SECRET inside each handler, never by a browser session. Must never
@@ -44,86 +49,29 @@ const CRON_PATHS = new Set([
 
 const SITE_LOGIN_PATH = '/api/site/login'
 
-const SITE_LOGIN_PAGE_HTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta name="robots" content="noindex, nofollow" />
-<title>SSR.fun - Sign in</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #0d0b12; color: #eeeaf6;
-    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  form {
-    width: 320px; padding: 32px; border-radius: 14px;
-    background: #16131d; border: 1px solid rgba(255,255,255,0.07);
-    box-shadow: 0 12px 40px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4);
-  }
-  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; color: #eeeaf6; }
-  p.sub { font-size: 13px; color: #a89fbb; margin: 0 0 20px; }
-  input {
-    width: 100%; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px;
-    background: #1b1724; border: 1px solid rgba(255,255,255,0.13); color: #eeeaf6; font-size: 14px;
-  }
-  input:focus { outline: 2px solid #8b45ff; outline-offset: 1px; }
-  button {
-    width: 100%; padding: 10px 12px; border-radius: 8px; border: none; cursor: pointer;
-    background: #8b45ff; color: #fff; font-size: 14px; font-weight: 600;
-  }
-  button:hover { background: #9c60ff; }
-  button:disabled { opacity: 0.6; cursor: not-allowed; }
-  .error { color: #e5586a; font-size: 13px; margin: 12px 0 0; min-height: 16px; }
-</style>
-</head>
-<body>
-  <form id="login-form">
-    <h1>SSR.fun</h1>
-    <p class="sub">Password required.</p>
-    <input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus required />
-    <button type="submit">Enter</button>
-    <p class="error" id="error"></p>
-  </form>
-  <script>
-    var form = document.getElementById('login-form');
-    var errorEl = document.getElementById('error');
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var password = form.password.value;
-      var button = form.querySelector('button');
-      button.disabled = true;
-      errorEl.textContent = '';
-      fetch('/api/site/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ password: password }),
-      })
-        .then(function (res) {
-          if (res.ok) { window.location.reload(); return; }
-          return res.json().then(function (body) {
-            errorEl.textContent = body && body.error ? body.error : 'Sign in failed.';
-            button.disabled = false;
-          });
-        })
-        .catch(function () {
-          errorEl.textContent = 'Network error. Try again.';
-          button.disabled = false;
-        });
-    });
-  </script>
-</body>
-</html>`
+// The Coming Soon page (public/coming-soon.html, copied verbatim into the
+// build output by Vite) is the ONLY thing an unauthenticated visitor sees at
+// any page URL. It is served by REWRITE, not redirect: the address bar keeps
+// the URL the visitor asked for, and after a successful key redemption the
+// page simply reloads that same URL -- now authenticated -- into the real app.
+const COMING_SOON_PATH = '/coming-soon.html'
 
-function siteLoginPageResponse(): Response {
-  return new Response(SITE_LOGIN_PAGE_HTML, {
-    status: 200,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
-  })
+// Files the Coming Soon page needs that live at the public/ root (not under
+// /assets/, which the matcher already excludes). Exact paths only; nothing
+// here reveals anything about the gated app.
+const PUBLIC_PATHS = new Set([
+  COMING_SOON_PATH,
+  '/coming-soon-eagle.jpg',
+  '/ssr-seal.png',
+  '/favicon-seal.png',
+  '/apple-touch-seal.png',
+  '/favicon.svg',
+  '/robots.txt',
+])
+
+function comingSoonResponse(request: Request): Response {
+  const target = new URL(COMING_SOON_PATH, request.url)
+  return rewrite(target, { headers: { 'cache-control': 'no-store' } })
 }
 
 const LOGIN_PAGE_HTML = `<!doctype html>
@@ -241,9 +189,9 @@ export default async function middleware(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const isApiPath = url.pathname.startsWith('/api/')
 
-  // Cron trigger requests and the site-login endpoint itself are never gated
-  // by either password -- see the header comment above.
-  if (CRON_PATHS.has(url.pathname) || url.pathname === SITE_LOGIN_PATH) return next()
+  // Cron trigger requests, the site-login endpoint itself, and the Coming
+  // Soon page's own files are never gated -- see the header comment above.
+  if (CRON_PATHS.has(url.pathname) || url.pathname === SITE_LOGIN_PATH || PUBLIC_PATHS.has(url.pathname)) return next()
 
   const cookieHeader = request.headers.get('cookie')
 
@@ -255,12 +203,11 @@ export default async function middleware(request: Request): Promise<Response> {
   // toggle existed) so this is a no-op change until the env var is actually
   // set. Re-enable by removing the env var or setting it back to 'true'.
   if (process.env.SSR_SITE_GATE_ENABLED !== 'false') {
-    const sitePassword = process.env.SSR_SITE_PASSWORD ?? ''
     const siteSessionValue = parseCookie(cookieHeader, SITE_SESSION_COOKIE_NAME)
-    const siteAuthenticated = await verifySessionCookie(siteSessionValue, sitePassword)
+    const siteAuthenticated = await verifySiteSessionCookie(siteSessionValue, siteSessionSecret(), configuredBetaKeys())
 
     if (!siteAuthenticated) {
-      return isApiPath ? unauthorizedJson() : siteLoginPageResponse()
+      return isApiPath ? unauthorizedJson() : comingSoonResponse(request)
     }
   }
 
