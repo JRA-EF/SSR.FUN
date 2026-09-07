@@ -1,8 +1,9 @@
 // POST /api/site/login -- redeems a closed-beta key (DEC-0187) and sets the
 // signed, HttpOnly session cookie that gates the ENTIRE public site (see
-// middleware.ts). Accepted keys are the SSR_BETA_KEYS list plus
-// SSR_SITE_PASSWORD (see lib/site/session.ts for the model, the 30-day TTL
-// and why the cookie records which key was redeemed). Mirrors
+// middleware.ts). Accepted keys are the SSR_BETA_KEYS list (30-day sessions),
+// the SSR_TEAM_KEYS list (400-day sessions) and SSR_SITE_PASSWORD (see
+// lib/site/session.ts for the model and why the cookie records which key was
+// redeemed). Mirrors
 // api/dashboard/login.ts's rate-limit/lockout pattern exactly, with its own
 // independent cookie and attempt tracker -- redeeming a beta key never grants
 // /internal/* access, and vice versa.
@@ -10,11 +11,11 @@ import type { DashboardRequest, DashboardResponse } from '../../lib/dashboard/ht
 import { isSecureEnvironment } from '../../lib/dashboard/session.js'
 import {
   buildSiteSetCookie,
-  configuredBetaKeys,
+  configuredAccessKeys,
   createSiteSessionCookieValue,
   matchBetaKey,
+  sessionTtlForKey,
   SITE_SESSION_COOKIE_NAME,
-  SITE_SESSION_TTL_MS,
   siteSessionSecret,
 } from '../../lib/site/session.js'
 
@@ -73,7 +74,7 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
   }
 
   const secret = siteSessionSecret()
-  const keys = configuredBetaKeys()
+  const keys = configuredAccessKeys()
   if (!secret || keys.length === 0) {
     res.status(500).json({ error: 'Beta access is not configured.' })
     return
@@ -117,7 +118,8 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
   }
 
   attemptsByClient.delete(client)
-  const cookieValue = await createSiteSessionCookieValue(secret, redeemed, SITE_SESSION_TTL_MS)
-  res.setHeader('Set-Cookie', buildSiteSetCookie(cookieValue, { maxAgeSeconds: SITE_SESSION_TTL_MS / 1000, secure: isSecureEnvironment() }))
+  const ttlMs = sessionTtlForKey(redeemed)
+  const cookieValue = await createSiteSessionCookieValue(secret, redeemed, ttlMs)
+  res.setHeader('Set-Cookie', buildSiteSetCookie(cookieValue, { maxAgeSeconds: ttlMs / 1000, secure: isSecureEnvironment() }))
   res.status(200).json({ ok: true })
 }
