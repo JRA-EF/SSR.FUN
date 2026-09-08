@@ -5950,3 +5950,33 @@
   ]
 }
 ```
+
+## DEC-0191
+
+```json
+{
+  "id": "DEC-0191",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "100 additional BETA keys issued and activated (Production env SSR_BETA_KEYS on ssr-fun now holds 110 keys: the 10 from DEC-0187 plus 100 new SSR-BETA-XXXX-XXXX-XXXX keys; SSR_TEAM_KEYS unchanged at 10), deployed as dpl for ssr-dfnube2er-ssr14.vercel.app (main @ d6ec7a8, env-only change). The single source of truth for every access key is now a Google Sheet owned by the Creator, 'SSR.fun Access Keys (master)', one row per key with columns #, Key, Type, Session length, Batch, Active in Vercel, Issued to, Issued on, Used, First used on, Notes. Issuance bookkeeping (who got which key, whether it was used) is manual in that sheet: the gate is stateless and records no redemptions.",
+  "context": "Creator: 'spin up a list of beta 100 keys and export as csv' to the Desktop; then 'keep a record of all the keys and uniformize that into 1 sheet that the entire team can access and see if it was used or not ... use all the historical keys (team list + this list)'; 'lets use g sheets'; then 'activate all the keys in the list'. The 20 historical keys (DEC-0187 beta, DEC-0188 team) were recovered from the 2026-09-07 session transcript, since Vercel Sensitive env values cannot be read back.",
+  "rationale": "Replacing SSR_BETA_KEYS with the union (old 10 + new 100) rather than only the new 100 keeps every existing beta session valid (a cookie is only honoured while its key is still configured). Keys are 12 random characters from a 32-symbol alphabet without 0/O/1/I. A shared sheet is the lowest-friction team record; automated 'used' tracking would need a redemption log in the database and is offered as a follow-up.",
+  "alternativesConsidered": [
+    "Replace the list with only the 100 new keys -- rejected: revokes yesterday's 10 beta sessions.",
+    "Track redemptions server-side now -- deferred; not requested."
+  ],
+  "impact": "110 beta keys and 10 team keys open ssr.fun. Live-verified after redeploy: a new key, an old beta key and a team key each return 200 with the expected cookie lifetime (30 days / 30 days / 400 days); an invalid key returns 401; unauthenticated / still serves the Coming Soon page.",
+  "affectedAreas": [
+    "Vercel ssr-fun Production env SSR_BETA_KEYS (PATCH, sensitive)",
+    "Production deployment ssr-dfnube2er-ssr14.vercel.app",
+    "Google Sheet 'SSR.fun Access Keys (master)' (Creator's Drive) + Desktop/ssr-access-keys-master.csv",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "PATCH /v9/projects/prj_cbTf3idEypjW1ccQA90NEEVbUUxQ/env/i3ZPBopgKD9szQUY -> key SSR_BETA_KEYS type sensitive updated. `vercel deploy --prod` -> ssr-dfnube2er-ssr14.vercel.app aliased by ssr.fun.",
+    "POST https://ssr.fun/api/site/login: new beta key -> 200 Max-Age=2592000; old beta key -> 200 Max-Age=2592000; team key -> 200 Max-Age=34560000; bogus key -> 401. GET / -> 'SSR.FUN — Coming Soon'."
+  ]
+}
+```
