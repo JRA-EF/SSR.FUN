@@ -110,11 +110,28 @@ export interface JupiterQuoteParams {
   apiKey: string;
 }
 
+/**
+ * DEX venues Jupiter must not route through (Jupiter `excludeDexes` labels,
+ * see /swap/v1/program-id-to-label). Live 2026-09-08 on a 10-asset Buy: every
+ * leg routed via "ZeroFi" (program ZERor4xh...) failed on-chain with custom
+ * error 0xd after ~13k CU (6 of 6), every leg via Raydium CLMM / Orca landed
+ * (2 of 2) -- a broken venue, not slippage. Same morning, the tester's GOLF
+ * Buy failed inside "Quantum" (program QuaNtZsg...) with custom error 0xe at
+ * ~4k CU (sig 48hDBgg3...). Override with JUPITER_EXCLUDE_DEXES
+ * (comma-separated) without a deploy; empty string disables the default.
+ */
+export const DEFAULT_EXCLUDED_DEXES = ["ZeroFi", "Quantum"];
+export function excludedDexesParam(): string {
+  const raw = process.env.JUPITER_EXCLUDE_DEXES;
+  const list = raw === undefined ? DEFAULT_EXCLUDED_DEXES : raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return list.length ? `&excludeDexes=${encodeURIComponent(list.join(","))}` : "";
+}
+
 /** ExactIn quote with the shared retry policy. */
 export async function fetchJupiterQuoteWithRetry(p: JupiterQuoteParams): Promise<JupiterCallResult<JupiterQuote>> {
   return withJupiterRetry<JupiterQuote>(async () => {
     try {
-      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${p.inputMint}&outputMint=${p.outputMint}&amount=${p.amount.toString()}&slippageBps=${p.slippageBps}&swapMode=ExactIn${p.maxAccounts !== null ? `&maxAccounts=${p.maxAccounts}` : ""}`;
+      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${p.inputMint}&outputMint=${p.outputMint}&amount=${p.amount.toString()}&slippageBps=${p.slippageBps}&swapMode=ExactIn${p.maxAccounts !== null ? `&maxAccounts=${p.maxAccounts}` : ""}${excludedDexesParam()}`;
       const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": p.apiKey } });
       if (!quoteRes.ok) {
         // Read the RAW text once (never .json() directly) so a genuinely
