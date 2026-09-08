@@ -6005,6 +6005,16 @@
   "supersedes": null,
   "supersededBy": null,
   "evidence": ["All signatures per clause: docs/project/final-fixes.md (2026-09-08 pass).", "close_reserve failure: 3ub72R3KzUaAYAi6nNd11tppADc4BC7Su1A45XjX8WPjS5JyMrH8eEey2tArr1h4qkJgZBLea73R7Uxy4MMCZRc6 (UnbalancedInstruction after the first vault-close CPI; simulation reproduces: 'sum of account balances before and after instruction do not match')."]
+}
+```
+
+## DEC-0194
+
+```json
+{
+  "id": "DEC-0194",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
   "decision": "100 additional BETA keys issued and activated (Production env SSR_BETA_KEYS on ssr-fun now holds 110 keys: the 10 from DEC-0187 plus 100 new SSR-BETA-XXXX-XXXX-XXXX keys; SSR_TEAM_KEYS unchanged at 10), deployed as dpl for ssr-dfnube2er-ssr14.vercel.app (main @ d6ec7a8, env-only change). The single source of truth for every access key is now a Google Sheet owned by the Creator, 'SSR.fun Access Keys (master)', one row per key with columns #, Key, Type, Session length, Batch, Active in Vercel, Issued to, Issued on, Used, First used on, Notes. Issuance bookkeeping (who got which key, whether it was used) is manual in that sheet: the gate is stateless and records no redemptions.",
   "context": "Creator: 'spin up a list of beta 100 keys and export as csv' to the Desktop; then 'keep a record of all the keys and uniformize that into 1 sheet that the entire team can access and see if it was used or not ... use all the historical keys (team list + this list)'; 'lets use g sheets'; then 'activate all the keys in the list'. The 20 historical keys (DEC-0187 beta, DEC-0188 team) were recovered from the 2026-09-07 session transcript, since Vercel Sensitive env values cannot be read back.",
   "rationale": "Replacing SSR_BETA_KEYS with the union (old 10 + new 100) rather than only the new 100 keeps every existing beta session valid (a cookie is only honoured while its key is still configured). Keys are 12 random characters from a 32-symbol alphabet without 0/O/1/I. A shared sheet is the lowest-friction team record; automated 'used' tracking would need a redemption log in the database and is offered as a follow-up.",
