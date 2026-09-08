@@ -5917,3 +5917,36 @@
   ]
 }
 ```
+
+## DEC-0190
+
+```json
+{
+  "id": "DEC-0190",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "ssr.fun's closed-beta gate (DEC-0187/0188: Coming Soon page + 'I have a BETA key' entry, BETA and TEAM key lists) is restored on production, and the developer's tier-b-plus-warmcache work is kept: origin/tier-b-plus-warmcache @ 6b1092a was merged into main (merge commit 253314d; only docs conflicted, resolved by keeping both sides in order) and main was deployed to the ssr-fun project: dpl_Ebz9Ng1krKrFKYvxo9a2Cijdx2oy (ssr-axg9pkdug-ssr14.vercel.app), now aliased by ssr.fun, www.ssr.fun and -- for the interim recorded in DEC-0189 -- strategic-super-reserve.fun. Standing rule reaffirmed: production deploys of ssr-fun come from main; anything the developer wants live must be merged into main first (as DEC-0187 and this entry did), never deployed from a side branch with a dirty tree.",
+  "context": "Creator, after DEC-0189's report: 'you fucked up the ssr.fun one now. its showing password instead of coming soon + signup for beta + enter key for beta page that we setup yesterday'. Correction of the record: this session never deployed to ssr-fun before this entry; its very first request, before any change, already found https://ssr.fun/ serving 'SSR.fun - Sign in'. The cause was DEC-0189's recorded drift: the developer (cdrakep-5453) had deployed production six times in the preceding ten hours from tier-b-plus-warmcache (last one dpl_5tVjmT9iiGmTkwszerpvw5rGxNxn @ 6b1092a, gitDirty 1), a branch that predates the DEC-0187 gate and whose /api/site/login accepts only SSR_SITE_PASSWORD. The Creator's earlier 'dont change anything there' was given in the belief that ssr.fun was still on the gate; this message makes clear the gate is the intended state, so restoring it is the directive.",
+  "rationale": "Merging the developer's branch into main before deploying is the only option that restores the gate without discarding their server-built buy/sell, fee-keeper cron, set-keeper page and DEC-0173 client cutover (15 commits since ff18dbd). A redeploy of yesterday's main alone would have silently reverted all of that. The merge was low-risk for the gate: since ff18dbd the branch touched middleware.ts only to add the fee-settlement cron to CRON_PATHS and vercel.json to add that cron plus the /internal/set-keeper rewrite; the gate code (siteGateResponse, key lists, SSR_TEAM_KEYS) is intact after the merge, `npx tsc -b` passes and the 20 gate tests pass. What could NOT be preserved: the uncommitted changes in the developer's dirty-tree deployments -- only what they committed to origin/tier-b-plus-warmcache is on main now.",
+  "alternativesConsidered": [
+    "Redeploy yesterday's main (ded6b95/b833885) as-is -- rejected: reverts 15 commits of the developer's committed work.",
+    "Ask the developer to redeploy from a branch that has the gate -- rejected: ssr.fun was public-facing without the closed-beta gate right now; waiting was not acceptable.",
+    "Roll back the alias to dpl_4H6v754eMx94UTCiHjjmBJVs8XNB (DEC-0188's deploy) -- rejected for the same reason as the first alternative."
+  ],
+  "impact": "https://ssr.fun/ -> 200 'SSR.FUN — Coming Soon' with the 'I have a BETA key, let me in' entry at every page URL; wrong key -> 401 'That BETA key isn't valid.'; APIs -> 401 without a session. Side effect on the DEC-0189 interim: strategic-super-reserve.fun is still attached to ssr-fun, so it now shows the Coming Soon page too (the site password still opens it through the key field, so 'password gated, same password' still holds); it gets its plain password form back when the domain moves to ssr-fun-staging once the Sensitive secrets are entered (DEC-0189). The developer's dirty-tree extras, if any, are not live. The DEC-0189 risk 'Production is AGAIN not main' is resolved by this entry; the underlying process risk (side-branch deploys) remains and is the standing rule above.",
+  "affectedAreas": [
+    "main: merge commit 253314d (origin/tier-b-plus-warmcache @ 6b1092a into ff3443a; 51 files; docs/project/DECISION_LOG.md and PROJECT_STATUS.md conflicts resolved keeping both sides)",
+    "Vercel project ssr-fun: production dpl_Ebz9Ng1krKrFKYvxo9a2Cijdx2oy (main @ 253314d) aliased by ssr.fun, www.ssr.fun, strategic-super-reserve.fun, www.strategic-super-reserve.fun",
+    "vercel.json (from the developer's branch): +/api/mainnet/fee-settlement-cron (15 * * * *), +/internal/set-keeper rewrite; middleware.ts CRON_PATHS +fee-settlement-cron",
+    "docs/project/PROJECT_STATUS.md (Last 5 Working Days, Risks, Environment Status, Last Updated)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Pre-change (this session's first request, 2026-09-08 10:06 UTC, before any change): GET https://ssr.fun/ -> 200 <title>SSR.fun - Sign in</title>; alias ssr.fun -> ssr-ht6k7mikx-ssr14.vercel.app = dpl_5tVjmT9iiGmTkwszerpvw5rGxNxn (cdrakep-5453, tier-b-plus-warmcache @ 6b1092a, gitDirty 1, created 07:00 UTC).",
+    "`git diff --stat ff18dbd origin/tier-b-plus-warmcache -- middleware.ts api/site/login.ts lib/site public/coming-soon.html vercel.json` -> middleware.ts +1, vercel.json +5 only. `git merge origin/tier-b-plus-warmcache` -> conflicts only in docs/project/DECISION_LOG.md (3 hunks) and PROJECT_STATUS.md (2 hunks), both resolved as HEAD-then-theirs; merge commit 253314d. package-lock.json unchanged (no npm ci needed). `npx tsc -b` exit 0; `npx mocha tests/phase_beta_gate.mjs` -> 20 passing; grep confirms siteGateResponse/comingSoonResponse/SSR_TEAM_KEYS present in middleware.ts, lib/site/session.ts, api/site/login.ts.",
+    "`vercel deploy --prod` from the repo (linked to ssr-fun) -> dpl_Ebz9Ng1krKrFKYvxo9a2Cijdx2oy Ready. Post-deploy: GET https://ssr.fun/ -> 200 'SSR.FUN — Coming Soon', body contains 'I have a BETA key, let me in'; /discover?x=1 -> 200 (same page); POST /api/site/login {key:'nope'} -> 401 {error:\"That BETA key isn't valid.\"}; /api/mainnet/landing-stats -> 401 {error:Unauthorized}. `vercel alias ls`: ssr.fun and strategic-super-reserve.fun -> ssr-axg9pkdug-ssr14.vercel.app; GET https://strategic-super-reserve.fun/ -> 200 'SSR.FUN — Coming Soon' (interim, see impact).",
+    "git: main 253314d pushed to origin; design merged from main and pushed."
+  ]
+}
+```
