@@ -270,7 +270,7 @@ export function summarizeActivityEvent(
       // tvlFeeSettled's existing protocol-as-amountRaw convention.
       return {
         actor: null,
-        summary: `Fee crystallized into the fee vault (${source === "annualTvlFee" ? "TVL fee" : "mint fee"}): ${String(data.protocolShares)} protocol-share + ${String(data.managerShares)} manager-share Reserve Token units`,
+        summary: `Fee crystallized into the fee vault (${source === "annualTvlFee" ? "TVL fee" : source === "redemptionFee" ? "redemption fee" : "mint fee"}): ${String(data.protocolShares)} protocol-share + ${String(data.managerShares)} manager-share Reserve Token units`,
         amountRaw: addBig(data.protocolShares),
         amountKind: "protocolFee",
         amountRaw2: addBig(data.managerShares),

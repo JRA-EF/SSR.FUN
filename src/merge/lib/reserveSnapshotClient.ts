@@ -25,6 +25,11 @@ export interface ReserveSnapshot {
   priceByMint: Record<string, number>;
   /** reserveId -> resolved off-chain metadata (name/ticker/category/...), or null. */
   metadataByReserve: Record<string, ParsedReserveMetadata | null>;
+  /** mint -> real symbol/name (from the ledger asset catalogue, baked in by
+   *  warm-cache-cron) so cards paint real symbols on the FIRST frame instead of
+   *  the "AssetN" placeholder until the client's own catalogue loads. Optional:
+   *  an older snapshot without it just falls back to {} (same as before). */
+  mintMeta?: Record<string, { symbol: string; name: string }>;
   generatedAt: string | null;
   ageMs: number | null;
   warming?: boolean;
@@ -53,8 +58,9 @@ export async function fetchReserveSnapshot(origin: string): Promise<ReserveSnaps
 }
 
 /** Build the DTR[] the store renders from a snapshot, via the same builder the
- *  live poll uses. delegates/mintMeta/entryPrices are left empty here (the poll
- *  fills them); prices are converted from the flat USD map to AssetPriceInfo. */
+ *  live poll uses. delegates/entryPrices are left empty here (the poll fills
+ *  them); mintMeta comes baked into the snapshot so symbols paint on the first
+ *  frame; prices are converted from the flat USD map to AssetPriceInfo. */
 export function buildDtrsFromSnapshot(snapshot: ReserveSnapshot, walletKey: string | null): DTR[] {
   const asOf = snapshot.generatedAt ? new Date(snapshot.generatedAt).getTime() : Date.now();
   const priceByMint: Record<string, AssetPriceInfo> = {};
@@ -71,7 +77,7 @@ export function buildDtrsFromSnapshot(snapshot: ReserveSnapshot, walletKey: stri
       snapshot.metadataByReserve?.[reserve.reserveId] ?? null,
       SSR_PROGRAM_ID,
       SOLANA_CLUSTER,
-      {},
+      snapshot.mintMeta ?? {},
       priceByMint,
       {},
     ),

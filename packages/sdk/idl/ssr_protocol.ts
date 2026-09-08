@@ -4403,8 +4403,216 @@ export type SsrProtocol = {
           }
         },
         {
+          "name": "mintAuthority",
+          "docs": [
+            "bump -- DEC-0173: needed here for the first time, to mint the",
+            "redemption fee's shares into the fee vault below."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeSettlement",
+          "docs": [
+            "DEC-0173 (USDC on mint and redeem): the redemption fee's shares now",
+            "crystallize into this Reserve's shared fee vault for USDC settlement",
+            "(see `redeem_fee_vault_shares.rs`), replacing the old",
+            "burn-for-holders mechanic. The redeemer fronts the one-time rent only",
+            "on this Reserve's very first fee crystallization. Note this preserves",
+            "DEC-0016's administrator-cannot-block-redemption guarantee: these are",
+            "permissionless PDAs derived from the Reserve itself, requiring no",
+            "admin-controlled account and no ProtocolConfig read."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "feeVaultAuthority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "feeVaultAuthority",
+          "docs": [
+            "authority for the fee-share mint is `mint_authority` above), verified",
+            "purely by seeds against the cached bump."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
           "name": "tokenProgram",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
           "name": "systemProgram",
@@ -4907,35 +5115,56 @@ export type SsrProtocol = {
           ]
         },
         {
-          "name": "protocolFeeDestinationTokenAccount",
+          "name": "feeSettlement",
           "docs": [
-            "Instant Protocol mint-fee transfer (this pass, see",
-            "docs/project/DECISION_LOG.md): the initial seed mint is a mint like",
-            "any other -- the Protocol's share of ITS fee is minted directly",
-            "here, in the same atomic transaction, never accrued as pending.",
-            "`manager` fronts this ATA's rent if it doesn't exist yet.",
-            "",
-            "Option (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):",
-            "when `protocol_fee_destination` IS the manager's own wallet, this",
-            "account's associated_token derivation would resolve to the exact",
-            "same address as `manager_reserve_token_account` below -- two separate",
-            "mutable `Account<'info, TokenAccount>` slots resolving to one",
-            "underlying account, which Anchor's own ConstraintDuplicateMutableAccount",
-            "safety check rejects unconditionally, before this handler ever runs",
-            "(confirmed live: DevNet error 2040). The client detects this ahead of",
-            "time and passes this program's own ID as the explicit \"None\" sentinel",
-            "instead -- the same convention already used for `manager_fee_recipients`",
-            "below (see `common::credit_manager_fee_shares`'s doc comment). The",
-            "handler verifies the omission actually matches reality rather than",
-            "trusting it blindly (SsrError::ProtocolFeeDestinationTokenAccountRequired)."
+            "DEC-0173 (USDC on mint and redeem): the initial seed mint is a mint",
+            "like any other -- BOTH the Protocol's and the Manager's shares of its",
+            "fee crystallize together into this Reserve's shared fee vault (for",
+            "later USDC settlement -- see `redeem_fee_vault_shares.rs`), replacing",
+            "the old instant-mint-to-treasury + pending-counter destinations. This",
+            "also deletes the old manager-is-fee-destination",
+            "ConstraintDuplicateMutableAccount collapse special-case entirely: the",
+            "fee vault's ATA authority is a PDA, so it can never collide with",
+            "`manager_reserve_token_account`. `manager` fronts the one-time rent",
+            "on this Reserve's very first fee crystallization."
           ],
           "writable": true,
-          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeVault",
+          "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "account",
-                "path": "protocolFeeDestination"
+                "path": "feeVaultAuthority"
               },
               {
                 "kind": "const",
@@ -5019,11 +5248,43 @@ export type SsrProtocol = {
           }
         },
         {
-          "name": "protocolFeeDestination",
+          "name": "feeVaultAuthority",
           "docs": [
-            "must equal `protocol_config.default_protocol_fee_destination`,",
-            "checked in the handler."
-          ]
+            "instruction is `mint_authority` above -- this account is only the fee",
+            "vault's ATA *owner*, verified purely by seeds against the cached bump)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
         },
         {
           "name": "tvlAccrual",
@@ -5049,54 +5310,6 @@ export type SsrProtocol = {
                   117,
                   97,
                   108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "reserve"
-              }
-            ]
-          }
-        },
-        {
-          "name": "managerFeeRecipients",
-          "docs": [
-            "Optional (DEC-0094 sentinel pattern, see common::credit_manager_fee_shares):",
-            "pass the program ID itself for a Reserve that hasn't opted into",
-            "multi-recipient routing (the overwhelmingly common case at seed time,",
-            "since seeding is the FIRST mint -- but a creator can bundle",
-            "initializeManagerFeeRecipients into the same create-and-register",
-            "transaction, so this must still be handled here too)."
-          ],
-          "writable": true,
-          "optional": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  97,
-                  110,
-                  97,
-                  103,
-                  101,
-                  114,
-                  95,
-                  102,
-                  101,
-                  101,
-                  95,
-                  114,
-                  101,
-                  99,
-                  105,
-                  112,
-                  105,
-                  101,
-                  110,
-                  116,
-                  115
                 ]
               },
               {
@@ -7242,6 +7455,9 @@ export type SsrProtocol = {
           },
           {
             "name": "annualTvlFee"
+          },
+          {
+            "name": "redemptionFee"
           }
         ]
       }

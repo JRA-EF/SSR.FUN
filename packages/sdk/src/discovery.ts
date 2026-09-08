@@ -498,6 +498,23 @@ export function parseReserveMetadataUri(metadataUri: string): ParsedReserveMetad
  * anything unresolvable (network failure, 404, non-JSON body, timeout,
  * unsupported scheme).
  */
+/** Hosts this app has been served from. A Reserve's on-chain metadata URI
+ *  points at whichever of these was live when it was created; in a browser
+ *  the fetch is rewritten to the CURRENT origin so it stays same-origin
+ *  (the site gate cookie applies, and no CORS -- live 2026-09-08: ssr.fun
+ *  fetching strategic-super-reserve.fun was blocked for every Reserve). */
+const APP_HOSTS = new Set(["strategic-super-reserve.fun", "www.strategic-super-reserve.fun", "ssr.fun", "www.ssr.fun"]);
+export function rewriteAppMetadataUriToCurrentOrigin(metadataUri: string): string {
+  if (typeof window === "undefined" || !window.location?.origin) return metadataUri;
+  try {
+    const u = new URL(metadataUri);
+    if (!APP_HOSTS.has(u.hostname.toLowerCase())) return metadataUri;
+    return `${window.location.origin}${u.pathname}${u.search}`;
+  } catch {
+    return metadataUri;
+  }
+}
+
 export async function resolveReserveMetadata(metadataUri: string, timeoutMs = 5000): Promise<ParsedReserveMetadata | null> {
   const inline = parseReserveMetadataUri(metadataUri);
   if (inline) return inline;
@@ -505,7 +522,7 @@ export async function resolveReserveMetadata(metadataUri: string, timeoutMs = 50
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(metadataUri, { signal: controller.signal });
+    const response = await fetch(rewriteAppMetadataUriToCurrentOrigin(metadataUri), { signal: controller.signal, credentials: "same-origin" });
     if (!response.ok) return null;
     return metadataFromJson(await response.json());
   } catch {
