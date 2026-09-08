@@ -1,16 +1,18 @@
 # Vercel routes for the agent-feedback pipeline
 
-These deploy the feedback queue + form. Two options:
+Full design, the permanent-record table, and daemon setup live in
+`tools/agent-feedback-daemon/README.md`. Routes here:
 
-**A. Standalone Vercel project (recommended — decoupled from SSR):**
-Deploy this `vercel/` dir as its own project. Set env: `DATABASE_URL` (a Neon
-Postgres), `FEEDBACK_DAEMON_SECRET`. The `agent_feedback` table auto-creates.
-Point the daemon's `VERCEL_BASE_URL` at this project's URL.
+| route | auth | purpose |
+|---|---|---|
+| `POST /api/feedback/submit` | public (BotID + rate limits) | store one submission, status `new` |
+| `GET  /api/feedback/form` | public | legacy URL, 302 → `/feedback` |
+| `GET  /api/feedback/pending` | Bearer `FEEDBACK_DAEMON_SECRET` | daemon claims `new` items → `raised` |
+| `POST /api/feedback/ack` | Bearer | `dispatched` / `dismissed` + `handledBy` |
+| `GET  /api/feedback/item?id=` | Bearer | one row (daemon restart recovery) |
+| `GET  /api/feedback/list?status=&limit=` | Bearer | newest-first listing |
+| `POST /api/feedback/resolve` | Bearer | fixer's conclusion → `resolved` |
 
-**B. Fold into the SSR repo:** copy `api/feedback/*` -> `SSR.FUN/api/feedback/`
-and `lib/agent-feedback/db.ts` -> `SSR.FUN/lib/agent-feedback/`, COMMIT on a
-branch, and verify `npm run build` passes (as untracked files they broke the
-SSR monorepo's `tsc -b`; commit + a build check before relying on it).
-
-Routes: form.ts (public form), submit.ts (public POST), pending.ts +
-ack.ts (Bearer FEEDBACK_DAEMON_SECRET). See ../README.md for the full flow.
+`_auth.ts` holds the shared Bearer check. Store: `lib/agent-feedback/db.ts`
+(Neon `agent_feedback`; schema created and migrated on first request, no
+manual migration). Rows are never deleted.

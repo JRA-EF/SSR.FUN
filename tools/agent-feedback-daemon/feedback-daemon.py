@@ -117,8 +117,8 @@ def raise_to_telegram(item):
         "🗣 <b>New feedback</b>\n"
         f"<b>Category:</b> {esc(item.get('category') or 'general')}\n"
         f"<b>From:</b> {esc(item.get('contact') or 'anonymous')}\n"
-        f"<b>Page:</b> {esc(item.get('page_url') or '—')}\n"
-        f"<b>Submitted:</b> {esc(item.get('created_at') or '')}\n"
+        f"<b>Page:</b> {esc(item.get('page_url') or item.get('pageUrl') or '—')}\n"
+        f"<b>Submitted:</b> {esc(item.get('created_at') or item.get('createdAt') or '')}\n"
         f"<b>id:</b> <code>{esc(fid)}</code>\n"
         "———\n"
         f"{esc(preview)}"
@@ -153,14 +153,46 @@ def claim_pending():
         log("pending poll error:", e)
         return []
 
-def ack(fid, status, dispatched_to=None):
+def ack(fid, status, dispatched_to=None, handled_by=None):
     try:
         vercel("/api/feedback/ack", method="POST",
-               payload={"id": fid, "status": status, "dispatchedTo": dispatched_to})
+               payload={"id": fid, "status": status, "dispatchedTo": dispatched_to,
+                        "handledBy": handled_by})
         return True
     except Exception as e:
         log("ack error:", e)
         return False
+
+def fetch_item(fid):
+    """Recover one item from the database (the permanent record) -- used when the
+    daemon's memory is gone (restart) so an Approve never loses a submission."""
+    try:
+        return vercel(f"/api/feedback/item?id={urllib.parse.quote(fid)}").get("item")
+    except Exception as e:
+        log("item fetch error:", fid, e)
+        return None
+
+def list_items(status=None, limit=500):
+    q = f"?limit={limit}" + (f"&status={status}" if status else "")
+    return vercel("/api/feedback/list" + q).get("items", [])
+
+def resolve_item(fid, resolution):
+    return vercel("/api/feedback/resolve", method="POST",
+                  payload={"id": fid, "resolution": resolution})
+
+def export_markdown(items):
+    out = ["# Feedback log (exported %s)" % time.strftime("%Y-%m-%d %H:%M"), ""]
+    for it in items:
+        out.append(f"## {it.get('createdAt') or it.get('created_at') or ''} — {it.get('category')} — `{it.get('id')}`")
+        out.append(f"- status: **{it.get('status')}**" +
+                   (f" by {it.get('handledBy')}" if it.get('handledBy') else "") +
+                   (f" → {it.get('dispatchedTo')}" if it.get('dispatchedTo') else ""))
+        if it.get('contact'):  out.append(f"- from: {it['contact']}")
+        if it.get('pageUrl'):  out.append(f"- page: {it['pageUrl']}")
+        out.append(""); out.append((it.get('message') or '').strip()); out.append("")
+        if it.get('resolution'):
+            out.append(f"**Resolution ({it.get('resolvedAt') or ''}):** {it['resolution']}"); out.append("")
+    return "\n".join(out)
 
 # ----------------------------------------------------------------- tmux ------
 def tmux_session_exists(session):
@@ -176,13 +208,16 @@ def frame_feedback(item):
         f"id: {item.get('id')}\n"
         f"category: {item.get('category') or 'general'}\n"
         f"from: {item.get('contact') or 'anonymous'}\n"
-        f"page: {item.get('page_url') or '—'}\n"
-        f"submitted: {item.get('created_at') or ''}\n"
+        f"page: {item.get('page_url') or item.get('pageUrl') or '—'}\n"
+        f"submitted: {item.get('created_at') or item.get('createdAt') or ''}\n"
         "--- message ---\n"
         f"{(item.get('message') or '').strip()}\n"
         "--- end ---\n"
         "Please assess this feedback. If it is a real, in-scope issue, address it "
-        "carefully and safely; otherwise briefly note why it needs no action."
+        "carefully and safely; otherwise briefly note why it needs no action. "
+        "When you are done, RECORD your conclusion permanently by running:\n"
+        f"  python3 {DAEMON_PATH} --resolve {item.get('id')} \"<one-paragraph summary of what you found/changed>\"\n"
+        "(this writes the resolution to the feedback database; do it exactly once)."
     )
 
 def tmux_inject(session, text):
@@ -201,7 +236,12 @@ _raised = {}          # id -> item (so a callback can recover the full text)
 _handled = set()      # ids already dispatched/dismissed (idempotency)
 
 def handle_callback(cb):
-    from_id = str(cb.get("from", {}).get("id", ""))
+    frm     = cb.get("from", {}) or {}
+    from_id = str(frm.get("id", ""))
+    # Who tapped: "@handle" if they have one, else first/last name, plus the id.
+    who = ("@" + frm["username"]) if frm.get("username") else \
+          " ".join(x for x in (frm.get("first_name"), frm.get("last_name")) if x) or "unknown"
+    who_str = f"{who} ({from_id})"
     data    = cb.get("data", "")
     msg     = cb.get("message", {})
     chat_id = msg.get("chat", {}).get("id")
@@ -210,27 +250,28 @@ def handle_callback(cb):
 
     if not is_authorized(from_id):
         tg("answerCallbackQuery", callback_query_id=cb_id, text="Not authorized.")
-        log("ignored callback from non-approver", from_id)
+        log("ignored callback from non-approver", who_str)
         return
 
     action, _, fid = data.partition(":")
     if fid in _handled:
         tg("answerCallbackQuery", callback_query_id=cb_id, text="Already handled.")
         return
-    item = _raised.get(fid, {"id": fid, "message": None})
+    item = _raised.get(fid) or fetch_item(fid) or {"id": fid, "message": None}
 
     if action == "dm":
-        _handled.add(fid); ack(fid, "dismissed")
+        _handled.add(fid); ack(fid, "dismissed", handled_by=who_str)
         tg("answerCallbackQuery", callback_query_id=cb_id, text="Dismissed.")
         tg("editMessageText", chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
-           text=(msg.get("text") or "") + "\n\n🗑 <b>Dismissed.</b>")
-        log("dismissed", fid)
+           text=(msg.get("text") or "") + f"\n\n🗑 <b>Dismissed</b> by {esc(who_str)}")
+        log("dismissed", fid, "by", who_str)
         return
 
     if action == "ap":
         if item.get("message") is None:
             tg("answerCallbackQuery", callback_query_id=cb_id,
-               text="Lost the text (daemon restarted). Ask the submitter to resend.")
+               text="Could not load this item from the database; try again in a moment.")
+            log("approve: item not in memory and DB fetch failed", fid)
             return
         try:
             tmux_inject(TARGET_TMUX, frame_feedback(item))
@@ -238,11 +279,11 @@ def handle_callback(cb):
             tg("answerCallbackQuery", callback_query_id=cb_id, text=f"Inject failed: {e}")
             log("inject FAILED", fid, e)
             return
-        _handled.add(fid); ack(fid, "dispatched", dispatched_to=TARGET_TMUX)
+        _handled.add(fid); ack(fid, "dispatched", dispatched_to=TARGET_TMUX, handled_by=who_str)
         tg("answerCallbackQuery", callback_query_id=cb_id, text=f"Dispatched → {TARGET_TMUX}")
         tg("editMessageText", chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
-           text=(msg.get("text") or "") + f"\n\n✅ <b>Dispatched → {esc(TARGET_TMUX)}</b>")
-        log("dispatched", fid, "->", TARGET_TMUX)
+           text=(msg.get("text") or "") + f"\n\n✅ <b>Approved</b> by {esc(who_str)} → dispatched to {esc(TARGET_TMUX)}")
+        log("dispatched", fid, "->", TARGET_TMUX, "approved by", who_str)
 
 # --------------------------------------------------------------- loops -------
 def telegram_loop():
@@ -272,6 +313,8 @@ def poll_loop():
         time.sleep(POLL_INTERVAL)
 
 # --------------------------------------------------------------- modes -------
+DAEMON_PATH = os.path.abspath(__file__)
+
 def require(cond, msg):
     if not cond:
         print("CONFIG ERROR:", msg); sys.exit(1)
@@ -298,6 +341,23 @@ def main():
             {"id": "test", "category": "test", "contact": "self", "page_url": "—",
              "created_at": time.strftime("%Y-%m-%d %H:%M"), "message": text}))
         print(f"injected into tmux session '{TARGET_TMUX}'"); return
+
+    if args and args[0] == "--list":
+        status = args[1] if len(args) > 1 else None
+        for it in list_items(status):
+            print(f"{(it.get('createdAt') or '')[:16]:16} {it.get('status'):10} {it.get('category'):10} "
+                  f"{it.get('id')}  {(it.get('handledBy') or ''):22} {(it.get('message') or '').strip()[:70]!r}")
+        return
+
+    if args and args[0] == "--export":
+        path = args[1] if len(args) > 1 else "feedback-log.md"
+        items = list(reversed(list_items(limit=1000)))   # oldest first
+        open(path, "w").write(export_markdown(items))
+        print(f"wrote {len(items)} items to {path}"); return
+
+    if args and args[0] == "--resolve":
+        require(len(args) >= 3, "usage: --resolve <id> \"<resolution text>\"")
+        print(json.dumps(resolve_item(args[1], " ".join(args[2:])))); return
 
     if args and args[0] == "--selftest":
         require(APPROVER, "APPROVER_CHAT_ID missing")

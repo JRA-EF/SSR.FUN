@@ -59,6 +59,9 @@ const CRON_PATHS = new Set([
   // ever saw the token (live 2026-09-08). The human-facing form/submit stay gated.
   '/api/feedback/pending',
   '/api/feedback/ack',
+  '/api/feedback/item',
+  '/api/feedback/list',
+  '/api/feedback/resolve',
 ])
 
 const SITE_LOGIN_PATH = '/api/site/login'

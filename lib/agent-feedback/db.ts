@@ -24,7 +24,13 @@ export interface FeedbackRow {
   message: string
   contact: string | null
   pageUrl: string | null
-  status: string
+  status: string            // new | raised | dispatched | dismissed | resolved
+  raisedAt?: string | null
+  handledAt?: string | null
+  handledBy?: string | null // Telegram "@handle (id)" that tapped Approve/Dismiss
+  dispatchedTo?: string | null
+  resolution?: string | null // the fixer agent's conclusion
+  resolvedAt?: string | null
 }
 
 let _schemaReady = false
@@ -45,7 +51,58 @@ export async function ensureSchema(): Promise<void> {
       dispatched_to text
     )`
   await sql`create index if not exists agent_feedback_status_idx on agent_feedback (status, created_at)`
+  // Added 2026-09-08 (DEC-0197): the row is the permanent record of the whole
+  // life of a feedback item -- who decided, and what the fixer concluded.
+  await sql`alter table agent_feedback add column if not exists handled_by text`
+  await sql`alter table agent_feedback add column if not exists resolution text`
+  await sql`alter table agent_feedback add column if not exists resolved_at timestamptz`
   _schemaReady = true
+}
+
+const ROW_COLUMNS = `id,
+              created_at   as "createdAt",
+              category,
+              message,
+              contact,
+              page_url     as "pageUrl",
+              status,
+              raised_at    as "raisedAt",
+              handled_at   as "handledAt",
+              handled_by   as "handledBy",
+              dispatched_to as "dispatchedTo",
+              resolution,
+              resolved_at  as "resolvedAt"`
+
+/** One item by id (any status), or null. Lets the daemon recover the full
+ *  text on Approve after a restart instead of relying on its memory. */
+export async function getFeedback(id: string): Promise<FeedbackRow | null> {
+  await ensureSchema()
+  const sql = getSql()
+  const rows = (await sql.query(
+    `select ${ROW_COLUMNS} from agent_feedback where id = $1`, [id])) as FeedbackRow[]
+  return rows[0] ?? null
+}
+
+/** Newest-first listing, optionally filtered by status. */
+export async function listFeedback(limit: number, status: string | null): Promise<FeedbackRow[]> {
+  await ensureSchema()
+  const sql = getSql()
+  return (await sql.query(
+    `select ${ROW_COLUMNS} from agent_feedback
+      where ($2::text is null or status = $2)
+      order by created_at desc limit $1`, [limit, status])) as FeedbackRow[]
+}
+
+/** Record the fixer's conclusion for a dispatched item (status -> resolved). */
+export async function resolveFeedback(id: string, resolution: string): Promise<boolean> {
+  await ensureSchema()
+  const sql = getSql()
+  const rows = (await sql`
+    update agent_feedback
+       set status = 'resolved', resolution = ${resolution}, resolved_at = now()
+     where id = ${id}
+    returning id`) as { id: string }[]
+  return rows.length > 0
 }
 
 /** Insert a freshly-submitted feedback item; returns its id. */
@@ -89,11 +146,11 @@ export async function claimNewFeedback(limit: number): Promise<FeedbackRow[]> {
 }
 
 /** Mark an item dispatched (injected to an agent) or dismissed. */
-export async function markStatus(id: string, status: 'dispatched' | 'dismissed', dispatchedTo: string | null): Promise<void> {
+export async function markStatus(id: string, status: 'dispatched' | 'dismissed', dispatchedTo: string | null, handledBy: string | null = null): Promise<void> {
   await ensureSchema()
   const sql = getSql()
   await sql`
     update agent_feedback
-       set status = ${status}, handled_at = now(), dispatched_to = ${dispatchedTo}
+       set status = ${status}, handled_at = now(), dispatched_to = ${dispatchedTo}, handled_by = ${handledBy}
      where id = ${id}`
 }
