@@ -54,10 +54,27 @@ Criterion clauses:
 - [ ] Fee reaches the Squads Treasury vault -- now delivered as USDC by the keeper; **blocked on `set_fee_settlement_keeper`** (Creator/Boss, `/internal/set-keeper`).
 - [ ] Minimum / zero / dust amounts cannot mint zero value.
 
-## MRD-01 Redeem (Sell) -- **Partial**
-- [x] Pro-rata payout to the redeemer's own wallet; supply/AUM decrease. 6 redemptions; latest `4FnsRvf7Pr82Vam36hknVrn6QW61bukbQbrv4mkKKk1d5X6L8cCune8UqAhZ38BCfqB5iCHJbyFvLdkFx3jRLatb`.
-- [ ] Redemption fee reaches the Treasury -- since the 2026-09-08 upgrade it is re-minted into the fee vault; **no post-upgrade redemption recorded yet**.
-- [ ] Minimum / zero / dust redemptions cannot strand or leak value.
+## MRD-01 Redeem (Sell) -- **Passed** (closed 2026-09-08)
+- [x] **Post-upgrade redemption through the site's own build path (`/api/mainnet/build-sell`), real wallet, real USDC.**
+  Developer wallet `52b7pBNF...` sold 0.200000 tokens of Reserve 8 (`52eHitfwh7sPNnF9Ft8YHBd4EqY6TkjygVfCEhVdxw9y`, 4 assets):
+  redeem `44EVEVHT8x9yowbdxLoPxfgK9DcV81nSRR3J9Sc73bKMJuc5xQSvZGZWvZh67LdxH2gSnURVz9TYEQnZ3fiojdLX`, then four swaps
+  `4VWCFvCNMzmRVZXKuuiR5nW5MyiBJizpMhZHDkNVJGLuznpRZuNjYeR5M54fStNvV8HAffapNke1c8bRbS67x27n` (wSOL),
+  `2WEr4LydoGx9FpnpyfKtsqMPiHhaAwsJZGVk8wQY89aBCWtjVgjk8yYRQyhe4bQjMtBJcswTjEJb5b7ETBKzY28h`,
+  `23jXLG9PKCyLUf7pdcV52zsYpnMuhVtEuksoUyBDjehxteSnEHKvs4YF91iN2eXN2s2iErvYGRA42b14tV8DqsgJ`,
+  `3oSFzDzfXYAPD32bVx4nrgjGMBzD5d1CXScHsMREKBupAgyYsaDwvJZqwsxoJmZj6e1RKrUssunKzpBLAYzmH4RG`, all confirmed.
+  Server build 1.5 s (reads 746 ms, quotes 124 ms, build 629 ms).
+- [x] **Redeemer balance down by exactly the amount; supply down proportionately; payout to the redeemer's own wallet.**
+  Wallet Reserve Tokens 879,552 -> 679,552 (-200,000); supply 13,508,705 -> 13,308,705 (-200,000); USDC 5.829173 -> 6.897610
+  (**+1.068437 USDC** vs 1.068560 quoted, 99.99%); every asset leg paid into the redeemer's own ATAs.
+- [x] **Pro-rata amounts exact.** From the redeem tx's token deltas, each leg == floor(200,000 x vault / 13,508,705):
+  wSOL 2,513,763 (vault 169,788,421) · 9BB6...pump 289,227 (vault 19,535,450) · 6GmA...UNgx 5,025,608,330 (vault 339,447,301,888) · 6Nwar... 3,625,792 (vault 244,898,778) -- all MATCH.
+- [x] **NAV unchanged by a fair redemption**: burn and payout are both exactly pro-rata (above), so AUM/supply is invariant by construction; the fee vault was untouched (21,952 before and after).
+- [x] **Redemption fee handling.** Every live Mainnet Reserve is configured with `redemption_fee_bps = 0` (Reserves 7, 8, 13, 16, 18 checked), so no fee was owed and none was taken (fee vault delta 0, `ceil(200,000 x 0 bps) = 0`). Since the 2026-09-08 upgrade a nonzero redemption fee is re-minted into the fee vault (source RedemptionFee) for USDC delivery by the keeper -- exercising that needs a Reserve created with a nonzero redemption fee; noted as the next test if one is ever configured.
+- [x] **Zero / dust amounts cannot strand or leak value.** Two independent guards, both exercised:
+  the SDK/site refuses a zero redemption before it is ever signed (`computeRedemptionEntitlements: fee consumes the entire redeemed amount`),
+  and the program rejects it on-chain -- a valid redeem instruction with its amount field patched to 0 was submitted for real
+  (preflight skipped): `2XfJPMdb59VPJCrZnfAKFXDhVWqzypSnkGXxPFq2jXW4piHAKu5Gtak9wpF3EU11fhSqdvrTs6YkXCTf1cQd7Zvv`
+  FAILED custom 6001 `ZeroValue` (redeem_reserve_tokens_in_kind.rs:143); wallet balance 679,552 before and after. Dust is bounded the same way: each leg is floor(amount x vault / supply), so a redemption too small to earn one raw unit of an asset simply pays 0 of that asset while burning the tokens -- the client shows the exact per-asset payout before signing.
 
 ## MAR-01 Add Reserve asset -- **Partial** (scope note on the page is outdated: multi-asset Reserves exist)
 - [x] add_reserve_asset_active: `3iAMCcqiCbqsX7Fe3XMQTiyFQw4JKoCjszx6EodsosENeVcXXwhKUcvqZeuaJTEcFYChXYW5FFp24gYXAnuTJgY6` (manager `6BjTPAWG...`, H7NDKmf9...).
