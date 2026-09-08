@@ -38,7 +38,7 @@ import {
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "./pda";
+import { findTvlAccrual, findMintAuthority, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "./pda";
 import type { ZapAssetLeg } from "./zapInstructions";
 import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil } from "./calculations";
 
@@ -310,6 +310,7 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
   const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   const userAssetAta = getAssociatedTokenAddressSync(mint, user);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
+  const { mintAuthority, feeSettlement, feeVault, feeVaultAuthority } = redeemFeeVaultAccounts(program, reserve, reserveTokenMint);
 
   const instructions: TransactionInstruction[] = [];
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint));
@@ -322,9 +323,14 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
       vaultAuthority,
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
-      managerFeeRecipients: program.programId, // "None" sentinel, same as the mint path above
+      managerFeeRecipients: program.programId, // "None" sentinel (still Option<> on redeem)
       tvlAccrual,
+      mintAuthority,
+      feeSettlement,
+      feeVault,
+      feeVaultAuthority,
       tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
     .remainingAccounts([
@@ -349,14 +355,34 @@ export interface BuildDirectMultiAssetRedeemResult {
 }
 
 /**
+ * DEC-0173: redeem_reserve_tokens_in_kind now re-mints the redemption fee
+ * into the Reserve's shared fee vault after the full burn (the old
+ * burn-for-holders mechanic left it to nobody), so the redeem struct gained
+ * {mint_authority, fee_settlement, fee_vault, fee_vault_authority,
+ * associated_token_program} -- the same fee-vault trio the mint builders
+ * above pass (Tier B, DEC-0184), plus the mint authority the re-mint CPI
+ * signs with. Pure derivations, no fetch. The redeemer fronts the one-time
+ * FeeSettlement + fee-vault-ATA rent on a Reserve's first-ever
+ * crystallization (init_if_needed, payer = redeemer); every later call
+ * finds them already created.
+ */
+function redeemFeeVaultAccounts(program: Program<anchor.Idl>, reserve: PublicKey, reserveTokenMint: PublicKey) {
+  const [mintAuthority] = findMintAuthority(reserve, program.programId);
+  const [feeSettlement] = findFeeSettlement(reserve, program.programId);
+  const [feeVaultAuthority] = findFeeVaultAuthority(reserve, program.programId);
+  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId);
+  return { mintAuthority, feeSettlement, feeVault, feeVaultAuthority };
+}
+
+/**
  * Multi-asset in-kind redeem (DEC-0158): ONE redeem_reserve_tokens_in_kind
  * call paying the redeemer's proportional entitlement of EVERY registered
  * Reserve asset into their own ATAs -- the exact inverse of
- * buildDirectMultiAssetMintInstructions, using the same deployed-binary
- * account shape (redeem never drifted -- verified instruction-by-instruction
- * in the DEC-0154 pass). Selling to USDC is the caller's next step
- * (multiAssetSellClient.ts swaps each non-USDC leg's entitlement to USDC
- * via Jupiter, ideally inside the same atomic transaction).
+ * buildDirectMultiAssetMintInstructions. Account shape: the DEC-0173
+ * fee-vault redeem struct (see redeemFeeVaultAccounts above). Selling to
+ * USDC is the caller's next step (multiAssetSellClient.ts swaps each
+ * non-USDC leg's entitlement to USDC via Jupiter, ideally inside the same
+ * atomic transaction).
  */
 export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirectRedeemParams): Promise<BuildDirectMultiAssetRedeemResult> {
   const { program, reserve, reserveTokenMint, vaultAuthority, user, assets } = params;
@@ -375,6 +401,7 @@ export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirec
 
   const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
+  const { mintAuthority, feeSettlement, feeVault, feeVaultAuthority } = redeemFeeVaultAccounts(program, reserve, reserveTokenMint);
   const instructions: TransactionInstruction[] = [];
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (const leg of assets) {
@@ -404,9 +431,14 @@ export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirec
       vaultAuthority,
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
-      managerFeeRecipients: program.programId, // "None" sentinel, same as the mint path above
+      managerFeeRecipients: program.programId, // "None" sentinel (still Option<> on redeem)
       tvlAccrual,
+      mintAuthority,
+      feeSettlement,
+      feeVault,
+      feeVaultAuthority,
       tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(remainingAccounts)

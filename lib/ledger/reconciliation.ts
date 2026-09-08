@@ -61,7 +61,7 @@ export async function checkAmountFieldConsistency(cluster: string): Promise<Reco
 }
 
 /** Every row must have a non-null actor_wallet UNLESS its event_type is one of the small set of genuinely actor-less protocol events (e.g. a keeper-triggered settlement can legitimately have no human actor -- see actor_role='keeper'). Flags anything else as a real gap, not silently accepted. */
-const ACTOR_OPTIONAL_EVENT_TYPES = ["protocolMintFeeTransferred", "tvlFeeSettled", "reserveSeeded", "feesAccrued"];
+const ACTOR_OPTIONAL_EVENT_TYPES = ["protocolMintFeeTransferred", "tvlFeeSettled", "reserveSeeded", "feesAccrued", "feeVaultCredited"];
 export async function checkActorPresence(cluster: string): Promise<ReconciliationCheckResult> {
   const sql = getSql();
   const missing = await sql`
