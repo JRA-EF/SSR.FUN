@@ -321,6 +321,8 @@ def require(cond, msg):
 
 def main():
     args = sys.argv[1:]
+    if args and args[0] in ("--list", "--export", "--resolve"):
+        require(VERCEL_BASE and "CHANGE_ME" not in DAEMON_SECRET, "VERCEL_BASE_URL / FEEDBACK_DAEMON_SECRET missing in .env")
     require(BOT_TOKEN and ":" in BOT_TOKEN, "BOT_TOKEN missing/invalid in daemon/.env")
 
     if args and args[0] == "--getme":
@@ -389,3 +391,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\nbye")
+    except urllib.error.HTTPError as e:
+        print(f"ERROR: {VERCEL_BASE} answered HTTP {e.code} for that route "
+              f"(not deployed there yet, or the secret does not match).", file=sys.stderr)
+        sys.exit(2)
