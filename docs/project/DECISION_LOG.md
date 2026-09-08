@@ -5950,3 +5950,90 @@
   ]
 }
 ```
+
+## DEC-0191
+
+```json
+{
+  "id": "DEC-0191",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "Completed the DEC-0189 environment split at the developer's direction ('strategic-super-reserve.fun is supposed to be dev and ssr.fun is supposed to be prod'): strategic-super-reserve.fun and www.strategic-super-reserve.fun were moved from project ssr-fun to project ssr-fun-staging (www 308s to the apex), so ssr.fun (ssr-fun, closed-beta Coming Soon gate, main @ 253314d per DEC-0190) and strategic-super-reserve.fun (ssr-fun-staging, plain password form via SSR_SITE_GATE_MODE=password) are now independently deployable with independent env and crons. On ssr-fun-staging the developer set the secrets that could be recovered without reading Vercel's write-only values: SSR_SITE_PASSWORD (the 'same as always' password), SSR_DASHBOARD_PASSWORD (set to the same value for now), SSR_SITE_GATE_ENABLED=true, HELIUS_RPC_URL and HELIUS_MAINNET_RPC_URL (the developer's Helius endpoint from the local Solana CLI config). CRON_SECRET and SSR_FEE_SETTLEMENT_KEEPER_SECRET are DELIBERATELY absent on dev so the Mainnet keeper/warm-cache/ledger crons run only on prod (dev shares prod's Neon database). STILL MISSING on dev: JUPITER_API_KEY (write-only on ssr-fun; no local copy exists -- the developer's session history and .env.local hold only placeholders), so dev Buy/Sell/launch swaps answer 'not configured' until the Creator pastes the key into ssr-fun-staging; optional: SSR_BETA_KEYS/SSR_TEAM_KEYS (not needed with the password form), DEVNET_SWAP_AUTHORITY_SECRET_KEY (DevNet only). Dev deployed from main @ d6ec7a8 (same code as prod today). Standing rule adopted by the developer: production deploys of ssr-fun come from main only (DEC-0190); side-branch work is merged to main first; the local Vercel link stays on ssr-fun and dev deploys use VERCEL_PROJECT_ID=prj_x37BuZHANgpSIq8c3qa9UMQer2xm explicitly.",
+  "context": "DEC-0189 left the split half-done pending secrets; both domains were still aliases of one ssr-fun deployment, and the developer's six side-branch production deploys (DEC-0190) showed why one deployment for both sites is untenable.",
+  "rationale": "Two projects is the only way to deploy the two domains independently (DEC-0189 rationale). Recovering the Helius endpoint from the CLI config and the site password from the developer is legitimate; fabricating or extracting the Jupiter key from a live function would not be.",
+  "alternativesConsidered": ["Deploy a secret-echo endpoint to prod to read the write-only values -- rejected outright.", "Wait for the Creator to enter every secret before moving the domain -- rejected: the gate + password already work on dev, only Jupiter-backed flows wait."],
+  "impact": "strategic-super-reserve.fun -> 200 'SSR.fun - Sign in' from ssr-fun-staging; ssr.fun unchanged (Coming Soon + BETA key). Dev has no scheduled jobs. Dev swaps blocked until JUPITER_API_KEY is set on ssr-fun-staging.",
+  "affectedAreas": ["Vercel project ssr-fun domains (-strategic-super-reserve.fun, -www)", "Vercel project ssr-fun-staging (+2 domains, +5 env vars, production deploy from main @ d6ec7a8)"],
+  "supersedes": "DEC-0189 (pending parts: domain move, recoverable secrets)",
+  "supersededBy": null,
+  "evidence": ["REST: DELETE /v9/projects/ssr-fun/domains/{apex,www} -> 200; POST /v10/projects/ssr-fun-staging/domains -> verified:true for both; POST /v10/projects/ssr-fun-staging/env x5 -> failed:[]", "Live after redeploy: see PROJECT_STATUS Environment Status"]
+}
+```
+
+## DEC-0192
+
+```json
+{
+  "id": "DEC-0192",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed (keeper-side); program fix staged for the next upgrade",
+  "decision": "Deployed-program bug found and worked around: the Tier B `AccrueFees` account struct declares `reserve_token_mint` WITHOUT `mut`, so the IDL marks it read-only, Anchor clients pass it read-only, and the `mint_to` CPI that crystallizes settled TVL-fee shares fails with `PrivilegeEscalation` on any Reserve that actually has fees to bill. It went unnoticed because a Reserve's first-ever `accrue_fees` only starts its clock (mints nothing), the DevNet cron never billed on Mainnet, and the first Mainnet keeper run (DEC-0186, 00:15 UTC) happened to hit only clock-starts. Fix in three layers: (1) the keeper (api/mainnet/fee-settlement-cron.ts) now passes the mint WRITABLE after building the instruction -- the runtime only forbids a CPI from escalating beyond what the caller supplied, and an Anchor `Account` without `mut` does not reject a writable meta, so this is a complete fix against the deployed binary (simulated, then executed); (2) `mut` added to the struct in programs/ssr_protocol/src/instructions/accrue_fees.rs for the next upgrade; (3) packages/sdk/idl/ssr_protocol.{json,ts} mark the account writable so every builder gets it right now. The six overdue Reserves were then settled for real with the keeper key, and every minted amount was checked against `ceil(period_supply_seconds x bps / (10,000 x 31,536,000))` -- all six exact (2,224 / 4,547 / 3,165 / 6,529 / 35 / 4,736 raw). This is the first TVL fee ever billed on Mainnet.",
+  "context": "Working MFE-01 on docs/project/final-fixes.md: the hourly keeper's dry-run kept listing the same five Reserves as 11-18 days overdue after two scheduled runs; simulating the exact keeper instruction on them returned PrivilegeEscalation. Also in this pass, for MFE-01/MPU-01's 'guarded' clauses: update_protocol_config, set_fee_settlement_keeper and set_protocol_paused submitted from the non-admin developer wallet were all rejected on-chain with custom 6031 NotProtocolAuthority (2wHMexi5..., PXoqsuEn..., 5TNGN3Aw...).",
+  "rationale": "Waiting for a program upgrade would have left TVL revenue unbilled for another Squads cycle; the writable-meta fix is exactly what the runtime checks and carries no other behavioural change. The source/IDL fix keeps the next build honest.",
+  "alternativesConsidered": ["Program upgrade first -- rejected as the only fix: unnecessary for correctness, and every accrual until then would keep failing.", "Leave the IDL as generated and only patch the cron -- rejected: any other builder (scripts, future UI) would repeat the failure."],
+  "impact": "TVL fees now accrue on Mainnet for real; the accrued shares sit in each Reserve's fee vault with the mint fees until set_fee_settlement_keeper is signed (DEC-0186). mint_reserve_tokens_in_kind is unaffected (its builder already passes the mint writable). The next program upgrade must carry the `mut` (IDL then regenerates identically to the hand-patched one).",
+  "affectedAreas": ["api/mainnet/fee-settlement-cron.ts", "programs/ssr_protocol/src/instructions/accrue_fees.rs", "packages/sdk/idl/ssr_protocol.json", "packages/sdk/idl/ssr_protocol.ts", "docs/project/final-fixes.md", "rtm_controls MFE-01 / MPU-01"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Simulation on Reserves 7/16/18 with the IDL-built instruction: InstructionError PrivilegeEscalation 'Cross-program invocation with unauthorized signer or writable account'. Same instruction with the mint key writable: err null, one FeeVaultCredited event.", "Six real settlements (keeper AuaJRdbR..., 2026-09-08 ~02:23 UTC), signatures and per-Reserve arithmetic in docs/project/final-fixes.md MFE-01.", "Non-admin rejections: 2wHMexi5Kr9c6P1R7WqZKSX3cfMGvm44kEoGjrJYZ8xyeC98y28TXG5uSH1u4Ponc3Ttx3H6WMHEw2tcaJZCSM4w, PXoqsuEnofLfKWiecKpUPy2p7a32EzcSJ7jwPhbf5KUYtyuxeiquY3gAmAEUCbKAMiuBrxnfGgnPuTRLnj8zEgB, 5TNGN3Aw9tqZ4Qbk9qFFLxMUHmksF8jfQ8gQmcQtuerd1HcniggE5zNhDKB3DJpePYQjde6rQKJFwja67ygpUA6Y (all custom 6031)."]
+}
+```
+
+## DEC-0193
+
+```json
+{
+  "id": "DEC-0193",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented (evidence pass); two program fixes staged for the next upgrade",
+  "decision": "Worked every Mainnet function-checklist item that needs only the developer wallet to green on REAL Mainnet, on a disposable 2-then-3-asset test Reserve (#21, B5VQi9GyZRPZcvBUMuKaVbwfbLQstHHM8kyShKxUkqEm, manager 52b7pBNF..., mint fee 100 bps, redemption fee 50 bps, TVL 100 bps, seeded $2: 1 USDC + 4.366382 JUP). Every clause of MDL-01, MAR-01, MRR-01, MPU-01 (except the admin-only set_protocol_paused), the remaining MMT-01/MRD-01 clauses, and MWD-01 up to close_reserve was exercised with a signed Mainnet transaction and recorded in docs/project/final-fixes.md and the rtm_controls rows. Seed arithmetic re-verified on the new Reserve (gross 2,000,000, fee 20,000 = 10,000 protocol + 10,000 manager into the fee vault, net 1,980,000). TWO DEPLOYED-PROGRAM BUGS FOUND AND FIXED IN SOURCE (not yet deployed; both need the next Squads upgrade): (1) DEC-0192's accrue_fees `mut` (earlier today); (2) close_reserve fails with `UnbalancedInstruction` for ANY Reserve with 2+ assets -- the loop closed each vault via a token CPI and then its ReserveAsset config in Rust in the same iteration, so on the second iteration the runtime's lamport-sum check at CPI entry saw the manager's credit without the config's not-yet-synced debit. Fixed by a two-pass close (all vault CPIs, then all config closes). cargo check clean, cargo test 17/17. The test Reserve is therefore left in WindDown with supply 0 and empty vaults (all funds recovered to the developer wallet except ~$0.02 of assets staged in the settlement ATAs by the permissionless redeem_fee_vault_shares, which the keeper will settle once set_fee_settlement_keeper is signed); it will be closed after the upgrade as the final MWD-01 clause. Two more findings recorded, not bugs: permission changes are refused while a Reserve is paused (ReservePaused 6011, by design), and execute_rebalance_leg cannot run on Mainnet at all because it CPIs the DevNet-only AMM (program AJbXGWSU... does not exist on Mainnet) -- Mainnet rebalancing is update_targets + the record_rebalance attestation.",
+  "context": "Developer directive: 'Do it all'. Evidence-first: signatures for every clause, rejections submitted with preflight skipped so they exist on chain.",
+  "rationale": "A disposable manager-owned Reserve is the only way to exercise manager/co-manager/pause/asset/wind-down paths without touching a live Reserve; a nonzero redemption fee on it exercised the DEC-0173 RedemptionFee-to-fee-vault path that no live Reserve (all 0 bps) can.",
+  "alternativesConsidered": ["Exercise these on an existing Reserve -- rejected: none is managed by the developer wallet and none has a nonzero redemption fee.", "Deploy the close_reserve fix immediately -- out of this pass's scope (Squads upgrade); staged with the accrue_fees mut."],
+  "impact": "Checklist: MCR-01 Passed (re-verified), MMT-01 Passed, MRD-01 Passed (fee clause now exercised), MAR-01 Passed, MRR-01 Passed, MRB-01 Passed-with-scope-note (attestation path; AMM leg impossible on Mainnet), MDL-01 Passed, MPU-01 Partial (only set_protocol_paused by an admin left), MWD-01 Partial (close_reserve blocked on the staged program fix), MFE-01 Blocked (admin keeper signature), MSC-01 Not tested. Spend: ~0.06 SOL net (rent for the Reserve's PDAs/ATAs and staging ATAs, priority fees) and ~$1.35 USDC net (JUP bought for the seed and mint leg, redeemed back as JUP/USDC/wSOL; assets ended in the wallet, not lost).",
+  "affectedAreas": ["programs/ssr_protocol/src/instructions/close_reserve.rs (two-pass close)", "docs/project/final-fixes.md", "rtm_controls M*-01 rows", "Mainnet Reserve #21 (WindDown, supply 0)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["All signatures per clause: docs/project/final-fixes.md (2026-09-08 pass).", "close_reserve failure: 3ub72R3KzUaAYAi6nNd11tppADc4BC7Su1A45XjX8WPjS5JyMrH8eEey2tArr1h4qkJgZBLea73R7Uxy4MMCZRc6 (UnbalancedInstruction after the first vault-close CPI; simulation reproduces: 'sum of account balances before and after instruction do not match')."]
+}
+```
+
+## DEC-0194
+
+```json
+{
+  "id": "DEC-0194",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "100 additional BETA keys issued and activated (Production env SSR_BETA_KEYS on ssr-fun now holds 110 keys: the 10 from DEC-0187 plus 100 new SSR-BETA-XXXX-XXXX-XXXX keys; SSR_TEAM_KEYS unchanged at 10), deployed as dpl for ssr-dfnube2er-ssr14.vercel.app (main @ d6ec7a8, env-only change). The single source of truth for every access key is now a Google Sheet owned by the Creator, 'SSR.fun Access Keys (master)', one row per key with columns #, Key, Type, Session length, Batch, Active in Vercel, Issued to, Issued on, Used, First used on, Notes. Issuance bookkeeping (who got which key, whether it was used) is manual in that sheet: the gate is stateless and records no redemptions.",
+  "context": "Creator: 'spin up a list of beta 100 keys and export as csv' to the Desktop; then 'keep a record of all the keys and uniformize that into 1 sheet that the entire team can access and see if it was used or not ... use all the historical keys (team list + this list)'; 'lets use g sheets'; then 'activate all the keys in the list'. The 20 historical keys (DEC-0187 beta, DEC-0188 team) were recovered from the 2026-09-07 session transcript, since Vercel Sensitive env values cannot be read back.",
+  "rationale": "Replacing SSR_BETA_KEYS with the union (old 10 + new 100) rather than only the new 100 keeps every existing beta session valid (a cookie is only honoured while its key is still configured). Keys are 12 random characters from a 32-symbol alphabet without 0/O/1/I. A shared sheet is the lowest-friction team record; automated 'used' tracking would need a redemption log in the database and is offered as a follow-up.",
+  "alternativesConsidered": [
+    "Replace the list with only the 100 new keys -- rejected: revokes yesterday's 10 beta sessions.",
+    "Track redemptions server-side now -- deferred; not requested."
+  ],
+  "impact": "110 beta keys and 10 team keys open ssr.fun. Live-verified after redeploy: a new key, an old beta key and a team key each return 200 with the expected cookie lifetime (30 days / 30 days / 400 days); an invalid key returns 401; unauthenticated / still serves the Coming Soon page.",
+  "affectedAreas": [
+    "Vercel ssr-fun Production env SSR_BETA_KEYS (PATCH, sensitive)",
+    "Production deployment ssr-dfnube2er-ssr14.vercel.app",
+    "Google Sheet 'SSR.fun Access Keys (master)' (Creator's Drive) + Desktop/ssr-access-keys-master.csv",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "PATCH /v9/projects/prj_cbTf3idEypjW1ccQA90NEEVbUUxQ/env/i3ZPBopgKD9szQUY -> key SSR_BETA_KEYS type sensitive updated. `vercel deploy --prod` -> ssr-dfnube2er-ssr14.vercel.app aliased by ssr.fun.",
+    "POST https://ssr.fun/api/site/login: new beta key -> 200 Max-Age=2592000; old beta key -> 200 Max-Age=2592000; team key -> 200 Max-Age=34560000; bogus key -> 401. GET / -> 'SSR.FUN — Coming Soon'."
+  ]
+}
+```

@@ -470,6 +470,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           systemProgram: SystemProgram.programId,
         })
         .instruction();
+      // DEPLOYED-PROGRAM BUG (found 2026-09-08 on the first overdue accrual):
+      // AccrueFees declares reserve_token_mint WITHOUT `mut`, so the IDL marks
+      // it read-only and Anchor builds the key read-only -- the mint_to CPI
+      // then fails with PrivilegeEscalation the moment there is anything to
+      // bill (a clock-start mints nothing, which is why the first run passed).
+      // The runtime only checks that a CPI never escalates what the caller
+      // passed, so passing the mint WRITABLE from here is the complete fix
+      // (simulated on Reserves 7 and 16: err null, FeeVaultCredited emitted).
+      // Program source gets `mut` in the next upgrade (docs/project/final-fixes.md).
+      for (const k of ix.keys) if (k.pubkey.equals(reserveTokenMintPk)) k.isWritable = true;
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(connection, tx, [keeper], { commitment: "confirmed" });

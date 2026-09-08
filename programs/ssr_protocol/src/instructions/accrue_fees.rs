@@ -43,7 +43,14 @@ pub struct AccrueFees<'info> {
     )]
     pub reserve: Account<'info, Reserve>,
 
+    /// `mut`: this instruction MINTS the settled fee shares into the fee vault,
+    /// so the mint's supply changes. It was missing (found live 2026-09-08 --
+    /// the IDL marked the mint read-only, clients passed it read-only, and the
+    /// mint_to CPI failed with PrivilegeEscalation on the first Reserve that
+    /// actually had fees to bill). Keepers pass the account writable
+    /// regardless; this makes the IDL say so.
     #[account(
+        mut,
         seeds = [RESERVE_TOKEN_MINT_SEED, reserve.key().as_ref()],
         bump,
         address = reserve.reserve_token_mint,

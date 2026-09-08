@@ -111,18 +111,37 @@ function parseBody(req: ApiRequest): unknown {
   return req.body;
 }
 
+// Upstream 429 / 5xx / transport failures are retried briefly HERE (up to
+// UPSTREAM_RETRY_DELAYS_MS attempts, honouring a small Retry-After) before
+// anything is forwarded to the browser. Live 2026-09-08 on the test site: a
+// lower-tier Helius key answered ~15% of a burst with 429 and one send with a
+// transport failure -> the client saw raw 429s and a 502 "endpoint
+// unreachable" mid-purchase. Every JSON-RPC method this proxy allows is safe
+// to re-issue: reads are idempotent and sendTransaction is deduplicated by
+// signature on-chain, so a retried send can never double-execute.
+const UPSTREAM_RETRY_DELAYS_MS = [250, 700];
+const UPSTREAM_MAX_RETRY_AFTER_MS = 2_000;
+
 async function postJsonRpc(url: string, payload: unknown): Promise<{ status: number; body: unknown } | null> {
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await res.json().catch(() => null);
-    if (body === null) return null;
-    return { status: res.status, body };
-  } catch {
-    return null;
+  for (let attempt = 0; ; attempt++) {
+    let result: { status: number; body: unknown } | null = null;
+    let retryAfterMs: number | null = null;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => null);
+      if (body !== null) result = { status: res.status, body };
+      const ra = Number(res.headers.get("retry-after"));
+      if (Number.isFinite(ra) && ra > 0) retryAfterMs = Math.min(ra * 1000, UPSTREAM_MAX_RETRY_AFTER_MS);
+    } catch {
+      result = null;
+    }
+    const transient = result === null || result.status === 429 || result.status >= 500;
+    if (!transient || attempt >= UPSTREAM_RETRY_DELAYS_MS.length) return result;
+    await new Promise((r) => setTimeout(r, retryAfterMs ?? UPSTREAM_RETRY_DELAYS_MS[attempt]));
   }
 }
 

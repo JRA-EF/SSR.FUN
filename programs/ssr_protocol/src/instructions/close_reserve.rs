@@ -132,6 +132,18 @@ pub fn handler<'info>(ctx: Context<'info, CloseReserve<'info>>) -> Result<()> {
     let manager_info = ctx.accounts.manager.to_account_info();
     let program_id = ctx.program_id;
 
+    // TWO PASSES, deliberately (found live 2026-09-08, Mainnet test Reserve
+    // #21, DEC-0193): closing an asset's vault (a token-program CPI) and then
+    // its ReserveAsset config (a Rust-side lamport move) in the SAME loop
+    // iteration fails on the SECOND asset with `UnbalancedInstruction` --
+    // the runtime re-checks the caller's account lamport sum when the next
+    // CPI is entered, and the config just closed in Rust is not among the
+    // accounts passed to that CPI, so its lamport decrease is not yet
+    // visible while the manager's matching increase is. Every multi-asset
+    // Reserve was therefore un-closable. Pass 1 validates and closes every
+    // vault via CPI; pass 2 closes every ReserveAsset config with no CPI in
+    // between (Anchor then closes `reserve` itself on exit, also CPI-free).
+    let mut configs: Vec<Account<'info, ReserveAsset>> = Vec::with_capacity(asset_count);
     for i in 0..asset_count {
         let base = i * 2;
         let reserve_asset_info = &ctx.remaining_accounts[base];
@@ -193,6 +205,9 @@ pub fn handler<'info>(ctx: Context<'info, CloseReserve<'info>>) -> Result<()> {
         );
         token_interface::close_account(cpi_ctx)?;
 
+        configs.push(config);
+    }
+    for config in configs {
         config.close(manager_info.clone())?;
     }
 

@@ -37,6 +37,7 @@ import {
   findMintAuthority,
   findVaultAuthority,
   evaluateReserveEligibility,
+  rewriteAppMetadataUriToCurrentOrigin,
   type FixtureReserve,
 } from "@ssr/sdk";
 
@@ -546,7 +547,12 @@ export function buildDtrFromDiscoveredReserve(
     // metadata (set via ManageDTR's profile-picture editor). Absent for any
     // Reserve that has never set one -- the UI falls back to the
     // ticker-initial avatar, never a fabricated image.
-    logoUrl: parsedMetadata?.imageUrl,
+    // Served from the CURRENT origin: on-chain metadata records whichever app
+    // host was live at creation (strategic-super-reserve.fun for every
+    // Reserve so far), and since 2026-09-08 that host is the gated dev
+    // project -- an absolute URL would fetch the image cross-origin from the
+    // wrong site (and 401). Same rewrite as the metadata JSON fetch.
+    logoUrl: parsedMetadata?.imageUrl ? rewriteAppMetadataUriToCurrentOrigin(parsedMetadata.imageUrl) : undefined,
     dtrAddress: discovered.reserve,
     managerAddress: discovered.manager,
     // Locally-simulated delegate CRUD (see useAppStore's addDelegate/etc) is
