@@ -3,59 +3,45 @@
 // funding invariant's sell side: Reserve Tokens out -> USDC in. One
 // redeem_reserve_tokens_in_kind pays the redeemer's proportional
 // entitlement of every leg into their own ATAs, and every non-USDC leg is
-// then sold INTO USDC via Jupiter (the server builds every swap with
+// then sold INTO USDC via Jupiter (every swap built with
 // wrapAndUnwrapSol:false -- nothing ever unwraps or closes the seller's
 // wSOL ATA mid-flow; see DEC-0156's live root cause).
 //
-// NORMAL PATH: everything composes into ONE wallet-signed atomic v0
-// transaction -- X Reserve Tokens out -> Y USDC in, a single approval,
-// read-only-simulated before the wallet is ever asked. All-or-nothing: on
-// failure only the network fee is spent.
+// SERVER-BUILT, SIGN-MANY (2026-09-08 developer directive): ONE request to
+// /api/mainnet/build-sell (lib/mainnet/buildSell.ts) returns every unsigned
+// transaction -- either ONE atomic v0 transaction (redeem + every swap,
+// when it fits) or [redeem, swap 1..N] -- the wallet signs them all in ONE
+// prompt, and this client submits the redeem first (confirmed, re-broadcast
+// until it lands), then every swap in parallel. Nothing is quoted or
+// composed in the browser anymore. The server signs nothing.
 //
-// FALLBACK (SingleTxTooLargeError only -- many-asset Reserves): a
-// sequential flow guarded by a persisted per-sale state machine
-// (ssr_pending_sells_v1, wallet+reserve-keyed map): the redeem signature
-// and every leg's swap signature are recorded when submitted and reconciled
-// against real on-chain status before anything is ever re-submitted -- a
-// confirmed redeem is never repeated (never burns Reserve Tokens twice), a
-// confirmed swap is never repeated, and the sale resumes exactly where it
-// stopped across refresh/reconnect.
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+// The persisted per-sale state machine is unchanged (ssr_pending_sells_v1,
+// wallet+reserve-keyed): the redeem signature and every leg's swap signature
+// are recorded when submitted and reconciled against real on-chain status
+// before anything is rebuilt -- a confirmed redeem is never repeated (never
+// burns Reserve Tokens twice), a confirmed swap is never repeated, and the
+// sale resumes exactly where it stopped across refresh/reconnect.
+import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import {
-  buildReadOnlyProgram,
-  buildDirectMultiAssetRedeemInstructions,
-  fetchTokenBalanceRaw,
-  describeOnChainError,
-  MAINNET_USDC_MINT,
-  type ZapAssetLeg,
-} from "@ssr/sdk";
-import { fetchJupiterSwapInstructions, fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
+import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, type ZapAssetLeg } from "@ssr/sdk";
+import { JupiterSwapNotLandedError, partitionSwapOutcomes, SWAP_AUTO_RETRY_LIMIT } from "./jupiterSwapClient";
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
-import {
-  compileSingleBuyTransaction,
-  deserializeJupiterInstruction,
-  fetchLookupTables,
-  isComputeBudgetInstruction,
-  SingleTxTooLargeError,
-  SINGLE_TX_COMPUTE_UNIT_LIMIT,
-  SINGLE_TX_MICRO_LAMPORTS_PER_CU,
-  SINGLE_TX_SWAP_MAX_ACCOUNTS,
-  type SwapInstructionSet,
-} from "./singleTxBuy";
-import { ComputeBudgetProgram, type TransactionInstruction } from "@solana/web3.js";
-import { AmbiguousConfirmationError, confirmSignatureBounded, withRateLimitRetry } from "./rpcResilience";
-import { fetchReserveAltAddress } from "./reserveAltClient";
+import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
+import { registerReserveAlt } from "./reserveAltClient";
+import { waitForLookupTable, type BuiltTransaction } from "./multiAssetBuyClient";
 
 const log = (msg: string, extra?: Record<string, unknown>) => {
   console.info(`[multi-asset-sell] ${msg}`, extra ?? "");
 };
 
 export type MultiAssetSellProgressEvent =
+  /** The server is building every transaction of this sale (one request). */
+  | { phase: "building" }
   | { phase: "single-transaction" }
   | { phase: "redeeming" }
   | { phase: "swapping"; mint: string; index: number; total: number }
+  /** A signed transaction is on the wire and being confirmed (re-broadcast until it lands) -- the wallet prompt is over. */
+  | { phase: "confirming"; what: string; signature: string }
   | { phase: "awaiting-wallet" };
 
 export interface MultiAssetSellResult {
@@ -65,7 +51,7 @@ export interface MultiAssetSellResult {
   usdcReceivedRaw: bigint;
 }
 
-// --- Per-sale persistence (fallback path only; the single-tx path is atomic) --
+// --- Per-sale persistence ----------------------------------------------------
 const PENDING_SELL_KEY = "ssr_pending_sells_v1";
 
 export interface PendingSellState {
@@ -122,174 +108,90 @@ export function clearPendingSell(wallet: string, reserve: string): void {
   }
 }
 
+// --- The server's build contract (api/mainnet/build-sell.ts) ---------------
+
+export interface BuildSellResponse {
+  mode: "single" | "batch";
+  transactions: BuiltTransaction[];
+  plan: {
+    legs: { mint: string; legIndex: number; decimals: number; entitlementRaw: string; walletHeldRaw: string; amountInRaw: string; action: "swap" | "usdc" | "skip"; quotedUsdcOutRaw: string }[];
+    reserveTokensToRedeem: string;
+    entitlementsRaw: string[];
+    quotedUsdcOutRaw: string;
+    reserveTokenSupplyRaw: string;
+    walletReserveTokenRaw: string;
+    walletUsdcRaw: string;
+    walletSolLamports: string;
+  };
+  reserveAlt: string | null;
+  altToRegister: string | null;
+  blockhash: string;
+  lastValidBlockHeight: number;
+  generatedAt: string;
+  timings: Record<string, number>;
+}
+
+export interface BuildSellRequest {
+  reserve: string;
+  wallet: string;
+  reserveTokensToRedeem: string;
+  slippageBps?: number;
+  assetMints: string[];
+  legsOnly?: string[];
+  redeemDone?: boolean;
+}
+
+export async function requestSellBuild(body: BuildSellRequest, fetchImpl: typeof fetch = fetch): Promise<BuildSellResponse> {
+  const res = await fetchImpl("/api/mainnet/build-sell", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
+  const json = (await res.json().catch(() => null)) as (BuildSellResponse & { error?: string }) | null;
+  if (!res.ok || !json || !Array.isArray(json.transactions)) {
+    throw new Error((json && typeof json.error === "string" && json.error) || `Could not build this sale (HTTP ${res.status}).`);
+  }
+  return json;
+}
+
 export interface ExecuteMultiAssetSellParams {
   connection: Connection;
   wallet: WalletContextState;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
+  /** Kept for call-site compatibility -- the server derives it. */
   vaultAuthority: PublicKey;
   assets: ZapAssetLeg[];
+  /** Kept for call-site compatibility -- the server re-reads the live supply. */
   reserveTokenSupplyRaw: string;
+  /** Kept for call-site compatibility -- the server reads the live fee. */
   redemptionFeeBps: bigint;
   reserveTokensToRedeem: bigint;
   onProgress?: (event: MultiAssetSellProgressEvent) => void;
 }
 
 /**
- * Full USDC-settled sell: redeem the in-kind basket, then convert every
- * non-USDC leg's entitlement into USDC -- atomically in one transaction
- * where it fits, else sequentially with persisted-signature reconciliation.
- * Success is only ever reported after the seller's REAL USDC balance is
- * re-read; the result carries the measured gain, never an estimate.
+ * Full USDC-settled sell: reconcile the persisted sale -> ONE server build
+ * -> ONE wallet prompt -> redeem (confirmed) -> every leg's swap in
+ * parallel (each re-broadcast; legs that provably did not land rebuilt and
+ * re-signed once) -> the seller's REAL USDC balance re-read; the result
+ * carries the measured gain, never an estimate.
  */
 export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSellParams): Promise<MultiAssetSellResult> {
   if (!params.wallet.publicKey) throw new Error("Connect a wallet first.");
   const owner = params.wallet.publicKey;
   const ownerBase58 = owner.toBase58();
   const reserveBase58 = params.reserve.toBase58();
-  const program = buildReadOnlyProgram(params.connection) as any;
   const usdcMint = new PublicKey(MAINNET_USDC_MINT);
 
-  log("sell start", {
-    reserve: reserveBase58,
-    reserveTokensToRedeem: params.reserveTokensToRedeem.toString(),
-    legs: params.assets.map((a) => a.mint),
-  });
+  log("sell start", { reserve: reserveBase58, reserveTokensToRedeem: params.reserveTokensToRedeem.toString(), legs: params.assets.map((a) => a.mint) });
 
-  // ONE redeem builder for every composition (DEC-0160: the builder accepts
-  // any leg count >= 1, so a single-asset Reserve like ALPHA takes exactly
-  // the same path as CHARLI/BETA).
-  const buildRedeem = async () =>
-    buildDirectMultiAssetRedeemInstructions({
-      program,
-      reserve: params.reserve,
-      reserveTokenMint: params.reserveTokenMint,
-      vaultAuthority: params.vaultAuthority,
-      user: owner,
-      assets: params.assets,
-      reserveTokenSupplyRaw: params.reserveTokenSupplyRaw,
-      redemptionFeeBps: params.redemptionFeeBps,
-      reserveTokensToRedeem: params.reserveTokensToRedeem,
-    });
+  const [preSaleUsdcRaw, preRedeemRtRaw] = await Promise.all([
+    fetchTokenBalanceRaw(params.connection, usdcMint, owner).then(BigInt),
+    fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner).then(BigInt),
+  ]);
 
-  const preSaleUsdcRaw = BigInt(await fetchTokenBalanceRaw(params.connection, usdcMint, owner));
-  const preRedeemRtRaw = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner));
-  if (preRedeemRtRaw < params.reserveTokensToRedeem) {
-    throw new Error(
-      `This wallet holds ${preRedeemRtRaw.toString()} raw Reserve Tokens but the sale needs ${params.reserveTokensToRedeem.toString()} raw. Nothing was submitted.`,
-    );
-  }
-
-  const { instructions: redeemPrelude, entitlementsRaw } = await buildRedeem();
-  const redeemIx = redeemPrelude[redeemPrelude.length - 1];
-  const nonUsdcLegs = params.assets
-    .map((a, i) => ({ leg: a, entitlementRaw: entitlementsRaw[i] }))
-    .filter(({ leg, entitlementRaw }) => leg.mint !== MAINNET_USDC_MINT && entitlementRaw > 0n);
-
-  const verifyDelivery = async (signature: string): Promise<MultiAssetSellResult> => {
-    const usdcAfter = await fetchOwnedBalanceRawSettled(params.connection, usdcMint, owner, preSaleUsdcRaw);
-    const gained = usdcAfter > preSaleUsdcRaw ? usdcAfter - preSaleUsdcRaw : 0n;
-    log("post-sale verification", { usdcBefore: preSaleUsdcRaw.toString(), usdcAfter: usdcAfter.toString(), gainedRaw: gained.toString() });
-    if (gained <= 0n) {
-      throw new Error(
-        `The sale confirmed but your USDC balance has not increased yet (still ${usdcAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`,
-      );
-    }
-    clearPendingSell(ownerBase58, reserveBase58);
-    return { signature, reserveTokensRedeemed: params.reserveTokensToRedeem, usdcReceivedRaw: gained };
-  };
-
-  // ---------------------------------------------------------------------
-  // SINGLE-TRANSACTION PATH: [compute budget, ATA creates (incl. USDC),
-  // redeem, each leg -> USDC swap] -- one approval, atomic.
-  // ---------------------------------------------------------------------
-  try {
-    params.onProgress?.({ phase: "single-transaction" });
-    const swapSets: SwapInstructionSet[] = [];
-    const lookupAddresses: string[] = [];
-    for (const { leg, entitlementRaw } of nonUsdcLegs) {
-      // Account-budgeted quote first (DEC-0161; a live uncapped SSR->USDC
-      // route used 68 accounts and overran the wire limit, forcing the
-      // 3-signature fallback); uncapped retry if no route fits the budget.
-      const set = await fetchJupiterSwapInstructions(MAINNET_USDC_MINT, entitlementRaw, ownerBase58, undefined, leg.mint, SINGLE_TX_SWAP_MAX_ACCOUNTS).catch(
-        () => fetchJupiterSwapInstructions(MAINNET_USDC_MINT, entitlementRaw, ownerBase58, undefined, leg.mint),
-      );
-      log("single-tx sell-swap instructions fetched", { mint: leg.mint, inRaw: entitlementRaw.toString(), quotedUsdcOutRaw: set.outAmount.toString(), swapAccounts: set.swapInstruction.accounts.length });
-      swapSets.push({ setupInstructions: set.setupInstructions, swapInstruction: set.swapInstruction, addressLookupTableAddresses: set.addressLookupTableAddresses });
-      lookupAddresses.push(...set.addressLookupTableAddresses);
-    }
-    // Order: ONE compute budget pair -> ATA creations (each leg's + the
-    // seller's USDC ATA) -> the redeem FIRST (its outputs feed the swaps)
-    // -> each leg's setup + swap (their own compute-budget instructions
-    // dropped; cleanup never composed -- it would close the wSOL ATA).
-    const usdcAtaCreate = createAssociatedTokenAccountIdempotentInstruction(owner, getAssociatedTokenAddressSync(usdcMint, owner), owner, usdcMint);
-    const ixs: TransactionInstruction[] = [
-      ComputeBudgetProgram.setComputeUnitLimit({ units: SINGLE_TX_COMPUTE_UNIT_LIMIT }),
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }),
-      ...redeemPrelude.slice(0, -1),
-      usdcAtaCreate,
-      redeemIx,
-    ];
-    for (const set of swapSets) {
-      for (const setup of set.setupInstructions) {
-        const ix = deserializeJupiterInstruction(setup);
-        if (!isComputeBudgetInstruction(ix)) ixs.push(ix);
-      }
-      const swapIx = deserializeJupiterInstruction(set.swapInstruction);
-      if (!isComputeBudgetInstruction(swapIx)) ixs.push(swapIx);
-    }
-    // The Reserve's registered trading lookup table (DEC-0161, when one
-    // exists) compresses the protocol's fixed accounts -- often the
-    // difference between one approval and the sequential fallback.
-    const reserveAlt = await fetchReserveAltAddress(reserveBase58);
-    const lookupTables = await fetchLookupTables(params.connection, [...(reserveAlt ? [reserveAlt] : []), ...lookupAddresses]);
-    const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
-    const tx = compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
-    log("single-tx sell composed", { instructions: ixs.length, bytes: tx.serialize().length, lookupTables: lookupTables.length });
-
-    // Read-only simulation BEFORE the wallet signature (same rationale and
-    // caveats as the buy path -- see multiAssetBuyClient.ts).
-    try {
-      const sim = await params.connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true });
-      if (sim.value.err) {
-        log("single-tx sell simulation failed -- refusing before any signature", { err: sim.value.err, logs: sim.value.logs ?? [] });
-        throw new Error(
-          `${describeOnChainError(new Error(`Transaction failed on-chain (${JSON.stringify(sim.value.err)}).`))} This was caught by a read-only simulation BEFORE anything was signed or submitted -- nothing moved and no fee was paid.`,
-        );
-      }
-    } catch (simError) {
-      if (simError instanceof Error && simError.message.includes("read-only simulation")) throw simError;
-      log("single-tx sell simulation call itself failed -- proceeding (real confirmation remains the source of truth)", { error: String(simError) });
-    }
-
-    params.onProgress?.({ phase: "awaiting-wallet" });
-    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
-    const signed = await params.wallet.signTransaction(tx);
-    const signature = await params.connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-    log("single-tx sell submitted", { signature });
-    const outcome = await confirmSignatureBounded(params.connection, signature, lastValidBlockHeight);
-    if (outcome.status === "failed") {
-      throw new Error(
-        `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} The sale was ONE atomic transaction, so nothing was redeemed or swapped -- only the network fee was spent. Signature: ${signature}.`,
-      );
-    }
-    if (outcome.status === "expired") {
-      throw new Error(`The sale transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
-    }
-    if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
-    return await verifyDelivery(signature);
-  } catch (e) {
-    if (!(e instanceof SingleTxTooLargeError)) throw e;
-    log("single-tx sell too large for this Reserve -- falling back to the sequential flow", { message: e.message });
-  }
-
-  // ---------------------------------------------------------------------
-  // SEQUENTIAL FALLBACK: redeem once (double-redeem-guarded), then swap
-  // each leg -- every signature persisted and reconciled before any
-  // resubmission.
-  // ---------------------------------------------------------------------
   let pending = readPendingSell(ownerBase58, reserveBase58);
   if (!pending) {
+    if (preRedeemRtRaw < params.reserveTokensToRedeem) {
+      throw new Error(`This wallet holds ${preRedeemRtRaw.toString()} raw Reserve Tokens but the sale needs ${params.reserveTokensToRedeem.toString()} raw. Nothing was submitted.`);
+    }
     pending = {
       wallet: ownerBase58,
       reserve: reserveBase58,
@@ -303,6 +205,18 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   } else {
     log("resuming a previously-started sale", { startedAt: new Date(pending.startedAt).toISOString(), redeemSignature: pending.redeemSignature ?? null });
   }
+  const baselineUsdcRaw = BigInt(pending.preSaleUsdcRaw);
+
+  const verifyDelivery = async (signature: string): Promise<MultiAssetSellResult> => {
+    const usdcAfter = await fetchOwnedBalanceRawSettled(params.connection, usdcMint, owner, baselineUsdcRaw);
+    const gained = usdcAfter > baselineUsdcRaw ? usdcAfter - baselineUsdcRaw : 0n;
+    log("post-sale verification", { usdcBefore: baselineUsdcRaw.toString(), usdcAfter: usdcAfter.toString(), gainedRaw: gained.toString() });
+    if (gained <= 0n) {
+      throw new Error(`The sale confirmed but your USDC balance has not increased yet (still ${usdcAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`);
+    }
+    clearPendingSell(ownerBase58, reserveBase58);
+    return { signature, reserveTokensRedeemed: params.reserveTokensToRedeem, usdcReceivedRaw: gained };
+  };
 
   const reconcileSignature = async (signature: string): Promise<"confirmed" | "failed" | "unknown"> => {
     const { value } = await withRateLimitRetry(() => params.connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), 3, 500);
@@ -312,89 +226,175 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     return "unknown";
   };
 
-  // Step 1: the redeem -- exactly once.
+  // --- The redeem: exactly once. ---
   let redeemDone = pending.redeemConfirmed === true;
   if (!redeemDone && pending.redeemSignature) {
     const status = await reconcileSignature(pending.redeemSignature);
     log("reconciling previous redeem signature", { signature: pending.redeemSignature, status });
     if (status === "confirmed") redeemDone = true;
     else if (status === "unknown") {
-      throw new Error(
-        `A previous redeem for this sale could not be verified yet (signature ${pending.redeemSignature}). Nothing was submitted -- try again in a moment; a landed redeem will be counted, never repeated.`,
-      );
+      throw new Error(`A previous redeem for this sale could not be verified yet (signature ${pending.redeemSignature}). Nothing was submitted -- try again in a moment; a landed redeem will be counted, never repeated.`);
     }
   }
-  if (!redeemDone) {
-    // Belt-and-braces: if the Reserve Token balance already dropped by the
-    // sale amount since the sale began, the redeem landed even without a
-    // usable signature record.
-    const rtNow = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner));
-    if (BigInt(pending.preRedeemRtRaw) - rtNow >= params.reserveTokensToRedeem) {
-      log("redeem already landed for this sale (balance guard) -- not re-submitting");
-      redeemDone = true;
-    }
+  if (!redeemDone && BigInt(pending.preRedeemRtRaw) - preRedeemRtRaw >= params.reserveTokensToRedeem) {
+    log("redeem already landed for this sale (balance guard) -- not re-submitting");
+    redeemDone = true;
   }
-  if (!redeemDone) {
-    params.onProgress?.({ phase: "redeeming" });
-    params.onProgress?.({ phase: "awaiting-wallet" });
-    const tx = new Transaction().add(...redeemPrelude);
-    tx.feePayer = owner;
-    const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
-    tx.recentBlockhash = blockhash;
-    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
-    const signed = await params.wallet.signTransaction(tx);
-    const signature = await params.connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-    pending.redeemSignature = signature;
+  if (redeemDone) {
+    pending.redeemConfirmed = true;
     savePendingSell(pending);
-    log("redeem submitted", { signature });
-    const outcome = await confirmSignatureBounded(params.connection, signature, lastValidBlockHeight);
-    if (outcome.status === "failed") throw new Error(`${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
-    if (outcome.status === "expired") throw new Error(`The redeem expired before it could be confirmed -- nothing should have moved. Signature: ${signature}.`);
-    if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
   }
-  pending.redeemConfirmed = true;
-  savePendingSell(pending);
 
-  // Step 2: swap each non-USDC leg's redeemed amount into USDC.
-  let lastSignature = pending.redeemSignature ?? "";
-  for (let s = 0; s < nonUsdcLegs.length; s++) {
-    const { leg, entitlementRaw } = nonUsdcLegs[s];
-    const persisted = pending.legSwaps[leg.mint];
+  // --- Legs: reconcile any previously-submitted swap before rebuilding. ---
+  const nonUsdcMints = params.assets.map((a) => a.mint).filter((m) => m !== MAINNET_USDC_MINT);
+  const remainingLegs: string[] = [];
+  for (const mint of nonUsdcMints) {
+    const persisted = pending.legSwaps[mint];
     if (persisted?.confirmed) continue;
     if (persisted?.signature) {
       const status = await reconcileSignature(persisted.signature);
-      log("reconciling previous sell-swap signature", { mint: leg.mint, signature: persisted.signature, status });
+      log("reconciling previous sell-swap signature", { mint, signature: persisted.signature, status });
       if (status === "confirmed") {
-        pending.legSwaps[leg.mint] = { ...persisted, confirmed: true };
+        pending.legSwaps[mint] = { ...persisted, confirmed: true };
         savePendingSell(pending);
         continue;
       }
       if (status === "unknown") {
-        throw new Error(
-          `A previous swap for this sale could not be verified yet (signature ${persisted.signature}). Nothing was submitted -- try again in a moment; a landed swap will be counted, never repeated.`,
-        );
+        throw new Error(`A previous swap for this sale could not be verified yet (signature ${persisted.signature}). Nothing was submitted -- try again in a moment; a landed swap will be counted, never repeated.`);
       }
     }
-    params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: nonUsdcLegs.length });
-    // Swap what the redeem actually delivered and the wallet still holds --
-    // never more than the recorded entitlement.
-    const held = BigInt(await fetchTokenBalanceRaw(params.connection, new PublicKey(leg.mint), owner));
-    const amountIn = held < entitlementRaw ? held : entitlementRaw;
-    if (amountIn <= 0n) {
-      log("leg has nothing left to swap (already sold or moved) -- skipping", { mint: leg.mint });
-      pending.legSwaps[leg.mint] = { confirmed: true };
-      savePendingSell(pending);
-      continue;
-    }
-    const quote = await fetchJupiterSwapQuote(MAINNET_USDC_MINT, amountIn, ownerBase58, undefined, undefined, leg.mint);
+    remainingLegs.push(mint);
+  }
+  let lastSignature = pending.redeemSignature ?? "";
+  if (redeemDone && remainingLegs.length === 0) return await verifyDelivery(lastSignature);
+
+  // Signing: ONE prompt for everything when the wallet supports it.
+  const canSignAll = typeof params.wallet.signAllTransactions === "function";
+  const signMany = async (txs: VersionedTransaction[]): Promise<VersionedTransaction[]> => {
+    if (txs.length === 0) return [];
     params.onProgress?.({ phase: "awaiting-wallet" });
-    lastSignature = await executeJupiterSwap(params.connection, params.wallet, quote, (sig) => {
-      pending!.legSwaps[leg.mint] = { signature: sig };
+    if (canSignAll) return params.wallet.signAllTransactions!(txs);
+    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+    const out: VersionedTransaction[] = [];
+    for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    return out;
+  };
+  const submit = (signed: VersionedTransaction, lastValidBlockHeight: number, what: string, onSubmitted?: (sig: string) => void) =>
+    sendAndConfirmWithRebroadcast(params.connection, signed.serialize(), lastValidBlockHeight, {
+      onSubmitted: (sig) => {
+        onSubmitted?.(sig);
+        log("transaction submitted", { what, signature: sig });
+        params.onProgress?.({ phase: "confirming", what, signature: sig });
+      },
+    });
+  const throwOutcome = (outcome: ConfirmationOutcome, signature: string, what: string, note: string) => {
+    if (outcome.status === "failed") throw new Error(`${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))}${note} Signature: ${signature}.`);
+    if (outcome.status === "expired") throw new Error(`${what} expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+    if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
+  };
+  const decode = (t: BuiltTransaction) => VersionedTransaction.deserialize(Buffer.from(t.base64, "base64"));
+
+  // --- ONE server build. ---
+  params.onProgress?.({ phase: "building" });
+  const buildRequest = (extra: Partial<BuildSellRequest> = {}): BuildSellRequest => ({
+    reserve: reserveBase58,
+    wallet: ownerBase58,
+    reserveTokensToRedeem: params.reserveTokensToRedeem.toString(),
+    assetMints: params.assets.map((a) => a.mint),
+    redeemDone,
+    ...(redeemDone && remainingLegs.length < nonUsdcMints.length ? { legsOnly: remainingLegs } : {}),
+    ...extra,
+  });
+  const build = await requestSellBuild(buildRequest());
+  log("server build", { mode: build.mode, transactions: build.transactions.map((t) => ({ kind: t.kind, mint: t.mint, bytes: t.bytes })), timings: build.timings, quotedUsdcOutRaw: build.plan.quotedUsdcOutRaw });
+
+  if (build.mode === "single") params.onProgress?.({ phase: "single-transaction" });
+  const signed = await signMany(build.transactions.map(decode));
+
+  // Table setup first (if prepended).
+  const altIdx = build.transactions.map((t, i) => (t.kind === "alt-create" || t.kind === "alt-extend" ? i : -1)).filter((i) => i >= 0);
+  for (const i of altIdx) {
+    const t = build.transactions[i];
+    const { signature, outcome } = await submit(signed[i], t.lastValidBlockHeight, t.kind === "alt-create" ? "the trading table creation" : "the trading table extension");
+    throwOutcome(outcome, signature, "The trading-table setup", "");
+  }
+  if (altIdx.length > 0 && build.altToRegister) {
+    await waitForLookupTable(params.connection, new PublicKey(build.altToRegister));
+    await registerReserveAlt(reserveBase58, build.altToRegister).catch((e) => log("trading table registration deferred (not fatal)", { error: String(e) }));
+  }
+
+  // Mode "single": one atomic transaction.
+  const singleIdx = build.transactions.findIndex((t) => t.kind === "single");
+  if (build.mode === "single" && singleIdx >= 0) {
+    const t = build.transactions[singleIdx];
+    const { signature, outcome } = await submit(signed[singleIdx], t.lastValidBlockHeight, "your sale transaction", (sig) => {
+      pending!.redeemSignature = sig;
       savePendingSell(pending!);
     });
-    pending.legSwaps[leg.mint] = { signature: lastSignature, confirmed: true };
+    throwOutcome(outcome, signature, "The sale transaction", " The sale was ONE atomic transaction, so nothing was redeemed or swapped -- only the network fee was spent.");
+    return await verifyDelivery(signature);
+  }
+
+  // Mode "batch": the redeem first, confirmed; then every swap in parallel.
+  const redeemIdx = build.transactions.findIndex((t) => t.kind === "redeem");
+  if (!redeemDone && redeemIdx >= 0) {
+    params.onProgress?.({ phase: "redeeming" });
+    const t = build.transactions[redeemIdx];
+    const { signature, outcome } = await submit(signed[redeemIdx], t.lastValidBlockHeight, "the redeem of your Reserve Tokens", (sig) => {
+      pending!.redeemSignature = sig;
+      savePendingSell(pending!);
+    });
+    throwOutcome(outcome, signature, "The redeem", "");
+    pending.redeemConfirmed = true;
     savePendingSell(pending);
-    log("leg sold into USDC", { mint: leg.mint, inRaw: amountIn.toString(), signature: lastSignature });
+    lastSignature = signature;
+    redeemDone = true;
+  } else if (!redeemDone) {
+    throw new Error("The server did not return a redeem transaction for a sale whose redeem has not landed yet.");
+  }
+
+  type SwapJob = { tx: BuiltTransaction; signed: VersionedTransaction; mint: string };
+  const toJobs = (b: BuildSellResponse, s: VersionedTransaction[]): SwapJob[] =>
+    b.transactions.map((tx, i) => ({ tx, i })).filter(({ tx }) => tx.kind === "swap" && tx.mint).map(({ tx, i }) => ({ tx, signed: s[i], mint: tx.mint! }));
+  const submitSwaps = (jobs: SwapJob[]) =>
+    Promise.allSettled(
+      jobs.map(async (job, s) => {
+        params.onProgress?.({ phase: "swapping", mint: job.mint, index: s, total: jobs.length });
+        if (s > 0) await new Promise((r) => setTimeout(r, 150 * s));
+        const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `selling ${job.mint.slice(0, 4)}...${job.mint.slice(-4)} into USDC`, (sig) => {
+          pending!.legSwaps[job.mint] = { signature: sig };
+          savePendingSell(pending!);
+        });
+        if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
+        if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+        if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
+        pending!.legSwaps[job.mint] = { signature, confirmed: true };
+        savePendingSell(pending!);
+        lastSignature = signature;
+        log("leg sold into USDC", { mint: job.mint, signature });
+      }),
+    );
+
+  let jobs = toJobs(build, signed);
+  let outcomes = await submitSwaps(jobs);
+  for (let attempt = 0; attempt < SWAP_AUTO_RETRY_LIMIT; attempt++) {
+    const { retryable, fatal } = partitionSwapOutcomes(jobs, outcomes);
+    if (fatal !== null) throw fatal;
+    if (retryable.length === 0) break;
+    log("sell-swap leg(s) did not land -- rebuilding just those legs and re-signing once", { attempt: attempt + 1, mints: retryable.map((j) => j.mint) });
+    params.onProgress?.({ phase: "building" });
+    const rebuild = await requestSellBuild(buildRequest({ redeemDone: true, legsOnly: retryable.map((j) => j.mint) }));
+    const resigned = await signMany(rebuild.transactions.map(decode));
+    jobs = toJobs(rebuild, resigned);
+    outcomes = await submitSwaps(jobs);
+  }
+  {
+    const { retryable, fatal } = partitionSwapOutcomes(jobs, outcomes);
+    if (fatal !== null) throw fatal;
+    if (retryable.length > 0) {
+      const first = outcomes.find((o): o is PromiseRejectedResult => o.status === "rejected")!.reason as Error;
+      throw new Error(`${first.message} (This swap was already automatically retried once with a fresh build and did not land either.)`);
+    }
   }
 
   return await verifyDelivery(lastSignature);

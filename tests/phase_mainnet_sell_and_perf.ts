@@ -18,7 +18,7 @@ import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { buildDirectMultiAssetRedeemInstructions } from "../packages/sdk/src/directInstructions";
 import { computeRedemptionEntitlements } from "../packages/sdk/src/calculations";
-import { findTvlAccrual } from "../packages/sdk/src/pda";
+import { findTvlAccrual, findMintAuthority, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "../packages/sdk/src/pda";
 import {
   refreshPriceSeries,
   calcRecentChanges,
@@ -129,12 +129,20 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
     });
     expect(instructions).to.have.length(3); // 2 ATA creates + the redeem
     const redeemIx = instructions[instructions.length - 1];
-    // 9 fixed accounts + 5 per leg
-    expect(redeemIx.keys.length).to.equal(9 + 2 * 5);
+    // DEC-0173 redeem struct: 14 fixed accounts (the 9 deployed-Tier-B ones +
+    // mint_authority, fee_settlement, fee_vault, fee_vault_authority,
+    // associated_token_program) + 5 per leg
+    expect(redeemIx.keys.length).to.equal(14 + 2 * 5);
     expect(redeemIx.keys[5].pubkey.toBase58()).to.equal(program.programId.toBase58()); // manager_fee_recipients "None" sentinel
+    expect(redeemIx.keys[6].pubkey.toBase58()).to.equal(findTvlAccrual(RESERVE, program.programId)[0].toBase58()); // tvl_accrual
+    expect(redeemIx.keys[7].pubkey.toBase58()).to.equal(findMintAuthority(RESERVE, program.programId)[0].toBase58()); // mint_authority (re-mint CPI signer)
+    expect(redeemIx.keys[8].pubkey.toBase58()).to.equal(findFeeSettlement(RESERVE, program.programId)[0].toBase58()); // fee_settlement
+    expect(redeemIx.keys[9].pubkey.toBase58()).to.equal(findFeeVaultAta(RESERVE, RT_MINT, program.programId).toBase58()); // fee_vault
+    expect(redeemIx.keys[10].pubkey.toBase58()).to.equal(findFeeVaultAuthority(RESERVE, program.programId)[0].toBase58()); // fee_vault_authority
+    expect(redeemIx.keys[12].pubkey.toBase58()).to.equal("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"); // associated_token_program
     // Each leg pays the redeemer's OWN ATA (position 3 within each 5-tuple of remaining accounts)
-    expect(redeemIx.keys[9 + 2].pubkey.equals(getAssociatedTokenAddressSync(new PublicKey(WSOL), OWNER))).to.equal(true);
-    expect(redeemIx.keys[9 + 5 + 2].pubkey.equals(getAssociatedTokenAddressSync(new PublicKey(SSR), OWNER))).to.equal(true);
+    expect(redeemIx.keys[14 + 2].pubkey.equals(getAssociatedTokenAddressSync(new PublicKey(WSOL), OWNER))).to.equal(true);
+    expect(redeemIx.keys[14 + 5 + 2].pubkey.equals(getAssociatedTokenAddressSync(new PublicKey(SSR), OWNER))).to.equal(true);
     // Entitlements match the shared floor-rounded math exactly
     const expected = computeRedemptionEntitlements(9_500_000n, 100n, 19_900_000n, [
       { mint: WSOL, vaultBalance: 101_896_089n },
@@ -161,7 +169,7 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
     });
     expect(instructions).to.have.length(2); // 1 ATA create + the redeem
     const redeemIx = instructions[instructions.length - 1];
-    expect(redeemIx.keys.length).to.equal(9 + 1 * 5); // 9 fixed + one 5-account leg
+    expect(redeemIx.keys.length).to.equal(14 + 1 * 5); // 14 fixed (DEC-0173 shape) + one 5-account leg
     expect(entitlementsRaw).to.deep.equal([1_500_000_000n]); // floor(1M x 30B / 20M)
   });
 
@@ -262,9 +270,16 @@ describe("Reserve trading lookup table contents (buildReserveAltAddresses, DEC-0
       "9xQQ9UUjuUbKpu2E5Pswf8SsjfmEJVrYMdRwLX7spNvu",
       "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
       "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+      // The fee-vault trio every composed Buy (Tier B mint) and Sell (DEC-0173 redeem) references.
+      findFeeSettlement(params.reserve, params.ssrProgramId)[0].toBase58(),
+      findFeeVaultAuthority(params.reserve, params.ssrProgramId)[0].toBase58(),
+      findFeeVaultAta(params.reserve, params.reserveTokenMint, params.ssrProgramId).toBase58(),
     ]) {
       expect(addresses, required).to.include(required);
     }
+    // The old treasury destination + its Reserve Token ATA are no longer part of any composed trade.
+    expect(addresses).to.not.include(params.protocolFeeDestination.toBase58());
+    expect(addresses).to.not.include(getAssociatedTokenAddressSync(params.reserveTokenMint, params.protocolFeeDestination, true).toBase58());
     expect(new Set(addresses).size).to.equal(addresses.length); // deduplicated
     expect(addresses.every((a) => a !== getAssociatedTokenAddressSync(new PublicKey(WSOL), OWNER).toBase58())).to.equal(true);
   });

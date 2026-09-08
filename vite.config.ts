@@ -31,6 +31,9 @@ export default defineConfig({
         internalStatus: path.resolve(import.meta.dirname, './internal-status.html'),
         internalFeedback: path.resolve(import.meta.dirname, './internal-feedback.html'),
         internalKpis: path.resolve(import.meta.dirname, './internal-kpis.html'),
+        // Protocol-Admin one-click page: signs set_fee_settlement_keeper (plain
+        // HTML + web3.js from CDN, no app bundle) -- see the file's header.
+        internalSetKeeper: path.resolve(import.meta.dirname, './internal-set-keeper.html'),
       },
     },
   },

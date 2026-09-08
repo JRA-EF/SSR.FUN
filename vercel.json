@@ -49,9 +49,14 @@
     {
       "path": "/api/mainnet/warm-cache-cron",
       "schedule": "*/1 * * * *"
+    },
+    {
+      "path": "/api/mainnet/fee-settlement-cron",
+      "schedule": "15 * * * *"
     }
   ],
   "rewrites": [
+    { "source": "/internal/set-keeper", "destination": "/internal-set-keeper.html" },
     { "source": "/internal/status", "destination": "/internal-status.html" },
     { "source": "/internal/feedback", "destination": "/internal-feedback.html" },
     { "source": "/internal/kpis", "destination": "/internal-kpis.html" },

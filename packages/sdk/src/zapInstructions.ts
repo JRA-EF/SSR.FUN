@@ -41,7 +41,7 @@ import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil, type AssetBalance } from "./calculations";
 import { solLamportsToUsd, SOL_TEST_PRICE_USD, WRAPPED_SOL_MINT } from "./zapPricing";
-import { findTvlAccrual, resolveProtocolFeeDestinationTokenAccount } from "./pda";
+import { findTvlAccrual, findMintAuthority, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta, resolveProtocolFeeDestinationTokenAccount } from "./pda";
 
 function isWrappedSol(mint: PublicKey): boolean {
   return mint.equals(WRAPPED_SOL_MINT);
@@ -392,7 +392,16 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
       tvlAccrual,
+      // DEC-0173 redeem struct: the redemption fee is re-minted into the
+      // shared fee vault (same trio as the mint path + the mint authority
+      // the re-mint CPI signs with). Pure derivations, shared across clusters
+      // like every other builder in this SDK.
+      mintAuthority: findMintAuthority(reserve, program.programId)[0],
+      feeSettlement: findFeeSettlement(reserve, program.programId)[0],
+      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId),
+      feeVaultAuthority: findFeeVaultAuthority(reserve, program.programId)[0],
       tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(remainingAccounts)
@@ -503,7 +512,16 @@ export async function buildSellZapInstructionsDevUsdc(
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
       tvlAccrual,
+      // DEC-0173 redeem struct: the redemption fee is re-minted into the
+      // shared fee vault (same trio as the mint path + the mint authority
+      // the re-mint CPI signs with). Pure derivations, shared across clusters
+      // like every other builder in this SDK.
+      mintAuthority: findMintAuthority(reserve, program.programId)[0],
+      feeSettlement: findFeeSettlement(reserve, program.programId)[0],
+      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId),
+      feeVaultAuthority: findFeeVaultAuthority(reserve, program.programId)[0],
       tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(remainingAccounts)
@@ -602,7 +620,16 @@ export async function buildRedeemToDevUsdcInstructions(
       redeemerReserveTokenAccount: redeemerReserveTokenAta,
       redeemer: user,
       tvlAccrual,
+      // DEC-0173 redeem struct: the redemption fee is re-minted into the
+      // shared fee vault (same trio as the mint path + the mint authority
+      // the re-mint CPI signs with). Pure derivations, shared across clusters
+      // like every other builder in this SDK.
+      mintAuthority: findMintAuthority(reserve, program.programId)[0],
+      feeSettlement: findFeeSettlement(reserve, program.programId)[0],
+      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId),
+      feeVaultAuthority: findFeeVaultAuthority(reserve, program.programId)[0],
       tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(remainingAccounts)

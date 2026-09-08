@@ -149,12 +149,32 @@ async function refreshOnce(
     ),
   );
 
+  // Asset symbols from the ledger catalogue (ledger_asset_catalogue -- the same
+  // source the client's useMainnetAssetCatalogue reads) so the client paints
+  // REAL asset symbols from the first snapshot frame instead of "Asset2/Asset3"
+  // until its own Jupiter catalogue loads. SOL/USDC are resolved client-side
+  // without mintMeta; this map covers every other asset. Best-effort: a
+  // catalogue read failure just omits symbols (the live poll still backfills
+  // them), and never fails the snapshot.
+  const mintMeta: Record<string, { symbol: string; name: string }> = {};
+  try {
+    const sql = getSql();
+    const rows = (await sql`
+      select mint, symbol, name from ledger_asset_catalogue
+      where mint = any(${allAssetMints}) and symbol is not null
+    `) as { mint: string; symbol: string; name: string | null }[];
+    for (const row of rows) mintMeta[row.mint] = { symbol: row.symbol, name: row.name ?? row.symbol };
+  } catch (e) {
+    console.error("api/mainnet/warm-cache-cron: asset-symbol lookup failed (non-fatal):", e);
+  }
+
   // DiscoveredReserve is a flat DTO (all string/number/boolean) -- safe to
   // persist as jsonb and round-trip to the client's buildDtrFromDiscoveredReserve.
   await writeReserveSnapshot(CLUSTER, {
     reserves: displayable,
     priceByMint,
     metadataByReserve,
+    mintMeta,
     computedAt: Date.now(),
     reserveCount: displayable.length,
   });
