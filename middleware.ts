@@ -15,6 +15,13 @@
 //    (those are invoked by Vercel's own cron trigger, never a browser, and
 //    carry no session cookie at all -- gating them would break every
 //    scheduled job).
+//    Per-deployment PAGE choice (2026-09-08 DEC-0189, lib/site/session.ts
+//    siteGateMode): env SSR_SITE_GATE_MODE=password swaps the Coming Soon
+//    rewrite for the pre-DEC-0187 plain password form (SITE_LOGIN_PAGE_HTML
+//    below) -- used by the separate Vercel project ssr-fun-staging that
+//    serves strategic-super-reserve.fun, the team's test site. Unset
+//    (ssr.fun) means Coming Soon. Keys, cookie, TTLs and the login endpoint
+//    are the same either way.
 // 2. INTERNAL-team gate (pre-existing, unchanged): /internal/status,
 //    /internal/feedback, /internal/kpis, and /road-to-mainnet (+ their data
 //    endpoints) additionally require SSR_DASHBOARD_PASSWORD (session cookie
@@ -29,7 +36,7 @@
 
 import { next, rewrite } from '@vercel/functions'
 import { verifySessionCookie, parseCookie, SESSION_COOKIE_NAME } from './lib/dashboard/session.js'
-import { configuredAccessKeys, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
+import { configuredAccessKeys, siteGateMode, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
 
 // SITE_SESSION_COOKIE_NAME is imported from lib/site/session.ts (runtime-
 // agnostic, Web Crypto only), which api/site/login.ts imports too -- one
@@ -72,6 +79,98 @@ const PUBLIC_PATHS = new Set([
 function comingSoonResponse(request: Request): Response {
   const target = new URL(COMING_SOON_PATH, request.url)
   return rewrite(target, { headers: { 'cache-control': 'no-store' } })
+}
+
+// The plain sign-in form shown instead of the Coming Soon page when
+// SSR_SITE_GATE_MODE=password (DEC-0189) -- byte-for-byte the pre-DEC-0187
+// site gate page (commit c25a2b8). It posts { password } to the same
+// /api/site/login endpoint, which accepts SSR_SITE_PASSWORD (and every
+// configured key) exactly as the Coming Soon page's { key } field does.
+const SITE_LOGIN_PAGE_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>SSR.fun - Sign in</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0d0b12; color: #eeeaf6;
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  form {
+    width: 320px; padding: 32px; border-radius: 14px;
+    background: #16131d; border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4);
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; color: #eeeaf6; }
+  p.sub { font-size: 13px; color: #a89fbb; margin: 0 0 20px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px;
+    background: #1b1724; border: 1px solid rgba(255,255,255,0.13); color: #eeeaf6; font-size: 14px;
+  }
+  input:focus { outline: 2px solid #8b45ff; outline-offset: 1px; }
+  button {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: none; cursor: pointer;
+    background: #8b45ff; color: #fff; font-size: 14px; font-weight: 600;
+  }
+  button:hover { background: #9c60ff; }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .error { color: #e5586a; font-size: 13px; margin: 12px 0 0; min-height: 16px; }
+</style>
+</head>
+<body>
+  <form id="login-form">
+    <h1>SSR.fun</h1>
+    <p class="sub">Password required.</p>
+    <input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus required />
+    <button type="submit">Enter</button>
+    <p class="error" id="error"></p>
+  </form>
+  <script>
+    var form = document.getElementById('login-form');
+    var errorEl = document.getElementById('error');
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var password = form.password.value;
+      var button = form.querySelector('button');
+      button.disabled = true;
+      errorEl.textContent = '';
+      fetch('/api/site/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ password: password }),
+      })
+        .then(function (res) {
+          if (res.ok) { window.location.reload(); return; }
+          return res.json().then(function (body) {
+            errorEl.textContent = body && body.error ? body.error : 'Sign in failed.';
+            button.disabled = false;
+          });
+        })
+        .catch(function () {
+          errorEl.textContent = 'Network error. Try again.';
+          button.disabled = false;
+        });
+    });
+  </script>
+</body>
+</html>`
+
+function siteLoginPageResponse(): Response {
+  return new Response(SITE_LOGIN_PAGE_HTML, {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+  })
+}
+
+/** The page an unauthenticated visitor gets at a page URL, per SSR_SITE_GATE_MODE. */
+function siteGateResponse(request: Request): Response {
+  return siteGateMode() === 'password' ? siteLoginPageResponse() : comingSoonResponse(request)
 }
 
 const LOGIN_PAGE_HTML = `<!doctype html>
@@ -207,7 +306,7 @@ export default async function middleware(request: Request): Promise<Response> {
     const siteAuthenticated = await verifySiteSessionCookie(siteSessionValue, siteSessionSecret(), configuredAccessKeys())
 
     if (!siteAuthenticated) {
-      return isApiPath ? unauthorizedJson() : comingSoonResponse(request)
+      return isApiPath ? unauthorizedJson() : siteGateResponse(request)
     }
   }
 

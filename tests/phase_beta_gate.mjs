@@ -21,6 +21,7 @@ import {
   createSiteSessionCookieValue,
   matchBetaKey,
   sessionTtlForKey,
+  siteGateMode,
   SITE_SESSION_COOKIE_NAME,
   SITE_SESSION_TTL_MS,
   siteSessionSecret,
@@ -145,5 +146,19 @@ describe("Closed-beta gate -- session cookie", () => {
     expect(header.startsWith(`${SITE_SESSION_COOKIE_NAME}=v; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`)).to.equal(true);
     expect(header).to.include("Secure");
     expect(buildSiteSetCookie("v", { maxAgeSeconds: 1, secure: false })).to.not.include("Secure");
+  });
+});
+
+describe("Closed-beta gate -- page mode (SSR_SITE_GATE_MODE, DEC-0189)", () => {
+  it("defaults to the Coming Soon page: unset, empty, or any value other than 'password'", () => {
+    expect(siteGateMode({})).to.equal("coming-soon");
+    expect(siteGateMode({ SSR_SITE_GATE_MODE: "" })).to.equal("coming-soon");
+    expect(siteGateMode({ SSR_SITE_GATE_MODE: "coming-soon" })).to.equal("coming-soon");
+    expect(siteGateMode({ SSR_SITE_GATE_MODE: "true" })).to.equal("coming-soon");
+    expect(siteGateMode({ SSR_SITE_GATE_MODE: "passwords" })).to.equal("coming-soon");
+  });
+  it("'password' (trimmed, any case) selects the plain sign-in form", () => {
+    expect(siteGateMode({ SSR_SITE_GATE_MODE: "password" })).to.equal("password");
+    expect(siteGateMode({ SSR_SITE_GATE_MODE: " Password " })).to.equal("password");
   });
 });

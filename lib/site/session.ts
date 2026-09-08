@@ -22,6 +22,24 @@
 // Creator's 2026-09-07 decision), not the dashboard's 12 hours.
 
 export const SITE_SESSION_COOKIE_NAME = 'ssr_site_session'
+
+/**
+ * What an UNAUTHENTICATED visitor sees at a page URL (DEC-0189):
+ *   'coming-soon' (default, ssr.fun) -- the public Coming Soon page with the
+ *                 "I have a BETA key" entry (DEC-0187).
+ *   'password'    (strategic-super-reserve.fun, the team's test site) -- the
+ *                 pre-DEC-0187 plain sign-in form ("Password required").
+ * Selected per deployment by env SSR_SITE_GATE_MODE; only the literal
+ * 'password' (case-insensitive, trimmed) switches -- anything else, including
+ * unset, is the Coming Soon page, so ssr.fun's production env needs no change.
+ * The mode changes ONLY the page shown; the accepted keys, the login
+ * endpoint, the cookie and the TTLs are identical in both modes.
+ */
+export type SiteGateMode = 'coming-soon' | 'password'
+
+export function siteGateMode(env: { SSR_SITE_GATE_MODE?: string } = process.env): SiteGateMode {
+  return (env.SSR_SITE_GATE_MODE ?? '').trim().toLowerCase() === 'password' ? 'password' : 'coming-soon'
+}
 export const SITE_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days (beta keys, site password)
 export const TEAM_SESSION_TTL_MS = 400 * 24 * 60 * 60 * 1000 // 400 days (team keys) -- browsers' practical maximum
 
