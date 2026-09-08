@@ -1,15 +1,21 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Burn, Mint as SplMint, Token, TokenAccount as SplTokenAccount};
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token::{self, Burn, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
 
 use super::accrue_fees::checkpoint_tvl_accrual;
-use super::common::{load_asset_legs, mul_div_ceil, mul_div_floor, transfer_out_of_vault};
+use super::common::{
+    init_fee_settlement_if_needed, load_asset_legs, mul_div_ceil, mul_div_floor,
+    transfer_out_of_vault,
+};
 use crate::constants::{
-    BPS_DENOMINATOR, MANAGER_FEE_RECIPIENTS_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
+    BPS_DENOMINATOR, FEE_SETTLEMENT_SEED, FEE_VAULT_AUTHORITY_SEED, MANAGER_FEE_RECIPIENTS_SEED,
+    MINT_AUTHORITY_SEED, PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
     TVL_ACCRUAL_SEED, VAULT_AUTHORITY_SEED,
 };
 use crate::errors::SsrError;
-use crate::events::ReserveTokensRedeemed;
-use crate::state::{ManagerFeeRecipients, Reserve, TvlAccrual};
+use crate::events::{FeeVaultCredited, ManagerFeeAccrualSource, ReserveTokensRedeemed};
+use crate::fee_math::{split_redemption_bps, split_total_fee};
+use crate::state::{FeeSettlement, ManagerFeeRecipients, Reserve, TvlAccrual};
 
 /// Deliberately does NOT accept a `ProtocolConfig` account: redemption is
 /// exempt from both the Reserve-level pause AND the protocol-wide emergency
@@ -77,7 +83,51 @@ pub struct RedeemReserveTokensInKind<'info> {
     )]
     pub tvl_accrual: Account<'info, TvlAccrual>,
 
+    /// CHECK: signer-only PDA, verified purely by seeds against the cached
+    /// bump -- DEC-0173: needed here for the first time, to mint the
+    /// redemption fee's shares into the fee vault below.
+    #[account(
+        seeds = [MINT_AUTHORITY_SEED, reserve.key().as_ref()],
+        bump = reserve.mint_authority_bump,
+    )]
+    pub mint_authority: UncheckedAccount<'info>,
+
+    /// DEC-0173 (USDC on mint and redeem): the redemption fee's shares now
+    /// crystallize into this Reserve's shared fee vault for USDC settlement
+    /// (see `redeem_fee_vault_shares.rs`), replacing the old
+    /// burn-for-holders mechanic. The redeemer fronts the one-time rent only
+    /// on this Reserve's very first fee crystallization. Note this preserves
+    /// DEC-0016's administrator-cannot-block-redemption guarantee: these are
+    /// permissionless PDAs derived from the Reserve itself, requiring no
+    /// admin-controlled account and no ProtocolConfig read.
+    #[account(
+        init_if_needed,
+        payer = redeemer,
+        space = FeeSettlement::SPACE,
+        seeds = [FEE_SETTLEMENT_SEED, reserve.key().as_ref()],
+        bump,
+    )]
+    pub fee_settlement: Account<'info, FeeSettlement>,
+
+    #[account(
+        init_if_needed,
+        payer = redeemer,
+        associated_token::mint = reserve_token_mint,
+        associated_token::authority = fee_vault_authority,
+    )]
+    pub fee_vault: Account<'info, SplTokenAccount>,
+
+    /// CHECK: signer-only PDA (only the fee vault's ATA *owner* -- the mint
+    /// authority for the fee-share mint is `mint_authority` above), verified
+    /// purely by seeds against the cached bump.
+    #[account(
+        seeds = [FEE_VAULT_AUTHORITY_SEED, reserve.key().as_ref()],
+        bump,
+    )]
+    pub fee_vault_authority: UncheckedAccount<'info>,
+
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
     // Remaining accounts: reserve.asset_count groups of
     // [reserve_asset, vault, redeemer_asset_token_account, mint, token_program]
@@ -158,13 +208,15 @@ pub fn handler<'info>(
     }
 
     // Burn-then-transfer ordering (RESERVE_REFERENCE_ANALYSIS.md section 5).
-    // Note the FULL `reserve_tokens_to_redeem` is burned even though asset
-    // payout is computed on the net (post-fee) portion -- the fee portion's
-    // backing assets are deliberately left in the vaults, permanently
-    // increasing the per-share backing for all remaining holders. This is
-    // the redemption-side analogue of the reference protocol's
-    // `folioFeeForSelf` burn-instead-of-distribute mechanic, and avoids
-    // needing a separate fee-recipient mint on every redemption.
+    // The FULL `reserve_tokens_to_redeem` is burned while asset payout is
+    // computed on the net (post-fee) portion -- and then, DEC-0173, the fee
+    // portion is re-minted into the shared fee vault below (replacing the
+    // old burn-for-holders mechanic, which left the fee's backing to the
+    // remaining holders instead of ever paying the Protocol or Manager).
+    // Net supply effect is identical to the old design; the fee's backing
+    // assets stay in the vaults exactly as before, now claimable by the fee
+    // vault's own later `redeem_fee_vault_shares` settlement instead of
+    // accruing to holders.
     let cpi_accounts = Burn {
         mint: ctx.accounts.reserve_token_mint.to_account_info(),
         from: ctx
@@ -175,6 +227,60 @@ pub fn handler<'info>(
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     token::burn(cpi_ctx, reserve_tokens_to_redeem)?;
+
+    // DEC-0173: crystallize the redemption fee into the fee vault.
+    // split_redemption_bps is attribution-only -- the charged total remains
+    // exactly `redemption_fee_bps`, never raised by any floor (unlike the
+    // mint fee's split_configured_bps).
+    if redemption_fee_shares > 0 {
+        let (protocol_bps, manager_bps) =
+            split_redemption_bps(fee_config.redemption_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
+        let (protocol_fee_shares, manager_fee_shares) =
+            split_total_fee(redemption_fee_shares, protocol_bps, manager_bps)?;
+
+        let mint_authority_bump = ctx.accounts.reserve.mint_authority_bump;
+        let mint_authority_seeds: &[&[u8]] = &[
+            MINT_AUTHORITY_SEED,
+            reserve_key.as_ref(),
+            &[mint_authority_bump],
+        ];
+        let signer_seeds: &[&[&[u8]]] = &[mint_authority_seeds];
+        let vault_cpi_accounts = MintTo {
+            mint: ctx.accounts.reserve_token_mint.to_account_info(),
+            to: ctx.accounts.fee_vault.to_account_info(),
+            authority: ctx.accounts.mint_authority.to_account_info(),
+        };
+        let vault_cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.key(),
+            vault_cpi_accounts,
+            signer_seeds,
+        );
+        token::mint_to(vault_cpi_ctx, redemption_fee_shares)?;
+
+        let fee_settlement = &mut ctx.accounts.fee_settlement;
+        init_fee_settlement_if_needed(
+            fee_settlement,
+            reserve_key,
+            ctx.bumps.fee_settlement,
+            ctx.program_id,
+        )?;
+        fee_settlement.protocol_shares_in_vault = fee_settlement
+            .protocol_shares_in_vault
+            .checked_add(protocol_fee_shares)
+            .ok_or(error!(SsrError::MathOverflow))?;
+        fee_settlement.manager_shares_in_vault = fee_settlement
+            .manager_shares_in_vault
+            .checked_add(manager_fee_shares)
+            .ok_or(error!(SsrError::MathOverflow))?;
+
+        emit!(FeeVaultCredited {
+            reserve: reserve_key,
+            protocol_shares: protocol_fee_shares,
+            manager_shares: manager_fee_shares,
+            source: ManagerFeeAccrualSource::RedemptionFee,
+            ts: Clock::get()?.unix_timestamp,
+        });
+    }
 
     let vault_authority_bump = ctx.accounts.reserve.vault_authority_bump;
     let vault_authority_seeds: &[&[u8]] = &[

@@ -330,6 +330,11 @@ pub struct ManagerFeeShareAccrued {
 pub enum ManagerFeeAccrualSource {
     MintFee,
     AnnualTvlFee,
+    /// DEC-0173: the redemption fee, routed into the fee vault instead of
+    /// the old burn-for-holders mechanic. Appended (never reordered) so
+    /// existing Borsh decoders keep decoding the first two variants
+    /// unchanged.
+    RedemptionFee,
 }
 
 /// Emitted by `collect_manager_fee_share` -- one recipient's own pending
