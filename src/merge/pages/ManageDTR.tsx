@@ -1360,7 +1360,7 @@ export function ManageDTR() {
                         </div>
                       )}
                       <p className="text-xs text-muted-foreground mb-3">
-                        The Reserve-Token balances below are the in-kind Manager fees that are collectable directly here (e.g. the creation fee).
+                        The Reserve-Token balances below are legacy in-kind Manager fees collectable directly here (shares accrued before the 2026-09-08 fee-vault upgrade; since then the creation fee goes to the vault too).
                         Mint and TVL fees instead accrue to the shared fee vault and are settled to USDC by the keeper (shown above), so this in-kind
                         balance is often small. Only a recipient's own connected wallet can collect its balance --
                         the root Manager cannot collect on a recipient's behalf, and recipients cannot collect for each other.
