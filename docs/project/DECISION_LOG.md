@@ -5730,3 +5730,31 @@
   ]
 }
 ```
+
+## DEC-0187
+
+```json
+{
+  "id": "DEC-0187",
+  "date": "2026-09-08",
+  "status": "prepared-awaiting-squads-execute",
+  "decision": "DEC-0173 program upgrade (seed_reserve mint fee and redeem_reserve_tokens_in_kind redemption fee crystallize into the shared USDC fee vault; new RedemptionFee accrual source; fee_math::split_redemption_bps) staged for Mainnet on top of the deployed Tier B binary, with the SDK/client/ledger cutover built and gate-checked but NOT deployed until the on-chain upgrade executes. Program merge (branch dec-0173-program-on-tier-b, eb817b5): seed/redeem/fee_math/events taken from 50977ea; DEC-0173's accrue_fees revert to pending-shares deliberately EXCLUDED (Tier B's fee-vault accrue_fees is the deployed, intended behaviour); mint unchanged. Prerequisite proven first: the deployed binary (slot 445083760) is byte-identical to a fresh cargo-build-sbf of HEAD abc5ba8 (sha256 2fef89e2e4da159dcd9ca45400f396903e97e128764c52f1e6dab825aae2ec41, reproducible). New binary 1,015,416 bytes, sha256 079c957375a03d9d9ad4137f2efbddae3aa0fe96eddcedb689d18500e821c53e; cargo test 17/17; clippy zero new; IDL regenerated (seed: -protocol_fee_destination_token_account -protocol_fee_destination -manager_fee_recipients, +fee_settlement +fee_vault +fee_vault_authority; redeem: +mint_authority +fee_settlement +fee_vault +fee_vault_authority +associated_token_program). On-chain prep by the developer key 52b7pBNF...: program-data extended by 30,696 bytes (capacity was 1,005,200 < new size), buffer 5fTghBDEKpTnj7GQ5PAHEYNGhqZMYzP7EQFumF8TuRbQ written and dump-verified (sha 079c9573...), buffer authority set to the Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW. Cutover (7febd32, merged 41380f2): createReserveFlow seed builder, directInstructions/zapInstructions redeem builders (+5 accounts, shared redeemFeeVaultAccounts helper), Reserve ALT contents (+fee trio, -treasury pair), creation cost estimate (+FeeSettlement rent +fee-vault ATA rent paid by the manager at seed), ledger decoders (feeVaultCredited incl. RedemptionFee; protocolMintFeeTransferred kept for history), smoke test, tests. Frontend prebuilt from 41380f2 and gate-checked (mainnet tells, no devnet proxy, no sensitive strings, old treasury sentinel gone from the seed path).",
+  "context": "Tester item 1a (2026-09-07): creation fee charged in Reserve Tokens to a destination rather than into the USDC-settled vault; DEC-0173 (2026-08-28) adopted USDC delivery for mint/seed/redemption fees but its program side was never merged or deployed. Developer directive: 'do the upgrades'. Upgrade authority is the 1-of-3 controlled Squads (DEC-0179); the developer is a member and completes the execute alone.",
+  "rationale": "Same coordinated-cutover shape as Tier B (DEC-0184): builder account shapes change, so the frontend must switch in the same window as the program; pre-building the frontend and pre-writing the buffer shrinks that window to the seconds between the Squads execute and `vercel deploy --prebuilt --prod`. Extending program-data is authority-free and refundable in rent terms; the buffer's ~6.43 SOL rent is refunded to the developer key on upgrade (or on `solana program close` if aborted).",
+  "alternativesConsidered": [
+    "Deploy the frontend cutover first -- rejected: seed/redeem would fail against the old program until the execute.",
+    "Include DEC-0173's accrue_fees revert -- rejected: it would regress Tier B's deployed fee-vault accrual and the just-enabled keeper (DEC-0186).",
+    "Re-pin the 7 pre-existing Tier B test failures (mint/accrue IDL pins) in this pass -- deferred, unrelated to this change."
+  ],
+  "impact": "After execute + frontend deploy: creation (seed) and redemption fees crystallize into each Reserve's fee vault and are delivered as USDC by the keeper (once set_fee_settlement_keeper is signed, DEC-0186). Redeemers pay one-time FeeSettlement + fee-vault ATA rent on a Reserve's first-ever crystallization; managers pay it at seed. Old Reserve ALTs lack the fee trio (+96 bytes static keys on composed trades until recreated). DevNet builders follow the same unconditional precedent as Tier B (DevNet live discovery already mismatched since DEC-0176). The on-chain published IDL still needs `anchor idl upgrade` by the IDL authority after the execute.",
+  "affectedAreas": ["programs/ssr_protocol (seed_reserve, redeem_reserve_tokens_in_kind, fee_math, events)", "packages/sdk (idl, createReserveFlow, directInstructions, zapInstructions, activityLog)", "src/merge/lib (reserveAltClient, createReserveClient)", "lib/ledger (fieldExtraction, reconciliation)", "scripts/mainnet_smoke_test.ts", "tests", "Mainnet program-data account (extended), buffer 5fTghBDE..."],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Fork report: on-chain ELF (offset 45, first 1,004,176 bytes) sha256 2fef89e2...ec41 == /private/tmp/ssr_tierb.so == fresh HEAD build (cmp byte-identical).",
+    "`solana program extend 8hTW... 30696` -> 'Extended Program Id ... by 30696 bytes'; `solana program show 5fTghBDE...`: Authority HFmqpPVV..., Data Length 1015416, Balance 6.4317 SOL; dump sha 079c9573... matches.",
+    "Commits eb817b5 (program+IDL), 7febd32 (cutover), 41380f2 (merge into tier-b-plus-warmcache); tsc app/node clean; oxlint clean; mocha 251 passing / 7 pre-existing failures (baseline 247/11).",
+    "Prebuilt .vercel/output gate: devnet-proxy 0, mainnet-proxy present, SENSITIVE 0, resolveProtocolFeeDestinationTokenAccount absent from the bundle."
+  ]
+}
+```
