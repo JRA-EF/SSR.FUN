@@ -168,11 +168,13 @@ Criterion clauses:
 - [ ] update_protocol_config by an admin wallet succeeds (needs Creator/Boss).
 - [x] update_metadata by the Reserve manager: `5hTcsyWAZZyWPrBrSmHQi8y453kC1fKVAQoHbei8NK66d9uXU3CP6vunD7pNjkyrNuUSSTTdDedL3h4hDuVhzsmX`.
 
-## MWD-01 Wind-down / Closure -- **Partial** (blocked on a program fix found by this very test)
+## MWD-01 Wind-down / Closure -- **Passed** (closed 2026-09-08 on the DEC-0195 program; the fix was found by this very test)
 - [x] initiate_wind_down: by a non-manager rejected `3kbGh3TPPvG11p3n7rNDUGD7VfBMc8aRB7yYaLSQE6DPbHoYLdFGXoFDkap5ZaT3y5XwAFEJCMFN1Lkc6vzVsoMP` (6027 NotReserveManager); by the manager `2NLwdDv9bHY1FLfmByAcPd32yvBakp3Trmoqy3dewdkqYpjmdmUQsHPzTPzQrCnoVRX58rd95mNqFB92h8jg4rn8` (status WindDown).
 - [x] Buy blocked while wound down: `23KKzHwswkzijJrHcCz2g2QnVFT6W51p8MwGeHVZiQroenktZbvaUvJMVivVLp2Lwd93iwdxndqevAbK4deQ3stE` FAILED 6010.
 - [x] Redeem out: every holder (the manager) and the fee vault were redeemed to zero BEFORE the wind-down (see MRR-01), supply 0, every vault 0 -- redemption remains allowed in WindDown by the program (`require_redemption_allowed`).
-- [ ] **close_reserve -- FAILS on the deployed program for any Reserve with 2+ assets**: `3ub72R3KzUaAYAi6nNd11tppADc4BC7Su1A45XjX8WPjS5JyMrH8eEey2tArr1h4qkJgZBLea73R7Uxy4MMCZRc6` FAILED `UnbalancedInstruction` after the first vault-close CPI (simulation: "sum of account balances before and after instruction do not match"). Cause: the loop closed a vault (token CPI) then its ReserveAsset config (Rust-side lamport move) per iteration; at the next CPI the runtime sees the manager's credit but not the config's not-yet-synced debit. **Fixed in source** (two-pass close, `programs/ssr_protocol/src/instructions/close_reserve.rs`, cargo test 17/17) -- ships with the next Squads upgrade together with DEC-0192's `mut`. Reserve #21 stays in WindDown (supply 0, vaults 0, ~$0.02 staged for the keeper) until then, and its close will be this clause's signature.
+- [x] **close_reserve.** FAILED on the previous program for any Reserve with 2+ assets: `3ub72R3KzUaAYAi6nNd11tppADc4BC7Su1A45XjX8WPjS5JyMrH8eEey2tArr1h4qkJgZBLea73R7Uxy4MMCZRc6` `UnbalancedInstruction` after the first vault-close CPI (the loop closed a vault via token CPI then its ReserveAsset config via a Rust-side lamport move per iteration; the next CPI saw the credit but not the not-yet-synced debit). Fixed with a two-pass close (DEC-0193), shipped in the DEC-0195 upgrade (Squads execute 2026-09-08, slot 445414855, sha `c59e8a06...`, byte-verified), then closed for real:
+  `2J6Gz88tw8qBe28z1nBbn143RwuA3tBVBRL3AUVdR5wBeXV5kQu4QnpQxJdYTqNpST4GBC43V3enHXr5YAtq1gq9` -- Reserve account, both vaults and both ReserveAsset PDAs closed; 0.009919 SOL rent refunded to the manager.
+  Caller note: `manager_fee_recipients` is optional -- a Reserve that never opted into multi-recipient routing must pass the program ID as the None sentinel (the first attempt with the PDA failed 3012 AccountNotInitialized; the SDK builder and Manage now handle it).
 
 ## MSC-01 Security review by a non-builder -- **Not tested**
 - [ ] Reviewer + date per function above.

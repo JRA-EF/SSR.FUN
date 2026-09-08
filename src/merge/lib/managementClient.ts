@@ -20,6 +20,7 @@ import {
   buildAddDelegateInstruction,
   buildAddReserveAssetActiveInstruction,
   buildCloseReserveInstruction,
+  findManagerFeeRecipients,
   buildCollectFeesInstruction,
   buildCollectProtocolFeeInstruction,
   buildCollectManagerFeeShareInstruction,
@@ -481,13 +482,19 @@ export async function executeCloseReserve(
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
+  // manager_fee_recipients is Option on-chain: pass the None sentinel for a
+  // Reserve that never opted into multi-recipient routing (live 2026-09-08:
+  // the PDA path failed 3012 AccountNotInitialized on such a Reserve).
+  const reservePk = new PublicKey(reserve);
+  const recipientsExists = (await connection.getAccountInfo(findManagerFeeRecipients(reservePk, programId)[0])) !== null;
   const ix = await buildCloseReserveInstruction(
     program,
     programId,
-    new PublicKey(reserve),
+    reservePk,
     new PublicKey(reserveTokenMint),
     wallet.publicKey,
     assetMintsInOrder.map((m) => new PublicKey(m)),
+    recipientsExists,
   );
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
