@@ -240,11 +240,37 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
 
-  // --- Job B candidates: accrual overdue. ---
+  // --- Job B candidates: accrual overdue, judged by the accumulator itself. ---
+  // accrue_fees bills `TvlAccrual.period_supply_seconds` since
+  // `TvlAccrual.last_settled_ts` (programs/.../accrue_fees.rs). A Reserve with
+  // NO TvlAccrual yet has never started its clock -- its first call only
+  // creates the account with last_settled_ts = now (nothing billed, rent
+  // paid), so it is always "due" until initialized. After that, the legacy
+  // `reserve.fee_config.last_fee_accrual_ts` is NOT advanced by a no-op call,
+  // which is why the accumulator's own timestamp is the gate here: judging by
+  // the legacy field re-settled every such Reserve on every hourly run
+  // (observed on the first scheduled run, 2026-09-08 00:15 UTC).
   const nowS = Math.floor(Date.now() / 1000);
+  const readOnly = buildReadOnlyProgram(connection) as any;
+  const tvlAccrualAddrs = reserves.map((r) => findTvlAccrual(new PublicKey(r.reserve), PROGRAM_ID)[0]);
+  const tvlAccruals: ({ lastSettledTs: { toString(): string } } | null)[] = await readOnly.account.tvlAccrual
+    .fetchMultiple(tvlAccrualAddrs)
+    .catch(() => reserves.map(() => null));
   const accrueDue = reserves
-    .filter((r) => nowS - Number(r.lastFeeAccrualTs) >= ACCRUE_MIN_ELAPSED_S)
-    .map((r) => ({ reserveId: r.reserveId, reserve: r.reserve, reserveTokenMint: r.reserveTokenMint, elapsedDays: ((nowS - Number(r.lastFeeAccrualTs)) / 86400).toFixed(2) }));
+    .map((r, i) => {
+      const acc = tvlAccruals[i];
+      const lastSettled = acc ? Number(acc.lastSettledTs.toString()) : null;
+      const elapsedS = lastSettled === null ? null : nowS - lastSettled;
+      return {
+        reserveId: r.reserveId,
+        reserve: r.reserve,
+        reserveTokenMint: r.reserveTokenMint,
+        accumulatorInitialized: lastSettled !== null,
+        elapsedDays: elapsedS === null ? "clock not started" : (elapsedS / 86400).toFixed(2),
+        due: lastSettled === null || (elapsedS as number) >= ACCRUE_MIN_ELAPSED_S,
+      };
+    })
+    .filter((r) => r.due);
 
   const status = {
     keeperWallet: keeper ? keeper.publicKey.toBase58() : null,
