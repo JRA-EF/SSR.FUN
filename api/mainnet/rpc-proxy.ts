@@ -56,12 +56,18 @@ export const ALLOWED_METHODS = new Set([
 
 const MAX_BATCH_SIZE = 20;
 const MAX_BODY_BYTES = 50_000;
+// Raised 2026-09-08: a legitimate multi-asset Buy on a 10-asset Reserve
+// broadcasts ~10 swaps in parallel, re-broadcasts each every few seconds
+// until it lands, and polls every signature -- the previous 40/s per client
+// and 3/s GLOBAL sendTransaction ceilings produced a 429 storm on every such
+// purchase (web3.js retried through it, slowly). These are still far below
+// what the upstream Helius plan tolerates.
 const THROTTLE_WINDOW_MS = 1_000;
-const THROTTLE_MAX_PER_WINDOW = 40;
+const THROTTLE_MAX_PER_WINDOW = 150;
 
 const SEND_TRANSACTION_THROTTLE_KEY = "mainnet-rpc-proxy:sendTransaction:global";
 const SEND_TRANSACTION_THROTTLE_WINDOW_MS = 1_000;
-const SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW = 3;
+const SEND_TRANSACTION_THROTTLE_MAX_PER_WINDOW = 20;
 
 interface JsonRpcRequest {
   jsonrpc?: unknown;

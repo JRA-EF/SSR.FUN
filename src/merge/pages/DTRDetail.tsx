@@ -1148,6 +1148,11 @@ export function DTRDetail() {
           } else if (e.phase === "minting") {
             setMultiAssetBuyStep("Depositing into the Reserve and minting your tokens...");
             setBuyPhase("preparing");
+          } else if (e.phase === "confirming") {
+            // Signed and on the wire: the wallet prompt is over; we re-broadcast
+            // until it lands, so the button must say "confirming", not "approve".
+            setMultiAssetBuyStep(`Confirming ${e.what} on Solana Mainnet (${e.signature.slice(0, 8)}...)...`);
+            setBuyPhase("confirming");
           } else {
             setBuyPhase("awaiting-wallet");
           }

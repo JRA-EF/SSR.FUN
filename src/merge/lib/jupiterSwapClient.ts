@@ -22,7 +22,7 @@
 // raw failure honestly instead of guessing at a specific meaning.
 import { Connection, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
+import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast } from "./rpcResilience";
 
 /**
  * Pure -- turns a raw JSON-stringified on-chain TransactionError (e.g.
@@ -187,9 +187,9 @@ export async function submitSignedJupiterSwap(
   lastValidBlockHeight: number,
   onSubmitted?: (signature: string) => void,
 ): Promise<string> {
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-  onSubmitted?.(signature);
-  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+  // Re-broadcast until confirmed/failed/expired (see rpcResilience) -- a
+  // single send with no retries was being dropped under load.
+  const { signature, outcome } = await sendAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight, { onSubmitted });
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
   if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);

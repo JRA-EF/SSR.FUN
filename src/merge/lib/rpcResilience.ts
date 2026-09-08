@@ -242,6 +242,55 @@ export async function confirmSignatureBounded(
   return { status: "unknown" };
 }
 
+/**
+ * Submits an already-signed transaction and confirms it, RE-BROADCASTING the
+ * identical signed bytes every `rebroadcastEveryMs` until it is confirmed,
+ * failed, or its blockhash expires. Re-sending the same signature is
+ * idempotent on Solana (the runtime dedupes by signature; a node that already
+ * has it answers "already processed", which is ignored here) -- so this can
+ * never double-execute, and it is what every serious client does instead of
+ * `maxRetries: 0` + a single send. Live motivation (2026-09-08, 10-asset
+ * Reserve): the final mint was sent once, dropped under load, and simply
+ * "expired before it could be confirmed" after every swap had landed.
+ * `onSubmitted` fires the instant the signature exists so callers can persist
+ * it for reconciliation exactly as before.
+ */
+export async function sendAndConfirmWithRebroadcast(
+  connection: Connection,
+  rawTransaction: Uint8Array,
+  lastValidBlockHeight: number,
+  opts: { onSubmitted?: (signature: string) => void; rebroadcastEveryMs?: number; maxAttempts?: number; intervalMs?: number } = {},
+): Promise<{ signature: string; outcome: ConfirmationOutcome }> {
+  const rebroadcastEveryMs = opts.rebroadcastEveryMs ?? 3000;
+  const intervalMs = opts.intervalMs ?? 1500;
+  const maxAttempts = opts.maxAttempts ?? 40;
+  const send = () => connection.sendRawTransaction(rawTransaction, { skipPreflight: true, maxRetries: 0 });
+  const signature = await withRateLimitRetry(send, 4, 500);
+  opts.onSubmitted?.(signature);
+  let lastBroadcastAt = Date.now();
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const { value } = await withRateLimitRetry(() => connection.getSignatureStatuses([signature]), 3, 500);
+      const status = value[0];
+      if (status) {
+        if (status.err) return { signature, outcome: { status: "failed", error: JSON.stringify(status.err) } };
+        if (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized") return { signature, outcome: { status: "confirmed" } };
+      }
+      const blockHeight = await withRateLimitRetry(() => connection.getBlockHeight("confirmed"), 3, 500).catch(() => null);
+      if (blockHeight !== null && blockHeight > lastValidBlockHeight) return { signature, outcome: { status: "expired" } };
+      if (!status && Date.now() - lastBroadcastAt >= rebroadcastEveryMs) {
+        // Not seen by the cluster yet -- push the same bytes again.
+        lastBroadcastAt = Date.now();
+        await send().catch(() => undefined);
+      }
+    } catch {
+      // Inconclusive (transport / rate limit) -- keep going within the bound.
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return { signature, outcome: { status: "unknown" } };
+}
+
 // --- Duplicate-submission gating (pure, unit-testable) ----------------------
 
 export type TxPhase = "idle" | "preparing" | "awaiting-wallet" | "submitted" | "confirming" | "confirmed" | "failed" | "expired" | "unresolved";

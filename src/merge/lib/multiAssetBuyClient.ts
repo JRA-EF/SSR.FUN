@@ -44,7 +44,12 @@
 //  - Never custodies funds: every transaction is signed by the buyer's own
 //    wallet; acquired assets live in the buyer's own ATAs until the mint
 //    deposits them.
-import { Connection, PublicKey, Transaction, VersionedTransaction, type TransactionInstruction } from "@solana/web3.js";
+import { ComputeBudgetProgram, Connection, PublicKey, Transaction, VersionedTransaction, type TransactionInstruction } from "@solana/web3.js";
+import { SINGLE_TX_MICRO_LAMPORTS_PER_CU as MINT_TX_MICRO_LAMPORTS_PER_CU_SOURCE } from "./singleTxBuy";
+
+/** Compute-unit ceiling for the standalone (fallback) mint transaction: a 12-leg mint plus ATA creations stays well under this, and the priority fee scales with it (~0.06 SOL-cent at 100k microlamports/CU). */
+const MINT_TX_COMPUTE_UNIT_LIMIT = 600_000;
+const SINGLE_TX_MICRO_LAMPORTS_PER_CU = MINT_TX_MICRO_LAMPORTS_PER_CU_SOURCE;
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
@@ -92,7 +97,7 @@ import {
   type BuyStateReport,
   type TokenBalanceEntry,
 } from "./multiAssetBuyPlan";
-import { AmbiguousConfirmationError, confirmSignatureBounded } from "./rpcResilience";
+import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast } from "./rpcResilience";
 import { withRateLimitRetry } from "./rpcResilience";
 import { buildReserveAltAddresses, createAndRegisterReserveAlt, fetchReserveAltAddress } from "./reserveAltClient";
 
@@ -120,6 +125,8 @@ export type MultiAssetBuyProgressEvent =
   | { phase: "enabling-one-approval-trading" }
   | { phase: "swapping"; mint: string; index: number; total: number }
   | { phase: "minting" }
+  /** A signed transaction is on the wire and being confirmed (re-broadcast until it lands) -- the wallet prompt is over. */
+  | { phase: "confirming"; what: string; signature: string }
   | { phase: "awaiting-wallet" };
 
 export interface MultiAssetBuyResult {
@@ -551,11 +558,14 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       params.onProgress?.({ phase: "awaiting-wallet" });
       if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
       const signed = await params.wallet.signTransaction(tx);
-      const signature = await params.connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-      pending.lastMintSignature = signature;
-      savePendingBuy(pending);
-      log("single-tx submitted", { signature });
-      const outcome = await confirmSignatureBounded(params.connection, signature, lastValidBlockHeight);
+      const { signature, outcome } = await sendAndConfirmWithRebroadcast(params.connection, signed.serialize(), lastValidBlockHeight, {
+        onSubmitted: (sig) => {
+          pending!.lastMintSignature = sig;
+          savePendingBuy(pending!);
+          log("single-tx submitted", { signature: sig });
+          params.onProgress?.({ phase: "confirming", what: "your purchase transaction", signature: sig });
+        },
+      });
       if (outcome.status === "failed") {
         throw new Error(
           `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} The purchase was ONE atomic transaction, so nothing was swapped, deposited, or minted -- only the network fee was spent. Signature: ${signature}.`,
@@ -830,7 +840,15 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     const persistMintSig = (sig: string) => { pending!.lastMintSignature = sig; savePendingBuy(pending!); };
     let reserveAlt = await fetchReserveAltAddress(reserveBase58);
     let lookupTables = reserveAlt ? await fetchLookupTables(params.connection, [reserveAlt]) : [];
-    const compileMint = (ixs: TransactionInstruction[], blockhash: string) => compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
+    // Priority fee on the mint (same per-CU price as the single-transaction
+    // path; a bounded unit limit so the fee stays small) -- an unprioritized
+    // mint was being dropped under load and simply expired.
+    const mintBudgetIxs = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: MINT_TX_COMPUTE_UNIT_LIMIT }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }),
+    ];
+    const compileMint = (ixs: TransactionInstruction[], blockhash: string) =>
+      compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: [...mintBudgetIxs, ...ixs], lookupTables });
     // Prefer ONE transaction (ATA creations + mint); split the ATA creations
     // into their own leading legacy transaction(s) only when they don't fit.
     let mintIxs = instructions;
@@ -881,10 +899,15 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       log("mint transaction composed (v0)", { instructions: mintIxs.length, bytes: tx.serialize().length, lookupTables: lookupTables.length });
       if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
       const signed = await params.wallet.signTransaction(tx);
-      signature = await params.connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-      persistMintSig(signature);
-      log("transaction submitted", { signature });
-      const outcome = await confirmSignatureBounded(params.connection, signature, lastValidBlockHeight);
+      const sent = await sendAndConfirmWithRebroadcast(params.connection, signed.serialize(), lastValidBlockHeight, {
+        onSubmitted: (sig) => {
+          persistMintSig(sig);
+          log("transaction submitted", { signature: sig });
+          params.onProgress?.({ phase: "confirming", what: "the mint that delivers your Reserve Tokens", signature: sig });
+        },
+      });
+      signature = sent.signature;
+      const outcome = sent.outcome;
       if (outcome.status === "failed") throw new Error(`${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
       if (outcome.status === "expired") throw new Error(`The mint expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
       if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
@@ -931,10 +954,12 @@ async function signSubmitAndConfirmWithPersistedSig(
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   const signed = await wallet.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
-  onSubmitted?.(signature);
-  log("transaction submitted", { signature });
-  const outcome = await confirmSignatureBounded(connection, signature, lastValidBlockHeight);
+  const { signature, outcome } = await sendAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight, {
+    onSubmitted: (sig) => {
+      onSubmitted?.(sig);
+      log("transaction submitted", { signature: sig });
+    },
+  });
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(`${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
   if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);

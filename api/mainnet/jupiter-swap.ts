@@ -79,7 +79,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // already-verified assets on Resume, so 20 comfortably covers real use
   // while still blunting a hammering client. Retry-After tells the paced
   // client exactly how long to back off instead of guessing.
-  if (!checkRateWindow(`mainnet-jupiter-swap:${ip}`, 60_000, 20)) {
+  // 60/min (was 20): a 10-asset Buy needs ~20 quote/instruction calls in its
+  // first seconds (single-tx attempt + fallback re-quotes + auto-retries).
+  if (!checkRateWindow(`mainnet-jupiter-swap:${ip}`, 60_000, 60)) {
     res.setHeader("Retry-After", "15");
     res.status(429).json({ error: "Too many swap requests from this client -- wait a moment and try again." });
     return;
