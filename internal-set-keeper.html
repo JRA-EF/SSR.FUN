@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SSR Protocol -- Set Fee Settlement Keeper</title>
+  <!--
+    One-click Protocol-Admin action: signs `set_fee_settlement_keeper` so the
+    Mainnet fee-settlement keeper (api/mainnet/fee-settlement-cron.ts) is
+    allowed to convert crystallized fee shares into USDC and pay the Treasury
+    + Reserve managers. Only a Protocol Admin (ProtocolConfig.authority or
+    admin_2 -- Creator / Boss) can sign this; the Squads upgrade authority
+    cannot. The page builds the exact instruction bytes below (no SDK, no
+    build step), asks the connected Phantom/Solflare wallet to sign + send,
+    then reads SettlementKeeperConfig back from chain to prove it took.
+    Behind the site gate like every /internal/* page.
+  -->
+  <script src="https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #0b0d12; color: #e6e8ee; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+    main { max-width: 760px; margin: 40px auto; padding: 0 20px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: #9aa3b5; margin: 0 0 24px; }
+    .card { background: #12151d; border: 1px solid #232838; border-radius: 12px; padding: 18px 20px; margin: 0 0 16px; }
+    .row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; border-bottom: 1px solid #1c2130; }
+    .row:last-child { border-bottom: 0; }
+    .k { color: #9aa3b5; }
+    .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; text-align: right; }
+    button { background: #ffd54a; color: #111; border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 700; font-size: 15px; cursor: pointer; }
+    button[disabled] { opacity: .45; cursor: not-allowed; }
+    .ok { color: #6fe3a0; } .bad { color: #ff7b7b; } .warn { color: #ffd54a; }
+    pre { background: #0e1118; border: 1px solid #232838; border-radius: 10px; padding: 12px; overflow-x: auto; font-size: 12.5px; white-space: pre-wrap; }
+    a { color: #8ab4ff; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Set Fee Settlement Keeper</h1>
+  <p class="sub">Protocol Admin action on Solana <b>Mainnet</b>. One signature, one transaction (~0.00001 SOL + 0.0009 SOL rent for the config account the first time).</p>
+
+  <div class="card">
+    <div class="row"><span class="k">Program</span><span class="v" id="program"></span></div>
+    <div class="row"><span class="k">Instruction</span><span class="v">set_fee_settlement_keeper</span></div>
+    <div class="row"><span class="k">New keeper (the cron's wallet)</span><span class="v" id="keeper"></span></div>
+    <div class="row"><span class="k">Keeper SOL balance</span><span class="v" id="keeperBal">…</span></div>
+    <div class="row"><span class="k">Current on-chain keeper</span><span class="v" id="current">…</span></div>
+    <div class="row"><span class="k">Who can sign</span><span class="v" id="admins"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="row"><span class="k">Connected wallet</span><span class="v" id="wallet">not connected</span></div>
+    <div class="row"><span class="k">Is Protocol Admin</span><span class="v" id="isAdmin">–</span></div>
+    <div style="display:flex; gap:12px; margin-top:14px; flex-wrap:wrap">
+      <button id="connect">Connect wallet</button>
+      <button id="sign" disabled>Sign &amp; send set_fee_settlement_keeper</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="status">Ready.</div>
+    <pre id="log" hidden></pre>
+  </div>
+</main>
+
+<script>
+(async () => {
+  const W = window.solanaWeb3;
+  const PROGRAM_ID = new W.PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
+  const NEW_KEEPER = new W.PublicKey("AuaJRdbRZhhfdqpyjN8uNYSnggRwLY8kzHVjngkGPhsF");
+  const ADMINS = ["CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8", "PSpQGPvw7tZedKJvN21dJkh3vdDQeXkwA5n9DKBRZw5"];
+  // Anchor discriminator for `set_fee_settlement_keeper` (from packages/sdk/idl/ssr_protocol.json).
+  const DISCRIMINATOR = [64, 223, 51, 192, 42, 136, 156, 216];
+  const [PROTOCOL_CONFIG] = W.PublicKey.findProgramAddressSync([new TextEncoder().encode("protocol_config")], PROGRAM_ID);
+  const [KEEPER_CONFIG] = W.PublicKey.findProgramAddressSync([new TextEncoder().encode("settlement_keeper_config")], PROGRAM_ID);
+  const RPCS = ["https://api.mainnet-beta.solana.com", "https://solana-rpc.publicnode.com"];
+
+  const $ = (id) => document.getElementById(id);
+  const log = (m) => { const el = $("log"); el.hidden = false; el.textContent += m + "\n"; };
+  const setStatus = (m, cls) => { const el = $("status"); el.textContent = m; el.className = cls || ""; };
+
+  $("program").textContent = PROGRAM_ID.toBase58();
+  $("keeper").textContent = NEW_KEEPER.toBase58();
+  $("admins").textContent = ADMINS.join("  or  ");
+
+  async function rpc(fn) {
+    let last;
+    for (const url of RPCS) { try { return await fn(new W.Connection(url, "confirmed")); } catch (e) { last = e; } }
+    throw last;
+  }
+  async function readKeeper() {
+    const info = await rpc((c) => c.getAccountInfo(KEEPER_CONFIG));
+    if (!info) return null;
+    return new W.PublicKey(info.data.slice(9, 41)).toBase58(); // 8 disc + 1 schema_version, then keeper
+  }
+  async function refresh() {
+    try {
+      const cur = await readKeeper();
+      $("current").textContent = cur ?? "not set";
+      $("current").className = "v " + (cur === NEW_KEEPER.toBase58() ? "ok" : cur ? "warn" : "bad");
+      const bal = await rpc((c) => c.getBalance(NEW_KEEPER));
+      $("keeperBal").textContent = (bal / 1e9).toFixed(4) + " SOL";
+      return cur;
+    } catch (e) { $("current").textContent = "read failed: " + e.message; return undefined; }
+  }
+  await refresh();
+
+  const provider = window.phantom?.solana ?? window.solana;
+  let pubkey = null;
+  $("connect").onclick = async () => {
+    if (!provider) { setStatus("No Solana wallet extension found (Phantom/Solflare). Open this page in a browser with the admin wallet installed.", "bad"); return; }
+    try {
+      const r = await provider.connect();
+      pubkey = new W.PublicKey(r.publicKey.toString());
+      $("wallet").textContent = pubkey.toBase58();
+      const admin = ADMINS.includes(pubkey.toBase58());
+      $("isAdmin").textContent = admin ? "yes" : "NO -- this wallet cannot sign this (needs Creator or Boss admin wallet)";
+      $("isAdmin").className = "v " + (admin ? "ok" : "bad");
+      $("sign").disabled = !admin;
+      setStatus(admin ? "Admin wallet connected. Click Sign & send." : "Switch to the Protocol Admin wallet in your extension and reconnect.", admin ? "ok" : "bad");
+    } catch (e) { setStatus("Connect failed: " + e.message, "bad"); }
+  };
+
+  $("sign").onclick = async () => {
+    try {
+      $("sign").disabled = true;
+      setStatus("Building transaction…");
+      const data = new Uint8Array(8 + 32);
+      data.set(DISCRIMINATOR, 0);
+      data.set(NEW_KEEPER.toBytes(), 8);
+      const ix = new W.TransactionInstruction({
+        programId: PROGRAM_ID,
+        keys: [
+          { pubkey: PROTOCOL_CONFIG, isSigner: false, isWritable: false },
+          { pubkey: KEEPER_CONFIG, isSigner: false, isWritable: true },
+          { pubkey: pubkey, isSigner: true, isWritable: true },
+          { pubkey: W.SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      const { blockhash, lastValidBlockHeight } = await rpc((c) => c.getLatestBlockhash("confirmed"));
+      const tx = new W.Transaction({ feePayer: pubkey, recentBlockhash: blockhash }).add(ix);
+      // Read-only simulation first so a wrong wallet / wrong account fails BEFORE any signature.
+      const sim = await rpc((c) => c.simulateTransaction(tx));
+      if (sim.value.err) {
+        log("Simulation logs:\n" + (sim.value.logs || []).join("\n"));
+        throw new Error("Simulation failed: " + JSON.stringify(sim.value.err) + " -- nothing was signed.");
+      }
+      setStatus("Approve the transaction in your wallet…", "warn");
+      const { signature } = await provider.signAndSendTransaction(tx);
+      log("Submitted: " + signature);
+      setStatus("Submitted " + signature + " -- waiting for confirmation…", "warn");
+      await rpc((c) => c.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed"));
+      const cur = await refresh();
+      if (cur === NEW_KEEPER.toBase58()) {
+        setStatus("DONE. On-chain SettlementKeeperConfig.keeper = " + cur + ". The fee-settlement cron will start settling on its next hourly run.", "ok");
+        log("Explorer: https://solscan.io/tx/" + signature);
+      } else {
+        setStatus("Confirmed, but the on-chain keeper reads " + cur + " -- check the transaction on Solscan.", "bad");
+      }
+    } catch (e) {
+      setStatus("Failed: " + (e.message || e), "bad");
+      $("sign").disabled = false;
+    }
+  };
+})();
+</script>
+</body>
+</html>
