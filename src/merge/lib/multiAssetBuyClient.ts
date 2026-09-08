@@ -150,7 +150,7 @@ export function clearPendingBuy(wallet: string, reserve: string): void {
 
 // --- The server's build contract (api/mainnet/build-buy.ts) -----------------
 
-export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "single";
+export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single";
 export interface BuiltTransaction {
   kind: BuiltTxKind;
   mint?: string;

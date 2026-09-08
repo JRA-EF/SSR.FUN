@@ -1400,7 +1400,13 @@ export function DTRDetail() {
           redemptionFeeBps: BigInt(live.redemptionFeeBps),
           reserveTokensToRedeem,
           onProgress: (e) => {
-            if (e.phase === "single-transaction") {
+            if (e.phase === "building") {
+              setMultiAssetSellStep("Building every transaction of your sale (one request)...");
+              setSellPhase("preparing");
+            } else if (e.phase === "confirming") {
+              setMultiAssetSellStep(`Confirming ${e.what} on Solana Mainnet (${e.signature.slice(0, 8)}...)...`);
+              setSellPhase("confirming");
+            } else if (e.phase === "single-transaction") {
               setMultiAssetSellStep("One transaction: your Reserve Tokens are redeemed and every asset sold into USDC -- a single wallet approval.");
               setSellPhase("preparing");
             } else if (e.phase === "redeeming") {
