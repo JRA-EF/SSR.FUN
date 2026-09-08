@@ -34,6 +34,8 @@ export default defineConfig({
         // Protocol-Admin one-click page: signs set_fee_settlement_keeper (plain
         // HTML + web3.js from CDN, no app bundle) -- see the file's header.
         internalSetKeeper: path.resolve(import.meta.dirname, './internal-set-keeper.html'),
+        // Public feedback form (BotID-protected submit) -- see src/feedback/main.ts.
+        feedback: path.resolve(import.meta.dirname, './feedback.html'),
       },
     },
   },

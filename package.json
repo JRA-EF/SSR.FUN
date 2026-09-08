@@ -35,6 +35,7 @@
     "@solana/web3.js": "^1.98.4",
     "@ssr/sdk": "*",
     "@vercel/functions": "^3.7.6",
+    "botid": "^1.5.11",
     "buffer": "^6.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

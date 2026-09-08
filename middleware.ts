@@ -81,7 +81,14 @@ const PUBLIC_PATHS = new Set([
   '/apple-touch-seal.png',
   '/favicon.svg',
   '/robots.txt',
+  // Public feedback form (BotID + rate-limited submit, see api/feedback/submit.ts).
+  '/feedback',
+  '/feedback.html',
+  '/api/feedback/submit',
 ])
+
+// The opaque prefix Vercel BotID uses for its proxied script/telemetry (see vercel.json).
+const BOTID_PROXY_PREFIX = '/149e9513-01fa-4fb0-aad4-566afd725d1b/'
 
 function comingSoonResponse(request: Request): Response {
   const target = new URL(COMING_SOON_PATH, request.url)
@@ -298,6 +305,10 @@ export default async function middleware(request: Request): Promise<Response> {
   // Cron trigger requests, the site-login endpoint itself, and the Coming
   // Soon page's own files are never gated -- see the header comment above.
   if (CRON_PATHS.has(url.pathname) || url.pathname === SITE_LOGIN_PATH || PUBLIC_PATHS.has(url.pathname)) return next()
+  // Vercel BotID's proxied challenge/telemetry paths (vercel.json rewrites to
+  // api.vercel.com/bot-protection) -- fetched by the feedback page's client
+  // script from any visitor, never carries a session cookie.
+  if (url.pathname.startsWith(BOTID_PROXY_PREFIX)) return next()
 
   const cookieHeader = request.headers.get('cookie')
 
