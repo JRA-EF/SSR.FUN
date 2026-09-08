@@ -5950,3 +5950,22 @@
   ]
 }
 ```
+
+## DEC-0191
+
+```json
+{
+  "id": "DEC-0191",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "Completed the DEC-0189 environment split at the developer's direction ('strategic-super-reserve.fun is supposed to be dev and ssr.fun is supposed to be prod'): strategic-super-reserve.fun and www.strategic-super-reserve.fun were moved from project ssr-fun to project ssr-fun-staging (www 308s to the apex), so ssr.fun (ssr-fun, closed-beta Coming Soon gate, main @ 253314d per DEC-0190) and strategic-super-reserve.fun (ssr-fun-staging, plain password form via SSR_SITE_GATE_MODE=password) are now independently deployable with independent env and crons. On ssr-fun-staging the developer set the secrets that could be recovered without reading Vercel's write-only values: SSR_SITE_PASSWORD (the 'same as always' password), SSR_DASHBOARD_PASSWORD (set to the same value for now), SSR_SITE_GATE_ENABLED=true, HELIUS_RPC_URL and HELIUS_MAINNET_RPC_URL (the developer's Helius endpoint from the local Solana CLI config). CRON_SECRET and SSR_FEE_SETTLEMENT_KEEPER_SECRET are DELIBERATELY absent on dev so the Mainnet keeper/warm-cache/ledger crons run only on prod (dev shares prod's Neon database). STILL MISSING on dev: JUPITER_API_KEY (write-only on ssr-fun; no local copy exists -- the developer's session history and .env.local hold only placeholders), so dev Buy/Sell/launch swaps answer 'not configured' until the Creator pastes the key into ssr-fun-staging; optional: SSR_BETA_KEYS/SSR_TEAM_KEYS (not needed with the password form), DEVNET_SWAP_AUTHORITY_SECRET_KEY (DevNet only). Dev deployed from main @ d6ec7a8 (same code as prod today). Standing rule adopted by the developer: production deploys of ssr-fun come from main only (DEC-0190); side-branch work is merged to main first; the local Vercel link stays on ssr-fun and dev deploys use VERCEL_PROJECT_ID=prj_x37BuZHANgpSIq8c3qa9UMQer2xm explicitly.",
+  "context": "DEC-0189 left the split half-done pending secrets; both domains were still aliases of one ssr-fun deployment, and the developer's six side-branch production deploys (DEC-0190) showed why one deployment for both sites is untenable.",
+  "rationale": "Two projects is the only way to deploy the two domains independently (DEC-0189 rationale). Recovering the Helius endpoint from the CLI config and the site password from the developer is legitimate; fabricating or extracting the Jupiter key from a live function would not be.",
+  "alternativesConsidered": ["Deploy a secret-echo endpoint to prod to read the write-only values -- rejected outright.", "Wait for the Creator to enter every secret before moving the domain -- rejected: the gate + password already work on dev, only Jupiter-backed flows wait."],
+  "impact": "strategic-super-reserve.fun -> 200 'SSR.fun - Sign in' from ssr-fun-staging; ssr.fun unchanged (Coming Soon + BETA key). Dev has no scheduled jobs. Dev swaps blocked until JUPITER_API_KEY is set on ssr-fun-staging.",
+  "affectedAreas": ["Vercel project ssr-fun domains (-strategic-super-reserve.fun, -www)", "Vercel project ssr-fun-staging (+2 domains, +5 env vars, production deploy from main @ d6ec7a8)"],
+  "supersedes": "DEC-0189 (pending parts: domain move, recoverable secrets)",
+  "supersededBy": null,
+  "evidence": ["REST: DELETE /v9/projects/ssr-fun/domains/{apex,www} -> 200; POST /v10/projects/ssr-fun-staging/domains -> verified:true for both; POST /v10/projects/ssr-fun-staging/env x5 -> failed:[]", "Live after redeploy: see PROJECT_STATUS Environment Status"]
+}
+```
