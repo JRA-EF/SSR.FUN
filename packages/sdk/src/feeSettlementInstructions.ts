@@ -161,18 +161,22 @@ export async function buildDistributeFeeUsdcInstruction(params: BuildDistributeF
   const [settlementAuthority] = findSettlementAuthority(reserve, programId);
   const [managerFeeRecipients] = findManagerFeeRecipients(reserve, programId);
   const usdcStagingAta = getAssociatedTokenAddressSync(usdcMint, settlementAuthority, true);
-  const protocolUsdcDestination = getAssociatedTokenAddressSync(usdcMint, protocolFeeDestination);
+  // allowOwnerOffCurve: the Protocol Treasury is the Squads vault, an OFF-CURVE
+  // PDA (DEC-0112). Without the flag spl-token throws TokenOwnerOffCurveError
+  // (with an empty message) -- live 2026-09-08 this silently blocked every
+  // distribute_fee_usdc in the keeper. Recipients may be PDAs too.
+  const protocolUsdcDestination = getAssociatedTokenAddressSync(usdcMint, protocolFeeDestination, true);
 
   const usesMultiRecipient = managerRecipients.length > 0;
   const remainingAccounts = usesMultiRecipient
     ? managerRecipients.map((r) => ({
-        pubkey: getAssociatedTokenAddressSync(usdcMint, new PublicKey(r.wallet)),
+        pubkey: getAssociatedTokenAddressSync(usdcMint, new PublicKey(r.wallet), true),
         isWritable: true,
         isSigner: false,
       }))
     : [
         {
-          pubkey: getAssociatedTokenAddressSync(usdcMint, legacyManagerDestination ?? (() => { throw new Error("buildDistributeFeeUsdcInstruction: legacyManagerDestination is required when managerRecipients is empty."); })()),
+          pubkey: getAssociatedTokenAddressSync(usdcMint, legacyManagerDestination ?? (() => { throw new Error("buildDistributeFeeUsdcInstruction: legacyManagerDestination is required when managerRecipients is empty."); })(), true),
           isWritable: true,
           isSigner: false,
         },
