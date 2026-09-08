@@ -680,6 +680,10 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
         Promise.allSettled(
           batch.map(async (leg, s) => {
             params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: batch.length });
+            // Stagger broadcasts slightly: N simultaneous sends tripped the
+            // rpc-proxy's per-client rate limit (429 storm, live 2026-09-08);
+            // web3.js retried them through, but this avoids the storm.
+            if (s > 0) await new Promise((r) => setTimeout(r, 150 * s));
             await submitSignedJupiterSwap(params.connection, signedTxs[s], leg.quote.lastValidBlockHeight, (sig) => advanceLeg(leg.mint, "submitted", { lastSignature: sig }));
             await reconcileSwappedLeg(leg.mint, leg.legIndex, leg.preSwapRaw);
           }),
@@ -812,15 +816,78 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       perLegCapRaw: finalRequired.map((r) => r.toString()),
     });
 
-    // Same real-size-based batching createReserveClient.ts uses -- ATA
-    // creations may split into their own leading transaction(s); the mint
-    // instruction itself stays one atomic call.
-    const batches = packInstructionsBySize(owner, instructions);
+    // The mint goes out as a VERSIONED (v0) transaction compressed by the
+    // Reserve's trading lookup table. A legacy transaction lists every account
+    // key in full (32 bytes each), so a many-asset Reserve's mint -- 63 keys for
+    // a 10-asset Reserve, seen live 2026-09-08 -- can NEVER fit the 1232-byte
+    // wire limit that way ("Transaction too large: 2004 > 1232", after every
+    // swap had already landed). With the table, the protocol's fixed accounts
+    // and each asset's mint/reserve-asset/vault become 1-byte indexes. If the
+    // Reserve has no table yet and one would make the mint fit, it is created
+    // now (DEC-0171's auto-enable, one extra approval, once per Reserve).
+    const mintIx = instructions[instructions.length - 1];
+    const ataIxs = instructions.slice(0, -1);
+    const persistMintSig = (sig: string) => { pending!.lastMintSignature = sig; savePendingBuy(pending!); };
+    let reserveAlt = await fetchReserveAltAddress(reserveBase58);
+    let lookupTables = reserveAlt ? await fetchLookupTables(params.connection, [reserveAlt]) : [];
+    const compileMint = (ixs: TransactionInstruction[], blockhash: string) => compileSingleBuyTransaction({ payer: owner, recentBlockhash: blockhash, instructions: ixs, lookupTables });
+    // Prefer ONE transaction (ATA creations + mint); split the ATA creations
+    // into their own leading legacy transaction(s) only when they don't fit.
+    let mintIxs = instructions;
     let signature = "";
-    for (const batch of batches) {
-      params.onProgress?.({ phase: "awaiting-wallet" });
-      const isMintBatch = batch.includes(instructions[instructions.length - 1]);
-      signature = await signSubmitAndConfirmWithPersistedSig(params.connection, params.wallet, batch, isMintBatch ? (sig) => { pending!.lastMintSignature = sig; savePendingBuy(pending!); } : undefined);
+    const fits = (ixs: TransactionInstruction[]) => { try { compileMint(ixs, "11111111111111111111111111111111"); return true; } catch { return false; } };
+    if (!fits(mintIxs)) {
+      if (ataIxs.length > 0 && fits([mintIx])) {
+        mintIxs = [mintIx];
+      } else if (!reserveAlt) {
+        const altParams = {
+          ssrProgramId: program.programId as PublicKey,
+          reserve: params.reserve,
+          reserveTokenMint: params.reserveTokenMint,
+          mintAuthority: params.mintAuthority,
+          vaultAuthority: findVaultAuthority(params.reserve, program.programId)[0],
+          protocolFeeDestination: params.protocolFeeDestination,
+          assets: params.assets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
+        };
+        const altAddresses = buildReserveAltAddresses(altParams);
+        const mintOnlyFits = wouldFitWithReserveAlt({ payer: owner, instructions: [mintIx], reserveAltAddresses: altAddresses, swapLookupTables: [] });
+        if (!mintOnlyFits) {
+          throw new Error(
+            `This Reserve's mint references ${mintIx.keys.length} accounts and cannot fit one transaction even with a trading lookup table -- nothing further was submitted; the assets already acquired stay in your wallet and are counted on retry.`,
+          );
+        }
+        log("no trading table registered and the mint can't fit without one -- enabling one-approval trading (one-time table), then submitting the mint");
+        currentStage = "enabling one-approval trading for this Reserve (a one-time setup, its own wallet approval)";
+        params.onProgress?.({ phase: "enabling-one-approval-trading" });
+        reserveAlt = await createAndRegisterReserveAlt(params.connection, params.wallet, altParams);
+        lookupTables = await fetchLookupTables(params.connection, [reserveAlt]);
+        mintIxs = fits(instructions) ? instructions : [mintIx];
+      } else {
+        throw new Error(`This Reserve's mint (${mintIx.keys.length} accounts) does not fit one transaction even with its trading lookup table -- nothing further was submitted; retry counts the assets already acquired.`);
+      }
+    }
+    if (mintIxs.length < instructions.length) {
+      // ATA creations first, legacy, real-size batched (createReserveClient's packer).
+      for (const batch of packInstructionsBySize(owner, ataIxs)) {
+        params.onProgress?.({ phase: "awaiting-wallet" });
+        await signSubmitAndConfirmWithPersistedSig(params.connection, params.wallet, batch);
+      }
+    }
+    currentStage = "the final mint that deposits the acquired assets and delivers your Reserve Tokens";
+    params.onProgress?.({ phase: "awaiting-wallet" });
+    {
+      const { blockhash, lastValidBlockHeight } = await params.connection.getLatestBlockhash("confirmed");
+      const tx = compileMint(mintIxs, blockhash);
+      log("mint transaction composed (v0)", { instructions: mintIxs.length, bytes: tx.serialize().length, lookupTables: lookupTables.length });
+      if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+      const signed = await params.wallet.signTransaction(tx);
+      signature = await params.connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 0 });
+      persistMintSig(signature);
+      log("transaction submitted", { signature });
+      const outcome = await confirmSignatureBounded(params.connection, signature, lastValidBlockHeight);
+      if (outcome.status === "failed") throw new Error(`${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
+      if (outcome.status === "expired") throw new Error(`The mint expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+      if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
     }
 
     // DELIVERY VERIFICATION: success is only ever reported after the
