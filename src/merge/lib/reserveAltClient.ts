@@ -194,17 +194,22 @@ export async function createAndRegisterReserveAlt(
   }
 
   // Register (the server re-verifies the table on-chain before storing).
+  await registerReserveAlt(params.reserve.toBase58(), tableAddress.toBase58());
+  return tableAddress.toBase58();
+}
+
+/** Registers an already-created, already-active table server-side (the server re-verifies it on-chain before storing). Also used by the server-built Buy after it lands the table transactions the server prepended. */
+export async function registerReserveAlt(reserve: string, tableAddress: string): Promise<void> {
   const res = await fetch("/api/mainnet/reserve-alt", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ reserve: params.reserve.toBase58(), alt: tableAddress.toBase58() }),
+    body: JSON.stringify({ reserve, alt: tableAddress }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     throw new Error(
-      `The lookup table was created on-chain (${tableAddress.toBase58()}) but could not be registered yet: ${(body && body.error) || `HTTP ${res.status}`}. It can be registered again later without recreating it.`,
+      `The lookup table was created on-chain (${tableAddress}) but could not be registered yet: ${(body && body.error) || `HTTP ${res.status}`}. It can be registered again later without recreating it.`,
     );
   }
-  altCache.set(params.reserve.toBase58(), { alt: tableAddress.toBase58(), at: Date.now() });
-  return tableAddress.toBase58();
+  altCache.set(reserve, { alt: tableAddress, at: Date.now() });
 }

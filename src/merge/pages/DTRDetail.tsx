@@ -1136,7 +1136,10 @@ export function DTRDetail() {
         effectiveMintFeeTotalBps: BigInt(dtr.onChain.effectiveMintFeeTotalBps ?? dtr.onChain.mintFeeBps ?? 0),
         assetPricesUsd: dtr.onChain.assetPricesUsd ?? {},
         onProgress: (e) => {
-          if (e.phase === "single-transaction") {
+          if (e.phase === "building") {
+            setMultiAssetBuyStep("Building every transaction of your purchase (one request)...");
+            setBuyPhase("preparing");
+          } else if (e.phase === "single-transaction") {
             setMultiAssetBuyStep("One transaction: your USDC is swapped, deposited, and your Reserve Tokens minted -- a single wallet approval.");
             setBuyPhase("preparing");
           } else if (e.phase === "enabling-one-approval-trading") {
