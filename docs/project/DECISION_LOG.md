@@ -5675,3 +5675,58 @@
   ]
 }
 ```
+
+## DEC-0185
+
+```json
+{
+  "id": "DEC-0185",
+  "date": "2026-09-07",
+  "status": "confirmed-implemented-deployed",
+  "decision": "Shipped the client-side half of the 2026-09-07 tester feedback (relayed by the developer from a tester's Telegram report) plus the warm-cache symbol fix, in three production deploys the same day: (1) warm-cache snapshot now bakes asset symbols (mintMeta from ledger_asset_catalogue) so Reserve cards paint real symbols on the first frame instead of an 'Asset2/Asset3' placeholder; (2) a Jupiter swap that DEFINITIVELY did not land (executed-and-failed on-chain, or expired unincluded) is re-quoted and re-signed ONCE automatically in both the one-approval batch and sequential multi-asset Buy paths (typed JupiterSwapNotLandedError + pure partitionSwapOutcomes policy; ambiguous confirmations and every other error stay fatal, never retried); the batch submit is allSettled so a sibling's failure never leaves an in-flight leg unreconciled; (3) the multi-asset Sell FALLBACK (Reserves too large for one transaction) now signs [redeem, swap 1..N] in ONE signAllTransactions prompt -- redeem submitted and confirmed first, swaps broadcast in parallel with the same auto-retry, a failed redeem discarding the signed swaps unbroadcast; (4) Create Reserve's Wallet Cost Summary replaced the false 'No fee is charged at creation -- $0.00 now' row with an honest 'Mint Fee on the initial seed (x.xx%)' row (tokens withheld + USD, stating it is taken in Reserve Tokens); (5) the Rebalance tab prices vault balances with the live Mainnet prices already on the DTR (onChain.assetPricesUsd) instead of the DevNet fixture table (which priced every non-fixture Mainnet asset at $0), and gained a full 'Current Composition' block (stacked bar of real holdings by value + per-asset held-now share next to on-chain target; 'price unavailable' rather than a fake 0%) beside the sliders.",
+  "context": "Tester report (2026-09-07): create-reserve summary omitted the mint fee though it is charged; a multi-asset Buy on Reserve GOLF failed with 'error code 14'; redeem asked one signature per asset; mint fees not reaching manager claims; rebalance page did not show the current composition beside the sliders. On-chain forensics on the failed Buy (sig 48hDBgg3...vvi5b): the route's DEX hop QuaNt...bBDv failed with custom error 0xe after ~4k CU -- an early pool precondition on a low-liquidity pump token, not slippage (0x1771) and not blockhash expiry; the failed tx was the only one sent (pre-parallel sequential bundle), the tester's manual retry with a fresh quote landed, and a later Buy on the parallel bundle landed 3 swaps in one slot + MintReserveTokensInKind 12s later. The mint-fees-to-claims item is the keeper step (DEC-0186); the 'charge the creation fee in USDC' item is on-chain behavior (DEC-0173 program upgrade, in progress).",
+  "rationale": "Every item was a real, reproducible defect or misleading copy; the retry policy is limited to provably-nothing-moved failures so it cannot double-spend; the Sell batch mirrors the already-proven Buy batch (#6); the rebalance fix removed a DevNet fixture leaking into Mainnet pricing.",
+  "alternativesConsidered": [
+    "Retry the whole single-transaction Buy path on an on-chain failure -- deferred: that path is atomic and the failure surfaced in the fallback; can be added later with the same JupiterSwapNotLandedError contract.",
+    "Charge the creation mint fee in USDC client-side -- impossible: the fee is assessed by the program in Reserve Tokens; USDC delivery is the DEC-0173/keeper design."
+  ],
+  "impact": "First-frame Reserve cards are correct; a flaky DEX route no longer fails a purchase outright; large-Reserve sells need one approval instead of N+1; creation summary is honest; rebalance shows the real current composition on Mainnet.",
+  "affectedAreas": ["api/mainnet/warm-cache-cron.ts", "src/merge/lib/reserveSnapshotClient.ts", "src/merge/lib/jupiterSwapClient.ts", "src/merge/lib/multiAssetBuyClient.ts", "src/merge/lib/multiAssetSellClient.ts", "src/merge/pages/CreateDTR.tsx", "src/merge/pages/ManageDTR.tsx", "tests/phase_swap_auto_retry_and_one_approval_sell.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Commits ba43bfb (warm-cache symbols), a83fd6b (auto-retry + one-approval sell + creation fee row), abc5ba8 (rebalance composition) on tier-b-plus-warmcache; production deploys ssr-e6nhv48ao and ssr-a1ers4bhk (READY, aliased ssr.fun); every deploy gate-checked on the prebuilt bundle (mainnet rpc-proxy present, devnet absent, program id, fee_vault_authority, feature markers, no [SENSITIVE]).",
+    "Live snapshot row after the warm-cache deploy carried 18 mintMeta entries (SSR, PENGU, Fartcoin, JUP, ...).",
+    "tests: 7 new (retry policy) + 45 related existing = 52 passing; tsc app/node clean; oxlint clean.",
+    "Tester wallet 6BjTPAWG... history: 14:39:23Z failed swap (only tx), 14:40Z retry landed, 14:59:28Z three swaps same slot + 14:59:40Z MintReserveTokensInKind ok."
+  ]
+}
+```
+
+## DEC-0186
+
+```json
+{
+  "id": "DEC-0186",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed-awaiting-admin-signature",
+  "decision": "Turned on the Mainnet fee keeper. (a) Generated a dedicated keeper wallet AuaJRdbRZhhfdqpyjN8uNYSnggRwLY8kzHVjngkGPhsF (fresh keypair, never any other authority), funded it 0.05 SOL from the developer deploy wallet 52b7pBNF..., and stored its secret ONLY as the Sensitive Vercel Production env SSR_FEE_SETTLEMENT_KEEPER_SECRET. (b) Rewrote api/mainnet/fee-settlement-cron.ts to run two jobs under a 50s budget: Job A USDC settlement (redeem fee-vault shares -> keeper-signed approve_settlement_swap + Jupiter swap -> distribute_fee_usdc to Treasury + manager recipients), gated on SettlementKeeperConfig.keeper == this wallet; Job B TVL accrual -- accrue_fees for every Reserve >= 7 days since its last accrual (permissionless; Mainnet TVL fees had NEVER been accrued, PROJECT_STATUS risk of 2026-08-28). Candidate mints are now sourced like warm-cache-cron (ledger + on-chain enumeration); the prior cron passed only USDC, so multi-asset Reserves discovered with unresolved legs -- such a Reserve is now refused for redemption rather than redeemed against an incomplete asset list. (c) Scheduled it hourly ('15 * * * *') in vercel.json and allowlisted it in middleware CRON_PATHS. (d) Added /internal/set-keeper (internal-set-keeper.html, behind the site gate): a one-click Protocol-Admin page that builds the exact set_fee_settlement_keeper instruction for this keeper, simulates before any signature, signs via Phantom/Solflare, and reads SettlementKeeperConfig back. The ONE remaining step is that signature, which only ProtocolConfig.authority (Creator, CgHFxD4...) or admin_2 (Boss, PSpQ...) can give -- the Squads upgrade authority cannot, by the DEC-0177 design that keeps protocol admin separate from upgrade authority.",
+  "context": "Tester item 4 (2026-09-07): mint fees on Reserve 'H' not being redirected to manager claims. Tier B (DEC-0184 pipeline) crystallizes mint/TVL fee shares into each Reserve's fee vault, but nothing ever converted them to USDC or paid anyone: the cron existed unscheduled (per the 2026-08-21 plan) and no keeper had been configured. The developer directed: 'do the fees'. The developer holds the Squads member key but is NOT a Protocol Admin (verified on-chain: ProtocolConfig.authority = CgHFxD4..., admin_2 = PSpQ... at data offset 41).",
+  "rationale": "Everything that does not require a Protocol-Admin signature was completed and verified live; the admin step was reduced to one click with pre-simulation so it cannot be mis-signed. Hourly cadence with a time budget converges any backlog (21 Reserves) within a few runs while keeping each invocation under the 60s function limit; settlement runs before accrual because it is the money the tester is waiting on. Deliberately did NOT add any program path that would let the upgrade authority set the keeper -- that would circumvent the Creator's governance design.",
+  "alternativesConsidered": [
+    "Follow FEE_SETTLEMENT_RUNBOOK step 4 literally (hand-run one Reserve first) -- partially deviated: the first automated settlement run will process the 2 current candidates (fee vaults of ~0.0205 and ~0.0997 RT-units, i.e. cents), then be verified on-chain after the fact; every step is idempotent (SECURITY_INVARIANTS 22-23). Recorded honestly here.",
+    "Weekly cadence (runbook suggestion) -- rejected for now: hourly + budget clears the 18 overdue accruals today; can be relaxed later.",
+    "A program upgrade letting the Squads vault act as admin -- rejected on governance grounds (DEC-0177)."
+  ],
+  "impact": "TVL fees start crystallizing on Mainnet automatically from the first scheduled run (no admin needed). USDC settlement to Treasury + managers starts on the first hourly run after the admin signs set_fee_settlement_keeper. Keeper SOL (0.05) needs periodic top-up.",
+  "affectedAreas": ["api/mainnet/fee-settlement-cron.ts", "middleware.ts (CRON_PATHS)", "vercel.json (crons, rewrite /internal/set-keeper)", "vite.config.ts", "internal-set-keeper.html", "Vercel Production env SSR_FEE_SETTLEMENT_KEEPER_SECRET", "docs/project/FEE_SETTLEMENT_RUNBOOK.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Keeper funding tx 4qYiHisxf12G9bgrcvKTLSd8Dd16KkXcQqTfWzCQeJT7FWZbMwpm8cExfGpLavb1ef5v58aChPUXr9G7C5cA3Zdc (0.05 SOL, 52b7pBNF -> AuaJRdbR).",
+    "`vercel env ls production` shows SSR_FEE_SETTLEMENT_KEEPER_SECRET (Sensitive). Commit c175e61; production deploy READY, aliased ssr.fun; gate-check confirmed the secret name appears in no static file.",
+    "Live GET /api/mainnet/fee-settlement-cron?dryRun=true after deploy: keeperWallet AuaJRdbR..., keeperSolBalance 0.05, onChainKeeper null, settlementBlockedBy 'SettlementKeeperConfig not set on-chain yet', totalReserves 21, reservesWithSomethingToSettle 2 (HYK2pVFZ...: 20545/20544 shares; CYhMBkEL...: 99688/99687 shares; both assetsResolved=true), accrualsDue 18 (18-20 days overdue).",
+    "A manual authenticated trigger was NOT possible (CRON_SECRET is Sensitive and cannot be pulled) -- first real run is the Vercel schedule."
+  ]
+}
+```
