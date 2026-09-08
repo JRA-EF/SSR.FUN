@@ -237,17 +237,29 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     if (!feeSettlement) continue;
     const vaultTotal = BigInt(feeSettlement.protocolSharesInVault) + BigInt(feeSettlement.managerSharesInVault);
     const pendingTotal = BigInt(feeSettlement.protocolSharesPendingSettlement) + BigInt(feeSettlement.managerSharesPendingSettlement);
-    if (vaultTotal === 0n && pendingTotal === 0n) continue;
+    // Staged (or keeper-held) asset balances are checked for EVERY Reserve, not
+    // only those with vault/pending shares: distribute_fee_usdc zeroes the
+    // pending accounting even when a leg's swap was skipped, so the real tokens
+    // left in that staging ATA would otherwise never be looked at again (live
+    // 2026-09-08: two skipped legs vanished from the candidate list).
     const [sa] = findSettlementAuthority(new PublicKey(r.reserve), PROGRAM_ID);
-    const stagingAtas = [...r.assets.map((a) => new PublicKey(a.assetMint)), MAINNET_USDC_MINT].map((m) => getAssociatedTokenAddressSync(m, sa, true));
-    const infos = await connection.getMultipleAccountsInfo(stagingAtas).catch(() => stagingAtas.map(() => null));
+    const mints = [...r.assets.map((a) => new PublicKey(a.assetMint)), MAINNET_USDC_MINT];
+    const stagingAtas = mints.map((m) => getAssociatedTokenAddressSync(m, sa, true));
+    const keeperAtas = keeper ? mints.map((m) => getAssociatedTokenAddressSync(m, keeper.publicKey)) : [];
+    const [infos, keeperInfos] = await Promise.all([
+      connection.getMultipleAccountsInfo(stagingAtas).catch(() => stagingAtas.map(() => null)),
+      keeperAtas.length ? connection.getMultipleAccountsInfo(keeperAtas).catch(() => keeperAtas.map(() => null)) : Promise.resolve([] as (null | { data: Buffer })[]),
+    ]);
     const staged: { mint: string; amount: string }[] = [];
-    [...r.assets.map((a) => a.assetMint), USDC_MINT_STR].forEach((mint, i) => {
+    let keeperHeldAny = false;
+    mints.forEach((m, i) => {
       const info = infos[i];
-      if (!info) return;
-      const amount = info.data.length >= 72 ? info.data.readBigUInt64LE(64) : 0n;
-      if (amount > 0n) staged.push({ mint, amount: amount.toString() });
+      const amount = info && info.data.length >= 72 ? info.data.readBigUInt64LE(64) : 0n;
+      if (amount > 0n) staged.push({ mint: m.toBase58(), amount: amount.toString() });
+      const k = keeperInfos[i];
+      if (m.toBase58() !== USDC_MINT_STR && k && k.data.length >= 72 && k.data.readBigUInt64LE(64) > 0n) keeperHeldAny = true;
     });
+    if (vaultTotal === 0n && pendingTotal === 0n && staged.length === 0 && !keeperHeldAny) continue;
     candidates.push({ reserve: r.reserve, reserveTokenMint: r.reserveTokenMint, assetsResolved: r.resolvedAssetCount === r.assetCount, feeSettlement, staged });
   }
 
