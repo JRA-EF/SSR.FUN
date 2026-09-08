@@ -5789,3 +5789,77 @@
   ]
 }
 ```
+
+## DEC-0188
+
+```json
+{
+  "id": "DEC-0188",
+  "date": "2026-09-07",
+  "status": "confirmed-implemented-deployed",
+  "decision": "The closed-beta gate (DEC-0187) gains a second key list for the team: Production env SSR_TEAM_KEYS (comma-separated; 10 keys of the form SSR-TEAM-XXXX-XXXX-XXXX issued this pass and handed to the Creator). A team key is redeemed through the same Coming Soon field and endpoint, but its session cookie lasts TEAM_SESSION_TTL_MS = 400 days instead of 30. Everything else is shared: cookie format, signing secret (SSR_SITE_PASSWORD), per-key revocation (remove the key from SSR_TEAM_KEYS and its sessions die), rate limiting, and Gate 2.",
+  "context": "Creator, right after DEC-0187 shipped: 'give me 10 keys that are forever and for like team etc'. 'Forever' is not literally achievable with a cookie: browsers cap cookie lifetime (Chrome enforces a 400-day maximum on Max-Age/Expires; Safari and Firefox honour server-set HttpOnly cookies but a longer value is still clamped by Chrome). 400 days is therefore the practical ceiling and was chosen as the team TTL.",
+  "rationale": "A separate list rather than a per-key TTL field keeps configuration trivial (two env vars, no schema) and keeps beta and team keys visually distinct (SSR-BETA- vs SSR-TEAM- prefixes). The TTL is decided at redemption from which list matched (sessionTtlForKey), while verification uses the union (configuredAccessKeys) so middleware never needs to know which list a cookie came from -- the cookie already carries the key's digest and its own expiry. A key present in both lists is treated as a beta key (30 days) -- the conservative reading.",
+  "alternativesConsidered": [
+    "Truly non-expiring sessions (no Max-Age, or a 100-year expiry) -- rejected: session cookies without Max-Age die when the browser closes, and Chrome clamps any expiry beyond 400 days to 400 days anyway; the cookie's embedded expiresAt would also have to be trusted for decades. 400 days re-entered once a year is the honest 'forever'.",
+    "Make every key 400 days -- rejected: the Creator chose 30 days for beta testers hours earlier (DEC-0187); team members are the exception.",
+    "Encode 'team' in the cookie instead of relying on the list at verification -- unnecessary: expiry is already in the signed cookie, and revocation still works through the key tag."
+  ],
+  "impact": "Team members sign in once a year per browser. Ten team keys live in Production env SSR_TEAM_KEYS (Sensitive); rotating or removing one is an env edit plus redeploy. No change for beta users, the Coming Soon page, APIs, or the dashboard gate.",
+  "affectedAreas": [
+    "lib/site/session.ts (TEAM_SESSION_TTL_MS, AccessKeyEnv, configuredTeamKeys, configuredAccessKeys, sessionTtlForKey)",
+    "api/site/login.ts (access list + per-key TTL)",
+    "middleware.ts (verifies against the access list)",
+    "tests/phase_beta_gate.mjs (+3 team-key tests, 18 total)",
+    "Vercel Production env: +SSR_TEAM_KEYS",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "`npx mocha tests/phase_beta_gate.mjs` -> 18 passing (team list parsing; union access list; 400-day vs 30-day TTL selection incl. a key in both lists; team cookie verifies against the union, not the beta list alone, and dies when the team key is removed). `npx tsc -b` exit 0.",
+    "Production dpl_4H6v754eMx94UTCiHjjmBJVs8XNB (main @ ded6b95): POST /api/site/login with a team key -> 200 + Set-Cookie ssr_site_session ... Max-Age=34560000 (400 days), embedded expiry ~400 days out, and /api/mainnet/landing-stats 200 with that cookie; a beta key -> Max-Age=2592000 (30 days); unauthenticated / -> 'SSR.FUN — Coming Soon'.",
+    "git: ded6b95 on main pushed to origin; design merged from main and pushed."
+  ]
+}
+```
+
+## DEC-0189
+
+```json
+{
+  "id": "DEC-0189",
+  "date": "2026-09-08",
+  "status": "confirmed-partially-implemented-awaiting-secrets",
+  "decision": "strategic-super-reserve.fun is no longer redirected to ssr.fun. It is the team's separate TEST site ('the website we try shit on'), password-gated with the plain 'Password required' sign-in form and the same SSR_SITE_PASSWORD as always; ssr.fun (the closed-beta production site) is deliberately left untouched. Implemented in three parts: (1) DOMAIN, done and live: the DEC-0186 308 redirects on project ssr-fun were removed for strategic-super-reserve.fun (redirect null) and www.strategic-super-reserve.fun now 308s to its own apex, not to ssr.fun -- so the domain immediately serves itself again. (2) CODE, on main @ 0a164a0: a per-deployment page choice for the site gate, env SSR_SITE_GATE_MODE (lib/site/session.ts siteGateMode): the literal 'password' serves the restored pre-DEC-0187 sign-in form (middleware.ts SITE_LOGIN_PAGE_HTML, byte-for-byte commit c25a2b8's page, posting { password } to the unchanged /api/site/login); anything else, including unset, is the Coming Soon page, so ssr.fun's env needs no change. (3) SEPARATE VERCEL PROJECT ssr-fun-staging (prj_x37BuZHANgpSIq8c3qa9UMQer2xm, same team ssr14): created, given every READABLE Production env var of ssr-fun (the Neon/Postgres connection set, NEON_*, VITE_NEON_AUTH_URL, VITE_SOLANA_CLUSTER=mainnet-beta) plus SSR_SITE_GATE_MODE=password, and deployed from main @ 0a164a0 (dpl_DKb8t5sdbbyxtKfPyCPjwkwZZLnW, https://ssr-fun-staging.vercel.app). PENDING, needs the Creator: Vercel Sensitive env vars are write-only, so the 11 Sensitive values on ssr-fun could not be copied -- SSR_SITE_PASSWORD (the 'same password as always'), HELIUS_RPC_URL, HELIUS_MAINNET_RPC_URL, JUPITER_API_KEY, SSR_DASHBOARD_PASSWORD, SSR_FEE_SETTLEMENT_KEEPER_SECRET, DEVNET_SWAP_AUTHORITY_SECRET_KEY (and, only if the test site should run scheduled jobs, CRON_SECRET; SSR_BETA_KEYS / SSR_TEAM_KEYS / SSR_SITE_GATE_ENABLED are optional there). Once those are set on ssr-fun-staging, the final step is to move strategic-super-reserve.fun and www.strategic-super-reserve.fun from ssr-fun to ssr-fun-staging (no DNS change: both already resolve to Vercel, 76.76.21.21). UNTIL THEN strategic-super-reserve.fun serves ssr-fun's live production deployment directly (currently the developer's tier-b build, which shows the same password form and accepts the same password) -- i.e. the Creator's two stated requirements (no redirect, same-password gate) are already met, and only the isolation from ssr.fun is pending.",
+  "context": "Creator (2026-09-08): after the DEC-0186 migration, https://strategic-super-reserve.fun/ 'is redirecting to ssr.fun insert password page (shouldn't exist, it's beta key gated) - and once intro password it takes you to strategic-super-reserve.fun/#/create'. Directive: 'ssr.fun should stay exactly the same. but https://strategic-super-reserve.fun/ should stay in itself, not redirect to ssr.fun, and be password gated, same password as always. https://strategic-super-reserve.fun/ will be the website we try shit on. SSR.FUN is the main thing now, dont change anything there, we're only solving https://strategic-super-reserve.fun/'. Investigation: (a) the redirect was the DEC-0186 project-domain 308 on ssr-fun; (b) the 'insert password page' on ssr.fun is REAL and is a production drift, not a browser artefact -- ssr.fun's live alias is dpl_5tVjmT9iiGmTkwszerpvw5rGxNxn, deployed 2026-09-08 07:00 UTC by the developer (cdrakep-5453) from tier-b-plus-warmcache @ 6b1092a with a dirty tree, the sixth production deploy from that branch in ten hours; that branch predates DEC-0187/0188 (main is 9 commits ahead of it: the Coming Soon gate, BETA/TEAM keys, DEC-0186 docs) and its api/site/login.ts accepts ONLY SSR_SITE_PASSWORD (no SSR_BETA_KEYS / SSR_TEAM_KEYS), so the DEC-0187 closed-beta gate is NOT currently live on ssr.fun: GET https://ssr.fun/ returns 'SSR.fun - Sign in' and the issued BETA/TEAM keys do not open it; (c) the '#/create' URL is simply the app's hash router (src/lib/router.tsx) -- the hash survives the 308. Per the directive nothing was done to ssr.fun; the drift is recorded under Risks for the Creator to decide.",
+  "rationale": "A separate Vercel project is the only way for one domain to be 'the website we try shit on' while the other stays exactly as it is: a project owns one production deployment, one env set and one cron schedule, so the two domains can be deployed independently. A domain-level redirect removal is instant and deploy-free, which is why the redirect fix was done first and separately from the project split -- the Creator's two hard requirements were met within minutes, with isolation to follow. The gate page is chosen by an env var rather than a host check inside one deployment because the Creator wants two independently deployable sites, and because a host check would have required deploying new code to ssr.fun, which the directive forbids. Reusing the domainless ssr-fun-final project was rejected: it is a static 'Other'-framework coming-soon project with none of the app's env, and its history is worth keeping as it is. CRON_SECRET is deliberately left unset on the test project: every cron handler fails closed (500 'CRON_SECRET is not configured') so the test site never runs a second copy of the weekly DevNet accrue-fees, the daily ledger ingest or the per-minute Mainnet warm-cache against the SAME database and chain -- the test site currently SHARES ssr-fun's Neon database (the readable connection strings were copied as-is, which is what strategic-super-reserve.fun was doing 'as always'). Whether it should get its own database branch is an open question for the Creator.",
+  "alternativesConsidered": [
+    "Only remove the redirect and leave both domains on ssr-fun -- rejected as the end state (no isolation: every ssr-fun production deploy would still change strategic-super-reserve.fun), but adopted as the immediate interim state because it already satisfies 'no redirect' and 'password gated, same password'.",
+    "Keep one project and pick the gate page by Host header -- rejected: needs a code deploy to ssr.fun (forbidden) and still leaves one deployment for both sites.",
+    "Vercel 'domain assigned to a git branch' on ssr-fun -- rejected: branch deployments read the Preview env, which holds only 4 of the secrets, and the repo has git auto-deploys disabled.",
+    "Reuse ssr-fun-final for the test site -- rejected (static coming-soon project, wrong framework preset, no app env).",
+    "Deploy the developer's tier-b-plus-warmcache branch (which already has the plain password page) to the test project instead of main -- rejected: main is the reconciled source of truth (DEC-0187) and the branch is 9 commits behind it on the gate; the env switch gives main the same password page without forking.",
+    "Redeploy main to ssr.fun to restore the closed-beta gate -- NOT done: the directive says not to change anything on ssr.fun; recorded as a risk instead."
+  ],
+  "impact": "Live now: https://strategic-super-reserve.fun/ -> 200 'SSR.fun - Sign in' (same deployment as ssr.fun for the moment), deep links and APIs answer on the domain itself, www -> 308 to the apex. ssr.fun, www.ssr.fun, its deployment, env and crons are untouched. New project ssr-fun-staging exists with 20 env vars and one Ready production deployment; its login endpoint answers 500 'Beta access is not configured.' until SSR_SITE_PASSWORD is set there, and its scheduled crons answer 500 by design. The final domain move is a two-call `vercel api` operation (DELETE the two domains from ssr-fun, POST them to ssr-fun-staging) once the secrets are in. RISK RECORDED: ssr.fun's live production is the developer's tier-b build without the DEC-0187 gate, and BETA/TEAM keys do not currently open ssr.fun.",
+  "affectedAreas": [
+    "Vercel project ssr-fun domains: strategic-super-reserve.fun redirect removed; www.strategic-super-reserve.fun -> 308 strategic-super-reserve.fun (was ssr.fun)",
+    "Vercel project ssr-fun-staging (new, prj_x37BuZHANgpSIq8c3qa9UMQer2xm): 19 copied readable env vars + SSR_SITE_GATE_MODE=password (production+preview); production deployment dpl_DKb8t5sdbbyxtKfPyCPjwkwZZLnW; alias https://ssr-fun-staging.vercel.app",
+    "lib/site/session.ts (SiteGateMode, siteGateMode)",
+    "middleware.ts (SITE_LOGIN_PAGE_HTML restored from c25a2b8, siteLoginPageResponse, siteGateResponse, header comment)",
+    "tests/phase_beta_gate.mjs (+2 mode tests, 20 total)",
+    "docs/project/PROJECT_STATUS.md (Last 5 Working Days, Risks, Environment Status, Last Updated)"
+  ],
+  "supersedes": "DEC-0186 (only the strategic-super-reserve.fun -> ssr.fun 308 part; ssr.fun canonical status unchanged)",
+  "supersededBy": null,
+  "evidence": [
+    "Before: GET https://strategic-super-reserve.fun/ -> 308 Location: https://ssr.fun/ ; GET https://ssr.fun/ -> 200 <title>SSR.fun - Sign in</title> (not the Coming Soon page). `vercel ls ssr-fun`: six Production deploys by cdrakep-5453 in the last 10h; live alias ssr.fun -> ssr-ht6k7mikx-ssr14.vercel.app = dpl_5tVjmT9iiGmTkwszerpvw5rGxNxn, meta githubCommitRef tier-b-plus-warmcache, githubCommitSha 6b1092a5adebfba29a678ae34625feb5614b842f, gitDirty 1, created 2026-09-08T07:00:44Z. `git log main..origin/tier-b-plus-warmcache` = 15 commits (server-built buy/sell etc.); `git log origin/tier-b-plus-warmcache..main` = 9 commits (DEC-0185..0188). `git grep SSR_BETA_KEYS origin/tier-b-plus-warmcache -- api/site/login.ts lib/site/session.ts middleware.ts` -> no matches.",
+    "Domain ops: PATCH /v9/projects/prj_cbTf3idEypjW1ccQA90NEEVbUUxQ/domains/strategic-super-reserve.fun {redirect:null} -> redirect null; PATCH .../www.strategic-super-reserve.fun {redirect:'strategic-super-reserve.fun',redirectStatusCode:308} -> applied. After: GET https://strategic-super-reserve.fun/ -> 200 'SSR.fun - Sign in'; /discover?x=1 -> 200; https://www.strategic-super-reserve.fun/discover?x=1 -> 308 https://strategic-super-reserve.fun/discover?x=1; /api/mainnet/landing-stats -> 401 {error:Unauthorized}. ssr.fun -> 200, www.ssr.fun -> 308 ssr.fun (unchanged).",
+    "`npx mocha tests/phase_beta_gate.mjs` -> 20 passing; `npx tsc -b` exit 0; `npx oxlint middleware.ts lib/site/session.ts` clean. Commit 0a164a0 on main.",
+    "`vercel project add ssr-fun-staging` -> prj_x37BuZHANgpSIq8c3qa9UMQer2xm; POST /v10/projects/ssr-fun-staging/env x20 -> failed:[] each. `vercel env pull` of ssr-fun production showed 11 vars as [SENSITIVE] (write-only): CRON_SECRET DEVNET_SWAP_AUTHORITY_SECRET_KEY HELIUS_MAINNET_RPC_URL HELIUS_RPC_URL JUPITER_API_KEY SSR_BETA_KEYS SSR_DASHBOARD_PASSWORD SSR_FEE_SETTLEMENT_KEEPER_SECRET SSR_SITE_GATE_ENABLED SSR_SITE_PASSWORD SSR_TEAM_KEYS; the local .env.local (2026-08-20) has no SSR_SITE_PASSWORD either.",
+    "Staging deploy dpl_DKb8t5sdbbyxtKfPyCPjwkwZZLnW (main @ 0a164a0, --prod, from a detached scratch worktree linked to ssr-fun-staging): https://ssr-fun-staging.vercel.app/ and /discover?x=1 -> 200 <title>SSR.fun - Sign in</title>, <h1>SSR.fun</h1>, 'Password required'; POST /api/site/login {password:'x'} -> 500 {error:'Beta access is not configured.'}; /api/mainnet/landing-stats -> 401; /api/mainnet/warm-cache-cron -> 500 {error:'CRON_SECRET is not configured on this deployment.'}; /internal/status -> sign-in page.",
+    "DNS: strategic-super-reserve.fun and www both A 76.76.21.21 (Vercel); nameservers name.com (unchanged, no DNS action needed for the future project move)."
+  ]
+}
+```
