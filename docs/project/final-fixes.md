@@ -77,13 +77,34 @@ Criterion clauses:
 - [ ] update_delegate_permissions. - [ ] remove_delegate takes effect immediately. - [ ] transfer_reserve_manager from a non-manager rejected. - [ ] co-manager acting outside role/limits/expiry rejected.
 
 ## MPU-01 Pause / Unpause -- **Not tested** (DEC-0115 script evidence exists but the criterion excludes scripts)
-- [ ] pause_reserve from an admin wallet blocks a Buy. - [ ] unpause resumes. - [ ] set_protocol_paused. - [ ] non-admin rejected.
+- [ ] pause_reserve from an admin wallet blocks a Buy. - [ ] unpause resumes. - [ ] set_protocol_paused by an admin.
+- [x] **Non-admin rejected:** `set_protocol_paused(true)` from `52b7pBNF...` (not an admin) ->
+  `5TNGN3Aw9tqZ4Qbk9qFFLxMUHmksF8jfQ8gQmcQtuerd1HcniggE5zNhDKB3DJpePYQjde6rQKJFwja67ygpUA6Y`
+  FAILED custom 6031 `NotProtocolAuthority`; protocol still unpaused (real Mainnet tx, 2026-09-08).
 
-## MFE-01 Fees & protocol config -- **Blocked** (one Creator/Boss signature)
+## MFE-01 Fees & protocol config -- **Blocked** (one Creator/Boss signature for the payout leg; everything else green)
 - [x] accrue_fees runs on Mainnet: hourly keeper (`AuaJRdbR...`), first run 2026-09-08 00:15 UTC.
-- [x] Fees crystallize into the fee vault at the configured rate (HniecHQ... above).
+- [x] **Fees accrue at the configured rate -- six real TVL settlements, each checked against the formula
+  `ceil(period_supply_seconds x 100 bps / (10,000 x 31,536,000))`, all exact to the raw unit** (keeper-signed, 2026-09-08 ~02:23 UTC):
+  | Reserve | supply | period (supply-seconds) | minted | expected | signature |
+  |---|---|---|---|---|---|
+  | 7 H7NDKmf9 | 3,467,888 | 4,906,848,350,000 | 2,224 | 2,224 | `46ezztwbB2XY5ovVqyT3v8NuN33AsTHL1YiPnAXSYg5fibqDENgEjMozvtbqCJJSwvsmfywp9f5LrWssgLCpwV7w` |
+  | 8 52eHitfw | 13,504,158 | 14,193,003,544,920 | 4,547 | 4,547 | `366zGJmGyUpSZSJ3J6RUbJaoTXkgErN8hDCSyL4Xv3vNJEWb6a436eQjK9VeuQSd2ynZnbkGzL7Swut25t5Sb4R6` |
+  | 13 EK5WwpsR | 7,485,039 | 1,553,581,153,488 | 3,165 | 3,165 | `3bFJqT5tuQthMtgFmzBAS9nQRWwTMDvY25ngKCEK6ehV7xRmV8BVoQwoBtg5yRf95mYke64paf78JoKEi5zCBEfv` |
+  | 16 9oBkwdrT | 20,515,859 | 20,500,343,200,000 | 6,529 | 6,529 | `5pu7tUpgS7kmiw4fBL2veZbCHYYTyqh5npURxUTSbT4Rkdn7axim1PJeUZWz3gtYECPEo5rgbSbcXvGUSc4zb3b6` |
+  | 17 D6juoQKw | 99,956 | 5,272,098,256 | 35 | 35 | `2Yqg4NAcB7qbLA6TkPfVAdcZsKq6GKcapixnEM5tJDLk719hgw5p6zAdnnwo3vnAFYxYJtz8ScWvQeJ7xaxL8gmt` |
+  | 18 9rHRibvi | 25,256,908 | 1,556,920,000,000 | 4,736 | 4,736 | `3WXHWKiS5njKN32GBNL8KdxDCGva4Xdkn43pr8EYxjauX7kZkDqrTc6j5Uh2pgRu8kTxckLsHjjF7N5EaovJTAiw` |
+  Each settlement reset `period_supply_seconds` to 0 and advanced `last_settled_ts` to the block time; the 50/50 split lands in the fee vault (FeeVaultCredited, source AnnualTvlFee).
+  **Bug found on the way (DEC-0192):** the deployed `AccrueFees` struct declares the Reserve Token mint without `mut`, so the IDL marks it read-only and the mint CPI fails with `PrivilegeEscalation` the moment there is anything to bill (clock-starts mint nothing, so the first run passed). Fix: the keeper passes the mint writable (runtime accepts it; the program does not require read-only); `mut` added in source and the IDL for the next upgrade.
+- [x] Mint fees crystallize into the fee vault at the configured rate (HniecHQ... above; four vaults now hold shares: CYhMBkEL 99,688/99,687, HYK2pVFZ 20,545/20,544, 52eHitfw 8,703/8,702, 9oBkwdrT 3,080/3,079).
 - [ ] USDC reaches the Treasury vault `3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5` and manager recipients -- **blocked on `set_fee_settlement_keeper`**.
-- [ ] update_protocol_config by an admin; non-admin rejected. - [x] update_metadata by the Reserve manager: `5hTcsyWAZZyWPrBrSmHQi8y453kC1fKVAQoHbei8NK66d9uXU3CP6vunD7pNjkyrNuUSSTTdDedL3h4hDuVhzsmX`.
+- [x] **Guarded: a non-admin wallet cannot change protocol config or the keeper.** Real Mainnet rejections
+  (preflight skipped, signed by developer wallet `52b7pBNF...`, which is NOT a Protocol Admin), all
+  custom error 6031 `NotProtocolAuthority`, ProtocolConfig unchanged afterwards (paused=false, destination still `3CBpV...`):
+  - `update_protocol_config` -> `2wHMexi5Kr9c6P1R7WqZKSX3cfMGvm44kEoGjrJYZ8xyeC98y28TXG5uSH1u4Ponc3Ttx3H6WMHEw2tcaJZCSM4w`
+  - `set_fee_settlement_keeper` -> `PXoqsuEnofLfKWiecKpUPy2p7a32EzcSJ7jwPhbf5KUYtyuxeiquY3gAmAEUCbKAMiuBrxnfGgnPuTRLnj8zEgB`
+- [ ] update_protocol_config by an admin wallet succeeds (needs Creator/Boss).
+- [x] update_metadata by the Reserve manager: `5hTcsyWAZZyWPrBrSmHQi8y453kC1fKVAQoHbei8NK66d9uXU3CP6vunD7pNjkyrNuUSSTTdDedL3h4hDuVhzsmX`.
 
 ## MWD-01 Wind-down / Closure -- **Not tested** (by design; needs a disposable test Reserve)
 - [ ] initiate_wind_down. - [ ] redeem out. - [ ] close_reserve.

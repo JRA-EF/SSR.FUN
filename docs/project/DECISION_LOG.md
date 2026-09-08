@@ -5969,3 +5969,22 @@
   "evidence": ["REST: DELETE /v9/projects/ssr-fun/domains/{apex,www} -> 200; POST /v10/projects/ssr-fun-staging/domains -> verified:true for both; POST /v10/projects/ssr-fun-staging/env x5 -> failed:[]", "Live after redeploy: see PROJECT_STATUS Environment Status"]
 }
 ```
+
+## DEC-0192
+
+```json
+{
+  "id": "DEC-0192",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed (keeper-side); program fix staged for the next upgrade",
+  "decision": "Deployed-program bug found and worked around: the Tier B `AccrueFees` account struct declares `reserve_token_mint` WITHOUT `mut`, so the IDL marks it read-only, Anchor clients pass it read-only, and the `mint_to` CPI that crystallizes settled TVL-fee shares fails with `PrivilegeEscalation` on any Reserve that actually has fees to bill. It went unnoticed because a Reserve's first-ever `accrue_fees` only starts its clock (mints nothing), the DevNet cron never billed on Mainnet, and the first Mainnet keeper run (DEC-0186, 00:15 UTC) happened to hit only clock-starts. Fix in three layers: (1) the keeper (api/mainnet/fee-settlement-cron.ts) now passes the mint WRITABLE after building the instruction -- the runtime only forbids a CPI from escalating beyond what the caller supplied, and an Anchor `Account` without `mut` does not reject a writable meta, so this is a complete fix against the deployed binary (simulated, then executed); (2) `mut` added to the struct in programs/ssr_protocol/src/instructions/accrue_fees.rs for the next upgrade; (3) packages/sdk/idl/ssr_protocol.{json,ts} mark the account writable so every builder gets it right now. The six overdue Reserves were then settled for real with the keeper key, and every minted amount was checked against `ceil(period_supply_seconds x bps / (10,000 x 31,536,000))` -- all six exact (2,224 / 4,547 / 3,165 / 6,529 / 35 / 4,736 raw). This is the first TVL fee ever billed on Mainnet.",
+  "context": "Working MFE-01 on docs/project/final-fixes.md: the hourly keeper's dry-run kept listing the same five Reserves as 11-18 days overdue after two scheduled runs; simulating the exact keeper instruction on them returned PrivilegeEscalation. Also in this pass, for MFE-01/MPU-01's 'guarded' clauses: update_protocol_config, set_fee_settlement_keeper and set_protocol_paused submitted from the non-admin developer wallet were all rejected on-chain with custom 6031 NotProtocolAuthority (2wHMexi5..., PXoqsuEn..., 5TNGN3Aw...).",
+  "rationale": "Waiting for a program upgrade would have left TVL revenue unbilled for another Squads cycle; the writable-meta fix is exactly what the runtime checks and carries no other behavioural change. The source/IDL fix keeps the next build honest.",
+  "alternativesConsidered": ["Program upgrade first -- rejected as the only fix: unnecessary for correctness, and every accrual until then would keep failing.", "Leave the IDL as generated and only patch the cron -- rejected: any other builder (scripts, future UI) would repeat the failure."],
+  "impact": "TVL fees now accrue on Mainnet for real; the accrued shares sit in each Reserve's fee vault with the mint fees until set_fee_settlement_keeper is signed (DEC-0186). mint_reserve_tokens_in_kind is unaffected (its builder already passes the mint writable). The next program upgrade must carry the `mut` (IDL then regenerates identically to the hand-patched one).",
+  "affectedAreas": ["api/mainnet/fee-settlement-cron.ts", "programs/ssr_protocol/src/instructions/accrue_fees.rs", "packages/sdk/idl/ssr_protocol.json", "packages/sdk/idl/ssr_protocol.ts", "docs/project/final-fixes.md", "rtm_controls MFE-01 / MPU-01"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Simulation on Reserves 7/16/18 with the IDL-built instruction: InstructionError PrivilegeEscalation 'Cross-program invocation with unauthorized signer or writable account'. Same instruction with the mint key writable: err null, one FeeVaultCredited event.", "Six real settlements (keeper AuaJRdbR..., 2026-09-08 ~02:23 UTC), signatures and per-Reserve arithmetic in docs/project/final-fixes.md MFE-01.", "Non-admin rejections: 2wHMexi5Kr9c6P1R7WqZKSX3cfMGvm44kEoGjrJYZ8xyeC98y28TXG5uSH1u4Ponc3Ttx3H6WMHEw2tcaJZCSM4w, PXoqsuEnofLfKWiecKpUPy2p7a32EzcSJ7jwPhbf5KUYtyuxeiquY3gAmAEUCbKAMiuBrxnfGgnPuTRLnj8zEgB, 5TNGN3Aw9tqZ4Qbk9qFFLxMUHmksF8jfQ8gQmcQtuerd1HcniggE5zNhDKB3DJpePYQjde6rQKJFwja67ygpUA6Y (all custom 6031)."]
+}
+```
