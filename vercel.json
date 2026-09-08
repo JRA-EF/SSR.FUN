@@ -17,10 +17,6 @@
       "includeFiles": "packages/sdk/**",
       "maxDuration": 60
     },
-    "api/mainnet/fee-settlement-cron.ts": {
-      "includeFiles": "packages/sdk/**",
-      "maxDuration": 300
-    },
     "api/kpis/*.ts": {
       "includeFiles": "packages/sdk/**",
       "maxDuration": 60

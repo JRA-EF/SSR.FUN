@@ -125,7 +125,7 @@ Criterion clauses:
 - [x] Co-manager with PAUSE/UNPAUSE: pause `5bAtSR3jzsxWMNSDrReoNeD1tdGy1TXD6ZZFdUZceAqz3dbWFkYi12SdPQdYQjeJrMyugYyjcFeLqBriBxFVE3wu`, unpause `5LiJWxYqi3tPxusMtpzCEWx8q2vNRfYY8XGWXDjma8doFh8g3K8iWA1zNdHMwLv3XZJg88ppkV1qezsr5nnrsETC`; without the bit rejected `3k9zcEm1...` (6028); a wallet with no role rejected `SVv5vfiS...` (6032).
 - [ ] set_protocol_paused by an admin wallet (Creator/Boss). Non-admin already rejected: `5TNGN3Aw9tqZ4Qbk9qFFLxMUHmksF8jfQ8gQmcQtuerd1HcniggE5zNhDKB3DJpePYQjde6rQKJFwja67ygpUA6Y` (6031 NotProtocolAuthority).
 
-## MFE-01 Fees & protocol config -- **Blocked** (one Creator/Boss signature for the payout leg; everything else green)
+## MFE-01 Fees & protocol config -- **Partial** (fees accrue AND pay out in USDC, proven; one clause left: a positive `update_protocol_config` by an admin wallet)
 - [x] accrue_fees runs on Mainnet: hourly keeper (`AuaJRdbR...`), first run 2026-09-08 00:15 UTC.
 - [x] **Fees accrue at the configured rate -- six real TVL settlements, each checked against the formula
   `ceil(period_supply_seconds x 100 bps / (10,000 x 31,536,000))`, all exact to the raw unit** (keeper-signed, 2026-09-08 ~02:23 UTC):
@@ -140,7 +140,26 @@ Criterion clauses:
   Each settlement reset `period_supply_seconds` to 0 and advanced `last_settled_ts` to the block time; the 50/50 split lands in the fee vault (FeeVaultCredited, source AnnualTvlFee).
   **Bug found on the way (DEC-0192):** the deployed `AccrueFees` struct declares the Reserve Token mint without `mut`, so the IDL marks it read-only and the mint CPI fails with `PrivilegeEscalation` the moment there is anything to bill (clock-starts mint nothing, so the first run passed). Fix: the keeper passes the mint writable (runtime accepts it; the program does not require read-only); `mut` added in source and the IDL for the next upgrade.
 - [x] Mint fees crystallize into the fee vault at the configured rate (HniecHQ... above; four vaults now hold shares: CYhMBkEL 99,688/99,687, HYK2pVFZ 20,545/20,544, 52eHitfw 8,703/8,702, 9oBkwdrT 3,080/3,079).
-- [ ] USDC reaches the Treasury vault `3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5` and manager recipients -- **blocked on `set_fee_settlement_keeper`**.
+- [x] **USDC reaches the Treasury vault `3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5` and manager recipients.** The Creator/Boss signed
+  `set_fee_settlement_keeper` (keeper `AuaJRdbR...` on chain); the keeper then needed four fixes of its own (DEC-0196: staging ATAs never
+  created, swap sourced from the keeper's empty ATA instead of the delegated staging ATA, Treasury ATA derived without allowOwnerOffCurve,
+  single-send drops). First full settlement, keeper-signed 2026-09-08 (redeem -> swap -> `distribute_fee_usdc`), ten Reserves:
+  | Reserve | distribute signature | Treasury | managers |
+  |---|---|---|---|
+  | 7 H7NDKmf9 | `36kWjUEhVtn4vHo2HW85VdkxVC7QPUbUtbdfAn2SoCaSd79XpCAaTrjbP39EQVBDCrFyHSndMJJig86AGG4pYUZK` | +0.002048 | 6BjT +0.002045 |
+  | 8 52eHitfw | `4x6sPKa5rs1BcG1e7YS2oN1AJXLSEzuRmthX6HXijvCv2mRcCY2muefWR4jMtrhwcVh2CDqy9Ab23tbM5neEe2JE` | +0.061624 | 6BjT +0.061611 |
+  | 13 EK5WwpsR | `3jdPEetjRp18ZiUPqTJtoVZU368gjZzc8VPCt9XwHwfoz34vMc3uocWRxUMtmAA9x4rcAN2ktZqg63QBLnSmVLkU` | +0.001960 | 6BjT +0.000978, EME9 +0.000978 |
+  | 16 9oBkwdrT | `3Mbrgaz2pf2hTWDavoVhJM3jSCmkKZTcij226PUoNA5w2vvC6qQv2awnQjxsR1SgjgCJfxbHcciCG8d5U9ndWDkv` | +0.010600 | 6BjT +0.005298, EME9 +0.005297 |
+  | 17 D6juoQKw | `5y167NMFrmgWAg52XUUD3uaaWebvizdo46q5Ep8min9zoc825Lpw59vF24m7H7mpyepK5mTj6NsvAtEuBTnx1e8k` | +0.000006 | 6BjT +0.000003, EME9 +0.000002 |
+  | 18 9rHRibvi | `54yJ1mgNT496VLxsjzZdxpfjN7x9tKC9Khc2LTfVaT5ct2xoQq8ay6eUAEe1zzC82orYrtciaDiJTr9HKgkwWqb8` | +0.002721 | EME9 +0.002719 |
+  | 19 HYK2pVFZ | `2fRXNwX9YWZypYbMZWg5Meb3yXLe9SXkYa6cJXsfMY7sZYSVX2LfGjemqew59SWRoZBiPdco11Umhku4LeckSiJy` | +0.021575 | 6BjT +0.010786, EME9 +0.010786 |
+  | 20 CYhMBkEL | `2abU3mf9DnvNDkebwfrPQX3G3VrJJiMW41i887mHBkBMB3LXVgAavDnv5VX2N67q2CpWbdXYxewfz7DLq2LuZ1p8` | +0.065355 | 6BjT +0.032677, EME9 +0.032677 |
+  | 21 B5VQi9Gy | `4HGPEWjSfjNDc3GFG3Eoe7gv1PXdvqJKBtYHAMGCoT6J82Ghyc3aHwL7PrxqHopRungXFrmYK55i5fYrq1LGmLtU` | +0.021502 | 52b7 +0.010804 |
+  | 22 FDAiACnL | `3yGALX3Jb6DDJD2M7qSdqG6QE7gEX71WajF9DFn7G6VtAGnRnc5y6y32AX16DtYgJPV3zNkBBrgKQFuLdRUBJ1q1` | +0.127259 | CgHF +0.127258 |
+  **Total: 0.314650 USDC to the Treasury (its USDC account was created by this run), 0.303919 USDC to managers**, every split matching the
+  Reserve's FeeSettlement protocol/manager shares and its manager-fee-recipient table (50/50 where two recipients are configured).
+  Redeems e.g. `2T7R48ky7tgcZ9...` (Reserve 8), `ieBTREFT4WVSpu...` (10-asset Reserve 16, 9 swaps in one run). Two swap legs
+  (Reserve 17's 98sM..., Reserve 20's ZEC) were skipped by route errors and retry on the hourly schedule; their USDC follows.
 - [x] **Guarded: a non-admin wallet cannot change protocol config or the keeper.** Real Mainnet rejections
   (preflight skipped, signed by developer wallet `52b7pBNF...`, which is NOT a Protocol Admin), all
   custom error 6031 `NotProtocolAuthority`, ProtocolConfig unchanged afterwards (paused=false, destination still `3CBpV...`):

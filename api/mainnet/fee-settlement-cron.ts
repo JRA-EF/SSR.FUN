@@ -71,7 +71,7 @@ import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { lookupReserveAlt } from "./build-buy";
 import { readReserveAndWallet, compileV0, fitsV0, CORE_TX_COMPUTE_UNIT_LIMIT, MAINNET_TREASURY_VAULT } from "../../lib/mainnet/buildCommon";
-import { DEFAULT_SLIPPAGE_BPS, MAINNET_USDC_MINT as USDC_MINT_STR, buildJupiterSwapInstructionsWithRetry, fetchJupiterQuoteWithRetry, isPriceImpactAcceptable } from "../../lib/mainnet/jupiter";
+import { DEFAULT_SLIPPAGE_BPS, MAINNET_USDC_MINT as USDC_MINT_STR, MAX_PRICE_IMPACT_PCT, buildJupiterSwapInstructionsWithRetry, fetchJupiterQuoteWithRetry, isPriceImpactAcceptable } from "../../lib/mainnet/jupiter";
 import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/merge/lib/singleTxBuy";
 import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience";
 
@@ -86,9 +86,12 @@ const BUDGET_MS = 270_000;
 const ACCRUE_MIN_ELAPSED_S = 7 * 24 * 60 * 60;
 const MAX_KNOWN_MINTS = 2000;
 
-/** Pure: same price-impact ceiling as every other Mainnet swap (lib/mainnet/jupiter.ts). A `false` leaves the staged asset exactly where it is. */
+/** Per-route runtime config (Vercel reads this export): settlement needs several sequential confirmations per Reserve, ~20-60s each Reserve. */
+export const config = { maxDuration: 300 };
+
+/** Pure: same price-impact ceiling as every other Mainnet swap (lib/mainnet/jupiter.ts). A non-finite value (malformed Jupiter response) is NEVER accepted. A `false` leaves the staged asset exactly where it is. */
 export function isQuoteSafeToExecute(priceImpactPct: number): boolean {
-  return isPriceImpactAcceptable({ priceImpactPct: String(priceImpactPct), inAmount: "0", outAmount: "0" });
+  return Number.isFinite(priceImpactPct) && priceImpactPct <= MAX_PRICE_IMPACT_PCT;
 }
 
 function loadKeeperKeypair(): Keypair {
