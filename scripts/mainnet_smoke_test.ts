@@ -26,6 +26,7 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getOrCreateAssociatedTokenAccount,
+  getAssociatedTokenAddressSync,
   getAccount,
 } from "@solana/spl-token";
 import * as fs from "fs";
@@ -198,12 +199,12 @@ async function main() {
   console.log("\n=== 7. Seed Reserve with 1 USDC ===");
   const managerUsdcAta = await getOrCreateAssociatedTokenAccount(connection, keypair, USDC_MINT, signer);
   const managerReserveTokenAccount = await getOrCreateAssociatedTokenAccount(connection, keypair, reserveTokenMint, signer);
-  const protocolFeeDestTokenAccountSeed = resolveProtocolFeeDestinationTokenAccount(
-    TREASURY_VAULT,
-    signer,
-    reserveTokenMint,
-    programId,
-  );
+  // DEC-0173: seed/redeem fees crystallize into the per-Reserve fee vault
+  // (same trio as the Tier B mint struct); the treasury destination +
+  // manager_fee_recipients sentinel are gone from seed_reserve.
+  const feeSettlement = PublicKey.findProgramAddressSync([Buffer.from("fee_settlement"), reserve.toBuffer()], programId)[0];
+  const feeVaultAuthority = PublicKey.findProgramAddressSync([Buffer.from("fee_vault_authority"), reserve.toBuffer()], programId)[0];
+  const feeVault = getAssociatedTokenAddressSync(reserveTokenMint, feeVaultAuthority, true);
 
   const seedAmount = new BN(1_000_000); // 1 USDC (6 decimals)
   const seedSig = await program.methods
@@ -215,10 +216,10 @@ async function main() {
       mintAuthority,
       managerReserveTokenAccount: managerReserveTokenAccount.address,
       manager: signer,
-      protocolFeeDestinationTokenAccount: protocolFeeDestTokenAccountSeed,
-      protocolFeeDestination: TREASURY_VAULT,
+      feeSettlement,
+      feeVault,
+      feeVaultAuthority,
       tvlAccrual: PublicKey.findProgramAddressSync([Buffer.from("tvl_accrual"), reserve.toBuffer()], programId)[0],
-      managerFeeRecipients: programId, // sentinel: no multi-recipient routing for this test
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -296,7 +297,13 @@ async function main() {
       // (error 3012) during this pass's smoke test.
       managerFeeRecipients: programId,
       tvlAccrual: PublicKey.findProgramAddressSync([Buffer.from("tvl_accrual"), reserve.toBuffer()], programId)[0],
+      // DEC-0173: the redemption fee is re-minted into the fee vault.
+      mintAuthority,
+      feeSettlement,
+      feeVault,
+      feeVaultAuthority,
       tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
     .remainingAccounts([

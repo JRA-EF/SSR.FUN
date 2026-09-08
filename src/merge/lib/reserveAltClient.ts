@@ -15,9 +15,9 @@
 // the table is then registered server-side (api/mainnet/reserve-alt) and
 // shared by every trader of that Reserve.
 import { AddressLookupTableProgram, ComputeBudgetProgram, Connection, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { findProtocolConfig, findTvlAccrual, MAINNET_USDC_MINT } from "@ssr/sdk";
+import { findProtocolConfig, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta, MAINNET_USDC_MINT } from "@ssr/sdk";
 import { confirmSignatureBounded, AmbiguousConfirmationError } from "./rpcResilience";
 
 /** Jupiter's v6 swap program -- included so its program id also compresses. */
@@ -29,6 +29,7 @@ export interface ReserveAltParams {
   reserveTokenMint: PublicKey;
   mintAuthority: PublicKey;
   vaultAuthority: PublicKey;
+  /** No longer referenced by any composed trade (Tier B moved mint fees, and DEC-0173 seed/redeem fees, into the per-Reserve fee vault) -- kept on the params type so existing callers compile; ignored by buildReserveAltAddresses. */
   protocolFeeDestination: PublicKey;
   assets: { mint: string; reserveAsset: string; vault: string }[];
 }
@@ -41,6 +42,16 @@ export interface ReserveAltParams {
 export function buildReserveAltAddresses(params: ReserveAltParams): PublicKey[] {
   const [protocolConfig] = findProtocolConfig(params.ssrProgramId);
   const [tvlAccrual] = findTvlAccrual(params.reserve, params.ssrProgramId);
+  // The per-Reserve fee vault trio every composed Buy (mint, Tier B) AND
+  // Sell (redeem, DEC-0173) now references -- replaces the old treasury
+  // destination + its Reserve Token ATA, which no composed trade touches
+  // anymore. A table created before this change lacks these three, so
+  // those trades carry them as static keys (+96 bytes) until the table is
+  // recreated; the fit check (wouldFitWithReserveAlt) measures the real
+  // size either way.
+  const [feeSettlement] = findFeeSettlement(params.reserve, params.ssrProgramId);
+  const [feeVaultAuthority] = findFeeVaultAuthority(params.reserve, params.ssrProgramId);
+  const feeVault = findFeeVaultAta(params.reserve, params.reserveTokenMint, params.ssrProgramId);
   const usdcMint = new PublicKey(MAINNET_USDC_MINT);
   const addresses: PublicKey[] = [
     params.ssrProgramId,
@@ -50,9 +61,9 @@ export function buildReserveAltAddresses(params: ReserveAltParams): PublicKey[] 
     params.vaultAuthority,
     protocolConfig,
     tvlAccrual,
-    params.protocolFeeDestination,
-    // The treasury's Reserve Token ATA (the mint's protocol_fee_destination_token_account).
-    getAssociatedTokenAddressSync(params.reserveTokenMint, params.protocolFeeDestination, true),
+    feeSettlement,
+    feeVault,
+    feeVaultAuthority,
     usdcMint,
     TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID,
