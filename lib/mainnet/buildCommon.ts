@@ -37,7 +37,8 @@ export class BuildError extends Error {
   }
 }
 
-export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single";
+/** "tax": the manager's Sell tax transfers, submitted by the client only after every swap of a batch-mode sale has landed (DEC-0198). */
+export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single" | "tax";
 
 export interface BuiltTransaction {
   kind: BuiltTxKind;

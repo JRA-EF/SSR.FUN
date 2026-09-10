@@ -1415,6 +1415,9 @@ export function DTRDetail() {
             } else if (e.phase === "swapping") {
               setMultiAssetSellStep(`Selling Reserve asset ${e.index + 1} of ${e.total} into USDC...`);
               setSellPhase("awaiting-wallet");
+            } else if (e.phase === "paying-tax") {
+              setMultiAssetSellStep("Paying the Manager's Sell tax out of your USDC proceeds (last step)...");
+              setSellPhase("confirming");
             } else {
               setSellPhase("awaiting-wallet");
             }
@@ -2322,6 +2325,20 @@ export function DTRDetail() {
                           <span className="text-muted-foreground">Mint Fee</span>
                           <span className="font-merge-mono">{dtr.feeConfig.mintFeePct.toFixed(2)}%</span>
                         </div>
+                        {IS_MAINNET && dtr.feeConfig.managerBuyTaxPct > 0 && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              Buy Tax
+                              <InfoTip label="More information about the Buy tax">
+                                Set by this Reserve's Manager ({dtr.feeConfig.managerBuyTaxPct.toFixed(2)}%). Charged in {SETTLEMENT_SYMBOL} on top of your purchase, in the
+                                same transaction as the mint, and split 50/50 between the Manager and the SSR.fun protocol. Applies to Buys made through SSR.fun.
+                              </InfoTip>
+                            </span>
+                            <span className="font-merge-mono text-destructive">
+                              {dtr.feeConfig.managerBuyTaxPct.toFixed(2)}%{numBuyAmount > 0 ? ` (~${((numBuyAmount * dtr.feeConfig.managerBuyTaxPct) / 100).toFixed(2)} ${SETTLEMENT_SYMBOL})` : ""}
+                            </span>
+                          </div>
+                        )}
                         <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
                           <span>Est. You Receive</span>
                           {/* A numeric estimate reads as data (mono, primary); the
@@ -2559,8 +2576,24 @@ export function DTRDetail() {
                                     Reserve's current value; the exact amount depends on live routing and is verified from your wallet's real balance.
                                   </InfoTip>
                                 </span>
-                                <span className="font-merge-mono text-foreground">~{estSettlementOut.toFixed(2)} {SETTLEMENT_SYMBOL}</span>
+                                <span className="font-merge-mono text-foreground">
+                                  ~{(estSettlementOut * (1 - dtr.feeConfig.managerSellTaxPct / 100)).toFixed(2)} {SETTLEMENT_SYMBOL}
+                                </span>
                               </div>
+                              {dtr.feeConfig.managerSellTaxPct > 0 && (
+                                <div className="flex justify-between text-xs text-muted-foreground">
+                                  <span className="flex items-center gap-1">
+                                    Sell Tax
+                                    <InfoTip label="More information about the Sell tax">
+                                      Set by this Reserve's Manager ({dtr.feeConfig.managerSellTaxPct.toFixed(2)}%). Taken out of your {SETTLEMENT_SYMBOL} proceeds
+                                      once every swap has landed, and split 50/50 between the Manager and the SSR.fun protocol. Applies to Sells made through SSR.fun.
+                                    </InfoTip>
+                                  </span>
+                                  <span className="font-merge-mono text-destructive">
+                                    -{dtr.feeConfig.managerSellTaxPct.toFixed(2)}% (~{((estSettlementOut * dtr.feeConfig.managerSellTaxPct) / 100).toFixed(2)} {SETTLEMENT_SYMBOL})
+                                  </span>
+                                </div>
+                              )}
                               <p className="text-[11px] text-muted-foreground/80">
                                 You receive {SETTLEMENT_SYMBOL} -- your Reserve Tokens are redeemed and every asset is sold into {SETTLEMENT_SYMBOL} in the same sale.
                               </p>

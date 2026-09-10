@@ -150,7 +150,18 @@ export function clearPendingBuy(wallet: string, reserve: string): void {
 
 // --- The server's build contract (api/mainnet/build-buy.ts) -----------------
 
-export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single";
+export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single" | "tax";
+/** The manager's Buy/Sell tax a build charges in USDC (DEC-0198), as the server reports it. */
+export interface TradeTaxPlan {
+  taxPct: number;
+  taxBps: number;
+  baseUsdcRaw: string;
+  taxUsdcRaw: string;
+  protocolUsdcRaw: string;
+  managerUsdcRaw: string;
+  protocolDestination: string;
+  managerDestination: string;
+}
 export interface BuiltTransaction {
   kind: BuiltTxKind;
   mint?: string;
@@ -172,6 +183,7 @@ export interface BuildBuyResponse {
     walletUsdcRaw: string;
     walletSolLamports: string;
     walletReserveTokenRaw: string;
+    tradeTax?: TradeTaxPlan | null;
   };
   reserveAlt: string | null;
   altToRegister: string | null;

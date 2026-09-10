@@ -1802,7 +1802,7 @@ export function CreateDTR() {
                       onValueChange={(v) => setManagerBuyTaxPct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">
-                      For future secondary-market trading (e.g. a DEX listing) -- not applied when minting directly from the Reserve. Default is 0%.
+                      Charged in USDC on every Buy made through SSR.fun, on top of the purchase, and split 50/50 between you and the protocol. Default is 0%.
                     </p>
                   </div>
 
@@ -1818,12 +1818,12 @@ export function CreateDTR() {
                       onValueChange={(v) => setManagerSellTaxPct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">
-                      For future secondary-market trading (e.g. a DEX listing) -- not applied when redeeming directly from the Reserve. Default is 0%.
+                      Taken in USDC out of the proceeds of every Sell made through SSR.fun, and split 50/50 between you and the protocol. Default is 0%.
                     </p>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground italic">
-                  Buy Tax and Sell Tax are saved with this Reserve for when a secondary market exists, but are not enforced by any on-chain instruction today -- minting and redeeming directly from the Reserve are never taxed.
+                  Buy Tax and Sell Tax apply to trades made through SSR.fun's own Buy and Sell (the tax is added to those transactions). They are not applied to plain wallet transfers or to trades on other venues.
                 </p>
               </div>
 

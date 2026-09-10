@@ -26,6 +26,7 @@ import {
   fetchJupiterQuoteWithRetry,
 } from "../../lib/mainnet/jupiter";
 import { BuildBuyError, buildBuyTransactions, serializeBuildBuyResult } from "../../lib/mainnet/buildBuy";
+import { resolveReserveTradeTax, type ReserveTradeTaxRates } from "../../lib/mainnet/tradeTax";
 
 interface ApiResponseWithHeaders extends ApiResponse {
   setHeader?(name: string, value: string): void;
@@ -45,6 +46,31 @@ export async function lookupReserveAlt(reserve: string): Promise<string | null> 
   await sql`create table if not exists reserve_alts (reserve text primary key, alt text not null, updated_at timestamptz not null default now())`;
   const rows = (await sql`select alt from reserve_alts where reserve = ${reserve}`) as { alt: string }[];
   return rows[0]?.alt ?? null;
+}
+
+/**
+ * The manager's Buy/Sell tax rates for a Reserve (DEC-0198): its metadata_uri
+ * resolved against this app's own metadata store first (no network hop), then
+ * a plain HTTPS fetch. Shared with build-sell.ts. Never throws -- a metadata
+ * problem forgoes the tax for one build rather than blocking the trade.
+ */
+export async function lookupTradeTax(metadataUri: string): Promise<ReserveTradeTaxRates> {
+  return resolveReserveTradeTax(metadataUri, {
+    lookupStoredMetadata: async (id) => {
+      const rows = (await getSql()`select payload from reserve_metadata where id = ${id}`) as { payload: unknown }[];
+      return rows[0]?.payload ?? null;
+    },
+    fetchJson: async (url) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4_000);
+      try {
+        const r = await fetch(url, { signal: controller.signal });
+        return r.ok ? await r.json() : null;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  });
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponseWithHeaders) {
@@ -128,6 +154,7 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
         jupiterBuildTransaction: buildJupiterSwapTransactionWithRetry,
         jupiterBuildInstructions: buildJupiterSwapInstructionsWithRetry,
         lookupReserveAlt,
+        lookupTradeTax,
         simulate: async (tx) => {
           const sim = await connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true });
           return { err: sim.value.err, logs: sim.value.logs ?? null };

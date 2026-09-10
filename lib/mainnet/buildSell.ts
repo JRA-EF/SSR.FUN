@@ -21,9 +21,11 @@ import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAd
 import { buildDirectMultiAssetRedeemInstructions, describeOnChainError } from "@ssr/sdk";
 import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_COMPUTE_UNIT_LIMIT, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
+import { ZERO_TRADE_TAX, buildTradeTaxInstructions, computeTradeTax, tradeTaxBps, tradeTaxPlan, type ReserveTradeTaxRates, type TradeTaxPlan } from "./tradeTax";
 import {
   BuildError,
   CORE_TX_COMPUTE_UNIT_LIMIT,
+  MAINNET_TREASURY_VAULT,
   SINGLE_TX_MAX_SWAP_LEGS,
   altTransactions,
   compileV0,
@@ -62,6 +64,8 @@ export interface BuildSellResult {
     walletReserveTokenRaw: string;
     walletUsdcRaw: string;
     walletSolLamports: string;
+    /** The manager's Sell tax taken out of the USDC proceeds (DEC-0198), or null when the rate is 0 / this is a swaps-only rebuild. */
+    tradeTax: TradeTaxPlan | null;
   };
   reserveAlt: string | null;
   altToRegister: string | null;
@@ -81,6 +85,13 @@ export interface BuildSellInput {
   legsOnly: string[] | null;
   /** The redeem already landed (resume): no redeem transaction; swaps sell what is held. */
   redeemDone: boolean;
+  /**
+   * Rebuild ONLY the Sell-tax transaction (its blockhash expired after every
+   * swap landed) on the USDC base the original build computed -- no quotes,
+   * no redeem, no swaps. The client persists that base; the rate and the
+   * destinations are re-read live.
+   */
+  taxOnly: { baseUsdcRaw: bigint } | null;
 }
 
 export interface BuildSellDeps extends ReadDeps {
@@ -89,9 +100,22 @@ export interface BuildSellDeps extends ReadDeps {
   jupiterBuildTransaction(p: { quote: JupiterQuote; userPublicKey: string; apiKey: string }): Promise<JupiterCallResult<JupiterSwapTransactionPayload>>;
   jupiterBuildInstructions(p: { quote: JupiterQuote; userPublicKey: string; apiKey: string }): Promise<JupiterCallResult<JupiterSwapInstructionsPayload>>;
   simulate?: (tx: VersionedTransaction) => Promise<{ err: unknown; logs: string[] | null }>;
+  /** The manager's Buy/Sell tax rates from the Reserve's metadata_uri (DEC-0198); absent = no tax (offline tests). */
+  lookupTradeTax?: (metadataUri: string) => Promise<ReserveTradeTaxRates>;
+}
+
+/** Pure: the USDC a sale is taxed on -- each swap's MINIMUM out at the sale's slippage (never the optimistic quote, so the tax transfer cannot exceed what actually arrives) plus the USDC leg's entitlement when the redeem is part of this build. */
+export function sellTaxBaseUsdcRaw(quotedOutRaws: bigint[], slippageBps: number, usdcLegEntitlementRaw: bigint, redeemInThisBuild: boolean): bigint {
+  const bps = BigInt(Math.max(0, Math.min(10_000, Math.round(slippageBps))));
+  let total = 0n;
+  for (const out of quotedOutRaws) total += (out * (10_000n - bps)) / 10_000n;
+  return total + (redeemInThisBuild ? usdcLegEntitlementRaw : 0n);
 }
 
 /** Pure: which legs a sale must swap into USDC, and how much of each. */
+/** Compute budget for the standalone tax transaction: two ATA creates + two transfers. */
+const TAX_TX_COMPUTE_UNIT_LIMIT = 120_000;
+
 export function planSellLegs(
   legs: { mint: string; entitlementRaw: bigint; walletHeldRaw: bigint }[],
   redeemDone: boolean,
@@ -123,6 +147,50 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
   const read = await readReserveAndWallet(deps, input.reserve, wallet, input.assetMints);
   timings.readsMs = read.readsMs;
   const { orderedAssets, reserveTokenMint, vaultAuthority, supplyRaw, heldByMint, walletUsdcRaw, walletReserveTokenRaw, walletSolLamports, reserveAlt } = read;
+  const taxRatesPromise: Promise<ReserveTradeTaxRates> = deps.lookupTradeTax
+    ? deps.lookupTradeTax(String(read.reserveAccount.metadataUri ?? "")).catch(() => ZERO_TRADE_TAX)
+    : Promise.resolve(ZERO_TRADE_TAX);
+  const protocolDestination = new PublicKey(MAINNET_TREASURY_VAULT);
+  const managerDestinationRaw = read.reserveAccount.feeConfig?.feeDestination;
+  const managerDestination = managerDestinationRaw ? new PublicKey(managerDestinationRaw) : null;
+  const taxInstructionsFor = (baseUsdcRaw: bigint, taxPct: number) => {
+    const split = computeTradeTax(baseUsdcRaw, tradeTaxBps(taxPct));
+    const ixs = split.taxUsdcRaw > 0n && managerDestination ? buildTradeTaxInstructions({ trader: wallet, usdcMint, protocolDestination, managerDestination, split }) : [];
+    return { split, ixs, plan: ixs.length > 0 && managerDestination ? tradeTaxPlan(split, protocolDestination, managerDestination) : null };
+  };
+
+  if (input.taxOnly) {
+    // Only the tax transaction, on the persisted base (see BuildSellInput.taxOnly).
+    const tax = taxInstructionsFor(input.taxOnly.baseUsdcRaw, (await taxRatesPromise).sellTaxPct);
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    const transactions: BuiltTransaction[] = [];
+    if (tax.ixs.length > 0) {
+      const taxTx = compileV0(wallet, blockhash, [ComputeBudgetProgram.setComputeUnitLimit({ units: TAX_TX_COMPUTE_UNIT_LIMIT }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }), ...tax.ixs], []);
+      transactions.push({ kind: "tax", ...toBase64(taxTx), lastValidBlockHeight });
+    }
+    timings.totalMs = Date.now() - t0;
+    return {
+      mode: "batch",
+      transactions,
+      plan: {
+        legs: orderedAssets.map((a, i) => ({ mint: a.mint, legIndex: i, decimals: a.decimals, entitlementRaw: "0", walletHeldRaw: (heldByMint.get(a.mint) ?? 0n).toString(), amountInRaw: "0", action: a.mint === MAINNET_USDC_MINT ? ("usdc" as const) : ("skip" as const), quotedUsdcOutRaw: "0" })),
+        reserveTokensToRedeem: input.reserveTokensToRedeem.toString(),
+        entitlementsRaw: [],
+        quotedUsdcOutRaw: "0",
+        reserveTokenSupplyRaw: supplyRaw.toString(),
+        walletReserveTokenRaw: walletReserveTokenRaw.toString(),
+        walletUsdcRaw: walletUsdcRaw.toString(),
+        walletSolLamports: walletSolLamports.toString(),
+        tradeTax: tax.plan,
+      },
+      reserveAlt,
+      altToRegister: null,
+      blockhash,
+      lastValidBlockHeight,
+      generatedAt: new Date().toISOString(),
+      timings,
+    };
+  }
   if (!redeemDone && walletReserveTokenRaw < input.reserveTokensToRedeem) {
     throw new BuildError(422, `This wallet holds ${walletReserveTokenRaw.toString()} raw Reserve Tokens but the sale needs ${input.reserveTokensToRedeem.toString()} raw. Nothing was submitted.`);
   }
@@ -170,6 +238,14 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
   timings.quotesMs = Date.now() - tQuote;
   const quotedUsdcOutRaw = quotes.reduce((s, q) => s + BigInt(q.quote.outAmount), 0n);
 
+  // Sell tax (DEC-0198): out of the USDC proceeds this build produces. A
+  // swaps-only rebuild (legsOnly) never carries it -- the original build's tax
+  // transaction is still the one the client submits once every swap lands.
+  const usdcLegIndex = orderedAssets.findIndex((a) => a.mint === MAINNET_USDC_MINT);
+  const usdcLegEntitlementRaw = usdcLegIndex >= 0 ? entitlementsRaw[usdcLegIndex] : 0n;
+  const taxBase = input.legsOnly ? 0n : sellTaxBaseUsdcRaw(quotes.map((q) => BigInt(q.quote.outAmount)), input.slippageBps, usdcLegEntitlementRaw, !redeemDone);
+  const tax = taxInstructionsFor(taxBase, (await taxRatesPromise).sellTaxPct);
+
   const tBuild = Date.now();
   const alt = await planAlt(connection, wallet, read, input.reserve, ssrProgramId);
 
@@ -198,6 +274,7 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
       const swapIx = deserializeJupiterInstruction(set.swapInstruction);
       if (!isComputeBudgetInstruction(swapIx)) ixs.push(swapIx);
     }
+    ixs.push(...tax.ixs);
     const swapTables = await fetchLookupTables(connection, sets.flatMap((s) => s.addressLookupTableAddresses));
     single = { instructions: ixs, swapTables };
   }
@@ -253,6 +330,10 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
       }),
     );
     transactions.push(...swapTxs);
+    if (tax.ixs.length > 0) {
+      const taxTx = compileV0(wallet, blockhash, [ComputeBudgetProgram.setComputeUnitLimit({ units: TAX_TX_COMPUTE_UNIT_LIMIT }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }), ...tax.ixs], []);
+      transactions.push({ kind: "tax", ...toBase64(taxTx), lastValidBlockHeight });
+    }
   }
   timings.buildMs = Date.now() - tBuild;
   timings.totalMs = Date.now() - t0;
@@ -279,6 +360,7 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
       walletReserveTokenRaw: walletReserveTokenRaw.toString(),
       walletUsdcRaw: walletUsdcRaw.toString(),
       walletSolLamports: walletSolLamports.toString(),
+      tradeTax: tax.plan,
     },
     reserveAlt,
     altToRegister: decision.createAlt && alt.wouldBeAlt ? alt.wouldBeAlt.toBase58() : null,

@@ -55,6 +55,7 @@ interface World {
   supplyRaw: bigint;
   walletRtRaw: bigint;
   redemptionFeeBps: number;
+  feeDestination?: PublicKey;
 }
 
 function world(legCount: number, overrides: Partial<World> = {}): World {
@@ -69,7 +70,7 @@ function makeDeps(w: World, spies: { quotes: string[]; builds: string[]; instruc
     programId: PROGRAM_ID,
     methods: real.methods,
     account: {
-      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: w.legs.length, feeConfig: { mintFeeBps: 100, redemptionFeeBps: w.redemptionFeeBps } }) },
+      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: w.legs.length, metadataUri: "https://ssr.fun/api/mainnet/reserve-metadata?id=0123456789abcdef", feeConfig: { mintFeeBps: 100, redemptionFeeBps: w.redemptionFeeBps, feeDestination: w.feeDestination } }) },
       reserveAsset: {
         fetchMultiple: async (pdas: PublicKey[]) =>
           pdas.map((pda) => {
@@ -126,6 +127,7 @@ const input = (w: World, extra: Partial<Parameters<typeof buildSellTransactions>
   assetMints: w.legs.map((l) => l.mint),
   legsOnly: null,
   redeemDone: false,
+  taxOnly: null,
   ...extra,
 });
 
@@ -177,6 +179,44 @@ describe("buildSell.ts -- full build (fakes for RPC/program reads/Jupiter; real 
     const spies2 = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
     const r2 = await buildSellTransactions(makeDeps(w, spies2), input(w, { redeemDone: true, legsOnly: [w.legs[2].mint.toBase58()] }));
     expect(r2.transactions.map((t) => t.mint)).to.deep.equal([w.legs[2].mint.toBase58()]);
+  });
+
+  it("Sell tax (DEC-0198): batch mode appends ONE 'tax' transaction last, on the swaps' minimum out + the USDC entitlement; single mode folds the transfers in; legsOnly carries none; taxOnly rebuilds just the tax on the given base", async () => {
+    const manager = Keypair.generate().publicKey;
+    const w = world(10, { feeDestination: manager });
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    const deps: BuildSellDeps = { ...makeDeps(w, spies), lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 1 }) };
+    const r = await buildSellTransactions(deps, input(w));
+    expect(r.mode).to.equal("batch");
+    expect(r.transactions[r.transactions.length - 1].kind).to.equal("tax");
+    expect(r.transactions.filter((t) => t.kind === "tax")).to.have.length(1);
+    const swaps = r.plan.legs.filter((l) => l.action === "swap").length;
+    const usdcEntitlement = BigInt(r.plan.entitlementsRaw[0]);
+    const expectedBase = BigInt(swaps) * ((12_345n * (10_000n - 150n)) / 10_000n) + usdcEntitlement;
+    expect(BigInt(r.plan.tradeTax!.baseUsdcRaw)).to.equal(expectedBase);
+    expect(BigInt(r.plan.tradeTax!.taxUsdcRaw)).to.equal(expectedBase / 100n);
+    const taxTx = VersionedTransaction.deserialize(Buffer.from(r.transactions[r.transactions.length - 1].base64, "base64"));
+    expect(taxTx.message.compiledInstructions).to.have.length(2 + 4); // budget x2 + [ATA, transfer] x2
+    // single mode: transfers folded into the one transaction, no separate tax tx.
+    const small = world(2, { feeDestination: manager });
+    const single = await buildSellTransactions({ ...makeDeps(small, spies), lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 1 }) }, input(small));
+    expect(single.mode).to.equal("single");
+    expect(single.transactions.some((t) => t.kind === "tax")).to.equal(false);
+    expect(single.plan.tradeTax).to.not.equal(null);
+    // legsOnly: no tax.
+    const legs = await buildSellTransactions(deps, input(w, { redeemDone: true, legsOnly: [w.legs[1].mint.toBase58()] }));
+    expect(legs.plan.tradeTax).to.equal(null);
+    expect(legs.transactions.some((t) => t.kind === "tax")).to.equal(false);
+    // taxOnly: exactly one tax transaction on the persisted base, no quotes.
+    const before = spies.quotes.length;
+    const only = await buildSellTransactions(deps, input(w, { redeemDone: true, taxOnly: { baseUsdcRaw: 5_000_000n } }));
+    expect(spies.quotes.length).to.equal(before);
+    expect(only.transactions.map((t) => t.kind)).to.deep.equal(["tax"]);
+    expect(only.plan.tradeTax!.taxUsdcRaw).to.equal("50000");
+    // Rate 0 -> nothing.
+    const none = await buildSellTransactions({ ...deps, lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 0 }) }, input(w));
+    expect(none.plan.tradeTax).to.equal(null);
+    expect(none.transactions.some((t) => t.kind === "tax")).to.equal(false);
   });
 
   it("refuses (422) when the wallet holds fewer Reserve Tokens than the sale", async () => {

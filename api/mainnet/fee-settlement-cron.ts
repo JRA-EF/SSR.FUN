@@ -33,7 +33,9 @@
 //
 //   B. TVL FEE ACCRUAL: `accrue_fees` is permissionless and is the ONLY thing
 //      that crystallizes the annual TVL fee. Called for every Reserve whose
-//      accumulator was last settled >= 7 days ago (or never started).
+//      accumulator was last settled >= 1 day ago (or never started) -- the
+//      program accrues on full elapsed days, so daily calls charge the fee
+//      daily (JRA's fee spec, 2026-09-10; was weekly before DEC-0198).
 //
 // Scheduled in vercel.json, allowlisted in middleware.ts CRON_PATHS. Same
 // CRON_SECRET / `?dryRun=true` conventions as every other cron here. Time
@@ -83,7 +85,7 @@ const TREASURY = new PublicKey(MAINNET_TREASURY_VAULT);
 // Under this route's own maxDuration (vercel.json: 300s for fee-settlement-cron;
 // each Reserve needs several sequential confirmations, ~20-60s).
 const BUDGET_MS = 270_000;
-const ACCRUE_MIN_ELAPSED_S = 7 * 24 * 60 * 60;
+const ACCRUE_MIN_ELAPSED_S = 24 * 60 * 60;
 const MAX_KNOWN_MINTS = 2000;
 
 /** Per-route runtime config (Vercel reads this export): settlement needs several sequential confirmations per Reserve, ~20-60s each Reserve. */

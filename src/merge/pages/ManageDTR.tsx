@@ -1323,7 +1323,7 @@ export function ManageDTR() {
                   </div>
                   {dtr.onChain && (dtr.feeConfig.managerBuyTaxPct > 0 || dtr.feeConfig.managerSellTaxPct > 0) && (
                     <p className="text-xs text-muted-foreground italic -mt-2">
-                      Buy Tax and Sell Tax are configuration for a future secondary market (e.g. a DEX listing) -- not enforced by minting or redeeming directly from this Reserve.
+                      Buy Tax and Sell Tax are charged in USDC on Buys and Sells made through SSR.fun and split 50/50 between the Manager's fee destination and the protocol. Not applied to plain transfers or trades on other venues.
                     </p>
                   )}
 
