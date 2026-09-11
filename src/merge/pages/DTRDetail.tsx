@@ -629,6 +629,7 @@ export function DTRDetail() {
   // whether it is currently playing in the panel (embedded, not a redirect).
   const [featuredVideoIdx, setFeaturedVideoIdx] = useState(0);
   const [videoPlaying, setVideoPlaying] = useState(false);
+  const [mintAddressCopied, setMintAddressCopied] = useState(false);
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
   // Which percentage pill (0.25/0.5/0.75/1) is currently selected per side —
@@ -1946,15 +1947,46 @@ export function DTRDetail() {
                 {/* Reserve identity lives in the chart card (top-left) now that
                     the chart leads the page, in line with the Buy/Sell panel. */}
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar className="h-8 w-8 border border-border">
-                      {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
-                      <AvatarFallback className="bg-primary/10 text-primary text-xs font-merge-display font-bold">
-                        {dtr.ticker.slice(0, 2)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <h1 className="text-2xl max-sm:text-lg font-merge-display font-bold tracking-tight">{dtr.name}</h1>
-                    <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex items-center gap-2.5">
+                      <Avatar className="h-8 w-8 border border-border">
+                        {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
+                        <AvatarFallback className="bg-primary/10 text-primary text-xs font-merge-display font-bold">
+                          {dtr.ticker.slice(0, 2)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <h1 className="text-2xl max-sm:text-lg font-merge-display font-bold tracking-tight">{dtr.name}</h1>
+                      <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
+                    </div>
+                    {/* Reserve Token mint address -- same size/color as the
+                        "Token Price" label. No uppercase transform: base58 is
+                        case-sensitive, and this line exists to be copied. */}
+                    {/* 42px = avatar (32px) + gap (10px); +3px compensates the
+                        display face's left side-bearing so the INK of "CA:" sits
+                        flush with the ink of the name's first letter (measured:
+                        Lexend Giga cap at 24px ~3.2px bearing, mono ~0.3px). */}
+                    <div className="flex items-center gap-1.5 min-w-0 pl-[45px]">
+                      <span className="text-[10px] text-muted-foreground font-merge-mono font-semibold tracking-wide break-all">
+                        CA: {dtr.onChain?.reserveTokenMint ?? dtr.dtrAddress}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Copy the Reserve Token mint address"
+                        title="Copy mint address"
+                        className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        onClick={() => {
+                          void navigator.clipboard
+                            .writeText(dtr.onChain?.reserveTokenMint ?? dtr.dtrAddress)
+                            .then(() => {
+                              setMintAddressCopied(true);
+                              window.setTimeout(() => setMintAddressCopied(false), 2000);
+                            })
+                            .catch(() => undefined);
+                        }}
+                      >
+                        {mintAddressCopied ? <Check className="w-3 h-3 text-positive" /> : <Copy className="w-3 h-3" />}
+                      </button>
+                    </div>
                   </div>
                   <div className="text-right max-sm:text-left shrink-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>
