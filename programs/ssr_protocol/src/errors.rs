@@ -180,4 +180,8 @@ pub enum SsrError {
     FeeSettlementInvalidAsset,
     #[msg("This FeeSettlement account does not belong to the supplied Reserve.")]
     FeeSettlementReserveMismatch,
+
+    // --- Metaplex token metadata (2026-09-11, DEC-0200) ---
+    #[msg("Token name, symbol, or URI is empty or exceeds the Metaplex on-chain limit (32/10/200 bytes).")]
+    TokenMetadataFieldTooLong,
 }

@@ -12,12 +12,12 @@
 // involved in any of these: every action here is either root-manager-only
 // or manager-or-permitted-delegate, never something a DevNet swap-authority
 // key could or should co-sign.
-import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
+import { PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY, TransactionInstruction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority, findMintAuthority, findManagerFeeRecipients } from "./pda";
+import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority, findMintAuthority, findReserveTokenMint, findManagerFeeRecipients } from "./pda";
 import type { RecipientInput } from "./feeMath";
 
 /**
@@ -41,6 +41,64 @@ export async function buildUpdateMetadataInstruction(
   return program.methods
     .updateMetadata(newMetadataUri)
     .accounts({ reserve, delegate, signer })
+    .instruction();
+}
+
+/**
+ * The Metaplex Token Metadata program and the Metadata PDA for a mint
+ * (DEC-0200). Wallets and explorers derive exactly this address to find a
+ * token's name/symbol/image, which is why publishing to it is what makes a
+ * Reserve Token stop rendering as a raw address.
+ */
+export const METAPLEX_TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+
+export function findTokenMetadata(mint: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("metadata"), METAPLEX_TOKEN_METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    METAPLEX_TOKEN_METADATA_PROGRAM_ID,
+  );
+}
+
+/**
+ * Publishes Metaplex metadata for a Reserve Token mint (DEC-0200). The
+ * program signs the Metaplex CPI with the mint-authority PDA, so this is the
+ * ONLY way such a mint can ever get metadata -- no off-chain tool can do it.
+ *
+ * Idempotent on-chain: a mint that already has a metadata account is left
+ * untouched, so this doubles as the repair path for Reserves created before
+ * the instruction existed.
+ *
+ * `uri` must be the Reserve's public metadata URL (the same one stored in
+ * Reserve.metadata_uri), and `name`/`symbol` are capped on-chain at 32 and 10
+ * bytes -- callers should pass the Reserve's name and ticker, truncated by
+ * the caller if genuinely longer.
+ */
+export async function buildCreateTokenMetadataInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  payer: PublicKey,
+  delegate: PublicKey,
+  name: string,
+  symbol: string,
+  uri: string,
+): Promise<TransactionInstruction> {
+  const [reserveTokenMint] = findReserveTokenMint(reserve, programId);
+  const [mintAuthority] = findMintAuthority(reserve, programId);
+  const [metadata] = findTokenMetadata(reserveTokenMint);
+  return program.methods
+    .createTokenMetadata(name, symbol, uri)
+    .accounts({
+      reserve,
+      reserveTokenMint,
+      mintAuthority,
+      metadata,
+      delegate,
+      payer,
+      metadataProgram: METAPLEX_TOKEN_METADATA_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: SYSVAR_RENT_PUBKEY,
+    })
     .instruction();
 }
 

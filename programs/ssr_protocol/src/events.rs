@@ -427,3 +427,19 @@ pub struct FeeSettlementKeeperSet {
     pub new_keeper: Pubkey,
     pub ts: i64,
 }
+
+/// A Reserve Token mint's Metaplex metadata account was created (DEC-0200).
+/// Emitted once per mint: the instruction no-ops when the account already
+/// exists, so this event marks the transition from "no metadata anywhere" to
+/// "wallets and explorers can finally name this token".
+#[event]
+pub struct TokenMetadataPublished {
+    pub reserve: Pubkey,
+    pub reserve_token_mint: Pubkey,
+    pub metadata: Pubkey,
+    pub name: String,
+    pub symbol: String,
+    pub uri: String,
+    pub published_by: Pubkey,
+    pub ts: i64,
+}

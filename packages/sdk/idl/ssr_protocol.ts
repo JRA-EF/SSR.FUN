@@ -2116,6 +2116,169 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "createTokenMetadata",
+      "docs": [
+        "Publishes Metaplex token metadata for this Reserve's token mint so",
+        "wallets and explorers show its name/symbol/image instead of a raw",
+        "address (DEC-0200). Idempotent; safe on Reserves created before this",
+        "instruction existed, which is how already-deployed tokens get repaired."
+      ],
+      "discriminator": [
+        221,
+        80,
+        176,
+        37,
+        153,
+        188,
+        160,
+        68
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mintAuthority",
+          "docs": [
+            "bump. This is the mint authority Metaplex requires as a signer, and the",
+            "reason this can only ever be done from inside the program."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "metadata",
+          "docs": [
+            "by the Metaplex program itself inside the CPI (it derives the same PDA",
+            "from the mint); passed unchecked so this instruction can also inspect",
+            "whether it already exists and no-op."
+          ],
+          "writable": true
+        },
+        {
+          "name": "delegate"
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Pays the Metadata account's rent. Any wallet may pay; the permission",
+            "check below is what gates WHO may publish."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "metadataProgram",
+          "docs": [
+            "other program can ever be substituted here."
+          ],
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "type": "string"
+        },
+        {
+          "name": "uri",
+          "type": "string"
+        }
+      ]
+    },
+    {
       "name": "distributeFeeUsdc",
       "discriminator": [
         228,
@@ -6514,6 +6677,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "tokenMetadataPublished",
+      "discriminator": [
+        34,
+        166,
+        118,
+        19,
+        225,
+        169,
+        16,
+        127
+      ]
+    },
+    {
       "name": "tvlFeeSettled",
       "discriminator": [
         236,
@@ -6850,6 +7026,11 @@ export type SsrProtocol = {
       "code": 6061,
       "name": "feeSettlementReserveMismatch",
       "msg": "This FeeSettlement account does not belong to the supplied Reserve."
+    },
+    {
+      "code": 6062,
+      "name": "tokenMetadataFieldTooLong",
+      "msg": "Token name, symbol, or URI is empty or exceeds the Metaplex on-chain limit (32/10/200 bytes)."
     }
   ],
   "types": [
@@ -8670,6 +8851,52 @@ export type SsrProtocol = {
           },
           {
             "name": "updatedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tokenMetadataPublished",
+      "docs": [
+        "A Reserve Token mint's Metaplex metadata account was created (DEC-0200).",
+        "Emitted once per mint: the instruction no-ops when the account already",
+        "exists, so this event marks the transition from \"no metadata anywhere\" to",
+        "\"wallets and explorers can finally name this token\"."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserveTokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "metadata",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "publishedBy",
             "type": "pubkey"
           },
           {
