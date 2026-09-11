@@ -82,6 +82,7 @@ import {
   isWithinAcceptableShortfallTolerance,
   type ReserveOnChainStatus,
 } from "./createReserveResume";
+import { assertSignedBy, assertSignerReady } from "./assertSigner";
 import { advanceAssetFunding, canEnterSeeding, countReadyToSeed, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
@@ -747,12 +748,13 @@ async function signAndSend(
   // caller, since a blanket high limit would inflate priority-fee cost.
   computeUnitLimit?: number,
 ): Promise<string> {
-  if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+  // DEC-0200: assert a usable, connected signer before building anything.
+  const signer = assertSignerReady({ wallet, action: "Reserve launch step" });
   const microLamports = await fetchPriorityFeeMicroLamports(connection);
   const budgetIxs = [ComputeBudgetProgram.setComputeUnitPrice({ microLamports })];
   if (computeUnitLimit !== undefined) budgetIxs.push(ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }));
   const tx = new Transaction().add(...budgetIxs, ...ixs);
-  tx.feePayer = wallet.publicKey;
+  tx.feePayer = signer;
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   // A rejection here (the user closed/declined the wallet popup) happens
@@ -760,7 +762,8 @@ async function signAndSend(
   // wallet-adapter name/message intact, so isWalletRejectionError can
   // classify it downstream as "nothing was ever sent," never something
   // requiring on-chain reconciliation.
-  const signed = await wallet.signTransaction(tx);
+  const signed = await wallet.signTransaction!(tx);
+  assertSignedBy(signed, signer, wallet, "this Reserve launch step");
   const { signature, outcome } = await submitAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   // describeOnChainError decodes a real ssr_protocol custom-error code
@@ -789,8 +792,10 @@ async function signSubmitConfirmVersioned(
   lastValidBlockHeight: number,
   clusterLabel: string = "DevNet",
 ): Promise<string> {
-  if (!wallet.signTransaction) throw new Error("This wallet does not support transaction signing.");
-  const signed = await wallet.signTransaction(tx);
+  // DEC-0200: same signer guards as the legacy path above.
+  const signer = assertSignerReady({ wallet, action: "Reserve launch step" });
+  const signed = await wallet.signTransaction!(tx);
+  assertSignedBy(signed, signer, wallet, "this Reserve launch step");
   const { signature, outcome } = await submitAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
   if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));

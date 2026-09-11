@@ -29,6 +29,7 @@ import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
 import { waitForLookupTable, type BuiltTransaction, type TradeTaxPlan } from "./multiAssetBuyClient";
+import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 
 const log = (msg: string, extra?: Record<string, unknown>) => {
   console.info(`[multi-asset-sell] ${msg}`, extra ?? "");
@@ -282,11 +283,18 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   const canSignAll = typeof params.wallet.signAllTransactions === "function";
   const signMany = async (txs: VersionedTransaction[]): Promise<VersionedTransaction[]> => {
     if (txs.length === 0) return [];
+    // DEC-0200: see multiAssetBuyClient -- same guard on the sale path, which
+    // the 2026-09-11 QA also reported opening the wrong wallet.
+    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "sale" });
     params.onProgress?.({ phase: "awaiting-wallet" });
-    if (canSignAll) return params.wallet.signAllTransactions!(txs);
-    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
     const out: VersionedTransaction[] = [];
-    for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    if (canSignAll) {
+      out.push(...(await params.wallet.signAllTransactions!(txs)));
+    } else {
+      if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+      for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    }
+    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this sale`);
     return out;
   };
   const submit = (signed: VersionedTransaction, lastValidBlockHeight: number, what: string, onSubmitted?: (sig: string) => void) =>

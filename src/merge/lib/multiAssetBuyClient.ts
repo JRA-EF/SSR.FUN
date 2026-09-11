@@ -39,6 +39,7 @@ import { partitionSwapOutcomes, JupiterSwapNotLandedError, SWAP_AUTO_RETRY_LIMIT
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { computeSwapShortfallPct } from "./createReserveResume";
 import { advanceAssetFunding, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
+import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 import { shouldSubmitMint, buildBuyStateReport, countableAcquiredRaw, computeOwnerTokenDeltaRaw, type BuyStateReport, type TokenBalanceEntry } from "./multiAssetBuyPlan";
 import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
@@ -348,11 +349,19 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   const canSignAll = typeof params.wallet.signAllTransactions === "function";
   const signMany = async (txs: VersionedTransaction[]): Promise<VersionedTransaction[]> => {
     if (txs.length === 0) return [];
+    // DEC-0200: the purchase was planned against `owner`; refuse to sign with
+    // a different account, and verify afterwards that this account really
+    // signed (catches another extension answering the request).
+    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "purchase" });
     params.onProgress?.({ phase: "awaiting-wallet" });
-    if (canSignAll) return params.wallet.signAllTransactions!(txs);
-    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
     const out: VersionedTransaction[] = [];
-    for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    if (canSignAll) {
+      out.push(...(await params.wallet.signAllTransactions!(txs)));
+    } else {
+      if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+      for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    }
+    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this purchase`);
     return out;
   };
   const throwOutcome = (outcome: ConfirmationOutcome, signature: string, what: string, atomicNote: string) => {
