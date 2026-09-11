@@ -274,7 +274,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
       const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: action.usdcBudgetRaw, slippageBps: input.slippageBps, apiKey: deps.jupiterApiKey };
       let r = await deps.jupiterQuote({ ...base, maxAccounts: attemptSingle ? SINGLE_TX_SWAP_MAX_ACCOUNTS : null });
       if (r.kind !== "ok" && attemptSingle) r = await deps.jupiterQuote({ ...base, maxAccounts: null });
-      if (r.kind !== "ok") throw jupiterFailure("quote", action.mint, r);
+      if (r.kind !== "ok") throw jupiterFailure("quote", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw });
       if (!isPriceImpactAcceptable(r.value)) {
         throw new BuildError(422, `The swap for ${action.mint} has a price impact of ${Number(r.value.priceImpactPct).toFixed(1)}% -- too high to execute automatically; its on-chain liquidity is too thin right now.`, { mint: action.mint });
       }
@@ -312,7 +312,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     const sets = await Promise.all(
       quotes.map(async ({ action, quote }) => {
         const r = await deps.jupiterBuildInstructions({ quote, userPublicKey: wallet.toBase58(), apiKey: deps.jupiterApiKey });
-        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r);
+        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw, quote });
         return r.value;
       }),
     );
@@ -370,7 +370,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     const swapTxs = await Promise.all(
       quotes.map(async ({ action, quote }) => {
         const r = await deps.jupiterBuildTransaction({ quote, userPublicKey: wallet.toBase58(), apiKey: deps.jupiterApiKey });
-        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r);
+        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw, quote });
         const tx = VersionedTransaction.deserialize(Buffer.from(r.value.swapTransaction, "base64"));
         tx.message.recentBlockhash = blockhash;
         return { kind: "swap" as const, mint: action.mint, legIndex: legIndexOf(action.mint), ...toBase64(tx), lastValidBlockHeight };

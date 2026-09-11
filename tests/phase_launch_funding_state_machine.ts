@@ -167,12 +167,24 @@ describe("Launch feasibility preflight (assessLaunchFeasibility) -- run BEFORE t
     expect(funded.feasible).to.equal(true);
   });
 
-  it("dust allocations are rejected with a PRECISE recommended minimum, never an arbitrary blanket number: $3 across ten assets (30 cents each) recommends exactly $5 for 10% slices", () => {
+  it("the floor is Jupiter's, not an economic one (DEC-0199): $3 across ten assets (30 cents each) is ALLOWED -- measured live, Jupiter quotes and builds down to one raw unit", () => {
     const result = assessLaunchFeasibility({ assets: tenAssetPlan(), seedTotalUsd: 3, walletUsdcRaw: 100_000_000n });
+    expect(result.feasible).to.equal(true);
+    expect(result.perAsset.every((a) => a.ok)).to.equal(true);
+    expect(DEFAULT_MIN_PRACTICAL_SWAP_USD).to.equal(0.0005);
+  });
+
+  it("a genuinely unroutable allocation is still rejected with a PRECISE recommended minimum, never a blanket number: $0.003 across ten assets ($0.0003 each) recommends exactly $0.005 for 10% slices", () => {
+    const result = assessLaunchFeasibility({ assets: tenAssetPlan(), seedTotalUsd: 0.003, walletUsdcRaw: 100_000_000n });
     expect(result.feasible).to.equal(false);
-    expect(result.perAsset.filter((a) => !a.ok).length).to.equal(8); // every swap leg is dust; the USDC and SOL legs are not swaps
-    // min practical $0.50 / smallest USDC-consuming fraction 0.1 = $5.00
+    expect(result.perAsset.filter((a) => !a.ok).length).to.equal(8); // every swap leg is below the floor; the USDC and SOL legs are not swaps
+    // min practical $0.0005 / smallest USDC-consuming fraction 0.1 = $0.005
     expect(result.minimumRecommendedSeedUsd).to.equal(DEFAULT_MIN_PRACTICAL_SWAP_USD / 0.1);
+    // The reason names the asset and shows dust honestly -- never "$0.00".
+    const reason = result.reasons[0];
+    expect(reason).to.include("$0.000300");
+    expect(reason).to.include("minimum any swap venue will route");
+    expect(reason).to.not.include("$0.00 ");
   });
 
   it("a small REMAINING deficit on resume is never rejected as dust -- only a DESIGNED allocation below the floor is (the funding loop's dust-skip owns the remaining-deficit case)", () => {

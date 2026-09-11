@@ -34,7 +34,7 @@ import {
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
-import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, type LaunchAssetPlan } from "@/lib/launchFunding";
+import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, formatAllocationUsd, type LaunchAssetPlan } from "@/lib/launchFunding";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
@@ -1079,14 +1079,21 @@ export function CreateDTR() {
           }));
           const feasibility = assessLaunchFeasibility({ assets: plan, seedTotalUsd, walletUsdcRaw });
           if (!feasibility.feasible) {
+            // Lead with the fix, then at most three examples -- a 10-asset
+            // composition used to render ten near-identical lines and bury
+            // the one number that resolves them (DEC-0199).
+            const fix =
+              feasibility.minimumRecommendedSeedUsd > seedTotalUsd
+                ? `Raise the initial amount to at least ${formatAllocationUsd(feasibility.minimumRecommendedSeedUsd)} (or drop the smallest-weight assets).`
+                : feasibility.missingUsdcUi > 0
+                  ? `Add ${feasibility.missingUsdcUi.toFixed(2)} USDC to this wallet, or lower the initial amount.`
+                  : "";
+            const shown = feasibility.reasons.slice(0, 3).join(" ");
+            const more = feasibility.reasons.length > 3 ? ` (+${feasibility.reasons.length - 3} more assets in the same position.)` : "";
             toast({
               variant: "destructive",
               title: "This launch isn't fundable yet",
-              description: `${feasibility.reasons.join(". ")}.${
-                feasibility.minimumRecommendedSeedUsd > seedTotalUsd
-                  ? ` The recommended minimum initial amount for this composition is $${feasibility.minimumRecommendedSeedUsd.toFixed(2)}.`
-                  : ""
-              } Nothing was created on-chain.`,
+              description: `${fix ? fix + " " : ""}Nothing was created on-chain. ${shown}${more}`,
             });
             return;
           }

@@ -16,7 +16,7 @@ import {
 } from "@ssr/sdk";
 import { compileSingleBuyTransaction, fetchLookupTables, SingleTxTooLargeError } from "../../src/merge/lib/singleTxBuy";
 import { buildReserveAltAddresses, chunkAltAddresses } from "../../src/merge/lib/reserveAltClient";
-import { MAINNET_USDC_MINT, jupiterExhaustedResponse, type JupiterCallResult } from "./jupiter";
+import { MAINNET_USDC_MINT, describeSwapFailure, jupiterExhaustedResponse, type JupiterCallResult, type JupiterQuote } from "./jupiter";
 
 export const MAINNET_TREASURY_VAULT = "3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5";
 /** Above this many swap legs the one-transaction composition has never fit -- the single attempt is skipped outright. */
@@ -99,8 +99,24 @@ export function toBase64(tx: VersionedTransaction): { base64: string; bytes: num
   return { base64: Buffer.from(bytes).toString("base64"), bytes: bytes.length };
 }
 
-export function jupiterFailure(what: "quote" | "transaction", mint: string, r: Exclude<JupiterCallResult<unknown>, { kind: "ok" }>): BuildError {
-  if (r.kind === "specific-error") return new BuildError(502, `Jupiter could not ${what === "quote" ? "quote" : "build"} the swap for ${mint}: ${r.message}`, { mint });
+/**
+ * A failed Jupiter call as a user-facing BuildError. When the leg's context is
+ * known (amount + direction, and the quote itself for a build failure) the
+ * message names the venue(s) and the exact amount (DEC-0199); otherwise it
+ * falls back to the older mint-only wording.
+ */
+export function jupiterFailure(
+  what: "quote" | "transaction",
+  mint: string,
+  r: Exclude<JupiterCallResult<unknown>, { kind: "ok" }>,
+  context?: { inputMint: string; outputMint: string; amountRaw: bigint; quote?: JupiterQuote | null },
+): BuildError {
+  if (r.kind === "specific-error") {
+    const message = context
+      ? describeSwapFailure({ stage: what === "quote" ? "quote" : "build", inputMint: context.inputMint, outputMint: context.outputMint, amountRaw: context.amountRaw, quote: context.quote, message: r.message })
+      : `Jupiter could not ${what === "quote" ? "quote" : "build"} the swap for ${mint}: ${r.message}`;
+    return new BuildError(502, message, { mint });
+  }
   const x = jupiterExhaustedResponse(what, r.lastStatus);
   return new BuildError(x.status, `${x.error} (asset ${mint})`, { mint }, x.retryAfterSeconds);
 }
