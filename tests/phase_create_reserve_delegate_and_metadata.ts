@@ -69,7 +69,7 @@ describe("createReserveClient.ts -- ADDITIONAL_MANAGER_PERMISSIONS matches Creat
     );
   });
 
-  it("does NOT include delegate-management permissions -- copy explicitly promises 'won't be able to manage other delegates'", () => {
+  it("does NOT include delegate-management permissions -- copy explicitly promises 'won't be able to manage other co-managers'", () => {
     expect(ADDITIONAL_MANAGER_PERMISSIONS & PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE).to.equal(0);
     expect(ADDITIONAL_MANAGER_PERMISSIONS & PERMISSION_FLAGS.REMOVE_RESTRICTED_DELEGATE).to.equal(0);
   });

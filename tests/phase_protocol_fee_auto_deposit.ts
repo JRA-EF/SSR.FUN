@@ -179,7 +179,12 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
     ]);
   });
 
-  it("seed_reserve gained the identical protocol_fee_destination_token_account/protocol_fee_destination/tvl_accrual accounts, in Rust struct order", () => {
+  // DEC-0173 (re-pinned together with the program upgrade this shape ships
+  // in): seed_reserve's mint fee crystallizes into the shared fee vault --
+  // the treasury-destination pair + manager_fee_recipients sentinel are
+  // gone, replaced by the same fee_settlement/fee_vault/fee_vault_authority
+  // trio Tier B gave mint_reserve_tokens_in_kind.
+  it("seed_reserve (DEC-0173): fee-vault trio in place of the treasury destination + manager_fee_recipients, in Rust struct order", () => {
     const ix = (idl as any).instructions.find((i: any) => i.name === "seed_reserve");
     const names = ix.accounts.map((a: any) => a.name);
     expect(names).to.deep.equal([
@@ -189,17 +194,24 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
       "mint_authority",
       "manager_reserve_token_account",
       "manager",
-      "protocol_fee_destination_token_account",
-      "protocol_fee_destination",
+      "fee_settlement",
+      "fee_vault",
+      "fee_vault_authority",
       "tvl_accrual",
-      "manager_fee_recipients",
       "token_program",
       "associated_token_program",
       "system_program",
     ]);
+    for (const w of ["fee_settlement", "fee_vault"]) expect(ix.accounts.find((a: any) => a.name === w).writable, w).to.equal(true);
   });
 
-  it("redeem_reserve_tokens_in_kind gained tvl_accrual + system_program, and redeemer is now writable (fronts tvl_accrual's rent)", () => {
+  // DEC-0173: the redemption fee is re-minted into the fee vault after the
+  // full burn (old burn-for-holders mechanic paid nobody), so redeem gained
+  // mint_authority (the re-mint CPI signer), the fee-vault trio and
+  // associated_token_program; redeemer stays writable (now also fronts the
+  // one-time FeeSettlement + fee-vault ATA rent on a Reserve's first-ever
+  // crystallization). manager_fee_recipients stays optional.
+  it("redeem_reserve_tokens_in_kind (DEC-0173): gained mint_authority + the fee-vault trio + associated_token_program; redeemer writable", () => {
     const ix = (idl as any).instructions.find((i: any) => i.name === "redeem_reserve_tokens_in_kind");
     const names = ix.accounts.map((a: any) => a.name);
     expect(names).to.deep.equal([
@@ -210,11 +222,17 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
       "redeemer",
       "manager_fee_recipients",
       "tvl_accrual",
+      "mint_authority",
+      "fee_settlement",
+      "fee_vault",
+      "fee_vault_authority",
       "token_program",
+      "associated_token_program",
       "system_program",
     ]);
     const redeemer = ix.accounts.find((a: any) => a.name === "redeemer");
     expect(redeemer.writable).to.equal(true);
+    expect(ix.accounts.find((a: any) => a.name === "manager_fee_recipients").optional).to.equal(true);
   });
 
   it("accrue_fees: the SDK IDL tracks the DEPLOYED Mainnet binary (pre-fee-settlement shape), NOT the Rust source tree -- same DEC-0154 rule and rationale as mint_reserve_tokens_in_kind above. May only change together with a real Mainnet program upgrade.", () => {

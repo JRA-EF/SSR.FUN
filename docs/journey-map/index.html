@@ -652,7 +652,7 @@
     { "id": "reserve-creator", "name": "Reserve creator", "description": "A wallet-connected user launching a new Decentralized Token Reserve (its root Manager on success)." },
     { "id": "token-holder", "name": "Token holder", "description": "A wallet-connected user minting, redeeming, or holding Reserve Tokens." },
     { "id": "root-manager", "name": "Root Manager", "description": "The root Manager of an existing Decentralized Token Reserve, holding full on-chain authority over it." },
-    { "id": "restricted-delegate", "name": "Restricted delegate", "description": "A wallet granted a scoped subset of on-chain management permissions by a Reserve's root Manager." },
+    { "id": "restricted-delegate", "name": "Restricted co-manager", "description": "A wallet granted a scoped subset of on-chain management permissions by a Reserve's root Manager." },
     { "id": "devnet-operator", "name": "DevNet operator", "description": "An engineer operating the protocol directly on Solana DevNet -- fixtures, treasury configuration, fee collection, verification -- outside the end-user frontend." }
   ],
 
@@ -1330,7 +1330,7 @@
     },
     {
       "id": "grant-and-revoke-delegate-access",
-      "title": "Grant and revoke delegate access",
+      "title": "Grant and revoke co-manager access",
       "actor": "root-manager",
       "category": "management",
       "scenario": "A Reserve's root Manager wants to delegate specific administrative work to a trusted collaborator without handing over full control, and later needs to revoke that access.",
@@ -1342,27 +1342,27 @@
             {
               "id": "delegate-open-manage",
               "title": "Opens the Manager Dashboard",
-              "doing": "Navigates to #/manage, selects their Reserve (or is taken directly to it if they manage only one), and opens the Delegates tab.",
+              "doing": "Navigates to #/manage, selects their Reserve (or is taken directly to it if they manage only one), and opens the Co-Managers tab.",
               "thinking": "",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Manager Dashboard (ManageDTR.tsx) -- Overview / Delegates / Rebalance tabs; Delegates tab lists 'Active Delegates.'",
+              "frontstage": "Manager Dashboard (ManageDTR.tsx) -- Overview / Co-Managers / Rebalance tabs; Co-Managers tab lists 'Active Co-Managers.'",
               "backstage": "isManagerOrDelegate() gates the whole page; managed Reserves are filtered client-side by the connected wallet's address.",
               "support": "None -- this dashboard currently operates on the app's local, simulated Reserve store, not the real on-chain Reserve/Delegate accounts."
             },
             {
               "id": "delegate-add",
-              "title": "Adds a scoped delegate",
-              "doing": "Enters a wallet address and checks specific permission boxes (e.g. only 'rebalance'), then clicks 'Add Delegate.'",
+              "title": "Adds a scoped co-manager",
+              "doing": "Enters a wallet address and checks specific permission boxes (e.g. only 'rebalance'), then clicks 'Add Co-Manager.'",
               "thinking": "[Assumption] Good, I can hand off just the rebalancing work and nothing else.",
               "feeling": 4,
-              "pain": "[Assumption] The checkbox model here (manageDelegates / rebalance / feeAdmin / pause / metadata) is a simplified 5-flag simulation -- the real, deployed program's add_delegate instruction supports a richer 10-bit permission set (including separately add/remove-restricted-delegate rights), so this UI cannot yet express everything the protocol can actually enforce.",
+              "pain": "[Assumption] The checkbox model here (manageDelegates / rebalance / feeAdmin / pause / metadata) is a simplified 5-flag simulation -- the real, deployed program's add_delegate instruction supports a richer 10-bit permission set (including separately add/remove-restricted-co-manager rights), so this UI cannot yet express everything the protocol can actually enforce.",
               "opportunity": "[Assumption] Wire this form to the real add_delegate instruction and its full permission bitmask once a chain-backed Manage flow ships.",
               "evidence": "",
               "frontstage": "'Add New Delegate' card: wallet address input, permission checkboxes, 'Add Delegate' button.",
-              "backstage": "addDelegate() store action pushes a mock Delegate object into the simulated Reserve's local state -- no wallet signature, no on-chain transaction.",
+              "backstage": "addDelegate() store action pushes a mock Co-Manager object into the simulated Reserve's local state -- no wallet signature, no on-chain transaction.",
               "support": "None -- purely client-side/local for this UI today."
             }
           ]
@@ -1372,28 +1372,28 @@
           "moments": [
             {
               "id": "delegate-edit-permissions",
-              "title": "Narrows an existing delegate's scope",
-              "doing": "Opens an existing delegate's row and adjusts their checked permissions.",
+              "title": "Narrows an existing co-manager's scope",
+              "doing": "Opens an existing co-manager's row and adjusts their checked permissions.",
               "thinking": "[Assumption] Good -- I can narrow this down without removing them entirely.",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Inline edit mode within the Delegates tab: permission checkboxes, 'Save Changes'/'Cancel'.",
-              "backstage": "updateDelegatePermissions() store action mutates the mock Delegate's permissions object; the real equivalent is update_delegate_permissions.rs, gated by require_root_manager for an unrestricted delegate or require_reserve_permission for a restricted one.",
+              "frontstage": "Inline edit mode within the Co-Managers tab: permission checkboxes, 'Save Changes'/'Cancel'.",
+              "backstage": "updateDelegatePermissions() store action mutates the mock Co-Manager's permissions object; the real equivalent is update_delegate_permissions.rs, gated by require_root_manager for an unrestricted co-manager or require_reserve_permission for a restricted one.",
               "support": "None client-side; real equivalent in programs/ssr_protocol/src/instructions/update_delegate_permissions.rs."
             },
             {
               "id": "delegate-remove",
-              "title": "Removes a delegate",
-              "doing": "Clicks the remove (trash) button on a delegate they no longer want to have access.",
+              "title": "Removes a co-manager",
+              "doing": "Clicks the remove (trash) button on a co-manager they no longer want to have access.",
               "thinking": "",
               "feeling": 4,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Destructive-styled remove button; the delegate disappears from 'Active Delegates.'",
-              "backstage": "removeDelegate() store action; the real on-chain equivalent (remove_delegate.rs) requires require_root_manager specifically when removing an unrestricted delegate (UnrestrictedDelegateRequiresManager), so an ordinary restricted delegate cannot remove another delegate above their own scope.",
+              "frontstage": "Destructive-styled remove button; the co-manager disappears from 'Active Co-Managers.'",
+              "backstage": "removeDelegate() store action; the real on-chain equivalent (remove_delegate.rs) requires require_root_manager specifically when removing an unrestricted co-manager (UnrestrictedDelegateRequiresManager), so an ordinary restricted co-manager cannot remove another co-manager above their own scope.",
               "support": "None client-side; real equivalent in programs/ssr_protocol/src/instructions/remove_delegate.rs."
             }
           ]
@@ -1402,7 +1402,7 @@
     },
     {
       "id": "operate-as-restricted-delegate",
-      "title": "Operate as a restricted delegate",
+      "title": "Operate as a restricted co-manager",
       "actor": "restricted-delegate",
       "category": "management",
       "scenario": "A wallet has been granted a specific, scoped permission on someone else's Reserve and wants to use exactly that permission -- and only that permission.",
@@ -1413,28 +1413,28 @@
           "moments": [
             {
               "id": "delegate-restricted-view",
-              "title": "Sees the Delegates tab locked",
+              "title": "Sees the Co-Managers tab locked",
               "doing": "Connects and opens the same Manager Dashboard for a Reserve they were granted only partial access to.",
               "thinking": "[Assumption] I can see the dashboard, but can I actually do anything here?",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "ManageDTR view: the Delegates tab shows 'Locked' and a banner: 'You do not have permission to manage delegates. This view is read-only.'",
-              "backstage": "canManageDelegates(dtr, wallet.address) evaluates the delegate's stored permissions; the real, equivalent on-chain check is require_reserve_permission()'s delegate.has_permission(flag) against DelegatePermissionDenied.",
+              "frontstage": "ManageDTR view: the Co-Managers tab shows 'Locked' and a banner: 'You do not have permission to manage co-managers. This view is read-only.'",
+              "backstage": "canManageDelegates(dtr, wallet.address) evaluates the co-manager's stored permissions; the real, equivalent on-chain check is require_reserve_permission()'s co-manager.has_permission(flag) against DelegatePermissionDenied.",
               "support": "None client-side; the equivalent real check lives in programs/ssr_protocol/src/instructions/common.rs."
             },
             {
               "id": "delegate-see-own-scope",
               "title": "Checks their own granted permissions",
-              "doing": "Checks which of their own permissions are active by reading the badges next to their own wallet entry in Active Delegates.",
+              "doing": "Checks which of their own permissions are active by reading the badges next to their own wallet entry in Active Co-Managers.",
               "thinking": "[Assumption] At least I can see exactly what I'm allowed to do.",
               "feeling": 3,
               "pain": "[Assumption] They can only discover this by reading their own row in a shared list, not from a dedicated 'your permissions' summary.",
-              "opportunity": "[Assumption] Show the connected delegate's own scope prominently at the top of the dashboard, not just inline within the shared delegate list.",
+              "opportunity": "[Assumption] Show the connected co-manager's own scope prominently at the top of the dashboard, not just inline within the shared co-manager list.",
               "evidence": "",
-              "frontstage": "Active Delegates list -- their own row's permission badges (ManageDTR.tsx).",
-              "backstage": "The delegate's permissions object is rendered directly; no separate 'my permissions' view exists.",
+              "frontstage": "Active Co-Managers list -- their own row's permission badges (ManageDTR.tsx).",
+              "backstage": "The co-manager's permissions object is rendered directly; no separate 'my permissions' view exists.",
               "support": "None."
             }
           ]
@@ -1451,21 +1451,21 @@
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Rebalance tab, fully interactive for this delegate.",
+              "frontstage": "Rebalance tab, fully interactive for this co-manager.",
               "backstage": "hasRebalance = canRebalance(dtr, wallet.address) is true; the real on-chain equivalent instruction is update_targets, permission-gated by the INITIATE_REBALANCE/EXECUTE_REBALANCE bits.",
               "support": "None -- simulated for this UI; real equivalent in programs/ssr_protocol/src/instructions/update_targets.rs."
             },
             {
               "id": "delegate-unauthorized-blocked",
               "title": "Tries to access before/after having any scope",
-              "doing": "The same wallet, before ever being added as a delegate (or after being removed), tries to open the Manager Dashboard directly.",
+              "doing": "The same wallet, before ever being added as a co-manager (or after being removed), tries to open the Manager Dashboard directly.",
               "thinking": "",
               "feeling": 1,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "'Access Denied': 'You are not the Manager or an authorized Delegate for this reserve,' with a 'Return to Reserve' button.",
-              "backstage": "isManagerOrDelegate() returns false; the on-chain equivalent for any real management instruction would fail closed with DelegateNotFound (no PDA exists at the expected delegate address).",
+              "frontstage": "'Access Denied': 'You are not the Manager or an authorized Co-Manager for this reserve,' with a 'Return to Reserve' button.",
+              "backstage": "isManagerOrDelegate() returns false; the on-chain equivalent for any real management instruction would fail closed with DelegateNotFound (no PDA exists at the expected co-manager address).",
               "support": "None."
             }
           ]
@@ -1490,7 +1490,7 @@
               "thinking": "[Assumption] I know this capability exists and works (it's been tested), but I'd need direct RPC/CLI access today, not a UI, to actually use it.",
               "feeling": 3,
               "pain": "[Assumption] A real, deployed, DevNet-tested safety control (pause_reserve) has no discoverable entry point in the product UI at all -- a root Manager without engineering support effectively cannot use it.",
-              "opportunity": "[Assumption] A single 'Pause Reserve' button in the Manager Dashboard's Overview tab, gated the same way Delegates/Rebalance already are, would close this real gap.",
+              "opportunity": "[Assumption] A single 'Pause Reserve' button in the Manager Dashboard's Overview tab, gated the same way Co-Managers/Rebalance already are, would close this real gap.",
               "evidence": "",
               "frontstage": "None today -- reachable only via a direct Anchor/RPC call (as demonstrated in scripts/devnet_fixtures.ts's pause/unpause cycle).",
               "backstage": "pause_reserve.rs: require_reserve_permission(..., PAUSE_RESERVE) then sets Reserve.status = Paused; emits ReservePaused.",
@@ -1637,7 +1637,7 @@
               "opportunity": "",
               "evidence": "",
               "frontstage": "Terminal output from scripts/devnet_fixtures.ts.",
-              "backstage": "Creates a root manager, 2 restricted delegates with distinct permission scopes, 2 holders, a 2-asset Reserve and a 3-asset Reserve (both seeded with real proportional holder balances), and a pause/unpause cycle -- all against the live program, checkpoint-resumable since the public RPC rate-limits heavily under sustained use.",
+              "backstage": "Creates a root manager, 2 restricted co-managers with distinct permission scopes, 2 holders, a 2-asset Reserve and a 3-asset Reserve (both seeded with real proportional holder balances), and a pause/unpause cycle -- all against the live program, checkpoint-resumable since the public RPC rate-limits heavily under sustained use.",
               "support": "Solana DevNet program; api/devnet/mint-test-assets.ts."
             },
             {

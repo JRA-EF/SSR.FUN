@@ -50,10 +50,12 @@ import {
   DEVUSDC_MINT,
   WRAPPED_SOL_MINT,
   discoverAllReserves,
-  findManagerFeeRecipients,
   findMintAuthority,
   findProtocolConfig,
   findTvlAccrual,
+  findFeeSettlement,
+  findFeeVaultAuthority,
+  findFeeVaultAta,
   fetchProtocolConfig,
   buildReadOnlyProgram,
 } from "@ssr/sdk";
@@ -163,14 +165,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     try {
       const reservePk = new PublicKey(r.reserve);
       const reserveTokenMintPk = new PublicKey(r.reserveTokenMint);
-      const [managerFeeRecipients] = findManagerFeeRecipients(reservePk, PROGRAM_ID);
-      // Detect migration: an uninitialized ManagerFeeRecipients account
-      // means the legacy fallback sentinel (the program ID itself) must be
-      // passed instead -- see state/manager_fee_recipients.rs.
-      const recipientsAccount = await program.account.managerFeeRecipients.fetchNullable(managerFeeRecipients);
       const [mintAuthority] = findMintAuthority(reservePk, PROGRAM_ID);
       const [tvlAccrual] = findTvlAccrual(reservePk, PROGRAM_ID);
-      const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMintPk, protocolFeeDestination);
+      // Tier B (DEC-0184 settlement pipeline): accrue_fees now routes the
+      // protocol fee into the per-Reserve fee VAULT (fee_settlement/fee_vault/
+      // fee_vault_authority) instead of a destination ATA + manager-fee-recipients
+      // sentinel -- same 3-for-3 account swap as the mint builder in
+      // packages/sdk/src/directInstructions.ts. See mint_reserve_tokens_in_kind.rs
+      // / accrue_fees.rs and the regenerated IDL.
+      const [feeSettlement] = findFeeSettlement(reservePk, PROGRAM_ID);
+      const [feeVaultAuthority] = findFeeVaultAuthority(reservePk, PROGRAM_ID);
+      const feeVault = findFeeVaultAta(reservePk, reserveTokenMintPk, PROGRAM_ID);
       const ix = await program.methods
         .accrueFees()
         .accounts({
@@ -179,9 +184,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           reserveTokenMint: reserveTokenMintPk,
           mintAuthority,
           tvlAccrual,
-          protocolFeeDestinationTokenAccount,
-          protocolFeeDestination,
-          managerFeeRecipients: recipientsAccount ? managerFeeRecipients : PROGRAM_ID,
+          feeSettlement,
+          feeVault,
+          feeVaultAuthority,
           payer: authority.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,

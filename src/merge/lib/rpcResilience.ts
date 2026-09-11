@@ -91,19 +91,50 @@ export function invalidateCachedPrefix(prefix: string): void {
   }
 }
 
-// --- Bounded concurrency for read-only RPC calls ----------------------------
+// --- Bounded concurrency + RATE for read-only RPC calls ---------------------
 
 const MAX_CONCURRENT_READS = 4;
 let activeReads = 0;
 const readWaitQueue: (() => void)[] = [];
 
-/** Queues a read-only RPC call behind a conservative concurrency cap so a burst (e.g. discovery enumerating several Reserves, each with several candidate-asset lookups) never fires more than MAX_CONCURRENT_READS requests at the same instant against the shared connection. Never use this around a transaction-submitting call -- submission must never be queued behind unrelated reads. */
+// The same-origin rpc-proxy enforces a per-IP throttle of 40 requests / 1s
+// window (api/mainnet/rpc-proxy.ts THROTTLE_MAX_PER_WINDOW). The concurrency
+// cap above bounds SIMULTANEOUS reads but NOT the RATE: 4 fast concurrent
+// batched reads (each ~50-100ms) cycle well past 40/s, trip the proxy's 429,
+// and the 429 retries then amplify into a request storm that starves
+// discovery (reserves never load -> empty Discover + "Legacy Reserve" on a
+// direct link). Cap the client at a rate SAFELY under the proxy's limit so it
+// never 429s itself. Verified live 2026-09-03: idle Discover fired 136
+// rpc-proxy requests in ~30s with 429s; this is the fix.
+const MAX_READS_PER_SECOND = 25;
+const RATE_WINDOW_MS = 1_000;
+const readStartTimes: number[] = [];
+
+async function acquireReadRateSlot(): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    while (readStartTimes.length > 0 && now - readStartTimes[0] >= RATE_WINDOW_MS) readStartTimes.shift();
+    if (readStartTimes.length < MAX_READS_PER_SECOND) {
+      readStartTimes.push(now);
+      return;
+    }
+    const waitMs = RATE_WINDOW_MS - (now - readStartTimes[0]) + 5;
+    await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
+/** Queues a read-only RPC call behind a conservative concurrency cap AND a
+ * per-second rate cap (both under the rpc-proxy's own 40/s per-IP throttle) so
+ * a discovery burst never rate-limits itself into a 429/retry storm. Never use
+ * this around a transaction-submitting call -- submission must never be queued
+ * behind unrelated reads. */
 export async function withReadConcurrencyLimit<T>(fn: () => Promise<T>): Promise<T> {
   if (activeReads >= MAX_CONCURRENT_READS) {
     await new Promise<void>((resolve) => readWaitQueue.push(resolve));
   }
   activeReads++;
   try {
+    await acquireReadRateSlot();
     return await fn();
   } finally {
     activeReads--;
@@ -209,6 +240,55 @@ export async function confirmSignatureBounded(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return { status: "unknown" };
+}
+
+/**
+ * Submits an already-signed transaction and confirms it, RE-BROADCASTING the
+ * identical signed bytes every `rebroadcastEveryMs` until it is confirmed,
+ * failed, or its blockhash expires. Re-sending the same signature is
+ * idempotent on Solana (the runtime dedupes by signature; a node that already
+ * has it answers "already processed", which is ignored here) -- so this can
+ * never double-execute, and it is what every serious client does instead of
+ * `maxRetries: 0` + a single send. Live motivation (2026-09-08, 10-asset
+ * Reserve): the final mint was sent once, dropped under load, and simply
+ * "expired before it could be confirmed" after every swap had landed.
+ * `onSubmitted` fires the instant the signature exists so callers can persist
+ * it for reconciliation exactly as before.
+ */
+export async function sendAndConfirmWithRebroadcast(
+  connection: Connection,
+  rawTransaction: Uint8Array,
+  lastValidBlockHeight: number,
+  opts: { onSubmitted?: (signature: string) => void; rebroadcastEveryMs?: number; maxAttempts?: number; intervalMs?: number } = {},
+): Promise<{ signature: string; outcome: ConfirmationOutcome }> {
+  const rebroadcastEveryMs = opts.rebroadcastEveryMs ?? 3000;
+  const intervalMs = opts.intervalMs ?? 1500;
+  const maxAttempts = opts.maxAttempts ?? 40;
+  const send = () => connection.sendRawTransaction(rawTransaction, { skipPreflight: true, maxRetries: 0 });
+  const signature = await withRateLimitRetry(send, 4, 500);
+  opts.onSubmitted?.(signature);
+  let lastBroadcastAt = Date.now();
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const { value } = await withRateLimitRetry(() => connection.getSignatureStatuses([signature]), 3, 500);
+      const status = value[0];
+      if (status) {
+        if (status.err) return { signature, outcome: { status: "failed", error: JSON.stringify(status.err) } };
+        if (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized") return { signature, outcome: { status: "confirmed" } };
+      }
+      const blockHeight = await withRateLimitRetry(() => connection.getBlockHeight("confirmed"), 3, 500).catch(() => null);
+      if (blockHeight !== null && blockHeight > lastValidBlockHeight) return { signature, outcome: { status: "expired" } };
+      if (!status && Date.now() - lastBroadcastAt >= rebroadcastEveryMs) {
+        // Not seen by the cluster yet -- push the same bytes again.
+        lastBroadcastAt = Date.now();
+        await send().catch(() => undefined);
+      }
+    } catch {
+      // Inconclusive (transport / rate limit) -- keep going within the bound.
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return { signature, outcome: { status: "unknown" } };
 }
 
 // --- Duplicate-submission gating (pure, unit-testable) ----------------------

@@ -1453,7 +1453,10 @@ export function DTRDetail() {
         effectiveMintFeeTotalBps: BigInt(dtr.onChain.effectiveMintFeeTotalBps ?? dtr.onChain.mintFeeBps ?? 0),
         assetPricesUsd: dtr.onChain.assetPricesUsd ?? {},
         onProgress: (e) => {
-          if (e.phase === "single-transaction") {
+          if (e.phase === "building") {
+            setMultiAssetBuyStep("Building every transaction of your purchase (one request)...");
+            setBuyPhase("preparing");
+          } else if (e.phase === "single-transaction") {
             setMultiAssetBuyStep("One transaction: your USDC is swapped, deposited, and your Reserve Tokens minted -- a single wallet approval.");
             setBuyPhase("preparing");
           } else if (e.phase === "enabling-one-approval-trading") {
@@ -1465,6 +1468,11 @@ export function DTRDetail() {
           } else if (e.phase === "minting") {
             setMultiAssetBuyStep("Depositing into the Reserve and minting your tokens...");
             setBuyPhase("preparing");
+          } else if (e.phase === "confirming") {
+            // Signed and on the wire: the wallet prompt is over; we re-broadcast
+            // until it lands, so the button must say "confirming", not "approve".
+            setMultiAssetBuyStep(`Confirming ${e.what} on Solana Mainnet (${e.signature.slice(0, 8)}...)...`);
+            setBuyPhase("confirming");
           } else {
             setBuyPhase("awaiting-wallet");
           }
@@ -1709,7 +1717,13 @@ export function DTRDetail() {
           redemptionFeeBps: BigInt(live.redemptionFeeBps),
           reserveTokensToRedeem,
           onProgress: (e) => {
-            if (e.phase === "single-transaction") {
+            if (e.phase === "building") {
+              setMultiAssetSellStep("Building every transaction of your sale (one request)...");
+              setSellPhase("preparing");
+            } else if (e.phase === "confirming") {
+              setMultiAssetSellStep(`Confirming ${e.what} on Solana Mainnet (${e.signature.slice(0, 8)}...)...`);
+              setSellPhase("confirming");
+            } else if (e.phase === "single-transaction") {
               setMultiAssetSellStep("One transaction: your Reserve Tokens are redeemed and every asset sold into USDC -- a single wallet approval.");
               setSellPhase("preparing");
             } else if (e.phase === "redeeming") {

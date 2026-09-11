@@ -10,6 +10,7 @@ use crate::constants::{
 use crate::errors::SsrError;
 use crate::events::{FeeVaultCredited, ManagerFeeAccrualSource};
 use crate::fee_math::split_configured_bps;
+use super::common::init_fee_settlement_if_needed;
 use crate::state::{FeeSettlement, ProtocolConfig, Reserve, TvlAccrual};
 
 /// Permissionless, matching the reference protocol's own `distributeFees`
@@ -42,7 +43,14 @@ pub struct AccrueFees<'info> {
     )]
     pub reserve: Account<'info, Reserve>,
 
+    /// `mut`: this instruction MINTS the settled fee shares into the fee vault,
+    /// so the mint's supply changes. It was missing (found live 2026-09-08 --
+    /// the IDL marked the mint read-only, clients passed it read-only, and the
+    /// mint_to CPI failed with PrivilegeEscalation on the first Reserve that
+    /// actually had fees to bill). Keepers pass the account writable
+    /// regardless; this makes the IDL say so.
     #[account(
+        mut,
         seeds = [RESERVE_TOKEN_MINT_SEED, reserve.key().as_ref()],
         bump,
         address = reserve.reserve_token_mint,
@@ -198,6 +206,12 @@ pub fn handler<'info>(ctx: Context<'info, AccrueFees<'info>>) -> Result<()> {
         );
         token::mint_to(cpi_ctx, total_fee_shares)?;
 
+        init_fee_settlement_if_needed(
+            &mut ctx.accounts.fee_settlement,
+            reserve_key,
+            ctx.bumps.fee_settlement,
+            ctx.program_id,
+        )?;
         let fee_settlement = &mut ctx.accounts.fee_settlement;
         fee_settlement.protocol_shares_in_vault = fee_settlement
             .protocol_shares_in_vault

@@ -82,6 +82,19 @@ export function extractLedgerFields(eventName: string, data: Record<string, unkn
         protocolRevenueRaw: addBig(data.protocolFeeShares),
         managerRevenueRaw: addBig(data.managerFeeShares),
       };
+    case "feeVaultCredited":
+      // Tier B / DEC-0173: the fee assessment itself, for mint, seed, TVL and
+      // redemption fees alike (data.source distinguishes). Both shares land
+      // in the Reserve's own fee vault -- no external destination yet (the
+      // USDC delivery is a later feeUsdcDistributed) -- so this records the
+      // revenue split only, like feesAccrued/feesCollected. Replaces
+      // protocolMintFeeTransferred for post-upgrade seeds (kept above for
+      // historical rows).
+      return {
+        ...EMPTY,
+        protocolRevenueRaw: addBig(data.protocolShares),
+        managerRevenueRaw: addBig(data.managerShares),
+      };
     case "feesAccrued":
       // Legacy path: accrual only, nothing transferred yet -- no destination/feeAmountRaw.
       return {

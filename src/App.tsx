@@ -7,6 +7,7 @@ import { MergeParamsContext } from './merge/lib/wouter-shim'
 import { SolanaProviders } from './merge/lib/SolanaProviders'
 import { WalletSync } from './merge/lib/WalletSync'
 import { RealReserveSync } from './merge/lib/RealReserveSync'
+import { ReserveSnapshotHydrator } from './merge/lib/ReserveSnapshotHydrator'
 import { Discover } from './merge/pages/Discover'
 import { CreateDTR } from './merge/pages/CreateDTR'
 import { Portfolio } from './merge/pages/Portfolio'
@@ -82,6 +83,7 @@ export default function App() {
   return (
     <SolanaProviders>
       <WalletSync />
+      <ReserveSnapshotHydrator />
       <RealReserveSync />
       <StoreProvider>
         <RouterProvider>

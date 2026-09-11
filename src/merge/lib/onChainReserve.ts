@@ -37,6 +37,7 @@ import {
   findMintAuthority,
   findVaultAuthority,
   evaluateReserveEligibility,
+  rewriteAppMetadataUriToCurrentOrigin,
   type FixtureReserve,
 } from "@ssr/sdk";
 
@@ -546,7 +547,12 @@ export function buildDtrFromDiscoveredReserve(
     // metadata (set via ManageDTR's profile-picture editor). Absent for any
     // Reserve that has never set one -- the UI falls back to the
     // ticker-initial avatar, never a fabricated image.
-    logoUrl: parsedMetadata?.imageUrl,
+    // Served from the CURRENT origin: on-chain metadata records whichever app
+    // host was live at creation (strategic-super-reserve.fun for every
+    // Reserve so far), and since 2026-09-08 that host is the gated dev
+    // project -- an absolute URL would fetch the image cross-origin from the
+    // wrong site (and 401). Same rewrite as the metadata JSON fetch.
+    logoUrl: parsedMetadata?.imageUrl ? rewriteAppMetadataUriToCurrentOrigin(parsedMetadata.imageUrl) : undefined,
     dtrAddress: discovered.reserve,
     managerAddress: discovered.manager,
     // Locally-simulated delegate CRUD (see useAppStore's addDelegate/etc) is
@@ -746,7 +752,18 @@ export function resolveDtrPageState(
  */
 export function parseOnChainReserveId(dtrId: string | undefined): bigint | null {
   if (!dtrId) return null;
-  const match = /^devnet-(\d+)$/.exec(dtrId);
+  // Accept BOTH cluster id shapes this app mints:
+  //   `devnet-<id>`  and  `mainnet-beta-<id>`
+  // buildDtrFromDiscoveredReserve builds ids as `${cluster}-${reserveId}`, so a
+  // Mainnet Reserve's id is `mainnet-beta-<id>`. Matching only `devnet-<id>`
+  // here returned null for every Mainnet Reserve, which disabled DTRDetail's
+  // bounded direct on-chain fallback read AND its still-indexing guard -- so a
+  // real, freshly-created Mainnet Reserve that discovery had not yet merged
+  // rendered the terminal "Legacy Reserve / not supported" page instead of
+  // resolving. The numeric on-chain reserveId is cluster-independent; the
+  // caller pairs it with the correct (cluster-aware) program id (SSR_PROGRAM_ID)
+  // when deriving the Reserve PDA, so returning it for either prefix is correct.
+  const match = /^(?:devnet|mainnet-beta)-(\d+)$/.exec(dtrId);
   if (!match) return null;
   try {
     return BigInt(match[1]);

@@ -42,7 +42,7 @@ import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from ".
 import { useMainnetKnownAssetMints } from "../hooks/useMainnetKnownAssetMints";
 import { useMainnetAssetCatalogue } from "../hooks/useMainnetAssetCatalogue";
 
-const BASE_POLL_MS = 15_000;
+const BASE_POLL_MS = 30_000; // was 15_000 -- reserve data changes rarely; halves steady-state discovery load (see rpcResilience rate-limit fix)
 const MAX_POLL_MS = 120_000;
 /** Bounded so a manual "refresh now" moments after a poll tick reuses that tick's result instead of re-asking the RPC -- see refreshRealReserveNow in DTRDetail.tsx, which reads through the same cache key space for the balance half of this. */
 const DISCOVERY_CACHE_TTL_MS = 5_000;
@@ -106,7 +106,20 @@ export function RealReserveSync() {
   }, [mergedMainnetMints]);
 
   const candidateAssetMints = useMemo(
-    () => (IS_MAINNET ? mergedMainnetMints.map((m) => new PublicKey(m)) : DEVNET_CANDIDATE_ASSET_MINTS),
+    // Defense-in-depth: mergedMainnetMints includes mints from the Ledger API and
+    // this browser's persisted store. A single malformed mint string must NOT
+    // white-screen discovery (new PublicKey throws on non-base58) -- drop the bad
+    // entry and keep the rest as candidates.
+    () =>
+      IS_MAINNET
+        ? mergedMainnetMints.flatMap((m) => {
+            try {
+              return [new PublicKey(m)];
+            } catch {
+              return [];
+            }
+          })
+        : DEVNET_CANDIDATE_ASSET_MINTS,
     [mergedMainnetMints],
   );
 
@@ -235,7 +248,30 @@ export function RealReserveSync() {
           }),
         );
         if (cancelled) return;
-        applyDiscoveredReserves(dtrs, issues.length === 0);
+        // A pass is only AUTHORITATIVE (allowed to prune Reserves it didn't
+        // return) when it was actually capable of resolving multi-asset
+        // Reserves. On Mainnet the candidate-mint list loads asynchronously
+        // (useMainnetKnownAssetMints); until it arrives, mergedMainnetMints is
+        // just [USDC], so this pass can only resolve USDC-only Reserves and
+        // silently drops every multi-asset one as "unresolved". Marking such an
+        // incomplete pass fullyVerified would PRUNE the complete backend warm-
+        // cache seed (ReserveSnapshotHydrator) down to the 1 USDC Reserve, then
+        // climb back a minute later -- the exact 7->1->7 flip observed. So on
+        // Mainnet, only prune once the mint list has loaded past USDC; before
+        // that the pass is additive and preserves the instant snapshot seed.
+        // On Mainnet the warm-cache SNAPSHOT is the authoritative source for
+        // WHICH Reserves exist: the server does a complete discovery incl. a
+        // getProgramAccounts asset-mint enumeration the browser CANNOT do on
+        // the public RPC, refreshed ~15s and re-seeded on every load
+        // (ReserveSnapshotHydrator). This client poll therefore resolves only a
+        // SUBSET of Reserves (the ones whose asset mints happen to be in its
+        // ledger-hook candidate list) and must NEVER be treated as
+        // authoritative -- a clean-but-partial pass would PRUNE the snapshot's
+        // full set down to that subset (the "7 -> 1" flip). So on Mainnet the
+        // poll is always ADDITIVE: it adds/updates Reserves + holdings but never
+        // removes one the snapshot vouched for. DevNet has no snapshot, so it
+        // keeps the original authoritative (prune-on-clean-pass) behavior.
+        applyDiscoveredReserves(dtrs, !IS_MAINNET && issues.length === 0);
         setChainDiscoveryStatus("ready");
 
         if (walletKey && publicKey) {

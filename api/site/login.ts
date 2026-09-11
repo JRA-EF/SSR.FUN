@@ -1,13 +1,25 @@
-// POST /api/site/login -- verifies SSR_SITE_PASSWORD server-side and sets a
-// signed, HttpOnly session cookie gating the ENTIRE public site (see
-// middleware.ts). Mirrors api/dashboard/login.ts's rate-limit/lockout
-// pattern exactly, with its own independent password, cookie, and attempt
-// tracker -- entering the site password never grants /internal/* access,
-// and vice versa (see docs/project/DECISION_LOG.md's site-gate entry).
+// POST /api/site/login -- redeems a closed-beta key (DEC-0187) and sets the
+// signed, HttpOnly session cookie that gates the ENTIRE public site (see
+// middleware.ts). Accepted keys are the SSR_BETA_KEYS list (30-day sessions),
+// the SSR_TEAM_KEYS list (400-day sessions) and SSR_SITE_PASSWORD (see
+// lib/site/session.ts for the model and why the cookie records which key was
+// redeemed). Mirrors
+// api/dashboard/login.ts's rate-limit/lockout pattern exactly, with its own
+// independent cookie and attempt tracker -- redeeming a beta key never grants
+// /internal/* access, and vice versa.
 import type { DashboardRequest, DashboardResponse } from '../../lib/dashboard/http.js'
-import { buildSetCookie, createSessionCookieValue, isSecureEnvironment, SESSION_TTL_MS, timingSafeEqual } from '../../lib/dashboard/session.js'
+import { isSecureEnvironment } from '../../lib/dashboard/session.js'
+import {
+  buildSiteSetCookie,
+  configuredAccessKeys,
+  createSiteSessionCookieValue,
+  matchBetaKey,
+  sessionTtlForKey,
+  SITE_SESSION_COOKIE_NAME,
+  siteSessionSecret,
+} from '../../lib/site/session.js'
 
-export const SITE_SESSION_COOKIE_NAME = 'ssr_site_session'
+export { SITE_SESSION_COOKIE_NAME }
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name]
@@ -41,8 +53,10 @@ function clientKey(req: DashboardRequest): string {
   return raw?.split(',')[0]?.trim() || 'unknown'
 }
 
-function parseBody(req: DashboardRequest): { password?: unknown } {
-  if (req.body && typeof req.body === 'object') return req.body as { password?: unknown }
+// The Coming Soon page posts `{ key }`; the pre-DEC-0187 sign-in form (and
+// any bookmarked tooling) posted `{ password }`. Both name the same thing.
+function parseBody(req: DashboardRequest): { key?: unknown; password?: unknown } {
+  if (req.body && typeof req.body === 'object') return req.body as { key?: unknown; password?: unknown }
   if (typeof req.body === 'string') {
     try {
       return JSON.parse(req.body)
@@ -59,16 +73,17 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
     return
   }
 
-  const configuredPassword = process.env.SSR_SITE_PASSWORD ?? ''
-  if (!configuredPassword) {
-    res.status(500).json({ error: 'Site password is not configured.' })
+  const secret = siteSessionSecret()
+  const keys = configuredAccessKeys()
+  if (!secret || keys.length === 0) {
+    res.status(500).json({ error: 'Beta access is not configured.' })
     return
   }
 
   const limitEnabled = rateLimitEnabled()
-  const key = clientKey(req)
+  const client = clientKey(req)
   const now = Date.now()
-  const state = limitEnabled ? attemptsByClient.get(key) : undefined
+  const state = limitEnabled ? attemptsByClient.get(client) : undefined
 
   if (limitEnabled && state?.lockedUntil && state.lockedUntil > now) {
     const retryAfterSeconds = Math.ceil((state.lockedUntil - now) / 1000)
@@ -77,34 +92,34 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
     return
   }
 
-  const { password } = parseBody(req)
-  const submitted = typeof password === 'string' ? password : ''
+  const body = parseBody(req)
+  const raw = typeof body.key === 'string' ? body.key : typeof body.password === 'string' ? body.password : ''
+  const submitted = raw.trim()
+  const redeemed = submitted ? matchBetaKey(submitted, keys) : null
 
-  if (!timingSafeEqual(submitted, configuredPassword)) {
+  if (!redeemed) {
     if (limitEnabled) {
       const withinWindow = !!state && now - state.windowStart < ATTEMPT_WINDOW_MS
       const nextCount = (withinWindow ? state!.count : 0) + 1
       const windowStart = withinWindow ? state!.windowStart : now
 
       if (nextCount >= MAX_ATTEMPTS_PER_WINDOW) {
-        attemptsByClient.set(key, { count: 0, windowStart: now, lockedUntil: now + LOCKOUT_MS })
+        attemptsByClient.set(client, { count: 0, windowStart: now, lockedUntil: now + LOCKOUT_MS })
         const retryAfterSeconds = Math.ceil(LOCKOUT_MS / 1000)
         res.setHeader('Retry-After', String(retryAfterSeconds))
         res.status(429).json({ error: 'Too many attempts. Try again later.', retryAfterSeconds })
         return
       }
 
-      attemptsByClient.set(key, { count: nextCount, windowStart })
+      attemptsByClient.set(client, { count: nextCount, windowStart })
     }
-    res.status(401).json({ error: 'Incorrect password.' })
+    res.status(401).json({ error: "That BETA key isn't valid." })
     return
   }
 
-  attemptsByClient.delete(key)
-  const cookieValue = await createSessionCookieValue(configuredPassword, SESSION_TTL_MS)
-  res.setHeader(
-    'Set-Cookie',
-    buildSetCookie(SITE_SESSION_COOKIE_NAME, cookieValue, { maxAgeSeconds: SESSION_TTL_MS / 1000, secure: isSecureEnvironment() }),
-  )
+  attemptsByClient.delete(client)
+  const ttlMs = sessionTtlForKey(redeemed)
+  const cookieValue = await createSiteSessionCookieValue(secret, redeemed, ttlMs)
+  res.setHeader('Set-Cookie', buildSiteSetCookie(cookieValue, { maxAgeSeconds: ttlMs / 1000, secure: isSecureEnvironment() }))
   res.status(200).json({ ok: true })
 }

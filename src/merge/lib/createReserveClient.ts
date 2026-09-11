@@ -86,13 +86,13 @@ import { advanceAssetFunding, canEnterSeeding, countReadyToSeed, type AssetFundi
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
 /**
- * Exactly the capability set CreateDTR.tsx's "Additional Managers" copy
+ * Exactly the capability set CreateDTR.tsx's "Co-Managers" copy
  * promises them at creation time ("They'll be able to rebalance, manage
  * fees, and pause the reserve, but won't be able to manage other
- * delegates -- only the root Manager (you) can do that.") -- granted as a
+ * co-managers -- only the root Manager (you) can do that.") -- granted as a
  * RESTRICTED delegate (never unrestricted; add_delegate.rs only allows the
  * root Manager to grant unrestricted, and the whole point here is "won't be
- * able to manage other delegates," which an unrestricted delegate could).
+ * able to manage other co-managers," which an unrestricted delegate could).
  * Deliberately excludes UPDATE_METADATA, MANAGE_LIQUIDITY_CONFIG, and both
  * *_RESTRICTED_DELEGATE flags -- none of those are promised by the copy
  * above, so none are granted.
@@ -180,7 +180,7 @@ export function validateCreateReserveAssets(assets: CreateReserveAssetInput[]): 
   }
 }
 
-/** Validates and de-duplicates the "Additional Managers" list before it's turned into real add_delegate instructions -- never trusts caller-side UI state alone. Returns unique, valid wallet addresses excluding `manager` (which is always the root Manager already, and add_delegate.rs has no "grant yourself a delegate" concept). */
+/** Validates and de-duplicates the "Co-Managers" list before it's turned into real add_delegate instructions -- never trusts caller-side UI state alone. Returns unique, valid wallet addresses excluding `manager` (which is always the root Manager already, and add_delegate.rs has no "grant yourself a delegate" concept). */
 export function validateAdditionalManagers(addresses: string[], manager: PublicKey): PublicKey[] {
   const seen = new Set<string>();
   const result: PublicKey[] = [];
@@ -324,6 +324,8 @@ const RESERVE_ACCOUNT_BYTES = 377;
 const RESERVE_ASSET_ACCOUNT_BYTES = 112;
 const SPL_MINT_ACCOUNT_BYTES = 82;
 const SPL_TOKEN_ACCOUNT_BYTES = 165;
+/** programs/ssr_protocol/src/state/fee_settlement.rs FeeSettlement::SPACE (8 disc + 1 + 32 + 1 + 1 + 4x8 + 1). Created by seed_reserve (init_if_needed, payer = manager) on every new Reserve since DEC-0173 -- the seed is always the Reserve's first fee crystallization. */
+const FEE_SETTLEMENT_ACCOUNT_BYTES = 76;
 /** Rough per-transaction network fee estimate (base fee only, no priority fee) -- actual cost may vary slightly. */
 const ESTIMATED_TX_FEE_LAMPORTS = 5_000n;
 /** A Jupiter swap transaction typically carries a priority fee Jupiter itself recommends (observed ~0.0001 SOL) on top of the base fee -- a plain instruction's 5,000-lamport estimate above would understate it. Used only for the worst-case "this asset might need a swap" count below; never charged for an asset the wallet already holds enough of. */
@@ -340,6 +342,10 @@ export interface CreateReserveCostEstimate {
   vaultRentLamports: bigint;
   /** Rent for the creator's own Reserve Token ATA (created during seeding). */
   managerReserveTokenAtaRentLamports: bigint;
+  /** DEC-0173: rent for the Reserve's FeeSettlement PDA, created by the seed (its first fee crystallization), paid by the creator. */
+  feeSettlementRentLamports: bigint;
+  /** DEC-0173: rent for the Reserve's fee-vault Reserve Token ATA, created by the seed, paid by the creator. */
+  feeVaultAtaRentLamports: bigint;
   /** Real SOL the creator must provide for any wrapped-SOL leg(s) of the initial seed -- 0 if no SOL/wSOL asset is selected. */
   solSeedFundingLamports: bigint;
   /** Sum of all account-creation rent above (does NOT include SOL seed funding or network fees). */
@@ -381,6 +387,7 @@ interface RentConstants {
   mintRent: number;
   assetRent: number;
   vaultRent: number;
+  feeSettlementRent: number;
 }
 let rentCache: { endpoint: string; value: RentConstants; expiresAt: number } | null = null;
 let rentInFlight: { endpoint: string; promise: Promise<RentConstants> } | null = null;
@@ -396,13 +403,14 @@ export async function getRentConstants(connection: Connection): Promise<RentCons
   }
 
   const promise = withRateLimitRetry(async () => {
-    const [reserveRent, mintRent, assetRent, vaultRent] = await Promise.all([
+    const [reserveRent, mintRent, assetRent, vaultRent, feeSettlementRent] = await Promise.all([
       connection.getMinimumBalanceForRentExemption(RESERVE_ACCOUNT_BYTES),
       connection.getMinimumBalanceForRentExemption(SPL_MINT_ACCOUNT_BYTES),
       connection.getMinimumBalanceForRentExemption(RESERVE_ASSET_ACCOUNT_BYTES),
       connection.getMinimumBalanceForRentExemption(SPL_TOKEN_ACCOUNT_BYTES),
+      connection.getMinimumBalanceForRentExemption(FEE_SETTLEMENT_ACCOUNT_BYTES),
     ]);
-    return { reserveRent, mintRent, assetRent, vaultRent };
+    return { reserveRent, mintRent, assetRent, vaultRent, feeSettlementRent };
   })
     .then((value) => {
       rentCache = { endpoint, value, expiresAt: Date.now() + RENT_CACHE_TTL_MS };
@@ -440,11 +448,16 @@ export async function estimateCreateReserveCost(
   // (they inflated DevNet's numTransactions/fee figures before this flag).
   includeJupiterSwaps: boolean = true,
 ): Promise<CreateReserveCostEstimate> {
-  const { reserveRent, mintRent, assetRent, vaultRent } = await getRentConstants(connection);
+  const { reserveRent, mintRent, assetRent, vaultRent, feeSettlementRent } = await getRentConstants(connection);
 
   const reserveAssetRentLamports = BigInt(assetRent) * BigInt(assets.length);
   const vaultRentLamports = BigInt(vaultRent) * BigInt(assets.length);
   const managerReserveTokenAtaRentLamports = BigInt(vaultRent); // an ATA is a TokenAccount, same size/rent
+  // DEC-0173: the seed is the Reserve's first fee crystallization, so it
+  // creates (and the creator pays rent for) the FeeSettlement PDA and the
+  // fee-vault Reserve Token ATA -- both init_if_needed, payer = manager.
+  const feeSettlementRentLamports = BigInt(feeSettlementRent);
+  const feeVaultAtaRentLamports = BigInt(vaultRent);
 
   const wrapAssets = assets.filter((a) => isWrappedSol(a.mint));
   const solSeedFundingLamports = wrapAssets.reduce((sum, a) => sum + seedRawAmountForAsset(a, seedTotalUsd * a.seedWeightFraction, solPriceUsd), 0n);
@@ -452,7 +465,7 @@ export async function estimateCreateReserveCost(
   const wsolAtaRent = wrapAssets.length > 0 ? BigInt(vaultRent) : 0n;
 
   const totalRentLamports =
-    BigInt(reserveRent) + BigInt(mintRent) + reserveAssetRentLamports + vaultRentLamports + managerReserveTokenAtaRentLamports + wsolAtaRent;
+    BigInt(reserveRent) + BigInt(mintRent) + reserveAssetRentLamports + vaultRentLamports + managerReserveTokenAtaRentLamports + feeSettlementRentLamports + feeVaultAtaRentLamports + wsolAtaRent;
 
   // Worst case: every non-USDC/non-wrapped-SOL asset needs its own Jupiter
   // swap transaction to fund (see fundSeedAssetsIdempotent) -- the real
@@ -480,6 +493,8 @@ export async function estimateCreateReserveCost(
     reserveAssetRentLamports,
     vaultRentLamports,
     managerReserveTokenAtaRentLamports,
+    feeSettlementRentLamports,
+    feeVaultAtaRentLamports,
     solSeedFundingLamports,
     totalRentLamports,
     jupiterSwapCount,
@@ -1415,7 +1430,7 @@ export async function createReserveOnChain(params: {
   /**
    * Wallets to grant as restricted delegates (see ADDITIONAL_MANAGER_PERMISSIONS
    * above) in the SAME create-and-register transaction -- CreateDTR.tsx's
-   * "Additional Managers" step. Bundled here, not as separate post-creation
+   * "Co-Managers" step. Bundled here, not as separate post-creation
    * transactions, for the same reason feeRecipients is (DEC-0031): it shares
    * the reserve/signer/systemProgram accounts already in this transaction,
    * so no extra wallet approval is needed. Was previously collected by the
@@ -1516,7 +1531,7 @@ export async function createReserveOnChain(params: {
       // reading actingDelegate (this self-referential PDA doesn't need to
       // exist on-chain for that check), so this remains correct regardless
       // of which batch it ends up in. Restricted=true always, matching
-      // ADDITIONAL_MANAGER_PERMISSIONS's "can't manage other delegates" promise.
+      // ADDITIONAL_MANAGER_PERMISSIONS's "can't manage other co-managers" promise.
       const [actingDelegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
       const addDelegateIxs = await Promise.all(
         additionalManagerWallets.map((delegateWallet) =>

@@ -90,7 +90,7 @@
 - **Frontend use:** the Reserve-detail page's "Sell" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described. Also the canonical "redeem via SDK with no website" path for the frontend-independence test requirement.
 
 ## `update_targets`
-- **Signer:** manager, or delegate with `UPDATE_TARGETS`.
+- **Signer:** manager, or co-manager with `UPDATE_TARGETS`.
 - **Accounts:** `reserve` (mut), `delegate` (unchecked, conditionally validated), `signer`. **Remaining accounts:** `asset_count` `ReserveAsset` accounts (mut).
 - **Args:** `new_target_weights_bps: Vec<u16>`.
 - **Validation:** not paused; permission check; each asset either `enabled` or new weight is `0`; new sum `<= 10000`.
@@ -101,18 +101,18 @@
 - **Frontend use:** Manage → Rebalance tab, "Submit Rebalance" button (`src/merge/pages/ManageDTR.tsx`, via `executeSubmitRebalance`/`executeUpdateTargets` in `managementClient.ts`) -- changes intent only, no trade; also batched with `add_reserve_asset_active` calls in the same transaction when the proposed composition includes a not-yet-registered asset.
 
 ## `add_delegate`
-- **Signer:** manager (unrestricted delegate) or delegate with `ADD_RESTRICTED_DELEGATE` (restricted delegate only).
-- **Accounts:** `reserve` (mut), `delegate_account` (init, PDA), `acting_delegate` (unchecked, the signer's own delegate record if applicable), `signer`, `system_program`.
+- **Signer:** manager (unrestricted co-manager) or co-manager with `ADD_RESTRICTED_DELEGATE` (restricted co-manager only).
+- **Accounts:** `reserve` (mut), `delegate_account` (init, PDA), `acting_delegate` (unchecked, the signer's own co-manager record if applicable), `signer`, `system_program`.
 - **Args:** `delegate_wallet: Pubkey`, `permissions: u16`, `restricted: bool`.
 - **Validation:** not paused; `permissions` has no reserved bits set; authority check depends on `restricted`.
 - **State transition:** new `Delegate` account; `Reserve.delegate_count += 1`.
 - **Token movement:** none.
 - **Event:** `DelegateAdded`.
 - **Errors:** `ReservedPermissionBitSet`, `DelegatePermissionDenied`, `UnrestrictedDelegateRequiresManager`.
-- **Frontend use:** Manage → Delegates tab, "add delegate."
+- **Frontend use:** Manage → Co-Managers tab, "add co-manager."
 
 ## `update_delegate_permissions`
-- **Signer:** manager (any delegate) or delegate with `ADD_RESTRICTED_DELEGATE` (restricted delegates only).
+- **Signer:** manager (any co-manager) or co-manager with `ADD_RESTRICTED_DELEGATE` (restricted co-managers only).
 - **Accounts:** `reserve` (read), `delegate_account` (mut, PDA), `acting_delegate` (unchecked), `signer`.
 - **Args:** `new_permissions: u16`.
 - **Validation:** not paused; reserved bits check; authority check by target's `restricted` flag.
@@ -120,10 +120,10 @@
 - **Token movement:** none.
 - **Event:** `DelegatePermissionsUpdated`.
 - **Errors:** same family as `add_delegate`.
-- **Frontend use:** Manage → Delegates tab, "edit permissions."
+- **Frontend use:** Manage → Co-Managers tab, "edit permissions."
 
 ## `remove_delegate`
-- **Signer:** manager (any delegate) or delegate with `REMOVE_RESTRICTED_DELEGATE` (restricted delegates only).
+- **Signer:** manager (any co-manager) or co-manager with `REMOVE_RESTRICTED_DELEGATE` (restricted co-managers only).
 - **Accounts:** `reserve` (mut), `delegate_account` (mut, `close = signer`), `acting_delegate` (unchecked), `signer`.
 - **Args:** none.
 - **Validation:** authority check by target's `restricted` flag.
@@ -131,7 +131,7 @@
 - **Token movement:** none (SOL rent reclaim only).
 - **Event:** `DelegateRemoved`.
 - **Errors:** `DelegatePermissionDenied`, `UnrestrictedDelegateRequiresManager`, `MathUnderflow`.
-- **Frontend use:** Manage → Delegates tab, "remove."
+- **Frontend use:** Manage → Co-Managers tab, "remove."
 
 ## `transfer_reserve_manager`
 - **Signer:** current `manager` only -- root-exclusive, never delegable.
@@ -145,7 +145,7 @@
 - **Frontend use:** Manage → Overview, "transfer ownership" (a deliberately rare, high-friction action -- no dedicated UI exists yet, matches its root-exclusive/irreversible nature).
 
 ## `pause_reserve` / `unpause_reserve`
-- **Signer:** manager, or delegate with `PAUSE_RESERVE`/`UNPAUSE_RESERVE` respectively.
+- **Signer:** manager, or co-manager with `PAUSE_RESERVE`/`UNPAUSE_RESERVE` respectively.
 - **Accounts:** `reserve` (mut), `delegate` (unchecked), `signer`.
 - **Args:** none.
 - **Validation:** `status == Active` (to pause) / `status == Paused` (to unpause); permission check.
@@ -181,7 +181,7 @@
 - **DEC-0094 note:** left COMPLETELY UNTOUCHED by design -- for a Reserve that has opted into multi-recipient routing, `pending_manager_fee_shares` simply stays 0 forever (accrual now routes there instead -- see `mint_reserve_tokens_in_kind` above), so this instruction naturally degrades into a protocol-only collector with zero code change. Use the new `collect_manager_fee_share` below for a migrated Reserve's Manager-side payouts.
 
 ## `initialize_manager_fee_recipients` (new, DEC-0094)
-- **Signer:** `signer` (root manager, or a delegate holding `MANAGE_FEES`); `payer` (any wallet, covers the new account's one-time rent).
+- **Signer:** `signer` (root manager, or a co-manager holding `MANAGE_FEES`); `payer` (any wallet, covers the new account's one-time rent).
 - **Accounts:** `reserve` (read), `manager_fee_recipients` (init, PDA `[b"manager_fee_recipients", reserve]`), `delegate` (unchecked, see `common::require_reserve_permission`), `signer`, `payer` (mut, signer), `system_program`.
 - **Args:** `recipients: Vec<FeeRecipientInput>` (`{ wallet: Pubkey, allocation_bps: u16 }`, 1-10 entries).
 - **Validation:** `MANAGE_FEES` permission; `Reserve.fee_config.pending_manager_fee_shares == 0` (collect the legacy aggregate first); recipient list: 1-10 entries, no zero/default wallet, no zero allocation, no duplicate wallet, allocations sum to exactly 10,000 bps.
@@ -192,7 +192,7 @@
 - **Frontend use:** Create Reserve's "Fee Routing" step (bundled into the create transaction for >1 recipient) and Manage Reserve's "Set Up Recipients" action (for a Reserve that hasn't opted in yet).
 
 ## `update_fee_recipients` (new, DEC-0094)
-- **Signer:** `signer` (root manager, or a delegate holding `MANAGE_FEES`).
+- **Signer:** `signer` (root manager, or a co-manager holding `MANAGE_FEES`).
 - **Accounts:** `reserve` (read), `manager_fee_recipients` (mut, must already exist), `delegate` (unchecked), `signer`.
 - **Args:** `recipients: Vec<FeeRecipientInput>` (same shape/validation as above).
 - **Validation:** `MANAGE_FEES` permission; every CURRENT recipient's `pending_fee_shares == 0` (so a routing change can never reallocate already-accrued fees); same recipient-list validation as `initialize_manager_fee_recipients`.
@@ -214,7 +214,7 @@
 - **Frontend use:** Manage Reserve's per-recipient "Collect" button.
 
 ## `record_rebalance`
-- **Signer:** delegate with `EXECUTE_REBALANCE` (or manager).
+- **Signer:** co-manager with `EXECUTE_REBALANCE` (or manager).
 - **Accounts:** `reserve` (read), `delegate` (unchecked), `signer`. **Remaining accounts:** `asset_count` pairs of `[reserve_asset, vault]`.
 - **Args:** `balances_before: Vec<u64>` (caller-attested, **not independently verified on-chain** -- see SECURITY_INVARIANTS.md and the module doc comment in record_rebalance.rs), `note: String`.
 - **Validation:** permission check; account/count matching.
@@ -225,7 +225,7 @@
 - **Frontend use:** none currently wired -- the live Rebalance tab's "Submit Rebalance" flow (2026-08-12, DEC-0084) only calls `update_targets`/`add_reserve_asset_active` (a pure config-intent change), not this attestation instruction; `record_rebalance` belongs to an earlier/parallel "manager manually trades externally, then attests the outcome" design that the current UI doesn't expose a step for. Still a real, deployed, callable instruction -- exercised directly for this doc's audit (see `docs/protocol/DEVNET_INSTRUCTION_AUDIT_2026-08-13.md`).
 
 ## `update_metadata`
-- **Signer:** manager, or delegate with `UPDATE_METADATA`.
+- **Signer:** manager, or co-manager with `UPDATE_METADATA`.
 - **Accounts:** `reserve` (mut), `delegate` (unchecked), `signer`.
 - **Args:** `new_metadata_uri: String`.
 - **Validation:** length check; permission check.
@@ -258,7 +258,7 @@
 - **Frontend use:** none -- admin/ops-only, invoked via CLI/SDK script, not exposed in the product UI. Added in the Mainnet authority-model pass: `ProtocolConfig.paused` existed and was checked by `create_reserve`/`mint_reserve_tokens_in_kind`/`seed_reserve` since v1, but no instruction had ever set it -- this was the only way to actually engage the documented global emergency pause, and it did not previously exist.
 
 ## `add_reserve_asset_active`
-- **Signer:** manager, or delegate with `MANAGE_LIQUIDITY_CONFIG`.
+- **Signer:** manager, or co-manager with `MANAGE_LIQUIDITY_CONFIG`.
 - **Accounts:** `protocol_config` (read), `reserve` (mut), `reserve_asset` (init, PDA), `asset_mint`, `vault` (init, PDA token account), `vault_authority` (PDA, unchecked), `delegate` (unchecked), `signer`, `token_program`, `system_program`.
 - **Args:** `target_weight_bps: u16`.
 - **Validation:** `Reserve.status == Active` (deliberately separate from `initialize_reserve_asset`, which only runs pre-Active -- see the module doc comment for why splitting these two keeps the pre-Active creation flow's account interface unchanged); permission check; same weight/limit/token-program checks as `initialize_reserve_asset`.
@@ -269,7 +269,7 @@
 - **Frontend use:** Manage → Rebalance tab, "Submit Rebalance" (`executeSubmitRebalance` registers each not-yet-on-chain asset at 0 bps in the same transaction, immediately followed by one `update_targets` call covering every asset's real final weight -- see DEC-0084 for why: registering directly at a nonzero weight could blow the 10,000bps cap before `update_targets` has a chance to rebalance the total).
 
 ## `fund_new_reserve_asset`
-- **Signer:** `manager` (root-only, no delegate path; `reserve` is read-only here, `has_one = manager` enforces it).
+- **Signer:** `manager` (root-only, no co-manager path; `reserve` is read-only here, `has_one = manager` enforces it).
 - **Accounts:** `reserve` (read, `has_one = manager`), `reserve_asset` (read), `asset_mint`, `vault` (mut), `manager_token_account` (mut), `manager`, `token_program` (Interface, SPL Token or Token-2022).
 - **Args:** `amount: u64`.
 - **Validation:** `Reserve.status == Active`; `amount > 0`; the target vault's balance must be exactly zero (a one-time bootstrap, not a general top-up -- see the module doc comment: `mint_reserve_tokens_in_kind`'s deposit math is purely balance-ratio-based, so a vault stuck at 0 could never be funded through ordinary Buy activity).
@@ -280,8 +280,8 @@
 - **Frontend use:** Manage → Rebalance tab, "Fund {symbol}" (`executeFundReserveAsset` in `managementClient.ts`) -- a separate, individually-approved maintenance action, distinct from "Submit Rebalance".
 
 ## `remove_reserve_asset`
-- **Signer:** manager, or delegate with `MANAGE_LIQUIDITY_CONFIG`.
-- **Accounts:** `reserve` (mut), `reserve_asset` (mut, `close = manager`), `asset_mint`, `vault` (mut, closed), `vault_authority` (PDA, unchecked), `manager` (unchecked, rent destination -- always the Reserve's root manager, never the calling delegate), `delegate` (unchecked), `signer`, `token_program` (Interface).
+- **Signer:** manager, or co-manager with `MANAGE_LIQUIDITY_CONFIG`.
+- **Accounts:** `reserve` (mut), `reserve_asset` (mut, `close = manager`), `asset_mint`, `vault` (mut, closed), `vault_authority` (PDA, unchecked), `manager` (unchecked, rent destination -- always the Reserve's root manager, never the calling co-manager), `delegate` (unchecked), `signer`, `token_program` (Interface).
 - **Args:** none.
 - **Validation:** `Reserve.status ∈ {AssetsInitializing, Active, Paused}`; permission check; target must be the LAST-registered asset (`order_index == asset_count - 1`, so no other asset's `order_index` needs to shift); its vault balance must be exactly zero (removal can never strand value attributable to existing holders).
 - **State transition:** `asset_count -= 1`; `ReserveAsset` and vault accounts closed, rent reclaimed to `manager`.
@@ -291,7 +291,7 @@
 - **Frontend use:** Manage → Rebalance tab, "Remove {symbol}" (`executeRemoveReserveAsset` in `managementClient.ts`) -- only enabled for an asset that is both last-registered and currently zero-balance.
 
 ## `initiate_wind_down`
-- **Signer:** `manager` (root-only, no delegate path -- matches the "root-exclusive unless explicitly defined otherwise" authority model, same as `transfer_reserve_manager`).
+- **Signer:** `manager` (root-only, no co-manager path -- matches the "root-exclusive unless explicitly defined otherwise" authority model, same as `transfer_reserve_manager`).
 - **Accounts:** `reserve` (mut), `manager`.
 - **Args:** none.
 - **Validation:** `Reserve.status == Active`.
@@ -302,7 +302,7 @@
 - **Frontend use:** Manage → Overview, "Initiate Wind Down" (`executeInitiateWindDown` in `managementClient.ts`).
 
 ## `close_reserve`
-- **Signer:** `manager` (root-only, no delegate path).
+- **Signer:** `manager` (root-only, no co-manager path).
 - **Accounts:** `reserve` (mut, closed), `reserve_token_mint` (mut), `vault_authority` (PDA), `manager_fee_recipients` (DEC-0094, optional, closed too when present -- rent reclaimed to `manager`), `manager`, `token_program`. **Remaining accounts:** `asset_count` pairs of `[reserve_asset, vault]`, in `order_index` order (lighter than `mint`/`redeem`'s per-leg groups -- no owner-token-account/mint/token-program needed per leg here).
 - **Args:** none.
 - **Validation:** `Reserve.status == WindDown`; Reserve Token supply must be exactly zero; every registered asset's vault balance must be exactly zero (i.e. every holder has already redeemed out -- redemption stays available during `WindDown`); the legacy aggregate `pending_manager_fee_shares`/`pending_protocol_fee_shares` must both be zero (`PendingFeesNotCollected`, DEC-0093); if `manager_fee_recipients` is present, every active recipient's `pending_fee_shares` must also be zero (`PendingManagerFeeSharesNotCollected`, DEC-0094 -- the legacy check alone can't catch this for a migrated Reserve, since its aggregate field stops accumulating once migrated).

@@ -12,7 +12,7 @@ import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddres
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients, findTvlAccrual, resolveProtocolFeeDestinationTokenAccount } from "./pda";
+import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "./pda";
 import type { RecipientInput } from "./feeMath";
 
 export interface NewReserveAddresses {
@@ -151,41 +151,23 @@ export async function buildSeedReserveInstruction(
   initialReserveTokens: bigint,
 ): Promise<TransactionInstruction> {
   const managerReserveTokenAta = getAssociatedTokenAddressSync(addresses.reserveTokenMint, manager);
-  // The initial seed mint is fee-charged like any other mint (see
-  // seed_reserve.rs) and so, like mint/redeem/accrue, needs to resolve
-  // whether this Reserve has opted into multi-recipient Manager fee routing
-  // -- the DEC-0094 sentinel pattern (see credit_manager_fee_shares's own
-  // doc comment): pass the REAL ManagerFeeRecipients PDA if it already
-  // exists (e.g. bundled into the same create-and-register transaction), or
-  // the program ID itself as the explicit "None" sentinel otherwise. Anchor
-  // does NOT treat an arbitrary non-existent account as an automatic None
-  // for an `Option<Account<T>>` field -- only this exact sentinel -- so
-  // this can't be left to client-side PDA auto-resolution (confirmed live:
-  // auto-resolving the real PDA address for a not-yet-initialized account
-  // fails on-chain with AccountNotInitialized).
-  const [managerFeeRecipientsPda] = findManagerFeeRecipients(addresses.reserve, program.programId);
-  const recipientsAccount = await (program.account as any).managerFeeRecipients.fetchNullable(managerFeeRecipientsPda);
-  const managerFeeRecipients = recipientsAccount ? managerFeeRecipientsPda : program.programId;
-
-  // Instant Protocol mint-fee transfer (see docs/project/DECISION_LOG.md):
-  // the initial seed mint is a mint like any other -- its Protocol fee
-  // share must be minted straight to the live treasury wallet in this same
-  // transaction, so the current `defaultProtocolFeeDestination` is read
-  // fresh here rather than assumed.
-  const protocolConfigAccount: any = await (program.account as any).protocolConfig.fetch(addresses.protocolConfig);
-  const protocolFeeDestination = new PublicKey(protocolConfigAccount.defaultProtocolFeeDestination);
-  // Consolidation (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
-  // when the Protocol fee-destination wallet IS this Reserve's own manager,
-  // pass the Option<Account> "None" sentinel instead of a second mutable
-  // account that would resolve to the exact same ATA as
-  // managerReserveTokenAta below -- see resolveProtocolFeeDestinationTokenAccount's
-  // doc comment (pda.ts) for the full explanation.
-  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(
-    protocolFeeDestination,
-    manager,
-    addresses.reserveTokenMint,
-    program.programId,
-  );
+  // DEC-0173: the initial seed mint is fee-charged like any other mint, and
+  // -- exactly like mint_reserve_tokens_in_kind since Tier B (DEC-0184) --
+  // BOTH the Protocol and Manager shares of that fee now crystallize into
+  // the Reserve's shared fee vault (settled to USDC later by the keeper,
+  // see api/mainnet/fee-settlement-cron.ts). The old instant-mint-to-
+  // treasury (`protocol_fee_destination` + its token account, with the
+  // 2026-08-17 duplicate-ATA "None" sentinel dance) and the Manager pending
+  // counter (`manager_fee_recipients` sentinel) are gone from seed_reserve's
+  // account struct entirely, replaced by the same 3-for-3 swap the mint
+  // builder in directInstructions.ts already made: {feeSettlement, feeVault,
+  // feeVaultAuthority}, all pure PDA/ATA derivations -- no account fetch
+  // needed here anymore. The manager fronts the one-time rent for
+  // FeeSettlement + the fee-vault ATA (init_if_needed, payer = manager) on
+  // this Reserve's very first crystallization -- which the seed always is.
+  const [feeSettlement] = findFeeSettlement(addresses.reserve, program.programId);
+  const [feeVaultAuthority] = findFeeVaultAuthority(addresses.reserve, program.programId);
+  const feeVault = findFeeVaultAta(addresses.reserve, addresses.reserveTokenMint, program.programId);
 
   // Time-weighted average TVL accumulator (see docs/project/DECISION_LOG.md):
   // the initial seed mint checkpoints it too, same as every other mint.
@@ -214,10 +196,10 @@ export async function buildSeedReserveInstruction(
       mintAuthority: addresses.mintAuthority,
       managerReserveTokenAccount: managerReserveTokenAta,
       manager,
-      protocolFeeDestinationTokenAccount,
-      protocolFeeDestination,
+      feeSettlement,
+      feeVault,
+      feeVaultAuthority,
       tvlAccrual,
-      managerFeeRecipients,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,

@@ -78,7 +78,7 @@ export function AcceptanceModal() {
         <h3 id="accept-title">Before you continue</h3>
         <p className="accept-body">
           SSR.FUN is an interface to experimental blockchain software on Solana. Transactions are irreversible, and
-          you can lose the funds you commit.
+          you expressly acknowledge the risk of loss of funds.
         </p>
         <p className="accept-body">
           Please review the{' '}

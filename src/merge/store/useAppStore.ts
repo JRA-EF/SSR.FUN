@@ -368,18 +368,18 @@ export const useAppStore = create<AppState>()(
         const dtr = dtrs.find((d) => d.id === dtrId);
         if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
-          return { success: false, message: "You do not have delegate-management permission." };
+          return { success: false, message: "You do not have co-manager management permission." };
         if (!address.trim()) return { success: false, message: "Enter a wallet address." };
         if (address === dtr.managerAddress)
           return { success: false, message: "That wallet is already the root Manager." };
         if (dtr.delegates.some((d) => d.address === address))
-          return { success: false, message: "That wallet is already a delegate." };
+          return { success: false, message: "That wallet is already a co-manager." };
 
         const delegate: Delegate = { address, permissions, addedAt: Date.now() };
         set({
           dtrs: dtrs.map((d) => (d.id === dtrId ? { ...d, delegates: [...d.delegates, delegate] } : d)),
         });
-        return { success: true, message: "Delegate added." };
+        return { success: true, message: "Co-Manager added." };
       },
 
       updateDelegatePermissions: (dtrId, address, permissions) => {
@@ -387,7 +387,7 @@ export const useAppStore = create<AppState>()(
         const dtr = dtrs.find((d) => d.id === dtrId);
         if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
-          return { success: false, message: "You do not have delegate-management permission." };
+          return { success: false, message: "You do not have co-manager management permission." };
 
         set({
           dtrs: dtrs.map((d) =>
@@ -396,7 +396,7 @@ export const useAppStore = create<AppState>()(
               : d,
           ),
         });
-        return { success: true, message: "Delegate permissions updated." };
+        return { success: true, message: "Co-Manager permissions updated." };
       },
 
       removeDelegate: (dtrId, address) => {
@@ -404,12 +404,12 @@ export const useAppStore = create<AppState>()(
         const dtr = dtrs.find((d) => d.id === dtrId);
         if (!dtr) return { success: false, message: "Reserve not found." };
         if (!canManageDelegates(dtr, wallet.address))
-          return { success: false, message: "You do not have delegate-management permission." };
+          return { success: false, message: "You do not have co-manager management permission." };
 
         set({
           dtrs: dtrs.map((d) => (d.id === dtrId ? { ...d, delegates: d.delegates.filter((del) => del.address !== address) } : d)),
         });
-        return { success: true, message: "Delegate removed." };
+        return { success: true, message: "Co-Manager removed." };
       },
 
       rebalanceDTR: (dtrId, edits, adjustRemaining) => {
@@ -448,14 +448,21 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "ssrfun-simulation",
-      version: 6,
+      version: 7,
       // txInFlight is purely an in-session UI-coordination flag (RealReserveSync
       // pauses its poll while it's true) -- it must never survive a reload as
       // `true`, or a tab closed mid-transaction would permanently wedge
       // background polling on next load with nothing left to ever clear it.
       partialize: (state) => {
         const { txInFlight: _txInFlight, ...rest } = state;
-        return rest;
+        // On Mainnet, NEVER persist on-chain-discovered Reserves. They are
+        // always re-derived fresh from the warm-cache snapshot (pass-0 in
+        // RealReserveSync) plus the live poll, so a persisted -- and possibly
+        // stale or empty -- copy rehydrating on load can only race and clobber
+        // that fresh seed. That race is the "instant 7 -> flips to none/1 ->
+        // back to 7" bug. Only user-local DTRs (none today; future-proofed)
+        // persist. DevNet behaviour is deliberately unchanged.
+        return IS_MAINNET ? { ...rest, dtrs: rest.dtrs.filter((d) => !d.onChain) } : rest;
       },
       // Backfill fields added after a user's simulation state was already
       // persisted to localStorage -- e.g. DTRs created before the logo-art
@@ -526,6 +533,14 @@ export const useAppStore = create<AppState>()(
           if (state.holdings) {
             state.holdings = state.holdings.filter((h) => !removedIds.has(h.dtrId));
           }
+        }
+        // v7: on Mainnet, drop any on-chain Reserves left in an existing
+        // tester's localStorage from before partialize stopped persisting them.
+        // Without this, the one post-update load would still rehydrate the stale
+        // on-chain set and race the warm-cache snapshot seed (the 7->none/1 flip).
+        // They re-derive instantly from the snapshot. DevNet is left untouched.
+        if (IS_MAINNET && state.dtrs) {
+          state.dtrs = state.dtrs.filter((d) => !d.onChain);
         }
         if (state.wallet) {
           state.wallet = { ...state.wallet, usdc: 0, ssr: 0 };
