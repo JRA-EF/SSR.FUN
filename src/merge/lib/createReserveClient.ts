@@ -39,7 +39,7 @@ import {
   type TransactionInstruction,
 } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { assetAta, resolveLegTokenProgram, tokenProgramFromMintOwner, TOKEN_PROGRAM_ID } from "@ssr/sdk";
+import { assetAta, resolveLegTokenProgram, tokenProgramFromMintOwner, TOKEN_PROGRAM_ID, assessMintAccount, describeIncompatibleAsset } from "@ssr/sdk";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
   buildReadOnlyProgram,
@@ -186,6 +186,47 @@ export function validateCreateReserveAssets(assets: CreateReserveAssetInput[]): 
   const totalWeightBps = assets.reduce((sum, a) => sum + a.weightBps, 0);
   if (totalWeightBps <= 0 || totalWeightBps > 10_000) {
     throw new Error(`Invalid allocation total (${(totalWeightBps / 100).toFixed(2)}%) -- allocations must sum to more than 0% and no more than 100%.`);
+  }
+}
+
+/**
+ * Reads every selected mint and refuses the ones the PROGRAM will reject
+ * (DEC-0205).
+ *
+ * The program rejects five Token-2022 extensions at initialize_reserve_asset
+ * because each breaks an assumption the protocol depends on. Before this
+ * check existed, such a mint was selectable, and the user discovered the
+ * problem only when create-and-register failed on instruction 2 -- after
+ * paying for the transaction. Live 2026-09-11 with PUMP, which carries a
+ * transfer hook.
+ *
+ * Run against the chain rather than the catalogue on purpose: it is the
+ * authority the program itself consults, it cannot be stale, and it covers a
+ * mint whose extensions changed since the last catalogue snapshot.
+ *
+ * Throws naming the asset and the reason. A read failure is NOT treated as a
+ * rejection -- the transaction would simply fail the way it does today, and
+ * blocking a launch on an RPC hiccup would be worse.
+ */
+export async function assertSelectedMintsAreSupported(
+  connection: Connection,
+  assets: { mint: string; symbol?: string }[],
+): Promise<void> {
+  if (assets.length === 0) return;
+  const mints = assets.map((a) => new PublicKey(a.mint));
+  let infos: ({ data: Buffer; owner: PublicKey } | null)[];
+  try {
+    infos = (await connection.getMultipleAccountsInfo(mints)) as never;
+  } catch {
+    return; // see the note above: never block a launch on a failed read
+  }
+  const blocked: string[] = [];
+  mints.forEach((m, i) => {
+    const compat = assessMintAccount(m, infos[i]);
+    if (!compat.supported) blocked.push(describeIncompatibleAsset(assets[i].symbol ?? m.toBase58(), compat));
+  });
+  if (blocked.length > 0) {
+    throw new Error(`${blocked.join(" ")} Nothing was created on-chain.`);
   }
 }
 
@@ -1511,6 +1552,9 @@ export async function createReserveOnChain(params: {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   validateCreateReserveAssets(params.assets);
+  // DEC-0205: the chain's own answer on every selected mint, before a single
+  // instruction is built or the wallet is opened.
+  await assertSelectedMintsAreSupported(connection, params.assets);
   // The ONE choke point every caller of createReserveOnChain goes through
   // for metadataUri, same rationale as validateCreateReserveAssets above --
   // this is what makes "blocked before Phantom opens" true even if a future

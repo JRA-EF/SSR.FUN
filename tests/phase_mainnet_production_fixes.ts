@@ -868,7 +868,15 @@ describe("createReserveClient.ts's real Connection method usage stays inside bot
   // confirmed directly in node_modules/@solana/web3.js/lib/index.cjs.js: it
   // calls getAccountInfoAndContext (itself a getAccountInfo wrapper)
   // internally and issues no RPC method of its own.
-  const METHOD_TO_RPC_NAME: Record<string, string> = { sendRawTransaction: "sendTransaction", getAddressLookupTable: "getAccountInfo" };
+  // web3.js helper names -> the JSON-RPC method actually put on the wire, which
+  // is what the proxy allowlists gate. getMultipleAccountsInfo added 2026-09-11
+  // (DEC-0205): the Reserve-creation preflight reads every selected mint in one
+  // call, and that helper sends getMultipleAccounts, already allowed.
+  const METHOD_TO_RPC_NAME: Record<string, string> = {
+    sendRawTransaction: "sendTransaction",
+    getAddressLookupTable: "getAccountInfo",
+    getMultipleAccountsInfo: "getMultipleAccounts",
+  };
 
   function extractConnectionMethodCalls(sourcePath: string): string[] {
     const source = fs.readFileSync(path.join(__dirname, "..", sourcePath), "utf8");

@@ -37,6 +37,7 @@ import {
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
 import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, formatAllocationUsd, type LaunchAssetPlan } from "@/lib/launchFunding";
+import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
@@ -946,6 +947,19 @@ export function CreateDTR() {
     setAssets(assets.map(a => a.symbol === symbol ? { ...a, weight: newWeight } : a));
   };
 
+  // Quick-fill (DEC-0203), the direct-deposit-split idea: set a few weights by
+  // hand and let a button do the arithmetic that makes the column add up.
+  // All three go through basketAllocation.ts's integer-bps helpers so the
+  // total is exactly 100%, never 99.9% from float rounding.
+  const applyWeights = (next: number[]) => setAssets((prev) => prev.map((a, i) => ({ ...a, weight: next[i] ?? a.weight })));
+  const assignRestTo = (symbol: string) => {
+    setAssets((prev) => {
+      const i = prev.findIndex((a) => a.symbol === symbol);
+      const next = assignRemainder(prev.map((a) => a.weight), i);
+      return prev.map((a, j) => ({ ...a, weight: next[j] ?? a.weight }));
+    });
+  };
+
   const totalWeight = assets.reduce((sum, a) => sum + a.weight, 0);
   const unallocatedWeight = Math.max(0, 1 - totalWeight);
   // A real on-chain deployment requires EVERY selected asset to be one of
@@ -1726,9 +1740,38 @@ export function CreateDTR() {
                 <div className="space-y-4">
                   <div className="flex justify-between items-center bg-muted/50 p-3 rounded-lg border border-border">
                     <span className="font-semibold text-sm">Total Allocated</span>
-                    <span className={`font-merge-mono font-bold ${totalWeight > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
-                      {(totalWeight * 100).toFixed(1)}%
-                    </span>
+                    <div className="flex items-center gap-3">
+                      {/* Quick-fill (DEC-0203) -- the arithmetic, not a new
+                          allocation model. Only shown once there is something
+                          to act on. */}
+                      {assets.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                            title="Give every selected asset an equal share of 100%"
+                            onClick={() => applyWeights(splitEvenly(assets.length))}
+                          >
+                            Split evenly
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                            title="Set every asset to 0% and leave the basket in USDC"
+                            onClick={() => applyWeights(clearAll(assets.length))}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                      )}
+                      <span className={`font-merge-mono font-bold ${totalWeight > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
+                        {(totalWeight * 100).toFixed(1)}%
+                      </span>
+                    </div>
                   </div>
                   
                   {unallocatedWeight > 0 && totalWeight <= 1.0001 && (
@@ -1762,6 +1805,23 @@ export function CreateDTR() {
                               />
                               <span className="text-muted-foreground ml-1 text-sm">%</span>
                             </div>
+                            {/* "Rest": hand this asset everything still
+                                unallocated, so the column reaches exactly 100%
+                                without the user doing the subtraction. Hidden
+                                rather than disabled when nothing is left --
+                                a dead button invites clicking. */}
+                            {unallocatedBps(assets.map((a) => a.weight)) > 0 && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-2 text-xs font-merge-mono"
+                                title={`Add the remaining ${(unallocatedWeight * 100).toFixed(1)}% to ${asset.symbol}`}
+                                onClick={() => assignRestTo(asset.symbol)}
+                              >
+                                +{(unallocatedWeight * 100).toFixed(1)}%
+                              </Button>
+                            )}
                             <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeAsset(asset.symbol)}>
                               <X className="w-4 h-4" />
                             </Button>
