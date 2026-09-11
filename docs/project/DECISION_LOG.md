@@ -6169,3 +6169,21 @@
   "evidence": ["PUMP on-chain: owner TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb (Token-2022), 6 decimals; catalogue row jupiter_verified true, ssr_status unreviewed -- so nothing but the Token-2022 filter was excluding it.", "Live catalogue split among verified mints: 1,637 classic / 1,587 Token-2022 at the time of measurement.", "After the change, running the real dedupeBySymbolPreferOrganicScore against live rows: 3,201 -> 3,146 selectable, 1,574 Token-2022, PUMP present with tokenProgram TokenzQd...", "9 new tests incl. proof that the classic and Token-2022 ATA derivations for the same mint and owner are genuinely different addresses. 1,062 passing overall; the 5 remaining failures are the pre-existing CSS/formatting ones verified unchanged at 33693ff. tsc clean on app, node, api/mainnet and api/ledger scopes."]
 }
 ```
+
+## DEC-0202
+
+```json
+{
+  "id": "DEC-0202",
+  "date": "2026-09-11",
+  "status": "staged-awaiting-squads-execute",
+  "decision": "The DEC-0200 program upgrade (create_token_metadata) is staged for Squads execution. The program account was extended by 63,696 bytes first -- the new binary is 1,099,592 bytes against a prior capacity of 1,035,896, so no upgrade from this tree could have landed without it. Buffer HpB6TbVuGyzHRJWea5491rZDnhjcyQUYUjUtkj4d7N4k written from the developer key and its authority handed to the Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW. The upgrade carries exactly one new instruction and changes no existing account shape.",
+  "context": "Creator authorised getting the Squads approval ready after the 2026-09-11 QA pass established that reserve token mints carry no Metaplex metadata at all, which is why wallets render an address instead of SOLSSR.",
+  "rationale": "Reproducibility proven before spending: a clean rebuild of the committed tree produced sha256 23ce686e68c6bb50a410437a61a89fa0627fdf7282863bc7a9a66a3af9c07458 twice, and the on-chain buffer dump matches that hash byte for byte at the same 1,099,592 bytes. The IDL diff against the previously committed one adds create_token_metadata, the TokenMetadataPublished event and error 6062, with ZERO drift on any existing instruction's accounts or args -- so this upgrade cannot break an in-flight buy, sell, rebalance or settlement, and needs no coordinated frontend cutover.",
+  "impact": "Costs: 0.404197392 SOL of permanent rent for the account extension, and 6.964761082 SOL held in the buffer which refunds to the spill account on execute. Developer wallet 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa fell from 9.1274 to 1.7538 SOL and should be topped up before the next staging exercise. After execute, create_token_metadata can publish metadata for new Reserves and REPAIR existing mints (it is idempotent and signs the Metaplex CPI with the mint-authority PDA, the only key that can). Wallet symbol display remains broken until it is executed.",
+  "affectedAreas": ["Mainnet program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 (programdata extended)", "buffer HpB6TbVuGyzHRJWea5491rZDnhjcyQUYUjUtkj4d7N4k"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["solana program extend ... 63696 -> usable capacity now exactly 1,099,592 bytes.", "Clean rebuild sha256 23ce686e...7458, 1,099,592 bytes, reproduced across two independent builds.", "solana program dump of the buffer: identical sha256 and identical size.", "solana program show --buffers: authority HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW, balance 6.964761082 SOL.", "cargo test 20/20 including the three new wire-format tests; clippy 3 pre-existing warnings, none new."]
+}
+```
