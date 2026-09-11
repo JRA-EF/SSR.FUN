@@ -7,6 +7,8 @@ import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
 import { useAppStore } from "@/store/useAppStore";
+import { normalizeYouTubeChannelUrl } from "@/lib/youtube";
+import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import {
   createReserveOnChain,
   resumeReserveDeploymentOnChain,
@@ -281,6 +283,17 @@ export function CreateDTR() {
         </div>
       ),
     });
+    // Attach the step-1 header image to the new Reserve.
+    if (headerImage) {
+      useAppStore.getState().setReserveHeaderImage(dtrId, headerImage);
+    }
+    // Attach the creator's YouTube links (entered in step 1) to the new Reserve.
+    if (youtubeChannel.trim()) {
+      useAppStore.getState().setReserveYoutube(dtrId, {
+        channelUrl: normalizeYouTubeChannelUrl(youtubeChannel),
+        featuredVideoUrl: youtubeFeatured.trim() || undefined,
+      });
+    }
     setLocation(`/dtr/${dtrId}`);
   }
 
@@ -348,6 +361,15 @@ export function CreateDTR() {
   const [name, setName] = useState("");
   const [ticker, setTicker] = useState("");
   const [description, setDescription] = useState("");
+  // Optional creator YouTube links -- saved onto the Reserve after deploy and
+  // shown in the Reserve page's "From the Creator" video panel.
+  const [youtubeChannel, setYoutubeChannel] = useState("");
+  const [youtubeFeatured, setYoutubeFeatured] = useState("");
+  // Optional header banner (full-width art across the top of the Reserve's
+  // page) -- picked in step 1, attached after a successful deploy.
+  const headerImageInputRef = useRef<HTMLInputElement>(null);
+  const [headerImage, setHeaderImage] = useState<string | null>(null);
+  const [headerImageError, setHeaderImageError] = useState<string | null>(null);
   const [category, setCategory] = useState<string>(DEFAULT_RESERVE_CATEGORY);
   // Optional profile picture, picked in Step 1 (Identity): the normalized
   // data URL (see fileToProfileImageDataUrl -- downscaled/re-encoded
@@ -1293,6 +1315,17 @@ export function CreateDTR() {
           </div>
         ),
       });
+      // Attach the step-1 header image to the new Reserve.
+      if (headerImage) {
+        useAppStore.getState().setReserveHeaderImage(dtrId, headerImage);
+      }
+      // Attach the creator's YouTube links (entered in step 1) to the new Reserve.
+      if (youtubeChannel.trim()) {
+        useAppStore.getState().setReserveYoutube(dtrId, {
+          channelUrl: normalizeYouTubeChannelUrl(youtubeChannel),
+          featuredVideoUrl: youtubeFeatured.trim() || undefined,
+        });
+      }
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1541,6 +1574,67 @@ export function CreateDTR() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                 />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="youtube-channel">YouTube channel <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Input
+                    id="youtube-channel"
+                    placeholder="e.g. youtube.com/@yourchannel"
+                    value={youtubeChannel}
+                    onChange={(e) => setYoutubeChannel(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">Shown on your Reserve's page so holders can find your videos.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="youtube-featured">Featured video link <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Input
+                    id="youtube-featured"
+                    placeholder="e.g. youtube.com/watch?v=..."
+                    value={youtubeFeatured}
+                    onChange={(e) => setYoutubeFeatured(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">Plays at the top of the video panel on your Reserve's page.</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Header image <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                {headerImage && (
+                  <div className="relative h-24 sm:h-32 rounded-xl overflow-hidden border border-border">
+                    <img src={headerImage} alt="Header preview" className="w-full h-full object-cover" style={{ objectPosition: "center 30%" }} />
+                    <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 55%, hsl(var(--background) / 0.9) 100%)" }} />
+                  </div>
+                )}
+                <input
+                  ref={headerImageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file) return;
+                    setHeaderImageError(null);
+                    void fileToHeaderImageDataUrl(file).then(setHeaderImage).catch((err) => {
+                      setHeaderImage(null);
+                      setHeaderImageError(err instanceof Error ? err.message : "This file could not be read as an image -- try a different one.");
+                    });
+                  }}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => headerImageInputRef.current?.click()}>
+                    {headerImage ? "Replace Image" : "Choose Image"}
+                  </Button>
+                  {headerImage && (
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setHeaderImage(null)}>Remove</Button>
+                  )}
+                </div>
+                {headerImageError && <p className="text-xs text-destructive">{headerImageError}</p>}
+                <p className="text-xs text-muted-foreground">
+                  Shown full-width across the top of your Reserve's page, softly faded at the bottom. JPG or PNG (WebP and GIF work too). Ideal size: a wide landscape image, 1800 x 600 pixels or larger -- about a 3:1 crop. Keep the subject near the center; the bottom third fades into the page, and phones show a tighter middle slice. Large files are resized to 1800 pixels wide automatically.
+                </p>
               </div>
             </CardContent>
             <CardFooter className="justify-end border-t border-border/40 pt-6">

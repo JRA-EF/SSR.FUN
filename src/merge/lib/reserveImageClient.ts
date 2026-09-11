@@ -54,6 +54,43 @@ export async function fileToProfileImageDataUrl(file: File): Promise<string> {
   }
 }
 
+/** Longest edge of a stored header banner -- rendered full-width, so it needs far more pixels than the avatar. */
+const HEADER_MAX_DIMENSION = 1800;
+
+/**
+ * Same pipeline as fileToProfileImageDataUrl, sized for the wide header
+ * banner shown across the top of a Reserve's page: decoded locally,
+ * downscaled to 1800px on the longest edge, re-encoded (WebP where
+ * supported, else PNG), EXIF stripped by the canvas pass.
+ */
+export async function fileToHeaderImageDataUrl(file: File): Promise<string> {
+  if (!ACCEPTED_INPUT_TYPES.includes(file.type)) {
+    throw new Error("The header image must be a PNG, JPEG, WebP, or GIF image.");
+  }
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("This file could not be read as an image -- try a different one."));
+      img.src = objectUrl;
+    });
+    const scale = Math.min(1, HEADER_MAX_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("This browser could not process the image -- try a different browser.");
+    ctx.drawImage(image, 0, 0, width, height);
+    const webp = canvas.toDataURL("image/webp", 0.8);
+    return webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 /**
  * Uploads a normalized picture (from fileToProfileImageDataUrl) and returns
  * its short permanent HTTPS URL. Idempotent server-side (content-hashed id,

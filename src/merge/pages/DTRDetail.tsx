@@ -52,7 +52,7 @@ import {
   sampleLinePoints,
   calcAssetPnlPct,
 } from "@/lib/calculations";
-import { normalizeReserveCategory, type ChartTimeframe, type OnChainReserveMeta } from "@/lib/types";
+import { normalizeReserveCategory, type PricePoint, type ChartTimeframe, type OnChainReserveMeta } from "@/lib/types";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -65,7 +65,7 @@ import {
   Tooltip as RechartsTooltip,
 } from "recharts";
 import { format } from "date-fns";
-import { ChevronLeft, Layers, BarChart3, Activity, PenLine } from "lucide-react";
+import { ChevronLeft, Layers, BarChart3, Activity, PenLine, Play, Share2, Send, Link2, Check, Copy, Download } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -79,6 +79,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLandingStats } from "@/hooks/useLandingStats";
 import { ChartTimeframeSelector, DEFAULT_CHART_TIMEFRAME } from "@/components/ChartTimeframeSelector";
 import { applyDesignDemo, demoPriceHistory, isDesignDemoEnabled } from "@/lib/designDemo";
+import { parseYouTubeVideoId, youTubeThumbnailUrl } from "@/lib/youtube";
 import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
 import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
 
@@ -185,6 +186,283 @@ function AssetMiniChart({ seed, endPrice, synthetic }: { seed: string; endPrice:
 /* Chart event marker: a subtle pill riding a dashed reference line where a
    creator note landed (fee change, rebalance, …). Clicking it jumps to the
    "Notes from the Creator" section at the bottom of the page. */
+/** X and Facebook marks -- the installed lucide-react build has no brand icons. */
+function XMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z" />
+    </svg>
+  );
+}
+function FacebookMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z" />
+    </svg>
+  );
+}
+
+/** Draws the social share card (1200x675 PNG): reserve identity, about
+ *  snippet, price + 24h change, the price chart, and the link back --
+ *  everything a post needs even where share intents only carry text. */
+function drawShareCard(
+  canvas: HTMLCanvasElement,
+  opts: { name: string; ticker: string; description: string; price: number; change24h: number; points: PricePoint[]; url: string; clusterLabel: string },
+): void {
+  const W = 1200;
+  const H = 675;
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  // SSR navy world ground
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#070429");
+  bg.addColorStop(0.6, "#0d0940");
+  bg.addColorStop(1, "#1c1465");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Chart behind the lower half
+  const pts = opts.points.length > 1 ? opts.points : [{ t: 0, price: opts.price }, { t: 1, price: opts.price }];
+  const chartTop = 330;
+  const chartBottom = 585;
+  const min = Math.min(...pts.map((p) => p.price));
+  const max = Math.max(...pts.map((p) => p.price));
+  const span = max - min || 1;
+  const px = (i: number) => (i / (pts.length - 1)) * W;
+  const py = (v: number) => chartBottom - ((v - min) / span) * (chartBottom - chartTop);
+  ctx.beginPath();
+  pts.forEach((pt, i) => (i === 0 ? ctx.moveTo(px(i), py(pt.price)) : ctx.lineTo(px(i), py(pt.price))));
+  const line = ctx.strokeStyle;
+  ctx.strokeStyle = "#97abef";
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  const fill = ctx.createLinearGradient(0, chartTop, 0, H);
+  fill.addColorStop(0, "rgba(151, 171, 239, 0.35)");
+  fill.addColorStop(1, "rgba(151, 171, 239, 0)");
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = line;
+
+  const giga = "'Lexend Giga', 'Lexend', sans-serif";
+  const lexend = "'Lexend', sans-serif";
+
+  // Identity
+  ctx.fillStyle = "#eef1fc";
+  ctx.font = `700 58px ${giga}`;
+  ctx.fillText(opts.name.toUpperCase().slice(0, 24), 64, 132);
+  // Ticker pill
+  ctx.font = `600 26px ${giga}`;
+  const tickerW = ctx.measureText(opts.ticker).width + 48;
+  ctx.strokeStyle = "#97abef";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(64, 160, tickerW, 52, 26);
+  ctx.stroke();
+  ctx.fillStyle = "#97abef";
+  ctx.fillText(opts.ticker, 88, 196);
+  // Cluster chip text
+  ctx.font = `500 20px ${lexend}`;
+  ctx.fillStyle = "#a7b2dc";
+  ctx.fillText(`Solana ${opts.clusterLabel}`, 88 + tickerW, 194);
+
+  // About snippet, wrapped to two lines
+  ctx.font = `300 26px ${lexend}`;
+  ctx.fillStyle = "#c9d3f7";
+  const words = opts.description.split(/\s+/);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(test).width > W - 480 && cur) {
+      lines.push(cur);
+      cur = w;
+      if (lines.length === 2) break;
+    } else {
+      cur = test;
+    }
+  }
+  if (lines.length < 2 && cur) lines.push(cur);
+  if (lines.length === 2 && cur && !lines.includes(cur)) lines[1] = `${lines[1]}…`;
+  lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, 64, 262 + i * 38));
+
+  // Price block, top right
+  ctx.textAlign = "right";
+  ctx.font = `600 30px ${lexend}`;
+  ctx.fillStyle = "#a7b2dc";
+  ctx.fillText("Token Price", W - 64, 96);
+  ctx.font = `700 64px ${giga}`;
+  ctx.fillStyle = "#eef1fc";
+  ctx.fillText(`$${opts.price.toFixed(2)}`, W - 64, 168);
+  ctx.font = `600 32px ${lexend}`;
+  ctx.fillStyle = opts.change24h >= 0 ? "#4fe3a3" : "#ff8598";
+  ctx.fillText(`${opts.change24h >= 0 ? "+" : ""}${opts.change24h.toFixed(2)}% 24h`, W - 64, 214);
+  ctx.textAlign = "left";
+
+  // Link back, bottom bar
+  ctx.font = `600 26px ${giga}`;
+  ctx.fillStyle = "#ede871";
+  ctx.fillText("SSR.FUN", 64, H - 40);
+  ctx.font = `400 24px ${lexend}`;
+  ctx.fillStyle = "#a7b2dc";
+  ctx.fillText(opts.url.replace(/^https?:\/\//, ""), 210, H - 40);
+}
+
+/** Share pill in the Reserve page's sticky top row. The popover renders a
+ *  branded card (identity, about, chart, link back) that travels with the
+ *  post: attached directly where the browser's share sheet supports files,
+ *  otherwise copied/downloaded to attach by hand; X/Telegram intents carry
+ *  the about text and link. */
+function ShareMenu({ name, ticker, description, price, change24h, points, compact }: { name: string; ticker: string; description: string; price: number; change24h: number; points: PricePoint[]; compact?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<"link" | "image" | null>(null);
+  const [cardUrl, setCardUrl] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const shareUrl = typeof window !== "undefined" ? window.location.href : "";
+  const aboutSnippet = description.length > 120 ? `${description.slice(0, 117)}...` : description;
+  const shareText = `${name} ($${ticker}) on SSR.fun -- ${aboutSnippet}`;
+  const enc = encodeURIComponent;
+  const rowClass = "flex w-full items-center gap-2.5 px-3 py-2 rounded-xl text-sm hover:bg-muted transition-colors";
+
+  // Render the card when the popover opens (fonts are already loaded by then).
+  useEffect(() => {
+    if (!open) return;
+    const canvas = document.createElement("canvas");
+    const render = () => {
+      drawShareCard(canvas, { name, ticker, description, price, change24h, points, url: shareUrl, clusterLabel: CLUSTER_LABEL });
+      setCardUrl(canvas.toDataURL("image/png"));
+    };
+    if (typeof document !== "undefined" && document.fonts?.ready) {
+      void document.fonts.ready.then(render);
+    } else {
+      render();
+    }
+  }, [open, name, ticker, description, price, change24h, points, shareUrl]);
+
+  const cardBlob = async (): Promise<Blob | null> => {
+    if (!cardUrl) return null;
+    return (await fetch(cardUrl)).blob();
+  };
+
+  const flash = (kind: "link" | "image") => {
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 2000);
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      flash("link");
+    } catch { /* clipboard unavailable */ }
+  };
+
+  const copyImage = async () => {
+    try {
+      const blob = await cardBlob();
+      if (!blob) return;
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      flash("image");
+    } catch { /* image clipboard unsupported -- Download still works */ }
+  };
+
+  const nativeShare = async () => {
+    setOpen(false);
+    try {
+      const blob = await cardBlob();
+      const file = blob ? new File([blob], `${ticker.toLowerCase()}-ssr-fun.png`, { type: "image/png" }) : null;
+      if (file && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ title: shareText, text: `${shareText} ${shareUrl}`, files: [file] });
+      } else {
+        await navigator.share({ title: shareText, text: shareText, url: shareUrl });
+      }
+    } catch { /* user dismissed the sheet */ }
+  };
+
+  const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Share ${name}`}
+        className={`inline-flex items-center justify-center gap-2 rounded-full border border-border bg-card text-xs font-semibold hover:bg-muted transition-colors h-9 ${compact ? "w-9" : "px-4"}`}
+      >
+        <Share2 className="w-3.5 h-3.5" />
+        {!compact && "Share"}
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-2 w-80 rounded-2xl border border-border bg-card shadow-xl p-2.5 z-50">
+          {cardUrl && (
+            <div className="mb-2">
+              <img src={cardUrl} alt={`Share card for ${name}`} className="w-full rounded-xl border border-border" />
+              <p className="text-[11px] text-muted-foreground mt-1.5 px-1">
+                Your share card -- copy or download it to attach to your post. Posts link back to this Reserve.
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-1 mb-1">
+            <button role="menuitem" type="button" onClick={() => void copyImage()} className={rowClass}>
+              {copied === "image" ? <Check className="w-4 h-4 text-positive" /> : <Copy className="w-4 h-4" />}
+              {copied === "image" ? "Copied!" : "Copy card"}
+            </button>
+            <a role="menuitem" href={cardUrl ?? "#"} download={`${ticker.toLowerCase()}-ssr-fun.png`} className={rowClass} style={{ color: "inherit" }}>
+              <Download className="w-4 h-4" /> Download
+            </a>
+          </div>
+          <div style={{ borderTop: "1px solid hsl(var(--foreground) / 0.08)" }} className="pt-1">
+            <a role="menuitem" href={`https://twitter.com/intent/tweet?text=${enc(shareText)}&url=${enc(shareUrl)}`} target="_blank" rel="noreferrer" className={rowClass} style={{ color: "inherit" }} onClick={() => setOpen(false)}>
+              <XMark className="w-4 h-4" /> Share on X
+            </a>
+            <a role="menuitem" href={`https://t.me/share/url?url=${enc(shareUrl)}&text=${enc(shareText)}`} target="_blank" rel="noreferrer" className={rowClass} style={{ color: "inherit" }} onClick={() => setOpen(false)}>
+              <Send className="w-4 h-4" /> Share on Telegram
+            </a>
+            <a role="menuitem" href={`https://www.facebook.com/sharer/sharer.php?u=${enc(shareUrl)}`} target="_blank" rel="noreferrer" className={rowClass} style={{ color: "inherit" }} onClick={() => setOpen(false)}>
+              <FacebookMark className="w-4 h-4" /> Share on Facebook
+            </a>
+            <button role="menuitem" type="button" onClick={() => void copyLink()} className={rowClass}>
+              {copied === "link" ? <Check className="w-4 h-4 text-positive" /> : <Link2 className="w-4 h-4" />}
+              {copied === "link" ? "Link copied!" : "Copy link"}
+            </button>
+            {canNativeShare && (
+              <button role="menuitem" type="button" onClick={() => void nativeShare()} className={rowClass}>
+                <Share2 className="w-4 h-4" /> More options...
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Minimal YouTube mark -- the installed lucide-react build has no brand icons. */
+function YoutubeMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="#FF0033" aria-hidden="true">
+      <path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.5 3.55 12 3.55 12 3.55s-7.5 0-9.38.5A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14c1.88.5 9.38.5 9.38.5s7.5 0 9.38-.5a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81z" />
+      <path d="M9.55 15.57V8.43L15.82 12l-6.27 3.57z" fill="#ffffff" />
+    </svg>
+  );
+}
+
 function NoteMarkerLabel(props: { viewBox?: { x: number; y: number; height: number }; text?: string; level?: number }) {
   const { viewBox, text = "", level = 0 } = props;
   if (!viewBox) return null;
@@ -347,6 +625,11 @@ export function DTRDetail() {
 
   // Trading state
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
+  // Creator-videos mini player: which video holds the featured slot, and
+  // whether it is currently playing in the panel (embedded, not a redirect).
+  const [featuredVideoIdx, setFeaturedVideoIdx] = useState(0);
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [mintAddressCopied, setMintAddressCopied] = useState(false);
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
   // Which percentage pill (0.25/0.5/0.75/1) is currently selected per side —
@@ -539,6 +822,40 @@ export function DTRDetail() {
   // Design-preview overlay (?demo=1, DevNet-only): a flat fixture Reserve charts a
   // synthetic series instead, disclosed beside the chart -- see designDemo.ts.
   const designDemo = dtr ? applyDesignDemo(dtr, IS_MAINNET) : null;
+  // Creator's YouTube channel for the videos panel under Buy/Sell. The
+  // creator's own saved links (Launch step 1 / Manager Dashboard > Reserve
+  // Identity) take priority: their channel becomes the outbound link and
+  // their featured video takes the top slot. The design-preview overlay
+  // fills the preview list underneath.
+  const creatorChannel = useMemo(() => {
+    // Strictly creator-opt-in: no saved channel, no panel -- the demo overlay
+    // only fills out the preview list once a channel exists.
+    const cfg = dtr?.youtube;
+    if (!cfg?.channelUrl) return null;
+    const base = designDemo?.creatorChannel ?? null;
+    const handleFromUrl = (u: string): string => {
+      try {
+        const parsed = new URL(u);
+        return parsed.pathname.split("/").find((seg) => seg.startsWith("@")) ?? parsed.hostname;
+      } catch {
+        return u;
+      }
+    };
+    const videos = [...(base?.videos ?? [])];
+    const featuredId = parseYouTubeVideoId(cfg.featuredVideoUrl);
+    if (featuredId) {
+      videos.unshift({
+        title: "Featured by the creator",
+        videoId: featuredId,
+        duration: "",
+        thumbnail: youTubeThumbnailUrl(featuredId),
+        views: "",
+        age: "",
+      });
+    }
+    if (videos.length === 0) return null;
+    return { name: dtr?.name ?? "", handle: handleFromUrl(cfg.channelUrl), url: cfg.channelUrl, videos };
+  }, [designDemo, dtr]);
   const priceHistory = designDemo?.priceHistory ?? dtr?.priceHistory ?? [];
   const displayChange24h = designDemo ? designDemo.change24h : (dtr?.change24h ?? 0);
   const displayChange7d = designDemo ? designDemo.change7d : (dtr?.change7d ?? 0);
@@ -1589,7 +1906,7 @@ export function DTRDetail() {
   };
 
   return (
-    <div className="container mx-auto px-4 md:px-8 py-8">
+    <div className="container mx-auto px-4 md:px-8 py-8 relative">
       {/* Top row mirrors the page grid so the section-nav pill's right edge
           lines up exactly with the chart card's. Sticky just below the main
           nav (60px tall) so the section pills stay reachable while scrolling;
@@ -1600,15 +1917,40 @@ export function DTRDetail() {
         // top = the main nav's full height (60px row + 1px border) so the bar
         // stays flush against it while scrolling; opaque page-ground background
         // so it never reads as a separate translucent band.
-        style={{ top: 61, background: "hsl(var(--background))" }}
+        style={{
+          top: 61,
+          // Solid page ground normally; over a creator header image a solid
+          // strip would cut the art, so it goes frosted-glass instead.
+          background: dtr.headerImageUrl ? "hsl(var(--background) / 0.55)" : "hsl(var(--background))",
+          backdropFilter: dtr.headerImageUrl ? "blur(12px)" : undefined,
+        }}
       >
         <div className="lg:col-span-2 flex items-center gap-4">
           <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-primary transition-colors shrink-0">
             <ChevronLeft className="w-4 h-4 mr-1" /> Back to Directory
           </Link>
           <SectionNav />
+          <div className="ml-auto lg:hidden">
+            <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} compact />
+          </div>
+        </div>
+        <div className="hidden lg:flex items-center justify-end">
+          <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} />
         </div>
       </div>
+
+      {dtr.headerImageUrl && (
+        /* Creator-uploaded header: the same treatment as the app's own page
+           heroes -- absolutely positioned BEHIND the top of the page (content
+           does not move down), soft wash + bottom fade into the ground.
+           -z-10 is safe here for the same reason as Portfolio's hero: the
+           .merge-scope wrapper isolates stacking. */
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+          <img src={dtr.headerImageUrl} alt="" className="w-full h-full object-cover" style={{ objectPosition: "center 30%" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.5) 0%, hsl(var(--background) / 0.15) 45%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.2) 68%, hsl(var(--background)) 100%)" }} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Details & Charts */}
@@ -1622,15 +1964,46 @@ export function DTRDetail() {
                 {/* Reserve identity lives in the chart card (top-left) now that
                     the chart leads the page, in line with the Buy/Sell panel. */}
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar className="h-8 w-8 border border-border">
-                      {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
-                      <AvatarFallback className="bg-primary/10 text-primary text-xs font-merge-display font-bold">
-                        {dtr.ticker.slice(0, 2)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <h1 className="text-2xl max-sm:text-lg font-merge-display font-bold tracking-tight">{dtr.name}</h1>
-                    <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex items-center gap-2.5">
+                      <Avatar className="h-8 w-8 border border-border">
+                        {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
+                        <AvatarFallback className="bg-primary/10 text-primary text-xs font-merge-display font-bold">
+                          {dtr.ticker.slice(0, 2)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <h1 className="text-2xl max-sm:text-lg font-merge-display font-bold tracking-tight">{dtr.name}</h1>
+                      <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
+                    </div>
+                    {/* Reserve Token mint address -- same size/color as the
+                        "Token Price" label. No uppercase transform: base58 is
+                        case-sensitive, and this line exists to be copied. */}
+                    {/* 42px = avatar (32px) + gap (10px); +3px compensates the
+                        display face's left side-bearing so the INK of "CA:" sits
+                        flush with the ink of the name's first letter (measured:
+                        Lexend Giga cap at 24px ~3.2px bearing, mono ~0.3px). */}
+                    <div className="flex items-center gap-1.5 min-w-0 pl-[45px]">
+                      <span className="text-[10px] text-muted-foreground font-merge-mono font-semibold tracking-wide break-all">
+                        CA: {dtr.onChain?.reserveTokenMint ?? dtr.dtrAddress}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Copy the Reserve Token mint address"
+                        title="Copy mint address"
+                        className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        onClick={() => {
+                          void navigator.clipboard
+                            .writeText(dtr.onChain?.reserveTokenMint ?? dtr.dtrAddress)
+                            .then(() => {
+                              setMintAddressCopied(true);
+                              window.setTimeout(() => setMintAddressCopied(false), 2000);
+                            })
+                            .catch(() => undefined);
+                        }}
+                      >
+                        {mintAddressCopied ? <Check className="w-3 h-3 text-positive" /> : <Copy className="w-3 h-3" />}
+                      </button>
+                    </div>
                   </div>
                   <div className="text-right max-sm:text-left shrink-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>
@@ -2228,7 +2601,7 @@ export function DTRDetail() {
         <div className="lg:col-span-1">
           {/* z-20 beats the chart card's z-10 so button ripples expanding past
               the panel animate OVER the chart, not behind it. */}
-          <div className="sticky top-24 z-20">
+          <div id="section-trade" className="sticky top-24 z-20 scroll-mt-28">
             <Card className="border-border shadow-xl bg-card">
               <Tabs value={isWindingDown ? "sell" : tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
                 <CardHeader className="pb-4">
@@ -2748,8 +3121,143 @@ export function DTRDetail() {
                 </CardContent>
               </Card>
             )}
+
+            {creatorChannel && creatorChannel.videos.length > 0 && (() => {
+              /* Creator videos mini player: pressing play embeds the video in
+                 the panel (no redirect); pressing a preview promotes it to the
+                 featured slot and plays it there. Only the explicit
+                 "Watch on YouTube" link leaves the page. Inline color:inherit
+                 beats FABLE's unlayered `a` accent rule. */
+              const vids = creatorChannel.videos;
+              const safeIdx = featuredVideoIdx < vids.length ? featuredVideoIdx : 0;
+              const featured = vids[safeIdx];
+              const rest = vids.map((v, i) => ({ v, i })).filter(({ i }) => i !== safeIdx).slice(0, 3);
+              return (
+              <Card className="mt-4 bg-card border-card-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-merge-display flex items-center gap-2">
+                    <YoutubeMark className="w-4 h-4" /> From the Creator
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    <a href={creatorChannel.url} target="_blank" rel="noreferrer" style={{ color: "inherit" }} className="hover:underline">
+                      {creatorChannel.handle} on YouTube
+                    </a>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0">
+                  <div>
+                    <div className="relative aspect-video rounded-xl overflow-hidden border border-border bg-black">
+                      {videoPlaying ? (
+                        <iframe
+                          key={`${featured.videoId}-${safeIdx}`}
+                          src={`https://www.youtube-nocookie.com/embed/${featured.videoId}?autoplay=1&rel=0&modestbranding=1`}
+                          title={featured.title}
+                          className="absolute inset-0 w-full h-full"
+                          style={{ border: 0 }}
+                          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                          allowFullScreen
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setVideoPlaying(true)}
+                          className="group block w-full h-full text-left"
+                          aria-label={`Play video: ${featured.title}`}
+                        >
+                          <img src={featured.thumbnail} alt="" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+                          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(7,4,41,0) 55%, rgba(7,4,41,0.55) 100%)" }} />
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            <span className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-transform duration-200 group-hover:scale-110" style={{ background: "rgba(255,255,255,0.92)" }}>
+                              <Play className="w-5 h-5 ml-0.5" style={{ color: "#070429", fill: "#070429" }} />
+                            </span>
+                          </span>
+                          {featured.duration && (
+                            <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-merge-mono" style={{ background: "rgba(7,4,41,0.8)", color: "#ffffff" }}>
+                              {featured.duration}
+                            </span>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-2 text-sm font-medium leading-snug">{featured.title}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] text-muted-foreground">{featured.views && featured.age ? `${featured.views} · ${featured.age}` : "From the creator's channel"}</p>
+                      <a
+                        href={creatorChannel.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] font-medium hover:underline shrink-0"
+                        style={{ color: "hsl(var(--primary))" }}
+                      >
+                        Watch on YouTube ↗
+                      </a>
+                    </div>
+                  </div>
+                  <div style={{ borderTop: "1px solid hsl(var(--foreground) / 0.08)" }}>
+                    {rest.map(({ v, i }) => (
+                      <button
+                        key={v.title}
+                        type="button"
+                        onClick={() => { setFeaturedVideoIdx(i); setVideoPlaying(true); }}
+                        className="flex items-start gap-2.5 group pt-2.5 w-full text-left"
+                        style={{ color: "inherit" }}
+                        aria-label={`Play video: ${v.title}`}
+                      >
+                        <div className="relative w-24 shrink-0 aspect-video rounded-lg overflow-hidden border border-border">
+                          <img src={v.thumbnail} alt="" className="w-full h-full object-cover" />
+                          <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.92)" }}>
+                              <Play className="w-3 h-3 ml-px" style={{ color: "#070429", fill: "#070429" }} />
+                            </span>
+                          </span>
+                          {v.duration && (
+                            <span className="absolute bottom-1 right-1 rounded px-1 text-[9px] font-merge-mono" style={{ background: "rgba(7,4,41,0.8)", color: "#ffffff" }}>{v.duration}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium leading-snug line-clamp-2">{v.title}</p>
+                          {v.views && v.age && <p className="text-[10px] text-muted-foreground mt-0.5">{v.views} · {v.age}</p>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              );
+            })()}
           </div>
         </div>
+      </div>
+
+      {/* Mobile sticky Buy/Sell: on small screens the trade panel sits far
+          down the page, so a floating pill bar keeps the primary actions
+          reachable; tapping one jumps to the panel on the right tab. Hidden
+          on lg+ where the sticky trade rail is always in view. */}
+      <div
+        className="lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 p-1.5 rounded-full border border-border shadow-xl"
+        style={{ background: "hsl(var(--card) / 0.92)", backdropFilter: "blur(10px)" }}
+      >
+        <button
+          type="button"
+          disabled={isWindingDown}
+          className="rounded-full px-8 h-10 text-sm font-bold bg-action text-action-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => {
+            setTradeTab("buy");
+            document.getElementById("section-trade")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+        >
+          Buy
+        </button>
+        <button
+          type="button"
+          className="rounded-full px-8 h-10 text-sm font-bold text-destructive"
+          onClick={() => {
+            setTradeTab("sell");
+            document.getElementById("section-trade")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+        >
+          Sell
+        </button>
       </div>
 
       {/* Market Section: Recent Trades */}

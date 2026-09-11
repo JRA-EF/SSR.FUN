@@ -131,6 +131,14 @@ export function normalizeReserveCategory(category: string | null | undefined): s
   return category && category.trim().length > 0 ? category : "Uncategorized";
 }
 
+/** Creator-supplied YouTube links for the Reserve page's video panel. */
+export interface ReserveYoutube {
+  /** Link to the creator's channel -- the "Watch on YouTube" destination. */
+  channelUrl: string;
+  /** Link (or bare id) of the video featured at the top of the panel. */
+  featuredVideoUrl?: string;
+}
+
 export interface DTR {
   id: string;
   name: string;
@@ -170,6 +178,10 @@ export interface DTR {
   priceHistory: PricePoint[];
   /** Real executed trades this session -- starts empty for every Reserve; never backfilled with invented history. */
   trades: Trade[];
+  /** Creator-supplied YouTube links shown in the Reserve page's video panel. */
+  youtube?: ReserveYoutube;
+  /** Creator-uploaded wide banner (data/HTTPS URL) shown full-width across the top of this Reserve's page. */
+  headerImageUrl?: string;
   /** Present only for a Reserve backed by a real deployed SSR Protocol account on Solana DevNet -- see src/merge/lib/onChainReserve.ts. Absent for the fully-simulated seed DTRs. */
   onChain?: OnChainReserveMeta;
   /**

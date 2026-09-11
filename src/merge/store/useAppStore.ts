@@ -17,6 +17,7 @@ import type {
   UserProfile,
   WalletProviderId,
   WalletState,
+  ReserveYoutube,
 } from "@/lib/types";
 import { emptyPermissions } from "@/lib/types";
 import { isManagerOrDelegate, canManageDelegates, canRebalance } from "@/lib/permissions";
@@ -150,6 +151,10 @@ interface AppState {
   setOnChainDelegates: (dtrId: string, delegates: OnChainDelegateMeta[], delegateCountOnChain: number) => void;
   /** Immediately shows a just-published Reserve profile picture (ManageDTR's editor) without waiting for RealReserveSync's next metadata resolution -- the next discovery pass re-derives the same value from the Reserve's own updated metadata (see onChainReserve.ts's fresh-first logoUrl merge). */
   setReserveProfileImage: (dtrId: string, logoUrl: string) => void;
+  /** Saves (or clears, with null) the creator's YouTube links shown on the Reserve page's video panel. */
+  setReserveYoutube: (dtrId: string, youtube: ReserveYoutube | null) => void;
+  /** Saves (or clears, with null) the wide header banner shown across the top of the Reserve's page. */
+  setReserveHeaderImage: (dtrId: string, headerImageUrl: string | null) => void;
   /** Mirrors the connected wallet's REAL Reserve Token balance for an on-chain DTR into `holdings` -- see RealReserveSync.tsx. */
   syncRealHolding: (dtrId: string, tokenBalanceRaw: string, nav: number) => void;
   /**
@@ -259,6 +264,18 @@ export const useAppStore = create<AppState>()(
       setReserveProfileImage: (dtrId, logoUrl) => {
         set((state) => ({
           dtrs: state.dtrs.map((d) => (d.id === dtrId ? { ...d, logoUrl } : d)),
+        }));
+      },
+
+      setReserveYoutube: (dtrId, youtube) => {
+        set((state) => ({
+          dtrs: state.dtrs.map((d) => (d.id === dtrId ? { ...d, youtube: youtube ?? undefined } : d)),
+        }));
+      },
+
+      setReserveHeaderImage: (dtrId, headerImageUrl) => {
+        set((state) => ({
+          dtrs: state.dtrs.map((d) => (d.id === dtrId ? { ...d, headerImageUrl: headerImageUrl ?? undefined } : d)),
         }));
       },
 
