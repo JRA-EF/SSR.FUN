@@ -58,7 +58,12 @@
   "headers": [
     {
       "source": "/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/:path*",
-      "headers": [{ "key": "X-Frame-Options", "value": "SAMEORIGIN" }]
+      "headers": [
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        }
+      ]
     }
   ],
   "rewrites": [
@@ -70,12 +75,37 @@
       "source": "/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/:path*",
       "destination": "https://api.vercel.com/bot-protection/v1/proxy/:path*"
     },
-    { "source": "/feedback", "destination": "/feedback.html" },
-    { "source": "/internal/set-keeper", "destination": "/internal-set-keeper.html" },
-    { "source": "/internal/status", "destination": "/internal-status.html" },
-    { "source": "/internal/feedback", "destination": "/internal-feedback.html" },
-    { "source": "/internal/kpis", "destination": "/internal-kpis.html" },
-    { "source": "/road-to-mainnet", "destination": "/road-to-mainnet.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/r/:address",
+      "destination": "/api/mainnet/share?address=:address"
+    },
+    {
+      "source": "/feedback",
+      "destination": "/feedback.html"
+    },
+    {
+      "source": "/internal/set-keeper",
+      "destination": "/internal-set-keeper.html"
+    },
+    {
+      "source": "/internal/status",
+      "destination": "/internal-status.html"
+    },
+    {
+      "source": "/internal/feedback",
+      "destination": "/internal-feedback.html"
+    },
+    {
+      "source": "/internal/kpis",
+      "destination": "/internal-kpis.html"
+    },
+    {
+      "source": "/road-to-mainnet",
+      "destination": "/road-to-mainnet.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }

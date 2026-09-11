@@ -319,7 +319,7 @@ function drawShareCard(
  *  post: attached directly where the browser's share sheet supports files,
  *  otherwise copied/downloaded to attach by hand; X/Telegram intents carry
  *  the about text and link. */
-function ShareMenu({ name, ticker, description, price, change24h, points, compact }: { name: string; ticker: string; description: string; price: number; change24h: number; points: PricePoint[]; compact?: boolean }) {
+function ShareMenu({ name, ticker, description, price, change24h, points, poolAddress, compact }: { name: string; ticker: string; description: string; price: number; change24h: number; points: PricePoint[]; poolAddress?: string; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<"link" | "image" | null>(null);
   const [cardUrl, setCardUrl] = useState<string | null>(null);
@@ -333,7 +333,17 @@ function ShareMenu({ name, ticker, description, price, change24h, points, compac
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  const shareUrl = typeof window !== "undefined" ? window.location.href : "";
+  // DEC-0200: share the crawlable /r/<pool address> URL, not the hash URL.
+  // A hash fragment never reaches the server, so a shared #/dtr/... link can
+  // never produce a social card -- /r/<address> renders the Reserve's own
+  // title, description and image, then forwards a human into the app. Falls
+  // back to the current URL only if the pool address has not loaded yet.
+  const shareUrl =
+    typeof window !== "undefined"
+      ? poolAddress
+        ? `${window.location.origin}/r/${poolAddress}`
+        : window.location.href
+      : "";
   const aboutSnippet = description.length > 120 ? `${description.slice(0, 117)}...` : description;
   const shareText = `${name} ($${ticker}) on SSR.fun -- ${aboutSnippet}`;
   const enc = encodeURIComponent;
@@ -1931,11 +1941,11 @@ export function DTRDetail() {
           </Link>
           <SectionNav />
           <div className="ml-auto lg:hidden">
-            <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} compact />
+            <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} poolAddress={dtr.onChain?.reserve} compact />
           </div>
         </div>
         <div className="hidden lg:flex items-center justify-end">
-          <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} />
+          <ShareMenu name={dtr.name} ticker={dtr.ticker} description={dtr.description} price={dtr.tokenPrice} change24h={displayChange24h} points={designDemo?.priceHistory ?? dtr.priceHistory} poolAddress={dtr.onChain?.reserve} />
         </div>
       </div>
 

@@ -49,5 +49,5 @@
      CommonJS-native auth helper for exactly this reason: nothing under
      api/kpis/ or api/ledger/ may EVER import from lib/dashboard/ or
      lib/road-to-mainnet/, or from each other, or from api/dashboard/. */
-  "exclude": ["api/devnet", "api/mainnet", "api/kpis", "api/ledger", "lib/reserve-activity", "lib/reserve-metadata", "lib/reserve-image", "lib/reserve-entry-price", "lib/ledger", "lib/rate-limit", "lib/reserve-warm-cache", "lib/mainnet"]
+  "exclude": ["api/devnet", "api/mainnet", "api/kpis", "api/ledger", "lib/reserve-activity", "lib/reserve-metadata", "lib/reserve-image", "lib/reserve-entry-price", "lib/ledger", "lib/rate-limit", "lib/reserve-warm-cache", "lib/mainnet", "lib/share"]
 }

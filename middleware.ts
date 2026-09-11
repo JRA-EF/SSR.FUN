@@ -328,6 +328,14 @@ export default async function middleware(request: Request): Promise<Response> {
   // unreadable by the only consumers it exists for. READ is public; POST
   // (creating metadata/images) stays gated exactly as before.
   if (PUBLIC_READ_API_PATHS.has(url.pathname) && (request.method === 'GET' || request.method === 'HEAD')) return next()
+  // DEC-0200: the crawlable Reserve share page. A social-card fetcher or
+  // search crawler has no beta session and never will, so gating /r/ would
+  // make every shared link preview as the Coming Soon page. It exposes only
+  // what the metadata endpoint above already does -- a Reserve's name,
+  // ticker, description and picture -- and links onward into the gated app,
+  // which still asks for a key.
+  if (url.pathname === '/r' || url.pathname.startsWith('/r/')) return next()
+  if (url.pathname === '/api/mainnet/share') return next()
   // Vercel BotID's proxied challenge/telemetry paths (vercel.json rewrites to
   // api.vercel.com/bot-protection) -- fetched by the feedback page's client
   // script from any visitor, never carries a session cookie.
