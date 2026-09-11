@@ -39,6 +39,7 @@ import {
   type TransactionInstruction,
 } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { assetAta, resolveLegTokenProgram, tokenProgramFromMintOwner, TOKEN_PROGRAM_ID } from "@ssr/sdk";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
   buildReadOnlyProgram,
@@ -127,6 +128,13 @@ export interface CreateReserveAssetInput {
   /** Fraction of the total seed value allocated to this asset, e.g. 0.6 = 60%. */
   seedWeightFraction: number;
   decimals: number;
+  /**
+   * The token program that owns this mint (DEC-0201). Determines which program
+   * the Reserve's vault is created under and how every ATA for this asset is
+   * derived -- so it is recorded on-chain at registration and can never be
+   * changed afterwards. Absent means classic SPL Token.
+   */
+  tokenProgram?: string;
 }
 
 export interface CreateReserveResult {
@@ -918,13 +926,44 @@ async function signAndSendPossiblyOverLimit(
   return signSubmitConfirmVersioned(connection, wallet, versionedTx, lastValidBlockHeight, clusterLabel);
 }
 
-/** Reads a wallet's real, current raw balance for a mint -- 0 if the ATA doesn't exist yet (never an error in that case, since "no ATA" and "zero balance" mean the same thing for funding purposes). */
-async function fetchOwnedBalanceRaw(connection: Connection, mint: PublicKey, owner: PublicKey): Promise<bigint> {
+/**
+ * Reads a wallet's real, current raw balance for a mint -- 0 if the ATA
+ * doesn't exist yet (never an error in that case, since "no ATA" and "zero
+ * balance" mean the same thing for funding purposes).
+ *
+ * DEC-0201: the ATA address depends on the mint's token program, and a
+ * classic-derived address for a Token-2022 mint is a different account that
+ * always reads as zero -- during seed funding that looks like "the swap
+ * delivered nothing" and retries forever. Callers that already know the
+ * program (the asset list carries it) pass it; the mint's own account owner
+ * is only read as a fallback, so the common path costs no extra RPC.
+ */
+async function fetchOwnedBalanceRaw(
+  connection: Connection,
+  mint: PublicKey,
+  owner: PublicKey,
+  tokenProgram?: PublicKey | string | null,
+): Promise<bigint> {
+  // Resolving the program is an AUXILIARY lookup: if it is unavailable or
+  // fails, fall back to classic rather than letting that failure surface as a
+  // zero balance. Reading "no balance" from a lookup error is precisely the
+  // bug class fetchOwnedBalanceRawSettled below exists to prevent.
+  let program = TOKEN_PROGRAM_ID;
+  if (tokenProgram) {
+    program = resolveLegTokenProgram({ tokenProgram });
+  } else {
+    try {
+      const mintInfo = await connection.getAccountInfo(mint);
+      program = tokenProgramFromMintOwner(mintInfo?.owner);
+    } catch {
+      program = TOKEN_PROGRAM_ID;
+    }
+  }
   try {
-    const ata = getAssociatedTokenAddressSync(mint, owner);
-    const info = await connection.getTokenAccountBalance(ata);
+    const info = await connection.getTokenAccountBalance(assetAta(mint, owner, program));
     return BigInt(info.value.amount);
   } catch {
+    // A missing ATA and a zero balance mean the same thing for funding.
     return 0n;
   }
 }
@@ -951,14 +990,14 @@ export async function fetchOwnedBalanceRawSettled(
   // without actually waiting several real seconds -- every production
   // caller relies on the defaults (unchanged from before this was made
   // configurable).
-  opts: { maxAttempts?: number; delayMs?: number; maxDelayMs?: number } = {},
+  opts: { maxAttempts?: number; delayMs?: number; maxDelayMs?: number; tokenProgram?: PublicKey | string | null } = {},
 ): Promise<bigint> {
   const MAX_ATTEMPTS = opts.maxAttempts ?? 7;
   const BASE_DELAY_MS = opts.delayMs ?? 750;
   const MAX_DELAY_MS = opts.maxDelayMs ?? 4_000;
   let balance = balanceBefore;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    balance = await fetchOwnedBalanceRaw(connection, mint, owner);
+    balance = await fetchOwnedBalanceRaw(connection, mint, owner, opts.tokenProgram ?? null);
     if (balance !== balanceBefore) return balance;
     if (attempt < MAX_ATTEMPTS - 1) {
       // Exponential backoff (750ms, 1.5s, 3s, capped at 4s) rather than a
@@ -1096,7 +1135,7 @@ async function fundSeedAssetsIdempotent(
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   const owner = wallet.publicKey;
 
-  const balances = await Promise.all(assets.map((a) => fetchOwnedBalanceRaw(connection, new PublicKey(a.mint), owner)));
+  const balances = await Promise.all(assets.map((a) => fetchOwnedBalanceRaw(connection, new PublicKey(a.mint), owner, (a as { tokenProgram?: string }).tokenProgram ?? null)));
   const finalSeedAmounts = [...seedAmounts];
 
   // Per-asset funding state machine (launchFunding.ts, DEC-0151): every
@@ -1137,7 +1176,9 @@ async function fundSeedAssetsIdempotent(
         const st = value[0];
         if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
           advance(asset.mint, "confirmed");
-          balances[i] = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, balances[i]);
+          balances[i] = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, balances[i], {
+            tokenProgram: (asset as { tokenProgram?: string }).tokenProgram ?? null,
+          });
         } else {
           resetForRetry(asset.mint);
         }
@@ -1243,7 +1284,7 @@ async function fundSeedAssetsIdempotent(
       // retry could help). Jupiter's own documented handling for 6024 is
       // exactly this: show the current balance and the required balance.
       // A small buffer covers the swap's own fee/rounding headroom.
-      const usdcHeldRaw = await fetchOwnedBalanceRaw(connection, new PublicKey(MAINNET_USDC_MINT), owner);
+      const usdcHeldRaw = await fetchOwnedBalanceRaw(connection, new PublicKey(MAINNET_USDC_MINT), owner, TOKEN_PROGRAM_ID);
       const usdcRequiredWithBufferRaw = (scaledDeficitUsdcRaw * 102n) / 100n;
       if (usdcHeldRaw < usdcRequiredWithBufferRaw) {
         throw new Error(
@@ -1274,7 +1315,9 @@ async function fundSeedAssetsIdempotent(
       // immediate read) -- see its own header for why: a read right after
       // OUR OWN confirmation can still hit an RPC node that hasn't caught
       // up yet.
-      const newBalance = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, existingRaw);
+      const newBalance = await fetchOwnedBalanceRawSettled(connection, new PublicKey(asset.mint), owner, existingRaw, {
+        tokenProgram: (asset as { tokenProgram?: string }).tokenProgram ?? null,
+      });
       finalSeedAmounts[i] = newBalance;
       advance(asset.mint, "balance_verified", { verifiedBalanceRaw: newBalance.toString() });
       // Shortfall is always measured against the FULL target (targetRaw),
@@ -1489,7 +1532,9 @@ export async function createReserveOnChain(params: {
   params.onProgress("create-and-register");
   const addresses: NewReserveAddresses = await deriveNewReserveAddresses(program, programId);
   params.onAddressesResolved?.(addresses);
-  const assetAddresses: ReserveAssetAddresses[] = params.assets.map((a) => deriveReserveAssetAddresses(addresses.reserve, new PublicKey(a.mint), programId));
+  const assetAddresses: ReserveAssetAddresses[] = params.assets.map((a) =>
+    deriveReserveAssetAddresses(addresses.reserve, new PublicKey(a.mint), programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),
+  );
 
   let createAndRegisterSig: string;
   try {
@@ -1663,7 +1708,9 @@ export async function checkReserveGenuinelyComplete(
   });
   if (resumePoint.kind !== "already-complete" || !onChain) return null;
 
-  const assetAddresses: ReserveAssetAddresses[] = pending.assets.map((a) => deriveReserveAssetAddresses(reserveAddress, new PublicKey(a.mint), programId));
+  const assetAddresses: ReserveAssetAddresses[] = pending.assets.map((a) =>
+    deriveReserveAssetAddresses(reserveAddress, new PublicKey(a.mint), programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),
+  );
   return {
     reserveId: pending.reserveId,
     reserve: pending.reserve,
@@ -1754,7 +1801,9 @@ export async function resumeReserveDeploymentOnChain(params: {
     vaultAuthority: findVaultAuthority(reserveAddress, programId)[0],
     protocolConfig: findProtocolConfig(programId)[0],
   };
-  const assetAddresses: ReserveAssetAddresses[] = pending.assets.map((a) => deriveReserveAssetAddresses(reserveAddress, new PublicKey(a.mint), programId));
+  const assetAddresses: ReserveAssetAddresses[] = pending.assets.map((a) =>
+    deriveReserveAssetAddresses(reserveAddress, new PublicKey(a.mint), programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),
+  );
 
   const buildResult = (transactions: CreateReserveResult["transactions"]): CreateReserveResult => ({
     reserveId: addresses.reserveId.toString(),
@@ -1926,7 +1975,18 @@ export interface PendingReserveDeploy {
   ticker: string;
   startedAt: number;
   /** Exactly the asset list (and order) create-and-register registered -- required to resume funding/seeding correctly, and (weightBps) to resume registering any assets a later transaction in that step hadn't reached yet. */
-  assets: { mint: string; decimals: number; seedWeightFraction: number; weightBps: number }[];
+  assets: {
+    mint: string;
+    decimals: number;
+    seedWeightFraction: number;
+    weightBps: number;
+    /**
+     * DEC-0201: persisted so a RESUMED deployment registers each asset under
+     * the same token program the first attempt chose. Absent on records
+     * written before this field existed, which were all classic SPL Token.
+     */
+    tokenProgram?: string;
+  }[];
   seedTotalUsd: number;
   /**
    * Per-asset funding progress (launchFunding.ts's explicit state machine,

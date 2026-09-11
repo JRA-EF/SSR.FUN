@@ -12,6 +12,12 @@ export interface CatalogueAsset {
   mint: string;
   decimals: number;
   real: true;
+  /**
+   * The token program that owns this mint (DEC-0201). Carried from the
+   * catalogue to the instruction builders, which create the Reserve's vault
+   * and derive every ATA under it. Absent means classic SPL Token.
+   */
+  tokenProgram?: string;
 }
 
 export type CatalogueStatus = "loading" | "ready" | "unavailable";
@@ -21,6 +27,7 @@ interface RawToken {
   symbol: string;
   name: string;
   decimals: number;
+  tokenProgram?: string;
 }
 
 export function useMainnetAssetCatalogue(enabled: boolean): { status: CatalogueStatus; tokens: CatalogueAsset[] } {
@@ -33,7 +40,7 @@ export function useMainnetAssetCatalogue(enabled: boolean): { status: CatalogueS
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error("request failed"))))
       .then((data: { tokens: RawToken[] }) => {
         if (cancelled) return;
-        const tokens: CatalogueAsset[] = (data.tokens ?? []).map((t) => ({ symbol: t.symbol, name: t.name, mint: t.mint, decimals: t.decimals, real: true as const }));
+        const tokens: CatalogueAsset[] = (data.tokens ?? []).map((t) => ({ symbol: t.symbol, name: t.name, mint: t.mint, decimals: t.decimals, real: true as const, ...(t.tokenProgram ? { tokenProgram: t.tokenProgram } : {}) }));
         setState({ status: "ready", tokens });
       })
       .catch(() => {

@@ -11,6 +11,7 @@ export * from "./zapInstructions";
 export * from "./directInstructions";
 export * from "./createReserveFlow";
 export * from "./managementInstructions";
+export * from "./tokenPrograms";
 export * from "./feeSettlementInstructions";
 export * from "./hiddenReserves";
 export * from "./tradableAssets";

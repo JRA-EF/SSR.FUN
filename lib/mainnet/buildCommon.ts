@@ -4,7 +4,8 @@
 // Pure where possible (decideMode, hypotheticalLookupTable, fitsV0) so the
 // decisions are unit-testable without a wallet or Jupiter.
 import { AddressLookupTableAccount, AddressLookupTableProgram, Connection, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, unpackAccount } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, unpackAccount, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { assetAta, tokenProgramFromKind, type TokenProgramKindDecoded } from "@ssr/sdk";
 import {
   enumerateReserveAssetMintsOnChain,
   findProtocolConfig,
@@ -174,15 +175,22 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
   const usdcMint = new PublicKey(MAINNET_USDC_MINT);
   const reserveAssetPdas = candidateMints.map((m) => findReserveAsset(reserve, m, ssrProgramId)[0]);
   const vaultPdas = candidateMints.map((m) => findReserveVault(reserve, m, ssrProgramId)[0]);
-  const walletAtas = candidateMints.map((m) => getAssociatedTokenAddressSync(m, wallet));
+  // DEC-0201: an asset's ATA address depends on its token program, and we do
+  // not know that until the ReserveAsset accounts come back in the same batch
+  // below. Rather than spend an extra sequential round trip on the Buy/Sell
+  // hot path, derive BOTH candidate addresses per mint and fetch them in the
+  // one call we were already making; the leg then picks the one its recorded
+  // program says is real. Classic-only Reserves are unaffected.
+  const walletAtasClassic = candidateMints.map((m) => assetAta(m, wallet, TOKEN_PROGRAM_ID));
+  const walletAtas2022 = candidateMints.map((m) => assetAta(m, wallet, TOKEN_2022_PROGRAM_ID));
   const walletUsdcAta = getAssociatedTokenAddressSync(usdcMint, wallet);
   const walletRtAta = getAssociatedTokenAddressSync(reserveTokenMint, wallet);
-  type ReserveAssetRow = { decimals: number; orderIndex: number } | null;
+  type ReserveAssetRow = { decimals: number; orderIndex: number; tokenProgram?: TokenProgramKindDecoded } | null;
   const [reserveAssets, vaultInfos, supply, walletInfos, walletSolLamports, reserveAlt] = await Promise.all([
     program.account.reserveAsset.fetchMultiple(reserveAssetPdas) as Promise<ReserveAssetRow[]>,
     connection.getMultipleAccountsInfo(vaultPdas),
     getTokenSupplyWithRetry(connection, reserveTokenMint),
-    connection.getMultipleAccountsInfo([...walletAtas, walletUsdcAta, walletRtAta]),
+    connection.getMultipleAccountsInfo([...walletAtasClassic, ...walletAtas2022, walletUsdcAta, walletRtAta]),
     connection.getBalance(wallet, "confirmed"),
     deps.lookupReserveAlt(reserve.toBase58()).catch(() => null),
   ]);
@@ -191,7 +199,15 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
   candidateMints.forEach((m, i) => {
     const ra = reserveAssets[i];
     if (!ra) return;
-    assets.push({ mint: m.toBase58(), decimals: ra.decimals, reserveAsset: reserveAssetPdas[i].toBase58(), vault: vaultPdas[i].toBase58(), vaultBalanceRaw: tokenAmountFromInfo(vaultPdas[i], vaultInfos[i]).toString() });
+    const legTokenProgram = tokenProgramFromKind(ra.tokenProgram);
+    assets.push({
+      mint: m.toBase58(),
+      decimals: ra.decimals,
+      reserveAsset: reserveAssetPdas[i].toBase58(),
+      vault: vaultPdas[i].toBase58(),
+      vaultBalanceRaw: tokenAmountFromInfo(vaultPdas[i], vaultInfos[i]).toString(),
+      tokenProgram: legTokenProgram.toBase58(),
+    });
     orderIndexes.push(ra.orderIndex);
   });
   const order = assets.map((_, i) => i).sort((a, b) => orderIndexes[a] - orderIndexes[b]);
@@ -200,8 +216,17 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
     throw new BuildError(422, `Could not resolve every registered asset of this Reserve (${orderedAssets.length} of ${reserveAccount.assetCount}) -- refusing to build against an incomplete asset list.`);
   }
   if (orderedAssets.length === 0) throw new BuildError(422, "This Reserve has no registered assets.");
+  // Each mint's real balance comes from whichever of the two derived ATAs its
+  // token program actually uses (DEC-0201). A mint we could not resolve a
+  // ReserveAsset for is read classically, which is what it was before.
+  const programByMint = new Map(assets.map((a) => [a.mint, a.tokenProgram ?? TOKEN_PROGRAM_ID.toBase58()]));
   const heldByMint = new Map<string, bigint>();
-  candidateMints.forEach((m, i) => heldByMint.set(m.toBase58(), tokenAmountFromInfo(walletAtas[i], walletInfos[i])));
+  candidateMints.forEach((m, i) => {
+    const is2022 = programByMint.get(m.toBase58()) === TOKEN_2022_PROGRAM_ID.toBase58();
+    const ata = is2022 ? walletAtas2022[i] : walletAtasClassic[i];
+    const info = is2022 ? walletInfos[candidateMints.length + i] : walletInfos[i];
+    heldByMint.set(m.toBase58(), tokenAmountFromInfo(ata, info));
+  });
   return {
     reserveAccount,
     reserveTokenMint,
@@ -211,8 +236,8 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
     orderedAssets,
     supplyRaw: BigInt(supply ? supply.value.amount : "0"),
     heldByMint,
-    walletUsdcRaw: tokenAmountFromInfo(walletUsdcAta, walletInfos[candidateMints.length]),
-    walletReserveTokenRaw: tokenAmountFromInfo(walletRtAta, walletInfos[candidateMints.length + 1]),
+    walletUsdcRaw: tokenAmountFromInfo(walletUsdcAta, walletInfos[candidateMints.length * 2]),
+    walletReserveTokenRaw: tokenAmountFromInfo(walletRtAta, walletInfos[candidateMints.length * 2 + 1]),
     walletSolLamports: BigInt(walletSolLamports),
     reserveAlt,
     readsMs: Date.now() - t0,

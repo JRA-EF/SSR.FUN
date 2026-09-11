@@ -1071,7 +1071,16 @@ export function CreateDTR() {
         : undefined;
     const realAssets = assets.map((a) => {
       const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
-      return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeight) * 10_000), seedWeightFraction: a.weight / totalWeight };
+      // DEC-0201: carry the asset's own token program from the catalogue --
+      // it decides which program the Reserve's vault is created under and is
+      // recorded on-chain permanently at registration.
+      return {
+        mint: meta.mint,
+        decimals: meta.decimals,
+        weightBps: Math.round((a.weight / totalWeight) * 10_000),
+        seedWeightFraction: a.weight / totalWeight,
+        ...(("tokenProgram" in meta && meta.tokenProgram) ? { tokenProgram: meta.tokenProgram as string } : {}),
+      };
     });
     const seedTotalUsd = parseFloat(initialSeedUsdc) || 10;
 
@@ -1163,7 +1172,13 @@ export function CreateDTR() {
             name,
             ticker: ticker.toUpperCase(),
             startedAt: Date.now(),
-            assets: realAssets.map((a) => ({ mint: a.mint, decimals: a.decimals, seedWeightFraction: a.seedWeightFraction, weightBps: a.weightBps })),
+            assets: realAssets.map((a) => ({
+              mint: a.mint,
+              decimals: a.decimals,
+              seedWeightFraction: a.seedWeightFraction,
+              weightBps: a.weightBps,
+              ...(("tokenProgram" in a && a.tokenProgram) ? { tokenProgram: a.tokenProgram as string } : {}),
+            })),
             seedTotalUsd,
           });
         },

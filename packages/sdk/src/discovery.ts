@@ -37,6 +37,7 @@ import { buildReadOnlyProgram } from "./readOnly";
 import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault, findSettlementKeeperConfig } from "./pda";
 import { withRateLimitRetry } from "./rpcResilience";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
+import { tokenProgramFromKind, type TokenProgramKindDecoded } from "./tokenPrograms";
 
 /**
  * Solana's `getMultipleAccounts` accepts up to ~100 pubkeys per call --
@@ -98,6 +99,13 @@ export async function fetchSettlementKeeperConfig(connection: Connection, progra
 
 export interface DiscoveredReserveAsset {
   assetMint: string;
+  /**
+   * The token program that owns this asset's mint and vault, straight from
+   * the on-chain ReserveAsset (DEC-0201). Chain-authoritative -- never
+   * inferred -- so every builder can pass the right program instead of
+   * assuming classic SPL Token.
+   */
+  tokenProgram: string;
   reserveAsset: string;
   vault: string;
   decimals: number;
@@ -309,6 +317,7 @@ export async function discoverAllReserves(
       .filter((x): x is { c: AssetCandidate; reserveAsset: NonNullable<ReserveAssetDecoded> } => x !== null)
       .map(({ c, reserveAsset }) => ({
         assetMint: c.mint.toBase58(),
+        tokenProgram: tokenProgramFromKind(reserveAsset.tokenProgram as TokenProgramKindDecoded).toBase58(),
         reserveAsset: c.reserveAssetPda.toBase58(),
         vault: c.vaultPda.toBase58(),
         decimals: reserveAsset.decimals,
