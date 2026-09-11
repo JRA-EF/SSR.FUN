@@ -450,7 +450,11 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     await jupiterSwapHandler(makeValidReq() as never, res as never);
     expect(quoteCalls).to.equal(1);
     expect(res.statusCode).to.equal(502);
-    expect((res.body as { error?: string }).error).to.equal("The token X is not tradable");
+    // DEC-0199: the proxy now names the venue/amount/asset around Jupiter's
+    // own words instead of passing the bare string through. The contract this
+    // test guards -- no retry, 502, and Jupiter's real reason surfaced rather
+    // than a generic message -- is unchanged, so assert containment.
+    expect((res.body as { error?: string }).error).to.contain("The token X is not tradable");
   });
 
   it("retries a transient network-level failure and succeeds once a later attempt lands, exactly reproducing DELTA's real fix", async () => {
@@ -520,7 +524,9 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     await jupiterSwapHandler(makeValidReq() as never, res as never);
     expect(swapCalls).to.equal(1);
     expect(res.statusCode).to.equal(502);
-    expect((res.body as { error?: string }).error).to.equal("Simulation failed: insufficient funds for rent.");
+    // DEC-0199: same as the quote case above -- Jupiter's own words are
+    // surfaced, now inside a sentence that also names the route and amount.
+    expect((res.body as { error?: string }).error).to.contain("Simulation failed: insufficient funds for rent.");
   });
 
   // Live-observed 2026-08-25 (post-DEC-0151, Creator's topped-up Resume):
