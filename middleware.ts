@@ -90,6 +90,18 @@ const PUBLIC_PATHS = new Set([
   '/api/feedback/submit',
 ])
 
+// API routes whose GET is public because something OUTSIDE this app is meant
+// to read them: the on-chain metadata URI and the image it references. Never
+// add a path here that returns anything a beta visitor could not already see
+// on-chain -- these expose a Reserve's name, ticker, description, category
+// and picture, all of which are pointed at by a public on-chain account.
+const PUBLIC_READ_API_PATHS = new Set([
+  '/api/mainnet/reserve-metadata',
+  '/api/mainnet/reserve-image',
+  '/api/devnet/reserve-metadata',
+  '/api/devnet/reserve-image',
+])
+
 // The opaque prefix Vercel BotID uses for its proxied script/telemetry (see vercel.json).
 const BOTID_PROXY_PREFIX = '/149e9513-01fa-4fb0-aad4-566afd725d1b/'
 
@@ -308,6 +320,14 @@ export default async function middleware(request: Request): Promise<Response> {
   // Cron trigger requests, the site-login endpoint itself, and the Coming
   // Soon page's own files are never gated -- see the header comment above.
   if (CRON_PATHS.has(url.pathname) || url.pathname === SITE_LOGIN_PATH || PUBLIC_PATHS.has(url.pathname)) return next()
+  // DEC-0200: the Reserve Token's on-chain `metadata_uri` points at
+  // /api/<cluster>/reserve-metadata, and the JSON it returns points at
+  // /api/<cluster>/reserve-image. Behind the beta gate both answered 401 to
+  // every wallet, explorer and indexer on earth -- verified live against
+  // ssr.fun on 2026-09-11 -- so the metadata a Reserve publishes on-chain was
+  // unreadable by the only consumers it exists for. READ is public; POST
+  // (creating metadata/images) stays gated exactly as before.
+  if (PUBLIC_READ_API_PATHS.has(url.pathname) && (request.method === 'GET' || request.method === 'HEAD')) return next()
   // Vercel BotID's proxied challenge/telemetry paths (vercel.json rewrites to
   // api.vercel.com/bot-protection) -- fetched by the feedback page's client
   // script from any visitor, never carries a session cookie.

@@ -1984,7 +1984,12 @@ export function DTRDetail() {
                         Lexend Giga cap at 24px ~3.2px bearing, mono ~0.3px). */}
                     <div className="flex items-center gap-1.5 min-w-0 pl-[45px]">
                       <span className="text-[10px] text-muted-foreground font-merge-mono font-semibold tracking-wide break-all">
-                        CA: {dtr.onChain?.reserveTokenMint ?? dtr.dtrAddress}
+                        {/* DEC-0200: NEVER fall back to dtr.dtrAddress here --
+                            that is the Reserve account, not the token mint, and
+                            showing it under a "CA:" label is exactly the wrong
+                            address the 2026-09-11 QA reported. Until the
+                            on-chain read lands we show nothing but a hint. */}
+                        CA: {dtr.onChain?.reserveTokenMint ?? "loading..."}
                       </span>
                       <button
                         type="button"
@@ -1993,7 +1998,7 @@ export function DTRDetail() {
                         className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                         onClick={() => {
                           void navigator.clipboard
-                            .writeText(dtr.onChain?.reserveTokenMint ?? dtr.dtrAddress)
+                            .writeText(dtr.onChain?.reserveTokenMint ?? "")
                             .then(() => {
                               setMintAddressCopied(true);
                               window.setTimeout(() => setMintAddressCopied(false), 2000);
@@ -2582,9 +2587,37 @@ export function DTRDetail() {
              <CardContent className="p-0">
                <Table>
                  <TableBody>
+                   {/* DEC-0200: this row was labelled "Contract Address" and
+                       bound dtr.dtrAddress -- the Reserve PDA, never the token
+                       mint. A holder copying it got an address no wallet,
+                       explorer or DEX can resolve as a token. The mint is the
+                       identity users share, so it leads; the Reserve account
+                       keeps its own clearly-labelled row below. Deliberately
+                       duplicates the header CA (same value, same source). */}
                    <TableRow className="border-border/50">
-                     <TableCell className="py-4 pl-6 text-muted-foreground">Contract Address</TableCell>
-                     <TableCell className="text-right pr-6 font-merge-mono text-xs">{dtr.dtrAddress}</TableCell>
+                     <TableCell className="py-4 pl-6 text-muted-foreground">Reserve Token Mint</TableCell>
+                     <TableCell className="text-right pr-6 font-merge-mono text-xs">
+                       {dtr.onChain?.reserveTokenMint ? (
+                         <a
+                           href={explorerUrl("address", dtr.onChain.reserveTokenMint)}
+                           target="_blank"
+                           rel="noreferrer"
+                           className="underline break-all"
+                         >
+                           {dtr.onChain.reserveTokenMint}
+                         </a>
+                       ) : (
+                         <span className="text-muted-foreground">Loading from chain...</span>
+                       )}
+                     </TableCell>
+                   </TableRow>
+                   <TableRow className="border-border/50">
+                     <TableCell className="py-4 pl-6 text-muted-foreground">Reserve Account</TableCell>
+                     <TableCell className="text-right pr-6 font-merge-mono text-xs">
+                       <a href={explorerUrl("address", dtr.dtrAddress)} target="_blank" rel="noreferrer" className="underline break-all">
+                         {dtr.dtrAddress}
+                       </a>
+                     </TableCell>
                    </TableRow>
                    <TableRow className="border-border/50">
                      <TableCell className="py-4 pl-6 text-muted-foreground">Manager Address</TableCell>

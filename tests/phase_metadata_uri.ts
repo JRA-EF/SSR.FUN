@@ -19,7 +19,7 @@
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_metadata_uri.ts
 import { expect } from "chai";
 import { MAX_METADATA_URI_LEN, metadataUriByteLength, isMetadataUriWithinLimit, validateMetadataUri } from "../packages/sdk/src/metadataUri";
-import { validateReserveMetadataPayload, computeMetadataId, MAX_PAYLOAD_JSON_BYTES, MAX_IMAGE_URL_BYTES, type ReserveMetadataPayload } from "../lib/reserve-metadata/payload";
+import { validateReserveMetadataPayload, computeMetadataId, toWalletFacingMetadata, MAX_PAYLOAD_JSON_BYTES, MAX_IMAGE_URL_BYTES, type ReserveMetadataPayload } from "../lib/reserve-metadata/payload";
 
 describe("metadataUri.ts -- MAX_METADATA_URI_LEN mirrors programs/ssr_protocol/src/constants.rs", () => {
   it("is 200, matching the on-chain MAX_METADATA_URI_LEN exactly -- update both by hand together if this ever changes", () => {
@@ -265,5 +265,53 @@ describe("lib/reserve-metadata/payload.ts -- optional imageUrl (Reserve profile 
 
   it("rejects an imageUrl containing a null byte via the shared null-byte gate", () => {
     expect(() => validateReserveMetadataPayload({ ...base, imageUrl: "https://example.com/a\u0000.png" })).to.throw(/null byte/);
+  });
+});
+
+
+// DEC-0200: the on-chain metadata_uri points straight at this store, so what
+// it serves has to satisfy WALLETS (Metaplex convention: name/symbol/image)
+// as well as this app (ticker/imageUrl). The stored bytes are immutable --
+// their hash IS the id the on-chain account points at -- so the standard keys
+// are added at read time and must never change the stored payload.
+describe("toWalletFacingMetadata -- what a wallet or explorer actually reads", () => {
+  const stored: ReserveMetadataPayload = {
+    name: "Strategic Solana Reserve",
+    ticker: "SOLSSR",
+    description: "A Solana ecosystem reserve.",
+    category: "Ecosystem",
+    buyTaxPct: 0,
+    sellTaxPct: 1,
+    imageUrl: "https://ssr.fun/api/mainnet/reserve-image?id=65efa2d6c39b11f4",
+  };
+
+  it("adds the Metaplex keys wallets look for, with the same values", () => {
+    const out = toWalletFacingMetadata(stored);
+    expect(out.name).to.equal("Strategic Solana Reserve");
+    expect(out.symbol).to.equal("SOLSSR");
+    expect(out.image).to.equal(stored.imageUrl);
+    expect(out.description).to.equal(stored.description);
+  });
+
+  it("keeps the app's own keys so nothing client-side has to change", () => {
+    const out = toWalletFacingMetadata(stored);
+    expect(out.ticker).to.equal("SOLSSR");
+    expect(out.imageUrl).to.equal(stored.imageUrl);
+    expect(out.sellTaxPct).to.equal(1);
+  });
+
+  it("omits `image` entirely when the Reserve has no picture -- never an empty string a wallet would try to load", () => {
+    const { imageUrl: _drop, ...noImage } = stored;
+    const out = toWalletFacingMetadata(noImage as ReserveMetadataPayload);
+    expect(out).to.not.have.property("image");
+    expect(out.symbol).to.equal("SOLSSR");
+  });
+
+  it("does NOT mutate the stored payload, so its content-addressed id is unchanged", () => {
+    const before = computeMetadataId(stored);
+    const copy = { ...stored };
+    toWalletFacingMetadata(stored);
+    expect(stored).to.deep.equal(copy);
+    expect(computeMetadataId(stored)).to.equal(before);
   });
 });

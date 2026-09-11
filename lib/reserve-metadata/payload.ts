@@ -25,6 +25,35 @@ export interface ReserveMetadataPayload {
 }
 
 /**
+ * The wallet/explorer-facing view of a stored payload (DEC-0200).
+ *
+ * Wallets, explorers and aggregators read the Metaplex off-chain JSON
+ * convention -- `name`, `symbol`, `image`, `description` -- while this store's
+ * own schema has always used `ticker` and `imageUrl`. Stored rows are
+ * content-addressed and IMMUTABLE (their hash is the id the on-chain
+ * `metadata_uri` points at), so the standard keys are added at READ time and
+ * never written: the bytes on disk keep their hash, and one document now
+ * satisfies both the app and any external consumer.
+ *
+ * Both spellings are emitted. The app keeps reading `ticker`/`imageUrl`, so
+ * nothing client-side needs to change.
+ */
+export interface WalletFacingMetadata extends ReserveMetadataPayload {
+  /** Metaplex convention; same value as `ticker`. */
+  symbol: string;
+  /** Metaplex convention; same value as `imageUrl`, omitted when there is none. */
+  image?: string;
+}
+
+export function toWalletFacingMetadata(payload: ReserveMetadataPayload): WalletFacingMetadata {
+  return {
+    ...payload,
+    symbol: payload.ticker,
+    ...(payload.imageUrl ? { image: payload.imageUrl } : {}),
+  };
+}
+
+/**
  * Generous cap on the STORED JSON payload itself -- distinct from, and much
  * larger than, packages/sdk/src/metadataUri.ts's 200-byte on-chain URI
  * limit (which bounds the on-chain *link*, never the off-chain content it

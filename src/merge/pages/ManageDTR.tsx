@@ -1300,8 +1300,19 @@ export function ManageDTR() {
                     <p className="text-sm font-semibold text-muted-foreground mb-1">Root Manager</p>
                     <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.managerAddress}</p>
                   </div>
+                  {/* DEC-0200: the Reserve Token mint was absent from this page
+                      entirely, and "Reserve Contract" bound the Reserve PDA --
+                      so a manager had no way to read the address holders
+                      actually need. Mint first (the token's identity), Reserve
+                      account second, each labelled for what it is. */}
                   <div>
-                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Contract</p>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Token Mint</p>
+                    <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">
+                      {dtr.onChain?.reserveTokenMint ?? <span className="text-muted-foreground">Loading from chain...</span>}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Account</p>
                     <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.dtrAddress}</p>
                   </div>
                 </CardContent>
