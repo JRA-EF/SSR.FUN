@@ -330,7 +330,11 @@ export function ManageDTR() {
     if (activeTab !== "activity" || !dtr?.onChain || activityStatus !== "idle") return;
     let cancelled = false;
     setActivityStatus("loading");
-    fetch(`/api/devnet/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
+    // DEC-0200: was hardcoded to /api/devnet/ for BOTH clusters, so a Mainnet
+    // Reserve's activity was indexed against the DevNet RPC and stored under a
+    // `devnet` cursor -- it then read back empty and the Reserve looked
+    // inactive despite real on-chain trades.
+    fetch(`/api/${IS_MAINNET ? "mainnet" : "devnet"}/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load the activity log.");

@@ -16,12 +16,15 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/
 import { ReserveCard } from "../../components/ReserveCard";
 import { avatarStyle } from "../../lib/avatarStyle";
 
-type SortKey = "default" | "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
+type SortKey = "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
+// DEC-0200: "AUM: High to Low" IS the default now (QA 2026-09-11: the
+// directory had no useful ordering). The old "default" key sorted nothing and
+// rendered in on-chain discovery order, which means nothing to a visitor, so
+// it is gone rather than left as a confusing no-op choice.
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: "default", label: "Sort: Default" },
   { value: "aumDesc", label: "AUM: High to Low" },
   { value: "changeDesc", label: "24h Change: High to Low" },
   { value: "changeAsc", label: "24h Change: Low to High" },
@@ -33,8 +36,6 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 function sortDtrs(list: DTR[], sortBy: SortKey): DTR[] {
   const sorted = [...list];
   switch (sortBy) {
-    case "aumDesc":
-      return sorted.sort((a, b) => b.aum - a.aum);
     case "changeDesc":
       return sorted.sort((a, b) => b.change24h - a.change24h);
     case "changeAsc":
@@ -45,8 +46,11 @@ function sortDtrs(list: DTR[], sortBy: SortKey): DTR[] {
       return sorted.sort((a, b) => a.tokenPrice - b.tokenPrice);
     case "nameAsc":
       return sorted.sort((a, b) => a.name.localeCompare(b.name));
+    case "aumDesc":
     default:
-      return sorted;
+      // AUM descending is both the explicit choice and the fallback, so an
+      // unknown/persisted-stale key can never silently render unsorted.
+      return sorted.sort((a, b) => b.aum - a.aum);
   }
 }
 
@@ -59,7 +63,7 @@ export function Discover() {
   const chainDiscoveryError = useAppStore((s) => s.chainDiscoveryError);
   const [searchFilter, setSearchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [sortBy, setSortBy] = useState<SortKey>("default");
+  const [sortBy, setSortBy] = useState<SortKey>("aumDesc");
 
   // Filter options: the full canonical list (so every structured category is
   // always choosable, even with zero matching Reserves yet) plus any

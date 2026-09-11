@@ -1,20 +1,25 @@
-// GET /api/devnet/reserve-activity?reserve=<address> -- Reserve Activity
-// Log, served from Postgres (lib/reserve-activity/schema.sql) instead of
-// walking live RPC on every request. Best-effort syncs the store first
-// (lib/reserve-activity/indexer.ts's syncReserveActivity, bounded so this
-// call can never approach a serverless timeout regardless of how much real
-// history a Reserve has), then always reads from the database -- a sync
-// failure (RPC congestion) is reported via `syncError` but never blocks
-// returning whatever is already indexed. No dashboard auth: this must be
-// visible to any wallet viewing a Reserve's Manage page, same as the
-// public read this replaces (packages/sdk/src/activityLog.ts's
-// fetchReserveActivityLog, previously called directly from the browser).
+// GET /api/mainnet/reserve-activity?reserve=<address> -- the Mainnet twin of
+// api/devnet/reserve-activity.ts (DEC-0200).
+//
+// Why this exists: there was NO Mainnet activity route. ManageDTR called the
+// devnet one unconditionally for every Reserve on every cluster, so a Mainnet
+// Reserve's activity was indexed against the DevNet RPC, found nothing, and
+// wrote a cursor tagged `devnet`. Verified live 2026-09-11 against Reserve 24
+// (C6xZ6bPFqYknZawZexW1kBfAehL5qCXQJHmFkBNQWedP): a `devnet` cursor,
+// backfill incomplete, and 0 of the 429 indexed activity rows -- the direct
+// cause of "a Reserve with activity still shows as inactive". The indexer
+// already self-heals a mis-tagged cursor (indexer.ts's getCursor drops rows
+// recorded under a different cluster), so the first correct call repairs it.
+//
+// Same contract as the DevNet route: best-effort bounded sync first, then
+// always read from Postgres, and a sync failure is reported but never blocks
+// returning what is already indexed. Reads are scoped to this cluster.
 import { Connection, PublicKey } from "@solana/web3.js";
 import { buildReadOnlyProgram } from "@ssr/sdk";
 import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
 import { syncReserveActivity } from "../../lib/reserve-activity/indexer";
 import { getSql } from "../../lib/reserve-activity/db";
-import { checkRateWindow } from "./_lib/rateLimit";
+import { checkRateWindow } from "../devnet/_lib/rateLimit";
 
 interface ApiRequest {
   method?: string;
@@ -29,7 +34,7 @@ interface ApiResponse {
   json(body: unknown): void;
 }
 
-const RPC_URL = resolveRpcUrl();
+const CLUSTER = "mainnet-beta" as const;
 
 interface ActivityRow {
   signature: string;
@@ -53,11 +58,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   res.setHeader?.("Cache-Control", "no-store");
 
-  // This route does real backfill work (syncReserveActivity) per request for
-  // any syntactically-valid address, not just a known Reserve -- a per-IP
-  // throttle here is a cheap secondary defense against that being driven at
-  // volume, on top of syncReserveActivity's own bounded work per call.
-  if (!checkRateWindow(`devnet-reserve-activity:${clientIp(req)}`, 1_000, 5)) {
+  // Same per-IP throttle rationale as the DevNet route: this does real
+  // backfill work per request for any syntactically-valid address.
+  if (!checkRateWindow(`mainnet-reserve-activity:${clientIp(req)}`, 1_000, 5)) {
     res.status(429).json({ error: "Too many requests to the Reserve Activity Log from this client -- wait a moment and try again." });
     return;
   }
@@ -79,14 +82,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   let syncError: string | null;
   try {
-    const connection = new Connection(RPC_URL, "confirmed");
+    const connection = new Connection(resolveRpcUrl(), "confirmed");
     const program = buildReadOnlyProgram(connection);
-    const result = await syncReserveActivity(connection, program, reservePk, "devnet");
+    const result = await syncReserveActivity(connection, program, reservePk, CLUSTER);
     syncError = result.syncError ? redactRpcSecrets(result.syncError) : null;
   } catch (e) {
-    // syncReserveActivity itself never throws, but guard the connection/
-    // program construction above too -- a sync failure must never prevent
-    // reading whatever is already indexed below.
     syncError = redactRpcSecrets(e instanceof Error ? e.message : String(e));
   }
 
@@ -97,19 +97,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       sql`
         select signature, kind, ts, actor, summary
         from reserve_activity_log
-        where reserve = ${reserve} and cluster = 'devnet'
+        where reserve = ${reserve} and cluster = ${CLUSTER}
         order by ts desc
         limit 500
       `,
-      sql`select backfill_complete from reserve_activity_cursor where reserve = ${reserve} and cluster = 'devnet'`,
+      sql`select backfill_complete from reserve_activity_cursor where reserve = ${reserve} and cluster = ${CLUSTER}`,
     ]);
     const entries = rows as unknown as ActivityRow[];
     const backfillComplete = Boolean((cursorRows[0] as { backfill_complete?: boolean } | undefined)?.backfill_complete);
     res.status(200).json({ entries, backfillComplete, syncError });
   } catch (e) {
-    // A genuinely broken DB read (not just a sync-side RPC hiccup) is the
-    // one case worth a real error response -- there's nothing to fall back
-    // to serve at that point.
     res.status(503).json({ error: e instanceof Error ? e.message : "Failed to read the Reserve Activity Log." });
   }
 }
