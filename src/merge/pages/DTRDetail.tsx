@@ -67,6 +67,8 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { ChevronLeft, Layers, BarChart3, Activity, PenLine } from "lucide-react";
+import { ReservePnlCardTrigger, ReservePnlCardModal } from "@/components/ReservePnlCard";
+import { truncateWallet, type PnlCardData, type PnlCardTopAsset } from "@/lib/pnlCard";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -556,6 +558,56 @@ export function DTRDetail() {
       ? calcAllTimeChangePct(priceHistory, dtr.nav)
       : null;
   const trades = dtr?.trades ?? [];
+
+  // Shareable performance card (see components/ReservePnlCard.tsx). One card
+  // for holders and Managers alike: the Reserve's all-time gain plus up to
+  // three of its reserve assets with a POSITIVE gain since entry, from the
+  // same figures the page shows -- per-asset gain is calcAssetPnlPct(current,
+  // entry) exactly as the Composition table computes it. Losers and unpriced
+  // assets are never listed (Creator directive 2026-09-14), and the section
+  // disappears entirely when there is no winner yet.
+  const [pnlCardOpen, setPnlCardOpen] = useState(false);
+  const pnlCardData = useMemo<PnlCardData | null>(() => {
+    if (!dtr) return null;
+    const assetGains: Array<{ symbol: string; pnlPct: number | null }> = designDemo
+      ? designDemo.composition.map((a) => ({ symbol: a.symbol, pnlPct: a.pnlPct }))
+      : dtr.composition
+          .filter((a) => a.weight > 0)
+          .map((a) => {
+            const onChainAsset = dtr.onChain?.assets.find((oc) => oc.symbol === a.symbol);
+            const current = !onChainAsset
+              ? null
+              : IS_MAINNET
+                ? (dtr.onChain!.assetPricesUsd?.[onChainAsset.mint] ?? null)
+                : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
+            const entry = !onChainAsset
+              ? null
+              : IS_MAINNET
+                ? (dtr.onChain!.assetEntryPricesUsd?.[onChainAsset.mint] ?? null)
+                : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
+            return { symbol: a.symbol, pnlPct: calcAssetPnlPct(current, entry) };
+          });
+    const topAssets: PnlCardTopAsset[] = assetGains
+      .filter((a): a is { symbol: string; pnlPct: number } => a.pnlPct !== null && a.pnlPct > 0)
+      .sort((a, b) => b.pnlPct - a.pnlPct)
+      .slice(0, 3);
+    const priced = dtr.onChain?.priceSource !== "unavailable" && dtr.tokenPrice > 0;
+    return {
+      name: dtr.name,
+      ticker: dtr.ticker,
+      logoUrl: dtr.logoUrl,
+      allTimeChangePct,
+      tokenPriceUsdc: priced ? dtr.tokenPrice : null,
+      topAssets,
+      // Swap for the Manager's profile name once profiles ship.
+      managerLabel: truncateWallet(dtr.managerAddress),
+      siteHost: typeof window !== "undefined" ? window.location.host : "ssr.fun",
+    };
+  }, [dtr, designDemo, allTimeChangePct]);
+  // The app is hash-routed (src/lib/router.tsx): a Reserve's public link is
+  // `${origin}/#/dtr/<id>`, never a bare path (which would land on the homepage).
+  const pnlShareUrl = typeof window !== "undefined" && dtr ? `${window.location.origin}/#/dtr/${dtr.id}` : "";
+
   // Creator change log: illustrative entries in design preview; real Reserves
   // have no recorded notes yet, so they render the honest empty state.
   const creatorNotes = designDemo?.creatorNotes ?? [];
@@ -1657,6 +1709,7 @@ export function DTRDetail() {
                     <h1 className="text-2xl max-sm:text-lg font-merge-display font-bold tracking-tight">{dtr.name}</h1>
                     <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
                   </div>
+                  <div className="flex items-start gap-3 shrink-0 max-sm:w-full max-sm:justify-between">
                   <div className="text-right max-sm:text-left shrink-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>
                     <div className="flex items-baseline justify-end max-sm:justify-start gap-1.5">
@@ -1683,6 +1736,9 @@ export function DTRDetail() {
                         No verified Pyth or Jupiter price for {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "this Reserve's asset"} right now.
                       </p>
                     )}
+                  </div>
+                  {/* Top-right corner: opens the shareable performance card. */}
+                  {pnlCardData && <ReservePnlCardTrigger onClick={() => setPnlCardOpen(true)} />}
                   </div>
                 </div>
                 <div className="flex flex-col gap-3 max-sm:gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -2844,6 +2900,10 @@ export function DTRDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {pnlCardData && (
+        <ReservePnlCardModal open={pnlCardOpen} onClose={() => setPnlCardOpen(false)} data={pnlCardData} shareUrl={pnlShareUrl} />
+      )}
     </div>
   );
 }

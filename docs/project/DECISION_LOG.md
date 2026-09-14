@@ -6110,3 +6110,38 @@
   ]
 }
 ```
+
+## DEC-0198
+
+```json
+{
+  "id": "DEC-0198",
+  "date": "2026-09-14",
+  "status": "confirmed-implemented",
+  "decision": "Every Reserve detail page gets a shareable PERFORMANCE CARD ('PnL card'), opened from a small share glyph in the top-right corner of the Reserve display (next to Token Price in the chart card). ONE logic for holders and Managers alike: the card shows the Reserve's own all-time gain since launch (the same calcAllTimeChangePct figure as the page), up to three of its reserve assets with a POSITIVE gain since entry, ranked by calcAssetPnlPct(current, entry) exactly as the Composition table computes it (Creator refinement same day: losers and unpriced assets are never listed, no weight figures anywhere, and the section is omitted entirely when there is no winner yet), the Reserve name, its ticker, the Manager wallet (truncated; a swap-in point for the Manager's profile name once profiles ship) and the site host. It never draws per-wallet position figures. Three approved SSR eagle mascot artworks (coin rain, boardroom, bull run; public/pnl/*.jpg, downscaled to 1600px) are selectable as the card background under a navy wash that keeps the left text column legible while the mascot stays visible on the right. The card is drawn with the plain 2D canvas API at 1200x630 (X's landscape ratio) at 2x, so it is a real PNG: the overlay offers Share on X (opens the X web intent with pre-filled text + the Reserve link, and copies the PNG to the clipboard so the user pastes it into the composer -- X's intent cannot attach images), Copy image, and Download.",
+  "context": "Creator request (2026-09-14): 'create PNL cards for reserves -- creators and users can have just the one logic, which is pnl on gains; use the fomo and pump.fun ones as inspiration; include the top 3 tokens who best performed, the symbol and name of the reserve and the manager wallet (soon profiles); use these [three eagle images] as alternatives in the card background, cool but not too much; the card comes as a symbol in the top-right corner of the reserve display which pops out with an option to share on socials, mainly X.'",
+  "rationale": "Reserve-level figures are the only ones that are the same for every viewer: a wallet's cost basis lives in this browser's local store only (DEC-0149/DEC-0158) and would be wrong on any other device, so a shared card built on it could claim gains the page itself does not. Reusing calcAllTimeChangePct and calcAssetPnlPct means the card can never disagree with the detail page, and DEC-0197's server-side history makes the all-time figure real for every visitor. A canvas render avoids adding an html-to-image dependency (none exists in the repo) and yields a real PNG for X, which has no image parameter on its share intent -- the copy-to-clipboard-then-open-composer flow is the same one pump.fun-style cards use. No Radix Dialog exists in the merge design system, so the overlay is a small hand-rolled portal; .merge-scope's unlayered position:relative + opaque background had to be overridden inline on the portal wrapper or the fixed overlay collapses to zero height.",
+  "alternativesConsidered": [
+    "Separate holder card with the wallet's own P&L (rejected for now: per-browser cost basis; revisit when positions are server-tracked)",
+    "html-to-image / html2canvas DOM capture (rejected: new dependency, font/CORS fragility; canvas draws the same fonts merge.css already loads)",
+    "Server-rendered OG image via /api/mainnet/reserve-image (deferred: would give a link preview on X; can reuse uploadReserveImage later)",
+    "Native Web Share API with files (deferred: desktop X does not accept it reliably; clipboard + intent works everywhere the clipboard image write is allowed)"
+  ],
+  "impact": "Bug found on the first preview (Creator: 'you simply removed the top performers -- they're gone'): the warm-cache first paint seeded every Reserve with an EMPTY entry-price map (buildDtrsFromSnapshot passed {}), so per-asset P&L -- the card's top performers AND the Composition table's P&L column -- stayed '--' until the first live discovery poll (30s+) landed; and a later poll whose entry-price fetch failed wiped a map already resolved. Fixed at the source: the hydrator fetches /api/mainnet/reserve-entry-prices alongside the snapshot (same cache key as the poll) and the merge preserves an existing map when the fresh pass has none. Also caught on the preview: the X post link must be the hash route (${origin}/#/dtr/<id>) -- the app is hash-routed (src/lib/router.tsx) and a bare /dtr/<id> path lands on the homepage. New share glyph on every Reserve detail page (desktop and mobile); overlay previews the card, offers three backgrounds, Share on X / Copy image / Download. 'Just launched' is shown instead of a figure when all-time performance is not yet available (never a fabricated 0%). No new dependencies; three static JPEGs (~660 KB total) under public/pnl. Not yet committed or deployed.",
+  "affectedAreas": [
+    "src/merge/lib/pnlCard.ts (new: data shape, canvas renderer, PNG/clipboard/X-intent helpers)",
+    "src/merge/components/ReservePnlCard.tsx (new: ReservePnlCardTrigger glyph + ReservePnlCardModal overlay)",
+    "src/merge/pages/DTRDetail.tsx (pnlCardData memo, trigger next to Token Price, modal mount)",
+    "src/merge/lib/ReserveSnapshotHydrator.tsx + reserveSnapshotClient.ts (warm-cache seed now fetches and carries the entry-price map, so per-asset P&L exists on the first paint), src/merge/lib/onChainReserve.ts (mergeDiscoveredReserves keeps an already-resolved entry-price map when a later pass carries none)",
+    "public/pnl/eagle-rain.jpg, eagle-couch.jpg, eagle-bull.jpg (new)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on the two new files: 0 warnings, 0 errors (DTRDetail's 4 exhaustive-deps warnings pre-exist on HEAD).",
+    "Headless Chrome renders of the card for all three backgrounds, a long-name/no-logo/not-yet-available variant, and the overlay at 1280px and 512px viewports checked visually this session.",
+    "Preview ssr-67afzponv (share-cookie Chrome profile, hash route #/dtr/mainnet-beta-8): BETA renders on the first paint with the share glyph present, all-time +225.58%, and the Composition table already showing STONK +1383.69% -- i.e. entry prices now arrive with the warm-cache seed. Real preview data: 10 of 12 Mainnet Reserves have at least one positive asset gain to list."
+  ]
+}
+```

@@ -696,6 +696,21 @@ export function mergeDiscoveredReserves(
       // the old `existing ?? fresh` order made a stale local value mask
       // every later metadata change forever.
       logoUrl: fresh.logoUrl ?? existing.logoUrl,
+      // Entry prices are a write-once server map (DEC-0172): a pass whose
+      // entry-price fetch failed (or a seed that didn't carry them) must not
+      // wipe the map an earlier pass already resolved -- otherwise the
+      // Composition table's P&L column and the performance card's top
+      // performers flicker back to "--"/empty on a transient fetch error.
+      onChain:
+        fresh.onChain && existing.onChain
+          ? {
+              ...fresh.onChain,
+              assetEntryPricesUsd:
+                fresh.onChain.assetEntryPricesUsd && Object.keys(fresh.onChain.assetEntryPricesUsd).length > 0
+                  ? fresh.onChain.assetEntryPricesUsd
+                  : existing.onChain.assetEntryPricesUsd,
+            }
+          : fresh.onChain,
     };
   });
   const discoveredAddresses = new Set(discovered.map((d) => d.onChain?.reserve).filter(Boolean));
