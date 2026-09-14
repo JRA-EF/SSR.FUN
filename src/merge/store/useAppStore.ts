@@ -23,6 +23,7 @@ import { isManagerOrDelegate, canManageDelegates, canRebalance } from "@/lib/per
 import { pickLogoForId } from "@/lib/seed-data";
 import { buildPlaceholderRealDTR, mergeOnChainIntoDTR, mergeDiscoveredReserves, REAL_RESERVE_DESCRIPTORS, type AssetPriceInfo } from "@/lib/onChainReserve";
 import type { ReserveOnChain, FixtureReserve } from "@ssr/sdk";
+import type { ServerPriceHistory } from "@/lib/navHistoryClient";
 import { applyRebalance, appendPricePoint, initialLiquidityForAum, weightedAvgCostBasis } from "@/lib/calculations";
 import { IS_MAINNET, SSR_PROGRAM_ID } from "@/lib/solana-config";
 
@@ -143,7 +144,8 @@ interface AppState {
    * on every poll tick.
    */
   /** `fullyVerified` (default true): pass false only when this discovery pass itself had unresolved per-account issues, so a previously-known on-chain DTR missing from `discovered` isn't assumed closed -- see the implementation for the fail-closed reasoning. Also accumulates any newly-ineligible Reserves into `quarantinedReserves`. */
-  applyDiscoveredReserves: (discovered: DTR[], fullyVerified?: boolean) => void;
+  /** `serverHistoryByReserve` (Mainnet only): the server-recorded price history per Reserve address (navHistoryClient.ts), merged under this browser's own points -- see mergeDiscoveredReserves. */
+  applyDiscoveredReserves: (discovered: DTR[], fullyVerified?: boolean, serverHistoryByReserve?: Record<string, ServerPriceHistory>) => void;
   /** Registers a newly (really) created Reserve so it shows up in Discover/DTRDetail like any other real DTR. */
   registerRealReserve: (dtr: DTR) => void;
   /** Writes a freshly-resolved on-chain delegate list (see packages/sdk/src/discovery.ts's discoverDelegatesForReserve) onto a real DTR's onChain.delegatesOnChain -- read-only, verified data; never touches the fully-local, simulated `delegates` array. */
@@ -233,9 +235,9 @@ export const useAppStore = create<AppState>()(
       // Fail-closed merge logic (drop an on-chain DTR that's genuinely gone
       // from a fully-verified discovery pass) lives in the pure, testable
       // mergeDiscoveredReserves -- see src/merge/lib/onChainReserve.ts.
-      applyDiscoveredReserves: (discovered, fullyVerified = true) => {
+      applyDiscoveredReserves: (discovered, fullyVerified = true, serverHistoryByReserve = {}) => {
         set((state) => {
-          const { dtrs, quarantined } = mergeDiscoveredReserves(state.dtrs, discovered, fullyVerified);
+          const { dtrs, quarantined } = mergeDiscoveredReserves(state.dtrs, discovered, fullyVerified, serverHistoryByReserve);
           const quarantinedReserves = { ...state.quarantinedReserves };
           for (const q of quarantined) quarantinedReserves[q.id] = q;
           return { dtrs, quarantinedReserves };

@@ -168,6 +168,16 @@ export interface DTR {
   isUserCreated: boolean;
   /** Flat, chronologically ordered, strictly-increasing-timestamp price series. */
   priceHistory: PricePoint[];
+  /**
+   * Mainnet only. Present once the server-recorded history
+   * (api/mainnet/reserve-nav-history.ts) has been merged into priceHistory:
+   * the unix-ms time of the first genuinely RECORDED observation, or null
+   * when the recorder hasn't written this Reserve yet (priceHistory then
+   * starts at the derived launch anchor only). Absent (undefined) until the
+   * server history has been fetched at least once -- the detail page shows
+   * all-time performance as "--" rather than a misleading 0% until then.
+   */
+  priceHistoryRecordedFrom?: number | null;
   /** Real executed trades this session -- starts empty for every Reserve; never backfilled with invented history. */
   trades: Trade[];
   /** Present only for a Reserve backed by a real deployed SSR Protocol account on Solana DevNet -- see src/merge/lib/onChainReserve.ts. Absent for the fully-simulated seed DTRs. */

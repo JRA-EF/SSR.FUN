@@ -35,6 +35,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve, type AssetPriceInfo } from "./onChainReserve";
 import { fetchReserveImagePointers } from "./reserveImageClient";
 import { ensureReserveEntryPrices, fetchReserveEntryPrices } from "./entryPriceClient";
+import { fetchReserveNavHistory, NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, type ServerPriceHistory } from "./navHistoryClient";
 import { fetchAssetPricesUsd } from "./assetPricing";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
 import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
@@ -228,6 +229,19 @@ export function RealReserveSync() {
           if (missingPairs.length > 0) void ensureReserveEntryPrices(window.location.origin, missingPairs);
         }
 
+        // Mainnet only: the shared, server-recorded price history per
+        // Reserve (lib/reserve-nav-history via navHistoryClient.ts) -- the
+        // one history every visitor's chart and 24h/7d/all-time figures are
+        // computed from, merged UNDER this browser's own live points by
+        // mergeDiscoveredReserves. Best-effort like the maps above: {} on
+        // any failure keeps whatever history the store already holds.
+        let navHistory: Record<string, ServerPriceHistory> = {};
+        if (IS_MAINNET && reserves.length > 0) {
+          navHistory = await getCached(NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, () => fetchReserveNavHistory(window.location.origin)).catch(
+            () => ({}) as Record<string, ServerPriceHistory>,
+          );
+        }
+
         const dtrs = await Promise.all(
           reserves.map(async (reserve) => {
             const delegates = await withReadConcurrencyLimit(() =>
@@ -271,7 +285,7 @@ export function RealReserveSync() {
         // poll is always ADDITIVE: it adds/updates Reserves + holdings but never
         // removes one the snapshot vouched for. DevNet has no snapshot, so it
         // keeps the original authoritative (prune-on-clean-pass) behavior.
-        applyDiscoveredReserves(dtrs, !IS_MAINNET && issues.length === 0);
+        applyDiscoveredReserves(dtrs, !IS_MAINNET && issues.length === 0, navHistory);
         setChainDiscoveryStatus("ready");
 
         if (walletKey && publicKey) {

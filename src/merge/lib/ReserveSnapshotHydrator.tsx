@@ -12,6 +12,8 @@ import { registerDynamicSupportedAssetMints } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { IS_MAINNET } from "./solana-config";
 import { fetchReserveSnapshot, buildDtrsFromSnapshot } from "./reserveSnapshotClient";
+import { fetchReserveNavHistory, NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, type ServerPriceHistory } from "./navHistoryClient";
+import { getCached } from "./rpcResilience";
 
 export function ReserveSnapshotHydrator() {
   const { publicKey } = useWallet();
@@ -21,7 +23,16 @@ export function ReserveSnapshotHydrator() {
     if (!IS_MAINNET) return;
     let cancelled = false;
     void (async () => {
-      const snapshot = await fetchReserveSnapshot(window.location.origin);
+      // The shared server price history is fetched alongside the snapshot so
+      // the FIRST paint of a detail page already charts real history and a
+      // real all-time figure, rather than a flat line until the first live
+      // poll lands. Best-effort: {} on failure, the poll retries.
+      const [snapshot, navHistory] = await Promise.all([
+        fetchReserveSnapshot(window.location.origin),
+        getCached(NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, () => fetchReserveNavHistory(window.location.origin)).catch(
+          () => ({}) as Record<string, ServerPriceHistory>,
+        ),
+      ]);
       if (cancelled || !snapshot) return;
       // Register every asset mint the snapshot's Reserves hold BEFORE seeding,
       // so isReserveTradable() passes immediately. Without this the multi-asset
@@ -40,7 +51,7 @@ export function ReserveSnapshotHydrator() {
       if (cancelled || dtrs.length === 0) return;
       // fullyVerified=false: this is a non-authoritative seed; the live poll's
       // fully-verified pass is the source of truth and replaces it.
-      applyDiscoveredReserves(dtrs, false);
+      applyDiscoveredReserves(dtrs, false, navHistory);
       // Visible confirmation the warm-cache seed ran (age of the snapshot the
       // user is seeing). Safe, low-volume, and lets a maintainer confirm the
       // instant-paint path fired without a debugger.

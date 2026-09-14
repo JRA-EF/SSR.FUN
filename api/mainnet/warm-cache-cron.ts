@@ -34,6 +34,7 @@ import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { getSql as getMetadataSql } from "../../lib/reserve-metadata/db";
 import { writeReserveSnapshot } from "../../lib/reserve-warm-cache/db";
+import { createNavRecorderState, recordNavPoints, type NavRecorderState } from "../../lib/reserve-nav-history/recorder";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
 
 interface ApiRequest {
@@ -107,6 +108,7 @@ async function refreshOnce(
   connection: Connection,
   candidateAssetMints: PublicKey[],
   metadataCache: Map<string, ParsedReserveMetadata | null>,
+  navRecorder: NavRecorderState,
 ): Promise<number> {
   const { reserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints);
   const displayable = reserves.filter(
@@ -178,6 +180,19 @@ async function refreshOnce(
     computedAt: Date.now(),
     reserveCount: displayable.length,
   });
+
+  // Reserve NAV History (lib/reserve-nav-history): the same balances + prices
+  // that just went into the snapshot, recorded as a shared per-Reserve NAV
+  // time series (throttled -- see navMath.ts's shouldRecordNavPoint) so every
+  // visitor's Price History chart and all-time performance are computed from
+  // ONE server-side history instead of whatever each browser happened to see
+  // while open. Best-effort: a history write failing must never fail the
+  // snapshot the homepage paints from.
+  try {
+    await recordNavPoints(CLUSTER, displayable, priceByMint, navRecorder);
+  } catch (e) {
+    console.error("api/mainnet/warm-cache-cron: nav-history append failed (non-fatal):", e);
+  }
   return displayable.length;
 }
 
@@ -217,6 +232,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     registerDynamicSupportedAssetMints(knownMints);
 
     const metadataCache = new Map<string, ParsedReserveMetadata | null>();
+    // Like metadataCache, invocation-scoped: the last recorded NAV point per
+    // Reserve is read from the DB once, then advanced in memory per refresh.
+    const navRecorder = createNavRecorderState();
     const deadline = Date.now() + BUDGET_MS;
     let refreshes = 0;
     let lastReserveCount = 0;
@@ -224,7 +242,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
     do {
       try {
-        lastReserveCount = await refreshOnce(connection, candidateAssetMints, metadataCache);
+        lastReserveCount = await refreshOnce(connection, candidateAssetMints, metadataCache, navRecorder);
         refreshes++;
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);

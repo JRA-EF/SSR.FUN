@@ -6037,3 +6037,41 @@
   ]
 }
 ```
+
+## DEC-0197
+
+```json
+{
+  "id": "DEC-0197",
+  "date": "2026-09-14",
+  "status": "confirmed-implemented",
+  "decision": "Reserve price history is now SERVER-SIDE and shared (the Reserve NAV History store: table reserve_nav_history, lib/reserve-nav-history/*, appended by api/mainnet/warm-cache-cron.ts on every ~15s refresh with a throttle of >=0.5% move after >=60s, or >=15 min quiet; served by the new GET /api/mainnet/reserve-nav-history, downsampled to <=600 points per Reserve). Each served series is prefixed by a derived LAUNCH ANCHOR: the Reserve's current holdings valued at their ENTRY prices (the DEC-0172 Entry Price Store), stamped at the earliest entry-price capture time -- so 'All-Time Performance' is the value-weighted aggregate of the Composition table's per-asset P&L. The client (navHistoryClient.ts) fetches it once per discovery pass and once on the warm-cache first paint and merges it UNDER the browser's own live points (calculations.ts mergePriceHistories); the browser only extends history forward. On the Reserve detail page: the % next to Token Price and the middle stat tile now show ALL-TIME performance (tile renamed from '7D Performance' to 'All-Time Performance'; 'Not yet available' / '--' until the server history has been merged at least once, never a misleading 0%); the third tile is renamed from '24h Volume' to 'All-Time Volume', reading a new per-Reserve volumeAllTimeUsd on both landing-stats endpoints (same Ledger definition as the DEC-0180 homepage figure, via a new fetchAllTimeTradeVolumeUsdByReserve GROUP BY). The chart discloses, when a window reaches back before recording started, that the earlier segment runs straight from the launch value.",
+  "context": "Creator report with screenshot (BETA Reserve): 'all time chart is not moving and all time pnl% below the token price at 0% despite one of the underlying tokens being up 1300% and the reserve is highly profitable'; plus 'change the 7D performance in the mid of Market cap and 24h volume to all time performance and all time volume'. Root cause (already recorded as an open risk on 2026-08-28 under DEC-0172): a Reserve's priceHistory lived only in each browser -- and on Mainnet was deliberately never persisted across reloads (useAppStore partialize) -- so every visit started a fresh history at the current NAV: buildLineSeries fell back to its flatline ('No price movement recorded yet.') and every change figure measured NAV against itself. The Ledger could not rebuild the past either: its amount_usd values are frozen at INDEXING time (DEC-0176), not trade time.",
+  "rationale": "Only a server-side, shared time series can give every visitor the same real history; the warm-cache cron already computes every Reserve's balances and validated prices every ~15s, so recording NAV there costs one small insert per refresh and zero extra RPC. The entry-price anchor is the one honest pre-recording baseline the system already owns (server-captured, write-once, never client-supplied) and it makes the Reserve-level figure consistent by construction with the per-asset P&L rows the Creator was comparing against. Live check against the real snapshot: BETA anchor 2.2206 (2026-08-28) vs NAV 6.81 today = +207%, DELTA +103%, ALPHA +3.7%. The first recorded points were written by one manual recorder pass on 2026-09-14 09:24 UTC so recorded history starts now, not at the next deploy.",
+  "alternativesConsidered": [
+    "Rebuild history from the Ledger's mint/redeem rows (rejected: amount_usd is valued at indexing time, so trade-implied NAVs are not historical)",
+    "Persist priceHistory in localStorage on Mainnet (rejected: still per-browser, and partialize deliberately drops on-chain DTRs to avoid the 7->1->7 rehydration race)",
+    "Show the all-time figure only as the sum of per-asset P&L without a chart anchor (rejected: the chart's 'All' range would stay flat, which was half the report)",
+    "Record every 15s tick unthrottled (rejected: ~5.7k rows/day/Reserve for a volatile basket; the 60s floor + 0.5% move + 15 min quiet interval bounds it to <=1440/day while keeping every real move)"
+  ],
+  "impact": "Every Mainnet visitor now sees one shared Price History that starts at the launch value and accumulates real recorded movement from 2026-09-14 onward; 24h/7d changes are measured inside their own windows from that history. Detail-page stat strip: Market Cap | All-Time Performance | All-Time Volume. New DB table reserve_nav_history (migration applied to the production Neon DB this session via scripts/migrate-nav-history.mjs; idempotent). New endpoint is a cheap DB read (edge-cached 30s), gated by the site cookie like the other /api/mainnet reads. Payload per discovery pass <= 12 Reserves x 600 points, client-cached 60s. DevNet behaviour unchanged (no recorder; per-browser history as before). Homepage/Discover cards untouched. NOT YET DEPLOYED: code is on the working tree, uncommitted; the cron starts recording on the next production deploy of main.",
+  "affectedAreas": [
+    "lib/reserve-nav-history/{schema.sql,db.ts,navMath.ts,recorder.ts,package.json} (new)",
+    "scripts/migrate-nav-history.mjs, scripts/verify_nav_history.ts (new)",
+    "api/mainnet/reserve-nav-history.ts (new GET), api/mainnet/warm-cache-cron.ts (recorder call)",
+    "lib/reserve-activity/kpis.ts (fetchAllTimeTradeVolumeUsdByReserve), api/mainnet/landing-stats.ts + api/devnet/landing-stats.ts (perReserve.volumeAllTimeUsd), src/merge/hooks/useLandingStats.ts",
+    "src/merge/lib/navHistoryClient.ts (new), calculations.ts (mergePriceHistories, calcAllTimeChangePct), types.ts (DTR.priceHistoryRecordedFrom), onChainReserve.ts (mergeDiscoveredReserves server history), store/useAppStore.ts, RealReserveSync.tsx, ReserveSnapshotHydrator.tsx",
+    "src/merge/pages/DTRDetail.tsx (all-time % by Token Price; All-Time Performance + All-Time Volume tiles; pre-recording chart note)",
+    "tsconfig.node.json (exclude lib/reserve-nav-history), tests/phase_nav_history.ts (new, 22 tests)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_nav_history.ts: 22 passing (navMath, assembleNavHistory anchor logic, mergePriceHistories, calcAllTimeChangePct, calcRecentChanges window isolation, mergeDiscoveredReserves wiring).",
+    "npx tsc -b: exit 0. oxlint on all changed files: 0 errors (4 pre-existing exhaustive-deps warnings in DTRDetail.tsx, identical count on HEAD).",
+    "node scripts/migrate-nav-history.mjs -> 'Confirmed table present: reserve_nav_history' on the production Neon host.",
+    "scripts/verify_nav_history.ts (real handler, real DB): 12 Reserves served; BETA anchor 2026-08-28 @ 2.2206, nav now 6.8248, all-time +207.34%; DELTA +103.52%; --record wrote 12 rows, recordedFrom=2026-09-14T09:24 for every Reserve."
+  ]
+}
+```
