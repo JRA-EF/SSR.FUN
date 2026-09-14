@@ -80,6 +80,15 @@ export type SsrProtocol = {
         },
         {
           "name": "reserveTokenMint",
+          "docs": [
+            "`mut`: this instruction MINTS the settled fee shares into the fee vault,",
+            "so the mint's supply changes. It was missing (found live 2026-09-08 --",
+            "the IDL marked the mint read-only, clients passed it read-only, and the",
+            "mint_to CPI failed with PrivilegeEscalation on the first Reserve that",
+            "actually had fees to bill). Keepers pass the account writable",
+            "regardless; this makes the IDL say so."
+          ],
+          "writable": true,
           "pda": {
             "seeds": [
               {

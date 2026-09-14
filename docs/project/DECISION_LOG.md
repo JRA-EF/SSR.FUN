@@ -6037,3 +6037,76 @@
   ]
 }
 ```
+
+## DEC-0195
+
+```json
+{
+  "id": "DEC-0195",
+  "date": "2026-09-08",
+  "status": "prepared-awaiting-squads-execute",
+  "decision": "Next Mainnet program upgrade staged, carrying exactly two program fixes already on main: (1) DEC-0192 -- `mut` on AccrueFees.reserve_token_mint (the deployed struct lacked it, so the IDL marked the mint read-only and every real TVL-fee billing failed with PrivilegeEscalation; the keeper works around it today by passing the account writable); (2) DEC-0193 -- two-pass close_reserve (collect every ReserveAsset account first, then close, instead of interleaving the vault-close CPI with the Rust-side account close per iteration, which made close_reserve fail with UnbalancedInstruction on any 2+-asset Reserve). Program source diff vs the deployed DEC-0173 build is ONLY accrue_fees.rs (+7) and close_reserve.rs (+15). Reproducibility re-proven first: on-chain programdata (slot 445241220) sha256 079c957375a03d9d9ad4137f2efbddae3aa0fe96eddcedb689d18500e821c53e == a fresh cargo-build-sbf of merge 41380f2 in a temporary worktree (byte-identical, 1,015,416 bytes). New binary: 1,017,088 bytes, sha256 c59e8a069e206abf83d3eeb17d2a356080efecab2677031becefd232a73c7d6b; cargo test 17/17; clippy 3 warnings (the 3 pre-existing, zero new). IDL regenerated with anchor idl build/type: the only change vs the hand-patched IDL of DEC-0192 is the new doc comment on that account (cosmetic) -- committed. Program-data capacity 1,035,896 bytes already fits (no extend). Buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK written from the developer key, dump sha256 == build, authority set to the Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW; buffer rent 6.442 SOL (refunded to the spill account on execute). Frontend prebuilt from main and gate-checked at /private/tmp/ssr_post_upgrade2_output -- this upgrade changes NO account shapes (only a writable flag the keeper already forces), so the frontend may be deployed before or after the execute; no cutover window. execute_rebalance_leg is deliberately NOT in this upgrade: it CPIs the DevNet AMM program, which does not exist on Mainnet, so making rebalances move holdings on Mainnet is a design change (Jupiter-routed legs or a keeper), not a patch.",
+  "context": "DEC-0192 and DEC-0193 fixes were committed to main during the 2026-09-08 Mainnet checklist pass (docs/project/final-fixes.md); the developer asked for the next steps on both lists, and the program list's next step is this upgrade. Same coordinated recipe as DEC-0187.",
+  "rationale": "Ship the two proven fixes together in one Squads execute; keep the risky design change (rebalance execution on Mainnet) out of it.",
+  "alternativesConsidered": ["Include a Mainnet rebalance leg implementation -- rejected: unspecified design, needs its own decision.", "Skip the accrue `mut` since the keeper already works around it -- rejected: every other builder (scripts, future UI) would repeat the failure, and the IDL should tell the truth."],
+  "impact": "After execute: close_reserve works on multi-asset Reserves (Reserve 21 can be closed), accrue_fees works with an IDL-built read-only mint. Developer key holds 2.68 SOL until the buffer rent refunds on execute.",
+  "affectedAreas": ["Mainnet buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK (authority: Squads vault)", "packages/sdk/idl/ssr_protocol.{json,ts} (regenerated)", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Reproduction: worktree at 41380f2, cargo-build-sbf -> sha256 079c9573...ec41, byte-identical to on-chain.", "git diff --stat 41380f2 HEAD -- programs/: accrue_fees.rs +7, close_reserve.rs +15, nothing else.", "cargo test: 17 passed; clippy: 3 pre-existing warnings.", "solana program show CBXaPG3e...: Authority HFmqpPVV..., Data Length 1017088, Balance 6.442263249 SOL; dump sha256 c59e8a06...7d6b.", "Squads fields: Program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 / Buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK / Spill 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa."]
+}
+```
+
+## DEC-0196
+
+```json
+{
+  "id": "DEC-0196",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "The USDC fee-settlement keeper now actually settles. After the Creator/Boss signed set_fee_settlement_keeper (keeper AuaJRdbR... on chain, first hourly runs from 15:15 UTC), the keeper ran three times without moving a cent; a local real run with the keeper key exposed four defects, each fixed in api/mainnet/fee-settlement-cron.ts / lib/mainnet/jupiter.ts / packages/sdk: (1) redeem_fee_vault_shares failed preflight with ReserveAssetMismatch (common.rs:326) because the per-asset settlement staging ATAs had never been created -- now created idempotently, in their own transaction(s) when more than three (the 10-asset Reserve hit MaxInstructionTraceLengthExceeded with all ten creations + the redeem in one tx); (2) the settlement swap asked Jupiter to swap from the keeper's EMPTY ATA while the approve_settlement_swap allowance sits on the staging ATA (Jupiter 0x1789 on every run) -- now one atomic v0 transaction [approve -> SPL transfer of exactly the approved amount signed by the keeper as delegate -> Jupiter swap with destinationTokenAccount = the Reserve's USDC staging ATA], split into two only when it does not fit, with a sweep of any asset left in the keeper ATA by a split run; (3) buildDistributeFeeUsdcInstruction derived the Treasury's USDC ATA without allowOwnerOffCurve -- the Treasury is a Squads PDA, so spl-token threw TokenOwnerOffCurveError with an empty message and every distribute was silently skipped; (4) single sends were being dropped -- every keeper send now re-broadcasts until confirmed, the route's maxDuration is 300s (270s loop budget) and the cron uses the shared Jupiter helper (venue exclusions, JUPITER_API_BASE). First full settlement executed locally with the keeper key, then the fix deployed to prod and dev.",
+  "context": "MFE-01 payout clause; tester items #1/#4 (fees reaching managers). The keeper registration was the only step needing an admin; everything after it was code.",
+  "rationale": "Running the exact handler locally with the real keeper key was the only way to see the per-Reserve errors (the scheduled run's JSON is not retrievable and CRON_SECRET is write-only). Each fix is the minimal correct one against the deployed program; no program change was needed.",
+  "alternativesConsidered": ["Rewrite the Jupiter swap instruction's source account to the staging ATA (pure delegate swap) -- rejected as fragile: Jupiter's route programs may constrain the source account's owner; the delegate transfer into the keeper ATA inside the same transaction is equivalent and robust.", "Wait for a program upgrade adding on-chain swap support -- rejected: unnecessary."],
+  "impact": "10 Reserves redeemed, 21+ settlement swaps landed, 10 distribute_fee_usdc: 0.314650 USDC to the Treasury vault (USDC ATA created by the run) and 0.303919 USDC to manager wallets, splits matching FeeSettlement + recipient tables. Two legs (Reserve 17 98sM..., Reserve 20 ZEC) skipped by route errors and retry hourly. The keeper briefly holds an asset only inside an atomic transaction (or between the two halves of a split, swept next run).",
+  "affectedAreas": ["api/mainnet/fee-settlement-cron.ts", "lib/mainnet/jupiter.ts (destinationTokenAccount)", "packages/sdk/src/feeSettlementInstructions.ts (allowOwnerOffCurve)", "vercel.json (fee-settlement-cron maxDuration 300)", "docs/project/final-fixes.md MFE-01", "rtm_controls MFE-01"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Local real run #1: 9 Reserves redeem preflight ReserveAssetMismatch; Reserve 21 swap quote 401 (lite base ignored by the old cron). Run #2 (after fixes 1,2,4): 8 redeems landed, 21 swaps landed, distribute produced empty-message errors on all 10. Isolated repro: TokenOwnerOffCurveError from getAssociatedTokenAddressSync(usdc, treasury). Run #3 (after fix 3): 10 distributions -- signatures and per-wallet USDC deltas in docs/project/final-fixes.md MFE-01; Treasury USDC balance 0.314650 after."]
+## DEC-0197
+
+```json
+{
+  "id": "DEC-0197",
+  "date": "2026-09-14",
+  "status": "confirmed-implemented",
+  "decision": "Reserve price history is now SERVER-SIDE and shared (the Reserve NAV History store: table reserve_nav_history, lib/reserve-nav-history/*, appended by api/mainnet/warm-cache-cron.ts on every ~15s refresh with a throttle of >=0.5% move after >=60s, or >=15 min quiet; served by the new GET /api/mainnet/reserve-nav-history, downsampled to <=600 points per Reserve). Each served series is prefixed by a derived LAUNCH ANCHOR: the Reserve's current holdings valued at their ENTRY prices (the DEC-0172 Entry Price Store), stamped at the earliest entry-price capture time -- so 'All-Time Performance' is the value-weighted aggregate of the Composition table's per-asset P&L. The client (navHistoryClient.ts) fetches it once per discovery pass and once on the warm-cache first paint and merges it UNDER the browser's own live points (calculations.ts mergePriceHistories); the browser only extends history forward. On the Reserve detail page: the % next to Token Price and the middle stat tile now show ALL-TIME performance (tile renamed from '7D Performance' to 'All-Time Performance'; 'Not yet available' / '--' until the server history has been merged at least once, never a misleading 0%); the third tile is renamed from '24h Volume' to 'All-Time Volume', reading a new per-Reserve volumeAllTimeUsd on both landing-stats endpoints (same Ledger definition as the DEC-0180 homepage figure, via a new fetchAllTimeTradeVolumeUsdByReserve GROUP BY). The chart discloses, when a window reaches back before recording started, that the earlier segment runs straight from the launch value.",
+  "context": "Creator report with screenshot (BETA Reserve): 'all time chart is not moving and all time pnl% below the token price at 0% despite one of the underlying tokens being up 1300% and the reserve is highly profitable'; plus 'change the 7D performance in the mid of Market cap and 24h volume to all time performance and all time volume'. Root cause (already recorded as an open risk on 2026-08-28 under DEC-0172): a Reserve's priceHistory lived only in each browser -- and on Mainnet was deliberately never persisted across reloads (useAppStore partialize) -- so every visit started a fresh history at the current NAV: buildLineSeries fell back to its flatline ('No price movement recorded yet.') and every change figure measured NAV against itself. The Ledger could not rebuild the past either: its amount_usd values are frozen at INDEXING time (DEC-0176), not trade time.",
+  "rationale": "Only a server-side, shared time series can give every visitor the same real history; the warm-cache cron already computes every Reserve's balances and validated prices every ~15s, so recording NAV there costs one small insert per refresh and zero extra RPC. The entry-price anchor is the one honest pre-recording baseline the system already owns (server-captured, write-once, never client-supplied) and it makes the Reserve-level figure consistent by construction with the per-asset P&L rows the Creator was comparing against. Live check against the real snapshot: BETA anchor 2.2206 (2026-08-28) vs NAV 6.81 today = +207%, DELTA +103%, ALPHA +3.7%. The first recorded points were written by one manual recorder pass on 2026-09-14 09:24 UTC so recorded history starts now, not at the next deploy.",
+  "alternativesConsidered": [
+    "Rebuild history from the Ledger's mint/redeem rows (rejected: amount_usd is valued at indexing time, so trade-implied NAVs are not historical)",
+    "Persist priceHistory in localStorage on Mainnet (rejected: still per-browser, and partialize deliberately drops on-chain DTRs to avoid the 7->1->7 rehydration race)",
+    "Show the all-time figure only as the sum of per-asset P&L without a chart anchor (rejected: the chart's 'All' range would stay flat, which was half the report)",
+    "Record every 15s tick unthrottled (rejected: ~5.7k rows/day/Reserve for a volatile basket; the 60s floor + 0.5% move + 15 min quiet interval bounds it to <=1440/day while keeping every real move)"
+  ],
+  "impact": "Every Mainnet visitor now sees one shared Price History that starts at the launch value and accumulates real recorded movement from 2026-09-14 onward; 24h/7d changes are measured inside their own windows from that history. Detail-page stat strip: Market Cap | All-Time Performance | All-Time Volume. New DB table reserve_nav_history (migration applied to the production Neon DB this session via scripts/migrate-nav-history.mjs; idempotent). New endpoint is a cheap DB read (edge-cached 30s), gated by the site cookie like the other /api/mainnet reads. Payload per discovery pass <= 12 Reserves x 600 points, client-cached 60s. DevNet behaviour unchanged (no recorder; per-browser history as before). Homepage/Discover cards untouched. NOT YET DEPLOYED: code is on the working tree, uncommitted; the cron starts recording on the next production deploy of main.",
+  "affectedAreas": [
+    "lib/reserve-nav-history/{schema.sql,db.ts,navMath.ts,recorder.ts,package.json} (new)",
+    "scripts/migrate-nav-history.mjs, scripts/verify_nav_history.ts (new)",
+    "api/mainnet/reserve-nav-history.ts (new GET), api/mainnet/warm-cache-cron.ts (recorder call)",
+    "lib/reserve-activity/kpis.ts (fetchAllTimeTradeVolumeUsdByReserve), api/mainnet/landing-stats.ts + api/devnet/landing-stats.ts (perReserve.volumeAllTimeUsd), src/merge/hooks/useLandingStats.ts",
+    "src/merge/lib/navHistoryClient.ts (new), calculations.ts (mergePriceHistories, calcAllTimeChangePct), types.ts (DTR.priceHistoryRecordedFrom), onChainReserve.ts (mergeDiscoveredReserves server history), store/useAppStore.ts, RealReserveSync.tsx, ReserveSnapshotHydrator.tsx",
+    "src/merge/pages/DTRDetail.tsx (all-time % by Token Price; All-Time Performance + All-Time Volume tiles; pre-recording chart note)",
+    "tsconfig.node.json (exclude lib/reserve-nav-history), tests/phase_nav_history.ts (new, 22 tests)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_nav_history.ts: 22 passing (navMath, assembleNavHistory anchor logic, mergePriceHistories, calcAllTimeChangePct, calcRecentChanges window isolation, mergeDiscoveredReserves wiring).",
+    "npx tsc -b: exit 0. oxlint on all changed files: 0 errors (4 pre-existing exhaustive-deps warnings in DTRDetail.tsx, identical count on HEAD).",
+    "node scripts/migrate-nav-history.mjs -> 'Confirmed table present: reserve_nav_history' on the production Neon host.",
+    "scripts/verify_nav_history.ts (real handler, real DB): 12 Reserves served; BETA anchor 2026-08-28 @ 2.2206, nav now 6.8248, all-time +207.34%; DELTA +103.52%; --record wrote 12 rows, recordedFrom=2026-09-14T09:24 for every Reserve."
+  ]
+}
+```

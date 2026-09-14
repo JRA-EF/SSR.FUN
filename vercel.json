@@ -15,7 +15,7 @@
     },
     "api/mainnet/*.ts": {
       "includeFiles": "packages/sdk/**",
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "api/kpis/*.ts": {
       "includeFiles": "packages/sdk/**",

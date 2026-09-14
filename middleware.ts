@@ -53,6 +53,12 @@ const CRON_PATHS = new Set([
   '/api/ledger/jupiter-snapshot-cron',
   '/api/mainnet/warm-cache-cron',
   '/api/mainnet/fee-settlement-cron',
+  // Agent-feedback daemon endpoints: machine-to-machine, authenticated by
+  // their own FEEDBACK_DAEMON_SECRET bearer inside the handler (no browser,
+  // no session cookie) -- gating them here returned 401 before the handler
+  // ever saw the token (live 2026-09-08). The human-facing form/submit stay gated.
+  '/api/feedback/pending',
+  '/api/feedback/ack',
 ])
 
 const SITE_LOGIN_PATH = '/api/site/login'
