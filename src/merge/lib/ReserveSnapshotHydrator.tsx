@@ -13,6 +13,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { IS_MAINNET } from "./solana-config";
 import { fetchReserveSnapshot, buildDtrsFromSnapshot } from "./reserveSnapshotClient";
 import { fetchReserveNavHistory, NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, type ServerPriceHistory } from "./navHistoryClient";
+import { fetchReserveEntryPrices } from "./entryPriceClient";
 import { getCached } from "./rpcResilience";
 
 export function ReserveSnapshotHydrator() {
@@ -27,10 +28,20 @@ export function ReserveSnapshotHydrator() {
       // the FIRST paint of a detail page already charts real history and a
       // real all-time figure, rather than a flat line until the first live
       // poll lands. Best-effort: {} on failure, the poll retries.
-      const [snapshot, navHistory] = await Promise.all([
+      // The entry-price map rides along too (same cache key + TTL as
+      // RealReserveSync's discovery pass, so the poll reuses this fetch):
+      // without it the seeded Reserves carried NO per-asset entry prices, so
+      // the Composition table's P&L column and the shareable performance
+      // card's top performers stayed empty until the first live poll landed
+      // (reported 2026-09-14 as "top performers are gone"). Best-effort: {}
+      // on failure, the poll fills it in later exactly as before.
+      const [snapshot, navHistory, entryPrices] = await Promise.all([
         fetchReserveSnapshot(window.location.origin),
         getCached(NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, () => fetchReserveNavHistory(window.location.origin)).catch(
           () => ({}) as Record<string, ServerPriceHistory>,
+        ),
+        getCached("reserve-entry-prices", 5_000, () => fetchReserveEntryPrices(window.location.origin)).catch(
+          () => ({}) as Record<string, Record<string, number>>,
         ),
       ]);
       if (cancelled || !snapshot) return;
@@ -44,7 +55,7 @@ export function ReserveSnapshotHydrator() {
       if (snapshotMints.length > 0) registerDynamicSupportedAssetMints(snapshotMints);
       let dtrs;
       try {
-        dtrs = buildDtrsFromSnapshot(snapshot, publicKey ? publicKey.toBase58() : null);
+        dtrs = buildDtrsFromSnapshot(snapshot, publicKey ? publicKey.toBase58() : null, entryPrices);
       } catch {
         return; // Malformed snapshot -- fall back silently to the live poll.
       }
