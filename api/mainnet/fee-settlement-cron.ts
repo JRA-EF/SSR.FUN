@@ -3,45 +3,49 @@
 //
 //   A. USDC FEE SETTLEMENT (the 3-step redeem -> swap -> distribute pipeline,
 //      2026-08-21 pass, see docs/project/DECISION_LOG.md): for every Reserve
-//      whose shared fee vault holds crystallized mint/seed/TVL fee shares (or
-//      has assets already staged from an earlier run):
+//      whose shared fee vault holds crystallized mint/seed/TVL fee shares, or
+//      that has assets already staged from an earlier run:
 //        1. redeemFeeVaultShares -- burns the full current vault balance,
-//           stages each asset's proportional entitlement.
-//        2. For each asset with a nonzero staging balance: fetch a Jupiter
-//           quote, approveSettlementSwap for that exact amount (keeper-SIGNED,
-//           Tier B / DEC-0184), then sign and submit an ordinary Jupiter swap
-//           AS THE KEEPER (the program never signs a swap). A route failure or
-//           a quote past this file's price-impact guard is SKIPPED, not forced
-//           -- the staged asset stays in its own ATA, retried next run.
+//           stages each asset's proportional entitlement into the Reserve's
+//           settlement staging ATAs (created idempotently here first -- the
+//           program requires them to exist; live 2026-09-08 every redeem
+//           failed preflight with ReserveAssetMismatch until they did).
+//        2. For each staged non-USDC asset: ONE atomic transaction
+//           [approve_settlement_swap (keeper-signed, bounded to the staged
+//           amount) -> SPL transfer of exactly that amount from the staging
+//           ATA to the keeper's own ATA, signed by the keeper AS THE DELEGATE
+//           the approval just created -> Jupiter swap from the keeper's ATA
+//           with the USDC output delivered straight into the Reserve's USDC
+//           staging ATA (Jupiter destinationTokenAccount)]. The keeper never
+//           holds the asset across a transaction boundary; if the swap
+//           fails, the whole transaction fails and the asset stays staged.
+//           (Live 2026-09-08: the previous version asked Jupiter to swap from
+//           the keeper's EMPTY ATA -- the delegate allowance is on the staging
+//           account -- so every settlement swap failed with 0x1789.)
+//           A route failure or a quote past the price-impact guard is
+//           SKIPPED, not forced -- retried next run.
 //        3. distributeFeeUsdc -- pays whatever USDC is staged to the Protocol
-//           Treasury and the Reserve's Manager fee recipient(s). Idempotent.
+//           Treasury and the Reserve's Manager fee recipient(s) (their USDC
+//           ATAs created idempotently first). Idempotent.
 //      Gated on-chain: SettlementKeeperConfig.keeper must equal this
 //      deployment's keeper wallet (set_fee_settlement_keeper, Protocol-Admin
-//      signed). Until that is configured this job is reported as waiting and
-//      nothing is submitted for it.
+//      signed). Until then the job is reported as waiting.
 //
-//   B. TVL FEE ACCRUAL: `accrue_fees` is permissionless (any payer) and is the
-//      ONLY thing that ever crystallizes the annual TVL fee -- on Mainnet it
-//      had NEVER been called (PROJECT_STATUS risk: "Mainnet TVL fees have
-//      never been accrued"). Called here for every Reserve whose last accrual
-//      is >= 7 days old; the instruction is a cheap no-op when nothing new is
-//      owed, and the accrued shares land in the same fee vault job A settles.
-//      Needs no on-chain keeper config -- only a funded payer.
+//   B. TVL FEE ACCRUAL: `accrue_fees` is permissionless and is the ONLY thing
+//      that crystallizes the annual TVL fee. Called for every Reserve whose
+//      accumulator was last settled >= 7 days ago (or never started).
 //
-// Scheduled in vercel.json (see its `crons`) and allowlisted in middleware.ts's
-// CRON_PATHS. Same CRON_SECRET / `?dryRun=true` conventions as every other
-// cron here: dryRun never submits anything and reports exactly what a real run
-// would do. Time-budgeted (api/mainnet/* maxDuration is 60s): settlement is
-// processed first (the money the tester is waiting on), accruals with the
-// leftover budget; anything unprocessed is reported and picked up next run.
+// Scheduled in vercel.json, allowlisted in middleware.ts CRON_PATHS. Same
+// CRON_SECRET / `?dryRun=true` conventions as every other cron here. Time
+// budgeted (api/mainnet/* maxDuration is 60s): settlement first, accruals with
+// the leftover budget; anything unprocessed is reported and picked up next run.
+// Jupiter goes through lib/mainnet/jupiter.ts (shared venue exclusions,
+// retry policy, JUPITER_API_BASE override for the test site).
 //
 // The keeper wallet is a dedicated secret (SSR_FEE_SETTLEMENT_KEEPER_SECRET,
-// JSON array or base64), distinct from every other key. It only ever custodies
-// what one approveSettlementSwap just delegated to it for one asset, for the
-// brief window until that swap lands or is abandoned; it never owns Reserve
-// funds, and its SOL only pays transaction fees + first-use staging-ATA rent.
-import { Connection, PublicKey, SystemProgram, Transaction, VersionedTransaction, sendAndConfirmTransaction, Keypair } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+// JSON array or base64). Its SOL only pays transaction fees + first-use rent.
+import { ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction, sendAndConfirmTransaction, type AddressLookupTableAccount, type TransactionInstruction } from "@solana/web3.js";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
   discoverAllReserves,
   enumerateReserveAssetMintsOnChain,
@@ -49,7 +53,6 @@ import {
   fetchFeeSettlement,
   fetchSettlementKeeperConfig,
   fetchProtocolConfig,
-  findVaultAuthority,
   findSettlementAuthority,
   findManagerFeeRecipients,
   findMintAuthority,
@@ -66,33 +69,27 @@ import {
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
+import { lookupReserveAlt } from "./build-buy";
+import { readReserveAndWallet, compileV0, fitsV0, CORE_TX_COMPUTE_UNIT_LIMIT, MAINNET_TREASURY_VAULT } from "../../lib/mainnet/buildCommon";
+import { DEFAULT_SLIPPAGE_BPS, MAINNET_USDC_MINT as USDC_MINT_STR, MAX_PRICE_IMPACT_PCT, buildJupiterSwapInstructionsWithRetry, fetchJupiterQuoteWithRetry, isPriceImpactAcceptable } from "../../lib/mainnet/jupiter";
+import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/merge/lib/singleTxBuy";
+import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
-const MAINNET_USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-const MAINNET_TREASURY_VAULT = new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5");
+const MAINNET_USDC_MINT = new PublicKey(USDC_MINT_STR);
+const TREASURY = new PublicKey(MAINNET_TREASURY_VAULT);
 
-// Same guards as api/mainnet/jupiter-swap.ts's -- kept independent (not
-// imported) since this is a distinct, standalone server context, but MUST
-// stay in sync if either changes.
-const DEFAULT_SLIPPAGE_BPS = 150;
-const MAX_PRICE_IMPACT_PCT = 15;
-
-const JUPITER_QUOTE_URL = "https://api.jup.ag/swap/v1/quote";
-const JUPITER_SWAP_URL = "https://api.jup.ag/swap/v1/swap";
-
-const BUDGET_MS = 50_000; // under the api/mainnet/* maxDuration of 60s
+// Under this route's own maxDuration (vercel.json: 300s for fee-settlement-cron;
+// each Reserve needs several sequential confirmations, ~20-60s).
+const BUDGET_MS = 270_000;
 const ACCRUE_MIN_ELAPSED_S = 7 * 24 * 60 * 60;
 const MAX_KNOWN_MINTS = 2000;
 
-/**
- * Pure: decides whether a Jupiter quote is safe enough to actually execute
- * for a settlement swap -- same price-impact ceiling this app already
- * applies to every other Mainnet Jupiter swap (api/mainnet/jupiter-swap.ts).
- * Never mutates anything; a caller that gets `false` back must leave the
- * staged asset exactly where it is (requirement 10 -- report as pending,
- * retry later), never force the swap through anyway.
- */
+/** Per-route runtime config (Vercel reads this export): settlement needs several sequential confirmations per Reserve, ~20-60s each Reserve. */
+export const config = { maxDuration: 300 };
+
+/** Pure: same price-impact ceiling as every other Mainnet swap (lib/mainnet/jupiter.ts). A non-finite value (malformed Jupiter response) is NEVER accepted. A `false` leaves the staged asset exactly where it is. */
 export function isQuoteSafeToExecute(priceImpactPct: number): boolean {
   return Number.isFinite(priceImpactPct) && priceImpactPct <= MAX_PRICE_IMPACT_PCT;
 }
@@ -109,11 +106,6 @@ function getHeader(req: ApiRequest, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-// Candidate asset mints for discovery -- the SAME sourcing as
-// api/mainnet/warm-cache-cron.ts / landing-stats.ts (ledger + on-chain
-// enumeration). The previous version of this cron passed ONLY USDC, so any
-// Reserve holding another asset discovered with unresolved legs and its
-// redeemFeeVaultShares would have been built against an incomplete asset list.
 async function loadKnownAssetMints(): Promise<string[]> {
   const sql = getSql();
   const rows = (await sql`
@@ -127,12 +119,38 @@ async function loadKnownAssetMints(): Promise<string[]> {
   return rows.map((r) => r.mint);
 }
 
+/** Compile a v0 transaction for the keeper, simulate it read-only (throwing with the program logs on failure), sign, send, confirm, and verify the on-chain status. */
+async function sendV0(connection: Connection, keeper: Keypair, label: string, ixs: TransactionInstruction[], tables: AddressLookupTableAccount[]): Promise<string> {
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  const tx = compileV0(keeper.publicKey, blockhash, ixs, tables);
+  const sim = await connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true });
+  if (sim.value.err) {
+    const logs = (sim.value.logs ?? []).filter((l) => /Error|failed|Instruction:/.test(l)).slice(-6).join(" | ");
+    throw new Error(`${label}: simulation failed ${JSON.stringify(sim.value.err)} -- ${logs}`);
+  }
+  tx.sign([keeper]);
+  // Re-broadcast until it lands (live 2026-09-08: a simulated-OK settlement swap
+  // sent once was dropped and "not found after confirmation window").
+  const { signature, outcome } = await sendAndConfirmWithRebroadcast(connection, tx.serialize(), lastValidBlockHeight);
+  if (outcome.status === "failed") throw new Error(`${label}: transaction ${signature} failed on-chain ${outcome.error}.`);
+  if (outcome.status === "expired") throw new Error(`${label}: transaction ${signature} expired before it was included.`);
+  if (outcome.status !== "confirmed") throw new Error(`${label}: transaction ${signature} could not be confirmed in time (status unknown).`);
+  return signature;
+}
+
+const budgetIxs = (units: number) => [
+  ComputeBudgetProgram.setComputeUnitLimit({ units }),
+  ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }),
+];
+
 interface AssetSettlementResult {
   mint: string;
   stagedAmount: string;
   status: "swapped" | "skipped-price-impact" | "skipped-no-route" | "skipped-error";
   detail?: string;
   swapSignature?: string;
+  /** When the atomic composition did not fit one transaction, the delegate-transfer went in its own transaction first. */
+  transferSignature?: string;
 }
 
 interface ReserveSettlementResult {
@@ -177,7 +195,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const deadline = startedAt + BUDGET_MS;
   const connection = new Connection(RPC_URL, "confirmed");
 
-  // Keeper wallet from env (never the secret itself in any response).
   let keeper: Keypair | null = null;
   let keeperEnvError: string | null = null;
   try {
@@ -196,10 +213,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
   const protocolFeeDestination = new PublicKey(protocolConfig.defaultProtocolFeeDestination);
-  if (protocolFeeDestination.toBase58() !== MAINNET_TREASURY_VAULT.toBase58()) {
-    // Requirement: "The Protocol recipient must remain the configured
-    // official Treasury vault." -- refuse to proceed rather than silently
-    // settling to an unexpected destination.
+  if (!protocolFeeDestination.equals(TREASURY)) {
     res.status(500).json({ error: "protocolConfig.defaultProtocolFeeDestination does not match the official Treasury vault -- refusing to settle." });
     return;
   }
@@ -210,46 +224,46 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   ]);
   const knownMints = [...new Set([...ledgerMints, ...onChainMints])];
   registerDynamicSupportedAssetMints(knownMints);
-  const candidateAssetMints = [MAINNET_USDC_MINT, ...knownMints.filter((m) => m !== MAINNET_USDC_MINT.toBase58()).map((m) => new PublicKey(m))];
+  const candidateAssetMints = [MAINNET_USDC_MINT, ...knownMints.filter((m) => m !== USDC_MINT_STR).map((m) => new PublicKey(m))];
 
   const { reserves } = await discoverAllReserves(connection, PROGRAM_ID, candidateAssetMints).catch((e) => {
     throw new Error(`Failed to discover Reserves: ${e instanceof Error ? e.message : String(e)}`);
   });
 
-  // --- Job A candidates: anything in the fee vault or already staged. ---
-  const candidates: {
-    reserve: string;
-    reserveTokenMint: string;
-    assetsResolved: boolean;
-    assets: { mint: string; decimals: number; reserveAsset: string; vault: string; vaultBalanceRaw: string }[];
-    feeSettlement: Awaited<ReturnType<typeof fetchFeeSettlement>>;
-  }[] = [];
+  // --- Job A candidates: anything in the fee vault, pending, or staged. ---
+  const candidates: { reserve: string; reserveTokenMint: string; assetsResolved: boolean; feeSettlement: Awaited<ReturnType<typeof fetchFeeSettlement>>; staged: { mint: string; amount: string }[] }[] = [];
   for (const r of reserves) {
     const feeSettlement = await fetchFeeSettlement(connection, PROGRAM_ID, new PublicKey(r.reserve)).catch(() => null);
     if (!feeSettlement) continue;
     const vaultTotal = BigInt(feeSettlement.protocolSharesInVault) + BigInt(feeSettlement.managerSharesInVault);
     const pendingTotal = BigInt(feeSettlement.protocolSharesPendingSettlement) + BigInt(feeSettlement.managerSharesPendingSettlement);
-    if (vaultTotal > 0n || pendingTotal > 0n) {
-      candidates.push({
-        reserve: r.reserve,
-        reserveTokenMint: r.reserveTokenMint,
-        assetsResolved: r.resolvedAssetCount === r.assetCount,
-        assets: r.assets.map((a) => ({ mint: a.assetMint, decimals: a.decimals, reserveAsset: a.reserveAsset, vault: a.vault, vaultBalanceRaw: a.vaultBalanceRaw })),
-        feeSettlement,
-      });
-    }
+    // Staged (or keeper-held) asset balances are checked for EVERY Reserve, not
+    // only those with vault/pending shares: distribute_fee_usdc zeroes the
+    // pending accounting even when a leg's swap was skipped, so the real tokens
+    // left in that staging ATA would otherwise never be looked at again (live
+    // 2026-09-08: two skipped legs vanished from the candidate list).
+    const [sa] = findSettlementAuthority(new PublicKey(r.reserve), PROGRAM_ID);
+    const mints = [...r.assets.map((a) => new PublicKey(a.assetMint)), MAINNET_USDC_MINT];
+    const stagingAtas = mints.map((m) => getAssociatedTokenAddressSync(m, sa, true));
+    const keeperAtas = keeper ? mints.map((m) => getAssociatedTokenAddressSync(m, keeper.publicKey)) : [];
+    const [infos, keeperInfos] = await Promise.all([
+      connection.getMultipleAccountsInfo(stagingAtas).catch(() => stagingAtas.map(() => null)),
+      keeperAtas.length ? connection.getMultipleAccountsInfo(keeperAtas).catch(() => keeperAtas.map(() => null)) : Promise.resolve([] as (null | { data: Buffer })[]),
+    ]);
+    const staged: { mint: string; amount: string }[] = [];
+    let keeperHeldAny = false;
+    mints.forEach((m, i) => {
+      const info = infos[i];
+      const amount = info && info.data.length >= 72 ? info.data.readBigUInt64LE(64) : 0n;
+      if (amount > 0n) staged.push({ mint: m.toBase58(), amount: amount.toString() });
+      const k = keeperInfos[i];
+      if (m.toBase58() !== USDC_MINT_STR && k && k.data.length >= 72 && k.data.readBigUInt64LE(64) > 0n) keeperHeldAny = true;
+    });
+    if (vaultTotal === 0n && pendingTotal === 0n && staged.length === 0 && !keeperHeldAny) continue;
+    candidates.push({ reserve: r.reserve, reserveTokenMint: r.reserveTokenMint, assetsResolved: r.resolvedAssetCount === r.assetCount, feeSettlement, staged });
   }
 
-  // --- Job B candidates: accrual overdue, judged by the accumulator itself. ---
-  // accrue_fees bills `TvlAccrual.period_supply_seconds` since
-  // `TvlAccrual.last_settled_ts` (programs/.../accrue_fees.rs). A Reserve with
-  // NO TvlAccrual yet has never started its clock -- its first call only
-  // creates the account with last_settled_ts = now (nothing billed, rent
-  // paid), so it is always "due" until initialized. After that, the legacy
-  // `reserve.fee_config.last_fee_accrual_ts` is NOT advanced by a no-op call,
-  // which is why the accumulator's own timestamp is the gate here: judging by
-  // the legacy field re-settled every such Reserve on every hourly run
-  // (observed on the first scheduled run, 2026-09-08 00:15 UTC).
+  // --- Job B candidates: accrual overdue, judged by the accumulator itself (see DEC-0186/0192). ---
   const nowS = Math.floor(Date.now() / 1000);
   const readOnly = buildReadOnlyProgram(connection) as any;
   const tvlAccrualAddrs = reserves.map((r) => findTvlAccrual(new PublicKey(r.reserve), PROGRAM_ID)[0]);
@@ -294,7 +308,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(200).json({
       dryRun: true,
       ...status,
-      candidates: candidates.map((c) => ({ reserve: c.reserve, assetsResolved: c.assetsResolved, feeSettlement: c.feeSettlement })),
+      candidates: candidates.map((c) => ({ reserve: c.reserve, assetsResolved: c.assetsResolved, feeSettlement: c.feeSettlement, staged: c.staged })),
       accrueDue,
     });
     return;
@@ -304,7 +318,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(500).json({ error: keeperEnvError ?? "Keeper wallet not configured." });
     return;
   }
-  const program = buildReadOnlyProgram(connection) as any;
+  const apiKey = process.env.JUPITER_API_KEY ?? "";
+  const program = readOnly;
+  const deps = { connection, program, ssrProgramId: PROGRAM_ID, lookupReserveAlt };
 
   // ---------------------------------------------------------------------
   // Job A: settlement (only when the on-chain keeper is THIS wallet).
@@ -321,84 +337,107 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       try {
         if (!c.assetsResolved) throw new Error("Not every asset leg resolved in discovery -- refusing to redeem against an incomplete asset list.");
         const reservePk = new PublicKey(c.reserve);
-        const reserveTokenMintPk = new PublicKey(c.reserveTokenMint);
+        const read = await readReserveAndWallet(deps, reservePk, keeper.publicKey, null);
+        const legs = read.orderedAssets;
+        const [settlementAuthority] = findSettlementAuthority(reservePk, PROGRAM_ID);
+        const stagingAtaOf = (mint: PublicKey) => getAssociatedTokenAddressSync(mint, settlementAuthority, true);
+        const usdcStaging = stagingAtaOf(MAINNET_USDC_MINT);
+        const reserveTables = read.reserveAlt ? await fetchLookupTables(connection, [read.reserveAlt]) : [];
+        const createStagingIxs = [
+          ...legs.map((l) => createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, stagingAtaOf(new PublicKey(l.mint)), settlementAuthority, new PublicKey(l.mint))),
+          createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, usdcStaging, settlementAuthority, MAINNET_USDC_MINT),
+        ];
 
         // Step 1: redeem the full current vault balance (if any).
         const vaultTotal = BigInt(c.feeSettlement.protocolSharesInVault) + BigInt(c.feeSettlement.managerSharesInVault);
         if (vaultTotal > 0n) {
-          const [vaultAuthority] = findVaultAuthority(reservePk, PROGRAM_ID);
-          const ix = await buildRedeemFeeVaultSharesInstruction({
+          const redeemIx = await buildRedeemFeeVaultSharesInstruction({
             program,
             programId: PROGRAM_ID,
             reserve: reservePk,
-            reserveTokenMint: reserveTokenMintPk,
-            vaultAuthority,
+            reserveTokenMint: read.reserveTokenMint,
+            vaultAuthority: read.vaultAuthority,
             payer: keeper.publicKey,
-            assets: c.assets,
+            assets: legs,
             shares: vaultTotal,
           });
-          const tx = new Transaction().add(ix);
-          tx.feePayer = keeper.publicKey;
-          result.redeemSignature = await sendAndConfirmTransaction(connection, tx, [keeper], { commitment: "confirmed" });
+          // Staging ATA creations go in their own transaction(s) whenever there are
+          // more than a few: the redeem itself CPIs once per asset, and N ATA
+          // creations (each a CPI into the ATA program + system + token) in the same
+          // transaction hit MaxInstructionTraceLengthExceeded on the 10-asset
+          // Reserve (live 2026-09-08). Only the ones that don't exist yet are sent.
+          const stagingInfosNow = await connection.getMultipleAccountsInfo([...legs.map((l) => stagingAtaOf(new PublicKey(l.mint))), usdcStaging]);
+          const missingCreates = createStagingIxs.filter((_, i) => !stagingInfosNow[i]);
+          let ixs = [...budgetIxs(CORE_TX_COMPUTE_UNIT_LIMIT), ...missingCreates, redeemIx];
+          if (missingCreates.length > 3 || !fitsV0(keeper.publicKey, ixs, reserveTables)) {
+            for (let i = 0; i < missingCreates.length; i += 6) {
+              await sendV0(connection, keeper, "create staging ATAs", [...budgetIxs(200_000), ...missingCreates.slice(i, i + 6)], []);
+            }
+            ixs = [...budgetIxs(CORE_TX_COMPUTE_UNIT_LIMIT), redeemIx];
+            if (!fitsV0(keeper.publicKey, ixs, reserveTables)) throw new Error(`redeem_fee_vault_shares does not fit one transaction for this ${legs.length}-asset Reserve${read.reserveAlt ? " even with its lookup table" : " (no lookup table registered)"}.`);
+          }
+          result.redeemSignature = await sendV0(connection, keeper, "redeem_fee_vault_shares", ixs, reserveTables);
           result.redeemedShares = vaultTotal.toString();
         }
 
-        // Step 2: attempt a swap for every asset with a nonzero staging balance.
-        const [settlementAuthority] = findSettlementAuthority(reservePk, PROGRAM_ID);
-        for (const asset of c.assets) {
+        // Step 2: one atomic [approve -> delegate transfer -> swap -> USDC to staging] per staged non-USDC asset.
+        // Also sweeps any of the asset already sitting in the KEEPER's own ATA
+        // (left there when a split approve+transfer landed but its swap did not):
+        // that balance is swapped too, straight into the USDC staging ATA.
+        const stagingAtas = legs.map((l) => stagingAtaOf(new PublicKey(l.mint)));
+        const keeperAtas = legs.map((l) => getAssociatedTokenAddressSync(new PublicKey(l.mint), keeper.publicKey));
+        const [stagedInfos, keeperInfos] = await Promise.all([connection.getMultipleAccountsInfo(stagingAtas), connection.getMultipleAccountsInfo(keeperAtas)]);
+        const amountOf = (info: { data: Buffer } | null) => (info && info.data.length >= 72 ? info.data.readBigUInt64LE(64) : 0n);
+        for (let i = 0; i < legs.length; i++) {
           if (Date.now() > deadline) break;
-          const mint = new PublicKey(asset.mint);
-          const stagingAta = getAssociatedTokenAddressSync(mint, settlementAuthority, true);
-          const stagedInfo = await connection.getTokenAccountBalance(stagingAta).catch(() => null);
-          const stagedAmount = stagedInfo ? BigInt(stagedInfo.value.amount) : 0n;
-          if (stagedAmount === 0n) continue;
-          // USDC needs no swap -- distribute below pays out staged USDC directly.
-          if (asset.mint === MAINNET_USDC_MINT.toBase58()) continue;
-
-          const assetResult: AssetSettlementResult = { mint: asset.mint, stagedAmount: stagedAmount.toString(), status: "skipped-no-route" };
+          const leg = legs[i];
+          if (leg.mint === USDC_MINT_STR) continue;
+          const stagedAmount = amountOf(stagedInfos[i]);
+          const keeperHeld = amountOf(keeperInfos[i]);
+          const toSwap = stagedAmount + keeperHeld;
+          if (toSwap === 0n) continue;
+          const mint = new PublicKey(leg.mint);
+          const assetResult: AssetSettlementResult = { mint: leg.mint, stagedAmount: stagedAmount.toString(), status: "skipped-no-route", ...(keeperHeld > 0n ? { detail: `includes ${keeperHeld.toString()} already held by the keeper from an earlier partial run` } : {}) };
           try {
-            const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${asset.mint}&outputMint=${MAINNET_USDC_MINT.toBase58()}&amount=${stagedAmount.toString()}&slippageBps=${DEFAULT_SLIPPAGE_BPS}&swapMode=ExactIn`;
-            const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": process.env.JUPITER_API_KEY ?? "" } });
-            if (!quoteRes.ok) {
-              assetResult.status = "skipped-no-route";
-              assetResult.detail = `Quote request failed (HTTP ${quoteRes.status}).`;
+            const quoteR = await fetchJupiterQuoteWithRetry({ inputMint: leg.mint, outputMint: USDC_MINT_STR, amount: toSwap, slippageBps: DEFAULT_SLIPPAGE_BPS, maxAccounts: null, apiKey });
+            if (quoteR.kind !== "ok") {
+              assetResult.detail = quoteR.kind === "specific-error" ? quoteR.message : `Quote request exhausted retries (last status ${quoteR.lastStatus}).`;
+            } else if (!isPriceImpactAcceptable(quoteR.value)) {
+              assetResult.status = "skipped-price-impact";
+              assetResult.detail = `Price impact ${Number(quoteR.value.priceImpactPct).toFixed(2)}% exceeds the safety ceiling.`;
             } else {
-              const quote = await quoteRes.json();
-              const priceImpactPct = Number(quote.priceImpactPct);
-              if (!isQuoteSafeToExecute(priceImpactPct)) {
-                assetResult.status = "skipped-price-impact";
-                assetResult.detail = `Price impact ${priceImpactPct}% exceeds the ${MAX_PRICE_IMPACT_PCT}% safety ceiling.`;
+              const builtR = await buildJupiterSwapInstructionsWithRetry({ quote: quoteR.value, userPublicKey: keeper.publicKey.toBase58(), apiKey, destinationTokenAccount: usdcStaging.toBase58() });
+              if (builtR.kind !== "ok") {
+                assetResult.status = "skipped-error";
+                assetResult.detail = builtR.kind === "specific-error" ? builtR.message : `Swap build exhausted retries (last status ${builtR.lastStatus}).`;
               } else {
-                // approveSettlementSwap: bounded, per-call delegate approval, keeper-signed.
-                const approveIx = await buildApproveSettlementSwapInstruction({
-                  program,
-                  programId: PROGRAM_ID,
-                  reserve: reservePk,
-                  assetMint: mint,
-                  keeper: keeper.publicKey,
-                  amount: stagedAmount,
-                });
-                const approveTx = new Transaction().add(approveIx);
-                approveTx.feePayer = keeper.publicKey;
-                await sendAndConfirmTransaction(connection, approveTx, [keeper], { commitment: "confirmed" });
-
-                const swapRes = await fetch(JUPITER_SWAP_URL, {
-                  method: "POST",
-                  headers: { "content-type": "application/json", "x-api-key": process.env.JUPITER_API_KEY ?? "" },
-                  body: JSON.stringify({ quoteResponse: quote, userPublicKey: keeper.publicKey.toBase58(), dynamicComputeUnitLimit: true, dynamicSlippage: true }),
-                });
-                const swapBody = await swapRes.json().catch(() => null);
-                if (!swapRes.ok || !swapBody?.swapTransaction) {
-                  assetResult.status = "skipped-error";
-                  assetResult.detail = swapBody?.error || "Failed to build the Jupiter swap transaction.";
-                } else {
-                  const vtx = VersionedTransaction.deserialize(Buffer.from(swapBody.swapTransaction, "base64"));
-                  vtx.sign([keeper]);
-                  const sig = await connection.sendRawTransaction(vtx.serialize(), { skipPreflight: true, maxRetries: 0 });
-                  await connection.confirmTransaction(sig, "confirmed");
-                  assetResult.status = "swapped";
-                  assetResult.swapSignature = sig;
+                const built = builtR.value;
+                const keeperAta = keeperAtas[i];
+                const prelude: TransactionInstruction[] = [
+                  createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, keeperAta, keeper.publicKey, mint),
+                  createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, usdcStaging, settlementAuthority, MAINNET_USDC_MINT),
+                ];
+                if (stagedAmount > 0n) {
+                  prelude.unshift(await buildApproveSettlementSwapInstruction({ program, programId: PROGRAM_ID, reserve: reservePk, assetMint: mint, keeper: keeper.publicKey, amount: stagedAmount }));
+                  // The keeper signs as the SPL DELEGATE the approval above just created -- bounded to exactly stagedAmount.
+                  prelude.push(createTransferInstruction(stagingAtaOf(mint), keeperAta, keeper.publicKey, stagedAmount));
                 }
+                const swapIxs = [
+                  ...built.setupInstructions.map(deserializeJupiterInstruction).filter((ix) => !isComputeBudgetInstruction(ix)),
+                  deserializeJupiterInstruction(built.swapInstruction),
+                ];
+                const jupTables = await fetchLookupTables(connection, built.addressLookupTableAddresses);
+                const atomic = [...budgetIxs(CORE_TX_COMPUTE_UNIT_LIMIT), ...prelude, ...swapIxs];
+                if (fitsV0(keeper.publicKey, atomic, jupTables)) {
+                  assetResult.swapSignature = await sendV0(connection, keeper, `settle ${leg.mint.slice(0, 6)} (atomic)`, atomic, jupTables);
+                } else {
+                  // Too large for one transaction: the bounded delegate transfer first, then the swap. The keeper holds the
+                  // asset only between these two sends; a failed swap leaves it in the keeper ATA, retried by the next run
+                  // (the staged amount check below then reads 0 -- operators reconcile keeper ATAs via the dry-run report).
+                  assetResult.transferSignature = await sendV0(connection, keeper, `settle ${leg.mint.slice(0, 6)} (approve+transfer)`, [...budgetIxs(200_000), ...prelude], []);
+                  assetResult.swapSignature = await sendV0(connection, keeper, `settle ${leg.mint.slice(0, 6)} (swap)`, [...budgetIxs(CORE_TX_COMPUTE_UNIT_LIMIT), ...swapIxs], jupTables);
+                }
+                assetResult.status = "swapped";
               }
             }
           } catch (e) {
@@ -414,11 +453,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         const managerRecipients = recipientsAccount
           ? (recipientsAccount.recipients as any[]).slice(0, recipientsAccount.recipientCount).map((r) => ({ wallet: r.wallet.toBase58() }))
           : [];
-        let legacyManagerDestination: PublicKey | undefined;
-        if (!recipientsAccount) {
-          const reserveAccount = await program.account.reserve.fetch(reservePk);
-          legacyManagerDestination = reserveAccount.feeConfig.feeDestination;
-        }
+        const legacyManagerDestination: PublicKey | undefined = recipientsAccount ? undefined : (read.reserveAccount.feeConfig.feeDestination as PublicKey);
+        const recipientWallets = managerRecipients.length ? managerRecipients.map((r) => new PublicKey(r.wallet)) : [legacyManagerDestination!];
         const distributeIx = await buildDistributeFeeUsdcInstruction({
           program,
           programId: PROGRAM_ID,
@@ -429,9 +465,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           managerRecipients,
           legacyManagerDestination,
         });
-        const distributeTx = new Transaction().add(distributeIx);
-        distributeTx.feePayer = keeper.publicKey;
-        result.distributeSignature = await sendAndConfirmTransaction(connection, distributeTx, [keeper], { commitment: "confirmed" });
+        const recipientAtaIxs = recipientWallets.map((w) => createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, getAssociatedTokenAddressSync(MAINNET_USDC_MINT, w, true), w, MAINNET_USDC_MINT));
+        result.distributeSignature = await sendV0(connection, keeper, "distribute_fee_usdc", [...budgetIxs(CORE_TX_COMPUTE_UNIT_LIMIT), ...recipientAtaIxs, distributeIx], []);
       } catch (e) {
         result.error = e instanceof Error ? e.message : String(e);
       }
@@ -470,15 +505,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           systemProgram: SystemProgram.programId,
         })
         .instruction();
-      // DEPLOYED-PROGRAM BUG (found 2026-09-08 on the first overdue accrual):
-      // AccrueFees declares reserve_token_mint WITHOUT `mut`, so the IDL marks
-      // it read-only and Anchor builds the key read-only -- the mint_to CPI
-      // then fails with PrivilegeEscalation the moment there is anything to
-      // bill (a clock-start mints nothing, which is why the first run passed).
-      // The runtime only checks that a CPI never escalates what the caller
-      // passed, so passing the mint WRITABLE from here is the complete fix
-      // (simulated on Reserves 7 and 16: err null, FeeVaultCredited emitted).
-      // Program source gets `mut` in the next upgrade (docs/project/final-fixes.md).
+      // DEPLOYED-PROGRAM BUG (DEC-0192): AccrueFees declares reserve_token_mint
+      // without `mut`; the mint_to CPI needs it writable. Passing it writable
+      // from here is the complete fix against the deployed binary.
       for (const k of ix.keys) if (k.pubkey.equals(reserveTokenMintPk)) k.isWritable = true;
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
@@ -497,3 +526,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     accrual: { processed: accruals.length, results: accruals, skippedForBudget: accrualsSkippedForBudget },
   });
 }
+
+// Referenced for type-completeness of the v0 path; VersionedTransaction is what compileV0 returns.
+void VersionedTransaction;

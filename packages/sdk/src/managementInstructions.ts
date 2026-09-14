@@ -306,6 +306,8 @@ export async function buildCloseReserveInstruction(
   reserveTokenMint: PublicKey,
   manager: PublicKey,
   assetMintsInOrder: PublicKey[],
+  /** Whether this Reserve's ManagerFeeRecipients PDA exists (multi-recipient routing opted in). When false the program-ID "None" sentinel is passed -- the account is `Option` on-chain and passing the uninitialized PDA fails with 3012 AccountNotInitialized (live 2026-09-08, Reserve #21). */
+  managerFeeRecipientsInitialized = true,
 ): Promise<TransactionInstruction> {
   const [vaultAuthority] = findVaultAuthority(reserve, programId);
   const remainingAccounts = assetMintsInOrder.flatMap((mint) => [
@@ -315,7 +317,7 @@ export async function buildCloseReserveInstruction(
   const [managerFeeRecipients] = findManagerFeeRecipients(reserve, programId);
   return program.methods
     .closeReserve()
-    .accounts({ reserve, reserveTokenMint, vaultAuthority, managerFeeRecipients, manager, tokenProgram: TOKEN_PROGRAM_ID } as any)
+    .accounts({ reserve, reserveTokenMint, vaultAuthority, managerFeeRecipients: managerFeeRecipientsInitialized ? managerFeeRecipients : programId, manager, tokenProgram: TOKEN_PROGRAM_ID } as any)
     .remainingAccounts(remainingAccounts)
     .instruction();
 }

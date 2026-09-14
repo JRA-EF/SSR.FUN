@@ -125,7 +125,7 @@ Criterion clauses:
 - [x] Co-manager with PAUSE/UNPAUSE: pause `5bAtSR3jzsxWMNSDrReoNeD1tdGy1TXD6ZZFdUZceAqz3dbWFkYi12SdPQdYQjeJrMyugYyjcFeLqBriBxFVE3wu`, unpause `5LiJWxYqi3tPxusMtpzCEWx8q2vNRfYY8XGWXDjma8doFh8g3K8iWA1zNdHMwLv3XZJg88ppkV1qezsr5nnrsETC`; without the bit rejected `3k9zcEm1...` (6028); a wallet with no role rejected `SVv5vfiS...` (6032).
 - [ ] set_protocol_paused by an admin wallet (Creator/Boss). Non-admin already rejected: `5TNGN3Aw9tqZ4Qbk9qFFLxMUHmksF8jfQ8gQmcQtuerd1HcniggE5zNhDKB3DJpePYQjde6rQKJFwja67ygpUA6Y` (6031 NotProtocolAuthority).
 
-## MFE-01 Fees & protocol config -- **Blocked** (one Creator/Boss signature for the payout leg; everything else green)
+## MFE-01 Fees & protocol config -- **Partial** (fees accrue AND pay out in USDC, proven; one clause left: a positive `update_protocol_config` by an admin wallet)
 - [x] accrue_fees runs on Mainnet: hourly keeper (`AuaJRdbR...`), first run 2026-09-08 00:15 UTC.
 - [x] **Fees accrue at the configured rate -- six real TVL settlements, each checked against the formula
   `ceil(period_supply_seconds x 100 bps / (10,000 x 31,536,000))`, all exact to the raw unit** (keeper-signed, 2026-09-08 ~02:23 UTC):
@@ -140,7 +140,26 @@ Criterion clauses:
   Each settlement reset `period_supply_seconds` to 0 and advanced `last_settled_ts` to the block time; the 50/50 split lands in the fee vault (FeeVaultCredited, source AnnualTvlFee).
   **Bug found on the way (DEC-0192):** the deployed `AccrueFees` struct declares the Reserve Token mint without `mut`, so the IDL marks it read-only and the mint CPI fails with `PrivilegeEscalation` the moment there is anything to bill (clock-starts mint nothing, so the first run passed). Fix: the keeper passes the mint writable (runtime accepts it; the program does not require read-only); `mut` added in source and the IDL for the next upgrade.
 - [x] Mint fees crystallize into the fee vault at the configured rate (HniecHQ... above; four vaults now hold shares: CYhMBkEL 99,688/99,687, HYK2pVFZ 20,545/20,544, 52eHitfw 8,703/8,702, 9oBkwdrT 3,080/3,079).
-- [ ] USDC reaches the Treasury vault `3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5` and manager recipients -- **blocked on `set_fee_settlement_keeper`**.
+- [x] **USDC reaches the Treasury vault `3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5` and manager recipients.** The Creator/Boss signed
+  `set_fee_settlement_keeper` (keeper `AuaJRdbR...` on chain); the keeper then needed four fixes of its own (DEC-0196: staging ATAs never
+  created, swap sourced from the keeper's empty ATA instead of the delegated staging ATA, Treasury ATA derived without allowOwnerOffCurve,
+  single-send drops). First full settlement, keeper-signed 2026-09-08 (redeem -> swap -> `distribute_fee_usdc`), ten Reserves:
+  | Reserve | distribute signature | Treasury | managers |
+  |---|---|---|---|
+  | 7 H7NDKmf9 | `36kWjUEhVtn4vHo2HW85VdkxVC7QPUbUtbdfAn2SoCaSd79XpCAaTrjbP39EQVBDCrFyHSndMJJig86AGG4pYUZK` | +0.002048 | 6BjT +0.002045 |
+  | 8 52eHitfw | `4x6sPKa5rs1BcG1e7YS2oN1AJXLSEzuRmthX6HXijvCv2mRcCY2muefWR4jMtrhwcVh2CDqy9Ab23tbM5neEe2JE` | +0.061624 | 6BjT +0.061611 |
+  | 13 EK5WwpsR | `3jdPEetjRp18ZiUPqTJtoVZU368gjZzc8VPCt9XwHwfoz34vMc3uocWRxUMtmAA9x4rcAN2ktZqg63QBLnSmVLkU` | +0.001960 | 6BjT +0.000978, EME9 +0.000978 |
+  | 16 9oBkwdrT | `3Mbrgaz2pf2hTWDavoVhJM3jSCmkKZTcij226PUoNA5w2vvC6qQv2awnQjxsR1SgjgCJfxbHcciCG8d5U9ndWDkv` | +0.010600 | 6BjT +0.005298, EME9 +0.005297 |
+  | 17 D6juoQKw | `5y167NMFrmgWAg52XUUD3uaaWebvizdo46q5Ep8min9zoc825Lpw59vF24m7H7mpyepK5mTj6NsvAtEuBTnx1e8k` | +0.000006 | 6BjT +0.000003, EME9 +0.000002 |
+  | 18 9rHRibvi | `54yJ1mgNT496VLxsjzZdxpfjN7x9tKC9Khc2LTfVaT5ct2xoQq8ay6eUAEe1zzC82orYrtciaDiJTr9HKgkwWqb8` | +0.002721 | EME9 +0.002719 |
+  | 19 HYK2pVFZ | `2fRXNwX9YWZypYbMZWg5Meb3yXLe9SXkYa6cJXsfMY7sZYSVX2LfGjemqew59SWRoZBiPdco11Umhku4LeckSiJy` | +0.021575 | 6BjT +0.010786, EME9 +0.010786 |
+  | 20 CYhMBkEL | `2abU3mf9DnvNDkebwfrPQX3G3VrJJiMW41i887mHBkBMB3LXVgAavDnv5VX2N67q2CpWbdXYxewfz7DLq2LuZ1p8` | +0.065355 | 6BjT +0.032677, EME9 +0.032677 |
+  | 21 B5VQi9Gy | `4HGPEWjSfjNDc3GFG3Eoe7gv1PXdvqJKBtYHAMGCoT6J82Ghyc3aHwL7PrxqHopRungXFrmYK55i5fYrq1LGmLtU` | +0.021502 | 52b7 +0.010804 |
+  | 22 FDAiACnL | `3yGALX3Jb6DDJD2M7qSdqG6QE7gEX71WajF9DFn7G6VtAGnRnc5y6y32AX16DtYgJPV3zNkBBrgKQFuLdRUBJ1q1` | +0.127259 | CgHF +0.127258 |
+  **Total: 0.314650 USDC to the Treasury (its USDC account was created by this run), 0.303919 USDC to managers**, every split matching the
+  Reserve's FeeSettlement protocol/manager shares and its manager-fee-recipient table (50/50 where two recipients are configured).
+  Redeems e.g. `2T7R48ky7tgcZ9...` (Reserve 8), `ieBTREFT4WVSpu...` (10-asset Reserve 16, 9 swaps in one run). Two swap legs
+  (Reserve 17's 98sM..., Reserve 20's ZEC) were skipped by route errors and retry on the hourly schedule; their USDC follows.
 - [x] **Guarded: a non-admin wallet cannot change protocol config or the keeper.** Real Mainnet rejections
   (preflight skipped, signed by developer wallet `52b7pBNF...`, which is NOT a Protocol Admin), all
   custom error 6031 `NotProtocolAuthority`, ProtocolConfig unchanged afterwards (paused=false, destination still `3CBpV...`):
@@ -149,11 +168,13 @@ Criterion clauses:
 - [ ] update_protocol_config by an admin wallet succeeds (needs Creator/Boss).
 - [x] update_metadata by the Reserve manager: `5hTcsyWAZZyWPrBrSmHQi8y453kC1fKVAQoHbei8NK66d9uXU3CP6vunD7pNjkyrNuUSSTTdDedL3h4hDuVhzsmX`.
 
-## MWD-01 Wind-down / Closure -- **Partial** (blocked on a program fix found by this very test)
+## MWD-01 Wind-down / Closure -- **Passed** (closed 2026-09-08 on the DEC-0195 program; the fix was found by this very test)
 - [x] initiate_wind_down: by a non-manager rejected `3kbGh3TPPvG11p3n7rNDUGD7VfBMc8aRB7yYaLSQE6DPbHoYLdFGXoFDkap5ZaT3y5XwAFEJCMFN1Lkc6vzVsoMP` (6027 NotReserveManager); by the manager `2NLwdDv9bHY1FLfmByAcPd32yvBakp3Trmoqy3dewdkqYpjmdmUQsHPzTPzQrCnoVRX58rd95mNqFB92h8jg4rn8` (status WindDown).
 - [x] Buy blocked while wound down: `23KKzHwswkzijJrHcCz2g2QnVFT6W51p8MwGeHVZiQroenktZbvaUvJMVivVLp2Lwd93iwdxndqevAbK4deQ3stE` FAILED 6010.
 - [x] Redeem out: every holder (the manager) and the fee vault were redeemed to zero BEFORE the wind-down (see MRR-01), supply 0, every vault 0 -- redemption remains allowed in WindDown by the program (`require_redemption_allowed`).
-- [ ] **close_reserve -- FAILS on the deployed program for any Reserve with 2+ assets**: `3ub72R3KzUaAYAi6nNd11tppADc4BC7Su1A45XjX8WPjS5JyMrH8eEey2tArr1h4qkJgZBLea73R7Uxy4MMCZRc6` FAILED `UnbalancedInstruction` after the first vault-close CPI (simulation: "sum of account balances before and after instruction do not match"). Cause: the loop closed a vault (token CPI) then its ReserveAsset config (Rust-side lamport move) per iteration; at the next CPI the runtime sees the manager's credit but not the config's not-yet-synced debit. **Fixed in source** (two-pass close, `programs/ssr_protocol/src/instructions/close_reserve.rs`, cargo test 17/17) -- ships with the next Squads upgrade together with DEC-0192's `mut`. Reserve #21 stays in WindDown (supply 0, vaults 0, ~$0.02 staged for the keeper) until then, and its close will be this clause's signature.
+- [x] **close_reserve.** FAILED on the previous program for any Reserve with 2+ assets: `3ub72R3KzUaAYAi6nNd11tppADc4BC7Su1A45XjX8WPjS5JyMrH8eEey2tArr1h4qkJgZBLea73R7Uxy4MMCZRc6` `UnbalancedInstruction` after the first vault-close CPI (the loop closed a vault via token CPI then its ReserveAsset config via a Rust-side lamport move per iteration; the next CPI saw the credit but not the not-yet-synced debit). Fixed with a two-pass close (DEC-0193), shipped in the DEC-0195 upgrade (Squads execute 2026-09-08, slot 445414855, sha `c59e8a06...`, byte-verified), then closed for real:
+  `2J6Gz88tw8qBe28z1nBbn143RwuA3tBVBRL3AUVdR5wBeXV5kQu4QnpQxJdYTqNpST4GBC43V3enHXr5YAtq1gq9` -- Reserve account, both vaults and both ReserveAsset PDAs closed; 0.009919 SOL rent refunded to the manager.
+  Caller note: `manager_fee_recipients` is optional -- a Reserve that never opted into multi-recipient routing must pass the program ID as the None sentinel (the first attempt with the PDA failed 3012 AccountNotInitialized; the SDK builder and Manage now handle it).
 
 ## MSC-01 Security review by a non-builder -- **Not tested**
 - [ ] Reviewer + date per function above.

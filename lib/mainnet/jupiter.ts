@@ -159,6 +159,8 @@ export interface JupiterBuildParams {
   quote: JupiterQuote;
   userPublicKey: string;
   apiKey: string;
+  /** Optional: deliver the swap OUTPUT into this existing token account instead of the user's ATA (Jupiter `destinationTokenAccount`). Used by the fee-settlement keeper to land USDC directly in a Reserve's settlement staging ATA. */
+  destinationTokenAccount?: string;
 }
 
 /**
@@ -182,7 +184,14 @@ async function attemptBuild(p: JupiterBuildParams, mode: "transaction" | "instru
     const swapRes = await fetch(mode === "instructions" ? JUPITER_SWAP_INSTRUCTIONS_URL : JUPITER_SWAP_URL, {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": p.apiKey },
-      body: JSON.stringify({ quoteResponse: p.quote, userPublicKey: p.userPublicKey, dynamicComputeUnitLimit: true, dynamicSlippage: true, wrapAndUnwrapSol: false }),
+      body: JSON.stringify({
+        quoteResponse: p.quote,
+        userPublicKey: p.userPublicKey,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: true,
+        wrapAndUnwrapSol: false,
+        ...(p.destinationTokenAccount ? { destinationTokenAccount: p.destinationTokenAccount } : {}),
+      }),
     });
     const rawText = await swapRes.text().catch(() => "<unreadable body>");
     let swapBody: { swapTransaction?: unknown; lastValidBlockHeight?: unknown; swapInstruction?: unknown; error?: unknown } | null = null;

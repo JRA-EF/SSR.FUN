@@ -6038,6 +6038,41 @@
 }
 ```
 
+## DEC-0195
+
+```json
+{
+  "id": "DEC-0195",
+  "date": "2026-09-08",
+  "status": "prepared-awaiting-squads-execute",
+  "decision": "Next Mainnet program upgrade staged, carrying exactly two program fixes already on main: (1) DEC-0192 -- `mut` on AccrueFees.reserve_token_mint (the deployed struct lacked it, so the IDL marked the mint read-only and every real TVL-fee billing failed with PrivilegeEscalation; the keeper works around it today by passing the account writable); (2) DEC-0193 -- two-pass close_reserve (collect every ReserveAsset account first, then close, instead of interleaving the vault-close CPI with the Rust-side account close per iteration, which made close_reserve fail with UnbalancedInstruction on any 2+-asset Reserve). Program source diff vs the deployed DEC-0173 build is ONLY accrue_fees.rs (+7) and close_reserve.rs (+15). Reproducibility re-proven first: on-chain programdata (slot 445241220) sha256 079c957375a03d9d9ad4137f2efbddae3aa0fe96eddcedb689d18500e821c53e == a fresh cargo-build-sbf of merge 41380f2 in a temporary worktree (byte-identical, 1,015,416 bytes). New binary: 1,017,088 bytes, sha256 c59e8a069e206abf83d3eeb17d2a356080efecab2677031becefd232a73c7d6b; cargo test 17/17; clippy 3 warnings (the 3 pre-existing, zero new). IDL regenerated with anchor idl build/type: the only change vs the hand-patched IDL of DEC-0192 is the new doc comment on that account (cosmetic) -- committed. Program-data capacity 1,035,896 bytes already fits (no extend). Buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK written from the developer key, dump sha256 == build, authority set to the Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW; buffer rent 6.442 SOL (refunded to the spill account on execute). Frontend prebuilt from main and gate-checked at /private/tmp/ssr_post_upgrade2_output -- this upgrade changes NO account shapes (only a writable flag the keeper already forces), so the frontend may be deployed before or after the execute; no cutover window. execute_rebalance_leg is deliberately NOT in this upgrade: it CPIs the DevNet AMM program, which does not exist on Mainnet, so making rebalances move holdings on Mainnet is a design change (Jupiter-routed legs or a keeper), not a patch.",
+  "context": "DEC-0192 and DEC-0193 fixes were committed to main during the 2026-09-08 Mainnet checklist pass (docs/project/final-fixes.md); the developer asked for the next steps on both lists, and the program list's next step is this upgrade. Same coordinated recipe as DEC-0187.",
+  "rationale": "Ship the two proven fixes together in one Squads execute; keep the risky design change (rebalance execution on Mainnet) out of it.",
+  "alternativesConsidered": ["Include a Mainnet rebalance leg implementation -- rejected: unspecified design, needs its own decision.", "Skip the accrue `mut` since the keeper already works around it -- rejected: every other builder (scripts, future UI) would repeat the failure, and the IDL should tell the truth."],
+  "impact": "After execute: close_reserve works on multi-asset Reserves (Reserve 21 can be closed), accrue_fees works with an IDL-built read-only mint. Developer key holds 2.68 SOL until the buffer rent refunds on execute.",
+  "affectedAreas": ["Mainnet buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK (authority: Squads vault)", "packages/sdk/idl/ssr_protocol.{json,ts} (regenerated)", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Reproduction: worktree at 41380f2, cargo-build-sbf -> sha256 079c9573...ec41, byte-identical to on-chain.", "git diff --stat 41380f2 HEAD -- programs/: accrue_fees.rs +7, close_reserve.rs +15, nothing else.", "cargo test: 17 passed; clippy: 3 pre-existing warnings.", "solana program show CBXaPG3e...: Authority HFmqpPVV..., Data Length 1017088, Balance 6.442263249 SOL; dump sha256 c59e8a06...7d6b.", "Squads fields: Program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 / Buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK / Spill 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa."]
+}
+```
+
+## DEC-0196
+
+```json
+{
+  "id": "DEC-0196",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "The USDC fee-settlement keeper now actually settles. After the Creator/Boss signed set_fee_settlement_keeper (keeper AuaJRdbR... on chain, first hourly runs from 15:15 UTC), the keeper ran three times without moving a cent; a local real run with the keeper key exposed four defects, each fixed in api/mainnet/fee-settlement-cron.ts / lib/mainnet/jupiter.ts / packages/sdk: (1) redeem_fee_vault_shares failed preflight with ReserveAssetMismatch (common.rs:326) because the per-asset settlement staging ATAs had never been created -- now created idempotently, in their own transaction(s) when more than three (the 10-asset Reserve hit MaxInstructionTraceLengthExceeded with all ten creations + the redeem in one tx); (2) the settlement swap asked Jupiter to swap from the keeper's EMPTY ATA while the approve_settlement_swap allowance sits on the staging ATA (Jupiter 0x1789 on every run) -- now one atomic v0 transaction [approve -> SPL transfer of exactly the approved amount signed by the keeper as delegate -> Jupiter swap with destinationTokenAccount = the Reserve's USDC staging ATA], split into two only when it does not fit, with a sweep of any asset left in the keeper ATA by a split run; (3) buildDistributeFeeUsdcInstruction derived the Treasury's USDC ATA without allowOwnerOffCurve -- the Treasury is a Squads PDA, so spl-token threw TokenOwnerOffCurveError with an empty message and every distribute was silently skipped; (4) single sends were being dropped -- every keeper send now re-broadcasts until confirmed, the route's maxDuration is 300s (270s loop budget) and the cron uses the shared Jupiter helper (venue exclusions, JUPITER_API_BASE). First full settlement executed locally with the keeper key, then the fix deployed to prod and dev.",
+  "context": "MFE-01 payout clause; tester items #1/#4 (fees reaching managers). The keeper registration was the only step needing an admin; everything after it was code.",
+  "rationale": "Running the exact handler locally with the real keeper key was the only way to see the per-Reserve errors (the scheduled run's JSON is not retrievable and CRON_SECRET is write-only). Each fix is the minimal correct one against the deployed program; no program change was needed.",
+  "alternativesConsidered": ["Rewrite the Jupiter swap instruction's source account to the staging ATA (pure delegate swap) -- rejected as fragile: Jupiter's route programs may constrain the source account's owner; the delegate transfer into the keeper ATA inside the same transaction is equivalent and robust.", "Wait for a program upgrade adding on-chain swap support -- rejected: unnecessary."],
+  "impact": "10 Reserves redeemed, 21+ settlement swaps landed, 10 distribute_fee_usdc: 0.314650 USDC to the Treasury vault (USDC ATA created by the run) and 0.303919 USDC to manager wallets, splits matching FeeSettlement + recipient tables. Two legs (Reserve 17 98sM..., Reserve 20 ZEC) skipped by route errors and retry hourly. The keeper briefly holds an asset only inside an atomic transaction (or between the two halves of a split, swept next run).",
+  "affectedAreas": ["api/mainnet/fee-settlement-cron.ts", "lib/mainnet/jupiter.ts (destinationTokenAccount)", "packages/sdk/src/feeSettlementInstructions.ts (allowOwnerOffCurve)", "vercel.json (fee-settlement-cron maxDuration 300)", "docs/project/final-fixes.md MFE-01", "rtm_controls MFE-01"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Local real run #1: 9 Reserves redeem preflight ReserveAssetMismatch; Reserve 21 swap quote 401 (lite base ignored by the old cron). Run #2 (after fixes 1,2,4): 8 redeems landed, 21 swaps landed, distribute produced empty-message errors on all 10. Isolated repro: TokenOwnerOffCurveError from getAssociatedTokenAddressSync(usdc, treasury). Run #3 (after fix 3): 10 distributions -- signatures and per-wallet USDC deltas in docs/project/final-fixes.md MFE-01; Treasury USDC balance 0.314650 after."]
 ## DEC-0197
 
 ```json

@@ -27,6 +27,8 @@ import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLA
 import {
   fetchReserveOnChain,
   fetchManagerFeeRecipients,
+  fetchFeeSettlement,
+  type FeeSettlementView,
   discoverDelegatesForReserve,
   DEVNET_FIXTURES,
   DEVUSDC,
@@ -389,6 +391,11 @@ export function ManageDTR() {
   // synthesized entry means this Reserve hasn't opted into multi-recipient
   // routing yet, see fetchManagerFeeRecipients's doc comment.
   const [feeRecipientsData, setFeeRecipientsData] = useState<ManagerFeeRecipientsOnChain | null>(null);
+  // The USDC fee-settlement vault position for this Reserve (DEC-0173). Mint &
+  // TVL fees accrue HERE (settled to USDC by the keeper), NOT into the in-kind
+  // pendingManagerFeeShares below -- surfaced so a Manager sees their real
+  // earned fees instead of a misleadingly-empty in-kind claimable.
+  const [feeSettlement, setFeeSettlement] = useState<FeeSettlementView | null>(null);
   // CLAIMANT-ONLY UI (2026-08-14 pass, see docs/project/DECISION_LOG.md):
   // keyed by recipient wallet, independent of `onChainTxPending` -- clicking
   // one recipient's Collect button must never show another recipient's row
@@ -415,6 +422,8 @@ export function ManageDTR() {
         dtr.onChain.pendingManagerFeeShares ?? "0",
       );
       setFeeRecipientsData(data);
+      const fs = await fetchFeeSettlement(connection, programId, new PublicKey(dtr.onChain.reserve));
+      setFeeSettlement(fs);
     } catch {
       // Transient RPC failure -- leave the last-known data in place rather
       // than flashing an empty state; the next poll will retry.
@@ -1330,8 +1339,30 @@ export function ManageDTR() {
                           </Button>
                         )}
                       </div>
+                      {feeSettlement && (BigInt(feeSettlement.managerSharesInVault) > 0n || BigInt(feeSettlement.managerSharesPendingSettlement) > 0n) && (
+                        <div className="p-3 mb-3 bg-muted/30 rounded-lg border border-border/50">
+                          <p className="text-xs font-semibold text-muted-foreground mb-1">Fee vault &middot; settling to USDC</p>
+                          <p className="text-xs text-muted-foreground">
+                            Mint and TVL fees for this Reserve accrue to the shared fee vault and are settled to USDC by the fee-settlement keeper -- they are not collected as Reserve Tokens below.
+                            {" "}Your Manager share currently in the vault:{" "}
+                            <span className="font-merge-mono text-foreground">
+                              {(Number(feeSettlement.managerSharesInVault) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                            </span>
+                            {BigInt(feeSettlement.managerSharesPendingSettlement) > 0n && (
+                              <>
+                                {" "}&middot; crystallized &amp; pending USDC payout:{" "}
+                                <span className="font-merge-mono text-foreground">
+                                  {(Number(feeSettlement.managerSharesPendingSettlement) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                </span>
+                              </>
+                            )}.
+                          </p>
+                        </div>
+                      )}
                       <p className="text-xs text-muted-foreground mb-3">
-                        Fees accrue in-kind as pending Reserve Token shares. Only a recipient's own connected wallet can collect its balance --
+                        The Reserve-Token balances below are legacy in-kind Manager fees collectable directly here (shares accrued before the 2026-09-08 fee-vault upgrade; since then the creation fee goes to the vault too).
+                        Mint and TVL fees instead accrue to the shared fee vault and are settled to USDC by the keeper (shown above), so this in-kind
+                        balance is often small. Only a recipient's own connected wallet can collect its balance --
                         the root Manager cannot collect on a recipient's behalf, and recipients cannot collect for each other.
                         {feeRecipientsData && (
                           <>
