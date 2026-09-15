@@ -24,7 +24,7 @@ Usage:
   python3 feedback-daemon.py --inject "some text"   # test tmux injection only
   python3 feedback-daemon.py --selftest # raise a fake item to TG; Approve -> injects a canned test
 """
-import json, os, sys, time, subprocess, threading, urllib.request, urllib.parse, urllib.error, html
+import json, os, re, sys, time, subprocess, threading, urllib.request, urllib.parse, urllib.error, html
 
 # ---------------------------------------------------------------- config -----
 def load_env(path):
@@ -38,7 +38,8 @@ def load_env(path):
             env[k.strip()] = v.strip()
     # real environment overrides file
     for k in list(env) + ["BOT_TOKEN","APPROVER_CHAT_ID","APPROVAL_CHAT_ID","APPROVER_USER_IDS",
-                          "VERCEL_BASE_URL","FEEDBACK_DAEMON_SECRET","TARGET_TMUX_SESSION","POLL_INTERVAL"]:
+                          "VERCEL_BASE_URL","FEEDBACK_DAEMON_SECRET","TARGET_TMUX_SESSION","POLL_INTERVAL",
+                          "TG_API_BASE","STATE_DIR","SWEEP_INTERVAL","OUTAGE_ALERT_AFTER","AGENT_COMMANDS"]:
         if os.environ.get(k):
             env[k] = os.environ[k]
     return env
@@ -58,10 +59,76 @@ VERCEL_BASE   = ENV.get("VERCEL_BASE_URL", "").rstrip("/")
 DAEMON_SECRET = ENV.get("FEEDBACK_DAEMON_SECRET", "")
 TARGET_TMUX   = ENV.get("TARGET_TMUX_SESSION", "")
 POLL_INTERVAL = int(ENV.get("POLL_INTERVAL", "20") or "20")
-TG = f"https://api.telegram.org/bot{BOT_TOKEN}"
+# Re-raise items the DB says are 'raised' but this process never posted, every N s.
+SWEEP_INTERVAL = int(ENV.get("SWEEP_INTERVAL", "600") or "600")
+# Warn in Telegram once the feedback API has been unreachable for N s.
+OUTAGE_ALERT_AFTER = int(ENV.get("OUTAGE_ALERT_AFTER", "900") or "900")
+# Local journal + retry outbox (gitignored). The DB stays the permanent record.
+STATE_DIR     = ENV.get("STATE_DIR", "") or os.path.join(HERE, "state")
+# Foreground process names that count as "the fixer agent is running". Claude
+# Code shows up in tmux as `claude`, `node`, or its bare version (e.g. 2.1.267).
+AGENT_COMMANDS = [x.strip() for x in ENV.get("AGENT_COMMANDS", "claude,node").split(",") if x.strip()]
+TG_API_BASE   = ENV.get("TG_API_BASE", "https://api.telegram.org").rstrip("/")   # override for tests only
+TG = f"{TG_API_BASE}/bot{BOT_TOKEN}"
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+# ---------------------------------------------------------- local state ------
+# The database is the permanent record. This is the local safety net so nothing
+# is lost while the API/DB is unreachable or the daemon restarts:
+#   state/journal.jsonl  append-only: every claimed item + every decision
+#   state/outbox.json    decisions whose DB write failed; retried every poll
+_journal_lock = threading.Lock()
+_outbox_lock  = threading.Lock()
+
+def _state_path(name):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    return os.path.join(STATE_DIR, name)
+
+def journal(event, **fields):
+    rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "event": event, **fields}
+    try:
+        with _journal_lock, open(_state_path("journal.jsonl"), "a") as f:
+            f.write(json.dumps(rec, default=str) + "\n"); f.flush(); os.fsync(f.fileno())
+    except Exception as e:
+        log("journal write FAILED:", e)
+
+def journal_lookup(fid):
+    """(item, decided_status) for `fid` from the local journal."""
+    item, decided = None, None
+    try:
+        with _journal_lock, open(_state_path("journal.jsonl")) as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("event") == "claimed" and (rec.get("item") or {}).get("id") == fid:
+                    item = rec["item"]
+                elif rec.get("event") == "decision" and rec.get("id") == fid:
+                    decided = rec.get("status")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log("journal read FAILED:", e)
+    return item, decided
+
+def _load_outbox():
+    try:
+        with open(_state_path("outbox.json")) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        log("outbox unreadable, treating as empty:", e)
+        return []
+
+def _save_outbox(entries):
+    path = _state_path("outbox.json"); tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(entries, f); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 # ------------------------------------------------------------- telegram ------
 def tg(method, **params):
@@ -108,13 +175,13 @@ def is_authorized(user_id):
         allowed.add(APPROVAL_CHAT)
     return uid in allowed
 
-def raise_to_telegram(item):
+def raise_to_telegram(item, note=None):
     """Send one feedback item to the approver with Approve/Dismiss buttons."""
     fid = item["id"]
     body = (item.get("message") or "").strip()
     preview = body if len(body) <= 3000 else body[:3000] + "\n…(truncated)"
-    text = (
-        "🗣 <b>New feedback</b>\n"
+    header = f"♻️ <b>Feedback (re-raised: {esc(note)})</b>\n" if note else "🗣 <b>New feedback</b>\n"
+    text = header + (
         f"<b>Category:</b> {esc(item.get('category') or 'general')}\n"
         f"<b>From:</b> {esc(item.get('contact') or 'anonymous')}\n"
         f"<b>Page:</b> {esc(item.get('page_url') or item.get('pageUrl') or '—')}\n"
@@ -144,24 +211,70 @@ def vercel(path, method="GET", payload=None):
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
 
+_api = {"fail_since": None, "alerted": False}
+
+def api_ok():
+    if _api["alerted"]:
+        log("feedback API reachable again")
+        tg("sendMessage", chat_id=APPROVAL_CHAT, parse_mode="HTML",
+           text="🟢 <b>Feedback daemon:</b> the feedback API is reachable again.")
+    _api["fail_since"], _api["alerted"] = None, False
+
+def api_failed(e):
+    now = time.time()
+    if _api["fail_since"] is None:
+        _api["fail_since"] = now
+    if not _api["alerted"] and now - _api["fail_since"] >= OUTAGE_ALERT_AFTER:
+        _api["alerted"] = True
+        mins = int((now - _api["fail_since"]) // 60)
+        log("feedback API unreachable for", mins, "min; alerting")
+        tg("sendMessage", chat_id=APPROVAL_CHAT, parse_mode="HTML",
+           text=(f"⚠️ <b>Feedback daemon:</b> cannot reach {esc(VERCEL_BASE)} for {mins} min "
+                 f"(<code>{esc(e)}</code>). Submissions are still saved in the database and "
+                 "will be raised here when it recovers."))
+
 def claim_pending():
-    """Atomically claim up to N new feedback items (Vercel flips them new->raised)."""
+    """Atomically claim up to N new feedback items (Vercel flips them new->raised).
+    If the response is lost after the DB commits, the item is stuck in 'raised';
+    sweep_stalled() picks it back up."""
     try:
         res = vercel("/api/feedback/pending", method="GET")
+        api_ok()
         return res.get("items", [])
     except Exception as e:
         log("pending poll error:", e)
+        api_failed(e)
         return []
 
 def ack(fid, status, dispatched_to=None, handled_by=None):
+    """Record a decision. It is journaled first; if the DB write fails it is kept
+    in state/outbox.json and retried every poll, so a decision is never lost."""
+    entry = {"id": fid, "status": status, "dispatchedTo": dispatched_to, "handledBy": handled_by}
+    journal("decision", **entry)
     try:
-        vercel("/api/feedback/ack", method="POST",
-               payload={"id": fid, "status": status, "dispatchedTo": dispatched_to,
-                        "handledBy": handled_by})
+        vercel("/api/feedback/ack", method="POST", payload=entry)
         return True
     except Exception as e:
-        log("ack error:", e)
+        log("ack error (queued for retry):", fid, e)
+        with _outbox_lock:
+            box = [x for x in _load_outbox() if x.get("id") != fid]
+            box.append(entry)
+            _save_outbox(box)
         return False
+
+def flush_outbox():
+    with _outbox_lock:
+        box = _load_outbox()
+        if not box:
+            return
+        left = []
+        for entry in box:
+            try:
+                vercel("/api/feedback/ack", method="POST", payload=entry)
+                log("outbox: delivered", entry.get("status"), entry.get("id"))
+            except Exception:
+                left.append(entry)
+        _save_outbox(left)
 
 def fetch_item(fid):
     """Recover one item from the database (the permanent record) -- used when the
@@ -220,10 +333,24 @@ def frame_feedback(item):
         "(this writes the resolution to the feedback database; do it exactly once)."
     )
 
+def pane_command(session):
+    r = subprocess.run(["tmux", "display-message", "-p", "-t", session, "#{pane_current_command}"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+def agent_running(session):
+    cmd = pane_command(session)
+    return (cmd in AGENT_COMMANDS or re.fullmatch(r"\d+\.\d+\.\d+", cmd) is not None), cmd
+
 def tmux_inject(session, text):
     """Paste `text` as a single prompt into the target pane, then submit."""
     if not tmux_session_exists(session):
         raise RuntimeError(f"tmux session '{session}' not found")
+    running, cmd = agent_running(session)
+    if not running:
+        # Pasting into a bare shell would record 'dispatched' with no agent to read it.
+        raise RuntimeError(f"no agent running in tmux '{session}' (foreground: {cmd or 'unknown'}). "
+                           "Start the fixer agent there, then tap Approve again.")
     buf = "agentfeedback"
     subprocess.run(["tmux", "set-buffer", "-b", buf, "--", text], check=True)
     # -p bracketed paste (multi-line stays one prompt), -d delete buffer after.
@@ -254,10 +381,17 @@ def handle_callback(cb):
         return
 
     action, _, fid = data.partition(":")
-    if fid in _handled:
-        tg("answerCallbackQuery", callback_query_id=cb_id, text="Already handled.")
+    local_item, decided = journal_lookup(fid)
+    if fid in _handled or decided:
+        tg("answerCallbackQuery", callback_query_id=cb_id,
+           text=f"Already handled ({decided})." if decided else "Already handled.")
         return
-    item = _raised.get(fid) or fetch_item(fid) or {"id": fid, "message": None}
+    fresh = fetch_item(fid)   # authoritative status; survives daemon restarts
+    if fresh and fresh.get("status") not in ("new", "raised"):
+        _handled.add(fid)
+        tg("answerCallbackQuery", callback_query_id=cb_id, text=f"Already handled ({fresh.get('status')}).")
+        return
+    item = fresh or _raised.get(fid) or local_item or {"id": fid, "message": None}
 
     if action == "dm":
         _handled.add(fid); ack(fid, "dismissed", handled_by=who_str)
@@ -276,8 +410,9 @@ def handle_callback(cb):
         try:
             tmux_inject(TARGET_TMUX, frame_feedback(item))
         except Exception as e:
-            tg("answerCallbackQuery", callback_query_id=cb_id, text=f"Inject failed: {e}")
+            tg("answerCallbackQuery", callback_query_id=cb_id, text=f"Not dispatched: {e}"[:200], show_alert=True)
             log("inject FAILED", fid, e)
+            journal("inject_failed", id=fid, error=str(e), by=who_str)
             return
         _handled.add(fid); ack(fid, "dispatched", dispatched_to=TARGET_TMUX, handled_by=who_str)
         tg("answerCallbackQuery", callback_query_id=cb_id, text=f"Dispatched → {TARGET_TMUX}")
@@ -289,27 +424,73 @@ def handle_callback(cb):
 def telegram_loop():
     offset = None
     while True:
-        res = tg("getUpdates", offset=offset, timeout=25,
-                 allowed_updates=["callback_query"])
-        if not res.get("ok"):
-            time.sleep(3); continue
-        for upd in res.get("result", []):
-            offset = upd["update_id"] + 1
-            if "callback_query" in upd:
-                try:
-                    handle_callback(upd["callback_query"])
-                except Exception as e:
-                    log("callback handler error:", e)
+        try:
+            res = tg("getUpdates", offset=offset, timeout=25,
+                     allowed_updates=["callback_query"])
+            if not res.get("ok"):
+                time.sleep(3); continue
+            for upd in res.get("result", []):
+                offset = upd["update_id"] + 1
+                if "callback_query" in upd:
+                    try:
+                        handle_callback(upd["callback_query"])
+                    except Exception as e:
+                        log("callback handler error:", e)
+        except Exception as e:
+            log("telegram loop error:", e)
+            time.sleep(5)
 
-def poll_loop():
+_unsent = {}   # id -> (item, note) whose Telegram post failed; retried every poll
+
+def post_item(item, note=None):
+    fid = item["id"]
+    _raised[fid] = item
+    if raise_to_telegram(item, note):
+        _unsent.pop(fid, None)
+        journal("raised", id=fid, note=note)
+        log("raised", fid, f"({note})" if note else "")
+    else:
+        _unsent[fid] = (item, note)
+        log("telegram post failed; will retry", fid)
+
+def sweep_stalled(note):
+    """Re-raise items the DB holds in 'raised' that this process never posted:
+    the daemon restarted, or a claim response was lost to a network timeout."""
+    try:
+        items = list_items("raised")
+    except Exception as e:
+        log("sweep: cannot list raised items:", e)
+        return
+    for it in items:
+        fid = it.get("id")
+        if not fid or fid in _raised or fid in _handled or journal_lookup(fid)[1]:
+            continue
+        journal("claimed", item=it, via="sweep")
+        post_item(it, note)
+
+def poll_loop(start_telegram_thread):
+    tg_thread = start_telegram_thread()
+    last_sweep = 0.0
     while True:
-        for item in claim_pending():
-            fid = item.get("id")
-            if not fid or fid in _raised:
-                continue
-            _raised[fid] = item
-            if raise_to_telegram(item):
-                log("raised", fid)
+        if not tg_thread.is_alive():
+            log("telegram thread died; restarting it")
+            journal("telegram_thread_restart")
+            tg_thread = start_telegram_thread()
+        try:
+            flush_outbox()
+            for item, note in list(_unsent.values()):
+                post_item(item, note)
+            for item in claim_pending():
+                fid = item.get("id")
+                if not fid or fid in _raised:
+                    continue
+                journal("claimed", item=item)
+                post_item(item)
+            if time.time() - last_sweep >= SWEEP_INTERVAL:
+                sweep_stalled("daemon restarted" if last_sweep == 0 else "stalled")
+                last_sweep = time.time()
+        except Exception as e:
+            log("poll loop error:", e)
         time.sleep(POLL_INTERVAL)
 
 # --------------------------------------------------------------- modes -------
@@ -381,10 +562,16 @@ def main():
         log(f"WARNING: tmux session '{TARGET_TMUX}' not found right now — approvals will fail until it exists.")
     log(f"daemon up. polling {VERCEL_BASE}/api/feedback/pending every {POLL_INTERVAL}s; "
         f"approver={APPROVER}; target tmux='{TARGET_TMUX}'")
+    log(f"state dir {STATE_DIR}; {len(_load_outbox())} queued decision(s) to deliver")
+    if tmux_session_exists(TARGET_TMUX) and not agent_running(TARGET_TMUX)[0]:
+        log(f"WARNING: no agent running in '{TARGET_TMUX}' (foreground: {pane_command(TARGET_TMUX)}); approvals will be refused until one is.")
     tg("sendMessage", chat_id=APPROVAL_CHAT, parse_mode="HTML",
        text=f"🟢 <b>Feedback daemon started.</b> Target session: <code>{esc(TARGET_TMUX)}</code>")
-    t = threading.Thread(target=telegram_loop, daemon=True); t.start()
-    poll_loop()
+    def start_telegram_thread():
+        t = threading.Thread(target=telegram_loop, daemon=True, name="telegram_loop")
+        t.start()
+        return t
+    poll_loop(start_telegram_thread)
 
 if __name__ == "__main__":
     try:
