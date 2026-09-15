@@ -9,6 +9,7 @@ import { Activity, SearchX } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
 import { RESERVE_CATEGORIES, normalizeReserveCategory, type DTR } from "@/lib/types";
 import { buildReserveCardProps } from "@/lib/reserveCardProps";
+import { useLandingStats } from "@/hooks/useLandingStats";
 import { IS_MAINNET } from "@/lib/solana-config";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
@@ -58,6 +59,9 @@ export function Discover() {
   const chainDiscoveryError = useAppStore((s) => s.chainDiscoveryError);
   const [searchFilter, setSearchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  // Per-Reserve all-time volume for the cards' stats row -- the same fetch/
+  // cache the Home page and DTRDetail read (see hooks/useLandingStats.ts).
+  const landingStats = useLandingStats();
   const [sortBy, setSortBy] = useState<SortKey>("default");
 
   // Filter options: the full canonical list (so every structured category is
@@ -152,7 +156,10 @@ export function Discover() {
 
       <div className="fcards">
         {visibleDtrs.map((dtr) => {
-          const cardProps = buildReserveCardProps(dtr, IS_MAINNET);
+          const cardProps = buildReserveCardProps(dtr, IS_MAINNET, {
+            status: landingStats.status,
+            volumeAllTimeUsd: dtr.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve]?.volumeAllTimeUsd : undefined,
+          });
           return (
             <ReserveCard
               key={dtr.id}

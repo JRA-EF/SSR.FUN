@@ -5,7 +5,7 @@ import { HeroPlatforms } from '../components/HeroPlatforms'
 import { ReserveCard } from '../components/ReserveCard'
 import { avatarStyle } from '../lib/avatarStyle'
 import { useAppStore } from '@/store/useAppStore'
-import { buildReserveCardProps, selectFeaturedReserves } from '@/lib/reserveCardProps'
+import { buildReserveCardProps, selectFeaturedReserves, type ReserveCardStats } from '@/lib/reserveCardProps'
 import { computeMarketCap } from '@/lib/onChainReserve'
 import { useLandingStats } from '@/hooks/useLandingStats'
 import { IS_MAINNET } from '@/lib/solana-config'
@@ -14,8 +14,8 @@ import type { DTR } from '@/lib/types'
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 const SETTLEMENT_SYMBOL = IS_MAINNET ? 'USDC' : 'devUSDC'
 
-function FeaturedCard({ dtr }: { dtr: DTR }) {
-  const cardProps = buildReserveCardProps(dtr, IS_MAINNET)
+function FeaturedCard({ dtr, stats }: { dtr: DTR; stats: ReserveCardStats }) {
+  const cardProps = buildReserveCardProps(dtr, IS_MAINNET, stats)
   return (
     <ReserveCard
       {...cardProps}
@@ -136,7 +136,14 @@ export function Home() {
           ) : (
             <div className="fcards">
               {featured.map(dtr => (
-                <FeaturedCard key={dtr.id} dtr={dtr} />
+                <FeaturedCard
+                  key={dtr.id}
+                  dtr={dtr}
+                  stats={{
+                    status: landingStats.status,
+                    volumeAllTimeUsd: dtr.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve]?.volumeAllTimeUsd : undefined,
+                  }}
+                />
               ))}
             </div>
           )}

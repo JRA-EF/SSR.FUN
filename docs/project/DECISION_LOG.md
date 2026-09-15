@@ -6145,3 +6145,37 @@
   ]
 }
 ```
+
+## DEC-0199
+
+```json
+{
+  "id": "DEC-0199",
+  "date": "2026-09-15",
+  "status": "confirmed-implemented",
+  "decision": "The Reserve cards on the homepage's Featured Reserves section and on Discover show exactly the same stats as the Reserve's own detail page: Price, Market Cap, All-Time PNL (%), All-Time Volume. The legacy 24h and Prem/Discount chips are removed from the cards. Everywhere the all-time gain is labelled, the word 'Performance' is replaced by 'PNL (%)': the detail page's middle stat tile (and its InfoTip label) is now 'All-Time PNL (%)'. The four card stats lay out as a deliberate 2x2 grid (src/index.css .fcard-metrics) instead of a wrapping flex row.",
+  "context": "Creator request (2026-09-15): 'in the front end, featured reserves and the discover reserve cards, it still displays a legacy prem/discount kpi -- instead it should be the same stats as it is inside: price, market cap, all time PNL(%), all time volume. and while you're at it lets replace the word performance by PNL(%) as it's shorter'. DEC-0197 (2026-09-14) had already changed the detail page's stat strip to All-Time Performance / All-Time Volume; the cards were never updated to match, and Prem/Discount was already known to carry no information (DTRDetail's stats-grid comment, 2026-08-24: Token Price IS NAV while every Buy/Sell executes at NAV, so it always reads ~0%).",
+  "rationale": "One shared builder (buildReserveCardProps) already feeds both card call sites, so the fix lives in one place and the cards cannot drift from each other. The all-time figure reuses calcAllTimeChangePct with the same Mainnet guard as the detail page (a '--' until the server launch anchor has been merged, never a misleading 0%), so a card and its page can never disagree. All-Time Volume comes from the same landing-stats fetch (perReserve[reserve].volumeAllTimeUsd) the Home KPIs and the detail page already read -- Discover now calls useLandingStats too -- with the same Loading/Unavailable placeholders, never a fabricated $0 for a live Reserve (a simulated DTR is honestly $0). A 2x2 grid was chosen because, with the longer labels, the old wrapping flex row stranded the fourth chip alone on a second line.",
+  "alternativesConsidered": [
+    "Keep 24h on the card as a fifth chip (rejected: the request is to mirror the detail page's set; the 24h change still shows under the price in the card header)",
+    "Extend the landing-stats API into the DTR store so the builder needs no extra argument (rejected: more plumbing for one figure; passing the hook state through keeps the builder pure and testable)",
+    "Leave the flex row wrapping (rejected on the headless-Chrome render: 3+1 ragged wrap)"
+  ],
+  "impact": "Featured Reserves (Home) and Discover cards now show Price / Market Cap / All-Time PNL (%) / All-Time Volume; Discover makes one extra landing-stats request (cached server-side 60s, same endpoint the Home page already hits). Detail page copy: 'All-Time Performance' -> 'All-Time PNL (%)'. Two existing tests that asserted on the Prem/Discount chip were rewritten; five new tests cover the exact stat set, PNL sign/tone, the Mainnet unmerged-anchor guard, and the volume placeholders.",
+  "affectedAreas": [
+    "src/merge/lib/reserveCardProps.ts (metrics + new optional ReserveCardStats argument)",
+    "src/pages/Home.tsx, src/merge/pages/Discover.tsx (pass landing-stats volume through)",
+    "src/merge/pages/DTRDetail.tsx (label rename)",
+    "src/index.css (.fcard-metrics 2x2 grid)",
+    "tests/phase_featured_cards_and_rpc_redaction.ts, tests/phase_landing_wallet_corrections.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on the four touched TS/TSX files: only DTRDetail's 4 pre-existing exhaustive-deps warnings.",
+    "ts-mocha tests/phase_featured_cards_and_rpc_redaction.ts tests/phase_landing_wallet_corrections.ts tests/phase_mainnet_pricing.ts: 68 passing.",
+    "Headless Chrome render of three cards (live with figures, live with '--'/Loading…, simulated with Unavailable) against src/index.css at 1280px: 2x2 stat grid with the Trade button pinned right."
+  ]
+}
+```

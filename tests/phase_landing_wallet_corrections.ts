@@ -101,14 +101,18 @@ describe("Landing-page correction -- Featured Reserve sourcing (selectFeaturedRe
 });
 
 describe("Landing-page correction -- shared card props (buildReserveCardProps)", () => {
-  it("computes a positive premium/discount sign when token price trades above NAV", () => {
-    const dtr = makeOnChainDtr("premium-case", 1000);
+  it("computes a positive All-Time PNL (%) sign when the token price has risen since the earliest history point", () => {
+    // 2026-09-15: the card's legacy Prem/Discount chip (always ~0% while
+    // every Buy/Sell executes at NAV) was replaced by the detail page's
+    // All-Time PNL (%).
+    const dtr = makeOnChainDtr("gain-case", 1000);
     dtr.tokenPrice = 1.1;
-    dtr.nav = 1.0;
+    dtr.nav = 1.1;
+    dtr.priceHistory = [{ t: Date.now() - 1000, price: 1.0 }];
     const props = buildReserveCardProps(dtr);
-    const prem = props.metrics.find((m) => m.key === "prem")!;
-    expect(prem.tone).to.equal("up");
-    expect(prem.value.startsWith("+")).to.equal(true);
+    const pnl = props.metrics.find((m) => m.key === "pnl")!;
+    expect(pnl.tone).to.equal("up");
+    expect(pnl.value.startsWith("+")).to.equal(true);
   });
 
   it("orders topAssets by weight descending and caps at 3", () => {

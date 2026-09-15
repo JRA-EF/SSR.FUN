@@ -1967,8 +1967,8 @@ export function DTRDetail() {
                 </div>
                 <div className="md:px-6">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
-                    All-Time Performance
-                    <InfoTip label="More information about All-Time Performance">Change in Token Price since this Reserve launched: today's price versus the value of its holdings at the prices they were first added at -- the same baseline as the P&L % column in the Reserve Composition table below.</InfoTip>
+                    All-Time PNL (%)
+                    <InfoTip label="More information about All-Time PNL (%)">Change in Token Price since this Reserve launched: today's price versus the value of its holdings at the prices they were first added at -- the same baseline as the P&L % column in the Reserve Composition table below.</InfoTip>
                   </div>
                   <p className={`font-merge-mono font-semibold ${allTimeChangePct === null ? 'text-sm text-muted-foreground' : allTimeChangePct >= 0 ? 'text-lg text-positive' : 'text-lg text-destructive'}`}>
                     {allTimeChangePct === null ? 'Not yet available' : `${allTimeChangePct >= 0 ? '+' : ''}${allTimeChangePct.toFixed(2)}%`}

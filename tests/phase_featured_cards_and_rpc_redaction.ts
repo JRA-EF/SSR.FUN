@@ -106,23 +106,87 @@ describe("buildReserveCardProps -- sparkline always uses the centralized fallbac
     expect(props.sparkline).to.include(1.05);
   });
 
-  it("never renders NaN%/$NaN for Market Cap or Prem/Discount when NAV is 0 -- shows an honest placeholder instead", () => {
+  it("never renders NaN%/$NaN for Market Cap or All-Time PNL when NAV is 0 -- shows an honest placeholder instead", () => {
     // Mainnet-pricing-layer pass: the card's "NAV" chip was replaced by
     // "Market Cap" (supply x Token Price, computed independently -- see
     // reserveCardProps.ts/onChainReserve.ts's computeMarketCap). This DTR
     // has no onChain data (a simulated/non-Mainnet fixture, matching every
     // other DTR in this test file), so supply is honestly 0 -- Market Cap is
     // genuinely $0, not NaN and not a fabricated "unavailable," which is
-    // exactly what's being asserted here. Prem/Discount keeps its original
-    // "—" placeholder (nav === 0 makes the premium/discount ratio undefined).
+    // exactly what's being asserted here. All-Time PNL (%) (which replaced
+    // the legacy Prem/Discount chip, 2026-09-15) shows "—" when the current
+    // price (nav === 0) can't anchor a percentage.
     const dtr = makeDtr({ id: "a", nav: 0, tokenPrice: 5 });
     const props = buildReserveCardProps(dtr);
     const mcapMetric = props.metrics.find((m) => m.key === "mcap")!;
-    const premMetric = props.metrics.find((m) => m.key === "prem")!;
+    const pnlMetric = props.metrics.find((m) => m.key === "pnl")!;
     expect(mcapMetric.value).to.not.match(/NaN/);
-    expect(premMetric.value).to.not.match(/NaN/);
+    expect(pnlMetric.value).to.not.match(/NaN/);
     expect(mcapMetric.value).to.equal("$0");
-    expect(premMetric.value).to.equal("—");
+    expect(pnlMetric.value).to.equal("—");
+  });
+});
+
+// --- 2026-09-15 pass: card stats row mirrors DTRDetail's band (Price, Market Cap, All-Time PNL (%), All-Time Volume) ---
+// The Featured/Discover cards still showed a legacy 24h + Prem/Discount pair
+// (Prem/Discount is always ~0% while every Buy/Sell executes at NAV). They
+// now carry exactly the same four stats the Reserve's own page shows.
+describe("Reserve card stats row -- same stats as the detail page (buildReserveCardProps)", () => {
+  it("renders exactly Price, Market Cap, All-Time PNL (%), All-Time Volume -- no 24h, no Prem/Discount", () => {
+    const props = buildReserveCardProps(makeDtr({ id: "a" }));
+    expect(props.metrics.map((m) => m.key)).to.deep.equal(["price", "mcap", "pnl", "volume"]);
+    expect(props.metrics.map((m) => m.label)).to.deep.equal(["Price", "Market Cap", "All-Time PNL (%)", "All-Time Volume"]);
+    for (const m of props.metrics) {
+      expect(m.label.toLowerCase()).to.not.include("prem");
+      expect(m.label.toLowerCase()).to.not.include("discount");
+      expect(m.label.toLowerCase()).to.not.include("performance");
+    }
+  });
+
+  it("All-Time PNL (%) is current price vs. the earliest positive history point, signed and toned like the detail page", () => {
+    const now = Date.now();
+    const dtr = makeDtr({
+      id: "a",
+      nav: 1.25,
+      tokenPrice: 1.25,
+      priceHistory: [
+        { t: now - 6 * 24 * 60 * 60 * 1000, price: 1.0 },
+        { t: now - 1 * 60 * 60 * 1000, price: 1.25 },
+      ],
+    });
+    const pnl = buildReserveCardProps(dtr).metrics.find((m) => m.key === "pnl")!;
+    expect(pnl.value).to.equal("+25.00%");
+    expect(pnl.tone).to.equal("up");
+
+    const loser = makeDtr({ id: "b", nav: 0.5, tokenPrice: 0.5, priceHistory: [{ t: now - 1000, price: 1.0 }] });
+    const lpnl = buildReserveCardProps(loser).metrics.find((m) => m.key === "pnl")!;
+    expect(lpnl.value).to.equal("-50.00%");
+    expect(lpnl.tone).to.equal("down");
+  });
+
+  it("on Mainnet, All-Time PNL (%) stays '—' until the server launch anchor has been merged (priceHistoryRecordedFrom set) -- never a misleading 0%", () => {
+    const now = Date.now();
+    const history = [{ t: now - 1000, price: 1.0 }];
+    const unmerged = makeDtr({ id: "a", priceHistory: history, onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    expect(buildReserveCardProps(unmerged, true).metrics.find((m) => m.key === "pnl")!.value).to.equal("—");
+    const merged = { ...unmerged, priceHistoryRecordedFrom: now - 1000 } as DTR;
+    expect(buildReserveCardProps(merged, true).metrics.find((m) => m.key === "pnl")!.value).to.equal("+0.00%");
+  });
+
+  it("All-Time Volume reads the landing-stats row for a live Reserve, with honest Loading/Unavailable placeholders (never a fabricated $0)", () => {
+    const live = makeDtr({ id: "a", onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    const vol = (stats?: Parameters<typeof buildReserveCardProps>[2]) => buildReserveCardProps(live, false, stats).metrics.find((m) => m.key === "volume")!.value;
+    expect(vol({ status: "ready", volumeAllTimeUsd: 12_345.67 })).to.equal("$12.35K");
+    expect(vol({ status: "loading" })).to.equal("Loading…");
+    expect(vol({ status: "unavailable" })).to.equal("Unavailable");
+    expect(vol({ status: "ready", volumeAllTimeUsd: null })).to.equal("Unavailable");
+    expect(vol({ status: "ready" })).to.equal("Unavailable");
+    expect(vol(undefined)).to.equal("Unavailable");
+  });
+
+  it("All-Time Volume is genuinely $0 for a simulated (non-onChain) DTR -- it has no Ledger rows", () => {
+    const sim = makeDtr({ id: "sim" });
+    expect(buildReserveCardProps(sim, false, { status: "loading" }).metrics.find((m) => m.key === "volume")!.value).to.equal("$0");
   });
 });
 
