@@ -1,28 +1,38 @@
-<!-- SSR.fun team roadmap. Source of truth for the shared Artifact page; edit here, then republish. -->
+<!-- SSR.fun team roadmap (Gantt). Source of truth for the shared Artifact page.
+     Edit here, then run `node docs/project/roadmap-build.mjs` to inline the two
+     brand images and publish the built copy. Image paths below are relative to
+     this file so it also opens straight from the repo. -->
+<meta charset="utf-8">
 <title>SSR.fun Roadmap</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600&family=Lexend+Giga:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600&family=Lexend+Giga:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
     color-scheme: dark;
     --bg: #070429;
+    --bg-raise: #0a0836;
     --surface: #0d0940;
     --surface-2: #14104f;
+    --surface-3: #1c1465;
     --line: rgba(151, 171, 239, 0.14);
     --line-strong: rgba(151, 171, 239, 0.26);
     --text: #eef1fc;
     --text-2: #b0bae4;
     --text-3: #7580b0;
     --accent: #7b95f2;
-    --accent-soft: rgba(123, 149, 242, 0.18);
+    --accent-soft: rgba(123, 149, 242, 0.2);
+    --accent-ink: #ccd6f9;
     --action: #ede871;
-    --action-soft: rgba(237, 232, 113, 0.14);
+    --action-soft: rgba(237, 232, 113, 0.16);
     --up: #33c088;
-    --up-soft: rgba(51, 192, 136, 0.14);
+    --up-soft: rgba(51, 192, 136, 0.18);
     --warn: #d9a13c;
-    --warn-soft: rgba(217, 161, 60, 0.14);
+    --warn-soft: rgba(217, 161, 60, 0.16);
+    --verified: #7fd7ff;
     --font-display: 'Lexend Giga', 'Lexend', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --font-body: 'Lexend', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    --label-w: 296px;
+    --days: 28;
   }
   * { box-sizing: border-box; }
   body {
@@ -31,199 +41,297 @@
     color: var(--text);
     font-family: var(--font-body);
     font-weight: 300;
-    font-size: 15px;
-    line-height: 1.55;
+    font-size: 14px;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
-  .page { max-width: 960px; margin: 0 auto; padding: 48px 28px 80px; }
+  .slide { max-width: 1240px; margin: 0 auto; padding: 28px 24px 72px; }
 
-  /* Header */
-  .head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 32px; padding-bottom: 22px; border-bottom: 1px solid var(--line-strong); }
-  .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); margin: 0 0 8px; }
-  h1 { font-family: var(--font-display); font-weight: 600; font-size: 26px; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
-  .meta { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); line-height: 1.8; text-align: right; }
-  .meta b { color: var(--text); font-weight: 500; }
+  /* ------------------------------------------------ hero (site hero treatment) */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: linear-gradient(180deg, #070429 0%, #0d0940 100%);
+    min-height: 300px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  }
+  .hero-art {
+    position: absolute; inset: 0;
+    background-image: url("../../public/pnl/eagle-bull.jpg");
+    background-size: cover;
+    background-position: center 14%;
+  }
+  .hero-art::after {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(90deg, #070429 0%, #070429 30%, rgba(7, 4, 41, 0.88) 44%, rgba(7, 4, 41, 0.3) 64%, rgba(7, 4, 41, 0.1) 100%),
+      linear-gradient(180deg, rgba(7, 4, 41, 0.35) 0%, rgba(7, 4, 41, 0) 40%, rgba(7, 4, 41, 0.55) 100%);
+  }
+  .hero-copy { position: relative; padding: 36px 40px 34px; display: flex; flex-direction: column; justify-content: space-between; gap: 22px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { width: 44px; height: 44px; border-radius: 50%; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); }
+  .brand .eyebrow { margin: 0; }
+  .eyebrow {
+    font-family: var(--font-display); font-size: 10px; font-weight: 500;
+    letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-2);
+  }
+  .eyebrow b { color: var(--text); font-weight: 600; }
+  .hero h1 {
+    font-family: var(--font-display); font-weight: 600; text-transform: uppercase;
+    font-size: clamp(22px, 2.6vw, 34px); line-height: 1.22; letter-spacing: 0.02em; margin: 0;
+  }
+  .hero h1 .grad {
+    background-image: linear-gradient(100deg, #97abef 0%, #c9d3f7 55%, #eef1fc 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede { margin: 12px 0 0; max-width: 46ch; color: var(--text-2); font-size: 15px; line-height: 1.55; }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.04em; border-radius: 999px; padding: 4px 10px; border: 1px solid var(--line-strong); color: var(--text-2); white-space: nowrap;
+  }
+  .badge-verified { color: var(--verified); border-color: rgba(127, 215, 255, 0.35); }
+  .badge-action { color: var(--action); border-color: rgba(237, 232, 113, 0.4); }
 
-  /* Horizon strip */
-  .horizon { margin: 32px 0 8px; }
-  .weeks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
-  .week { padding: 14px 16px 16px; border-right: 1px solid var(--line); min-height: 150px; display: flex; flex-direction: column; gap: 10px; }
-  .week:last-child { border-right: 0; }
-  .week.now { background: var(--surface-2); }
-  .wk-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); display: flex; justify-content: space-between; }
-  .wk-label b { color: var(--text-2); font-weight: 500; }
-  .wk-label .now-tag { color: var(--action); }
-  .ms { font-size: 13px; line-height: 1.35; color: var(--text); padding-left: 12px; position: relative; }
-  .ms::before { content: ""; position: absolute; left: 0; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  .ms.action::before { background: var(--action); }
-  .ms.tbd::before { background: transparent; border: 1px solid var(--text-3); }
-  .ms.tbd { color: var(--text-2); }
-  .ms small { display: block; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; }
-  .gate { margin-top: 12px; padding: 12px 16px; border: 1px dashed var(--line-strong); border-radius: 10px; font-size: 13px; color: var(--text-2); display: flex; gap: 12px; align-items: baseline; }
-  .gate b { color: var(--text); font-weight: 500; }
-  .gate .k { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--warn); white-space: nowrap; }
+  /* ------------------------------------------------ KPI strip (site kpi-band) */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-top: 18px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .kpi { background: var(--surface); padding: 16px 20px; }
+  .kpi .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+  .kpi .v { font-family: var(--font-display); font-weight: 600; font-size: 18px; letter-spacing: 0.01em; color: var(--text); line-height: 1.2; }
+  .kpi .v.action { color: var(--action); }
+  .kpi .v.up { color: var(--up); }
+  .kpi .v.warn { color: var(--warn); }
+  .kpi .s { font-size: 12.5px; color: var(--text-2); margin-top: 4px; }
 
-  /* Sections + rows */
-  section { margin-top: 40px; }
-  h2 { font-family: var(--font-display); font-weight: 500; font-size: 15px; letter-spacing: 0.01em; margin: 0 0 4px; }
-  .sub { margin: 0 0 14px; color: var(--text-2); font-size: 13px; max-width: 66ch; }
-  .rows { border-top: 1px solid var(--line-strong); }
-  .row { display: grid; grid-template-columns: 34px 1fr 150px 130px; gap: 18px; padding: 16px 0; border-bottom: 1px solid var(--line); align-items: start; }
-  .row .n { font-family: var(--font-mono); font-size: 12px; color: var(--text-3); padding-top: 3px; }
-  .row .t { font-weight: 500; font-size: 15px; color: var(--text); margin: 0 0 4px; }
-  .row .d { margin: 0; color: var(--text-2); font-size: 13.5px; max-width: 62ch; }
-  .row .d + .d { margin-top: 6px; }
-  .row .d b { color: var(--text); font-weight: 500; }
-  .row .eta { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--text); padding-top: 3px; }
-  .row .eta small { display: block; color: var(--text-3); }
-  .row .who { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); padding-top: 3px; }
-  .chip { display: inline-block; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; margin-bottom: 8px; white-space: nowrap; }
-  .chip.soon { background: var(--action-soft); color: var(--action); }
-  .chip.tbd { background: var(--accent-soft); color: var(--accent); }
-  .chip.wait { background: var(--warn-soft); color: var(--warn); }
-  .chip.track { background: var(--up-soft); color: var(--up); }
+  /* ------------------------------------------------ section heads */
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 34px 0 14px; }
+  .section-head h2 { font-family: var(--font-display); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0; display: flex; align-items: center; gap: 10px; }
+  .section-head h2 i { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); display: inline-block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend .sw { width: 18px; height: 8px; border-radius: 3px; }
+  .legend .sw.action { background: var(--action); }
+  .legend .sw.accent { background: var(--accent); }
+  .legend .sw.up { background: var(--up); }
+  .legend .sw.tbd { background: repeating-linear-gradient(135deg, var(--warn) 0 3px, transparent 3px 6px); border: 1px solid var(--warn); }
+  .legend .dia { width: 9px; height: 9px; background: var(--action); transform: rotate(45deg); border-radius: 1px; }
+  .legend .dia.gate { background: transparent; border: 1.5px solid var(--warn); }
 
-  .foot { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); line-height: 1.8; }
+  /* ------------------------------------------------ Gantt */
+  .gantt-wrap { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow-x: auto; }
+  .gantt { min-width: 980px; position: relative; padding-bottom: 10px; }
+  .g-row { display: grid; grid-template-columns: var(--label-w) repeat(var(--days), minmax(0, 1fr)); align-items: center; position: relative; }
+  .g-head { border-bottom: 1px solid var(--line-strong); position: sticky; top: 0; background: var(--surface); z-index: 3; }
+  .g-head .lbl { padding: 14px 20px 10px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); }
+  .wk { grid-column: span 7; padding: 12px 10px 8px; border-left: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+  .wk b { color: var(--text); font-weight: 500; }
+  .wk small { display: block; color: var(--text-3); letter-spacing: 0.04em; margin-top: 1px; }
+  .g-days { border-bottom: 1px solid var(--line); }
+  .g-days .lbl { padding: 0 20px; }
+  .day { text-align: center; font-family: var(--font-mono); font-size: 10px; color: var(--text-3); padding: 5px 0 6px; border-left: 1px solid transparent; }
+  .day.mon { border-left-color: var(--line); }
+  .day.we { color: var(--text-3); opacity: 0.5; }
+  .day.today { color: var(--action); font-weight: 500; }
+
+  .g-group { border-top: 1px solid var(--line); }
+  .g-group .lbl { padding: 14px 20px 4px; font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); }
+  .g-group.first { border-top: 0; }
+
+  .g-item { min-height: 54px; }
+  .g-item .lbl { padding: 8px 20px; }
+  .g-item .t { font-weight: 500; font-size: 13.5px; color: var(--text); line-height: 1.3; }
+  .g-item .n { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; }
+  .g-item .n em { font-style: normal; color: var(--text-2); }
+
+  /* weekend + week-line underlay, drawn once behind all rows */
+  .g-body { position: relative; }
+  .g-bg { position: absolute; top: 0; bottom: 0; left: var(--label-w); right: 0; display: grid; grid-template-columns: repeat(var(--days), minmax(0, 1fr)); pointer-events: none; }
+  .g-bg i { display: block; border-left: 1px solid transparent; }
+  .g-bg i.mon { border-left-color: var(--line); }
+  .g-bg i.we { background: rgba(151, 171, 239, 0.035); }
+  .today-line { position: absolute; top: 0; bottom: 0; left: calc(var(--label-w) + (100% - var(--label-w)) * 1 / var(--days)); width: 0; border-left: 1.5px dashed var(--action); opacity: 0.85; z-index: 2; pointer-events: none; }
+  .today-line::before { content: "Today · Tue 15 Sep"; position: absolute; top: -1px; left: 6px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--action); white-space: nowrap; }
+
+  .bar {
+    height: 30px; border-radius: 7px; display: flex; align-items: center; padding: 0 10px; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    position: relative; z-index: 1;
+  }
+  .bar.action { background: var(--action); color: #070429; font-weight: 500; }
+  .bar.accent { background: var(--accent); color: #070429; font-weight: 500; }
+  .bar.up { background: var(--up); color: #062a1c; font-weight: 500; }
+  .bar.up-soft { background: var(--up-soft); color: var(--up); border: 1px dashed rgba(51, 192, 136, 0.55); }
+  .bar.tbd { background: repeating-linear-gradient(135deg, var(--warn-soft) 0 4px, transparent 4px 8px); color: var(--warn); border: 1px dashed rgba(217, 161, 60, 0.6); }
+  .bar.tbd-accent { background: repeating-linear-gradient(135deg, var(--accent-soft) 0 4px, transparent 4px 8px); color: var(--accent-ink); border: 1px dashed rgba(123, 149, 242, 0.55); }
+  .bar.faint { background: transparent; color: var(--text-3); border: 1px dotted var(--line-strong); }
+  .bar .eta { margin-left: auto; opacity: 0.85; }
+
+  .ms { position: relative; z-index: 2; height: 30px; display: flex; align-items: center; }
+  .ms i { width: 13px; height: 13px; background: var(--action); transform: rotate(45deg); border-radius: 2px; box-shadow: 0 0 0 3px var(--surface); flex-shrink: 0; margin: 0 auto; }
+  .ms.gate i { background: var(--surface); border: 1.5px solid var(--warn); }
+  .ms span { margin-left: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text); white-space: nowrap; }
+  .ms.gate span { color: var(--warn); }
+
+  /* ------------------------------------------------ decisions + notes */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .callout { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--bg-raise); padding: 14px 18px; font-size: 13px; color: var(--text-2); }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout b { color: var(--text); font-weight: 500; }
+  .callout .who { display: block; margin-top: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  .foot { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; color: var(--text-3); line-height: 1.8; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
   .foot code { color: var(--text-2); }
 
-  @media (max-width: 720px) {
-    .page { padding: 32px 18px 60px; }
-    .meta { text-align: left; }
-    .weeks { grid-template-columns: 1fr 1fr; }
-    .week { border-bottom: 1px solid var(--line); }
-    .week:nth-child(2n) { border-right: 0; }
-    .row { grid-template-columns: 28px 1fr; }
-    .row .eta, .row .who { grid-column: 2; padding-top: 0; }
+  @media (max-width: 860px) {
+    .slide { padding: 16px 14px 56px; }
+    .hero { grid-template-columns: 1fr; min-height: 0; }
+    .hero-art { opacity: 0.55; }
+    .hero-copy { padding: 26px 22px; }
+    .kpis { grid-template-columns: 1fr 1fr; }
+    .cols { grid-template-columns: 1fr; }
   }
-  @media (prefers-reduced-motion: no-preference) { a { transition: color 0.15s; } }
-  a { color: var(--accent); }
-  a:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
-<div class="page">
-  <header class="head">
-    <div>
-      <p class="eyebrow">Team roadmap · Solana + EVM</p>
-      <h1>SSR.fun Roadmap</h1>
+<div class="slide">
+
+  <header class="hero">
+    <div class="hero-art" aria-hidden="true"></div>
+    <div class="hero-copy">
+      <div class="brand">
+        <img src="../../public/apple-touch-seal.png" alt="">
+        <p class="eyebrow"><b>SSR.fun</b> · Team roadmap</p>
+      </div>
+      <div>
+        <h1>The next<br><span class="grad">four weeks.</span></h1>
+        <p class="lede">Ship the Solana fixes, start EVM testing this Friday, then open the doors to outside testers.</p>
+      </div>
+      <div class="hero-meta">
+        <span class="badge badge-verified">Mon 14 Sep – Sun 11 Oct 2026</span>
+        <span class="badge badge-action">Updated Tue 15 Sep 2026</span>
+        <span class="badge">Solana · EVM</span>
+      </div>
     </div>
-    <div class="meta">
-      Horizon <b>Mon 15 Sep – Sun 12 Oct 2026</b><br>
-      Last updated <b>Tue 15 Sep 2026</b> · from JRA's outstanding list (11:06) and Enigma's ask (12:09)
-    </div>
+    <div aria-hidden="true"></div>
   </header>
 
-  <div class="horizon">
-    <div class="weeks">
-      <div class="week now">
-        <div class="wk-label"><b>Wk 1 · 15–21 Sep</b><span class="now-tag">now</span></div>
-        <div class="ms action">Wallet: rebalance + sell use the connected wallet<small>items 1 + 4 · by Fri 18 Sep</small></div>
-        <div class="ms action">Reserve Token metadata on PumpSwap / Raydium<small>item 2 · by Fri 18 Sep</small></div>
-        <div class="ms">EVM contracts: testing begins<small>Fri 18 Sep · Robinhood, Base, ETH mainnet</small></div>
-      </div>
-      <div class="week">
-        <div class="wk-label"><b>Wk 2 · 22–28 Sep</b></div>
-        <div class="ms">Mobile test pass on the Solana fixes<small>after items 1, 2, 4 land</small></div>
-      </div>
-      <div class="week">
-        <div class="wk-label"><b>Wk 3 · 29 Sep–5 Oct</b></div>
-        <div class="ms tbd">Per-asset price charts<small>item 3 · TBD, decision pending</small></div>
-      </div>
-      <div class="week">
-        <div class="wk-label"><b>Wk 4 · 6–12 Oct</b></div>
-        <div class="ms tbd">DEX liquidity via the protocol<small>TBD, pending Enigma</small></div>
-      </div>
-    </div>
-    <div class="gate">
-      <span class="k">Gate</span>
-      <span><b>External beta testers</b> are not invited until items 1, 2 and 4 are resolved and checked on mobile. Testers would otherwise report exactly these issues.</span>
+  <div class="kpis">
+    <div class="kpi"><div class="k">This week</div><div class="v action">3 fixes · Fri 18 Sep</div><div class="s">Wallet on rebalance + sell, token identity on DEXes</div></div>
+    <div class="kpi"><div class="k">EVM contracts</div><div class="v up">Testing from Fri 18 Sep</div><div class="s">Robinhood · Base · Ethereum mainnet</div></div>
+    <div class="kpi"><div class="k">Decisions pending</div><div class="v warn">2 open</div><div class="s">Per-asset charts (Charles) · DEX liquidity (Enigma)</div></div>
+    <div class="kpi"><div class="k">External beta</div><div class="v">Gated · wk 2</div><div class="s">After items 1, 2, 4 land and pass on mobile</div></div>
+  </div>
+
+  <div class="section-head">
+    <h2><i></i>Timeline</h2>
+    <div class="legend">
+      <span><i class="sw action"></i>Committed this week</span>
+      <span><i class="sw accent"></i>Planned</span>
+      <span><i class="sw up"></i>EVM build / test</span>
+      <span><i class="sw tbd"></i>TBD · decision pending</span>
+      <span><i class="dia"></i>Milestone</span>
+      <span><i class="dia gate"></i>Gate</span>
     </div>
   </div>
 
-  <section>
-    <h2>Outstanding on Solana</h2>
-    <p class="sub">JRA's list from desktop testing of the Strategic Solana Reserve (SSRSol), created with Solflare. Numbering matches the original message.</p>
-    <div class="rows">
-      <div class="row">
-        <div class="n">1</div>
-        <div>
-          <span class="chip soon">ETA this week</span>
-          <p class="t">Rebalance forces Phantom even though Solflare is connected</p>
-          <p class="d">The Reserve was created with Solflare and that wallet is still connected with no issues. Rebalance opens Phantom instead, and the transaction fails. Fix: every write path must sign with the wallet that is actually connected.</p>
-        </div>
-        <div class="eta">Fri 18 Sep 2026<small>this week</small></div>
-        <div class="who">SSR.fun app</div>
+  <div class="gantt-wrap">
+    <div class="gantt">
+      <div class="g-row g-head">
+        <div class="lbl">Workstream</div>
+        <div class="wk"><b>Week 1</b><small>14 – 20 Sep</small></div>
+        <div class="wk"><b>Week 2</b><small>21 – 27 Sep</small></div>
+        <div class="wk"><b>Week 3</b><small>28 Sep – 4 Oct</small></div>
+        <div class="wk"><b>Week 4</b><small>5 – 11 Oct</small></div>
       </div>
-      <div class="row">
-        <div class="n">2</div>
-        <div>
-          <span class="chip soon">ETA this week</span>
-          <p class="t">Reserve Token name, symbol and image do not reach PumpSwap / Raydium</p>
-          <p class="d">Adding liquidity on PumpSwap shows the token as unverified with no image. Raydium shows neither name nor symbol. Expected: name <b>Strategic Solana Reserve</b>, symbol <b>SSRSol</b>, with the Reserve image.</p>
-        </div>
-        <div class="eta">Fri 18 Sep 2026<small>this week</small></div>
-        <div class="who">Program + app</div>
+      <div class="g-row g-days">
+        <div class="lbl"></div>
+        <div class="day mon">14</div><div class="day today">15</div><div class="day">16</div><div class="day">17</div><div class="day">18</div><div class="day we">19</div><div class="day we">20</div>
+        <div class="day mon">21</div><div class="day">22</div><div class="day">23</div><div class="day">24</div><div class="day">25</div><div class="day we">26</div><div class="day we">27</div>
+        <div class="day mon">28</div><div class="day">29</div><div class="day">30</div><div class="day">1</div><div class="day">2</div><div class="day we">3</div><div class="day we">4</div>
+        <div class="day mon">5</div><div class="day">6</div><div class="day">7</div><div class="day">8</div><div class="day">9</div><div class="day we">10</div><div class="day we">11</div>
       </div>
-      <div class="row">
-        <div class="n">3</div>
-        <div>
-          <span class="chip wait">TBD · waiting on Charles</span>
-          <p class="t">Per-asset price charts inside a Reserve are flat</p>
-          <p class="d">Clicking a reserve asset's chart shows no data. The chart shipped with the design update without a back end for historical prices. Open question whether to take it on: market-data API cost, server bandwidth and function usage, storage if SSR keeps history itself. Enigma's view: worth it, no legal issue; wants cost and difficulty of doing it now vs. later.</p>
+
+      <div class="g-body">
+        <div class="g-bg" aria-hidden="true">
+          <i class="mon"></i><i></i><i></i><i></i><i></i><i class="we"></i><i class="we"></i>
+          <i class="mon"></i><i></i><i></i><i></i><i></i><i class="we"></i><i class="we"></i>
+          <i class="mon"></i><i></i><i></i><i></i><i></i><i class="we"></i><i class="we"></i>
+          <i class="mon"></i><i></i><i></i><i></i><i></i><i class="we"></i><i class="we"></i>
         </div>
-        <div class="eta">TBD<small>needs Charles's infra view</small></div>
-        <div class="who">Charles (infra)</div>
-      </div>
-      <div class="row">
-        <div class="n">4</div>
-        <div>
-          <span class="chip soon">ETA this week</span>
-          <p class="t">Sell forces Phantom even though Solflare is connected</p>
-          <p class="d">Same root cause as item 1, on the Sell path. Fixed together and verified on both desktop and mobile with Solflare.</p>
+        <div class="today-line" aria-hidden="true"></div>
+
+        <!-- SOLANA -->
+        <div class="g-row g-group first"><div class="lbl">Solana · outstanding</div></div>
+
+        <div class="g-row g-item">
+          <div class="lbl"><div class="t">Rebalance and Sell sign with the connected wallet</div><div class="n">Items <em>1</em> + <em>4</em> · Solflare connected, Phantom forced</div></div>
+          <div class="bar action" style="grid-column: 3 / 7;">Fix<span class="eta">Fri 18</span></div>
         </div>
-        <div class="eta">Fri 18 Sep 2026<small>this week, with item 1</small></div>
-        <div class="who">SSR.fun app</div>
+
+        <div class="g-row g-item">
+          <div class="lbl"><div class="t">Reserve Token name, symbol and image on PumpSwap / Raydium</div><div class="n">Item <em>2</em> · Strategic Solana Reserve · SSRSol</div></div>
+          <div class="bar action" style="grid-column: 3 / 7;">Fix<span class="eta">Fri 18</span></div>
+        </div>
+
+        <div class="g-row g-item">
+          <div class="lbl"><div class="t">Mobile test pass</div><div class="n">JRA · repeats the desktop checks on mobile</div></div>
+          <div class="bar accent" style="grid-column: 9 / 14;">Mobile pass<span class="eta">wk 2</span></div>
+        </div>
+
+        <div class="g-row g-item">
+          <div class="lbl"><div class="t">Per-asset price charts inside a Reserve</div><div class="n">Item <em>3</em> · shipped without a price-history back end</div></div>
+          <div class="bar tbd" style="grid-column: 16 / 21;">TBD · Charles</div>
+        </div>
+
+        <!-- EVM -->
+        <div class="g-row g-group"><div class="lbl">EVM · new chains</div></div>
+
+        <div class="g-row g-item">
+          <div class="lbl"><div class="t">EVM contracts embedded in SSR.fun</div><div class="n">Robinhood · Base · Ethereum mainnet</div></div>
+          <div class="bar up" style="grid-column: 2 / 6;">Build</div>
+          <div class="ms" style="grid-column: 6 / 7;" title="Testing begins Fri 18 Sep"><i></i></div>
+          <div class="bar up-soft" style="grid-column: 7 / 30;">Testing begins Fri 18 Sep · ongoing</div>
+        </div>
+
+        <!-- LIQUIDITY -->
+        <div class="g-row g-group"><div class="lbl">Liquidity</div></div>
+
+        <div class="g-row g-item">
+          <div class="lbl"><div class="t">Add DEX liquidity through the protocol</div><div class="n">Option for Reserve Token holders and creators</div></div>
+          <div class="bar tbd-accent" style="grid-column: 23 / 30;">TBD · pending Enigma</div>
+        </div>
+
+        <!-- BETA -->
+        <div class="g-row g-group"><div class="lbl">Beta</div></div>
+
+        <div class="g-row g-item">
+          <div class="lbl"><div class="t">External beta testers</div><div class="n">Gate: items 1, 2, 4 fixed and checked on mobile</div></div>
+          <div class="ms gate" style="grid-column: 14 / 15;" title="Gate: items 1, 2, 4 fixed and checked on mobile"><i></i></div>
+          <div class="bar faint" style="grid-column: 15 / 30;">Gate passed → invite window</div>
+        </div>
       </div>
     </div>
-  </section>
+  </div>
 
-  <section>
-    <h2>New tracks</h2>
-    <p class="sub">Work beyond the Solana fixes, with the dates the team has committed to so far.</p>
-    <div class="rows">
-      <div class="row">
-        <div class="n">E</div>
-        <div>
-          <span class="chip track">In build</span>
-          <p class="t">EVM contracts embedded in SSR.fun</p>
-          <p class="d">Support for Robinhood, Base and Ethereum mainnet alongside Solana. Contracts are being built now; testing begins this Friday.</p>
-        </div>
-        <div class="eta">Fri 18 Sep 2026<small>testing begins</small></div>
-        <div class="who">EVM team</div>
-      </div>
-      <div class="row">
-        <div class="n">L</div>
-        <div>
-          <span class="chip tbd">TBD · pending Enigma</span>
-          <p class="t">Add liquidity to DEXes through the protocol</p>
-          <p class="d">An option for Reserve Token holders and creators to seed DEX liquidity from within SSR.fun rather than manually on PumpSwap or Raydium. Scope and go-ahead pending Enigma. Item 2 must land first so listed tokens carry the right identity.</p>
-        </div>
-        <div class="eta">TBD<small>after item 2</small></div>
-        <div class="who">Enigma to decide</div>
-      </div>
-      <div class="row">
-        <div class="n">M</div>
-        <div>
-          <span class="chip tbd">Queued</span>
-          <p class="t">Mobile test pass</p>
-          <p class="d">JRA is testing on desktop first, then repeats the same checks on mobile once items 1, 2 and 4 are in.</p>
-        </div>
-        <div class="eta">Wk 2<small>after 1, 2, 4</small></div>
-        <div class="who">JRA</div>
-      </div>
+  <div class="section-head">
+    <h2><i></i>Decisions pending</h2>
+  </div>
+  <div class="cols">
+    <div class="callout warn">
+      <b>Per-asset price charts (item 3).</b> Clicking a reserve asset's chart shows no data: the chart shipped with the design update without a back end for historical prices. Open question whether to take it on. Costs: market-data API, server bandwidth and function usage, storage if SSR keeps history itself. Enigma's view: worth it, no legal issue. Needs a cost and difficulty estimate for now versus later.
+      <span class="who">Owner · Charles (infra view)</span>
     </div>
-  </section>
+    <div class="callout">
+      <b>DEX liquidity via the protocol.</b> Let Reserve Token holders and creators seed liquidity on PumpSwap or Raydium from within SSR.fun instead of manually. Scope and go-ahead pending. Depends on item 2 so listed tokens carry the right name, symbol and image.
+      <span class="who">Owner · Enigma</span>
+    </div>
+  </div>
 
-  <p class="foot">
-    Source file: <code>docs/project/ROADMAP.html</code> in the SSR.FUN repo. To update, change the dates and chips there and republish this page; keep the item numbers stable so chat references still line up.
-  </p>
+  <div class="foot">
+    <span>Source: <code>docs/project/ROADMAP.html</code> · edit, run <code>node docs/project/roadmap-build.mjs</code>, republish. Item numbers match JRA's message of 15 Sep 11:06.</span>
+    <span>SSR.fun · internal</span>
+  </div>
 </div>
