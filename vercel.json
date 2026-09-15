@@ -96,6 +96,10 @@
       "destination": "/internal-feedback.html"
     },
     {
+      "source": "/internal/feedback-board",
+      "destination": "/internal-feedback-board.html"
+    },
+    {
       "source": "/internal/kpis",
       "destination": "/internal-kpis.html"
     },

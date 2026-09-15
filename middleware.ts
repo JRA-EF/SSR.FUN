@@ -62,6 +62,11 @@ const CRON_PATHS = new Set([
   '/api/feedback/item',
   '/api/feedback/list',
   '/api/feedback/resolve',
+  // The team feedback board API is called by people (dashboard session cookie)
+  // AND by the fixer agent (daemon bearer, no cookie), so api/feedback/board.ts
+  // checks both credentials itself and rejects everything else with 401.
+  '/api/feedback/board',
+  '/api/feedback/agent-requests',
 ])
 
 const SITE_LOGIN_PATH = '/api/site/login'
@@ -307,6 +312,8 @@ const INTERNAL_PAGE_PATHS = new Set([
   '/internal-status.html',
   '/internal/feedback',
   '/internal-feedback.html',
+  '/internal/feedback-board',
+  '/internal-feedback-board.html',
   '/road-to-mainnet',
   '/road-to-mainnet.html',
   '/internal/kpis',
