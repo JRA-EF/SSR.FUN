@@ -137,6 +137,21 @@
   .day.we { color: var(--text-3); opacity: 0.5; }
   .day.today { color: var(--action); font-weight: 500; }
 
+  .g-phase { min-height: 64px; border-bottom: 1px solid var(--line-strong); background: linear-gradient(180deg, rgba(151, 171, 239, 0.06), rgba(151, 171, 239, 0)); }
+  .g-phase .lbl { padding: 12px 20px; }
+  .g-phase .t { font-family: var(--font-display); font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text); }
+  .g-phase .n { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 3px; }
+  .ph {
+    position: relative; z-index: 1; height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
+    font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; white-space: nowrap; overflow: hidden;
+  }
+  .ph.internal { background: var(--surface-3); color: var(--accent-ink); border: 1px solid var(--line-strong); border-radius: 8px 0 0 8px; }
+  .ph.closed { background: var(--accent); color: #070429; border-radius: 0; }
+  .ph.open { background: linear-gradient(90deg, var(--accent) 0%, var(--action) 100%); color: #070429; border-radius: 0 8px 8px 0; }
+  .ph .dia { width: 11px; height: 11px; background: #070429; transform: rotate(45deg); border-radius: 1px; flex-shrink: 0; margin-right: 2px; }
+  .g-phase .ms { justify-content: center; }
+  .g-phase .ms i { box-shadow: 0 0 0 3px var(--surface-3); }
+
   .g-group { border-top: 1px solid var(--line); }
   .g-group .lbl { padding: 14px 20px 4px; font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); }
   .g-group.first { border-top: 0; }
@@ -207,7 +222,7 @@
       </div>
       <div>
         <h1>The next<br><span class="grad">four weeks.</span></h1>
-        <p class="lede">Ship the Solana fixes, start EVM testing this Friday, then open the doors to outside testers.</p>
+        <p class="lede">Ship the Solana fixes, start EVM testing this Friday, and take the beta from internal to closed to open.</p>
       </div>
       <div class="hero-meta">
         <span class="badge badge-verified">Mon 14 Sep – Sun 11 Oct 2026</span>
@@ -226,7 +241,7 @@
       <span><i class="sw up"></i>EVM build / test</span>
       <span><i class="sw tbd"></i>TBD · decision pending</span>
       <span><i class="dia"></i>Milestone</span>
-      <span><i class="dia gate"></i>Gate</span>
+      <span><i class="dia gate"></i>Beta gate</span>
     </div>
   </div>
 
@@ -255,6 +270,15 @@
           <i class="mon"></i><i></i><i></i><i></i><i></i><i class="we"></i><i class="we"></i>
         </div>
         <div class="today-line" aria-hidden="true"></div>
+
+        <!-- BETA PHASES: transversal, spans every workstream -->
+        <div class="g-row g-phase">
+          <div class="lbl"><div class="t">Beta phases</div><div class="n">Across all workstreams</div></div>
+          <div class="ph internal" style="grid-column: 2 / 9;">Internal beta</div>
+          <div class="ms gate" style="grid-column: 9 / 10;" title="Gate: items 1, 2 and 4 fixed before outside testers join"><i></i></div>
+          <div class="ph closed" style="grid-column: 10 / 23;">Closed beta</div>
+          <div class="ph open" style="grid-column: 23 / 30;">Open beta<i class="dia" title="Open beta · end of week 4"></i></div>
+        </div>
 
         <!-- SOLANA -->
         <div class="g-row g-group first"><div class="lbl">Solana · outstanding</div></div>
@@ -289,17 +313,9 @@
 
         <div class="g-row g-item">
           <div class="lbl"><div class="t">Add DEX liquidity through the protocol</div><div class="n">Option for Reserve Token holders and creators</div></div>
-          <div class="bar tbd-accent" style="grid-column: 23 / 30;">TBD · pending Enigma</div>
+          <div class="bar tbd-accent" style="grid-column: 3 / 9;">TBD · pending Enigma</div>
         </div>
 
-        <!-- BETA -->
-        <div class="g-row g-group"><div class="lbl">Beta</div></div>
-
-        <div class="g-row g-item">
-          <div class="lbl"><div class="t">External beta testers</div><div class="n">Gate: items 1, 2, 4 fixed and checked on mobile</div></div>
-          <div class="ms gate" style="grid-column: 14 / 15;" title="Gate: items 1, 2, 4 fixed and checked on mobile"><i></i></div>
-          <div class="bar faint" style="grid-column: 15 / 30;">Gate passed → invite window</div>
-        </div>
       </div>
     </div>
   </div>
