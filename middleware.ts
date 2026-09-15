@@ -318,6 +318,8 @@ const INTERNAL_PAGE_PATHS = new Set([
   '/road-to-mainnet.html',
   '/internal/kpis',
   '/internal-kpis.html',
+  '/internal/roadmap',
+  '/internal-roadmap.html',
 ])
 
 export default async function middleware(request: Request): Promise<Response> {

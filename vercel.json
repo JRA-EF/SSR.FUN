@@ -104,6 +104,10 @@
       "destination": "/internal-kpis.html"
     },
     {
+      "source": "/internal/roadmap",
+      "destination": "/internal-roadmap.html"
+    },
+    {
       "source": "/road-to-mainnet",
       "destination": "/road-to-mainnet.html"
     },
