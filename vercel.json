@@ -60,6 +60,7 @@
     { "source": "/internal/status", "destination": "/internal-status.html" },
     { "source": "/internal/feedback", "destination": "/internal-feedback.html" },
     { "source": "/internal/kpis", "destination": "/internal-kpis.html" },
+    { "source": "/internal/roadmap", "destination": "/internal-roadmap.html" },
     { "source": "/road-to-mainnet", "destination": "/road-to-mainnet.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
