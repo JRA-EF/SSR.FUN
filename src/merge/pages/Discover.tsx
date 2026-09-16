@@ -10,18 +10,21 @@ import { useAppStore } from "@/store/useAppStore";
 import { RESERVE_CATEGORIES, normalizeReserveCategory, type DTR } from "@/lib/types";
 import { isDesignDemoEnabled } from "@/lib/designDemo";
 import { buildReserveCardProps } from "@/lib/reserveCardProps";
+import { useLandingStats } from "@/hooks/useLandingStats";
 import { IS_MAINNET } from "@/lib/solana-config";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { ReserveCard } from "../../components/ReserveCard";
 import { avatarStyle } from "../../lib/avatarStyle";
 
-type SortKey = "default" | "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
+type SortKey = "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
+// AUM (market cap) descending is the default order -- the same ranking the
+// Home page's Featured Reserves use (selectFeaturedReserves = the top 3 here,
+// minus any Reserve that is winding down).
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: "default", label: "Sort: Default" },
   { value: "aumDesc", label: "AUM: High to Low" },
   { value: "changeDesc", label: "24h Change: High to Low" },
   { value: "changeAsc", label: "24h Change: Low to High" },
@@ -33,8 +36,6 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 function sortDtrs(list: DTR[], sortBy: SortKey): DTR[] {
   const sorted = [...list];
   switch (sortBy) {
-    case "aumDesc":
-      return sorted.sort((a, b) => b.aum - a.aum);
     case "changeDesc":
       return sorted.sort((a, b) => b.change24h - a.change24h);
     case "changeAsc":
@@ -45,8 +46,9 @@ function sortDtrs(list: DTR[], sortBy: SortKey): DTR[] {
       return sorted.sort((a, b) => a.tokenPrice - b.tokenPrice);
     case "nameAsc":
       return sorted.sort((a, b) => a.name.localeCompare(b.name));
+    case "aumDesc":
     default:
-      return sorted;
+      return sorted.sort((a, b) => b.aum - a.aum);
   }
 }
 
@@ -59,7 +61,10 @@ export function Discover() {
   const chainDiscoveryError = useAppStore((s) => s.chainDiscoveryError);
   const [searchFilter, setSearchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [sortBy, setSortBy] = useState<SortKey>("default");
+  // Per-Reserve all-time volume for the cards' stats row -- the same fetch/
+  // cache the Home page and DTRDetail read (see hooks/useLandingStats.ts).
+  const landingStats = useLandingStats();
+  const [sortBy, setSortBy] = useState<SortKey>("aumDesc");
 
   // Filter options: the full canonical list (so every structured category is
   // always choosable, even with zero matching Reserves yet) plus any
@@ -155,7 +160,10 @@ export function Discover() {
 
       <div className="fcards">
         {visibleDtrs.map((dtr) => {
-          const cardProps = buildReserveCardProps(dtr, IS_MAINNET);
+          const cardProps = buildReserveCardProps(dtr, IS_MAINNET, {
+            status: landingStats.status,
+            volumeAllTimeUsd: dtr.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve]?.volumeAllTimeUsd : undefined,
+          });
           return (
             <ReserveCard
               key={dtr.id}

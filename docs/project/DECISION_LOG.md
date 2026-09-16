@@ -6145,3 +6145,98 @@
   ]
 }
 ```
+
+## DEC-0199
+
+```json
+{
+  "id": "DEC-0199",
+  "date": "2026-09-15",
+  "status": "confirmed-implemented",
+  "decision": "The Reserve cards on the homepage's Featured Reserves section and on Discover show exactly the same stats as the Reserve's own detail page: Price, Market Cap, All-Time PNL (%), All-Time Volume. The legacy 24h and Prem/Discount chips are removed from the cards. Everywhere the all-time gain is labelled, the word 'Performance' is replaced by 'PNL (%)': the detail page's middle stat tile (and its InfoTip label) is now 'All-Time PNL (%)'. The four card stats lay out as a deliberate 2x2 grid (src/index.css .fcard-metrics) instead of a wrapping flex row.",
+  "context": "Creator request (2026-09-15): 'in the front end, featured reserves and the discover reserve cards, it still displays a legacy prem/discount kpi -- instead it should be the same stats as it is inside: price, market cap, all time PNL(%), all time volume. and while you're at it lets replace the word performance by PNL(%) as it's shorter'. DEC-0197 (2026-09-14) had already changed the detail page's stat strip to All-Time Performance / All-Time Volume; the cards were never updated to match, and Prem/Discount was already known to carry no information (DTRDetail's stats-grid comment, 2026-08-24: Token Price IS NAV while every Buy/Sell executes at NAV, so it always reads ~0%).",
+  "rationale": "One shared builder (buildReserveCardProps) already feeds both card call sites, so the fix lives in one place and the cards cannot drift from each other. The all-time figure reuses calcAllTimeChangePct with the same Mainnet guard as the detail page (a '--' until the server launch anchor has been merged, never a misleading 0%), so a card and its page can never disagree. All-Time Volume comes from the same landing-stats fetch (perReserve[reserve].volumeAllTimeUsd) the Home KPIs and the detail page already read -- Discover now calls useLandingStats too -- with the same Loading/Unavailable placeholders, never a fabricated $0 for a live Reserve (a simulated DTR is honestly $0). A 2x2 grid was chosen because, with the longer labels, the old wrapping flex row stranded the fourth chip alone on a second line.",
+  "alternativesConsidered": [
+    "Keep 24h on the card as a fifth chip (rejected: the request is to mirror the detail page's set; the 24h change still shows under the price in the card header)",
+    "Extend the landing-stats API into the DTR store so the builder needs no extra argument (rejected: more plumbing for one figure; passing the hook state through keeps the builder pure and testable)",
+    "Leave the flex row wrapping (rejected on the headless-Chrome render: 3+1 ragged wrap)"
+  ],
+  "impact": "Featured Reserves (Home) and Discover cards now show Price / Market Cap / All-Time PNL (%) / All-Time Volume; Discover makes one extra landing-stats request (cached server-side 60s, same endpoint the Home page already hits). Detail page copy: 'All-Time Performance' -> 'All-Time PNL (%)'. Two existing tests that asserted on the Prem/Discount chip were rewritten; five new tests cover the exact stat set, PNL sign/tone, the Mainnet unmerged-anchor guard, and the volume placeholders.",
+  "affectedAreas": [
+    "src/merge/lib/reserveCardProps.ts (metrics + new optional ReserveCardStats argument)",
+    "src/pages/Home.tsx, src/merge/pages/Discover.tsx (pass landing-stats volume through)",
+    "src/merge/pages/DTRDetail.tsx (label rename)",
+    "src/index.css (.fcard-metrics 2x2 grid)",
+    "tests/phase_featured_cards_and_rpc_redaction.ts, tests/phase_landing_wallet_corrections.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on the four touched TS/TSX files: only DTRDetail's 4 pre-existing exhaustive-deps warnings.",
+    "ts-mocha tests/phase_featured_cards_and_rpc_redaction.ts tests/phase_landing_wallet_corrections.ts tests/phase_mainnet_pricing.ts: 68 passing.",
+    "Headless Chrome render of three cards (live with figures, live with '--'/Loading…, simulated with Unavailable) against src/index.css at 1280px: 2x2 stat grid with the Trade button pinned right."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0201",
+  "date": "2026-09-16",
+  "title": "Discover sorts by AUM (market cap) descending by default; Featured Reserves = plainly the top 3 on-chain Reserves by AUM",
+  "status": "implemented (not yet committed/deployed)",
+  "decision": "Discover's sort dropdown no longer has a 'Sort: Default' (discovery order) option: 'AUM: High to Low' is the first option and the initial state, and sortDtrs falls through to the AUM-descending comparator. selectFeaturedReserves (Home's Featured Reserves) now returns the top n (3) DTRs that have onChain data, sorted by AUM descending -- exactly the head of Discover's default order. The four curation gates it used to apply (assetsResolvedFully === true, isReserveTradable composition, name not 'Unnamed Reserve (#N)', status !== windDown) are removed.",
+  "context": "Creator request (2026-09-16): 'lets order the reserves in discover reserves by AUM/ market cap - thats the default sort. also the featured reserves for now should be the top 3 ones in AUM'. Before this pass Discover opened in raw discovery order and Featured already ranked by AUM but could skip a large Reserve that failed one of its curation gates, so the homepage's 'top 3' could disagree with the top of Discover.",
+  "rationale": "One ranking rule in one place: Featured is defined as the first 3 of Discover's default order, so the two surfaces can never disagree about which Reserves are biggest. The 'for now' in the request is honoured literally -- the gates are dropped rather than partially kept -- and documented in the selectFeaturedReserves header so a future curation rule (e.g. hiding windDown or unnamed Reserves again) is a deliberate new decision, not a leftover. The only exclusion kept is 'has onChain data': a purely local/simulated fixture DTR must never be featured on Mainnet regardless of its fixture AUM (DEC from the landing-page correction pass, unchanged).",
+  "alternativesConsidered": [
+    "Keep the windDown / unnamed / unresolved gates and only change Discover's default sort (rejected: the request says Featured should be the top 3 by AUM, and any gate reintroduces the Featured-vs-Discover mismatch)",
+    "Keep a 'Sort: Default' option meaning discovery order (rejected: nobody needs on-chain discovery order as a user-facing sort; AUM is the default now)",
+    "Compute Featured as Discover's sorted list sliced in Home.tsx instead of a shared helper (rejected: selectFeaturedReserves is already the single tested seam and keeps Home free of Discover's filter/sort code)"
+  ],
+  "impact": "Discover opens sorted by AUM descending; the dropdown loses the 'Sort: Default' entry. Featured Reserves on Home may now include a Reserve that is winding down, still resolving its assets, or carries a placeholder name if it ranks in the top 3 by AUM -- accepted for now per the request. The WD-01 Featured exclusion test (DEC-0164-era) is superseded and rewritten; ReserveSnapshotHydrator's mint pre-registration is still needed for Buy/Sell eligibility, only its comment about Featured is updated. isReserveTradable is no longer imported by reserveCardProps.ts.",
+  "affectedAreas": [
+    "src/merge/pages/Discover.tsx (SortKey, SORT_OPTIONS, sortDtrs default, initial sortBy)",
+    "src/merge/lib/reserveCardProps.ts (selectFeaturedReserves)",
+    "src/merge/lib/ReserveSnapshotHydrator.tsx (comment only)",
+    "tests/phase_featured_cards_and_rpc_redaction.ts, tests/phase_landing_wallet_corrections.ts (comment), tests/phase_road_to_mainnet_feedback.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": "WD-01's Featured-curation clause (selectFeaturedReserves excluding windDown) and the earlier Featured-Reserves exclusion fix (assetsResolvedFully / isReserveTradable / Unnamed gates)",
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on Discover.tsx / reserveCardProps.ts / ReserveSnapshotHydrator.tsx: clean (a duplicate-case warning introduced mid-pass was fixed before finishing).",
+    "ts-mocha tests/phase_featured_cards_and_rpc_redaction.ts tests/phase_landing_wallet_corrections.ts tests/phase_road_to_mainnet_feedback.ts: 50 passing (Featured tests rewritten to assert inclusion of under-resolved / unsupported-asset / unnamed / windDown Reserves and top-N slicing by AUM)."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0202",
+  "date": "2026-09-16",
+  "title": "Featured Reserves never show a Reserve that is winding down (premise added on top of DEC-0201's top-3-by-AUM rule)",
+  "status": "confirmed-implemented",
+  "decision": "selectFeaturedReserves keeps DEC-0201's rule (top 3 on-chain Reserves by AUM, the head of Discover's default order) but additionally excludes any Reserve whose on-chain status is windDown; the next-ranked Reserve takes the freed slot. A winding-down Reserve remains fully visible and tradable-out on Discover (WD-01), it is only never curated as a Featured highlight.",
+  "context": "Creator, same day, on reviewing DEC-0201: 'winding down reserves should not display in featured. please add this premise and push and deploy'. DEC-0201 had removed the windDown gate together with the other curation gates.",
+  "rationale": "A Reserve on its way to closing is exactly what a homepage highlight should not promote; the AUM ranking still decides among the remaining candidates, so Featured stays the 'top of Discover' minus that one deliberate exception, documented in the selector's header so the rule is not mistaken for a leftover.",
+  "alternativesConsidered": [
+    "Also hide winding-down Reserves from Discover (rejected: holders must still find them to exit -- WD-01)",
+    "Reinstate all of DEC-0201's dropped gates (rejected: not requested; only the wind-down premise was added)"
+  ],
+  "impact": "Home's Featured Reserves skip windDown Reserves; nothing else changes. Pushed to main, design fast-forwarded, deployed to production (see evidence).",
+  "affectedAreas": [
+    "src/merge/lib/reserveCardProps.ts (selectFeaturedReserves)",
+    "src/merge/pages/Discover.tsx (comment)",
+    "tests/phase_featured_cards_and_rpc_redaction.ts (new windDown test), tests/phase_road_to_mainnet_feedback.ts (WD-01 Featured test restored)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": "DEC-0201's removal of the windDown gate (its other gate removals stand)",
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on Discover.tsx / reserveCardProps.ts: clean.",
+    "ts-mocha tests/phase_featured_cards_and_rpc_redaction.ts tests/phase_landing_wallet_corrections.ts tests/phase_road_to_mainnet_feedback.ts: 51 passing.",
+    "Commit / deployment IDs recorded in PROJECT_STATUS.md's 2026-09-16 entry."
+  ]
+}
+```

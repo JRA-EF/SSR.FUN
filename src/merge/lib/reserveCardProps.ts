@@ -2,8 +2,7 @@
 // Discover.tsx and the native landing page's Featured Reserve section -- one
 // code path instead of two independently-computed views of the same DTR, so
 // they can never drift back out of sync with each other.
-import { isReserveTradable } from "@ssr/sdk";
-import { formatUsdc, formatUsdcOrUnavailable, buildLineSeries } from "./calculations";
+import { formatUsdc, formatUsdcOrUnavailable, buildLineSeries, calcAllTimeChangePct } from "./calculations";
 import { applyDesignDemo } from "./designDemo";
 import { computeMarketCap } from "./onChainReserve";
 import { normalizeReserveCategory, type DTR } from "./types";
@@ -29,6 +28,21 @@ export interface ReserveCardData {
 }
 
 /**
+ * Per-Reserve figures the card can't derive from the DTR alone -- today just
+ * the all-time trade volume, which lives in the landing-stats API (see
+ * hooks/useLandingStats.ts: `perReserve[reserve].volumeAllTimeUsd`). Callers
+ * pass the hook's state through; the card renders the same "Loading…" /
+ * "Unavailable" placeholders as DTRDetail's All-Time Volume tile, never a
+ * fabricated $0 for a live Reserve.
+ */
+export interface ReserveCardStats {
+  /** `landingStats.data?.perReserve[reserve]?.volumeAllTimeUsd`, or undefined when the response has no row for this Reserve. */
+  volumeAllTimeUsd?: number | null;
+  /** `landingStats.status`. */
+  status: "loading" | "ready" | "unavailable";
+}
+
+/**
  * Derives every plain-data prop `ReserveCard` needs from a DTR -- identical
  * for Discover's grid and the landing page's Featured Reserves.
  *
@@ -43,13 +57,12 @@ export interface ReserveCardData {
  * constraint documented in onChainReserve.ts's own header). Real callers
  * (Discover.tsx, the landing page) pass the real IS_MAINNET themselves.
  */
-export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): ReserveCardData {
+export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, stats?: ReserveCardStats): ReserveCardData {
   const clusterLabel = isMainnet ? "Mainnet" : "DevNet";
   // dtr.nav can be 0 when a Reserve's assets are under-resolved (AUM reads as
   // $0) even though it already has token supply -- guard against NaN rather
   // than computing 0/0 (same class of bug fixed in DTRDetail.tsx).
   const validNav = dtr.nav > 0 && Number.isFinite(dtr.nav) ? dtr.nav : null;
-  const premiumDiscount = validNav !== null ? ((dtr.tokenPrice - validNav) / validNav) * 100 : null;
   const topAssets = [...dtr.composition]
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 3)
@@ -61,6 +74,27 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
   const recentHistory = buildLineSeries(demo ? demo.priceHistory : dtr.priceHistory, "7d", validNav);
   const pricingUnavailable = isMainnet && dtr.onChain?.priceSource === "unavailable";
   const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
+  // All-time PNL (%): the same figure (and the same guards) as DTRDetail's
+  // stats band -- current Token Price vs. the earliest point of the history.
+  // On Mainnet that baseline is only meaningful once the server-served
+  // launch anchor has been merged (priceHistoryRecordedFrom set); before
+  // that the sole point is this browser's own first observation, which would
+  // read as a misleading 0%, so it shows "--" instead.
+  const allTimePnlPct = demo
+    ? calcAllTimeChangePct(demo.priceHistory, demo.priceHistory[demo.priceHistory.length - 1]?.price)
+    : !isMainnet || dtr.priceHistoryRecordedFrom !== undefined
+      ? calcAllTimeChangePct(dtr.priceHistory, dtr.nav)
+      : null;
+  // All-time volume: a simulated DTR has no Ledger rows, so $0 is the honest
+  // answer; a live Reserve reads the landing-stats row, with the same
+  // Loading/Unavailable placeholders DTRDetail's tile shows.
+  const allTimeVolume = !dtr.onChain
+    ? formatUsdc(0, { compact: true })
+    : typeof stats?.volumeAllTimeUsd === "number"
+      ? formatUsdc(stats.volumeAllTimeUsd, { compact: true })
+      : stats?.status === "loading"
+        ? "Loading…"
+        : "Unavailable";
 
   return {
     name: dtr.name,
@@ -80,41 +114,39 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
     sparklineValueFmt: formatUsdc,
     sparklineIsFallback: recentHistory.isFallback,
     topAssets,
+    // The same stats as DTRDetail's band under the chart (Market Cap,
+    // All-Time PNL (%), All-Time Volume) plus Price -- the legacy 24h and
+    // Prem/Discount chips are gone (Prem/Discount is always ~0% while every
+    // Buy/Sell executes at NAV; see DTRDetail's stats-grid comment).
     metrics: [
       { key: "price", label: "Price", value: formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable) },
-      { key: "24h", label: "24h", value: `${change24h >= 0 ? "+" : ""}${change24h.toFixed(2)}%`, tone: change24h >= 0 ? "up" : "down" },
       { key: "mcap", label: "Market Cap", value: formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true }) },
       {
-        key: "prem",
-        label: "Prem/Discount",
-        value: premiumDiscount !== null ? `${premiumDiscount >= 0 ? "+" : ""}${premiumDiscount.toFixed(2)}%` : "—",
-        tone: premiumDiscount !== null ? (premiumDiscount >= 0 ? "up" : "down") : undefined,
+        key: "pnl",
+        label: "All-Time PNL (%)",
+        value: allTimePnlPct !== null ? `${allTimePnlPct >= 0 ? "+" : ""}${allTimePnlPct.toFixed(2)}%` : "—",
+        tone: allTimePnlPct !== null ? (allTimePnlPct >= 0 ? "up" : "down") : undefined,
       },
+      { key: "volume", label: "All-Time Volume", value: allTimeVolume },
     ],
   };
 }
 
 /**
- * Picks the top `n` genuinely on-chain-verified, fully-resolved, tradable,
- * named Reserves by AUM -- never a simulated/placeholder DTR no matter how
- * large its fixture AUM is, and never a Reserve this discovery pass couldn't
- * fully resolve, couldn't confirm is within the supported asset set, or
- * couldn't recover a real name for (an "Unnamed Reserve (#N)" placeholder is
- * exactly the kind of Reserve that shouldn't be prominently featured).
+ * Picks the top `n` on-chain Reserves by AUM -- the first `n` of Discover's
+ * default (AUM-descending) order, so Featured mirrors the top of the Discover
+ * grid (DEC-0201, 2026-09-16), with exactly two exclusions:
+ *  - a purely local/simulated DTR (no onChain data), no matter how large its
+ *    fixture AUM is;
+ *  - a Reserve that is winding down (DEC-0202): it stays visible/tradable-out
+ *    on Discover (see reserveEligibility.ts's WD-01 fix) but must never be
+ *    curated as a "Featured" highlight while it's on its way to closing.
+ * The earlier gates on assets-fully-resolved, tradable composition and a real
+ * (non-"Unnamed Reserve") name were dropped on purpose in DEC-0201.
  */
 export function selectFeaturedReserves(dtrs: DTR[], n = 3): DTR[] {
   return dtrs
-    .filter((d) => {
-      if (!d.onChain) return false;
-      if (d.onChain.assetsResolvedFully !== true) return false;
-      if (!isReserveTradable(d.onChain.assets.map((a) => a.mint))) return false;
-      if (d.name.startsWith("Unnamed Reserve")) return false;
-      // A wound-down Reserve is genuinely visible/tradable-out (see
-      // reserveEligibility.ts's WD-01 fix) but shouldn't be curated as a
-      // "Featured" highlight while it's on its way to closing.
-      if (d.onChain.status === "windDown") return false;
-      return true;
-    })
+    .filter((d) => Boolean(d.onChain) && d.onChain?.status !== "windDown")
     .sort((a, b) => b.aum - a.aum)
     .slice(0, n);
 }

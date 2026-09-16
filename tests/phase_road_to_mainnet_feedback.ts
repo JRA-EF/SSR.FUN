@@ -137,7 +137,11 @@ describe("WD-01 -- evaluateReserveEligibility no longer quarantines a Reserve in
   });
 });
 
-describe("WD-01 -- selectFeaturedReserves excludes windDown from curation (but not from Discover)", () => {
+// WD-01's Featured clause, reaffirmed by DEC-0202 (2026-09-16): Featured is
+// the top 3 on-chain Reserves by AUM (the head of Discover's default order),
+// but a Reserve that is winding down is never curated as a highlight even
+// though it stays visible/tradable-out on Discover.
+describe("WD-01 / DEC-0202 -- selectFeaturedReserves excludes windDown from curation (but not from Discover)", () => {
   function windDownCandidateDtr(status: string): DTR {
     return baseDtr({
       aum: 1000,
