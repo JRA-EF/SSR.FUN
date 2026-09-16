@@ -2,7 +2,6 @@
 // Discover.tsx and the native landing page's Featured Reserve section -- one
 // code path instead of two independently-computed views of the same DTR, so
 // they can never drift back out of sync with each other.
-import { isReserveTradable } from "@ssr/sdk";
 import { formatUsdc, formatUsdcOrUnavailable, buildLineSeries, calcAllTimeChangePct } from "./calculations";
 import { applyDesignDemo } from "./designDemo";
 import { computeMarketCap } from "./onChainReserve";
@@ -134,26 +133,20 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, stat
 }
 
 /**
- * Picks the top `n` genuinely on-chain-verified, fully-resolved, tradable,
- * named Reserves by AUM -- never a simulated/placeholder DTR no matter how
- * large its fixture AUM is, and never a Reserve this discovery pass couldn't
- * fully resolve, couldn't confirm is within the supported asset set, or
- * couldn't recover a real name for (an "Unnamed Reserve (#N)" placeholder is
- * exactly the kind of Reserve that shouldn't be prominently featured).
+ * Picks the top `n` on-chain Reserves by AUM -- the first `n` of Discover's
+ * default (AUM-descending) order, so Featured mirrors the top of the Discover
+ * grid (DEC-0201, 2026-09-16), with exactly two exclusions:
+ *  - a purely local/simulated DTR (no onChain data), no matter how large its
+ *    fixture AUM is;
+ *  - a Reserve that is winding down (DEC-0202): it stays visible/tradable-out
+ *    on Discover (see reserveEligibility.ts's WD-01 fix) but must never be
+ *    curated as a "Featured" highlight while it's on its way to closing.
+ * The earlier gates on assets-fully-resolved, tradable composition and a real
+ * (non-"Unnamed Reserve") name were dropped on purpose in DEC-0201.
  */
 export function selectFeaturedReserves(dtrs: DTR[], n = 3): DTR[] {
   return dtrs
-    .filter((d) => {
-      if (!d.onChain) return false;
-      if (d.onChain.assetsResolvedFully !== true) return false;
-      if (!isReserveTradable(d.onChain.assets.map((a) => a.mint))) return false;
-      if (d.name.startsWith("Unnamed Reserve")) return false;
-      // A wound-down Reserve is genuinely visible/tradable-out (see
-      // reserveEligibility.ts's WD-01 fix) but shouldn't be curated as a
-      // "Featured" highlight while it's on its way to closing.
-      if (d.onChain.status === "windDown") return false;
-      return true;
-    })
+    .filter((d) => Boolean(d.onChain) && d.onChain?.status !== "windDown")
     .sort((a, b) => b.aum - a.aum)
     .slice(0, n);
 }

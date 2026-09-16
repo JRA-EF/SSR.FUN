@@ -46,11 +46,13 @@ export function ReserveSnapshotHydrator() {
       ]);
       if (cancelled || !snapshot) return;
       // Register every asset mint the snapshot's Reserves hold BEFORE seeding,
-      // so isReserveTradable() passes immediately. Without this the multi-asset
-      // Reserves seed but fail the Home page's Featured filter (which requires
-      // isReserveTradable) until the async useMainnetKnownAssetMints hook loads
-      // -- i.e. "Active Reserves 7" but "Featured: none". The snapshot already
-      // carries the full mint set, so we don't wait on the hook.
+      // so isReserveTradable() passes immediately for every trade-eligibility
+      // check (Buy/Sell gating etc.) instead of waiting on the async
+      // useMainnetKnownAssetMints hook. (Historically the Home page's Featured
+      // filter also depended on this -- "Active Reserves 7" but "Featured:
+      // none" -- but since 2026-09-16 Featured is plainly the top 3 by AUM.)
+      // The snapshot already carries the full mint set, so we don't wait on
+      // the hook.
       const snapshotMints = [...new Set(snapshot.reserves.flatMap((r) => r.assets.map((a) => a.assetMint)))];
       if (snapshotMints.length > 0) registerDynamicSupportedAssetMints(snapshotMints);
       let dtrs;

@@ -41,7 +41,11 @@ function onChainMeta(overrides: { assetsResolvedFully: boolean; mints: string[] 
   } as any;
 }
 
-describe("selectFeaturedReserves -- excludes unresolved/unsupported/unnamed Reserves", () => {
+// Featured = the top 3 on-chain Reserves by AUM, i.e. the head of Discover's
+// default (AUM-descending) order (DEC-0201, 2026-09-16), with two exclusions:
+// a purely local/simulated DTR, and a Reserve that is winding down (DEC-0202).
+// The earlier resolved/tradable/named gates were dropped on purpose.
+describe("selectFeaturedReserves -- top N on-chain Reserves by AUM, mirroring Discover's default order", () => {
   it("keeps a fully-resolved, tradable, named on-chain Reserve", () => {
     const dtr = makeDtr({ id: "a", name: "Real Reserve", aum: 500, onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
     expect(selectFeaturedReserves([dtr])).to.deep.equal([dtr]);
@@ -52,25 +56,35 @@ describe("selectFeaturedReserves -- excludes unresolved/unsupported/unnamed Rese
     expect(selectFeaturedReserves([dtr])).to.deep.equal([]);
   });
 
-  it("excludes an under-resolved Reserve (assetsResolvedFully: false), even if its AUM is large", () => {
+  it("no longer excludes an under-resolved Reserve (assetsResolvedFully: false) -- AUM rank alone decides", () => {
     const dtr = makeDtr({ id: "a", aum: 999999, onChain: onChainMeta({ assetsResolvedFully: false, mints: TRADABLE_MINTS }) });
-    expect(selectFeaturedReserves([dtr])).to.deep.equal([]);
+    expect(selectFeaturedReserves([dtr])).to.deep.equal([dtr]);
   });
 
-  it("excludes a fully-resolved Reserve holding an unsupported asset (e.g. wrapped SOL)", () => {
+  it("no longer excludes a Reserve holding an unsupported asset (e.g. wrapped SOL)", () => {
     const dtr = makeDtr({ id: "a", onChain: onChainMeta({ assetsResolvedFully: true, mints: [UNSUPPORTED_MINT] }) });
-    expect(selectFeaturedReserves([dtr])).to.deep.equal([]);
+    expect(selectFeaturedReserves([dtr])).to.deep.equal([dtr]);
   });
 
-  it("excludes a Reserve with the 'Unnamed Reserve (#N)' placeholder name", () => {
+  it("no longer excludes a Reserve with the 'Unnamed Reserve (#N)' placeholder name", () => {
     const dtr = makeDtr({ id: "a", name: "Unnamed Reserve (#7)", onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
-    expect(selectFeaturedReserves([dtr])).to.deep.equal([]);
+    expect(selectFeaturedReserves([dtr])).to.deep.equal([dtr]);
   });
 
-  it("sorts the remaining eligible Reserves by AUM, descending", () => {
+  it("excludes a Reserve that is winding down, and lets the next-ranked Reserve take its Featured slot (DEC-0202)", () => {
+    const windingDown = makeDtr({ id: "wd", aum: 999999, onChain: { ...onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }), status: "windDown" } });
+    const a = makeDtr({ id: "a", aum: 300, onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    const b = makeDtr({ id: "b", aum: 200, onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    const c = makeDtr({ id: "c", aum: 100, onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    expect(selectFeaturedReserves([c, windingDown, a, b]).map((d) => d.id)).to.deep.equal(["a", "b", "c"]);
+  });
+
+  it("sorts on-chain Reserves by AUM, descending, and keeps only the top N", () => {
     const low = makeDtr({ id: "low", aum: 100, onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
+    const mid = makeDtr({ id: "mid", aum: 500, onChain: onChainMeta({ assetsResolvedFully: false, mints: TRADABLE_MINTS }) });
     const high = makeDtr({ id: "high", aum: 900, onChain: onChainMeta({ assetsResolvedFully: true, mints: TRADABLE_MINTS }) });
-    expect(selectFeaturedReserves([low, high]).map((d) => d.id)).to.deep.equal(["high", "low"]);
+    const top = makeDtr({ id: "top", aum: 5000, onChain: onChainMeta({ assetsResolvedFully: true, mints: [UNSUPPORTED_MINT] }) });
+    expect(selectFeaturedReserves([low, mid, high, top]).map((d) => d.id)).to.deep.equal(["top", "high", "mid"]);
   });
 });
 

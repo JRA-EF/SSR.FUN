@@ -60,9 +60,10 @@ function makeOnChainDtr(id: string, aum: number): DTR {
       mintAuthority: "11111111111111111111111111111111",
       vaultAuthority: "11111111111111111111111111111111",
       manager: "11111111111111111111111111111111",
-      // A real, fully-resolved, supported (devUSDC) asset -- selectFeaturedReserves
-      // now also requires assetsResolvedFully and a tradable composition (see
-      // this pass's Featured-Reserves exclusion fix), not just "has onChain".
+      // A real, fully-resolved, supported (devUSDC) asset. (Since 2026-09-16
+      // selectFeaturedReserves only requires "has onChain" -- Featured is the
+      // top 3 by AUM, mirroring Discover's default order -- but this fixture
+      // stays realistic on purpose.)
       assets: [{ mint: DEVUSDC.mint, symbol: "devUSDC", decimals: DEVUSDC.decimals, weightBps: 10_000, reserveAsset: "ra", vault: "v", vaultBalanceRaw: "0" }],
       status: "active",
       totalTargetWeightBps: 10_000,
