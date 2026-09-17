@@ -28,10 +28,33 @@ export interface TokenMetadataOptions {
    */
   currentImageUrl?: string | null;
   externalUrl?: string | null;
+  /**
+   * The origin serving this record (e.g. https://ssr.fun). A payload imageUrl
+   * that points at one of this app's OTHER hosts (a Reserve launched on the
+   * old domain, which is now the gated staging site) is rewritten onto it,
+   * mirroring the frontend's rewriteAppMetadataUriToCurrentOrigin, so a
+   * wallet fetching the image never hits a gated host.
+   */
+  rewriteOrigin?: string | null;
+}
+
+/** Hosts this app has been served from -- same set as packages/sdk/src/discovery.ts's APP_HOSTS. */
+export const APP_HOSTS = new Set(["strategic-super-reserve.fun", "www.strategic-super-reserve.fun", "ssr.fun", "www.ssr.fun", "ssr-fun.vercel.app"]);
+
+export function rewriteAppImageUrl(imageUrl: string, origin: string | null | undefined): string {
+  if (!origin) return imageUrl;
+  try {
+    const u = new URL(imageUrl);
+    if (!APP_HOSTS.has(u.hostname.toLowerCase())) return imageUrl;
+    return `${origin.replace(/[/]+$/, "")}${u.pathname}${u.search}`;
+  } catch {
+    return imageUrl;
+  }
 }
 
 export function buildTokenMetadataJson(payload: ReserveMetadataPayload, opts: TokenMetadataOptions = {}): TokenMetadataJson {
-  const image = (opts.currentImageUrl && opts.currentImageUrl.trim()) || (payload.imageUrl && payload.imageUrl.trim()) || "";
+  const rawImage = (opts.currentImageUrl && opts.currentImageUrl.trim()) || (payload.imageUrl && payload.imageUrl.trim()) || "";
+  const image = rawImage ? rewriteAppImageUrl(rawImage, opts.rewriteOrigin) : "";
   const out: TokenMetadataJson = {
     name: payload.name,
     symbol: payload.ticker,

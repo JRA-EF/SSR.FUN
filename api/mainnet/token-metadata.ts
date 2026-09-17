@@ -79,6 +79,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const body = buildTokenMetadataJson(row.payload, {
       currentImageUrl,
       externalUrl: reserve ? `${origin}/#/dtr/${reserve}` : `${origin}/#/discover`,
+      rewriteOrigin: origin,
     });
     // Short edge cache: a Manager's picture change should reach wallets
     // within a minute, and the record is cheap to rebuild.

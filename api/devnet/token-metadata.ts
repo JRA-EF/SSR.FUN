@@ -70,6 +70,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const body = buildTokenMetadataJson(row.payload, {
       currentImageUrl,
       externalUrl: reserve ? `${origin}/#/dtr/${reserve}` : `${origin}/#/discover`,
+      rewriteOrigin: origin,
     });
     res.setHeader?.("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
     res.setHeader?.("Access-Control-Allow-Origin", "*");
