@@ -57,10 +57,10 @@ import {
   findDelegate,
   validateFeeRecipientInputs,
   validateMetadataUri,
-  computeEffectiveFeeSplit,
   buildSetReserveTokenMetadataInstruction,
   tokenMetadataUriFromReserveMetadataUri,
   tokenMetadataOriginFor,
+  computeEffectiveFeeSplit,
   validateSeedPlan,
   MIN_SEED_AMOUNT_PER_ASSET,
   DEVNET_FIXTURES,
@@ -1417,13 +1417,6 @@ export async function createReserveOnChain(params: {
   connection: Connection;
   wallet: WalletContextState;
   metadataUri: string;
-  mintFeeBps: number;
-  tvlFeeBps: number;
-  feeDestination: PublicKey;
-  /**
-   * Manager fee recipients beyond the Primary Fee Destination (DEC-0094).
-   * When omitted or containing only the Primary at 100%, no extra
-   * instruction is needed -- `feeDestination` alone already covers that
   /**
    * The Reserve Token's on-chain (Metaplex) name and symbol, already fitted
    * to Metaplex's 32/10-byte limits (fitTokenMetadataName/Symbol). When
@@ -1433,6 +1426,13 @@ export async function createReserveOnChain(params: {
    * not this app's record (nothing standard-format to point at).
    */
   tokenMetadata?: { name: string; symbol: string };
+  mintFeeBps: number;
+  tvlFeeBps: number;
+  feeDestination: PublicKey;
+  /**
+   * Manager fee recipients beyond the Primary Fee Destination (DEC-0094).
+   * When omitted or containing only the Primary at 100%, no extra
+   * instruction is needed -- `feeDestination` alone already covers that
    * case. When >1 entries, `initializeManagerFeeRecipients` is bundled into
    * the SAME create-and-register transaction. If provided, MUST include the
    * Primary (`feeDestination`) as one entry and allocations must sum to
@@ -1518,13 +1518,6 @@ export async function createReserveOnChain(params: {
     );
 
     const ixs: TransactionInstruction[] = [createIx, ...registerIxs];
-    const recipients = params.feeRecipients;
-    if (recipients && recipients.length > 1) {
-      validateFeeRecipientInputs(recipients);
-      const [delegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
-      const initRecipientsIx = await buildInitializeManagerFeeRecipientsInstruction(
-        program,
-        programId,
 
     if (params.tokenMetadata) {
       // Same stored record as metadataUri, served in the standard format the
@@ -1545,6 +1538,13 @@ export async function createReserveOnChain(params: {
         );
       }
     }
+    const recipients = params.feeRecipients;
+    if (recipients && recipients.length > 1) {
+      validateFeeRecipientInputs(recipients);
+      const [delegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
+      const initRecipientsIx = await buildInitializeManagerFeeRecipientsInstruction(
+        program,
+        programId,
         addresses.reserve,
         wallet.publicKey,
         delegate,

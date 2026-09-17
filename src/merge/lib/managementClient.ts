@@ -33,15 +33,15 @@ import {
   buildUpdateDelegatePermissionsInstruction,
   buildUpdateMetadataInstruction,
   buildUpdateTargetsInstruction,
-  describeOnChainError,
   buildSetReserveTokenMetadataInstruction,
+  describeOnChainError,
   findDelegate,
   fetchProtocolConfig,
-  validateMetadataUri,
   fitTokenMetadataName,
   fitTokenMetadataSymbol,
   tokenMetadataOriginFor,
   tokenMetadataUriFromReserveMetadataUri,
+  validateMetadataUri,
   type RecipientInput,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError } from "./rpcResilience";
@@ -126,11 +126,6 @@ export async function executeUpdateMetadata(
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
 
-export async function executeAddReserveAsset(
-  connection: Connection,
-  wallet: WalletContextState,
-  reserve: string,
-  assetMint: string,
 /** The protocol's root authority wallet (ProtocolConfig.authority) -- may publish any Reserve's token metadata (the program also accepts admin_2, which the read model does not expose). */
 export async function fetchProtocolAuthority(connection: Connection): Promise<string | null> {
   const cfg = await fetchProtocolConfig(connection, programId);
@@ -172,6 +167,11 @@ export async function executeSetReserveTokenMetadata(
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
 
+export async function executeAddReserveAsset(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  assetMint: string,
   targetWeightBps: number,
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
