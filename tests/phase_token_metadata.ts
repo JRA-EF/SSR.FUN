@@ -14,7 +14,7 @@ import { expect } from "chai";
 import { createHash } from "node:crypto";
 import { PublicKey } from "@solana/web3.js";
 import idlJson from "../packages/sdk/idl/ssr_protocol.json";
-import { buildTokenMetadataJson } from "../lib/reserve-metadata/tokenMetadata";
+import { buildTokenMetadataJson, rewriteAppImageUrl } from "../lib/reserve-metadata/tokenMetadata";
 import type { ReserveMetadataPayload } from "../lib/reserve-metadata/payload";
 import {
   TOKEN_METADATA_PROGRAM_ID,
@@ -117,6 +117,14 @@ describe("lib/reserve-metadata/tokenMetadata.ts -- buildTokenMetadataJson (the r
   it("prefers the Reserve's CURRENT picture pointer over the payload's imageUrl (a Manager can change the picture without republishing)", () => {
     const out = buildTokenMetadataJson(payload, { currentImageUrl: "https://ssr.fun/api/mainnet/reserve-image?id=fedcba9876543210" });
     expect(out.image).to.equal("https://ssr.fun/api/mainnet/reserve-image?id=fedcba9876543210");
+  });
+
+  it("rewrites a picture link on one of this app's other hosts onto the serving origin (a Reserve launched on the old, now-gated domain), and leaves foreign hosts alone", () => {
+    const old = { ...payload, imageUrl: "https://strategic-super-reserve.fun/api/mainnet/reserve-image?id=978fa4e7b28cc378" };
+    expect(buildTokenMetadataJson(old, { rewriteOrigin: "https://ssr.fun" }).image).to.equal("https://ssr.fun/api/mainnet/reserve-image?id=978fa4e7b28cc378");
+    expect(buildTokenMetadataJson(old).image).to.equal(old.imageUrl);
+    expect(rewriteAppImageUrl("https://cdn.example.com/pic.png", "https://ssr.fun")).to.equal("https://cdn.example.com/pic.png");
+    expect(rewriteAppImageUrl("not a url", "https://ssr.fun")).to.equal("not a url");
   });
 
   it("omits image entirely (never an empty string) when the Reserve has no picture, and omits the Category attribute when blank", () => {
