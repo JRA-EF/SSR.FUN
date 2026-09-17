@@ -106,6 +106,9 @@ export function Shell({ children }: { children: ReactNode }) {
                 {l.label}
               </Link>
             ))}
+            {/* Public Documentation site: a real path (docs.html via the
+                /docs rewrite), not a hash route, so it is a plain anchor. */}
+            <a href="/docs" className="nav-link">Docs</a>
           </nav>
           <ReserveSearch />
           <ThemeToggle />
@@ -166,6 +169,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <div style={{ color: 'var(--text-2)', marginBottom: 8, fontWeight: 600 }}>Understand</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Link to="/#how" className="faint">How it works</Link>
+                <a href="/docs" className="faint">Documentation</a>
                 <Link to="/legal/terms" className="faint">Terms</Link>
                 <Link to="/legal/disclosures" className="faint">Disclosures</Link>
                 <Link to="/legal/privacy" className="faint">Privacy</Link>

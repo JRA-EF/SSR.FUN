@@ -1,11 +1,28 @@
 import path from 'path'
-import { defineConfig } from 'vite'
+import { defineConfig, type Connect, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
+// Dev/preview servers have no vercel.json rewrites, so mirror the one
+// production rule the Documentation site needs: /docs and /docs/<slug>
+// serve docs.html (Vercel does the same via vercel.json "rewrites").
+const DOCS_PATH_RE = /^\/docs(?=\/|\?|$)/
+function docsPathRewrite(): Plugin {
+  const rewrite = (server: { middlewares: Connect.Server }) => {
+    server.middlewares.use((req, _res, next) => {
+      if (req.url && DOCS_PATH_RE.test(req.url)) {
+        const q = req.url.indexOf('?')
+        req.url = '/docs.html' + (q >= 0 ? req.url.slice(q) : '')
+      }
+      next()
+    })
+  }
+  return { name: 'ssr-docs-path-rewrite', configureServer: rewrite, configurePreviewServer: rewrite }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), docsPathRewrite()],
   // @solana/web3.js and friends assume a Node-like `global` -- see
   // src/polyfills.ts for the Buffer half of this fix.
   define: {
@@ -28,6 +45,9 @@ export default defineConfig({
       // built as its own page/bundle, entirely separate from the main app.
       input: {
         main: path.resolve(import.meta.dirname, './index.html'),
+        // Public Documentation site (/docs) -- separate bundle, no wallet or
+        // store code, served outside the closed-beta gate (middleware.ts).
+        docs: path.resolve(import.meta.dirname, './docs.html'),
         internalStatus: path.resolve(import.meta.dirname, './internal-status.html'),
         internalFeedback: path.resolve(import.meta.dirname, './internal-feedback.html'),
         internalKpis: path.resolve(import.meta.dirname, './internal-kpis.html'),
