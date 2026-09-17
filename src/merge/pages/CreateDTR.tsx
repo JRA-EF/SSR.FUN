@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, type RecipientInput } from "@ssr/sdk";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
@@ -38,7 +38,7 @@ import {
 } from "@/lib/createReserveClient";
 import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, type LaunchAssetPlan } from "@/lib/launchFunding";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
-import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
+import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
@@ -1119,6 +1119,10 @@ export function CreateDTR() {
         connection,
         wallet: walletCtx,
         metadataUri,
+        // On-chain token name/symbol for wallets and DEXes, from the same
+        // Step-1 fields, fitted to Metaplex's 32/10-byte limits. Only once
+        // the program on this cluster has the instruction (TOKEN_METADATA_LIVE).
+        tokenMetadata: TOKEN_METADATA_LIVE ? { name: fitTokenMetadataName(name), symbol: fitTokenMetadataSymbol(ticker) } : undefined,
         mintFeeBps: Math.round(mintFeePct * 100),
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,

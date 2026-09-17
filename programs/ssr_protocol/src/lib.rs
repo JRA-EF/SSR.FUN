@@ -236,6 +236,15 @@ pub mod ssr_protocol {
         instructions::update_metadata::handler(ctx, new_metadata_uri)
     }
 
+    pub fn set_reserve_token_metadata<'info>(
+        ctx: Context<'info, SetReserveTokenMetadata<'info>>,
+        name: String,
+        symbol: String,
+        uri: String,
+    ) -> Result<()> {
+        instructions::set_reserve_token_metadata::handler(ctx, name, symbol, uri)
+    }
+
     pub fn update_protocol_config<'info>(
         ctx: Context<'info, UpdateProtocolConfig<'info>>,
         new_default_protocol_fee_destination: Pubkey,

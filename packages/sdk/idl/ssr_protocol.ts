@@ -5505,6 +5505,166 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "setReserveTokenMetadata",
+      "discriminator": [
+        246,
+        76,
+        137,
+        45,
+        38,
+        13,
+        14,
+        165
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "docs": [
+            "The Reserve Token mint. Read-only here: Metaplex reads its mint",
+            "authority to authorise creation; nothing on the mint changes."
+          ],
+          "relations": [
+            "reserve"
+          ]
+        },
+        {
+          "name": "mintAuthority",
+          "docs": [
+            "Signs the CPI as the mint authority on create and as the metadata",
+            "update authority on both create and update."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "metadata",
+          "docs": [
+            "is re-derived and compared in the handler (Metaplex's seeds live in",
+            "another program, so Anchor's `seeds =` constraint can't express it);",
+            "whether it already holds data decides create vs. update."
+          ],
+          "writable": true
+        },
+        {
+          "name": "delegate",
+          "docs": [
+            "`Delegate` PDA, only deserialized when the signer is neither the",
+            "Reserve's root manager nor a protocol admin."
+          ]
+        },
+        {
+          "name": "signer",
+          "docs": [
+            "Pays the metadata account's rent on first creation."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "tokenMetadataProgram",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "type": "string"
+        },
+        {
+          "name": "uri",
+          "type": "string"
+        }
+      ]
+    },
+    {
       "name": "transferReserveManager",
       "discriminator": [
         17,
@@ -6449,6 +6609,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "reserveTokenMetadataSet",
+      "discriminator": [
+        180,
+        103,
+        248,
+        54,
+        162,
+        177,
+        209,
+        0
+      ]
+    },
+    {
       "name": "reserveTokensMinted",
       "discriminator": [
         201,
@@ -6850,6 +7023,26 @@ export type SsrProtocol = {
       "code": 6061,
       "name": "feeSettlementReserveMismatch",
       "msg": "This FeeSettlement account does not belong to the supplied Reserve."
+    },
+    {
+      "code": 6062,
+      "name": "tokenMetadataNameInvalid",
+      "msg": "Token metadata name must be 1-32 bytes."
+    },
+    {
+      "code": 6063,
+      "name": "tokenMetadataSymbolInvalid",
+      "msg": "Token metadata symbol must be 1-10 bytes."
+    },
+    {
+      "code": 6064,
+      "name": "tokenMetadataUriInvalid",
+      "msg": "Token metadata URI must be 1-200 bytes."
+    },
+    {
+      "code": 6065,
+      "name": "tokenMetadataAddressMismatch",
+      "msg": "The supplied metadata account is not the Metaplex metadata PDA of this Reserve Token mint."
     }
   ],
   "types": [
@@ -8471,6 +8664,55 @@ export type SsrProtocol = {
           },
           {
             "name": "closed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reserveTokenMetadataSet",
+      "docs": [
+        "Emitted by `set_reserve_token_metadata`: the Reserve Token mint's Metaplex",
+        "metadata account was created (`created == true`) or its name/symbol/uri",
+        "replaced."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserveTokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "metadata",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "created",
+            "type": "bool"
+          },
+          {
+            "name": "updatedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
           }
         ]
       }

@@ -272,6 +272,8 @@ export interface OnChainReserveMeta {
   redemptionFeeBps?: number;
   /** The Manager's configured fee-payout wallet, read live from Reserve.feeConfig.feeDestination -- required (not derivable) for a real collect_fees call. */
   feeDestination?: string;
+  /** The Reserve's on-chain metadata_uri (its own off-chain record) -- the source the Reserve Token's Metaplex metadata `uri` is derived from (see packages/sdk/src/tokenMetadata.ts). */
+  metadataUri?: string;
   /** Manager's share of every collected fee, in bps of the fee itself -- read live from Reserve.feeConfig.managerFeeShareBps. Sums with protocolFeeShareBps to exactly 10000. */
   managerFeeShareBps?: number;
   /** Protocol's share of every collected fee, in bps of the fee itself -- read live from Reserve.feeConfig.protocolFeeShareBps. */

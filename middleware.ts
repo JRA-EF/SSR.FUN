@@ -104,8 +104,10 @@ function isPublicDocsPath(pathname: string): boolean {
 const PUBLIC_READ_API_PATHS = new Set([
   '/api/mainnet/reserve-metadata',
   '/api/mainnet/reserve-image',
+  '/api/mainnet/token-metadata',
   '/api/devnet/reserve-metadata',
   '/api/devnet/reserve-image',
+  '/api/devnet/token-metadata',
 ])
 function isPublicReadApi(request: Request, pathname: string): boolean {
   return (request.method === 'GET' || request.method === 'HEAD') && PUBLIC_READ_API_PATHS.has(pathname)
