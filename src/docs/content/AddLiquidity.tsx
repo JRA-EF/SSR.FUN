@@ -28,11 +28,10 @@ function BeforeYouStart() {
           reserve assets per Reserve Token. Your starting pool price should match it.
         </li>
       </ul>
-      <Callout kind="warn" title="Expect an 'unknown token' warning today.">
-        Exchanges show Reserve Tokens without a name, symbol, or image and mark them unverified because the on-chain
-        metadata has not shipped yet. This is being fixed; see{' '}
-        <DocLink to={docHref('reserve-tokens-on-dexes')}>Reserve Tokens on DEXes</DocLink>. The token itself is what
-        the Reserve page says it is. Always confirm you pasted the exact mint address.
+      <Callout title="Check the mint address.">
+        An exchange identifies a token by its mint address alone. Confirm the address you paste matches the one on the
+        Reserve page before you deposit. How exchanges see a Reserve Token is described in{' '}
+        <DocLink to={docHref('reserve-tokens-on-dexes')}>Reserve Tokens on DEXes</DocLink>.
       </Callout>
       <h3>Why the starting price matters</h3>
       <p>
@@ -58,8 +57,8 @@ function Raydium() {
           <>Open Raydium, connect the wallet that holds your Reserve Tokens, and go to Liquidity, then Create Pool.</>,
           <>Choose the standard constant-product pool type unless you specifically want a concentrated pool.</>,
           <>
-            For the base token, paste the Reserve Token mint address. Raydium will show it as an unknown or unverified
-            token. Confirm the address matches the Reserve page, then accept the import.
+            For the base token, paste the Reserve Token mint address and confirm it matches the Reserve page, then
+            accept the import.
           </>,
           <>Choose the quote token, typically SOL or USDC.</>,
           <>
@@ -77,10 +76,9 @@ function Raydium() {
           <>Approve in your wallet. You receive LP tokens that represent your share of the pool.</>,
         ]}
       </Steps>
-      <Callout title="Name and symbol.">
-        Raydium fills in a token's name and symbol from Jupiter's token list and from on-chain metadata. Neither exists
-        for Reserve Tokens yet, so the fields stay blank. Once the on-chain metadata ships they populate automatically
-        for existing pools too.
+      <Callout title="Starting price.">
+        A new pool opens at the ratio of your two deposits. Match the Reserve's Token Price shown on SSR.fun so the pool
+        starts where minting and redemption already value the token.
       </Callout>
     </>
   )
@@ -96,10 +94,7 @@ function PumpSwap() {
       <Steps>
         {[
           <>Open PumpSwap, connect your wallet, and choose to create a pool or add liquidity.</>,
-          <>
-            Paste the Reserve Token mint address. The token appears without a picture and outside the verified list. Check
-            the address against the Reserve page before continuing.
-          </>,
+          <>Paste the Reserve Token mint address and check it against the Reserve page before continuing.</>,
           <>Pick the quote asset, usually SOL.</>,
           <>
             Enter the amounts. As on Raydium, the ratio of the two deposits sets the starting price, so match the
@@ -108,10 +103,9 @@ function PumpSwap() {
           <>Approve the transactions in your wallet and keep the LP position visible in your portfolio.</>,
         ]}
       </Steps>
-      <Callout title="Verified list and image.">
-        PumpSwap reads the same on-chain metadata account as other Solana interfaces for the name and image, and uses a
-        separate list for the verified marker. Both are covered by the work described in{' '}
-        <DocLink to={docHref('reserve-tokens-on-dexes', 'roadmap')}>What is changing</DocLink>.
+      <Callout title="Same token, any venue.">
+        A Reserve Token pooled on PumpSwap is the same token that SSR.fun mints and redeems. Holders who buy it there can
+        redeem it on SSR.fun at value per token like any other holder.
       </Callout>
     </>
   )

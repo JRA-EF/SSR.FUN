@@ -29,8 +29,8 @@ export const DOCS: DocEntry[] = [
   {
     slug: 'reserve-tokens-on-dexes',
     title: 'Reserve Tokens on DEXes',
-    blurb: 'Why a Reserve Token shows as "Unknown" and unverified on Raydium or PumpSwap today, how to resolve one to its Reserve, and what is changing.',
-    audience: 'Holders, DEX and wallet teams',
+    blurb: 'How a Reserve Token behaves as a standard Solana token: what happens on SSR.fun versus on an exchange, its on-chain properties, and how any mint resolves to its Reserve.',
+    audience: 'Holders, exchanges and wallets',
     updated: '17 September 2026',
     render: () => <ReserveTokensOnDexes />,
   },
