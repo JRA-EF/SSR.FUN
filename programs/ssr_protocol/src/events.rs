@@ -280,6 +280,22 @@ pub struct MetadataUpdated {
     pub ts: i64,
 }
 
+/// Emitted by `set_reserve_token_metadata`: the Reserve Token mint's Metaplex
+/// metadata account was created (`created == true`) or its name/symbol/uri
+/// replaced.
+#[event]
+pub struct ReserveTokenMetadataSet {
+    pub reserve: Pubkey,
+    pub reserve_token_mint: Pubkey,
+    pub metadata: Pubkey,
+    pub name: String,
+    pub symbol: String,
+    pub uri: String,
+    pub created: bool,
+    pub updated_by: Pubkey,
+    pub ts: i64,
+}
+
 #[event]
 pub struct ProtocolConfigUpdated {
     pub authority: Pubkey,

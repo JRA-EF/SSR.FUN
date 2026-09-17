@@ -517,6 +517,7 @@ export function buildDtrFromDiscoveredReserve(
     delegateCountOnChain: discovered.delegateCount,
     delegatesOnChain: delegates.map(onChainDelegateFromDiscovered),
     feeDestination: discovered.feeDestination,
+    metadataUri: discovered.metadataUri,
     managerFeeShareBps: discovered.managerFeeShareBps,
     protocolFeeShareBps: discovered.protocolFeeShareBps,
     pendingManagerFeeShares: discovered.pendingManagerFeeShares,

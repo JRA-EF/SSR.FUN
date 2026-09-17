@@ -34,9 +34,14 @@ import {
   buildUpdateMetadataInstruction,
   buildUpdateTargetsInstruction,
   describeOnChainError,
+  buildSetReserveTokenMetadataInstruction,
   findDelegate,
   fetchProtocolConfig,
   validateMetadataUri,
+  fitTokenMetadataName,
+  fitTokenMetadataSymbol,
+  tokenMetadataOriginFor,
+  tokenMetadataUriFromReserveMetadataUri,
   type RecipientInput,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError } from "./rpcResilience";
@@ -126,6 +131,47 @@ export async function executeAddReserveAsset(
   wallet: WalletContextState,
   reserve: string,
   assetMint: string,
+/** The protocol's root authority wallet (ProtocolConfig.authority) -- may publish any Reserve's token metadata (the program also accepts admin_2, which the read model does not expose). */
+export async function fetchProtocolAuthority(connection: Connection): Promise<string | null> {
+  const cfg = await fetchProtocolConfig(connection, programId);
+  return cfg ? cfg.authority : null;
+}
+
+/**
+ * Publishes (or refreshes) the Reserve Token's on-chain Metaplex metadata:
+ * name and symbol from the Reserve's current name/ticker (fitted to
+ * Metaplex's limits) and a uri pointing at the standard-format record
+ * derived from the Reserve's own metadata URI. One wallet approval; the
+ * signer pays the metadata account's rent the first time. Gated on-chain to
+ * the root Manager, a co-manager with UPDATE_METADATA, or a protocol admin.
+ */
+export async function executeSetReserveTokenMetadata(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  reserveTokenMint: string,
+  reserveMetadataUri: string,
+  reserveName: string,
+  ticker: string,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const uri = tokenMetadataUriFromReserveMetadataUri(
+    reserveMetadataUri,
+    reserve,
+    tokenMetadataOriginFor(IS_MAINNET ? "mainnet" : "devnet", typeof window !== "undefined" ? window.location.origin : null),
+  );
+  if (!uri) throw new Error("This Reserve's metadata record is not in a format that can be published for wallets and exchanges.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildSetReserveTokenMetadataInstruction(program, programId, reservePk, new PublicKey(reserveTokenMint), wallet.publicKey, actingDelegate, {
+    name: fitTokenMetadataName(reserveName),
+    symbol: fitTokenMetadataSymbol(ticker),
+    uri,
+  });
+  return signAndSend(connection, wallet, new Transaction().add(ix));
+}
+
   targetWeightBps: number,
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");

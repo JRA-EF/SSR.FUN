@@ -6,7 +6,7 @@ import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } fr
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered, computeMarketCap, type AssetPriceInfo } from "@/lib/onChainReserve";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
-import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
+import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt, fetchReserveAltAddress } from "@/lib/reserveAltClient";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
@@ -34,8 +34,12 @@ import {
   DEVUSDC,
   findReserve,
   validateFeeRecipientInputs,
+  fetchReserveTokenMetadata,
+  fitTokenMetadataName,
+  fitTokenMetadataSymbol,
   type ActivityLogEntry,
   type ManagerFeeRecipientsOnChain,
+  type OnChainTokenMetadata,
   type RecipientInput,
 } from "@ssr/sdk";
 import {
@@ -50,6 +54,8 @@ import {
   executeRemoveReserveAsset,
   executeSubmitRebalance,
   executeUpdateDelegatePermissions,
+  executeSetReserveTokenMetadata,
+  fetchProtocolAuthority,
   type RebalanceAssetPlan,
 } from "@/lib/managementClient";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
@@ -379,6 +385,35 @@ export function ManageDTR() {
   // reserveImageClient.ts) and held here for preview until saved.
   const [pendingProfileImage, setPendingProfileImage] = useState<string | null>(null);
   const [profileImageError, setProfileImageError] = useState<string | null>(null);
+  // On-chain (Metaplex) token metadata of the Reserve Token -- what wallets
+  // and exchanges display. undefined = not loaded yet, null = none published.
+  const [tokenMetadataOnChain, setTokenMetadataOnChain] = useState<OnChainTokenMetadata | null | undefined>(undefined);
+  const [publishingTokenMetadata, setPublishingTokenMetadata] = useState(false);
+  const [tokenMetadataError, setTokenMetadataError] = useState<string | null>(null);
+  const [protocolAuthority, setProtocolAuthority] = useState<string | null>(null);
+  const reserveTokenMintForMetadata = TOKEN_METADATA_LIVE ? (dtr?.onChain?.reserveTokenMint ?? null) : null;
+  useEffect(() => {
+    if (!reserveTokenMintForMetadata) {
+      setTokenMetadataOnChain(undefined);
+      return;
+    }
+    let cancelled = false;
+    void fetchReserveTokenMetadata(connection, new PublicKey(reserveTokenMintForMetadata))
+      .then((m) => {
+        if (!cancelled) setTokenMetadataOnChain(m);
+      })
+      .catch(() => {
+        if (!cancelled) setTokenMetadataOnChain(undefined);
+      });
+    void fetchProtocolAuthority(connection)
+      .then((a) => {
+        if (!cancelled) setProtocolAuthority(a);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [connection, reserveTokenMintForMetadata]);
   // True while a picked picture is uploading/saving -- its own flag (not
   // onChainTxPending) because saving a picture no longer submits any
   // transaction at all.
@@ -732,6 +767,12 @@ export function ManageDTR() {
   // the !dtr.onChain branches above (hasManageDelegates/hasRebalance) keep
   // using the local-simulated system for a purely local/demo Reserve.
   const canUpdateMetadataOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_METADATA);
+  // Publishing the Reserve Token's on-chain metadata: same permission as
+  // editing the Reserve's metadata, plus the protocol authority (backfill).
+  const canPublishTokenMetadata = Boolean(dtr.onChain) && (canUpdateMetadataOnChain || (protocolAuthority !== null && protocolAuthority === wallet.address));
+  const tokenMetadataStale = Boolean(
+    tokenMetadataOnChain && (tokenMetadataOnChain.name !== fitTokenMetadataName(dtr.name) || tokenMetadataOnChain.symbol !== fitTokenMetadataSymbol(dtr.ticker)),
+  );
   const canUpdateTargetsOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_TARGETS);
   const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
   const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
@@ -791,6 +832,29 @@ export function ManageDTR() {
         setProfileImageError(e instanceof Error ? e.message : "Failed to save the profile picture. Please try again.");
       } finally {
         setSavingProfileImage(false);
+      }
+    })();
+  };
+
+  // Handler: publish the Reserve Token's on-chain metadata (Reserve Identity card).
+  const handlePublishTokenMetadata = () => {
+    const onChainMeta = dtr.onChain;
+    if (!onChainMeta) return;
+    if (!onChainMeta.metadataUri) {
+      setTokenMetadataError("This Reserve's metadata record could not be read from the chain, so there is nothing to publish yet.");
+      return;
+    }
+    setTokenMetadataError(null);
+    setPublishingTokenMetadata(true);
+    void (async () => {
+      try {
+        await executeSetReserveTokenMetadata(connection, walletCtx, onChainMeta.reserve, onChainMeta.reserveTokenMint, onChainMeta.metadataUri!, dtr.name, dtr.ticker);
+        setTokenMetadataOnChain(await fetchReserveTokenMetadata(connection, new PublicKey(onChainMeta.reserveTokenMint)));
+        toast({ title: "Token metadata published", description: "Wallets and exchanges will now show this Reserve Token's name, symbol, and picture." });
+      } catch (e) {
+        setTokenMetadataError(e instanceof Error ? e.message : "Failed to publish the token metadata. Please try again.");
+      } finally {
+        setPublishingTokenMetadata(false);
       }
     })();
   };
@@ -1162,6 +1226,40 @@ export function ManageDTR() {
                       <p className="font-merge-mono font-medium">{dtr.ticker}</p>
                     </div>
                   </div>
+                  {dtr.onChain && TOKEN_METADATA_LIVE && (
+                    <div>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Wallets and Exchanges</p>
+                      {tokenMetadataOnChain === undefined ? (
+                        <p className="text-sm text-muted-foreground">Checking the on-chain token metadata...</p>
+                      ) : tokenMetadataOnChain === null ? (
+                        <p className="text-sm text-muted-foreground">
+                          Not published yet. Wallets and exchanges show this Reserve Token without its name, symbol, or picture until the metadata is published on-chain.
+                        </p>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Published on-chain as <span className="font-medium text-foreground">{tokenMetadataOnChain.name}</span> (
+                          <span className="font-merge-mono">{tokenMetadataOnChain.symbol}</span>). Wallets and exchanges show this name, symbol, and picture.
+                          {tokenMetadataStale && " The Reserve's name or ticker has changed since -- publish again to update it."}
+                        </p>
+                      )}
+                      {canPublishTokenMetadata && tokenMetadataOnChain !== undefined && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant={tokenMetadataOnChain === null || tokenMetadataStale ? "default" : "outline"}
+                            disabled={publishingTokenMetadata}
+                            onClick={handlePublishTokenMetadata}
+                          >
+                            {publishingTokenMetadata ? "Publishing..." : tokenMetadataOnChain === null ? "Publish to wallets and exchanges" : "Publish again"}
+                          </Button>
+                          <p className="text-xs text-muted-foreground">
+                            Your wallet will ask you to approve one transaction{tokenMetadataOnChain === null ? " and pay a small one-time account fee" : ""}.
+                          </p>
+                        </div>
+                      )}
+                      {tokenMetadataError && <p className="text-sm text-destructive mt-2">{tokenMetadataError}</p>}
+                    </div>
+                  )}
                   <div>
                     <p className="text-sm font-semibold text-muted-foreground mb-1">Root Manager</p>
                     <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.managerAddress}</p>
