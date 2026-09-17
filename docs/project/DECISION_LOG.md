@@ -6240,3 +6240,40 @@
   ]
 }
 ```
+
+## DEC-0203
+
+```json
+{
+  "id": "DEC-0203",
+  "date": "2026-09-17",
+  "title": "Public Documentation site at /docs (own Vite entry, outside the closed-beta gate) + Reserve metadata/picture GET endpoints made publicly readable",
+  "status": "confirmed-implemented",
+  "decision": "Added a public-facing Documentation section to SSR.fun at /docs, built as its own Vite entry (docs.html -> src/docs/*) in the native design system, with four tabbed documents: Getting started; Reserve Tokens on DEXes (why a Reserve Token shows as Unknown/unverified on Raydium and PumpSwap today, what DEXes read, how to resolve a mint to its Reserve and name with one RPC call, what is changing, and a brief for DEX teams); Adding liquidity (Raydium, PumpSwap, fees and risks); Protocol reference (program addresses, PDA seeds, Reserve account byte layout, fee limits, with copyable TypeScript). Served by vercel.json rewrites /docs and /docs/(.*) -> /docs.html and mirrored for vite dev/preview by a small plugin. The site gate (middleware.ts) now lets /docs, /docs/* and /docs.html through unauthenticated, and additionally lets GET/HEAD through for /api/{mainnet,devnet}/reserve-metadata and /api/{mainnet,devnet}/reserve-image (POST stays gated). The main app gained a 'Docs' primary-nav link and a 'Documentation' footer link.",
+  "context": "Creator: 'lets create a public facing docs page. include some code, but still make it accessible and simple with different tabs etc. we'll include a Documentation section in ssr.fun.' The immediate driver is the Raydium conversation: the Strategic Solana Reserve token (SSRSol) shows on PumpSwap as not on the verified list with no image, and on Raydium with no name or symbol, and the team wants to send Raydium docs that explain what a Reserve Token is and why. Code inspection confirmed the root cause the docs describe: create_reserve initializes a plain SPL mint (6 decimals, PDA mint authority, no freeze authority) and stores name/ticker/description/imageUrl only in the off-chain record behind Reserve.metadata_uri; no Metaplex Token Metadata account is ever created (no Metaplex integration exists in the repo, as the devUSDC-era notes already recorded), and no Reserve Token is on Jupiter's verified list. A second finding: since the site-wide gate (DEC-0129/0187) returned JSON 401 for every /api/* path, the metadata_uri stored on-chain for every live Reserve was a dead link to anyone outside the beta, contradicting api/*/reserve-metadata.ts's own header ('must be resolvable by anyone/anything reading a Reserve's metadata later').",
+  "rationale": "The docs must be reachable by people who do not have a BETA key (Raydium, wallet and token-list teams, holders), so a hash route inside the gated SPA was not an option; a separate light entry (no wallet adapters, store or RPC code, ~49 kB JS) can be exempted from the gate without exposing anything the gate protects. Real paths (/docs/<slug>?tab=<id>) make specific tabs linkable when sending the material to a partner. The docs tell DEX teams to resolve a Reserve Token through the on-chain metadata_uri, which only works if that GET is public; opening GET/HEAD alone keeps the bounded, content-addressed writes gated. Tabs use the native .seg segmented control per the UI baseline (WAI-ARIA tabs pattern, arrow-key navigation); code samples are plain monospace blocks with a copy button rather than a highlighter, so the pages stay readable for non-developers and add no dependency. The 'What is changing' tab describes the metadata fix (Metaplex metadata on every Reserve Token, standard-format record, updates flowing through, then Jupiter verification, then add-liquidity from SSR.fun) as in progress without dates, matching ROADMAP.html item 2 and its DEX-liquidity callout.",
+  "alternativesConsidered": [
+    "A #/docs hash route inside the main app (rejected: behind the closed-beta gate, so unreachable by the DEX teams it is written for; the main bundle also drags wallet/RPC code into a static page)",
+    "A static page in public/ like internal-roadmap.html (rejected: no tabs without hand-written JS, and the content must share the app design tokens and theme toggle)",
+    "A document or PDF sent to Raydium instead of a site section (rejected: Creator explicitly asked for a Documentation section in ssr.fun that can be linked)",
+    "Leaving the metadata/picture GET endpoints gated (rejected: makes the on-chain metadata_uri a dead link for the outside world and the docs' lookup instructions false; GET-only exposure was already the endpoints' design intent)",
+    "Also opening POST on those endpoints (rejected: no need, and the beta gate is the only thing bounding anonymous writes today)"
+  ],
+  "impact": "New public surface: /docs (four documents, 17 tabs). No program, IDL, database or environment change. Gate behavior change: /docs* and GET/HEAD on the four metadata/picture endpoints are public; every other route is gated exactly as before. NOT yet committed or deployed at the time of this entry. ssr.fun's robots.txt still disallows everything except /, so the docs are linkable but not indexed (open question for the Creator). The 'What is changing' tab makes a public statement that on-chain metadata for Reserve Tokens is in progress and will be backfilled for existing Reserves; that statement must be kept true or the tab edited.",
+  "affectedAreas": [
+    "docs.html, src/docs/** (main.tsx, DocsApp.tsx, router.tsx, docs.css, components/{DocTabs,CodeBlock,primitives}.tsx, content/{index,addresses,GettingStarted,ReserveTokensOnDexes,AddLiquidity,ProtocolReference}.tsx)",
+    "vite.config.ts (docs entry + /docs path rewrite plugin for dev/preview)",
+    "vercel.json (rewrites /docs, /docs/(.*) -> /docs.html)",
+    "middleware.ts (isPublicDocsPath, PUBLIC_READ_API_PATHS / isPublicReadApi)",
+    "src/components/Shell.tsx (Docs nav link, Documentation footer link)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b: exit 0. oxlint on src/docs, Shell.tsx, vite.config.ts, middleware.ts: no errors (only the pre-existing only-export-components fast-refresh warning pattern, same as src/lib/router.tsx). npm run build: clean; docs bundle docs-*.js 48.9 kB (14.7 kB gzip) + docs-*.css 5.5 kB.",
+    "vite preview on :5199: GET /docs and /docs/add-liquidity?tab=raydium -> 200 serving docs.html; headless Chrome screenshots of the index, the DEX guide's What-DEXes-read and Look-up tabs at 1280px, and the Adding-liquidity Raydium tab at 520px all render in the native light theme; --dump-dom on /docs/protocol-reference?tab=read shows the Read-a-Reserve tab selected via the ?tab= deep link; --dump-dom on / shows the Docs nav-link and the footer Documentation link.",
+    "Root-cause facts quoted in the docs verified in source: programs/ssr_protocol/src/instructions/create_reserve.rs (anchor_spl::token::Mint, mint::decimals = 6, mint::authority = PDA, no freeze authority, metadata_uri only), lib/reserve-metadata/payload.ts (name/ticker/description/category/buyTaxPct/sellTaxPct/imageUrl), no Metaplex program reference anywhere in the repo; Reserve byte offsets computed from state/reserve.rs (mint at 49, metadata_uri at 167) and the discriminator sha256('account:Reserve')[0..8] = 8MMas8GHex6."
+  ]
+}
+```

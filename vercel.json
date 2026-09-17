@@ -62,6 +62,8 @@
     { "source": "/internal/kpis", "destination": "/internal-kpis.html" },
     { "source": "/internal/roadmap", "destination": "/internal-roadmap.html" },
     { "source": "/road-to-mainnet", "destination": "/road-to-mainnet.html" },
+    { "source": "/docs", "destination": "/docs.html" },
+    { "source": "/docs/(.*)", "destination": "/docs.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

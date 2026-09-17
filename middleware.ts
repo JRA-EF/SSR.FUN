@@ -83,6 +83,34 @@ const PUBLIC_PATHS = new Set([
   '/robots.txt',
 ])
 
+// The public Documentation site (docs.html, /docs and /docs/<slug> via the
+// vercel.json rewrites). Deliberately OUTSIDE the closed-beta gate: it is
+// written for people who do not have a BETA key (DEX and wallet teams, token
+// holders) and contains only public information -- program addresses,
+// account layouts, and how Reserve Tokens behave. It is its own bundle with
+// no wallet/store/RPC code, so nothing gated leaks through it.
+const DOCS_PUBLIC_PREFIX = '/docs'
+function isPublicDocsPath(pathname: string): boolean {
+  return pathname === DOCS_PUBLIC_PREFIX || pathname === '/docs.html' || pathname.startsWith(DOCS_PUBLIC_PREFIX + '/')
+}
+
+// Reserve metadata and picture READS. A Reserve's on-chain metadata_uri
+// points at these GET endpoints (api/*/reserve-metadata.ts's header: "must
+// be resolvable by anyone/anything reading a Reserve's metadata later"), and
+// the Documentation site tells DEX/wallet teams to resolve a Reserve Token
+// through them. Gating them made every live Reserve's metadata link a dead
+// 401 for the outside world. GET only: the content-addressed POST writes
+// stay behind the site gate.
+const PUBLIC_READ_API_PATHS = new Set([
+  '/api/mainnet/reserve-metadata',
+  '/api/mainnet/reserve-image',
+  '/api/devnet/reserve-metadata',
+  '/api/devnet/reserve-image',
+])
+function isPublicReadApi(request: Request, pathname: string): boolean {
+  return (request.method === 'GET' || request.method === 'HEAD') && PUBLIC_READ_API_PATHS.has(pathname)
+}
+
 function comingSoonResponse(request: Request): Response {
   const target = new URL(COMING_SOON_PATH, request.url)
   return rewrite(target, { headers: { 'cache-control': 'no-store' } })
@@ -300,6 +328,9 @@ export default async function middleware(request: Request): Promise<Response> {
   // Cron trigger requests, the site-login endpoint itself, and the Coming
   // Soon page's own files are never gated -- see the header comment above.
   if (CRON_PATHS.has(url.pathname) || url.pathname === SITE_LOGIN_PATH || PUBLIC_PATHS.has(url.pathname)) return next()
+  // Public Documentation site and the metadata/picture reads it relies on
+  // (see DOCS_PUBLIC_PREFIX / PUBLIC_READ_API_PATHS above).
+  if (isPublicDocsPath(url.pathname) || isPublicReadApi(request, url.pathname)) return next()
 
   const cookieHeader = request.headers.get('cookie')
 
