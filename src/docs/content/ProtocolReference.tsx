@@ -10,7 +10,6 @@ import {
   SPL_TOKEN_PROGRAM,
   SSR_PROGRAM_DEVNET,
   SSR_PROGRAM_MAINNET,
-  TOKEN_METADATA_PROGRAM,
 } from './addresses'
 
 const DERIVE_CODE = `import { PublicKey } from '@solana/web3.js'
@@ -86,7 +85,6 @@ function Addresses() {
           ['SSR Protocol, Mainnet', <Addr key="c86" value={SSR_PROGRAM_MAINNET} label="Mainnet program address" />],
           ['SSR Protocol, DevNet', <Addr key="c87" value={SSR_PROGRAM_DEVNET} label="DevNet program address" />],
           ['SPL Token program', <Addr key="c88" value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />],
-          ['Metaplex Token Metadata', <Addr key="c89" value={TOKEN_METADATA_PROGRAM} label="Token Metadata program address" />],
         ]}
       />
       <Facts
@@ -96,7 +94,7 @@ function Addresses() {
           ['Decimals', String(RESERVE_TOKEN_DECIMALS)],
           ['Mint authority', 'The Reserve’s mint-authority PDA (below). Program-controlled.'],
           ['Freeze authority', 'None.'],
-          ['Metaplex metadata', <>Not yet. See <DocLink to={docHref('reserve-tokens-on-dexes', 'roadmap')}>What is changing</DocLink>.</>],
+          ['Name, symbol, picture', <>In the Reserve's metadata record, linked from the Reserve account. See <DocLink to={docHref('reserve-tokens-on-dexes', 'lookup')}>Identify a Reserve Token</DocLink>.</>],
         ]}
       />
     </>

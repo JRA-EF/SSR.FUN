@@ -6277,3 +6277,35 @@
   ]
 }
 ```
+
+## DEC-0204
+
+```json
+{
+  "id": "DEC-0204",
+  "date": "2026-09-17",
+  "title": "Public docs describe how Reserve Tokens work, never current gaps: \"Reserve Tokens on DEXes\" reframed, problem/fix framing removed everywhere; the Metaplex metadata fix is an internal program change, not a partner ask",
+  "status": "confirmed-implemented",
+  "decision": "Rewrote the public /docs content so every page reads as a neutral description of how the product works. \"Reserve Tokens on DEXes\" now has four tabs (How it works, On-chain properties, Identify a Reserve Token, For integrators): what happens on SSR.fun versus on an exchange, the mint’s on-chain properties, the one-call mint-to-Reserve lookup, and an integrator brief. Removed: the Overview’s \"shows as Unknown / unverified\" explanation, the \"What DEXes read\" today-vs-expected table, the Metaplex-metadata-PDA snippet that demonstrates a null account, the \"What is changing\" roadmap tab, and every \"being fixed\" / \"not yet\" / \"expect an unknown-token warning\" callout in Getting started, Adding liquidity and the Protocol reference (the Metaplex program address row is gone too). Slug, URL and the ?tab=lookup deep link are unchanged; the old ?tab=roadmap / ?tab=for-dex-teams / ?tab=what-dexes-read links fall back to the first tab. Standing rule going forward: public documentation explains mechanisms; gap analysis and fix plans live in this log, PROJECT_STATUS.md and chat.",
+  "context": "Creator, on reading the deployed DEC-0203 guide: \"can we fix this internally? ... please while u respond also remove that part from the documentation and make the documentation more like how it works\". The first version had been written as material to send Raydium and opened by explaining why Reserve Tokens look broken on Raydium/PumpSwap and promising a fix.",
+  "rationale": "The missing name/symbol/image is an SSR.fun-side gap (no Metaplex Token Metadata account on Reserve Token mints) that SSR.fun can close itself with a program instruction, so there is nothing for a partner to act on and no reason to publish the gap. A visitor or integrator needs to know what a Reserve Token is and how to identify one, which the reframed pages still give in full, including the mint-to-Reserve lookup code. Keeping the slug and the lookup tab id preserves any link already shared.",
+  "alternativesConsidered": [
+    "Keep the \"What is changing\" tab but soften it (rejected: the Creator asked for the part to be removed, and any public roadmap statement must be kept true)",
+    "Delete the DEX guide entirely (rejected: how a Reserve Token trades on an exchange and how to identify one is exactly the how-it-works content the Creator wants)",
+    "Keep the Metaplex-PDA snippet as a neutral \"how wallets read metadata\" example (rejected: for a Reserve Token it returns null today, which is the gap in disguise)"
+  ],
+  "impact": "Public copy only; no program, API, gate or environment change. Deployed to production from a clean worktree (IDs in PROJECT_STATUS.md). The internal fix itself (Metaplex metadata via a new program instruction signed by the mint-authority PDA, standard-format metadata record, backfill for existing Reserves, then Jupiter verification) is a separate piece of work: it needs a program upgrade through the Squads authority (as DEC-0195) and is NOT started by this entry; see the 2026-09-17 status entry for the plan as explained to the Creator.",
+  "affectedAreas": [
+    "src/docs/content/ReserveTokensOnDexes.tsx (rewritten)",
+    "src/docs/content/{GettingStarted,AddLiquidity,ProtocolReference,index}.tsx (callouts, steps, rows, blurb)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": "DEC-0203’s content framing of the \"Reserve Tokens on DEXes\" guide (its site, gate and endpoint decisions stand)",
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b exit 0; oxlint src/docs 0 warnings/errors beyond the known fast-refresh pattern; vite build clean.",
+    "Grep over src/docs/content for roadmap / Unknown / unverified / being fixed / has not shipped / not yet: only the decode sample’s ?? \"Unknown\" status fallback remains.",
+    "vite preview + headless Chrome: How-it-works and On-chain-properties tabs render; DOM contains no literal \\u2019 escape sequences."
+  ]
+}
+```

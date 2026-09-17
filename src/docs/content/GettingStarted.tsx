@@ -60,12 +60,6 @@ function ReserveTokens() {
         today, and <DocLink to={docHref('add-liquidity')}>Adding liquidity</DocLink> if you want to make a market for
         one.
       </p>
-      <Callout title="Where the name and symbol live.">
-        Right now a Reserve's name, symbol, and image are stored in an off-chain record that SSR.fun reads. Wallets and
-        exchanges look for that information on-chain instead, so they may show a Reserve Token as "Unknown" until the
-        on-chain metadata ships. This is being fixed. Details are in{' '}
-        <DocLink to={docHref('reserve-tokens-on-dexes')}>Reserve Tokens on DEXes</DocLink>.
-      </Callout>
     </>
   )
 }
