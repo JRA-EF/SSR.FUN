@@ -47,7 +47,7 @@ describe("IDL -- set_reserve_token_metadata is present and consistent", () => {
 
   it("carries the instruction with Anchor's sha256('global:<name>') discriminator", () => {
     const ix = idl.instructions.find((i) => i.name === "set_reserve_token_metadata");
-    expect(ix, "instruction missing from packages/sdk/idl/ssr_protocol.json").to.exist;
+    expect(ix, "instruction missing from packages/sdk/idl/ssr_protocol.json").to.not.equal(undefined);
     expect(ix!.discriminator).to.deep.equal(anchorDiscriminator("global:set_reserve_token_metadata"));
     expect(ix!.accounts.map((a) => a.name)).to.deep.equal([
       "protocol_config",
@@ -66,7 +66,7 @@ describe("IDL -- set_reserve_token_metadata is present and consistent", () => {
 
   it("carries the ReserveTokenMetadataSet event with its sha256('event:<name>') discriminator, and its type", () => {
     const ev = idl.events.find((e) => e.name === "ReserveTokenMetadataSet");
-    expect(ev).to.exist;
+    expect(ev).to.not.equal(undefined);
     expect(ev!.discriminator).to.deep.equal(anchorDiscriminator("event:ReserveTokenMetadataSet"));
     expect(idl.types.some((t) => t.name === "ReserveTokenMetadataSet")).to.equal(true);
   });
