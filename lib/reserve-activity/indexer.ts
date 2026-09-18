@@ -65,15 +65,18 @@ async function getCursor(reserve: string, cluster: ActivityCluster): Promise<Cur
 async function upsertEntries(reserve: string, cluster: ActivityCluster, entries: ActivityLogEntry[]): Promise<void> {
   const sql = getSql();
   for (const e of entries) {
-    // On conflict (an already-indexed event), the ONLY thing that may change
-    // is a null USD valuation being filled in -- a stored valuation is
-    // frozen at first-indexing and never re-priced (DEC-0176).
+    // On conflict (an already-indexed event), the ONLY things that may change
+    // are a null USD valuation being filled in -- a stored valuation is
+    // frozen at first-indexing and never re-priced (DEC-0176) -- and a null
+    // per-recipient payouts list (DEC-0206: rows indexed before that column
+    // existed). Both are exact on-chain facts, never re-derived.
     await sql`
-      insert into reserve_activity_log (reserve, cluster, signature, kind, event_index, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2, amount_usd, amount_usd_2)
-      values (${reserve}, ${cluster}, ${e.signature}, ${e.kind}, ${e.eventIndex}, ${e.ts}, ${e.actor}, ${e.summary}, ${e.amountRaw ?? null}, ${e.amountKind ?? null}, ${e.amountRaw2 ?? null}, ${e.amountKind2 ?? null}, ${e.amountUsd ?? null}, ${e.amountUsd2 ?? null})
+      insert into reserve_activity_log (reserve, cluster, signature, kind, event_index, ts, actor, summary, amount_raw, amount_kind, amount_raw_2, amount_kind_2, amount_usd, amount_usd_2, payouts)
+      values (${reserve}, ${cluster}, ${e.signature}, ${e.kind}, ${e.eventIndex}, ${e.ts}, ${e.actor}, ${e.summary}, ${e.amountRaw ?? null}, ${e.amountKind ?? null}, ${e.amountRaw2 ?? null}, ${e.amountKind2 ?? null}, ${e.amountUsd ?? null}, ${e.amountUsd2 ?? null}, ${e.payouts ? JSON.stringify(e.payouts) : null})
       on conflict (reserve, signature, kind, event_index) do update set
         amount_usd = coalesce(reserve_activity_log.amount_usd, excluded.amount_usd),
-        amount_usd_2 = coalesce(reserve_activity_log.amount_usd_2, excluded.amount_usd_2)
+        amount_usd_2 = coalesce(reserve_activity_log.amount_usd_2, excluded.amount_usd_2),
+        payouts = coalesce(reserve_activity_log.payouts, excluded.payouts)
     `;
   }
 }
