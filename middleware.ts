@@ -51,6 +51,7 @@ const CRON_PATHS = new Set([
   '/api/ledger/ingest-cron',
   '/api/ledger/reclassify-actors-cron',
   '/api/ledger/jupiter-snapshot-cron',
+  '/api/ledger/launchpad-classify-cron',
   '/api/mainnet/warm-cache-cron',
   '/api/mainnet/fee-settlement-cron',
   // Agent-feedback daemon endpoints: machine-to-machine, authenticated by

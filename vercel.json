@@ -47,6 +47,10 @@
       "schedule": "0 5 * * 1"
     },
     {
+      "path": "/api/ledger/launchpad-classify-cron",
+      "schedule": "30 5 * * *"
+    },
+    {
       "path": "/api/mainnet/warm-cache-cron",
       "schedule": "*/1 * * * *"
     },
