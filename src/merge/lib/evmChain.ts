@@ -11,10 +11,10 @@
 //
 //   testnet 46630 -- carries a live SSR instance over MOCK assets whose
 //     mint() is unguarded, so anyone can fund themselves. Safe to break.
-//   mainnet  4663 -- carries the factory (SSRDeployer) and the registries,
-//     with the fee rule already configured, but NO instance yet. Real
-//     tokenised equities live here. Creating a reserve costs ~1.4M gas and
-//     real assets to seed the basket.
+//   mainnet  4663 -- carries the factory (SSRDeployer), the registries, the
+//     configured fee rule, and the first real reserve (EQSSR) over USDG and
+//     Robinhood stock tokens. Creating another costs ~1.8M gas and real
+//     assets to seed the basket.
 import { defineChain, type Address } from "viem";
 
 export interface AssetRef {
@@ -89,7 +89,13 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     key: "mainnet",
     chain: mainnetChain,
     explorer: "https://robinhoodchain.blockscout.com",
-    ssr: null, // nothing created yet
+    // First reserve created through the mainnet factory, 2026-09-21:
+    // deploySSR tx 0x835b3bea496bae28f0449948dd6eb4c953667ea94c8f74ac82260630e53c48eb
+    // (block 69019394). Seeded with ~$10 of USDG / NVDA / SPY bought on
+    // Uniswap v3; ATOMIC_SWAP pricing and a 300s auction cap. Admin is the
+    // separate owner key 0x8b41e427...; its ProxyAdmin is
+    // 0xCd098aD73A19fe647d462e8A10C7B5A4024051bF.
+    ssr: "0xADEd2d2967AC92EE8FB52612D3436511F302Fe2f",
     isMock: false,
     deployer: "0x81dd183c53C95F251869520d8DB10B0A4a4F8858",
     versionRegistry: "0x835dd7fF172874749855aae0174c6ecAA82Ef1e6",
@@ -108,9 +114,8 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
       { address: "0xc72b96e0e48ecd4dc75e1e45396e26300bc39681", symbol: "INTC", decimals: 18, note: "Intel -- stock token" },
     ],
     notice:
-      "Live on Robinhood Chain mainnet. The factory, the registries and the fee rule are deployed and " +
-      "configured. No reserve has been created through the factory yet -- creating one moves real assets " +
-      "into it as the starting basket.",
+      "Live on Robinhood Chain mainnet. This reserve holds real USDG and Robinhood stock tokens; " +
+      "minting moves real assets into it and redeeming returns them.",
   },
 };
 
