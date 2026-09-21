@@ -10,14 +10,18 @@ import { WalletSync } from './merge/lib/WalletSync'
 import { RealReserveSync } from './merge/lib/RealReserveSync'
 import { ReserveSnapshotHydrator } from './merge/lib/ReserveSnapshotHydrator'
 import { Discover } from './merge/pages/Discover'
-import { CreateDTR } from './merge/pages/CreateDTR'
 import { Portfolio } from './merge/pages/Portfolio'
 import { Manage } from './merge/pages/Manage'
 import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
-// The EVM page pulls in viem, which the Solana app never needs. Lazy so it
-// lands in its own chunk instead of the main bundle.
-const Evm = lazy(() => import('./merge/pages/Evm').then((m) => ({ default: m.Evm })))
+import { CreateReserve } from './merge/pages/CreateReserve'
+import { rhAddressFromId } from './merge/lib/evmReserveId'
+// Robinhood Chain reserve pages pull in viem, which the Solana app never
+// needs. Lazy so it lands in its own chunk instead of the main bundle.
+const RobinhoodReserveDetail = lazy(() =>
+  import('./merge/components/robinhood/RobinhoodReserveDetail').then((m) => ({ default: m.RobinhoodReserveDetail })),
+)
+const Loading = () => <div className="container mx-auto px-4 py-16 text-muted-foreground">Loading…</div>
 import { Terms } from './pages/legal/Terms'
 import { Disclosures } from './pages/legal/Disclosures'
 import { Privacy } from './pages/legal/Privacy'
@@ -41,6 +45,16 @@ function Routes() {
   }
 
   const dtr = matchPath('/dtr/:dtrId', path)
+  const rhAddress = dtr ? rhAddressFromId(dtr.dtrId) : null
+  if (rhAddress) {
+    return (
+      <MergeLayout>
+        <Suspense fallback={<Loading />}>
+          <RobinhoodReserveDetail address={rhAddress} />
+        </Suspense>
+      </MergeLayout>
+    )
+  }
   if (dtr) {
     return (
       <MergeLayout>
@@ -61,7 +75,15 @@ function Routes() {
   if (matchPath('/create', path)) {
     return (
       <MergeLayout>
-        <CreateDTR />
+        <CreateReserve />
+      </MergeLayout>
+    )
+  }
+  // Old link to the standalone Robinhood page: it is Discover now.
+  if (matchPath('/evm', path)) {
+    return (
+      <MergeLayout>
+        <Discover initialChain="robinhood" />
       </MergeLayout>
     )
   }
@@ -69,15 +91,6 @@ function Routes() {
     return (
       <MergeLayout>
         <Portfolio />
-      </MergeLayout>
-    )
-  }
-  if (matchPath('/evm', path)) {
-    return (
-      <MergeLayout>
-        <Suspense fallback={<div className="container mx-auto px-4 py-16 text-muted-foreground">Loading…</div>}>
-          <Evm />
-        </Suspense>
       </MergeLayout>
     )
   }

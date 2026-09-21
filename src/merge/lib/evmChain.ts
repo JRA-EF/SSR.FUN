@@ -33,6 +33,8 @@ export interface ChainConfig {
   /** The live SSR instance, or null when none has been created yet. */
   ssr: Address | null;
   deployer: Address;
+  /** Block the factory was created in -- where reserve discovery starts reading SSRDeployed logs. */
+  deployerBlock: bigint;
   versionRegistry: Address;
   feeRegistry: Address;
   roleRegistry: Address;
@@ -61,6 +63,8 @@ const mainnetChain = defineChain({
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
   blockExplorers: { default: { name: "Explorer", url: "https://robinhoodchain.blockscout.com" } },
+  // Canonical Multicall3, verified deployed on 4663.
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
 export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
@@ -70,6 +74,7 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     explorer: "https://explorer.testnet.chain.robinhood.com",
     ssr: "0x33651dca47088f87e6fb7ef846c695aeb8195d66",
     deployer: "0x5ad2281bca3b0232ca2e9d57a9cb8333392589ef",
+    deployerBlock: 122412044n,
     versionRegistry: "0xa523cfb8168559c889068a1047f483821f0a361b",
     feeRegistry: "0xf6248693d45706ea00dd7aaaa56bbf1f050eb2c4",
     roleRegistry: "0x64563ac360a3c0b2d7690d1b519a70d8015712f5",
@@ -98,6 +103,7 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     ssr: "0xADEd2d2967AC92EE8FB52612D3436511F302Fe2f",
     isMock: false,
     deployer: "0x81dd183c53C95F251869520d8DB10B0A4a4F8858",
+    deployerBlock: 68886534n,
     versionRegistry: "0x835dd7fF172874749855aae0174c6ecAA82Ef1e6",
     feeRegistry: "0x03079d5f8d3B6d27827315205D1328b193c48d31",
     roleRegistry: "0x3a96Fd76dAB64be73404BF59587beF21773Dcd94",
@@ -136,6 +142,21 @@ export const MULTIPLIER_WARNING =
   "Robinhood stock tokens use an ERC-8056 corporate-action multiplier. Custody is safe " +
   "(mint/redeem are pro-rata over raw units), but rebalance prices go stale across a split " +
   "or dividend. New reserves are created with atomic-swap pricing and a 5-minute auction cap.";
+
+/**
+ * Uniswap v3 on Robinhood Chain mainnet (Uniswap sdk-core, ROBINHOOD_ADDRESSES).
+ * Used only to MARK basket assets to USDG from pool spot prices (slot0) --
+ * never to trade from the app.
+ */
+export const UNISWAP_V3 = {
+  factory: "0x1f7d7550b1b028f7571e69a784071f0205fd2efa" as Address,
+  fees: [100, 500, 3000, 10000] as const,
+};
+export const USDG: Address = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+export const WETH: Address = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
+
+/** The Robinhood network the app shows. Testnet stays configured for development only. */
+export const ROBINHOOD = CHAINS.mainnet;
 
 /** Contract limits, mirrored from ssr-evm/contracts/utils/Constants.sol. */
 export const LIMITS = {

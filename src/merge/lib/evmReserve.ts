@@ -1,16 +1,21 @@
-// Read/write helpers for the EVM half of SSR (Robinhood Chain), kept out of
-// the React page so the page stays presentational.
+// Read/write helpers for the Robinhood Chain (EVM) half of SSR, kept out of
+// the React components so they stay presentational.
 //
-// The Solana side of this app never imports anything here and vice versa: the
-// two chains are separate deployments, and entangling them would make a bug on
-// one look like a bug on the other.
+// Nothing on the Solana side imports this, and this imports nothing from it:
+// the two chains are separate deployments, and entangling them would make a
+// bug on one look like a bug on the other. They meet only in the UI --
+// Discover lists both, Create lets you pick one, and a reserve page is chosen
+// by its id.
 import {
   createPublicClient,
   createWalletClient,
   custom,
   formatUnits,
   http,
+  parseAbi,
+  parseAbiItem,
   parseUnits,
+  zeroAddress,
   type Address,
   type EIP1193Provider,
   type PublicClient,
@@ -24,13 +29,32 @@ import {
   FEE_REGISTRY_ABI,
   SAFE_REBALANCE_DEFAULTS,
   SSR_ABI,
+  UNISWAP_V3,
+  USDG,
+  WETH,
   type AssetRef,
   type ChainConfig,
 } from "./evmChain";
 
+/** Reserve ids in the app's /dtr/:id route (see evmReserveId.ts, which the router uses viem-free). */
+export { RH_ID_PREFIX, rhReserveId, rhAddressFromId } from "./evmReserveId";
+
+const clients = new Map<number, PublicClient>();
+/** One client per chain, batching reads through Multicall3 -- the public RPC rate-limits bursts. */
 export function publicClientFor(cfg: ChainConfig): PublicClient {
-  return createPublicClient({ chain: cfg.chain, transport: http() }) as PublicClient;
+  let c = clients.get(cfg.chain.id);
+  if (!c) {
+    c = createPublicClient({
+      chain: cfg.chain,
+      transport: http(undefined, { batch: true }),
+      batch: { multicall: !!cfg.chain.contracts?.multicall3 },
+    }) as PublicClient;
+    clients.set(cfg.chain.id, c);
+  }
+  return c;
 }
+
+// ------------------------------------------------------------------ wallet
 
 export function injectedProvider(): EIP1193Provider {
   const p = (window as unknown as { ethereum?: EIP1193Provider }).ethereum;
@@ -86,6 +110,8 @@ export function describeEvmError(e: unknown): string {
   return m.length > 240 ? `${m.slice(0, 240)}...` : m;
 }
 
+// ------------------------------------------------------------------ format
+
 export function fmtUnits(v: bigint, decimals: number, maxFrac = 6): string {
   const s = formatUnits(v, decimals);
   if (!s.includes(".")) return s;
@@ -109,6 +135,53 @@ export function parseAmount(raw: string, decimals: number, field: string): bigin
   return parseUnits(n, decimals);
 }
 
+// ----------------------------------------------------------------- pricing
+
+const V3_FACTORY_ABI = parseAbi(["function getPool(address,address,uint24) view returns (address)"]);
+const V3_POOL_ABI = parseAbi([
+  "function liquidity() view returns (uint128)",
+  "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)",
+]);
+
+/**
+ * Spot price of `token` in `quote`, from the deepest Uniswap v3 pool between
+ * them (slot0, so no price impact from probing). Null when no pool has
+ * in-range liquidity. Pool prices are per RAW token, which is what a
+ * reserve's balanceOf holds -- so this stays correct for ERC-8056 stock
+ * tokens without touching the multiplier.
+ */
+async function v3Spot(pc: PublicClient, token: Address, tokenDec: number, quote: Address, quoteDec: number): Promise<number | null> {
+  const pools = await Promise.all(
+    UNISWAP_V3.fees.map((fee) => pc.readContract({ address: UNISWAP_V3.factory, abi: V3_FACTORY_ABI, functionName: "getPool", args: [token, quote, fee] })),
+  );
+  const live = pools.filter((p) => p !== zeroAddress);
+  if (live.length === 0) return null;
+  const liq = await Promise.all(live.map((p) => pc.readContract({ address: p, abi: V3_POOL_ABI, functionName: "liquidity" })));
+  let best = -1;
+  liq.forEach((l, i) => {
+    if (l > 0n && (best < 0 || l > liq[best])) best = i;
+  });
+  if (best < 0) return null;
+  const [sqrtPriceX96] = await pc.readContract({ address: live[best], abi: V3_POOL_ABI, functionName: "slot0" });
+  const tokenIs0 = token.toLowerCase() < quote.toLowerCase();
+  const [dec0, dec1] = tokenIs0 ? [tokenDec, quoteDec] : [quoteDec, tokenDec];
+  const ratio = Number(sqrtPriceX96) / 2 ** 96;
+  const p1per0 = ratio * ratio * 10 ** (dec0 - dec1); // token1 per token0, human units
+  return tokenIs0 ? p1per0 : p1per0 === 0 ? null : 1 / p1per0;
+}
+
+/** USD (USDG) price of one whole token: direct USDG pool, else routed through WETH. */
+export async function usdPrice(pc: PublicClient, token: Address, decimals: number): Promise<number | null> {
+  if (token.toLowerCase() === USDG.toLowerCase()) return 1;
+  const direct = await v3Spot(pc, token, decimals, USDG, 6);
+  if (direct !== null) return direct;
+  const inWeth = await v3Spot(pc, token, decimals, WETH, 18);
+  const wethUsd = await v3Spot(pc, WETH, 18, USDG, 6);
+  return inWeth !== null && wethUsd !== null ? inWeth * wethUsd : null;
+}
+
+// ------------------------------------------------------------------- reads
+
 export interface BasketRow {
   address: Address;
   symbol: string;
@@ -116,9 +189,12 @@ export interface BasketRow {
   amount: bigint;
   /** ERC-8056 corporate-action multiplier, when the token has one. */
   uiMultiplier?: bigint;
+  /** USD value of `amount`, or null when no pool can price it. */
+  usd: number | null;
 }
 
 export interface ReserveSnapshot {
+  address: Address;
   name: string;
   symbol: string;
   decimals: number;
@@ -128,27 +204,25 @@ export interface ReserveSnapshot {
   daoFeeBps: bigint;
   feeFloor: bigint;
   basket: BasketRow[];
+  /** Sum of priced legs; null if any leg could not be priced. */
+  aumUsd: number | null;
+  navPerShare: number | null;
 }
 
-export async function loadReserve(pc: PublicClient, cfg: ChainConfig): Promise<ReserveSnapshot> {
-  const ssr = cfg.ssr!;
-  const [name, symbol, decimals, totalSupply, mintFee, maxAuctionLength] = await Promise.all([
+export async function loadReserve(pc: PublicClient, cfg: ChainConfig, ssr: Address): Promise<ReserveSnapshot> {
+  const [name, symbol, decimals, totalSupply, mintFee, maxAuctionLength, feeDetails, totalAssets] = await Promise.all([
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "name" }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "symbol" }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "decimals" }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "totalSupply" }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "mintFee" }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "maxAuctionLength" }),
+    pc.readContract({ address: cfg.feeRegistry, abi: FEE_REGISTRY_ABI, functionName: "getFeeDetails", args: [ssr] }),
+    pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "totalAssets" }),
   ]);
+  const [, feeNumerator, feeDenominator, feeFloor] = feeDetails;
+  const [assets, amounts] = totalAssets;
 
-  const [, feeNumerator, feeDenominator, feeFloor] = await pc.readContract({
-    address: cfg.feeRegistry,
-    abi: FEE_REGISTRY_ABI,
-    functionName: "getFeeDetails",
-    args: [ssr],
-  });
-
-  const [assets, amounts] = await pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "totalAssets" });
   const basket = await Promise.all(
     assets.map(async (a, i): Promise<BasketRow> => {
       const [sym, dec] = await Promise.all([
@@ -162,11 +236,21 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig): Promise<R
       } catch {
         uiMultiplier = undefined;
       }
-      return { address: a, symbol: sym, decimals: Number(dec), amount: amounts[i], uiMultiplier };
+      let usd: number | null = null;
+      try {
+        const px = await usdPrice(pc, a, Number(dec));
+        usd = px === null ? null : Number(formatUnits(amounts[i], Number(dec))) * px;
+      } catch {
+        usd = null;
+      }
+      return { address: a, symbol: sym, decimals: Number(dec), amount: amounts[i], uiMultiplier, usd };
     }),
   );
 
+  const aumUsd = basket.every((b) => b.usd !== null) ? basket.reduce((s, b) => s + (b.usd ?? 0), 0) : null;
+  const supply = Number(formatUnits(totalSupply, Number(decimals)));
   return {
+    address: ssr,
     name,
     symbol,
     decimals: Number(decimals),
@@ -176,34 +260,25 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig): Promise<R
     daoFeeBps: (feeNumerator * 10000n) / feeDenominator,
     feeFloor,
     basket,
+    aumUsd,
+    navPerShare: aumUsd !== null && supply > 0 ? aumUsd / supply : null,
   };
 }
 
-/**
- * The fee rule the registry applies to a reserve that does not exist yet --
- * `getFeeDetails(address(0))` returns the deployment's defaults. Real, live,
- * on-chain values, which is what a chain with no instance can honestly show.
- */
-export async function loadRegistryDefaults(pc: PublicClient, cfg: ChainConfig) {
-  const [recipient, num, den, floor] = await pc.readContract({
-    address: cfg.feeRegistry,
-    abi: FEE_REGISTRY_ABI,
-    functionName: "getFeeDetails",
-    args: ["0x0000000000000000000000000000000000000000"],
-  });
-  return { recipient, daoFeeBps: (num * 10000n) / den, feeFloor: floor };
+const SSR_DEPLOYED = parseAbiItem("event SSRDeployed(address indexed folioOwner, address indexed folio, address folioAdmin)");
+
+/** Every reserve ever created through this chain's factory, oldest first, straight from its logs. */
+export async function listReserveAddresses(pc: PublicClient, cfg: ChainConfig): Promise<Address[]> {
+  const logs = await pc.getLogs({ address: cfg.deployer, event: SSR_DEPLOYED, fromBlock: cfg.deployerBlock, toBlock: "latest" });
+  return logs.map((l) => l.args.folio).filter((a): a is Address => !!a);
 }
 
 /** Mirrors SSRLib.computeMintFees so a quote matches what will execute. */
-export async function mintFeeBreakdown(pc: PublicClient, cfg: ChainConfig, shares: bigint) {
-  const ssr = cfg.ssr!;
-  const mintFee = await pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "mintFee" });
-  const [, num, den, floor] = await pc.readContract({
-    address: cfg.feeRegistry,
-    abi: FEE_REGISTRY_ABI,
-    functionName: "getFeeDetails",
-    args: [ssr],
-  });
+export async function mintFeeBreakdown(pc: PublicClient, cfg: ChainConfig, ssr: Address, shares: bigint) {
+  const [mintFee, [, num, den, floor]] = await Promise.all([
+    pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "mintFee" }),
+    pc.readContract({ address: cfg.feeRegistry, abi: FEE_REGISTRY_ABI, functionName: "getFeeDetails", args: [ssr] }),
+  ]);
   let total = (shares * mintFee + D18 - 1n) / D18;
   let dao = (total * num + den - 1n) / den;
   const minDao = (shares * floor + D18 - 1n) / D18;
@@ -213,14 +288,16 @@ export async function mintFeeBreakdown(pc: PublicClient, cfg: ChainConfig, share
 }
 
 /** Assets and amounts a mint of `shares` will cost (Ceil, as mint() rounds). */
-export function quoteMintCost(pc: PublicClient, cfg: ChainConfig, shares: bigint) {
-  return pc.readContract({ address: cfg.ssr!, abi: SSR_ABI, functionName: "toAssets", args: [shares, 1] });
+export function quoteMintCost(pc: PublicClient, ssr: Address, shares: bigint) {
+  return pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "toAssets", args: [shares, 1] });
 }
 
 /** Assets and amounts a redeem of `shares` returns (Floor, as redeem() rounds). */
-export function quoteRedeemProceeds(pc: PublicClient, cfg: ChainConfig, shares: bigint) {
-  return pc.readContract({ address: cfg.ssr!, abi: SSR_ABI, functionName: "toAssets", args: [shares, 0] });
+export function quoteRedeemProceeds(pc: PublicClient, ssr: Address, shares: bigint) {
+  return pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "toAssets", args: [shares, 0] });
 }
+
+// ------------------------------------------------------------------ writes
 
 /**
  * Approves exactly what is needed, never unlimited: Folio uses the allowance
@@ -256,10 +333,12 @@ export interface CreateReserveInput {
 }
 
 /**
- * Deploys a new reserve through the SSR factory.
+ * Deploys a new reserve through the SSR factory and returns its address.
  *
  * The starting basket is pulled from the CALLER by deploySSR, so each leg is
- * approved to the deployer -- not to the reserve, which does not exist yet.
+ * approved to the factory -- not to the reserve, which does not exist yet.
+ * The call is simulated before it is sent, which both catches a revert
+ * before the user pays gas and yields the new reserve's address.
  *
  * Rebalance settings are fixed to the stock-token-safe pair: ATOMIC_SWAP
  * pricing (an auction opens and fills in one block) and a short auction cap,
@@ -273,14 +352,15 @@ export async function createReserve(
   account: Address,
   input: CreateReserveInput,
   onProgress?: (msg: string) => void,
-): Promise<`0x${string}`> {
+): Promise<{ hash: `0x${string}`; reserve: Address }> {
   for (const leg of input.legs) {
     await approveIfNeeded(pc, wallet, cfg, account, leg.asset.address, cfg.deployer, leg.amount, () =>
       onProgress?.(`Approving ${leg.asset.symbol}...`),
     );
   }
   onProgress?.("Deploying the reserve...");
-  return wallet.writeContract({
+  const { request, result } = await pc.simulateContract({
+    account,
     address: cfg.deployer,
     abi: DEPLOYER_ABI,
     functionName: "deploySSR",
@@ -312,9 +392,10 @@ export async function createReserve(
       [input.owner],
       `0x${Date.now().toString(16).padStart(64, "0")}` as `0x${string}`,
     ],
-    chain: cfg.chain,
-    account,
   });
+  const hash = await wallet.writeContract(request);
+  await pc.waitForTransactionReceipt({ hash });
+  return { hash, reserve: result[0] };
 }
 
 export { SSR_ABI, ERC20_ABI };
