@@ -15,6 +15,7 @@ const LINKS = [
   { to: '/create', label: 'Launch Reserve' },
   { to: '/portfolio', label: 'Portfolio' },
   { to: '/manage', label: 'Manage' },
+  { to: '/evm', label: 'Robinhood' },
 ]
 
 type Theme = 'dark' | 'light'

@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react'
 import { RouterProvider, matchPath, usePath } from './lib/router'
 import { StoreProvider } from './state/store'
 import { Shell } from './components/Shell'
@@ -14,6 +15,9 @@ import { Portfolio } from './merge/pages/Portfolio'
 import { Manage } from './merge/pages/Manage'
 import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
+// The EVM page pulls in viem, which the Solana app never needs. Lazy so it
+// lands in its own chunk instead of the main bundle.
+const Evm = lazy(() => import('./merge/pages/Evm').then((m) => ({ default: m.Evm })))
 import { Terms } from './pages/legal/Terms'
 import { Disclosures } from './pages/legal/Disclosures'
 import { Privacy } from './pages/legal/Privacy'
@@ -65,6 +69,15 @@ function Routes() {
     return (
       <MergeLayout>
         <Portfolio />
+      </MergeLayout>
+    )
+  }
+  if (matchPath('/evm', path)) {
+    return (
+      <MergeLayout>
+        <Suspense fallback={<div className="container mx-auto px-4 py-16 text-muted-foreground">Loading…</div>}>
+          <Evm />
+        </Suspense>
       </MergeLayout>
     )
   }

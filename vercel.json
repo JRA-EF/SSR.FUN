@@ -88,10 +88,6 @@
       "destination": "/feedback.html"
     },
     {
-      "source": "/evm",
-      "destination": "/evm.html"
-    },
-    {
       "source": "/internal/set-keeper",
       "destination": "/internal-set-keeper.html"
     },
@@ -130,6 +126,13 @@
     {
       "source": "/(.*)",
       "destination": "/index.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/evm",
+      "destination": "/#/evm",
+      "permanent": false
     }
   ]
 }

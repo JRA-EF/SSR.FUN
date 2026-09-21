@@ -58,9 +58,6 @@ export default defineConfig({
         internalSetKeeper: path.resolve(import.meta.dirname, './internal-set-keeper.html'),
         // Public feedback form (BotID-protected submit) -- see src/feedback/main.ts.
         feedback: path.resolve(import.meta.dirname, './feedback.html'),
-        // EVM test page (/evm): the Robinhood Chain port, exercised against
-        // testnet. Its own bundle -- it shares no code with the Solana app.
-        evm: path.resolve(import.meta.dirname, './evm.html'),
       },
     },
   },
