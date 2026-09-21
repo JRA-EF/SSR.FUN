@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>SSR on Robinhood Chain -- test</title>
+<style>
+  :root{color-scheme:light dark;--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--acc:#2f81f7;--border:#30363d;--ok:#3fb950;--err:#f85149;--warn:#d29922}
+  @media(prefers-color-scheme:light){:root{--bg:#f6f8fa;--card:#fff;--fg:#1f2328;--muted:#59636e;--acc:#0969da;--border:#d0d7de;--ok:#1a7f37;--err:#cf222e;--warn:#9a6700}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{margin:0 0 4px;font-size:22px}
+  p.sub{margin:0 0 18px;color:var(--muted);font-size:13px}
+  .banner{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);color:var(--fg);border-radius:10px;padding:11px 14px;font-size:13px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+  h2{margin:0 0 12px;font-size:15px;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td{padding:6px 0;border-bottom:1px solid var(--border)}
+  tr:last-child td{border-bottom:0}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  td.addr{text-align:right;font-size:12px}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:14px}
+  .kv span{color:var(--muted)}
+  .kv b{font-weight:600;font-variant-numeric:tabular-nums;text-align:right;word-break:break-all}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all}
+  a{color:var(--acc)}
+  button{padding:10px 16px;background:var(--acc);color:#fff;border:0;border-radius:9px;font:inherit;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--acc);border:1px solid var(--border)}
+  button:disabled{opacity:.6;cursor:default}
+  input{width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:9px;font:inherit;font-variant-numeric:tabular-nums}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .row input{flex:1;min-width:150px}
+  .msg{margin-top:10px;font-size:13px;min-height:18px}
+  .msg.ok,.ok{color:var(--ok)}.msg.err{color:var(--err)}.msg.busy{color:var(--muted)}
+  .quote{margin-top:12px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px}
+  .quote-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:3px 0}
+  .quote-row span{color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:620px){.grid2{grid-template-columns:1fr}}
+</style></head><body>
+<div class="wrap">
+
+  <h1>SSR on Robinhood Chain</h1>
+  <p class="sub">The EVM port, running on a real chain. Read the basket, fund yourself, mint, redeem.</p>
+
+  <div class="banner">
+    <b>Testnet only.</b> This is Robinhood Chain Testnet. The basket assets are mock tokens
+    anyone can mint, and the shares are worthless. Nothing here touches real funds or the
+    Solana protocol.
+  </div>
+
+  <div class="card">
+    <h2>Instance</h2>
+    <div class="kv"><span>Network</span><b id="chain-name">--</b></div>
+    <div class="kv"><span>Name</span><b id="ssr-name">--</b></div>
+    <div class="kv"><span>Symbol</span><b id="ssr-symbol">--</b></div>
+    <div class="kv"><span>Total supply</span><b id="ssr-supply">--</b></div>
+    <div class="kv"><span>Contract</span><b><a id="ssr-link" class="mono" target="_blank" rel="noopener"><span id="ssr-address">--</span></a></b></div>
+    <div class="row" style="margin-top:12px"><button id="refresh" class="ghost">Refresh</button></div>
+    <div class="msg" id="refresh-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Fee rule (read live from the chain)</h2>
+    <p class="sub" style="margin:-6px 0 10px">
+      The only thing SSR changed from upstream Folio. The DAO floor can bind above the
+      SSR's own mint fee, which is what makes the Solana rule expressible here.
+    </p>
+    <div class="kv"><span>Mint fee</span><b id="fee-mint">--</b></div>
+    <div class="kv"><span>DAO share</span><b id="fee-dao">--</b></div>
+    <div class="kv"><span>DAO floor</span><b id="fee-floor">--</b></div>
+  </div>
+
+  <div class="card">
+    <h2>Basket</h2>
+    <table><tbody id="basket"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Wallet</h2>
+    <div class="row">
+      <button id="connect">Connect wallet</button>
+      <button id="faucet" class="ghost">Get test assets</button>
+    </div>
+    <div class="msg" id="connect-msg"></div>
+    <div id="connected" hidden>
+      <div class="kv" style="margin-top:8px"><span>Account</span><b class="mono" id="account">--</b></div>
+      <div class="kv"><span>Your shares</span><b id="my-shares">--</b></div>
+      <table style="margin-top:8px"><tbody id="my-assets"></tbody></table>
+    </div>
+    <div class="msg" id="faucet-msg"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Mint</h2>
+      <div class="row">
+        <input id="mint-shares" type="text" inputmode="decimal" placeholder="Shares to mint" value="1">
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="mint-quote-btn" class="ghost">Quote</button>
+        <button id="mint-btn">Mint</button>
+      </div>
+      <div class="quote" id="mint-quote" hidden></div>
+      <div class="msg" id="mint-msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Redeem</h2>
+      <div class="row">
+        <input id="redeem-shares" type="text" inputmode="decimal" placeholder="Shares to redeem" value="1">
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="redeem-btn">Redeem</button>
+      </div>
+      <div class="msg" id="redeem-msg"></div>
+    </div>
+  </div>
+
+</div>
+<script type="module" src="/src/evm/main.ts"></script>
+</body></html>

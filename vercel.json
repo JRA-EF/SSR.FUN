@@ -88,6 +88,10 @@
       "destination": "/feedback.html"
     },
     {
+      "source": "/evm",
+      "destination": "/evm.html"
+    },
+    {
       "source": "/internal/set-keeper",
       "destination": "/internal-set-keeper.html"
     },
