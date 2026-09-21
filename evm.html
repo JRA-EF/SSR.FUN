@@ -1,121 +1,248 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>SSR on Robinhood Chain -- test</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/png" href="/ssr-seal.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lexend+Giga:wght@600;700&family=Lexend:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>SSR on Robinhood Chain</title>
 <style>
-  :root{color-scheme:light dark;--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#8b949e;--acc:#2f81f7;--border:#30363d;--ok:#3fb950;--err:#f85149;--warn:#d29922}
-  @media(prefers-color-scheme:light){:root{--bg:#f6f8fa;--card:#fff;--fg:#1f2328;--muted:#59636e;--acc:#0969da;--border:#d0d7de;--ok:#1a7f37;--err:#cf222e;--warn:#9a6700}}
+  /* Palette lifted from src/index.css so this page belongs to SSR.fun rather
+     than looking like a different product. Dark is the primary ground. */
+  :root{
+    color-scheme:dark;
+    --bg:#070429; --bg-raise:#0a0836; --surface:#0d0940; --surface-2:#14104f; --surface-3:#1c1465;
+    --line:rgba(151,171,239,.14); --line-strong:rgba(151,171,239,.26);
+    --text:#eef1fc; --text-2:#b0bae4; --text-3:#7580b0;
+    --accent:#7b95f2; --accent-hover:#8ea6fa; --accent-soft:rgba(123,149,242,.2);
+    --action:#ede871; --action-hover:#f3ef8f; --action-ink:#070429;
+    --up:#33c088; --down:#e5586a; --warn:#d9a13c; --verified:#7fd7ff;
+    --font-display:'Lexend Giga','Lexend',system-ui,sans-serif;
+    --font-body:'Lexend',system-ui,-apple-system,sans-serif;
+    --font-mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+    --r-sm:6px; --r-md:10px; --r-lg:14px; --maxw:1000px;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px}
-  .wrap{max-width:760px;margin:0 auto}
-  h1{margin:0 0 4px;font-size:22px}
-  p.sub{margin:0 0 18px;color:var(--muted);font-size:13px}
-  .banner{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);color:var(--fg);border-radius:10px;padding:11px 14px;font-size:13px;margin-bottom:18px}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
-  h2{margin:0 0 12px;font-size:15px;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  td{padding:6px 0;border-bottom:1px solid var(--border)}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 var(--font-body);padding:0 20px 64px}
+  .wrap{max-width:var(--maxw);margin:0 auto}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{color:var(--accent-hover);text-decoration:underline}
+  .mono{font-family:var(--font-mono);font-size:12.5px;word-break:break-all}
+  .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:22px 0 18px;border-bottom:1px solid var(--line);margin-bottom:22px}
+  h1{font-family:var(--font-display);font-size:17px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin:0}
+  .sub{color:var(--text-3);font-size:12.5px;margin:2px 0 0}
+  .spacer{margin-left:auto}
+
+  .chainsel{display:flex;gap:0;border:1px solid var(--line-strong);border-radius:999px;overflow:hidden}
+  .chainsel button{background:transparent;color:var(--text-2);border:0;padding:7px 15px;font:600 12.5px var(--font-body);cursor:pointer}
+  .chainsel button[aria-pressed="true"]{background:var(--surface-3);color:var(--text)}
+
+  button.btn{padding:9px 16px;background:var(--action);color:var(--action-ink);border:0;border-radius:999px;font:600 13.5px var(--font-body);cursor:pointer}
+  button.btn:hover{background:var(--action-hover)}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line-strong)}
+  button.ghost:hover{background:var(--accent-soft);color:var(--accent-hover)}
+
+  .banner{border-radius:var(--r-md);padding:11px 14px;font-size:13px;margin-bottom:18px;border:1px solid}
+  .banner.warn{background:rgba(217,161,60,.11);border-color:rgba(217,161,60,.5)}
+  .banner.info{background:var(--accent-soft);border-color:rgba(123,149,242,.4)}
+  .banner b{font-weight:600}
+
+  .tabs{display:flex;gap:6px;margin-bottom:18px}
+  .tabs button{background:transparent;border:1px solid transparent;color:var(--text-3);padding:7px 14px;border-radius:999px;font:600 13px var(--font-body);cursor:pointer}
+  .tabs button[aria-selected="true"]{background:var(--surface-2);border-color:var(--line);color:var(--text)}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:16px}
+  .card h2{font-family:var(--font-display);font-size:11.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--text-3);margin:0 0 14px}
+  .card .hint{color:var(--text-3);font-size:12.5px;margin:-8px 0 12px}
+
+  .kv{display:flex;justify-content:space-between;gap:14px;padding:6px 0;font-size:14px;border-bottom:1px solid var(--line)}
+  .kv:last-child{border-bottom:0}
+  .kv>span{color:var(--text-3);white-space:nowrap}
+  .kv>b{font-weight:600;text-align:right;font-variant-numeric:tabular-nums;min-width:0}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;color:var(--text-3);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:0 0 7px;border-bottom:1px solid var(--line)}
+  th.r,td.r{text-align:right}
+  td{padding:8px 0;border-bottom:1px solid var(--line)}
   tr:last-child td{border-bottom:0}
-  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  td.addr{text-align:right;font-size:12px}
-  .kv{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:14px}
-  .kv span{color:var(--muted)}
-  .kv b{font-weight:600;font-variant-numeric:tabular-nums;text-align:right;word-break:break-all}
-  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all}
-  a{color:var(--acc)}
-  button{padding:10px 16px;background:var(--acc);color:#fff;border:0;border-radius:9px;font:inherit;font-weight:600;cursor:pointer}
-  button.ghost{background:transparent;color:var(--acc);border:1px solid var(--border)}
-  button:disabled{opacity:.6;cursor:default}
-  input{width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:9px;font:inherit;font-variant-numeric:tabular-nums}
-  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .row input{flex:1;min-width:150px}
-  .msg{margin-top:10px;font-size:13px;min-height:18px}
-  .msg.ok,.ok{color:var(--ok)}.msg.err{color:var(--err)}.msg.busy{color:var(--muted)}
-  .quote{margin-top:12px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px}
+  .sym{font-weight:600}
+  .tag{display:inline-block;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--verified);border:1px solid rgba(127,215,255,.35);border-radius:999px;padding:1px 7px;margin-left:7px;vertical-align:middle}
+
+  label{display:block;font-size:12px;font-weight:600;color:var(--text-2);margin:12px 0 5px}
+  input,select{width:100%;padding:9px 11px;background:var(--bg-raise);color:var(--text);border:1px solid var(--line-strong);border-radius:var(--r-md);font:14px var(--font-body);font-variant-numeric:tabular-nums}
+  input:focus,select:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+  .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+  .row>input{flex:1;min-width:120px}
+  .row>select{flex:1;min-width:120px}
+
+  .msg{margin-top:11px;font-size:13px;min-height:18px}
+  .msg.ok,.ok{color:var(--up)} .msg.err{color:var(--down)} .msg.busy{color:var(--text-3)}
+
+  .quote{margin-top:13px;padding:12px 14px;background:var(--bg-raise);border:1px solid var(--line);border-radius:var(--r-md)}
   .quote-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:3px 0}
-  .quote-row span{color:var(--muted)}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media(max-width:620px){.grid2{grid-template-columns:1fr}}
+  .quote-row span{color:var(--text-3)}
+  .quote-row b{font-variant-numeric:tabular-nums}
+
+  .assetrow{display:grid;grid-template-columns:1.2fr 1fr auto;gap:9px;margin-bottom:9px;align-items:center}
+  @media(max-width:560px){.assetrow{grid-template-columns:1fr}}
+  .x{background:transparent;border:1px solid var(--line-strong);color:var(--text-3);border-radius:var(--r-sm);width:34px;height:34px;cursor:pointer;font-size:15px}
+  .x:hover{color:var(--down);border-color:var(--down)}
+  .empty{color:var(--text-3);font-size:13.5px;padding:10px 0}
 </style></head><body>
 <div class="wrap">
 
-  <h1>SSR on Robinhood Chain</h1>
-  <p class="sub">The EVM port, running on a real chain. Read the basket, fund yourself, mint, redeem.</p>
-
-  <div class="banner">
-    <b>Testnet only.</b> This is Robinhood Chain Testnet. The basket assets are mock tokens
-    anyone can mint, and the shares are worthless. Nothing here touches real funds or the
-    Solana protocol.
-  </div>
-
-  <div class="card">
-    <h2>Instance</h2>
-    <div class="kv"><span>Network</span><b id="chain-name">--</b></div>
-    <div class="kv"><span>Name</span><b id="ssr-name">--</b></div>
-    <div class="kv"><span>Symbol</span><b id="ssr-symbol">--</b></div>
-    <div class="kv"><span>Total supply</span><b id="ssr-supply">--</b></div>
-    <div class="kv"><span>Contract</span><b><a id="ssr-link" class="mono" target="_blank" rel="noopener"><span id="ssr-address">--</span></a></b></div>
-    <div class="row" style="margin-top:12px"><button id="refresh" class="ghost">Refresh</button></div>
-    <div class="msg" id="refresh-msg"></div>
-  </div>
-
-  <div class="card">
-    <h2>Fee rule (read live from the chain)</h2>
-    <p class="sub" style="margin:-6px 0 10px">
-      The only thing SSR changed from upstream Folio. The DAO floor can bind above the
-      SSR's own mint fee, which is what makes the Solana rule expressible here.
-    </p>
-    <div class="kv"><span>Mint fee</span><b id="fee-mint">--</b></div>
-    <div class="kv"><span>DAO share</span><b id="fee-dao">--</b></div>
-    <div class="kv"><span>DAO floor</span><b id="fee-floor">--</b></div>
-  </div>
-
-  <div class="card">
-    <h2>Basket</h2>
-    <table><tbody id="basket"></tbody></table>
-  </div>
-
-  <div class="card">
-    <h2>Wallet</h2>
-    <div class="row">
-      <button id="connect">Connect wallet</button>
-      <button id="faucet" class="ghost">Get test assets</button>
+  <header>
+    <div>
+      <h1>SSR &middot; Robinhood Chain</h1>
+      <p class="sub">The EVM port of the Strategic Super Reserve protocol</p>
     </div>
-    <div class="msg" id="connect-msg"></div>
-    <div id="connected" hidden>
-      <div class="kv" style="margin-top:8px"><span>Account</span><b class="mono" id="account">--</b></div>
-      <div class="kv"><span>Your shares</span><b id="my-shares">--</b></div>
-      <table style="margin-top:8px"><tbody id="my-assets"></tbody></table>
+    <div class="spacer"></div>
+    <div class="chainsel" role="group" aria-label="Network">
+      <button id="sel-testnet" aria-pressed="true">Testnet</button>
+      <button id="sel-mainnet" aria-pressed="false">Mainnet</button>
     </div>
-    <div class="msg" id="faucet-msg"></div>
+    <button id="connect" class="btn">Connect wallet</button>
+  </header>
+
+  <div class="banner warn" id="chain-notice"></div>
+  <div class="banner info" id="multiplier-notice" hidden></div>
+  <div class="msg err" id="global-msg"></div>
+
+  <div class="tabs" role="tablist">
+    <button id="tab-reserve" role="tab" aria-selected="true">Reserve</button>
+    <button id="tab-create" role="tab" aria-selected="false">Create a reserve</button>
+    <button id="tab-contracts" role="tab" aria-selected="false">Contracts</button>
   </div>
 
-  <div class="grid2">
+  <!-- ============================ RESERVE ============================ -->
+  <section id="view-reserve">
+    <div id="no-instance" class="card" hidden>
+      <h2>No reserve yet</h2>
+      <p class="hint" id="no-instance-text"></p>
+      <button class="btn ghost" id="goto-create">Create the first one</button>
+    </div>
+
+    <div id="instance-wrap" hidden>
+      <div class="grid">
+        <div class="card">
+          <h2>Reserve</h2>
+          <div class="kv"><span>Name</span><b id="ssr-name">--</b></div>
+          <div class="kv"><span>Symbol</span><b id="ssr-symbol">--</b></div>
+          <div class="kv"><span>Total supply</span><b class="num" id="ssr-supply">--</b></div>
+          <div class="kv"><span>Contract</span><b><a id="ssr-link" class="mono" target="_blank" rel="noopener">--</a></b></div>
+        </div>
+        <div class="card">
+          <h2>Fee rule &mdash; read live from the chain</h2>
+          <p class="hint">The only contract SSR changed from upstream Folio.</p>
+          <div class="kv"><span>Mint fee</span><b class="num" id="fee-mint">--</b></div>
+          <div class="kv"><span>DAO share of it</span><b class="num" id="fee-dao">--</b></div>
+          <div class="kv"><span>DAO floor</span><b class="num" id="fee-floor">--</b></div>
+          <div class="kv"><span>Auction cap</span><b class="num" id="auction-cap">--</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Basket</h2>
+        <table>
+          <thead><tr><th>Asset</th><th class="r">Held</th><th class="r">Per share</th><th class="r">Contract</th></tr></thead>
+          <tbody id="basket"></tbody>
+        </table>
+      </div>
+
+      <div class="card" id="position-card" hidden>
+        <h2>Your position</h2>
+        <div class="kv"><span>Account</span><b class="mono" id="account">--</b></div>
+        <div class="kv"><span>Gas balance</span><b class="num" id="gas-balance">--</b></div>
+        <div class="kv"><span>Your shares</span><b class="num" id="my-shares">--</b></div>
+        <table style="margin-top:12px">
+          <thead><tr><th>Asset</th><th class="r">Your balance</th></tr></thead>
+          <tbody id="my-assets"></tbody>
+        </table>
+        <div class="row" style="margin-top:14px">
+          <button class="btn ghost" id="faucet" hidden>Get test assets</button>
+          <button class="btn ghost" id="refresh">Refresh</button>
+        </div>
+        <div class="msg" id="faucet-msg"></div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>Mint</h2>
+          <label for="mint-shares">Shares to mint</label>
+          <input id="mint-shares" type="text" inputmode="decimal" value="1">
+          <div class="row" style="margin-top:11px">
+            <button class="btn ghost" id="mint-quote-btn">Quote</button>
+            <button class="btn" id="mint-btn">Mint</button>
+          </div>
+          <div class="quote" id="mint-quote" hidden></div>
+          <div class="msg" id="mint-msg"></div>
+        </div>
+        <div class="card">
+          <h2>Redeem</h2>
+          <label for="redeem-shares">Shares to redeem</label>
+          <input id="redeem-shares" type="text" inputmode="decimal" value="1">
+          <div class="row" style="margin-top:11px">
+            <button class="btn ghost" id="redeem-max">Max</button>
+            <button class="btn" id="redeem-btn">Redeem</button>
+          </div>
+          <div class="quote" id="redeem-quote" hidden></div>
+          <div class="msg" id="redeem-msg"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= CREATE ============================= -->
+  <section id="view-create" hidden>
     <div class="card">
-      <h2>Mint</h2>
-      <div class="row">
-        <input id="mint-shares" type="text" inputmode="decimal" placeholder="Shares to mint" value="1">
-      </div>
-      <div class="row" style="margin-top:10px">
-        <button id="mint-quote-btn" class="ghost">Quote</button>
-        <button id="mint-btn">Mint</button>
-      </div>
-      <div class="quote" id="mint-quote" hidden></div>
-      <div class="msg" id="mint-msg"></div>
-    </div>
+      <h2>Create a reserve</h2>
+      <p class="hint">
+        Every reserve is its own contract, deployed through the SSR factory. You supply the
+        starting basket &mdash; those assets leave your wallet and become the reserve's holdings.
+      </p>
 
-    <div class="card">
-      <h2>Redeem</h2>
-      <div class="row">
-        <input id="redeem-shares" type="text" inputmode="decimal" placeholder="Shares to redeem" value="1">
+      <div class="grid" style="gap:0 16px">
+        <div><label for="c-name">Name</label><input id="c-name" type="text" placeholder="Strategic Tech Reserve"></div>
+        <div><label for="c-symbol">Ticker</label><input id="c-symbol" type="text" placeholder="TECHSSR"></div>
       </div>
-      <div class="row" style="margin-top:10px">
-        <button id="redeem-btn">Redeem</button>
+
+      <label style="margin-top:18px">Starting basket</label>
+      <div id="asset-rows"></div>
+      <button class="btn ghost" id="add-asset" style="margin-top:4px">Add asset</button>
+
+      <div class="grid" style="gap:0 16px">
+        <div><label for="c-shares">Initial shares</label><input id="c-shares" type="text" inputmode="decimal" value="100"></div>
+        <div><label for="c-mintfee">Mint fee (%)</label><input id="c-mintfee" type="text" inputmode="decimal" value="1"></div>
       </div>
-      <div class="msg" id="redeem-msg"></div>
+      <div class="grid" style="gap:0 16px">
+        <div><label for="c-tvlfee">Annual TVL fee (%)</label><input id="c-tvlfee" type="text" inputmode="decimal" value="1"></div>
+        <div><label for="c-owner">Owner</label><input id="c-owner" type="text" placeholder="defaults to your wallet"></div>
+      </div>
+
+      <div class="banner info" style="margin-top:18px" id="create-config-note"></div>
+
+      <div class="row" style="margin-top:6px">
+        <button class="btn" id="create-btn">Create reserve</button>
+      </div>
+      <div class="msg" id="create-msg"></div>
     </div>
-  </div>
+  </section>
+
+  <!-- =========================== CONTRACTS =========================== -->
+  <section id="view-contracts" hidden>
+    <div class="card">
+      <h2>Deployed contracts</h2>
+      <p class="hint">Source and provenance: the SSR fork of Reserve's audited Folio.</p>
+      <table><tbody id="contracts"></tbody></table>
+    </div>
+  </section>
 
 </div>
 <script type="module" src="/src/evm/main.ts"></script>
