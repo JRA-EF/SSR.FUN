@@ -190,6 +190,47 @@ export function weightedAvgCostBasis(prevBalance: number, prevAvgPrice: number, 
   return (prevBalance * prevAvgPrice + addAmount * addPrice) / newBalance;
 }
 
+/**
+ * Merges the server-recorded history (lib/reserve-nav-history, via
+ * navHistoryClient.ts) UNDER this browser's own points: every server point
+ * is kept as-is, and only local points strictly NEWER than the last server
+ * point are appended after it. The server owns the past (it's the one
+ * history every visitor shares); the browser only ever extends it forward
+ * with the live NAV it observes between server refreshes. Non-positive
+ * placeholder points are dropped on both sides, timestamps stay strictly
+ * increasing, and the result is trimmed to the same MAX_PRICE_POINTS cap.
+ */
+export function mergePriceHistories(serverHistory: PricePoint[], localHistory: PricePoint[]): PricePoint[] {
+  const merged: PricePoint[] = [];
+  for (const p of serverHistory) {
+    if (!(p.price > 0)) continue;
+    if (merged.length > 0 && p.t <= merged[merged.length - 1].t) continue;
+    merged.push(p);
+  }
+  const lastServerT = merged.length > 0 ? merged[merged.length - 1].t : -Infinity;
+  for (const p of localHistory) {
+    if (!(p.price > 0) || p.t <= lastServerT) continue;
+    if (merged.length > 0 && p.t <= merged[merged.length - 1].t) continue;
+    merged.push(p);
+  }
+  return merged.length > MAX_PRICE_POINTS ? merged.slice(merged.length - MAX_PRICE_POINTS) : merged;
+}
+
+/**
+ * All-time percent change: the current price vs. the EARLIEST valid point
+ * of the history -- on Mainnet that first point is the server-served launch
+ * anchor (the Reserve's holdings valued at their entry prices, see
+ * api/mainnet/reserve-nav-history.ts), so this is the value-weighted
+ * aggregate of the Composition table's per-asset P&L. null (never a
+ * fabricated 0%) when there is no valid base or current price.
+ */
+export function calcAllTimeChangePct(priceHistory: PricePoint[], currentPrice: number | null | undefined): number | null {
+  if (typeof currentPrice !== "number" || !Number.isFinite(currentPrice) || currentPrice <= 0) return null;
+  const base = priceHistory.find((p) => p.price > 0);
+  if (!base) return null;
+  return ((currentPrice - base.price) / base.price) * 100;
+}
+
 /** 24h/7d percent change derived from the earliest point still inside each rolling window vs. the latest price. */
 export function calcRecentChanges(
   priceHistory: PricePoint[],

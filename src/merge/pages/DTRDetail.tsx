@@ -51,6 +51,7 @@ import {
   formatTokenAmount,
   sampleLinePoints,
   calcAssetPnlPct,
+  calcAllTimeChangePct,
 } from "@/lib/calculations";
 import { normalizeReserveCategory, type PricePoint, type ChartTimeframe, type OnChainReserveMeta } from "@/lib/types";
 import {
@@ -66,6 +67,8 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { ChevronLeft, Layers, BarChart3, Activity, PenLine, Play, Share2, Send, Link2, Check, Copy, Download } from "lucide-react";
+import { ReservePnlCardTrigger, ReservePnlCardModal } from "@/components/ReservePnlCard";
+import { truncateWallet, type PnlCardData, type PnlCardTopAsset } from "@/lib/pnlCard";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -867,9 +870,74 @@ export function DTRDetail() {
     return { name: dtr?.name ?? "", handle: handleFromUrl(cfg.channelUrl), url: cfg.channelUrl, videos };
   }, [designDemo, dtr]);
   const priceHistory = designDemo?.priceHistory ?? dtr?.priceHistory ?? [];
+  // 24h move, used by the Share card. Kept alongside allTimeChangePct below:
+  // the share card quotes the day, the header quotes since launch.
   const displayChange24h = designDemo ? designDemo.change24h : (dtr?.change24h ?? 0);
-  const displayChange7d = designDemo ? designDemo.change7d : (dtr?.change7d ?? 0);
+  // All-time performance: current Token Price vs. the earliest point of the
+  // history. On Mainnet that earliest point is the server-served launch
+  // anchor (the Reserve's holdings at their entry prices -- the same
+  // baseline as the Composition table's per-asset P&L), so this is the
+  // value-weighted aggregate of those rows. Until the server history has
+  // been merged at least once (priceHistoryRecordedFrom undefined) the only
+  // point is this browser's own first observation, which would read as a
+  // misleading 0% -- shown as "--" instead. DevNet keeps its per-browser
+  // history (fixture prices never move, so 0.00% is the genuine answer).
+  const allTimeChangePct = designDemo
+    ? calcAllTimeChangePct(designDemo.priceHistory, designDemo.priceHistory[designDemo.priceHistory.length - 1]?.price)
+    : dtr && (!IS_MAINNET || dtr.priceHistoryRecordedFrom !== undefined)
+      ? calcAllTimeChangePct(priceHistory, dtr.nav)
+      : null;
   const trades = dtr?.trades ?? [];
+
+  // Shareable performance card (see components/ReservePnlCard.tsx). One card
+  // for holders and Managers alike: the Reserve's all-time gain plus up to
+  // three of its reserve assets with a POSITIVE gain since entry, from the
+  // same figures the page shows -- per-asset gain is calcAssetPnlPct(current,
+  // entry) exactly as the Composition table computes it. Losers and unpriced
+  // assets are never listed (Creator directive 2026-09-14), and the section
+  // disappears entirely when there is no winner yet.
+  const [pnlCardOpen, setPnlCardOpen] = useState(false);
+  const pnlCardData = useMemo<PnlCardData | null>(() => {
+    if (!dtr) return null;
+    const assetGains: Array<{ symbol: string; pnlPct: number | null }> = designDemo
+      ? designDemo.composition.map((a) => ({ symbol: a.symbol, pnlPct: a.pnlPct }))
+      : dtr.composition
+          .filter((a) => a.weight > 0)
+          .map((a) => {
+            const onChainAsset = dtr.onChain?.assets.find((oc) => oc.symbol === a.symbol);
+            const current = !onChainAsset
+              ? null
+              : IS_MAINNET
+                ? (dtr.onChain!.assetPricesUsd?.[onChainAsset.mint] ?? null)
+                : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
+            const entry = !onChainAsset
+              ? null
+              : IS_MAINNET
+                ? (dtr.onChain!.assetEntryPricesUsd?.[onChainAsset.mint] ?? null)
+                : (TEST_ASSET_PRICES_USD[onChainAsset.mint] ?? null);
+            return { symbol: a.symbol, pnlPct: calcAssetPnlPct(current, entry) };
+          });
+    const topAssets: PnlCardTopAsset[] = assetGains
+      .filter((a): a is { symbol: string; pnlPct: number } => a.pnlPct !== null && a.pnlPct > 0)
+      .sort((a, b) => b.pnlPct - a.pnlPct)
+      .slice(0, 3);
+    const priced = dtr.onChain?.priceSource !== "unavailable" && dtr.tokenPrice > 0;
+    return {
+      name: dtr.name,
+      ticker: dtr.ticker,
+      logoUrl: dtr.logoUrl,
+      allTimeChangePct,
+      tokenPriceUsdc: priced ? dtr.tokenPrice : null,
+      topAssets,
+      // Swap for the Manager's profile name once profiles ship.
+      managerLabel: truncateWallet(dtr.managerAddress),
+      siteHost: typeof window !== "undefined" ? window.location.host : "ssr.fun",
+    };
+  }, [dtr, designDemo, allTimeChangePct]);
+  // The app is hash-routed (src/lib/router.tsx): a Reserve's public link is
+  // `${origin}/#/dtr/<id>`, never a bare path (which would land on the homepage).
+  const pnlShareUrl = typeof window !== "undefined" && dtr ? `${window.location.origin}/#/dtr/${dtr.id}` : "";
+
   // Creator change log: illustrative entries in design preview; real Reserves
   // have no recorded notes yet, so they render the honest empty state.
   const creatorNotes = designDemo?.creatorNotes ?? [];
@@ -922,6 +990,21 @@ export function DTRDetail() {
   }, [lineSeries, timeframe]);
   const candlesUsable = candleData.length > 1 && !lineSeries.isFallback;
   const showCandles = chartStyle === "candles" && candlesUsable;
+  // Honest disclosure for a window that reaches back before the server
+  // started recording this Reserve (Mainnet): the series there runs in a
+  // straight line from the launch value (holdings at entry prices) to the
+  // first recorded point -- real endpoints, but not recorded movement.
+  const preRecordedSegmentNote = useMemo(() => {
+    if (designDemo || !dtr || lineSeries.isFallback || lineSeries.points.length < 2) return null;
+    const recordedFrom = dtr.priceHistoryRecordedFrom;
+    if (recordedFrom === undefined) return null;
+    const windowStart = lineSeries.points[0].t;
+    if (recordedFrom !== null && windowStart >= recordedFrom - 60_000) return null;
+    const from = recordedFrom === null ? null : new Date(recordedFrom).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return from
+      ? `Recorded price history starts ${from}; the earlier segment runs straight from the launch value.`
+      : "Recorded price history begins with the next server refresh; this line runs straight from the launch value to now.";
+  }, [designDemo, dtr, lineSeries]);
   // First genuinely recorded observation, marked on the chart when the design
   // preview's synthetic backfill extends further into the past than the real
   // series does (the same "launch" annotation Reserve-style charts carry).
@@ -2020,6 +2103,7 @@ export function DTRDetail() {
                       </button>
                     </div>
                   </div>
+                  <div className="flex items-start gap-3 shrink-0 max-sm:w-full max-sm:justify-between">
                   <div className="text-right max-sm:text-left shrink-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>
                     <div className="flex items-baseline justify-end max-sm:justify-start gap-1.5">
@@ -2027,8 +2111,11 @@ export function DTRDetail() {
                         {formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable)}
                       </span>
                       {!pricingUnavailable && (
-                        <span className={`text-xs font-merge-mono ${displayChange24h >= 0 ? "text-positive" : "text-destructive"}`}>
-                          {displayChange24h >= 0 ? "+" : ""}{displayChange24h.toFixed(2)}%
+                        <span
+                          className={`text-xs font-merge-mono ${allTimeChangePct === null ? "text-muted-foreground" : allTimeChangePct >= 0 ? "text-positive" : "text-destructive"}`}
+                          title="All-time change in Token Price since launch"
+                        >
+                          {allTimeChangePct === null ? "—" : `${allTimeChangePct >= 0 ? "+" : ""}${allTimeChangePct.toFixed(2)}%`}
                         </span>
                       )}
                     </div>
@@ -2043,6 +2130,9 @@ export function DTRDetail() {
                         No verified Pyth or Jupiter price for {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "this Reserve's asset"} right now.
                       </p>
                     )}
+                  </div>
+                  {/* Top-right corner: opens the shareable performance card. */}
+                  {pnlCardData && <ReservePnlCardTrigger onClick={() => setPnlCardOpen(true)} />}
                   </div>
                 </div>
                 <div className="flex flex-col gap-3 max-sm:gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -2092,9 +2182,13 @@ export function DTRDetail() {
                       <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
                         Design preview — synthetic data, not recorded trades.
                       </p>
-                    ) : lineSeries.isFallback && (
+                    ) : lineSeries.isFallback ? (
                       <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
                         No price movement recorded yet.
+                      </p>
+                    ) : preRecordedSegmentNote && (
+                      <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10 whitespace-nowrap max-w-full truncate px-2">
+                        {preRecordedSegmentNote}
                       </p>
                     )}
                     <ResponsiveContainer width="100%" height="100%">
@@ -2267,24 +2361,29 @@ export function DTRDetail() {
                 </div>
                 <div className="md:px-6">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
-                    7D Performance
+                    All-Time PNL (%)
+                    <InfoTip label="More information about All-Time PNL (%)">Change in Token Price since this Reserve launched: today's price versus the value of its holdings at the prices they were first added at -- the same baseline as the P&L % column in the Reserve Composition table below.</InfoTip>
                   </div>
-                  <p className={`text-lg font-merge-mono font-semibold ${displayChange7d >= 0 ? 'text-positive' : 'text-destructive'}`}>
-                    {displayChange7d >= 0 ? '+' : ''}{displayChange7d.toFixed(2)}%
+                  <p className={`font-merge-mono font-semibold ${allTimeChangePct === null ? 'text-sm text-muted-foreground' : allTimeChangePct >= 0 ? 'text-lg text-positive' : 'text-lg text-destructive'}`}>
+                    {allTimeChangePct === null ? 'Not yet available' : `${allTimeChangePct >= 0 ? '+' : ''}${allTimeChangePct.toFixed(2)}%`}
                   </p>
                 </div>
                 <div className="md:px-6">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
-                    24h Volume
-                    <InfoTip label="More information about 24h Volume">Sum of confirmed Buy/Sell notional for this Reserve over the trailing 24 hours{IS_MAINNET ? "." : ", valued at fixed DevNet test prices."}</InfoTip>
+                    All-Time Volume
+                    <InfoTip label="More information about All-Time Volume">Sum of every confirmed Buy and Sell for this Reserve since it launched{IS_MAINNET ? ", valued in USD at the time each trade was recorded." : ", valued at fixed DevNet test prices."}</InfoTip>
                   </div>
                   <p className="text-lg font-merge-mono font-semibold">
                     {isOnChain ? (
                       reserveStats ? (
-                        <>
-                          {formatUsdc(reserveStats.volume24hUsd, { compact: true })}
-                          {landingStats.stale && <span className="text-xs text-muted-foreground font-normal"> (stale)</span>}
-                        </>
+                        typeof reserveStats.volumeAllTimeUsd === "number" ? (
+                          <>
+                            {formatUsdc(reserveStats.volumeAllTimeUsd, { compact: true })}
+                            {landingStats.stale && <span className="text-xs text-muted-foreground font-normal"> (stale)</span>}
+                          </>
+                        ) : (
+                          <span className="text-sm text-muted-foreground font-normal">Unavailable</span>
+                        )
                       ) : landingStats.status === "loading" ? (
                         <span className="text-sm text-muted-foreground font-normal">Loading…</span>
                       ) : (
@@ -3388,6 +3487,10 @@ export function DTRDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {pnlCardData && (
+        <ReservePnlCardModal open={pnlCardOpen} onClose={() => setPnlCardOpen(false)} data={pnlCardData} shareUrl={pnlShareUrl} />
+      )}
     </div>
   );
 }

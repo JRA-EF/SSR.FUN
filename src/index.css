@@ -1789,9 +1789,15 @@ input, select, textarea {
 }
 
 .fcard-metrics {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
+  /* Four stats (Price, Market Cap, All-Time PNL (%), All-Time Volume --
+     the same row as the Reserve page, 2026-09-15) as a deliberate 2x2
+     grid: a wrapping flex row left the fourth chip stranded alone on its
+     own line once the labels got longer than the old 24h/Prem chips. */
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  justify-content: start;
+  column-gap: 18px;
+  row-gap: 10px;
   flex: 1;
   min-width: 0;
 }

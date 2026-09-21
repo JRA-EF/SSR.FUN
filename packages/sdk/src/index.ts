@@ -28,4 +28,6 @@ export * from "./ammInstructions";
 export * from "./rebalanceExecutionInstructions";
 export * from "./activityLog";
 export * from "./metadataUri";
+export * from "./tokenMetadata";
+export * from "./launchpads";
 export * from "./pricing";

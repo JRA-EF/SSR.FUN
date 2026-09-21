@@ -51,6 +51,7 @@ const CRON_PATHS = new Set([
   '/api/ledger/ingest-cron',
   '/api/ledger/reclassify-actors-cron',
   '/api/ledger/jupiter-snapshot-cron',
+  '/api/ledger/launchpad-classify-cron',
   '/api/mainnet/warm-cache-cron',
   '/api/mainnet/fee-settlement-cron',
   // Agent-feedback daemon endpoints: machine-to-machine, authenticated by
@@ -95,20 +96,42 @@ const PUBLIC_PATHS = new Set([
   '/api/feedback/submit',
 ])
 
-// API routes whose GET is public because something OUTSIDE this app is meant
-// to read them: the on-chain metadata URI and the image it references. Never
-// add a path here that returns anything a beta visitor could not already see
-// on-chain -- these expose a Reserve's name, ticker, description, category
-// and picture, all of which are pointed at by a public on-chain account.
+// Reserve metadata and picture READS. A Reserve's on-chain metadata_uri
+// points at these GET endpoints (api/*/reserve-metadata.ts's header: "must
+// be resolvable by anyone/anything reading a Reserve's metadata later"), and
+// the Documentation site tells DEX/wallet teams to resolve a Reserve Token
+// through them. Behind the beta gate they all answered 401 to every wallet,
+// explorer and indexer on earth -- verified live against ssr.fun on
+// 2026-09-11 -- so the metadata a Reserve publishes on-chain was unreadable
+// by the only consumers it exists for. GET only: the content-addressed POST
+// writes (creating metadata/images) stay behind the site gate exactly as
+// before. Never add a path here that returns anything a beta visitor could
+// not already see on-chain.
 const PUBLIC_READ_API_PATHS = new Set([
   '/api/mainnet/reserve-metadata',
   '/api/mainnet/reserve-image',
+  '/api/mainnet/token-metadata',
   '/api/devnet/reserve-metadata',
   '/api/devnet/reserve-image',
+  '/api/devnet/token-metadata',
 ])
+function isPublicReadApi(request: Request, pathname: string): boolean {
+  return (request.method === 'GET' || request.method === 'HEAD') && PUBLIC_READ_API_PATHS.has(pathname)
+}
 
 // The opaque prefix Vercel BotID uses for its proxied script/telemetry (see vercel.json).
 const BOTID_PROXY_PREFIX = '/149e9513-01fa-4fb0-aad4-566afd725d1b/'
+
+// The public Documentation site (docs.html, /docs and /docs/<slug> via the
+// vercel.json rewrites). Deliberately OUTSIDE the closed-beta gate: it is
+// written for people who do not have a BETA key (DEX and wallet teams, token
+// holders) and contains only public information -- program addresses,
+// account layouts, and how Reserve Tokens behave. It is its own bundle with
+// no wallet/store/RPC code, so nothing gated leaks through it.
+const DOCS_PUBLIC_PREFIX = '/docs'
+function isPublicDocsPath(pathname: string): boolean {
+  return pathname === DOCS_PUBLIC_PREFIX || pathname === '/docs.html' || pathname.startsWith(DOCS_PUBLIC_PREFIX + '/')
+}
 
 function comingSoonResponse(request: Request): Response {
   const target = new URL(COMING_SOON_PATH, request.url)
@@ -318,6 +341,8 @@ const INTERNAL_PAGE_PATHS = new Set([
   '/road-to-mainnet.html',
   '/internal/kpis',
   '/internal-kpis.html',
+  '/internal/roadmap',
+  '/internal-roadmap.html',
 ])
 
 export default async function middleware(request: Request): Promise<Response> {
@@ -327,14 +352,9 @@ export default async function middleware(request: Request): Promise<Response> {
   // Cron trigger requests, the site-login endpoint itself, and the Coming
   // Soon page's own files are never gated -- see the header comment above.
   if (CRON_PATHS.has(url.pathname) || url.pathname === SITE_LOGIN_PATH || PUBLIC_PATHS.has(url.pathname)) return next()
-  // DEC-0200: the Reserve Token's on-chain `metadata_uri` points at
-  // /api/<cluster>/reserve-metadata, and the JSON it returns points at
-  // /api/<cluster>/reserve-image. Behind the beta gate both answered 401 to
-  // every wallet, explorer and indexer on earth -- verified live against
-  // ssr.fun on 2026-09-11 -- so the metadata a Reserve publishes on-chain was
-  // unreadable by the only consumers it exists for. READ is public; POST
-  // (creating metadata/images) stays gated exactly as before.
-  if (PUBLIC_READ_API_PATHS.has(url.pathname) && (request.method === 'GET' || request.method === 'HEAD')) return next()
+  // Public Documentation site and the metadata/picture reads it relies on
+  // (see DOCS_PUBLIC_PREFIX / PUBLIC_READ_API_PATHS above).
+  if (isPublicDocsPath(url.pathname) || isPublicReadApi(request, url.pathname)) return next()
   // DEC-0200: the crawlable Reserve share page. A social-card fetcher or
   // search crawler has no beta session and never will, so gating /r/ would
   // make every shared link preview as the Coming Soon page. It exposes only

@@ -14,6 +14,17 @@ export const SOLANA_CLUSTER = (import.meta.env.VITE_SOLANA_CLUSTER as string) ||
 export const IS_DEVNET = SOLANA_CLUSTER === "devnet";
 export const IS_MAINNET = SOLANA_CLUSTER === "mainnet-beta";
 
+/**
+ * Whether the deployed program on this cluster carries the
+ * set_reserve_token_metadata instruction (Reserve Token Metaplex metadata --
+ * see packages/sdk/src/tokenMetadata.ts). Set VITE_TOKEN_METADATA_LIVE=true
+ * once the program upgrade that adds it has executed on the cluster this
+ * build targets; until then the launch flow must NOT bundle the instruction
+ * (the transaction would fail with an unknown-instruction error and nothing
+ * would be created) and the Manage page hides the publish control.
+ */
+export const TOKEN_METADATA_LIVE = (import.meta.env.VITE_TOKEN_METADATA_LIVE as string | undefined) === "true";
+
 // The dedicated RPC provider (Helius) is only ever reached through the
 // matching server-side proxy (api/devnet/rpc-proxy.ts or
 // api/mainnet/rpc-proxy.ts) -- its URL/API key is a server-only secret and

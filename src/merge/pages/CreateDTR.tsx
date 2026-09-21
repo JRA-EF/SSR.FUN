@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, type RecipientInput } from "@ssr/sdk";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
+import { launchpadBadgeText, matchesLaunchpadFilter, LAUNCHPAD_FILTER_OPTIONS, type LaunchpadFilter } from "@/lib/launchpadLabels";
+import type { CatalogueAssetLaunchpad } from "@/hooks/useMainnetAssetCatalogue";
 import { useAppStore } from "@/store/useAppStore";
 import { normalizeYouTubeChannelUrl } from "@/lib/youtube";
 import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
@@ -39,7 +41,7 @@ import {
 import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, formatAllocationUsd, type LaunchAssetPlan } from "@/lib/launchFunding";
 import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
-import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
+import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
@@ -130,11 +132,18 @@ export function CreateDTR() {
     }
   }, [mainnetCatalogue.tokens]);
 
-  const SELECTABLE_ASSETS = useMemo(() => {
+  // DevNet fixtures carry no launchpad field; Mainnet catalogue entries may.
+  type SelectableAsset = { symbol: string; name: string; mint: string; decimals: number; real: true; launchpad?: CatalogueAssetLaunchpad | null };
+  const SELECTABLE_ASSETS = useMemo<SelectableAsset[]>(() => {
     if (!IS_MAINNET) return DEVNET_REAL_ASSETS;
     return [MAINNET_USDC_ASSET, ...mainnetCatalogue.tokens.filter((t) => t.symbol !== MAINNET_USDC_ASSET.symbol)];
   }, [mainnetCatalogue.tokens]);
   const REAL_ASSET_BY_SYMBOL = useMemo(() => new Map(SELECTABLE_ASSETS.map((a) => [a.symbol, a])), [SELECTABLE_ASSETS]);
+  // Launchpad filter for the picker (Mainnet only; the catalogue carries the
+  // on-chain provenance). Narrows the LIST a Manager browses -- it never adds
+  // a token the catalogue would not otherwise offer.
+  const [launchpadFilter, setLaunchpadFilter] = useState<LaunchpadFilter>("all");
+  const launchpadFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.launchpad);
 
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1149,6 +1158,10 @@ export function CreateDTR() {
         connection,
         wallet: walletCtx,
         metadataUri,
+        // On-chain token name/symbol for wallets and DEXes, from the same
+        // Step-1 fields, fitted to Metaplex's 32/10-byte limits. Only once
+        // the program on this cluster has the instruction (TOKEN_METADATA_LIVE).
+        tokenMetadata: TOKEN_METADATA_LIVE ? { name: fitTokenMetadataName(name), symbol: fitTokenMetadataSymbol(ticker) } : undefined,
         mintFeeBps: Math.round(mintFeePct * 100),
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,
@@ -1701,15 +1714,36 @@ export function CreateDTR() {
                     />
                   </div>
 
+                  {launchpadFilterAvailable && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label htmlFor="launchpad-filter" className="text-xs text-muted-foreground">Launched on</label>
+                      <select
+                        id="launchpad-filter"
+                        className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                        value={launchpadFilter}
+                        onChange={(e) => setLaunchpadFilter(e.target.value as LaunchpadFilter)}
+                      >
+                        {LAUNCHPAD_FILTER_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
                     {SELECTABLE_ASSETS
                       .filter(a => !assets.some(selected => selected.symbol === a.symbol))
                       .filter(a => matchesAssetSearch(a, assetSearch))
+                      .filter(a => matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter))
                       .map(asset => (
                         <div key={asset.symbol} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
                           <div>
                             <span className="font-semibold">{asset.name}</span>
                             <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{asset.symbol}</span>
+                            {asset.launchpad && (
+                              <span className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-border text-muted-foreground" title="Where this token was launched, verified on-chain. Not a safety rating.">
+                                {launchpadBadgeText(asset.launchpad)}
+                              </span>
+                            )}
                             <div className="text-xs text-muted-foreground font-merge-mono">{asset.mint.slice(0, 4)}...{asset.mint.slice(-4)}</div>
                           </div>
                           <Button variant="ghost" size="sm" className="h-8 w-8 p-0" disabled={atAssetLimit} onClick={() => addAsset(asset.symbol, asset.name)}>
@@ -1730,6 +1764,10 @@ export function CreateDTR() {
                         const noMatches = assetSearch.trim().length > 0 && remaining.every((a) => !matchesAssetSearch(a, assetSearch));
                         if (noMatches) {
                           return <div className="p-4 text-center text-sm text-muted-foreground">No assets match "{assetSearch.trim()}".</div>;
+                        }
+                        const noneForLaunchpad = launchpadFilter !== "all" && remaining.filter((a) => matchesAssetSearch(a, assetSearch)).every((a) => !matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter));
+                        if (noneForLaunchpad) {
+                          return <div className="p-4 text-center text-sm text-muted-foreground">No eligible assets from that launchpad{assetSearch.trim() ? ` match "${assetSearch.trim()}"` : ""}.</div>;
                         }
                         return null;
                       })()}

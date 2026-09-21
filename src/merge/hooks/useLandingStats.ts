@@ -15,6 +15,8 @@ import { IS_MAINNET } from "../lib/solana-config";
 export interface PerReserveStats {
   holders: number;
   volume24hUsd: number;
+  /** This Reserve's all-time mint + redeem USD volume from the Ledger (the detail page's "All-Time Volume" tile; same definition as the global volumeAllTimeUsd). null when the server's Ledger read failed; optional so a cached response from before this field shipped still parses -- both render "Unavailable", never 0. */
+  volumeAllTimeUsd?: number | null;
 }
 
 export interface LandingStatsData {

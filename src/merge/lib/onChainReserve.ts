@@ -27,7 +27,8 @@ import { PublicKey } from "@solana/web3.js";
 // import solana-config.ts directly) passes the real cluster-aware values.
 import type { DTR, OnChainAssetMeta, OnChainDelegateMeta, OnChainReserveMeta, QuarantinedReserveInfo } from "./types";
 import type { DiscoveredDelegate, DiscoveredReserve, ReserveOnChain, ParsedReserveMetadata } from "@ssr/sdk";
-import { refreshPriceSeries } from "./calculations";
+import { mergePriceHistories, refreshPriceSeries } from "./calculations";
+import type { ServerPriceHistory } from "./navHistoryClient";
 import {
   DEVNET_FIXTURES,
   SOL_TEST_PRICE_USD,
@@ -516,6 +517,7 @@ export function buildDtrFromDiscoveredReserve(
     delegateCountOnChain: discovered.delegateCount,
     delegatesOnChain: delegates.map(onChainDelegateFromDiscovered),
     feeDestination: discovered.feeDestination,
+    metadataUri: discovered.metadataUri,
     managerFeeShareBps: discovered.managerFeeShareBps,
     protocolFeeShareBps: discovered.protocolFeeShareBps,
     pendingManagerFeeShares: discovered.pendingManagerFeeShares,
@@ -631,7 +633,17 @@ function checkDtrEligibility(d: DTR): { eligible: boolean; reason: string | null
   });
 }
 
-export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[], fullyVerified: boolean): MergeDiscoveredReservesResult {
+export function mergeDiscoveredReserves(
+  existingDtrs: DTR[],
+  rawDiscovered: DTR[],
+  fullyVerified: boolean,
+  // Mainnet only: the server-recorded price history per Reserve address
+  // (navHistoryClient.ts), merged UNDER whatever this browser already holds
+  // -- see calculations.ts's mergePriceHistories. Omitted/empty (DevNet,
+  // tests, a history-service hiccup) leaves the per-browser behaviour
+  // exactly as before.
+  serverHistoryByReserve: Record<string, ServerPriceHistory> = {},
+): MergeDiscoveredReservesResult {
   const discovered: DTR[] = [];
   const quarantined: QuarantinedReserveInfo[] = [];
   for (const d of rawDiscovered) {
@@ -658,12 +670,24 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
     // Real 24h/7d performance + a growing price history on every discovery
     // pass (DEC-0158) -- previously fresh discovery reset changes to 0 and
     // history only ever grew on the user's own trades.
-    const baseHistory = existing && existing.priceHistory.length > 1 ? existing.priceHistory : fresh.priceHistory;
+    const serverHistory = fresh.onChain ? serverHistoryByReserve[fresh.onChain.reserve] : undefined;
+    // Server history (when this pass carries it) is the authoritative past;
+    // this browser's points only extend it forward. Without it, keep the
+    // per-browser history exactly as before.
+    const baseHistory = serverHistory
+      ? mergePriceHistories(serverHistory.points, existing?.priceHistory ?? [])
+      : existing && existing.priceHistory.length > 1
+        ? existing.priceHistory
+        : fresh.priceHistory;
     const series = refreshPriceSeries(baseHistory, fresh.nav);
-    if (!existing) return { ...fresh, priceHistory: series.priceHistory, change24h: series.change24h, change7d: series.change7d };
+    // A pass without server history (e.g. a history-service hiccup) must not
+    // erase the fact that an earlier pass already merged it.
+    const priceHistoryRecordedFrom = serverHistory ? serverHistory.recordedFrom : existing?.priceHistoryRecordedFrom;
+    if (!existing) return { ...fresh, priceHistory: series.priceHistory, priceHistoryRecordedFrom, change24h: series.change24h, change7d: series.change7d };
     return {
       ...fresh,
       priceHistory: series.priceHistory,
+      priceHistoryRecordedFrom,
       change24h: series.change24h,
       change7d: series.change7d,
       trades: existing.trades,
@@ -673,6 +697,21 @@ export function mergeDiscoveredReserves(existingDtrs: DTR[], rawDiscovered: DTR[
       // the old `existing ?? fresh` order made a stale local value mask
       // every later metadata change forever.
       logoUrl: fresh.logoUrl ?? existing.logoUrl,
+      // Entry prices are a write-once server map (DEC-0172): a pass whose
+      // entry-price fetch failed (or a seed that didn't carry them) must not
+      // wipe the map an earlier pass already resolved -- otherwise the
+      // Composition table's P&L column and the performance card's top
+      // performers flicker back to "--"/empty on a transient fetch error.
+      onChain:
+        fresh.onChain && existing.onChain
+          ? {
+              ...fresh.onChain,
+              assetEntryPricesUsd:
+                fresh.onChain.assetEntryPricesUsd && Object.keys(fresh.onChain.assetEntryPricesUsd).length > 0
+                  ? fresh.onChain.assetEntryPricesUsd
+                  : existing.onChain.assetEntryPricesUsd,
+            }
+          : fresh.onChain,
     };
   });
   const discoveredAddresses = new Set(discovered.map((d) => d.onChain?.reserve).filter(Boolean));

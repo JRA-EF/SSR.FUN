@@ -58,6 +58,9 @@ import {
   findDelegate,
   validateFeeRecipientInputs,
   validateMetadataUri,
+  buildSetReserveTokenMetadataInstruction,
+  tokenMetadataUriFromReserveMetadataUri,
+  tokenMetadataOriginFor,
   computeEffectiveFeeSplit,
   validateSeedPlan,
   MIN_SEED_AMOUNT_PER_ASSET,
@@ -1503,6 +1506,15 @@ export async function createReserveOnChain(params: {
   connection: Connection;
   wallet: WalletContextState;
   metadataUri: string;
+  /**
+   * The Reserve Token's on-chain (Metaplex) name and symbol, already fitted
+   * to Metaplex's 32/10-byte limits (fitTokenMetadataName/Symbol). When
+   * given, set_reserve_token_metadata is bundled into the create-and-register
+   * batch so the token shows its name, symbol and picture in wallets and
+   * DEXes from the moment it exists. Omitted only when the metadata URI is
+   * not this app's record (nothing standard-format to point at).
+   */
+  tokenMetadata?: { name: string; symbol: string };
   mintFeeBps: number;
   tvlFeeBps: number;
   feeDestination: PublicKey;
@@ -1600,6 +1612,26 @@ export async function createReserveOnChain(params: {
     );
 
     const ixs: TransactionInstruction[] = [createIx, ...registerIxs];
+
+    if (params.tokenMetadata) {
+      // Same stored record as metadataUri, served in the standard format the
+      // Metaplex `uri` convention expects (see packages/sdk/src/tokenMetadata.ts).
+      const tokenUri = tokenMetadataUriFromReserveMetadataUri(
+        params.metadataUri,
+        addresses.reserve,
+        tokenMetadataOriginFor(clusterLabel.toLowerCase() === "mainnet" ? "mainnet" : "devnet", typeof window !== "undefined" ? window.location.origin : null),
+      );
+      if (tokenUri) {
+        const [actingDelegate] = findDelegate(addresses.reserve, wallet.publicKey, programId);
+        ixs.push(
+          await buildSetReserveTokenMetadataInstruction(program, programId, addresses.reserve, addresses.reserveTokenMint, wallet.publicKey, actingDelegate, {
+            name: params.tokenMetadata.name,
+            symbol: params.tokenMetadata.symbol,
+            uri: tokenUri,
+          }),
+        );
+      }
+    }
     const recipients = params.feeRecipients;
     if (recipients && recipients.length > 1) {
       validateFeeRecipientInputs(recipients);

@@ -8,7 +8,7 @@ import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered, computeMarketCap, type AssetPriceInfo } from "@/lib/onChainReserve";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
-import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
+import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt, fetchReserveAltAddress } from "@/lib/reserveAltClient";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
@@ -36,8 +36,12 @@ import {
   DEVUSDC,
   findReserve,
   validateFeeRecipientInputs,
+  fetchReserveTokenMetadata,
+  fitTokenMetadataName,
+  fitTokenMetadataSymbol,
   type ActivityLogEntry,
   type ManagerFeeRecipientsOnChain,
+  type OnChainTokenMetadata,
   type RecipientInput,
 } from "@ssr/sdk";
 import {
@@ -52,6 +56,8 @@ import {
   executeRemoveReserveAsset,
   executeSubmitRebalance,
   executeUpdateDelegatePermissions,
+  executeSetReserveTokenMetadata,
+  fetchProtocolAuthority,
   type RebalanceAssetPlan,
 } from "@/lib/managementClient";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
@@ -83,6 +89,45 @@ const COMPOSITION_BAR_COLORS = ["bg-primary", "bg-amber-500", "bg-sky-500", "bg-
 const CASH_SLOT_SYMBOL = IS_MAINNET ? "USDC" : DEVUSDC.symbol;
 const CASH_SLOT_DECIMALS = IS_MAINNET ? 6 : DEVUSDC.decimals;
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
+// DEC-0206: the Activity Log / fee-payout index is served per cluster
+// (api/mainnet/reserve-activity.ts vs api/devnet/reserve-activity.ts) --
+// each route syncs against its own chain and tags rows with its own cluster.
+const ACTIVITY_API_CLUSTER = IS_MAINNET ? "mainnet" : "devnet";
+/** What Manager fees are paid out in: real USDC on Mainnet, the zero-value devUSDC test token on DevNet. */
+const SETTLEMENT_SYMBOL = IS_MAINNET ? "USDC" : DEVUSDC.symbol;
+
+/** Mirror of lib/reserve-activity/feePayouts.ts's FeePayoutTotals -- the `?scope=fees` response body. */
+interface FeePayoutTotalsView {
+  byRecipient: { wallet: string; usdcRaw: string; payoutCount: number; lastTs: number; lastSignature: string }[];
+  pendingHeal: number;
+  backfillComplete: boolean;
+}
+
+/** Raw USDC base units (6 decimals) -> "$0.05". Sub-cent totals still show their real value rather than rounding to "$0.00". */
+function formatUsdcRawAmount(raw: string): string {
+  const value = Number(raw) / 1_000_000;
+  if (value > 0 && value < 0.01) return `$${value.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 })}`;
+  return formatUsdc(value);
+}
+
+/** Whether the Reserve Token price is trustworthy enough to value pending fee shares in USD (mirrors the AUM tile's own "Price unavailable" rule). */
+function managerFeePriceAvailable(d: { tokenPrice: number; onChain?: { priceSource?: string } }): boolean {
+  return d.tokenPrice > 0 && !(IS_MAINNET && d.onChain?.priceSource === "unavailable");
+}
+
+/**
+ * Estimated USD value of the Manager fee shares sitting in the fee vault
+ * (crystallized or already redeemed and awaiting the swap/payout leg) that
+ * ONE recipient will receive at the next settlement: (in vault + pending)
+ * x that recipient's allocation x the Reserve Token's current price. An
+ * estimate by nature -- the keeper's actual swap fixes the real USDC.
+ */
+function formatPendingManagerFeeUsd(fs: FeeSettlementView, allocationBps: number, tokenPrice: number, priceAvailable: boolean): string {
+  const managerShares = BigInt(fs.managerSharesInVault) + BigInt(fs.managerSharesPendingSettlement);
+  const recipientShares = (managerShares * BigInt(allocationBps)) / 10_000n;
+  if (!priceAvailable) return "value unavailable";
+  return `≈ ${formatUsdcRawAmount(Math.round((Number(recipientShares) / 1_000_000) * tokenPrice * 1_000_000).toString())}`;
+}
 
 /**
  * Verified-on-chain delegate row -- reused by both the Overview summary
@@ -315,7 +360,7 @@ export function ManageDTR() {
 
   // DL-01b fix: lazy-loaded only when the Activity tab is actually opened
   // (never an unconditional background poll). Reads from the Reserve
-  // Activity Log's own Postgres index (api/devnet/reserve-activity.ts,
+  // Activity Log's own Postgres index (api/{mainnet,devnet}/reserve-activity.ts,
   // lib/reserve-activity/) instead of walking live RPC directly from the
   // browser -- a live-RPC hiccup during that endpoint's best-effort
   // background sync is reported via `activitySyncError` but never blocks
@@ -330,11 +375,11 @@ export function ManageDTR() {
     if (activeTab !== "activity" || !dtr?.onChain || activityStatus !== "idle") return;
     let cancelled = false;
     setActivityStatus("loading");
-    // DEC-0200: was hardcoded to /api/devnet/ for BOTH clusters, so a Mainnet
-    // Reserve's activity was indexed against the DevNet RPC and stored under a
-    // `devnet` cursor -- it then read back empty and the Reserve looked
-    // inactive despite real on-chain trades.
-    fetch(`/api/${IS_MAINNET ? "mainnet" : "devnet"}/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
+    // Was hardcoded to /api/devnet/ for BOTH clusters, so a Mainnet Reserve's
+    // activity was indexed against the DevNet RPC and stored under a `devnet`
+    // cursor -- it then read back empty and the Reserve looked inactive
+    // despite real on-chain trades.
+    fetch(`/api/${ACTIVITY_API_CLUSTER}/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load the activity log.");
@@ -385,6 +430,35 @@ export function ManageDTR() {
   // reserveImageClient.ts) and held here for preview until saved.
   const [pendingProfileImage, setPendingProfileImage] = useState<string | null>(null);
   const [profileImageError, setProfileImageError] = useState<string | null>(null);
+  // On-chain (Metaplex) token metadata of the Reserve Token -- what wallets
+  // and exchanges display. undefined = not loaded yet, null = none published.
+  const [tokenMetadataOnChain, setTokenMetadataOnChain] = useState<OnChainTokenMetadata | null | undefined>(undefined);
+  const [publishingTokenMetadata, setPublishingTokenMetadata] = useState(false);
+  const [tokenMetadataError, setTokenMetadataError] = useState<string | null>(null);
+  const [protocolAuthority, setProtocolAuthority] = useState<string | null>(null);
+  const reserveTokenMintForMetadata = TOKEN_METADATA_LIVE ? (dtr?.onChain?.reserveTokenMint ?? null) : null;
+  useEffect(() => {
+    if (!reserveTokenMintForMetadata) {
+      setTokenMetadataOnChain(undefined);
+      return;
+    }
+    let cancelled = false;
+    void fetchReserveTokenMetadata(connection, new PublicKey(reserveTokenMintForMetadata))
+      .then((m) => {
+        if (!cancelled) setTokenMetadataOnChain(m);
+      })
+      .catch(() => {
+        if (!cancelled) setTokenMetadataOnChain(undefined);
+      });
+    void fetchProtocolAuthority(connection)
+      .then((a) => {
+        if (!cancelled) setProtocolAuthority(a);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [connection, reserveTokenMintForMetadata]);
   // True while a picked picture is uploading/saving -- its own flag (not
   // onChainTxPending) because saving a picture no longer submits any
   // transaction at all.
@@ -402,6 +476,13 @@ export function ManageDTR() {
   // pendingManagerFeeShares below -- surfaced so a Manager sees their real
   // earned fees instead of a misleadingly-empty in-kind claimable.
   const [feeSettlement, setFeeSettlement] = useState<FeeSettlementView | null>(null);
+  // DEC-0206: what each recipient has actually RECEIVED in USDC, read from
+  // the indexed feeUsdcDistributed events (api/*/reserve-activity?scope=fees).
+  // Manager fees are never claimed on this protocol -- the keeper pays USDC
+  // straight to each recipient's wallet -- so this, not an in-kind balance,
+  // is the number a Manager needs to see.
+  const [feePayouts, setFeePayouts] = useState<FeePayoutTotalsView | null>(null);
+  const [feePayoutsStatus, setFeePayoutsStatus] = useState<"loading" | "ready" | "error">("loading");
   // CLAIMANT-ONLY UI (2026-08-14 pass, see docs/project/DECISION_LOG.md):
   // keyed by recipient wallet, independent of `onChainTxPending` -- clicking
   // one recipient's Collect button must never show another recipient's row
@@ -433,6 +514,20 @@ export function ManageDTR() {
     } catch {
       // Transient RPC failure -- leave the last-known data in place rather
       // than flashing an empty state; the next poll will retry.
+    }
+    await refreshFeePayouts();
+  }
+
+  async function refreshFeePayouts() {
+    if (!dtr?.onChain) return;
+    try {
+      const res = await fetch(`/api/${ACTIVITY_API_CLUSTER}/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}&scope=fees`);
+      const data = await res.json();
+      if (!res.ok || !data?.feePayouts) throw new Error(data?.error || "Failed to load fee payouts.");
+      setFeePayouts(data.feePayouts as FeePayoutTotalsView);
+      setFeePayoutsStatus("ready");
+    } catch {
+      setFeePayoutsStatus("error");
     }
   }
 
@@ -738,6 +833,12 @@ export function ManageDTR() {
   // the !dtr.onChain branches above (hasManageDelegates/hasRebalance) keep
   // using the local-simulated system for a purely local/demo Reserve.
   const canUpdateMetadataOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_METADATA);
+  // Publishing the Reserve Token's on-chain metadata: same permission as
+  // editing the Reserve's metadata, plus the protocol authority (backfill).
+  const canPublishTokenMetadata = Boolean(dtr.onChain) && (canUpdateMetadataOnChain || (protocolAuthority !== null && protocolAuthority === wallet.address));
+  const tokenMetadataStale = Boolean(
+    tokenMetadataOnChain && (tokenMetadataOnChain.name !== fitTokenMetadataName(dtr.name) || tokenMetadataOnChain.symbol !== fitTokenMetadataSymbol(dtr.ticker)),
+  );
   const canUpdateTargetsOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_TARGETS);
   const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
   const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
@@ -840,6 +941,29 @@ export function ManageDTR() {
         setProfileImageError(e instanceof Error ? e.message : "Failed to save the profile picture. Please try again.");
       } finally {
         setSavingProfileImage(false);
+      }
+    })();
+  };
+
+  // Handler: publish the Reserve Token's on-chain metadata (Reserve Identity card).
+  const handlePublishTokenMetadata = () => {
+    const onChainMeta = dtr.onChain;
+    if (!onChainMeta) return;
+    if (!onChainMeta.metadataUri) {
+      setTokenMetadataError("This Reserve's metadata record could not be read from the chain, so there is nothing to publish yet.");
+      return;
+    }
+    setTokenMetadataError(null);
+    setPublishingTokenMetadata(true);
+    void (async () => {
+      try {
+        await executeSetReserveTokenMetadata(connection, walletCtx, onChainMeta.reserve, onChainMeta.reserveTokenMint, onChainMeta.metadataUri!, dtr.name, dtr.ticker);
+        setTokenMetadataOnChain(await fetchReserveTokenMetadata(connection, new PublicKey(onChainMeta.reserveTokenMint)));
+        toast({ title: "Token metadata published", description: "Wallets and exchanges will now show this Reserve Token's name, symbol, and picture." });
+      } catch (e) {
+        setTokenMetadataError(e instanceof Error ? e.message : "Failed to publish the token metadata. Please try again.");
+      } finally {
+        setPublishingTokenMetadata(false);
       }
     })();
   };
@@ -1211,6 +1335,40 @@ export function ManageDTR() {
                       <p className="font-merge-mono font-medium">{dtr.ticker}</p>
                     </div>
                   </div>
+                  {dtr.onChain && TOKEN_METADATA_LIVE && (
+                    <div>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Wallets and Exchanges</p>
+                      {tokenMetadataOnChain === undefined ? (
+                        <p className="text-sm text-muted-foreground">Checking the on-chain token metadata...</p>
+                      ) : tokenMetadataOnChain === null ? (
+                        <p className="text-sm text-muted-foreground">
+                          Not published yet. Wallets and exchanges show this Reserve Token without its name, symbol, or picture until the metadata is published on-chain.
+                        </p>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Published on-chain as <span className="font-medium text-foreground">{tokenMetadataOnChain.name}</span> (
+                          <span className="font-merge-mono">{tokenMetadataOnChain.symbol}</span>). Wallets and exchanges show this name, symbol, and picture.
+                          {tokenMetadataStale && " The Reserve's name or ticker has changed since -- publish again to update it."}
+                        </p>
+                      )}
+                      {canPublishTokenMetadata && tokenMetadataOnChain !== undefined && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant={tokenMetadataOnChain === null || tokenMetadataStale ? "default" : "outline"}
+                            disabled={publishingTokenMetadata}
+                            onClick={handlePublishTokenMetadata}
+                          >
+                            {publishingTokenMetadata ? "Publishing..." : tokenMetadataOnChain === null ? "Publish to wallets and exchanges" : "Publish again"}
+                          </Button>
+                          <p className="text-xs text-muted-foreground">
+                            Your wallet will ask you to approve one transaction{tokenMetadataOnChain === null ? " and pay a small one-time account fee" : ""}.
+                          </p>
+                        </div>
+                      )}
+                      {tokenMetadataError && <p className="text-sm text-destructive mt-2">{tokenMetadataError}</p>}
+                    </div>
+                  )}
                   <div>
                     <p className="text-sm font-semibold text-muted-foreground mb-2">YouTube</p>
                     {canEditProfilePicture ? (
@@ -1488,31 +1646,11 @@ export function ManageDTR() {
                           </Button>
                         )}
                       </div>
-                      {feeSettlement && (BigInt(feeSettlement.managerSharesInVault) > 0n || BigInt(feeSettlement.managerSharesPendingSettlement) > 0n) && (
-                        <div className="p-3 mb-3 bg-muted/30 rounded-lg border border-border/50">
-                          <p className="text-xs font-semibold text-muted-foreground mb-1">Fee vault &middot; settling to USDC</p>
-                          <p className="text-xs text-muted-foreground">
-                            Mint and TVL fees for this Reserve accrue to the shared fee vault and are settled to USDC by the fee-settlement keeper -- they are not collected as Reserve Tokens below.
-                            {" "}Your Manager share currently in the vault:{" "}
-                            <span className="font-merge-mono text-foreground">
-                              {(Number(feeSettlement.managerSharesInVault) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
-                            </span>
-                            {BigInt(feeSettlement.managerSharesPendingSettlement) > 0n && (
-                              <>
-                                {" "}&middot; crystallized &amp; pending USDC payout:{" "}
-                                <span className="font-merge-mono text-foreground">
-                                  {(Number(feeSettlement.managerSharesPendingSettlement) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
-                                </span>
-                              </>
-                            )}.
-                          </p>
-                        </div>
-                      )}
                       <p className="text-xs text-muted-foreground mb-3">
-                        The Reserve-Token balances below are legacy in-kind Manager fees collectable directly here (shares accrued before the 2026-09-08 fee-vault upgrade; since then the creation fee goes to the vault too).
-                        Mint and TVL fees instead accrue to the shared fee vault and are settled to USDC by the keeper (shown above), so this in-kind
-                        balance is often small. Only a recipient's own connected wallet can collect its balance --
-                        the root Manager cannot collect on a recipient's behalf, and recipients cannot collect for each other.
+                        Manager fees are paid in {SETTLEMENT_SYMBOL}. Every creation, mint and TVL fee is set aside in this Reserve's fee vault, and the hourly
+                        fee-settlement service converts it to {SETTLEMENT_SYMBOL} and pays each recipient's share straight into that wallet's {SETTLEMENT_SYMBOL} account --
+                        there is nothing to claim. The mint fee's Manager share is {dtr.onChain?.effectiveMintFeeManagerBps != null ? `${(dtr.onChain.effectiveMintFeeManagerBps / 100).toFixed(2)}%` : "its configured share"} of each mint,
+                        split between the recipients below by their percentages.
                         {feeRecipientsData && (
                           <>
                             {" "}
@@ -1522,20 +1660,70 @@ export function ManageDTR() {
                           </>
                         )}
                       </p>
+                      {feeSettlement && (BigInt(feeSettlement.managerSharesInVault) > 0n || BigInt(feeSettlement.managerSharesPendingSettlement) > 0n) && (
+                        <div className="p-3 mb-3 bg-muted/30 rounded-lg border border-border/50">
+                          <p className="text-xs font-semibold text-muted-foreground mb-1">Awaiting the next settlement</p>
+                          <p className="text-xs text-muted-foreground">
+                            Manager fees set aside but not yet paid out:{" "}
+                            <span className="font-merge-mono text-foreground">
+                              {formatPendingManagerFeeUsd(feeSettlement, 10_000, dtr.tokenPrice, managerFeePriceAvailable(dtr))}
+                            </span>
+                            {" "}({(Number(BigInt(feeSettlement.managerSharesInVault) + BigInt(feeSettlement.managerSharesPendingSettlement)) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker} in the fee vault).
+                            {" "}The settlement service runs every hour and pays it out in {SETTLEMENT_SYMBOL}.
+                          </p>
+                        </div>
+                      )}
+                      {feePayoutsStatus === "error" && (
+                        <p className="text-xs text-muted-foreground mb-3 flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" /> Couldn't load the {SETTLEMENT_SYMBOL} payout history just now -- the balances below refresh on the next load.
+                        </p>
+                      )}
+                      {feePayouts && (feePayouts.pendingHeal > 0 || !feePayouts.backfillComplete) && (
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Payout history is still syncing -- the {SETTLEMENT_SYMBOL} totals below may not yet include every past payout.
+                        </p>
+                      )}
                       <div className="space-y-2 mb-3">
                         {(feeRecipientsData?.recipients ?? []).map((r) => {
                           const isConnectedWallet = wallet.connected && wallet.address === r.wallet;
                           const isCollectingThisRow = collectingRecipient === r.wallet;
                           const lastCollection = lastRecipientCollection[r.wallet];
+                          const paid = feePayouts?.byRecipient.find((p) => p.wallet === r.wallet);
+                          const hasLegacyInKind = BigInt(r.pendingFeeShares) > 0n || BigInt(r.collectedFeeShares) > 0n;
                           return (
                             <div key={r.wallet} className="p-3 bg-muted/30 rounded-lg border border-border/50 flex items-center justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="font-merge-mono text-xs truncate">{r.wallet}</p>
                                 <p className="text-xs text-muted-foreground">
-                                  {(r.allocationBps / 100).toFixed(1)}% of Manager share &middot; total accrued / currently claimable{" "}
-                                  {(Number(r.pendingFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
-                                  {" "}&middot; total collected {(Number(r.collectedFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                  {(r.allocationBps / 100).toFixed(1)}% of Manager share &middot; {SETTLEMENT_SYMBOL} received{" "}
+                                  <span className="font-merge-mono text-foreground">
+                                    {feePayoutsStatus === "loading" ? "..." : formatUsdcRawAmount(paid?.usdcRaw ?? "0")}
+                                  </span>
+                                  {paid && paid.payoutCount > 0 && (
+                                    <>
+                                      {" "}({paid.payoutCount} {paid.payoutCount === 1 ? "payout" : "payouts"}, last {new Date(paid.lastTs * 1000).toLocaleString()}{" "}
+                                      <a href={explorerUrl("tx", paid.lastSignature)} target="_blank" rel="noreferrer" className="underline hover:text-foreground">
+                                        {paid.lastSignature.slice(0, 8)}...
+                                      </a>)
+                                    </>
+                                  )}
+                                  {feeSettlement && (BigInt(feeSettlement.managerSharesInVault) > 0n || BigInt(feeSettlement.managerSharesPendingSettlement) > 0n) && (
+                                    <>
+                                      {" "}&middot; awaiting settlement{" "}
+                                      <span className="font-merge-mono text-foreground">
+                                        {formatPendingManagerFeeUsd(feeSettlement, r.allocationBps, dtr.tokenPrice, managerFeePriceAvailable(dtr))}
+                                      </span>
+                                    </>
+                                  )}
                                 </p>
+                                {hasLegacyInKind && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Legacy in-kind balance (fees from before the 2026-09-08 fee-vault upgrade): claimable{" "}
+                                    {(Number(r.pendingFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                    {" "}&middot; collected {(Number(r.collectedFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}.
+                                    {" "}Only this recipient's own connected wallet can collect it.
+                                  </p>
+                                )}
                                 {lastCollection && (
                                   <p className="text-xs text-muted-foreground">
                                     Last collection: {new Date(lastCollection.ts * 1000).toLocaleString()} &middot;{" "}
@@ -1545,18 +1733,18 @@ export function ManageDTR() {
                                   </p>
                                 )}
                               </div>
-                              {isConnectedWallet ? (
+                              {isConnectedWallet && BigInt(r.pendingFeeShares) > 0n ? (
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   className="shrink-0 gap-1.5"
-                                  disabled={collectingRecipient !== null || r.pendingFeeShares === "0"}
+                                  disabled={collectingRecipient !== null}
                                   onClick={() => void collectRecipientFee(r.wallet)}
                                 >
-                                  <Coins className="w-3.5 h-3.5" /> {isCollectingThisRow ? "Confirming..." : "Collect"}
+                                  <Coins className="w-3.5 h-3.5" /> {isCollectingThisRow ? "Confirming..." : "Collect legacy balance"}
                                 </Button>
                               ) : (
-                                <Badge variant="secondary" className="shrink-0 text-xs">Claimable by this wallet</Badge>
+                                <Badge variant="secondary" className="shrink-0 text-xs">Paid in {SETTLEMENT_SYMBOL}{isConnectedWallet ? " to this wallet" : ""}</Badge>
                               )}
                             </div>
                           );

@@ -24,6 +24,7 @@
 // (MAINNET_USDC_MINT), so no catalogue-sourced "USDC" entry can ever shadow
 // it.
 import { getSql } from "../../lib/ledger/db";
+import { isLaunchpadId, type LaunchpadId, type LaunchpadStage, type LaunchpadVenue } from "../../packages/sdk/src/launchpads";
 
 interface ApiRequest {
   method?: string;
@@ -42,6 +43,17 @@ export interface CatalogueRow {
   decimals: number;
   organicScore: number | null;
   tokenProgram: string | null;
+  /** On-chain launchpad provenance (lib/ledger/launchpadClassification.ts); null = not from a supported launchpad or not yet classified. */
+  launchpad?: string | null;
+  launchpadStage?: string | null;
+  launchpadVenue?: string | null;
+}
+
+/** Launchpad provenance as the picker shows it. Informational: it never affects whether a token is offered. */
+export interface CatalogueTokenLaunchpad {
+  id: LaunchpadId;
+  stage: LaunchpadStage;
+  venue: LaunchpadVenue | null;
 }
 
 export interface CatalogueToken {
@@ -50,12 +62,22 @@ export interface CatalogueToken {
   name: string;
   decimals: number;
   /**
-   * The token program that owns this mint (DEC-0201). Carried all the way to
-   * the instruction builders, which create the vault and derive every ATA
-   * under it. Rows captured before this column existed report classic SPL
-   * Token, which is what they are.
+   * The token program that owns this mint. Carried all the way to the
+   * instruction builders, which create the vault and derive every ATA under
+   * it. Rows captured before this column existed report classic SPL Token,
+   * which is what they are.
    */
   tokenProgram: string;
+  launchpad: CatalogueTokenLaunchpad | null;
+}
+
+/** Pure: the stored columns -> the picker's launchpad object, or null. Only accepts the exact verified ids (a stray/unknown value is treated as no provenance, never surfaced). */
+export function launchpadOfRow(row: Pick<CatalogueRow, "launchpad" | "launchpadStage" | "launchpadVenue">): CatalogueTokenLaunchpad | null {
+  if (!isLaunchpadId(row.launchpad)) return null;
+  const stage: LaunchpadStage = row.launchpadStage === "graduated" ? "graduated" : "bonding";
+  const venue = row.launchpadVenue;
+  const knownVenue = venue === "pumpswap" || venue === "raydium-cpmm" || venue === "raydium-amm-v4" || venue === "meteora-damm-v1" || venue === "meteora-damm-v2" ? venue : null;
+  return { id: row.launchpad, stage, venue: knownVenue };
 }
 
 /**
@@ -102,6 +124,7 @@ export function dedupeBySymbolPreferOrganicScore(rows: CatalogueRow[]): Catalogu
       name: r.name || r.symbol,
       decimals: r.decimals,
       tokenProgram: r.tokenProgram === TOKEN_2022_PROGRAM_ID ? TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID,
+      launchpad: launchpadOfRow(r),
     }));
 }
 
@@ -124,7 +147,12 @@ let cached: { tokens: CatalogueToken[]; updatedAt: number } | null = null;
 async function loadCatalogue(): Promise<{ tokens: CatalogueToken[]; updatedAt: number }> {
   const sql = getSql();
   const rows = (await sql`
-    select mint, symbol, name, decimals, jupiter_organic_score as "organicScore", token_program as "tokenProgram"
+    select mint, symbol, name, decimals, jupiter_organic_score as "organicScore", token_program as "tokenProgram",
+      -- via to_jsonb so a deployment that precedes scripts/migrate-launchpads.mjs
+      -- reads null instead of failing on a missing column
+      to_jsonb(ledger_asset_catalogue) ->> 'launchpad' as "launchpad",
+      to_jsonb(ledger_asset_catalogue) ->> 'launchpad_stage' as "launchpadStage",
+      to_jsonb(ledger_asset_catalogue) ->> 'launchpad_venue' as "launchpadVenue"
     from ledger_asset_catalogue
     where jupiter_verified = true
       and decimals is not null

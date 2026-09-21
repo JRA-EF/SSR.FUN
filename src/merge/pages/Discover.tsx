@@ -10,6 +10,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { RESERVE_CATEGORIES, normalizeReserveCategory, type DTR } from "@/lib/types";
 import { isDesignDemoEnabled } from "@/lib/designDemo";
 import { buildReserveCardProps } from "@/lib/reserveCardProps";
+import { useLandingStats } from "@/hooks/useLandingStats";
 import { IS_MAINNET } from "@/lib/solana-config";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
@@ -20,10 +21,13 @@ type SortKey = "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc"
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
-// DEC-0200: "AUM: High to Low" IS the default now (QA 2026-09-11: the
+// DEC-0200/DEC-0201: "AUM: High to Low" IS the default now (QA 2026-09-11: the
 // directory had no useful ordering). The old "default" key sorted nothing and
 // rendered in on-chain discovery order, which means nothing to a visitor, so
-// it is gone rather than left as a confusing no-op choice.
+// it is gone rather than left as a confusing no-op choice. AUM (market cap)
+// descending is the same ranking the Home page's Featured Reserves use
+// (selectFeaturedReserves = the top 3 here, minus any Reserve that is
+// winding down).
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "aumDesc", label: "AUM: High to Low" },
   { value: "changeDesc", label: "24h Change: High to Low" },
@@ -63,6 +67,9 @@ export function Discover() {
   const chainDiscoveryError = useAppStore((s) => s.chainDiscoveryError);
   const [searchFilter, setSearchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  // Per-Reserve all-time volume for the cards' stats row -- the same fetch/
+  // cache the Home page and DTRDetail read (see hooks/useLandingStats.ts).
+  const landingStats = useLandingStats();
   const [sortBy, setSortBy] = useState<SortKey>("aumDesc");
 
   // Filter options: the full canonical list (so every structured category is
@@ -159,7 +166,10 @@ export function Discover() {
 
       <div className="fcards">
         {visibleDtrs.map((dtr) => {
-          const cardProps = buildReserveCardProps(dtr, IS_MAINNET);
+          const cardProps = buildReserveCardProps(dtr, IS_MAINNET, {
+            status: landingStats.status,
+            volumeAllTimeUsd: dtr.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve]?.volumeAllTimeUsd : undefined,
+          });
           return (
             <ReserveCard
               key={dtr.id}
