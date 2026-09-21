@@ -1,16 +1,14 @@
-// #/evm -- SSR on Robinhood Chain, inside the real app.
+// #/evm -- SSR on Robinhood Chain.
 //
-// This is the EVM half of the protocol: a fork of Reserve's audited Folio,
-// deep-renamed to SSR, with one behavioural change (the DAO fee caps raised so
-// the Solana fee rule fits). It uses the same components, theme and shell as
-// every other page so the UX can be judged against the real product rather
-// than against a standalone harness.
+// Uses the same components, theme and shell as every other page so the UX can
+// be judged against the real product rather than a standalone harness.
 //
-// Two chains are offered and they are genuinely different situations:
-//   testnet 46630 -- a live instance over MOCK assets; safe to break
-//   mainnet  4663 -- the factory, registries and configured fee rule are live,
-//                    but NO reserve exists yet. Real tokenised equities.
-// The page says which is which rather than rendering an empty reserve.
+// Defaults to MAINNET (4663), which is deployed: factory, registries and the
+// fee rule are live and read straight off the chain, and the page shows that
+// real state even though no reserve has been created through the factory yet.
+// Testnet (46630) is fixtures -- a test instance over mock tokens whose name,
+// basket and balances are made up -- and is labelled as such so its numbers
+// are never mistaken for reality.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Address, PublicClient, WalletClient } from "viem";
 import { Button } from "@/components/ui/button";
@@ -20,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CHAINS, LIMITS, MULTIPLIER_WARNING, SAFE_REBALANCE_DEFAULTS, type AssetRef, type ChainConfig } from "@/lib/evmChain";
+import { CHAINS, DEPLOYER_ABI, LIMITS, MULTIPLIER_WARNING, SAFE_REBALANCE_DEFAULTS, type AssetRef, type ChainConfig } from "@/lib/evmChain";
 import {
   connectWallet,
   createReserve,
@@ -35,6 +33,7 @@ import {
   publicClientFor,
   quoteMintCost,
   quoteRedeemProceeds,
+  loadRegistryDefaults,
   approveIfNeeded,
   SSR_ABI,
   type ReserveSnapshot,
@@ -64,7 +63,7 @@ function StatusLine({ status, link }: { status: Status; link?: { href: string; l
 
 export function Evm() {
   const [chainKey, setChainKey] = useState<ChainKey>(
-    () => (localStorage.getItem(CHAIN_KEY) as ChainKey) ?? "testnet",
+    () => (localStorage.getItem(CHAIN_KEY) as ChainKey) ?? "mainnet",
   );
   const cfg: ChainConfig = CHAINS[chainKey];
   const pc: PublicClient = useMemo(() => publicClientFor(cfg), [cfg]);
@@ -159,9 +158,6 @@ export function Evm() {
       <header className="flex flex-wrap items-center gap-4 mb-6">
         <div className="mr-auto">
           <h1 className="font-merge-display text-2xl font-bold">SSR on Robinhood Chain</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            The EVM port of the protocol &mdash; a fork of Reserve&rsquo;s audited Folio, renamed to SSR
-          </p>
         </div>
         <div className="flex rounded-full border border-border overflow-hidden">
           {(["testnet", "mainnet"] as const).map((k) => (
@@ -254,19 +250,7 @@ function ReserveView(props: {
   const [redeemLink, setRedeemLink] = useState<{ href: string; label: string } | null>(null);
   const [faucetStatus, setFaucetStatus] = useState<Status>(null);
 
-  if (!cfg.ssr) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>No reserve yet</CardTitle>
-          <CardDescription>
-            The SSR factory is live on {cfg.chain.name}, but nobody has created a reserve through it yet. Creating one
-            deploys a new contract and moves your chosen assets into it as the starting basket.
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
+  if (!cfg.ssr) return <DeployedButEmpty cfg={cfg} pc={pc} explorerAddr={explorerAddr} />;
   if (!snapshot) return <Card><CardContent className="py-8 text-muted-foreground">Loading…</CardContent></Card>;
 
   const dec = snapshot.decimals;
@@ -719,6 +703,112 @@ function ContractsView({ cfg, explorerAddr }: { cfg: ChainConfig; explorerAddr: 
         </Table>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * What a chain shows when the protocol is deployed but nobody has created a
+ * reserve yet. Everything here is read live from the chain -- the fee rule is
+ * the registry's own defaults (getFeeDetails on the zero address), which is
+ * exactly what the next reserve created will inherit. No placeholders.
+ */
+function DeployedButEmpty({
+  cfg,
+  pc,
+  explorerAddr,
+}: {
+  cfg: ChainConfig;
+  pc: PublicClient;
+  explorerAddr: (a: string) => string;
+}) {
+  const [defaults, setDefaults] = useState<{ recipient: Address; daoFeeBps: bigint; feeFloor: bigint } | null>(null);
+  const [impl, setImpl] = useState<Address | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [d, i] = await Promise.all([
+          loadRegistryDefaults(pc, cfg),
+          pc.readContract({ address: cfg.deployer, abi: DEPLOYER_ABI, functionName: "ssrImplementation" }),
+        ]);
+        if (!cancelled) {
+          setDefaults(d);
+          setImpl(i);
+        }
+      } catch (e) {
+        if (!cancelled) setErr(describeEvmError(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pc, cfg]);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Protocol status</CardTitle>
+            <CardDescription>{cfg.chain.name} &middot; chain {cfg.chain.id}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <Row label="Factory" value={<span className="text-positive">deployed</span>} />
+            <Row label="Registries" value={<span className="text-positive">deployed</span>} />
+            <Row label="Fee rule" value={<span className="text-positive">configured</span>} />
+            <Row label="Reserves created" value="0" />
+            <Row
+              label="Implementation"
+              value={
+                impl ? (
+                  <a href={explorerAddr(impl)} target="_blank" rel="noopener noreferrer" className="font-merge-mono text-xs underline text-primary">
+                    {short(impl)}
+                  </a>
+                ) : (
+                  "—"
+                )
+              }
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Fee rule</CardTitle>
+            <CardDescription>Live from the fee registry &mdash; what the next reserve inherits.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <Row label="DAO share of mint fee" value={defaults ? `${fmtUnits(defaults.daoFeeBps, 2, 2)}%` : "—"} />
+            <Row label="DAO floor" value={defaults ? pctFromD18(defaults.feeFloor) : "—"} />
+            <Row
+              label="Fee recipient"
+              value={
+                defaults ? (
+                  <a href={explorerAddr(defaults.recipient)} target="_blank" rel="noopener noreferrer" className="font-merge-mono text-xs underline text-primary">
+                    {short(defaults.recipient)}
+                  </a>
+                ) : (
+                  "—"
+                )
+              }
+            />
+            {err && <p className="text-sm text-destructive">{err}</p>}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>No reserve yet</CardTitle>
+          <CardDescription>
+            Nobody has created a reserve through the factory on this network. Creating one deploys a new contract and
+            moves your chosen assets into it as the starting basket. Use the &ldquo;Create a reserve&rdquo; tab.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    </div>
   );
 }
 

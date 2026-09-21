@@ -179,6 +179,21 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig): Promise<R
   };
 }
 
+/**
+ * The fee rule the registry applies to a reserve that does not exist yet --
+ * `getFeeDetails(address(0))` returns the deployment's defaults. Real, live,
+ * on-chain values, which is what a chain with no instance can honestly show.
+ */
+export async function loadRegistryDefaults(pc: PublicClient, cfg: ChainConfig) {
+  const [recipient, num, den, floor] = await pc.readContract({
+    address: cfg.feeRegistry,
+    abi: FEE_REGISTRY_ABI,
+    functionName: "getFeeDetails",
+    args: ["0x0000000000000000000000000000000000000000"],
+  });
+  return { recipient, daoFeeBps: (num * 10000n) / den, feeFloor: floor };
+}
+
 /** Mirrors SSRLib.computeMintFees so a quote matches what will execute. */
 export async function mintFeeBreakdown(pc: PublicClient, cfg: ChainConfig, shares: bigint) {
   const ssr = cfg.ssr!;

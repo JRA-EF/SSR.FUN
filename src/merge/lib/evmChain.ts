@@ -39,6 +39,8 @@ export interface ChainConfig {
   fillerRegistry: Address;
   /** Assets the UI offers when creating a reserve. A product choice, not a contract limit. */
   assets: AssetRef[];
+  /** True when the instance and its assets are test fixtures, not real value. */
+  isMock: boolean;
   faucetUrl?: string;
   /** Shown as a banner. The honest state of this deployment. */
   notice: string;
@@ -76,9 +78,11 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
       { address: "0xd60cece26598397b6f90deababf22c1ce6066d8f", symbol: "USDC", decimals: 6, faucetAmount: 10_000n },
       { address: "0x638626af66bbaf2a8fe5a9c293a2f718f6f170cd", symbol: "WBTC", decimals: 8, faucetAmount: 1n },
     ],
+    isMock: true,
     faucetUrl: "https://docs.robinhood.com/chain/",
     notice:
-      "Testnet. The basket assets are mock tokens anyone can mint and the shares are worthless. " +
+      "Testnet fixtures. The reserve here is a TEST deployment: its name, its basket and its balances " +
+      "are made up, and the assets are mock tokens anyone can mint. Nothing on this network is real value. " +
       "You still need testnet ETH for gas -- the faucet button only mints basket assets.",
   },
   mainnet: {
@@ -86,6 +90,7 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     chain: mainnetChain,
     explorer: "https://robinhoodchain.blockscout.com",
     ssr: null, // nothing created yet
+    isMock: false,
     deployer: "0x81dd183c53C95F251869520d8DB10B0A4a4F8858",
     versionRegistry: "0x835dd7fF172874749855aae0174c6ecAA82Ef1e6",
     feeRegistry: "0x03079d5f8d3B6d27827315205D1328b193c48d31",
@@ -103,8 +108,9 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
       { address: "0xc72b96e0e48ecd4dc75e1e45396e26300bc39681", symbol: "INTC", decimals: 18, note: "Intel -- stock token" },
     ],
     notice:
-      "Mainnet. The factory and registries are live and the fee rule is already configured, " +
-      "but no reserve has been created yet. Creating one costs real assets to seed the basket.",
+      "Live on Robinhood Chain mainnet. The factory, the registries and the fee rule are deployed and " +
+      "configured. No reserve has been created through the factory yet -- creating one moves real assets " +
+      "into it as the starting basket.",
   },
 };
 
