@@ -6,7 +6,7 @@
 //
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_robinhood_rpc_proxy.ts
 import { expect } from "chai";
-import { ALLOWED_METHODS, isPlanRefusal, rejectReason, upstreamUrl, PUBLIC_FALLBACK_RPC_URL } from "../api/robinhood/rpc-proxy";
+import { ALLOWED_METHODS, isPlanRefusal, rejectReason, upstreamUrl, PUBLIC_FALLBACK_RPC_URL, takeLocal, MAX_BATCH_SIZE, PER_IP_CALLS_PER_MIN, GLOBAL_CALLS_PER_MIN } from "../api/robinhood/rpc-proxy";
 
 const req = (method: string, params: unknown[] = []) => ({ jsonrpc: "2.0", id: 1, method, params });
 
@@ -56,5 +56,23 @@ describe("api/robinhood/rpc-proxy -- read-only, keyed provider stays server-side
       if (before === undefined) delete process.env.ROBINHOOD_RPC_URL;
       else process.env.ROBINHOOD_RPC_URL = before;
     }
+  });
+
+  it("budgets in CALLS, not requests -- a batch cannot multiply the limit", () => {
+    const key = `t-${Math.random()}`;
+    const now = 1_000_000;
+    // 120 calls/min: six 20-call batches fit, the seventh does not.
+    const ok = Array.from({ length: 7 }, () => takeLocal(key, 20, PER_IP_CALLS_PER_MIN, 60_000, now));
+    expect(ok).to.deep.equal([true, true, true, true, true, true, false]);
+    // A new window resets the budget.
+    expect(takeLocal(key, 20, PER_IP_CALLS_PER_MIN, 60_000, now + 60_000)).to.equal(true);
+  });
+
+  it("keeps the limits in the ranges the measured page cost justifies", () => {
+    // A page load costs ~6-7 calls (measured 2026-09-22). These bounds stop a
+    // later edit from quietly reopening the quota to scripted use.
+    expect(MAX_BATCH_SIZE).to.be.at.most(20);
+    expect(PER_IP_CALLS_PER_MIN).to.be.within(60, 300);
+    expect(GLOBAL_CALLS_PER_MIN).to.be.within(PER_IP_CALLS_PER_MIN, 3_000);
   });
 });

@@ -9,9 +9,19 @@
 //    this proxy never needs eth_sendRawTransaction and refuses it.
 //  - eth_getLogs must name a contract address: an unfiltered log scan is the
 //    one read expensive enough to burn the plan, and the app never needs one.
-//  - Per-IP burst throttle, batch and body size caps, brief retry on upstream
-//    429/5xx, and a fall back to the public RPC when the key is unset so a
-//    missing env var degrades to "rate-limited" rather than "broken".
+//  - Who can reach it: only a signed-in site session (middleware gate; the
+//    cookie is SameSite=Strict + HttpOnly, so another website cannot spend a
+//    visitor's session), and raw *.vercel.app URLs sit behind Vercel
+//    deployment protection. The key itself never leaves the server.
+//  - How much they can spend: budgets are counted in JSON-RPC CALLS, not HTTP
+//    requests (a batch of 20 costs 20), per IP and globally across every
+//    serverless instance via the durable Neon window. A real page load costs
+//    ~6-7 calls (measured 2026-09-22; reads collapse through Multicall3), so
+//    the per-IP budget is ~17 page loads a minute and the global budget bounds
+//    what even a scripted beta-key holder on many IPs can burn off the plan.
+//  - Batch and body size caps, brief retry on upstream 429/5xx, and a fall
+//    back to the public RPC when the key is unset so a missing env var
+//    degrades to "rate-limited" rather than "broken".
 //  - Calls the provider's plan refuses as "archive" (live 2026-09-22: the
 //    Chainstack plan answers -32002 to eth_getLogs over history, which is
 //    exactly what reserve discovery needs) are re-sent to the public RPC,
@@ -19,7 +29,8 @@
 //
 // Kept a separate module from the Solana proxies so a request can never be
 // misrouted between chains.
-import { checkRateWindow } from "../devnet/_lib/rateLimit";
+import { checkDurableRateWindow } from "../../lib/rate-limit/durableRateWindow";
+import { getSql } from "../../lib/rate-limit/db";
 
 export interface ApiRequest {
   method?: string;
@@ -49,10 +60,13 @@ export const ALLOWED_METHODS = new Set([
   "net_version",
 ]);
 
-export const MAX_BATCH_SIZE = 50;
-const MAX_BODY_BYTES = 100_000;
-const THROTTLE_WINDOW_MS = 1_000;
-const THROTTLE_MAX_PER_WINDOW = 60;
+export const MAX_BATCH_SIZE = 20;
+const MAX_BODY_BYTES = 50_000;
+const BUDGET_WINDOW_MS = 60_000;
+/** JSON-RPC calls per IP per minute (~17 page loads). */
+export const PER_IP_CALLS_PER_MIN = 120;
+/** JSON-RPC calls per minute across ALL clients and instances. */
+export const GLOBAL_CALLS_PER_MIN = 1_200;
 const UPSTREAM_RETRY_DELAYS_MS = [250, 750];
 
 interface JsonRpcRequest {
@@ -66,6 +80,20 @@ interface JsonRpcErrorResponse {
   jsonrpc: "2.0";
   id: unknown;
   error: { code: number; message: string };
+}
+
+// Per-instance L1, weighted by calls. Only line of defence if the durable
+// window's database is unreachable (it fails open by design).
+const l1 = new Map<string, { start: number; used: number }>();
+export function takeLocal(key: string, calls: number, max: number, windowMs: number, now = Date.now()): boolean {
+  const e = l1.get(key);
+  if (!e || now - e.start >= windowMs) {
+    l1.set(key, { start: now, used: calls });
+    return calls <= max;
+  }
+  if (e.used + calls > max) return false;
+  e.used += calls;
+  return true;
 }
 
 const err = (id: unknown, code: number, message: string): JsonRpcErrorResponse => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
@@ -139,11 +167,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
-  if (!checkRateWindow(`robinhood-rpc-proxy:${clientIp(req)}`, THROTTLE_WINDOW_MS, THROTTLE_MAX_PER_WINDOW)) {
-    res.status(429).json(err(null, -32005, "Too many requests to the Robinhood RPC proxy from this client."));
-    return;
-  }
-
   const rawBody = parseBody(req);
   const isBatch = Array.isArray(rawBody);
   const items: unknown[] = isBatch ? rawBody : [rawBody];
@@ -154,6 +177,33 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const rawJson = JSON.stringify(rawBody);
   if (rawJson !== undefined && rawJson.length > MAX_BODY_BYTES) {
     res.status(400).json({ error: "Request body too large." });
+    return;
+  }
+
+  // Spend the budget BEFORE anything goes upstream: one unit per call.
+  const ip = clientIp(req);
+  const cost = items.length;
+  if (!takeLocal(`ip:${ip}`, cost, PER_IP_CALLS_PER_MIN, BUDGET_WINDOW_MS)) {
+    res.status(429).json(err(null, -32005, "Too many Robinhood RPC calls from this client. Try again in a minute."));
+    return;
+  }
+  // getSql() throws when DATABASE_URL is unset; treat that like a DB outage
+  // (fail open to the L1 above) rather than crashing the proxy.
+  let sql: Parameters<typeof checkDurableRateWindow>[0] | null = null;
+  try {
+    sql = getSql() as unknown as Parameters<typeof checkDurableRateWindow>[0];
+  } catch {
+    sql = null;
+  }
+  const open = { allowed: true, durable: false, count: 0 };
+  const [perIp, global] = sql
+    ? await Promise.all([
+        checkDurableRateWindow(sql, `robinhood-rpc:ip:${ip}`, BUDGET_WINDOW_MS, PER_IP_CALLS_PER_MIN, Date.now(), cost),
+        checkDurableRateWindow(sql, "robinhood-rpc:global", BUDGET_WINDOW_MS, GLOBAL_CALLS_PER_MIN, Date.now(), cost),
+      ])
+    : [open, open];
+  if (!perIp.allowed || !global.allowed) {
+    res.status(429).json(err(null, -32005, global.allowed ? "Too many Robinhood RPC calls from this client. Try again in a minute." : "Robinhood RPC is busy. Try again in a minute."));
     return;
   }
 
