@@ -9,17 +9,14 @@ import { Activity, SearchX } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
 import { RESERVE_CATEGORIES, normalizeReserveCategory } from "@/lib/types";
 import { isDesignDemoEnabled } from "@/lib/designDemo";
-import { buildReserveCardProps } from "@/lib/reserveCardProps";
 import { useLandingStats } from "@/hooks/useLandingStats";
 import { IS_MAINNET } from "@/lib/solana-config";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
-import { ReserveCard, type ReserveCardProps } from "../../components/ReserveCard";
+import { ReserveCard } from "../../components/ReserveCard";
 import { avatarStyle } from "../../lib/avatarStyle";
 import { useRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
-import { rhReserveId } from "@/lib/evmReserveId";
-import { formatUsdc } from "@/lib/calculations";
-import type { ReserveSnapshot } from "@/lib/evmReserve";
+import { robinhoodEntry, solanaEntry, type DirectoryEntry } from "@/lib/directoryEntry";
 
 type SortKey = "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
 export type ChainFilter = "all" | "solana" | "robinhood";
@@ -42,24 +39,6 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "nameAsc", label: "Name: A to Z" },
 ];
 
-/**
- * One directory entry, whichever chain it lives on. Discover sorts and
- * filters these, so a Robinhood reserve ranks against a Solana reserve on the
- * same terms (AUM, price, name) instead of being listed in a separate block.
- */
-interface DirectoryEntry {
-  key: string;
-  chain: "solana" | "robinhood";
-  name: string;
-  ticker: string;
-  category: string | null;
-  aum: number;
-  price: number;
-  change24h: number;
-  href: string;
-  card: Omit<ReserveCardProps, "renderCta">;
-}
-
 function sortEntries(list: DirectoryEntry[], sortBy: SortKey): DirectoryEntry[] {
   const sorted = [...list];
   switch (sortBy) {
@@ -79,48 +58,6 @@ function sortEntries(list: DirectoryEntry[], sortBy: SortKey): DirectoryEntry[] 
       // unknown/persisted-stale key can never silently render unsorted.
       return sorted.sort((a, b) => b.aum - a.aum);
   }
-}
-
-/**
- * A Robinhood Chain reserve as a standard card. Every number is on-chain:
- * holdings from the reserve, marked to USDG at Uniswap v3 spot. There is no
- * price history or volume index for Robinhood yet, so those read "—" rather
- * than inventing a figure.
- */
-function robinhoodEntry(r: ReserveSnapshot): DirectoryEntry {
-  const byValue = [...r.basket].sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0));
-  const price = r.navPerShare;
-  const aum = r.aumUsd;
-  return {
-    key: `rh:${r.address}`,
-    chain: "robinhood",
-    name: r.name,
-    ticker: r.symbol,
-    category: null,
-    aum: aum ?? 0,
-    price: price ?? 0,
-    change24h: 0,
-    href: `/dtr/${rhReserveId(r.address)}`,
-    card: {
-      name: r.name,
-      ticker: r.symbol,
-      description: `A basket of ${byValue.map((b) => b.symbol).join(", ")} held on Robinhood Chain.`,
-      avatarLabel: r.symbol.slice(0, 2),
-      categoryLabel: "Robinhood Chain",
-      sourceBadge: { label: "Live on Robinhood Chain", tone: "onchain" },
-      priceFormatted: price === null ? "Price unavailable" : formatUsdc(price),
-      changePct: 0,
-      changeFormatted: "—",
-      sparkline: [],
-      topAssets: byValue.map((b) => b.symbol),
-      metrics: [
-        { key: "price", label: "Price", value: price === null ? "—" : formatUsdc(price) },
-        { key: "mcap", label: "Market Cap", value: aum === null ? "—" : formatUsdc(aum, { compact: true }) },
-        { key: "pnl", label: "All-Time PNL (%)", value: "—" },
-        { key: "volume", label: "All-Time Volume", value: "—" },
-      ],
-    },
-  };
 }
 
 const selectClass =
@@ -149,24 +86,12 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
   }, [dtrs]);
 
   const entries = useMemo<DirectoryEntry[]>(() => {
-    const sol: DirectoryEntry[] = dtrs.map((dtr) => {
-      const cardProps = buildReserveCardProps(dtr, IS_MAINNET, {
+    const sol = dtrs.map((dtr) =>
+      solanaEntry(dtr, IS_MAINNET, {
         status: landingStats.status,
         volumeAllTimeUsd: dtr.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve]?.volumeAllTimeUsd : undefined,
-      });
-      return {
-        key: `sol:${dtr.id}`,
-        chain: "solana",
-        name: dtr.name,
-        ticker: dtr.ticker,
-        category: normalizeReserveCategory(dtr.category),
-        aum: dtr.aum,
-        price: dtr.tokenPrice,
-        change24h: dtr.change24h,
-        href: `/dtr/${dtr.id}`,
-        card: cardProps,
-      };
-    });
+      }),
+    );
     return [...sol, ...robinhood.reserves.map(robinhoodEntry)];
   }, [dtrs, robinhood.reserves, landingStats.status, landingStats.data]);
 

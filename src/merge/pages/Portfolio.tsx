@@ -1,5 +1,9 @@
 import { useState } from "react";
+import { lazy, Suspense } from "react";
 import { useAppStore } from "@/store/useAppStore";
+
+// viem only loads for holders who actually have an EVM wallet/page open.
+const RobinhoodHoldings = lazy(() => import("@/components/robinhood/RobinhoodHoldings").then((m) => ({ default: m.RobinhoodHoldings })));
 import {
   calcHoldingValue,
   calcUnrealizedPnl,
@@ -554,6 +558,16 @@ export function Portfolio() {
             </div>
           </Card>
         )}
+      </div>
+
+      {/* Robinhood Chain reserves live in the same portfolio, under the same
+          heading language -- a holder should read one portfolio, not two
+          products. It needs its own wallet because the chains do. */}
+      <div className="space-y-6 mb-8">
+        <h2 className="text-2xl font-merge-display font-bold">Robinhood Chain Holdings</h2>
+        <Suspense fallback={<Card className="bg-card/40 border-border/50"><CardContent className="py-8 text-sm text-muted-foreground">Loading…</CardContent></Card>}>
+          <RobinhoodHoldings />
+        </Suspense>
       </div>
 
       <div className="space-y-6">
