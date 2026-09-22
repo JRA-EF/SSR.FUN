@@ -32,6 +32,13 @@ export interface ChainConfig {
   explorer: string;
   /** The live SSR instance, or null when none has been created yet. */
   ssr: Address | null;
+  /**
+   * Same-origin proxy the BROWSER reads through (api/robinhood/rpc-proxy.ts),
+   * which holds the keyed provider URL server-side. Wallets are still handed
+   * the public RPC in wallet_addEthereumChain -- they sign and broadcast
+   * through their own node, never through our key.
+   */
+  readProxyPath?: string;
   deployer: Address;
   /** Block the factory was created in -- where reserve discovery starts reading SSRDeployed logs. */
   deployerBlock: bigint;
@@ -102,6 +109,7 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     // 0xCd098aD73A19fe647d462e8A10C7B5A4024051bF.
     ssr: "0xADEd2d2967AC92EE8FB52612D3436511F302Fe2f",
     isMock: false,
+    readProxyPath: "/api/robinhood/rpc-proxy",
     deployer: "0x81dd183c53C95F251869520d8DB10B0A4a4F8858",
     deployerBlock: 68886534n,
     versionRegistry: "0x835dd7fF172874749855aae0174c6ecAA82Ef1e6",

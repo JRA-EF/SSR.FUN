@@ -44,9 +44,12 @@ const clients = new Map<number, PublicClient>();
 export function publicClientFor(cfg: ChainConfig): PublicClient {
   let c = clients.get(cfg.chain.id);
   if (!c) {
+    // In the browser, read through our own proxy (keyed provider, server-side);
+    // outside it (scripts, tests) there is no origin, so use the chain's RPC.
+    const url = cfg.readProxyPath && typeof window !== "undefined" ? `${window.location.origin}${cfg.readProxyPath}` : undefined;
     c = createPublicClient({
       chain: cfg.chain,
-      transport: http(undefined, { batch: true }),
+      transport: http(url, { batch: true }),
       batch: { multicall: !!cfg.chain.contracts?.multicall3 },
     }) as PublicClient;
     clients.set(cfg.chain.id, c);
