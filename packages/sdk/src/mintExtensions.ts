@@ -10,6 +10,10 @@
 // equities declare a TransferHook with NO hook program and a
 // ConfidentialTransferMint that does not auto-approve accounts -- neither can
 // affect a Reserve, yet every one of them was refused.
+//
+// A transfer FEE is supported rather than refused: the program grosses every
+// deposit up so the vault still receives the full pro-rata amount. Without
+// that gross-up a fee silently diluted existing holders on every mint.
 import { PublicKey } from "@solana/web3.js";
 import {
   ExtensionType,
@@ -99,14 +103,19 @@ export function assessMint(mint: Mint): MintCompatibility {
         break;
       }
       case ExtensionType.TransferFeeConfig: {
-        // A scheduled fee activates on its own epoch with nobody acting, so a
-        // zero fee today is not enough.
+        // Supported: the program grosses every deposit up so the vault
+        // receives the full pro-rata amount and the depositor pays the fee
+        // (gross_up_for_transfer_fee). Only a 100% fee is impossible, because
+        // no send size makes the required amount arrive.
         const fee = getTransferFeeConfig(mint);
         const older = fee?.olderTransferFee.transferFeeBasisPoints ?? 0;
         const newer = fee?.newerTransferFee.transferFeeBasisPoints ?? 0;
-        if (older !== 0 || newer !== 0) {
+        if (older >= 10_000 || newer >= 10_000) {
           rejected.push(ext);
-          reasons.push("charges a transfer fee, so the amount that arrives is not the amount sent");
+          reasons.push("charges a 100% transfer fee, so nothing would ever reach the Reserve");
+        } else if (older !== 0 || newer !== 0) {
+          const bps = Math.max(older, newer);
+          issuerPowers.push(`transfers of this asset carry a ${(bps / 100).toFixed(2)}% fee, paid by whoever deposits or redeems`);
         }
         break;
       }

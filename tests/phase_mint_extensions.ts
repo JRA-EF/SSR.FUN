@@ -35,9 +35,15 @@ describe("client mirrors the program's mint rules", () => {
     expect(validator).to.match(/ExtensionType::NonTransferable[\s\S]{0,120}UnsupportedMintExtension/);
   });
 
-  it("rejects a scheduled fee, not just the current one (a newer fee activates on its own epoch)", () => {
-    expect(validator).to.include("older_transfer_fee");
-    expect(validator).to.include("newer_transfer_fee");
+  it("supports a transfer fee by grossing the deposit up, refusing only a 100% fee", () => {
+    // Allowing a fee WITHOUT the gross-up would be worse than refusing it: the
+    // vault receives less than the shares minted represent, and the shortfall
+    // comes out of the existing holders on every deposit.
+    expect(validator, "only an uninvertible fee is refused").to.include("BPS_DENOMINATOR");
+    const rust = readFileSync(join(__dirname, "..", "programs/ssr_protocol/src/instructions/common.rs"), "utf8");
+    expect(rust, "the gross-up must exist").to.include("pub fn gross_up_for_transfer_fee");
+    expect(rust, "and be used by the deposit path").to.match(/transfer_into_vault[\s\S]{0,600}gross_up_for_transfer_fee/);
+    expect(rust).to.include("calculate_inverse_epoch_fee");
   });
 });
 

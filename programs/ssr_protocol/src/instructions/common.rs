@@ -391,6 +391,45 @@ pub fn load_reserve_asset_configs<'r, 'info>(
     Ok(configs)
 }
 
+/// The amount that must be SENT for `arrive_amount` to land in the recipient,
+/// given the mint's Token-2022 transfer fee (zero-fee mints send exactly
+/// `arrive_amount`).
+///
+/// Why this exists: every deposit is sized pro-rata against the vault's
+/// balance (`mul_div_ceil(requested, vault_balance_before, supply_before)`)
+/// and shares are minted for that figure. A transfer fee is withheld from the
+/// transfer, so without grossing up, LESS arrives than the shares represent
+/// and the shortfall is paid by the existing holders -- silently, on every
+/// mint. Grossing up puts the fee where it belongs: on the depositor making
+/// the transfer.
+///
+/// Returns `UnsupportedMintExtension` when the fee cannot be inverted (a 100%
+/// fee), which is also refused up-front by `validate_asset_mint_extensions`.
+pub fn gross_up_for_transfer_fee(mint_info: &AccountInfo, arrive_amount: u64) -> Result<u64> {
+    use anchor_spl::token_2022::spl_token_2022::extension::{
+        transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions,
+    };
+    use anchor_spl::token_2022::spl_token_2022::state::Mint as Token2022Mint;
+
+    // Classic SPL Token mints cannot carry a fee.
+    if mint_info.owner != &anchor_spl::token_2022::ID {
+        return Ok(arrive_amount);
+    }
+    let data = mint_info.try_borrow_data()?;
+    let mint = StateWithExtensions::<Token2022Mint>::unpack(&data)
+        .map_err(|_| error!(SsrError::UnsupportedTokenProgram))?;
+    let Ok(fee_config) = mint.get_extension::<TransferFeeConfig>() else {
+        return Ok(arrive_amount);
+    };
+    let epoch = Clock::get()?.epoch;
+    let fee = fee_config
+        .calculate_inverse_epoch_fee(epoch, arrive_amount)
+        .ok_or(error!(SsrError::UnsupportedMintExtension))?;
+    arrive_amount
+        .checked_add(fee)
+        .ok_or(error!(SsrError::MathOverflow))
+}
+
 /// Transfers `amount` of `leg.mint` from `leg.owner_token_account` into
 /// `leg.vault`, signed by `owner` (a wallet-controlled signer -- used by
 /// mint/seed, where the depositor is transferring their own tokens in).
@@ -406,7 +445,10 @@ pub fn transfer_into_vault<'info>(
         authority: owner.clone(),
     };
     let cpi_ctx = CpiContext::new(leg.token_program, cpi_accounts);
-    token_interface::transfer_checked(cpi_ctx, amount, leg.mint.decimals)
+    // `amount` is what must ARRIVE in the vault; send the fee on top so a
+    // fee-bearing mint does not short the Reserve (see gross_up_for_transfer_fee).
+    let to_send = gross_up_for_transfer_fee(&leg.mint.to_account_info(), amount)?;
+    token_interface::transfer_checked(cpi_ctx, to_send, leg.mint.decimals)
 }
 
 /// Transfers `amount` of `leg.mint` out of `leg.vault` to
@@ -681,10 +723,9 @@ const APPROVED_PERMANENT_DELEGATES: [Pubkey; 1] = [
 /// * TransferHook -- arbitrary code on every transfer. Harmless when no
 ///   program is set; that mint transfers exactly like any other.
 /// * TransferFeeConfig -- the amount that arrives is less than the amount
-///   sent, which breaks the balance-delta accounting every deposit,
-///   redemption and rebalance relies on. Harmless at zero, in BOTH the
-///   current and the scheduled fee, since the newer one takes effect on its
-///   own epoch without anyone acting.
+///   sent. Supported: deposits gross the transfer up so the vault receives
+///   the full pro-rata amount (gross_up_for_transfer_fee). Only a 100% fee is
+///   refused, because no send size makes the required amount arrive.
 /// * PermanentDelegate -- see APPROVED_PERMANENT_DELEGATES above.
 /// * ConfidentialTransferMint -- balances that are not publicly readable make
 ///   NAV uncomputable. A vault must opt IN per account, so this is harmless
@@ -736,14 +777,18 @@ pub fn validate_asset_mint_extensions(
             }
 
             ExtensionType::TransferFeeConfig => {
+                // A fee is supported: every deposit grosses the transfer up so
+                // the vault receives the full pro-rata amount and the fee is
+                // paid by the depositor, not by the existing holders (see
+                // gross_up_for_transfer_fee). Only a fee that cannot be
+                // inverted -- 100% -- is refused, since no send size makes the
+                // required amount arrive.
                 let fee = mint_with_extensions
                     .get_extension::<TransferFeeConfig>()
                     .map_err(|_| error!(SsrError::UnsupportedMintExtension))?;
                 let older: u16 = fee.older_transfer_fee.transfer_fee_basis_points.into();
                 let newer: u16 = fee.newer_transfer_fee.transfer_fee_basis_points.into();
-                // A scheduled non-zero fee activates on its own epoch with no
-                // further action, so a zero fee today is not enough.
-                if older != 0 || newer != 0 {
+                if older >= BPS_DENOMINATOR || newer >= BPS_DENOMINATOR {
                     return Err(error!(SsrError::UnsupportedMintExtension));
                 }
             }
