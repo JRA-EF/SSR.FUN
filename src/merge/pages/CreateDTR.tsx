@@ -931,10 +931,12 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
             src="/create-gate-hero.jpg"
             alt=""
             className="w-full h-full object-cover"
-            // 1800x1028 art: the crest starts ~12% down, so the window must
-            // open near the top of the frame. No scale() -- magnifying about
-            // the centre is what cropped the head off.
-            style={{ objectPosition: "center 15%" }}
+            // 1800x1028 art: the head spans ~12%-60% of the frame. object-cover
+            // fits WIDTH here, so the visible slice is a window into a height
+            // that grows with the viewport, positioned by this Y%. 20% with the
+            // clamped band height keeps the whole head in frame from 1280px to
+            // ~1920px. No scale() -- magnifying about the centre cropped it off.
+            style={{ objectPosition: "center 20%" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
           <div

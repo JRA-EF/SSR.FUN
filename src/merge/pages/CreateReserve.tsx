@@ -138,7 +138,7 @@ export function CreateReserve() {
             // 1800x1028 art: the crest starts ~12% down, so the window must
             // open near the top of the frame. No scale() -- magnifying about
             // the centre is what cropped the head off.
-            style={{ objectPosition: "center 15%" }}
+            style={{ objectPosition: "center 20%" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
           <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.92) 0%, hsl(var(--background) / 0.6) 34%, hsl(var(--background) / 0.05) 62%)" }} />
