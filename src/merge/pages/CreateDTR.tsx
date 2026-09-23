@@ -914,7 +914,7 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
       <div
         className={
           chainPicker
-            ? "container mx-auto px-4 relative text-center flex items-center justify-center min-h-[320px] sm:min-h-[440px] py-12"
+            ? "container mx-auto px-4 relative flex items-center justify-center sm:justify-start min-h-[clamp(340px,30vw,560px)] py-12"
             : "container mx-auto px-4 py-24 text-center relative"
         }
       >
@@ -924,7 +924,7 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
         <div
           aria-hidden="true"
           className={`absolute top-0 left-1/2 w-screen -translate-x-1/2 overflow-hidden pointer-events-none -z-10 ${
-            chainPicker ? "h-[320px] sm:h-[440px]" : "h-[240px] sm:h-[400px]"
+            chainPicker ? "h-[clamp(340px,30vw,560px)]" : "h-[240px] sm:h-[400px]"
           }`}
         >
           <img
@@ -934,14 +934,22 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
             // 1800x1028 art: the crest starts ~12% down, so the window must
             // open near the top of the frame. No scale() -- magnifying about
             // the centre is what cropped the head off.
-            style={{ objectPosition: "center 14%" }}
+            style={{ objectPosition: "center 15%" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
-          <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div
+            className="absolute inset-0"
+            style={{
+              background: chainPicker
+                ? // Panel sits left, over the sky: scrim that edge and leave the bird clear.
+                  "linear-gradient(90deg, hsl(var(--background) / 0.92) 0%, hsl(var(--background) / 0.6) 34%, hsl(var(--background) / 0.05) 62%)"
+                : "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)",
+            }}
+          />
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
         {chainPicker ? (
-          <div className="max-w-md mx-auto">{chainPicker}</div>
+          <div className="w-full sm:w-auto sm:ml-2">{chainPicker}</div>
         ) : (
           <div className="max-w-md mx-auto space-y-6">
             <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />

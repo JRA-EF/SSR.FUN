@@ -88,7 +88,7 @@ function ChainChoiceBlock({
     <div
       className={
         overArt
-          ? "inline-flex flex-col items-center gap-3 text-center rounded-2xl border border-border/60 bg-background/80 backdrop-blur-md px-7 py-6 shadow-xl"
+          ? "inline-flex flex-col items-center sm:items-start gap-3 text-center sm:text-left rounded-2xl border border-border/60 bg-background/80 backdrop-blur-md px-7 py-6 shadow-xl"
           : "flex flex-col items-center gap-2.5 text-center"
       }
     >
@@ -129,8 +129,8 @@ export function CreateReserve() {
     <div>
       {/* Robinhood: the same hero treatment as the Solana gate, so switching
           chains does not change the shape of the page. */}
-      <div className="container mx-auto px-4 relative text-center flex items-center justify-center min-h-[320px] sm:min-h-[440px] py-12">
-        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[320px] sm:h-[440px] overflow-hidden pointer-events-none -z-10">
+      <div className="container mx-auto px-4 relative flex items-center justify-center sm:justify-start min-h-[clamp(340px,30vw,560px)] py-12">
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[clamp(340px,30vw,560px)] overflow-hidden pointer-events-none -z-10">
           <img
             src="/create-gate-hero.jpg"
             alt=""
@@ -138,13 +138,13 @@ export function CreateReserve() {
             // 1800x1028 art: the crest starts ~12% down, so the window must
             // open near the top of the frame. No scale() -- magnifying about
             // the centre is what cropped the head off.
-            style={{ objectPosition: "center 14%" }}
+            style={{ objectPosition: "center 15%" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
-          <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.92) 0%, hsl(var(--background) / 0.6) 34%, hsl(var(--background) / 0.05) 62%)" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
-        {pickerOverArt}
+        <div className="w-full sm:w-auto sm:ml-2">{pickerOverArt}</div>
       </div>
       <div className="container mx-auto px-4 md:px-8 pb-8 max-w-3xl">
         <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
