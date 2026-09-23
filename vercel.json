@@ -52,7 +52,7 @@
     },
     {
       "path": "/api/mainnet/warm-cache-cron",
-      "schedule": "*/1 * * * *"
+      "schedule": "*/10 * * * *"
     },
     {
       "path": "/api/mainnet/fee-settlement-cron",
