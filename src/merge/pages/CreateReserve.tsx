@@ -65,16 +65,40 @@ export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange:
   );
 }
 
-/** The "Launch on" block: label, segmented control, and the chosen chain's one-liner. */
-function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (c: ChainChoice) => void }) {
+/**
+ * The "Launch on" block: label, segmented control, and the chosen chain's
+ * one-liner.
+ *
+ * `overArt` gives it a glass panel. Bare centred text on top of the hero
+ * photograph reads as unfinished and the blurb loses contrast against the
+ * bright parts of the image; a surface makes it a deliberate control and
+ * keeps the text legible wherever the art happens to be light.
+ */
+function ChainChoiceBlock({
+  chain,
+  onChange,
+  overArt = false,
+}: {
+  chain: ChainChoice;
+  onChange: (c: ChainChoice) => void;
+  overArt?: boolean;
+}) {
   const blurb = CHAINS.find((c) => c.v === chain)?.blurb;
   return (
-    <div className="flex flex-col items-center gap-2.5 text-center">
+    <div
+      className={
+        overArt
+          ? "inline-flex flex-col items-center gap-3 text-center rounded-2xl border border-border/60 bg-background/80 backdrop-blur-md px-7 py-6 shadow-xl"
+          : "flex flex-col items-center gap-2.5 text-center"
+      }
+    >
       <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
         Launch on
       </p>
       <ChainPicker value={chain} onChange={onChange} />
-      <p className="text-sm text-muted-foreground max-w-md">{blurb}</p>
+      <p className="text-sm text-muted-foreground max-w-sm" style={{ marginTop: 2 }}>
+        {blurb}
+      </p>
     </div>
   );
 }
@@ -84,12 +108,13 @@ export function CreateReserve() {
   const solanaConnected = useAppStore((s) => s.wallet.connected);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
   const picker = <ChainChoiceBlock chain={chain} onChange={onChange} />;
+  const pickerOverArt = <ChainChoiceBlock chain={chain} onChange={onChange} overArt />;
 
   // Solana, no wallet yet: the chain choice takes the place of the connect
   // gate's own heading and CTA, sitting over the hero art. The header already
   // has a Connect Wallet button, so a second one here was just noise in front
   // of the decision the page actually starts with.
-  if (chain === "solana" && !solanaConnected) return <CreateDTR chainPicker={picker} />;
+  if (chain === "solana" && !solanaConnected) return <CreateDTR chainPicker={pickerOverArt} />;
 
   if (chain === "solana") {
     return (
@@ -104,19 +129,19 @@ export function CreateReserve() {
     <div>
       {/* Robinhood: the same hero treatment as the Solana gate, so switching
           chains does not change the shape of the page. */}
-      <div className="container mx-auto px-4 py-16 text-center relative">
-        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+      <div className="container mx-auto px-4 relative text-center flex items-center justify-center min-h-[300px] sm:min-h-[400px] py-12">
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[300px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
           <img
             src="/create-gate-hero.jpg"
             alt=""
             className="w-full h-full object-cover"
-            style={{ objectPosition: "center 30%", transform: "translateX(-14%) scale(1.3)" }}
+            style={{ objectPosition: "center 42%", transform: "translateX(-14%) scale(1.3)" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
-        <div className="max-w-md mx-auto">{picker}</div>
+        {pickerOverArt}
       </div>
       <div className="container mx-auto px-4 md:px-8 pb-8 max-w-3xl">
         <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>

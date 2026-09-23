@@ -907,16 +907,31 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
 
   if (!wallet.connected) {
     return (
-      <div className="container mx-auto px-4 py-24 text-center relative">
+      // With the chain picker in the slot the content is a third the height of
+      // the old heading+CTA block, so the band is sized to the art and the
+      // content is centred IN it -- otherwise the art runs on well below a
+      // short control and the composition reads as a mistake.
+      <div
+        className={
+          chainPicker
+            ? "container mx-auto px-4 relative text-center flex items-center justify-center min-h-[300px] sm:min-h-[400px] py-12"
+            : "container mx-auto px-4 py-24 text-center relative"
+        }
+      >
         {/* Full-bleed hero art behind the gate (public/create-gate-hero.jpg) —
             same treatment as Manage's gate screens: centered radial wash for
             the center-aligned text, bottom fade, hides itself if absent. */}
-        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+        <div
+          aria-hidden="true"
+          className={`absolute top-0 left-1/2 w-screen -translate-x-1/2 overflow-hidden pointer-events-none -z-10 ${
+            chainPicker ? "h-[300px] sm:h-[400px]" : "h-[240px] sm:h-[400px]"
+          }`}
+        >
           <img
             src="/create-gate-hero.jpg"
             alt=""
             className="w-full h-full object-cover"
-            style={{ objectPosition: "center 30%", transform: "translateX(-14%) scale(1.3)" }}
+            style={{ objectPosition: "center 42%", transform: "translateX(-14%) scale(1.3)" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
