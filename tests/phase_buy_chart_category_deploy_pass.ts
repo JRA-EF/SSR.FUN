@@ -202,9 +202,10 @@ describe("Reserve categories", () => {
 describe("Hidden Reserve registry (EGAYQQ)", () => {
   const EGAYQQ_ADDRESS = "GNAvLuTNmccXx5bSAVQeqPSncay7kBNjjHZFKFvKUbo2";
 
-  it("contains exactly the confirmed EGAYQQ Reserve address, verified live via scripts/find_reserve_by_ticker.ts", () => {
+  it("contains exactly the two confirmed addresses: DevNet EGAYQQ (verified live via scripts/find_reserve_by_ticker.ts) and the Mainnet reserveId-0 smoke-test Reserve (verified from the live warm snapshot)", () => {
     expect(isHiddenReserveAddress(EGAYQQ_ADDRESS)).to.equal(true);
-    expect(HIDDEN_RESERVE_ADDRESSES.size).to.equal(1);
+    expect(isHiddenReserveAddress("9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i")).to.equal(true);
+    expect(HIDDEN_RESERVE_ADDRESSES.size).to.equal(2);
   });
 
   it("does not hide a different Reserve merely for sharing a similar structural state (assetsInitializing, low assetCount)", () => {
