@@ -51,4 +51,13 @@ describe("merge.css's action-button treatment cannot capture non-CTA controls", 
     expect(picker, "picker uses radio inputs for semantics").to.include('type="radio"');
     expect(/<button[^>]*bg-(primary|action|destructive)/.test(create), "no bg-primary button on the Create page").to.equal(false);
   });
+
+  it("a wallet chip never wraps: a truncated address is one line", () => {
+    // Live 2026-09-23: with two chips in the nav (Solana + Robinhood) the pill
+    // shrank and broke "52b7...7ERa" across two lines.
+    const css = read("src/index.css");
+    const rule = css.slice(css.indexOf(".wallet-chip {"), css.indexOf(".wallet-chip:hover"));
+    expect(rule).to.include("white-space: nowrap");
+    expect(rule).to.include("flex-shrink: 0");
+  });
 });
