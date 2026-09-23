@@ -8,8 +8,6 @@
 // reload and can be linked to directly.
 import { lazy, Suspense } from "react";
 import { usePath, navigate } from "../../lib/router";
-import { useAppStore } from "@/store/useAppStore";
-import { CreateHeroBanner } from "@/components/CreateHeroBanner";
 import { CreateDTR } from "./CreateDTR";
 
 // viem is only needed on the Robinhood branch; keep it out of the main bundle.
@@ -82,34 +80,21 @@ function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (
 
 export function CreateReserve() {
   const chain = chainFromPath(usePath());
-  const solanaConnected = useAppStore((s) => s.wallet.connected);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
-  const picker = <ChainChoiceBlock chain={chain} onChange={onChange} />;
-
-  // Solana, no wallet yet: the chain choice takes the place of the connect
-  // gate's own heading and CTA, sitting over the hero art. The header already
-  // has a Connect Wallet button, so a second one here was just noise in front
-  // of the decision the page actually starts with.
-  if (chain === "solana" && !solanaConnected) return <CreateDTR chainPicker={picker} />;
-
-  if (chain === "solana") {
-    return (
-      <div>
-        <div className="container mx-auto px-4 md:px-8 pt-8 pb-2">{picker}</div>
-        <CreateDTR />
-      </div>
-    );
-  }
-
   return (
     <div>
-      <CreateHeroBanner />
-      <div className="container mx-auto px-4 md:px-8 pt-8 max-w-3xl flex justify-center">{picker}</div>
-      <div className="container mx-auto px-4 md:px-8 py-8 max-w-3xl">
-        <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
+      {/* The chain control is page-level chrome on the plain ground, above the
+          wizard -- the wizard brings its own hero wash behind its heading. */}
+      <div className="container mx-auto px-4 md:px-8 pt-8 flex justify-center">
+        <ChainChoiceBlock chain={chain} onChange={onChange} />
+      </div>
+      {chain === "solana" ? (
+        <CreateDTR />
+      ) : (
+        <Suspense fallback={<p className="container mx-auto px-4 py-12 text-muted-foreground">Loading…</p>}>
           <RobinhoodCreateForm />
         </Suspense>
-      </div>
+      )}
     </div>
   );
 }

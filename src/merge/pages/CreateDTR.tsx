@@ -9,8 +9,7 @@ import { matchesAssetSearch } from "@/lib/assetSearch";
 import { launchpadBadgeText, matchesLaunchpadFilter, LAUNCHPAD_FILTER_OPTIONS, type LaunchpadFilter } from "@/lib/launchpadLabels";
 import type { CatalogueAssetLaunchpad } from "@/hooks/useMainnetAssetCatalogue";
 import { useAppStore } from "@/store/useAppStore";
-import { CreateHeroBanner } from "@/components/CreateHeroBanner";
-import { LaunchHeader, LaunchStepper } from "@/components/LaunchStepper";
+import { LaunchShell } from "@/components/LaunchHero";
 import { normalizeYouTubeChannelUrl } from "@/lib/youtube";
 import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import {
@@ -111,12 +110,7 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 }
 
 
-/**
- * @param chainPicker Rendered over the hero art in place of the connect gate's
- *   own heading and CTA, so choosing a chain is the first thing on the page
- *   (the header already carries a Connect Wallet button).
- */
-export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
+export function CreateDTR() {
   const [, setLocation] = useLocation();
   const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints, setWalletModalOpen } = useAppStore();
   const { toast } = useToast();
@@ -908,32 +902,6 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   }
 
   if (!wallet.connected) {
-    // With the chain picker supplied, the art is a BANNER and the control sits
-    // below it in normal flow, aligned with the page. Floating the control on
-    // top of the photograph put it over the bird's face and left it unaligned
-    // with everything beneath.
-    if (chainPicker) {
-      return (
-        <div>
-          <CreateHeroBanner />
-          <div className="container mx-auto px-4 md:px-8 pt-8 flex justify-center">{chainPicker}</div>
-          {/* The chain choice leads, but the page still has to go SOMEWHERE:
-              without a wallet there is no wizard to show, so the connect step
-              stays right under it. */}
-          <div className="container mx-auto px-4 pb-16 pt-8 text-center">
-            <div className="max-w-md mx-auto space-y-4">
-              <h1 className="text-2xl font-merge-display font-bold">Connect Wallet to Deploy</h1>
-              <p className="text-muted-foreground" style={{ marginTop: 10, marginBottom: 12 }}>
-                You need a Solana wallet to deploy and manage a Reserve.
-              </p>
-              <Button className="rounded-full h-12 px-10 text-base" onClick={() => setWalletModalOpen(true)}>
-                Connect Wallet
-              </Button>
-            </div>
-          </div>
-        </div>
-      );
-    }
     return (
       <div className="container mx-auto px-4 py-24 text-center relative">
         {/* Full-bleed hero art behind the gate (public/create-gate-hero.jpg) —
@@ -944,7 +912,7 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
             src="/create-gate-hero.jpg"
             alt=""
             className="w-full h-full object-cover"
-            style={{ objectPosition: "center 30%", transform: "translateX(-14%) scale(1.3)" }}
+            style={{ objectPosition: "center 20%" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
@@ -1506,25 +1474,7 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   const handleSubmit = handleSubmitReal;
 
   return (
-    <div className="container max-w-4xl mx-auto px-4 py-12 relative">
-      {/* Full-bleed hero art behind the page top (public/create-hero.jpg) —
-          the shared mascot-hero treatment: left scrim for the title, bottom
-          fade into the ground, hides itself if the file is absent. */}
-      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[260px] sm:h-[460px] overflow-hidden pointer-events-none -z-10">
-        <img
-          src="/create-hero.jpg"
-          alt=""
-          className="w-full h-full object-cover"
-          style={{ objectPosition: "center 9%" }}
-          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-        />
-        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.78) 0%, hsl(var(--background) / 0.25) 45%, hsl(var(--background) / 0.05) 100%)" }} />
-        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
-      </div>
-
-      <LaunchHeader subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} />
-      <LaunchStepper step={step} />
-
+    <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} step={step}>
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>
@@ -2667,6 +2617,6 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
           </>
         )}
       </Card>
-    </div>
+    </LaunchShell>
   );
 }

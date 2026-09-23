@@ -5,7 +5,7 @@ import { useState } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { LaunchHeader, LaunchStepper } from "@/components/LaunchStepper";
+import { LaunchShell } from "@/components/LaunchHero";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -133,10 +133,7 @@ export function RobinhoodCreateForm() {
   }
 
   return (
-    <div>
-      <LaunchHeader subtitle="Launch a new Reserve on SSR.FUN, live on Robinhood Chain." />
-      <LaunchStepper step={step} />
-
+    <LaunchShell subtitle="Launch a new Reserve on SSR.FUN, live on Robinhood Chain." step={step}>
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>
@@ -323,6 +320,6 @@ export function RobinhoodCreateForm() {
           {status.text}
         </p>
       )}
-    </div>
+    </LaunchShell>
   );
 }
