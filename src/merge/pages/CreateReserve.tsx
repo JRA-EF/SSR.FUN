@@ -9,6 +9,7 @@
 import { lazy, Suspense } from "react";
 import { usePath, navigate } from "../../lib/router";
 import { useAppStore } from "@/store/useAppStore";
+import { CreateHeroBanner } from "@/components/CreateHeroBanner";
 import { CreateDTR } from "./CreateDTR";
 
 // viem is only needed on the Robinhood branch; keep it out of the main bundle.
@@ -65,40 +66,16 @@ export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange:
   );
 }
 
-/**
- * The "Launch on" block: label, segmented control, and the chosen chain's
- * one-liner.
- *
- * `overArt` gives it a glass panel. Bare centred text on top of the hero
- * photograph reads as unfinished and the blurb loses contrast against the
- * bright parts of the image; a surface makes it a deliberate control and
- * keeps the text legible wherever the art happens to be light.
- */
-function ChainChoiceBlock({
-  chain,
-  onChange,
-  overArt = false,
-}: {
-  chain: ChainChoice;
-  onChange: (c: ChainChoice) => void;
-  overArt?: boolean;
-}) {
+/** The "Launch on" block: label, segmented control, and the chosen chain's one-liner. */
+function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (c: ChainChoice) => void }) {
   const blurb = CHAINS.find((c) => c.v === chain)?.blurb;
   return (
-    <div
-      className={
-        overArt
-          ? "inline-flex flex-col items-center sm:items-start gap-3 text-center sm:text-left rounded-2xl border border-border/60 bg-background/80 backdrop-blur-md px-7 py-6 shadow-xl"
-          : "flex flex-col items-center gap-2.5 text-center"
-      }
-    >
+    <div className="flex flex-col items-center gap-2.5 text-center">
       <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
         Launch on
       </p>
       <ChainPicker value={chain} onChange={onChange} />
-      <p className="text-sm text-muted-foreground max-w-sm" style={{ marginTop: 2 }}>
-        {blurb}
-      </p>
+      <p className="text-sm text-muted-foreground max-w-md">{blurb}</p>
     </div>
   );
 }
@@ -108,13 +85,12 @@ export function CreateReserve() {
   const solanaConnected = useAppStore((s) => s.wallet.connected);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
   const picker = <ChainChoiceBlock chain={chain} onChange={onChange} />;
-  const pickerOverArt = <ChainChoiceBlock chain={chain} onChange={onChange} overArt />;
 
   // Solana, no wallet yet: the chain choice takes the place of the connect
   // gate's own heading and CTA, sitting over the hero art. The header already
   // has a Connect Wallet button, so a second one here was just noise in front
   // of the decision the page actually starts with.
-  if (chain === "solana" && !solanaConnected) return <CreateDTR chainPicker={pickerOverArt} />;
+  if (chain === "solana" && !solanaConnected) return <CreateDTR chainPicker={picker} />;
 
   if (chain === "solana") {
     return (
@@ -127,26 +103,9 @@ export function CreateReserve() {
 
   return (
     <div>
-      {/* Robinhood: the same hero treatment as the Solana gate, so switching
-          chains does not change the shape of the page. */}
-      <div className="container mx-auto px-4 relative flex items-center justify-center sm:justify-start min-h-[clamp(340px,30vw,560px)] py-12">
-        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[clamp(340px,30vw,560px)] overflow-hidden pointer-events-none -z-10">
-          <img
-            src="/create-gate-hero.jpg"
-            alt=""
-            className="w-full h-full object-cover"
-            // 1800x1028 art: the crest starts ~12% down, so the window must
-            // open near the top of the frame. No scale() -- magnifying about
-            // the centre is what cropped the head off.
-            style={{ objectPosition: "center 20%" }}
-            onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-          />
-          <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.92) 0%, hsl(var(--background) / 0.6) 34%, hsl(var(--background) / 0.05) 62%)" }} />
-          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
-        </div>
-        <div className="w-full sm:w-auto sm:ml-2">{pickerOverArt}</div>
-      </div>
-      <div className="container mx-auto px-4 md:px-8 pb-8 max-w-3xl">
+      <CreateHeroBanner />
+      <div className="container mx-auto px-4 md:px-8 pt-8 max-w-3xl flex justify-center">{picker}</div>
+      <div className="container mx-auto px-4 md:px-8 py-8 max-w-3xl">
         <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
           <RobinhoodCreateForm />
         </Suspense>

@@ -9,6 +9,8 @@ import { matchesAssetSearch } from "@/lib/assetSearch";
 import { launchpadBadgeText, matchesLaunchpadFilter, LAUNCHPAD_FILTER_OPTIONS, type LaunchpadFilter } from "@/lib/launchpadLabels";
 import type { CatalogueAssetLaunchpad } from "@/hooks/useMainnetAssetCatalogue";
 import { useAppStore } from "@/store/useAppStore";
+import { CreateHeroBanner } from "@/components/CreateHeroBanner";
+import { LaunchHeader, LaunchStepper } from "@/components/LaunchStepper";
 import { normalizeYouTubeChannelUrl } from "@/lib/youtube";
 import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import {
@@ -906,66 +908,60 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   }
 
   if (!wallet.connected) {
+    // With the chain picker supplied, the art is a BANNER and the control sits
+    // below it in normal flow, aligned with the page. Floating the control on
+    // top of the photograph put it over the bird's face and left it unaligned
+    // with everything beneath.
+    if (chainPicker) {
+      return (
+        <div>
+          <CreateHeroBanner />
+          <div className="container mx-auto px-4 md:px-8 pt-8 flex justify-center">{chainPicker}</div>
+          {/* The chain choice leads, but the page still has to go SOMEWHERE:
+              without a wallet there is no wizard to show, so the connect step
+              stays right under it. */}
+          <div className="container mx-auto px-4 pb-16 pt-8 text-center">
+            <div className="max-w-md mx-auto space-y-4">
+              <h1 className="text-2xl font-merge-display font-bold">Connect Wallet to Deploy</h1>
+              <p className="text-muted-foreground" style={{ marginTop: 10, marginBottom: 12 }}>
+                You need a Solana wallet to deploy and manage a Reserve.
+              </p>
+              <Button className="rounded-full h-12 px-10 text-base" onClick={() => setWalletModalOpen(true)}>
+                Connect Wallet
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
-      // With the chain picker in the slot the content is a third the height of
-      // the old heading+CTA block, so the band is sized to the art and the
-      // content is centred IN it -- otherwise the art runs on well below a
-      // short control and the composition reads as a mistake.
-      <div
-        className={
-          chainPicker
-            ? "container mx-auto px-4 relative flex items-center justify-center sm:justify-start min-h-[clamp(340px,30vw,560px)] py-12"
-            : "container mx-auto px-4 py-24 text-center relative"
-        }
-      >
+      <div className="container mx-auto px-4 py-24 text-center relative">
         {/* Full-bleed hero art behind the gate (public/create-gate-hero.jpg) —
             same treatment as Manage's gate screens: centered radial wash for
             the center-aligned text, bottom fade, hides itself if absent. */}
-        <div
-          aria-hidden="true"
-          className={`absolute top-0 left-1/2 w-screen -translate-x-1/2 overflow-hidden pointer-events-none -z-10 ${
-            chainPicker ? "h-[clamp(340px,30vw,560px)]" : "h-[240px] sm:h-[400px]"
-          }`}
-        >
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
           <img
             src="/create-gate-hero.jpg"
             alt=""
             className="w-full h-full object-cover"
-            // 1800x1028 art: the head spans ~12%-60% of the frame. object-cover
-            // fits WIDTH here, so the visible slice is a window into a height
-            // that grows with the viewport, positioned by this Y%. 20% with the
-            // clamped band height keeps the whole head in frame from 1280px to
-            // ~1920px. No scale() -- magnifying about the centre cropped it off.
-            style={{ objectPosition: "center 20%" }}
+            style={{ objectPosition: "center 30%", transform: "translateX(-14%) scale(1.3)" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
-          <div
-            className="absolute inset-0"
-            style={{
-              background: chainPicker
-                ? // Panel sits left, over the sky: scrim that edge and leave the bird clear.
-                  "linear-gradient(90deg, hsl(var(--background) / 0.92) 0%, hsl(var(--background) / 0.6) 34%, hsl(var(--background) / 0.05) 62%)"
-                : "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)",
-            }}
-          />
+          <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
-        {chainPicker ? (
-          <div className="w-full sm:w-auto sm:ml-2">{chainPicker}</div>
-        ) : (
-          <div className="max-w-md mx-auto space-y-6">
-            <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
-            <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
-            {/* Inline margins: FABLE's unlayered element reset zeroes <p> margins
-                with higher cascade priority than Tailwind's layered spacing. */}
-            <p className="text-muted-foreground" style={{ marginTop: 15, marginBottom: 12 }}>
-              You need to connect a wallet to deploy<br />and manage a Reserve.
-            </p>
-            <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
-              Connect Wallet
-            </Button>
-          </div>
-        )}
+        <div className="max-w-md mx-auto space-y-6">
+          <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
+          <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
+          {/* Inline margins: FABLE's unlayered element reset zeroes <p> margins
+              with higher cascade priority than Tailwind's layered spacing. */}
+          <p className="text-muted-foreground" style={{ marginTop: 15, marginBottom: 12 }}>
+            You need to connect a wallet to deploy<br />and manage a Reserve.
+          </p>
+          <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
+            Connect Wallet
+          </Button>
+        </div>
       </div>
     );
   }
@@ -1526,38 +1522,8 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
         <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
       </div>
 
-      <div className="mb-8">
-        <h1 className="text-4xl font-merge-display font-bold mb-2">Launch a Reserve</h1>
-        <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN, live on Solana {CLUSTER_LABEL}.</p>
-      </div>
-
-      <div className="flex justify-between mb-8 relative">
-        {/* Anchored to top-4 (16px = half of the w-8/h-8 circle below), not top-1/2 of the
-            whole step item -- top-1/2 measured against the full circle+label height, which
-            sits the line below the circles' true center. */}
-        <div className="absolute top-4 left-0 right-0 h-0.5 bg-border -z-10 -translate-y-1/2"></div>
-        <div
-          className="absolute top-4 left-0 h-0.5 bg-primary -z-10 -translate-y-1/2 transition-all duration-300"
-          style={{ width: `${((step - 1) / 3) * 100}%` }}
-        ></div>
-        
-        {[1, 2, 3, 4].map((s) => (
-          <div key={s} className="flex flex-col items-center gap-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors
-              ${s < step ? 'bg-primary text-primary-foreground' : 
-                s === step ? 'bg-background border-2 border-primary text-primary' : 
-                'bg-background border-2 border-border text-muted-foreground'}
-            `}>
-              {s}
-            </div>
-            <span className={`text-xs font-semibold hidden sm:block
-              ${s <= step ? 'text-foreground' : 'text-muted-foreground'}
-            `}>
-              {s === 1 ? "Identity" : s === 2 ? "Composition" : s === 3 ? "Economics" : "Review"}
-            </span>
-          </div>
-        ))}
-      </div>
+      <LaunchHeader subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} />
+      <LaunchStepper step={step} />
 
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (

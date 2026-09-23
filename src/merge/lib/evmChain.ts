@@ -16,6 +16,7 @@
 //     Robinhood stock tokens. Creating another costs ~1.8M gas and real
 //     assets to seed the basket.
 import { defineChain, type Address } from "viem";
+import { ROBINHOOD_ASSETS } from "./robinhoodAssets.generated";
 
 export interface AssetRef {
   address: Address;
@@ -116,17 +117,10 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     feeRegistry: "0x03079d5f8d3B6d27827315205D1328b193c48d31",
     roleRegistry: "0x3a96Fd76dAB64be73404BF59587beF21773Dcd94",
     fillerRegistry: "0x95CB8550056680a004019fD45db4347A622C2CFc",
-    // Robinhood's tokenised equities. VERIFIED on-chain 2026-09-21 by reading
-    // symbol()/decimals() directly; USDG is the quote asset everything trades
-    // against. These are ERC-8056: see MULTIPLIER_WARNING below.
-    assets: [
-      { address: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", symbol: "USDG", decimals: 6, note: "Global Dollar -- the cash leg" },
-      { address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", symbol: "WETH", decimals: 18 },
-      { address: "0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", symbol: "NVDA", decimals: 18, note: "NVIDIA -- stock token" },
-      { address: "0x117cc2133c37b721f49de2a7a74833232b3b4c0c", symbol: "SPY", decimals: 18, note: "S&P 500 ETF -- stock token" },
-      { address: "0x12f190a9f9d7d37a250758b26824b97ce941bf54", symbol: "AMZN", decimals: 18, note: "Amazon -- stock token" },
-      { address: "0xc72b96e0e48ecd4dc75e1e45396e26300bc39681", symbol: "INTC", decimals: 18, note: "Intel -- stock token" },
-    ],
+    // Every Robinhood stock token that trades against USDG, discovered
+    // on-chain -- see scripts/generate-robinhood-assets.mts. 279 of them as of
+    // 2026-09-23, plus the cash leg and WETH.
+    assets: ROBINHOOD_ASSETS,
     notice:
       "Live on Robinhood Chain mainnet. This reserve holds real USDG and Robinhood stock tokens; " +
       "minting moves real assets into it and redeeming returns them.",
