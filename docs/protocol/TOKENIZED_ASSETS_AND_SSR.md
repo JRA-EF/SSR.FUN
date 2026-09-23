@@ -41,28 +41,83 @@ holds — the live EQSSR reserve holds NVDA and SPY today.
 TSLA, and 133 more. So a Solana user searching "TSLA" is not at a dead end;
 they are one chain away, and the app now has both.
 
-## How to integrate, in order of value
+## How to integrate the shared artifacts, visibly
 
-1. **Explain, don't hide (small).** Today a tokenized equity is silently absent
-   from the asset picker. Carry the provider, underlying symbol and product URL
-   into `ledger_asset_catalogue` — the same shape as the launchpad provenance in
-   `lib/ledger/launchpadClassification.ts` — and say *why* it is unavailable:
-   "TSLAx is a tokenized equity (xStocks). SSR cannot hold it: it carries a
-   transfer hook and a permanent delegate." Same fix-class as the PUMP
-   complaint: an honest, specific absence beats a silent one.
+The artifacts are: the guide (`TOKENIZED_ASSET_DISCOVERY.md`), the runnable
+exporter (`scripts/export-tokenized-assets.mjs`, Node built-ins only), and a
+1,033-row snapshot (`exports/tokenized-assets.{json,csv}`). The design below
+uses all three without pretending the catalogue is something it is not.
 
-2. **Route to the chain where it works (small, high value).** With the
-   underlying symbol in hand, a search for TSLA on Solana can offer the
-   Robinhood reserve path instead. This is the only integration that makes the
-   catalogue *actionable* rather than informational.
+### Where the data lives
 
-3. **Keep it fresh (small).** `scripts/export-tokenized-assets.mjs` runs
-   standalone; wire it to a weekly cron beside `launchpad-classify-cron.ts` and
-   write rows rather than committing a snapshot. `exports/*` here is a
-   point-in-time handoff, and the guide is explicit that it is not a feed.
+A table of its own, `ledger_tokenized_assets`, keyed by mint:
 
-4. **Do NOT relax the extension policy (rejected).** The only way to hold these
-   on Solana is to accept transfer hooks and permanent delegates. Don't.
+    mint (pk), provider, product_name, symbol, underlying_symbol,
+    network, official_product_url, catalog_source_url,
+    provider_token_price_usd, provider_mark_price_usd,
+    implied_valuation_usd, retrieved_at, first_seen_at, removed_at
+
+It is PROVENANCE, joined to `ledger_asset_catalogue` by mint -- never merged
+into it and never consulted for eligibility. Eligibility stays exactly where it
+is (`assessMintAccount`, the program's extension policy). A row here says "this
+mint is a tokenized equity from this provider"; it never says holdable,
+tradable or available.
+
+### How it refreshes
+
+`api/ledger/tokenized-assets-cron.ts`, weekly, beside
+`launchpad-classify-cron.ts`. It calls the exporter's normalizers directly --
+the script already exports `normalizePrestocks` / `normalizeXstocks` and uses
+only Node built-ins, so it runs unmodified -- and upserts, setting `removed_at`
+for rows a provider stops listing rather than deleting them. `exports/*` stays
+as the checked-in handoff snapshot; the guide is explicit that it is a
+point-in-time export, not a feed, so the app must never read those files at
+runtime.
+
+### Surface 1: a real page (the visible part)
+
+`#/stocks` -- "Tokenized Stocks", in the primary nav. Every row: symbol,
+product name, underlying ticker, provider badge, official product link, and a
+status chip that is the honest answer for THAT asset:
+
+| Status | Meaning |
+| --- | --- |
+| Available on Robinhood Chain | the same underlying is one of our 281 ERC-20s -- links to Launch with it pre-filled |
+| Not holdable on Solana | names the blocking extensions, e.g. "transfer hook, permanent delegate" |
+| Not yet reviewed | in the catalogue, extension scan pending |
+
+Filters for provider, status and a search box. A footer line carries
+`retrieved_at` and links the source APIs and the guide, so the page states its
+own provenance rather than implying the app discovered this itself.
+
+### Surface 2: search
+
+The existing `ReserveSearch` in the header currently finds Reserves. Typing
+TSLA should also find the tokenized asset and show its status chip, because
+that is where a person actually asks the question.
+
+### Surface 3: the Create picker
+
+An equity ticker typed into the Robinhood basket picker already resolves. The
+Solana picker should resolve it too -- and then refuse it with the reason and
+the cross-chain route, instead of the ticker silently not existing.
+
+### What the UI must not do
+
+The guide is strict, and these are load-bearing:
+- never present a listing as liquid, buyable, or legally available;
+- never infer a mint from a ticker -- always the provider's published address;
+- always show provider, retrieval time and source URL next to the data;
+- provider price/mark/valuation are PROVIDER values, labelled as such, never
+  shown as an observed pool quote or a Reserve NAV input;
+- keep the exporter's `VCXX` exclusion; adding a provider means its own
+  official catalogue and its own verified mint mapping.
+
+### Effort
+
+Table + cron half a day; the page about a day; search and the picker a few
+hours each. Nothing here touches the program, the catalogue's eligibility
+rules, or any Reserve's holdings.
 
 ## One more thing worth knowing
 
