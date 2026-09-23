@@ -17,6 +17,7 @@ import { ReserveCard } from "../../components/ReserveCard";
 import { avatarStyle } from "../../lib/avatarStyle";
 import { useRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
 import { robinhoodEntry, solanaEntry, type DirectoryEntry } from "@/lib/directoryEntry";
+import { EVM_ENABLED } from "@/lib/evmFeature";
 
 type SortKey = "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
 export type ChainFilter = "all" | "solana" | "robinhood";
@@ -141,16 +142,20 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
               onChange={(e) => setSearchFilter(e.target.value)}
             />
           </div>
-          <select
-            className={selectClass}
-            value={chainFilter}
-            onChange={(e) => setChainFilter(e.target.value as ChainFilter)}
-            aria-label="Filter by chain"
-          >
-            <option value="all">All chains</option>
-            <option value="solana">Solana</option>
-            <option value="robinhood">Robinhood Chain</option>
-          </select>
+          {/* One chain, no filter: the control only earns its place once
+              there is something to choose between (evmFeature.ts). */}
+          {EVM_ENABLED && (
+            <select
+              className={selectClass}
+              value={chainFilter}
+              onChange={(e) => setChainFilter(e.target.value as ChainFilter)}
+              aria-label="Filter by chain"
+            >
+              <option value="all">All chains</option>
+              <option value="solana">Solana</option>
+              <option value="robinhood">Robinhood Chain</option>
+            </select>
+          )}
           <select
             className={selectClass}
             value={categoryFilter}
@@ -189,12 +194,12 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
         </div>
       )}
 
-      {chainFilter !== "solana" && robinhood.status === "error" && !isDesignDemoEnabled() && (
+      {EVM_ENABLED && chainFilter !== "solana" && robinhood.status === "error" && !isDesignDemoEnabled() && (
         <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn)", color: "var(--warn)" }}>
           Could not refresh Robinhood Chain Reserves ({robinhood.error ?? "unknown error"}).
         </div>
       )}
-      {chainFilter !== "solana" && robinhood.status === "loading" && robinhood.reserves.length === 0 && (
+      {EVM_ENABLED && chainFilter !== "solana" && robinhood.status === "loading" && robinhood.reserves.length === 0 && (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">Checking Robinhood Chain for live Reserves…</div>
       )}
 

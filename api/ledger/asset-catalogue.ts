@@ -25,6 +25,7 @@
 // it.
 import { getSql } from "../../lib/ledger/db";
 import { isLaunchpadId, type LaunchpadId, type LaunchpadStage, type LaunchpadVenue } from "../../packages/sdk/src/launchpads";
+import { isTokenIssuerId, type TokenIssuerId } from "../../packages/sdk/src/issuers";
 
 interface ApiRequest {
   method?: string;
@@ -47,6 +48,8 @@ export interface CatalogueRow {
   launchpad?: string | null;
   launchpadStage?: string | null;
   launchpadVenue?: string | null;
+  /** Tokenised-asset issuer, proven on-chain by the mint's permanent delegate (packages/sdk/src/issuers.ts); null = not from a known issuer or not yet classified. */
+  issuer?: string | null;
 }
 
 /** Launchpad provenance as the picker shows it. Informational: it never affects whether a token is offered. */
@@ -69,9 +72,16 @@ export interface CatalogueToken {
    */
   tokenProgram: string;
   launchpad: CatalogueTokenLaunchpad | null;
+  /** Who issued this tokenised real-world asset, or null. Informational: it never affects whether a token is offered. */
+  issuer: TokenIssuerId | null;
 }
 
 /** Pure: the stored columns -> the picker's launchpad object, or null. Only accepts the exact verified ids (a stray/unknown value is treated as no provenance, never surfaced). */
+/** Pure: the stored column -> the picker's issuer id, or null. Only the exact verified ids are accepted; a stray value is treated as no issuer. */
+export function issuerOfRow(row: Pick<CatalogueRow, "issuer">): TokenIssuerId | null {
+  return isTokenIssuerId(row.issuer) ? row.issuer : null;
+}
+
 export function launchpadOfRow(row: Pick<CatalogueRow, "launchpad" | "launchpadStage" | "launchpadVenue">): CatalogueTokenLaunchpad | null {
   if (!isLaunchpadId(row.launchpad)) return null;
   const stage: LaunchpadStage = row.launchpadStage === "graduated" ? "graduated" : "bonding";
@@ -125,6 +135,7 @@ export function dedupeBySymbolPreferOrganicScore(rows: CatalogueRow[]): Catalogu
       decimals: r.decimals,
       tokenProgram: r.tokenProgram === TOKEN_2022_PROGRAM_ID ? TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID,
       launchpad: launchpadOfRow(r),
+      issuer: issuerOfRow(r),
     }));
 }
 
@@ -152,7 +163,8 @@ async function loadCatalogue(): Promise<{ tokens: CatalogueToken[]; updatedAt: n
       -- reads null instead of failing on a missing column
       to_jsonb(ledger_asset_catalogue) ->> 'launchpad' as "launchpad",
       to_jsonb(ledger_asset_catalogue) ->> 'launchpad_stage' as "launchpadStage",
-      to_jsonb(ledger_asset_catalogue) ->> 'launchpad_venue' as "launchpadVenue"
+      to_jsonb(ledger_asset_catalogue) ->> 'launchpad_venue' as "launchpadVenue",
+      to_jsonb(ledger_asset_catalogue) ->> 'issuer' as "issuer"
     from ledger_asset_catalogue
     where jupiter_verified = true
       and decimals is not null

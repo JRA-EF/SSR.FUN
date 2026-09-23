@@ -27,6 +27,7 @@ import {
   type Mint,
 } from "@solana/spl-token";
 import { isToken2022 } from "./tokenPrograms";
+import { APPROVED_ISSUER_DELEGATES, ISSUER_LABELS, issuerOfPermanentDelegate, type TokenIssuerId } from "./issuers";
 
 /**
  * Issuers whose PermanentDelegate is accepted. Mirrors the program's
@@ -37,10 +38,11 @@ import { isToken2022 } from "./tokenPrograms";
  * for a regulated tokenised equity, whose issuer must be able to act on the
  * underlying. So it is allowed by ISSUER, not by extension.
  *
- * This is xStocks' delegate, the same key on all of their Solana mints
- * (verified on-chain 2026-09-23), so new listings are covered automatically.
+ * Derived from the issuer table (issuers.ts), which holds the evidence and
+ * one delegate per issuer -- the same key on all of that issuer's mints, so
+ * new listings are covered automatically with no list to maintain.
  */
-export const APPROVED_PERMANENT_DELEGATES: string[] = ["5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq"];
+export const APPROVED_PERMANENT_DELEGATES: string[] = APPROVED_ISSUER_DELEGATES;
 
 /** Extensions whose configuration decides the answer. Kept for the parity test. */
 export const CONDITIONAL_MINT_EXTENSIONS: ExtensionType[] = [
@@ -123,7 +125,9 @@ export function assessMint(mint: Mint): MintCompatibility {
         const delegate = getPermanentDelegate(mint)?.delegate;
         if (delegate && !delegate.equals(PublicKey.default)) {
           if (APPROVED_PERMANENT_DELEGATES.includes(delegate.toBase58())) {
-            issuerPowers.push("the issuer can move this asset out of the Reserve (permanent delegate)");
+            const issuer = issuerOfPermanentDelegate(delegate.toBase58());
+            const who = issuer ? ISSUER_LABELS[issuer].name : "the issuer";
+            issuerPowers.push(`${who} can move this asset out of the Reserve (permanent delegate)`);
           } else {
             rejected.push(ext);
             reasons.push("has a permanent delegate that is not an approved issuer, which could move the Reserve's holdings");
@@ -180,4 +184,26 @@ export function assessMintAccount(
 /** The user-facing sentence for a blocked asset. */
 export function describeIncompatibleAsset(symbol: string, compat: MintCompatibility): string {
   return `${symbol} ${compat.reason ?? "is not supported"}. Remove it from the basket to continue.`;
+}
+
+/**
+ * The issuer a mint's permanent delegate proves, from the same raw account
+ * `assessMintAccount` reads -- so a caller that already fetched the mint
+ * (lib/ledger/markIncompatibleMints.ts) gets compatibility and provenance
+ * without a second RPC round trip.
+ *
+ * Classic SPL mints carry no extensions and are never issuer-attributed.
+ */
+export function issuerOfMintAccount(
+  mint: PublicKey,
+  account: { data: Buffer; owner: PublicKey } | null | undefined,
+): TokenIssuerId | null {
+  if (!account || !isToken2022(account.owner)) return null;
+  try {
+    const delegate = getPermanentDelegate(unpackMint(mint, account as never, TOKEN_2022_PROGRAM_ID))?.delegate;
+    if (!delegate || delegate.equals(PublicKey.default)) return null;
+    return issuerOfPermanentDelegate(delegate.toBase58());
+  } catch {
+    return null;
+  }
 }

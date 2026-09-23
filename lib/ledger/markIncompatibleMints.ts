@@ -13,7 +13,7 @@
 // roughly 1,600 accounts in batches of 100 -- about sixteen RPC calls, once
 // a week.
 import { Connection, PublicKey } from "@solana/web3.js";
-import { assessMintAccount } from "@ssr/sdk";
+import { assessMintAccount, issuerOfMintAccount } from "@ssr/sdk";
 import { getSql } from "./db";
 
 const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
@@ -23,6 +23,8 @@ export interface IncompatibleMintsResult {
   checked: number;
   marked: number;
   cleared: number;
+  /** Mints whose recorded issuer changed this run (first classification included). */
+  issuersRecorded: number;
   examples: { mint: string; symbol: string; reason: string }[];
 }
 
@@ -40,14 +42,19 @@ export interface IncompatibleMintsResult {
 export async function markIncompatibleMints(connection: Connection): Promise<IncompatibleMintsResult> {
   const sql = getSql();
   const rows = (await sql`
-    select mint, symbol, ssr_status as "ssrStatus"
+    select mint, symbol, ssr_status as "ssrStatus",
+      -- via to_jsonb so a deployment that precedes scripts/migrate-issuers.mjs
+      -- reads null instead of failing on a missing column (same guard as
+      -- api/ledger/asset-catalogue.ts uses for the launchpad columns)
+      to_jsonb(ledger_asset_catalogue) ->> 'issuer' as "issuer",
+      to_jsonb(ledger_asset_catalogue) ->> 'issuer_checked_at' as "issuerCheckedAt"
     from ledger_asset_catalogue
     where token_program = ${TOKEN_2022_PROGRAM_ID}
       and removed_from_catalogue_at is null
       and ssr_status <> 'blocklisted'
-  `) as { mint: string; symbol: string | null; ssrStatus: string }[];
+  `) as { mint: string; symbol: string | null; ssrStatus: string; issuer: string | null; issuerCheckedAt: string | null }[];
 
-  const result: IncompatibleMintsResult = { checked: 0, marked: 0, cleared: 0, examples: [] };
+  const result: IncompatibleMintsResult = { checked: 0, marked: 0, cleared: 0, issuersRecorded: 0, examples: [] };
 
   for (let i = 0; i < rows.length; i += BATCH) {
     const slice = rows.slice(i, i + BATCH);
@@ -64,6 +71,27 @@ export async function markIncompatibleMints(connection: Connection): Promise<Inc
       const row = slice[j];
       const compat = assessMintAccount(keys[j], infos[j]);
       result.checked += 1;
+
+      // Issuer provenance rides along on the account we already fetched:
+      // the same PermanentDelegate the compatibility check reads is the
+      // issuer's proof (packages/sdk/src/issuers.ts). Always stamp
+      // issuer_checked_at, so "not from a known issuer" is a recorded fact
+      // rather than an unclassified row. Skipped when the account did not
+      // load, since a failed read must never erase a known issuer.
+      if (infos[j]) {
+        const issuer = issuerOfMintAccount(keys[j], infos[j]);
+        // Write only on a change or a first classification: this pass sees
+        // ~1,700 mints a week and almost none of them ever change issuer, so
+        // an unconditional update would be 1,700 pointless round trips.
+        if (issuer !== row.issuer || row.issuerCheckedAt === null) {
+          await sql`
+            update ledger_asset_catalogue
+               set issuer = ${issuer}, issuer_checked_at = now()
+             where mint = ${row.mint}
+          `;
+          result.issuersRecorded += 1;
+        }
+      }
       if (!compat.supported) {
         if (row.ssrStatus !== "disabled") {
           await sql`

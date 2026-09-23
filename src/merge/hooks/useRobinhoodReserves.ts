@@ -12,6 +12,7 @@
 // new reserve appears immediately.
 import { useEffect, useSyncExternalStore } from "react";
 import type { ReserveSnapshot } from "@/lib/evmReserve";
+import { EVM_ENABLED } from "@/lib/evmFeature";
 
 const STALE_MS = 60_000;
 
@@ -32,6 +33,10 @@ function set(next: Partial<RobinhoodReservesState>) {
 }
 
 async function load() {
+  // The single data choke point: with the EVM surface hidden, no Robinhood
+  // RPC call is made at all, so Home and Discover simply see an empty list
+  // rather than each needing its own guard.
+  if (!EVM_ENABLED) return;
   if (inflight) return inflight;
   set({ status: state.reserves.length ? state.status : "loading" });
   inflight = (async () => {
@@ -54,6 +59,7 @@ async function load() {
 }
 
 export function invalidateRobinhoodReserves() {
+  if (!EVM_ENABLED) return;
   state = { ...state, fetchedAt: 0 };
   void load();
 }
@@ -67,6 +73,7 @@ export function useRobinhoodReserves(): RobinhoodReservesState {
     () => state,
   );
   useEffect(() => {
+    if (!EVM_ENABLED) return;
     if (Date.now() - state.fetchedAt > STALE_MS) void load();
   }, []);
   return snap;

@@ -7,7 +7,9 @@ import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
 import { launchpadBadgeText, matchesLaunchpadFilter, LAUNCHPAD_FILTER_OPTIONS, type LaunchpadFilter } from "@/lib/launchpadLabels";
+import { issuerBadgeText, issuerBadgeTitle, matchesIssuerFilter, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
 import type { CatalogueAssetLaunchpad } from "@/hooks/useMainnetAssetCatalogue";
+import type { TokenIssuerId } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { LaunchShell } from "@/components/LaunchHero";
 import { normalizeYouTubeChannelUrl } from "@/lib/youtube";
@@ -133,8 +135,8 @@ export function CreateDTR() {
     }
   }, [mainnetCatalogue.tokens]);
 
-  // DevNet fixtures carry no launchpad field; Mainnet catalogue entries may.
-  type SelectableAsset = { symbol: string; name: string; mint: string; decimals: number; real: true; launchpad?: CatalogueAssetLaunchpad | null };
+  // DevNet fixtures carry no launchpad or issuer field; Mainnet catalogue entries may.
+  type SelectableAsset = { symbol: string; name: string; mint: string; decimals: number; real: true; launchpad?: CatalogueAssetLaunchpad | null; issuer?: TokenIssuerId | null };
   const SELECTABLE_ASSETS = useMemo<SelectableAsset[]>(() => {
     if (!IS_MAINNET) return DEVNET_REAL_ASSETS;
     return [MAINNET_USDC_ASSET, ...mainnetCatalogue.tokens.filter((t) => t.symbol !== MAINNET_USDC_ASSET.symbol)];
@@ -145,6 +147,11 @@ export function CreateDTR() {
   // a token the catalogue would not otherwise offer.
   const [launchpadFilter, setLaunchpadFilter] = useState<LaunchpadFilter>("all");
   const launchpadFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.launchpad);
+  // Issuer filter, same rules: it narrows the LIST, never widens what is
+  // eligible. Only shown once the catalogue actually carries a tokenised
+  // asset, so it cannot appear as an empty control.
+  const [issuerFilter, setIssuerFilter] = useState<IssuerFilter>("all");
+  const issuerFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.issuer);
 
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1667,19 +1674,38 @@ export function CreateDTR() {
                     />
                   </div>
 
-                  {launchpadFilterAvailable && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label htmlFor="launchpad-filter" className="text-xs text-muted-foreground">Launched on</label>
-                      <select
-                        id="launchpad-filter"
-                        className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                        value={launchpadFilter}
-                        onChange={(e) => setLaunchpadFilter(e.target.value as LaunchpadFilter)}
-                      >
-                        {LAUNCHPAD_FILTER_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
+                  {(launchpadFilterAvailable || issuerFilterAvailable) && (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      {issuerFilterAvailable && (
+                        <div className="flex items-center gap-2">
+                          <label htmlFor="issuer-filter" className="text-xs text-muted-foreground">Asset type</label>
+                          <select
+                            id="issuer-filter"
+                            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                            value={issuerFilter}
+                            onChange={(e) => setIssuerFilter(e.target.value as IssuerFilter)}
+                          >
+                            {ISSUER_FILTER_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {launchpadFilterAvailable && (
+                        <div className="flex items-center gap-2">
+                          <label htmlFor="launchpad-filter" className="text-xs text-muted-foreground">Launched on</label>
+                          <select
+                            id="launchpad-filter"
+                            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                            value={launchpadFilter}
+                            onChange={(e) => setLaunchpadFilter(e.target.value as LaunchpadFilter)}
+                          >
+                            {LAUNCHPAD_FILTER_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
@@ -1687,11 +1713,17 @@ export function CreateDTR() {
                       .filter(a => !assets.some(selected => selected.symbol === a.symbol))
                       .filter(a => matchesAssetSearch(a, assetSearch))
                       .filter(a => matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter))
+                      .filter(a => matchesIssuerFilter(a.issuer ?? null, issuerFilter))
                       .map(asset => (
                         <div key={asset.symbol} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
                           <div>
                             <span className="font-semibold">{asset.name}</span>
                             <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{asset.symbol}</span>
+                            {asset.issuer && (
+                              <span className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-primary/40 text-primary" title={issuerBadgeTitle(asset.issuer)}>
+                                {issuerBadgeText(asset.issuer)}
+                              </span>
+                            )}
                             {asset.launchpad && (
                               <span className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-border text-muted-foreground" title="Where this token was launched, verified on-chain. Not a safety rating.">
                                 {launchpadBadgeText(asset.launchpad)}
@@ -1718,7 +1750,12 @@ export function CreateDTR() {
                         if (noMatches) {
                           return <div className="p-4 text-center text-sm text-muted-foreground">No assets match "{assetSearch.trim()}".</div>;
                         }
-                        const noneForLaunchpad = launchpadFilter !== "all" && remaining.filter((a) => matchesAssetSearch(a, assetSearch)).every((a) => !matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter));
+                        const searched = remaining.filter((a) => matchesAssetSearch(a, assetSearch));
+                        const noneForIssuer = issuerFilter !== "all" && searched.every((a) => !matchesIssuerFilter(a.issuer ?? null, issuerFilter));
+                        if (noneForIssuer) {
+                          return <div className="p-4 text-center text-sm text-muted-foreground">No eligible assets of that type{assetSearch.trim() ? ` match "${assetSearch.trim()}"` : ""}.</div>;
+                        }
+                        const noneForLaunchpad = launchpadFilter !== "all" && searched.filter((a) => matchesIssuerFilter(a.issuer ?? null, issuerFilter)).every((a) => !matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter));
                         if (noneForLaunchpad) {
                           return <div className="p-4 text-center text-sm text-muted-foreground">No eligible assets from that launchpad{assetSearch.trim() ? ` match "${assetSearch.trim()}"` : ""}.</div>;
                         }

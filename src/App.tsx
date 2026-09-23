@@ -16,6 +16,7 @@ import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
 import { CreateReserve } from './merge/pages/CreateReserve'
 import { rhAddressFromId } from './merge/lib/evmReserveId'
+import { EVM_ENABLED } from './merge/lib/evmFeature'
 // Robinhood Chain reserve pages pull in viem, which the Solana app never
 // needs. Lazy so it lands in its own chunk instead of the main bundle.
 const RobinhoodReserveDetail = lazy(() =>
@@ -45,7 +46,9 @@ function Routes() {
   }
 
   const dtr = matchPath('/dtr/:dtrId', path)
-  const rhAddress = dtr ? rhAddressFromId(dtr.dtrId) : null
+  // With the EVM surface off, a /dtr/rh-<address> link is not a route this
+  // build serves; it falls through to the Solana branch, which 404s it.
+  const rhAddress = EVM_ENABLED && dtr ? rhAddressFromId(dtr.dtrId) : null
   if (rhAddress) {
     return (
       <MergeLayout>
@@ -80,7 +83,7 @@ function Routes() {
     )
   }
   // Old link to the standalone Robinhood page: it is Discover now.
-  if (matchPath('/evm', path)) {
+  if (EVM_ENABLED && matchPath('/evm', path)) {
     return (
       <MergeLayout>
         <Discover initialChain="robinhood" />

@@ -9,16 +9,13 @@
 import { lazy, Suspense } from "react";
 import { usePath, navigate } from "../../lib/router";
 import { CreateDTR } from "./CreateDTR";
+import { EVM_ENABLED } from "@/lib/evmFeature";
+import { chainFromPath, type ChainChoice } from "@/lib/chainChoice";
+
+export type { ChainChoice };
 
 // viem is only needed on the Robinhood branch; keep it out of the main bundle.
 const RobinhoodCreateForm = lazy(() => import("@/components/robinhood/RobinhoodCreateForm").then((m) => ({ default: m.RobinhoodCreateForm })));
-
-export type ChainChoice = "solana" | "robinhood";
-
-export function chainFromPath(path: string): ChainChoice {
-  const q = path.split("?")[1] ?? "";
-  return new URLSearchParams(q).get("chain") === "robinhood" ? "robinhood" : "solana";
-}
 
 const CHAINS: { v: ChainChoice; label: string; blurb: string }[] = [
   { v: "solana", label: "Solana", blurb: "Settles in USDC. Buy and sell in one click; the Reserve swaps into its basket for you." },
@@ -79,15 +76,19 @@ function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (
 }
 
 export function CreateReserve() {
-  const chain = chainFromPath(usePath());
+  const chain = chainFromPath(usePath(), EVM_ENABLED);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
   return (
     <div>
       {/* The chain control is page-level chrome on the plain ground, above the
-          wizard -- the wizard brings its own hero wash behind its heading. */}
-      <div className="container mx-auto px-4 md:px-8 pt-8 flex justify-center">
-        <ChainChoiceBlock chain={chain} onChange={onChange} />
-      </div>
+          wizard -- the wizard brings its own hero wash behind its heading.
+          With one chain there is no choice to present, so the whole block
+          goes rather than showing a control with a single option. */}
+      {EVM_ENABLED && (
+        <div className="container mx-auto px-4 md:px-8 pt-8 flex justify-center">
+          <ChainChoiceBlock chain={chain} onChange={onChange} />
+        </div>
+      )}
       {chain === "solana" ? (
         <CreateDTR />
       ) : (
