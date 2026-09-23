@@ -1,64 +1,55 @@
-// Which Token-2022 mints this protocol can hold (DEC-0205).
+// The client's view of which Token-2022 mints a Reserve can hold must match
+// the program's, or a user pays for a Reserve-creation transaction to find out
+// it cannot (live 2026-09-11 with PUMP).
 //
-// Opening the picker to Token-2022 (DEC-0201) was half a fix: the program
-// accepts Token-2022 but rejects five extensions at registration, and without
-// a matching client filter the picker offered mints that cannot be registered.
-// A user then paid for a Reserve-creation transaction to find out -- live
-// 2026-09-11 with PUMP (transfer hook), signature
-// k4LFCn13SJoMuj2r13toJ7JeAk81FLXXkm8K7qzHbzdEC3qSCxbTZP6oB4gDLHqZYR29EZWx7cfJ3gtdpUsvKLr.
+// The rules judge an extension's CONFIGURATION, not its presence. Judging by
+// presence refused all 1,025 xStocks equities for a TransferHook with no hook
+// program and a ConfidentialTransferMint that does not auto-approve.
+//
+//   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_mint_extensions.ts
 import { expect } from "chai";
-import * as fs from "fs";
-import * as path from "path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ExtensionType } from "@solana/spl-token";
-import { REJECTED_MINT_EXTENSIONS, SUPPORTED, assessExtensions, describeIncompatibleAsset } from "../packages/sdk/src/mintExtensions";
+import { APPROVED_PERMANENT_DELEGATES, describeIncompatibleAsset } from "../packages/sdk/src/mintExtensions";
 
-describe("rejected extensions mirror the program exactly", () => {
-  it("the client list matches validate_asset_mint_extensions' REJECTED array -- a drift here silently re-opens the bug", () => {
-    const rust = fs.readFileSync(path.join(__dirname, "..", "programs/ssr_protocol/src/instructions/common.rs"), "utf8");
-    const block = rust.slice(rust.indexOf("const REJECTED"), rust.indexOf("];", rust.indexOf("const REJECTED")));
-    for (const name of ["TransferFeeConfig", "TransferHook", "PermanentDelegate", "NonTransferable", "ConfidentialTransferMint"]) {
-      expect(block, `program rejects ${name}`).to.include(name);
-    }
-    expect(REJECTED_MINT_EXTENSIONS).to.have.length(5);
-    expect(REJECTED_MINT_EXTENSIONS).to.include(ExtensionType.TransferHook);
-    expect(REJECTED_MINT_EXTENSIONS).to.include(ExtensionType.TransferFeeConfig);
-    expect(REJECTED_MINT_EXTENSIONS).to.include(ExtensionType.PermanentDelegate);
-    expect(REJECTED_MINT_EXTENSIONS).to.include(ExtensionType.NonTransferable);
-    expect(REJECTED_MINT_EXTENSIONS).to.include(ExtensionType.ConfidentialTransferMint);
+const rust = readFileSync(join(__dirname, "..", "programs/ssr_protocol/src/instructions/common.rs"), "utf8");
+const validator = rust.slice(rust.indexOf("const APPROVED_PERMANENT_DELEGATES"), rust.indexOf("\n}", rust.indexOf("pub fn validate_asset_mint_extensions")));
+
+describe("client mirrors the program's mint rules", () => {
+  it("approves the SAME issuer delegates the program does -- a drift re-opens the bug in one direction or the other", () => {
+    const inRust = [...validator.matchAll(/Pubkey::from_str_const\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/g)].map((m) => m[1]);
+    expect(inRust, "the program must approve at least one issuer").to.not.be.empty;
+    expect([...APPROVED_PERMANENT_DELEGATES].sort()).to.deep.equal([...inRust].sort());
+  });
+
+  it("judges configuration, not presence -- the program reads each extension's value", () => {
+    // If these reads disappear the program is back to blanket-rejecting types.
+    expect(validator, "hook program id").to.include("hook.program_id");
+    expect(validator, "fee basis points").to.include("transfer_fee_basis_points");
+    expect(validator, "delegate pubkey").to.include("pd.delegate");
+    expect(validator, "confidential auto-approve").to.include("auto_approve_new_accounts");
+  });
+
+  it("keeps NonTransferable unconditional -- a vault could never pay a redemption", () => {
+    expect(validator).to.match(/ExtensionType::NonTransferable[\s\S]{0,120}UnsupportedMintExtension/);
+  });
+
+  it("rejects a scheduled fee, not just the current one (a newer fee activates on its own epoch)", () => {
+    expect(validator).to.include("older_transfer_fee");
+    expect(validator).to.include("newer_transfer_fee");
   });
 });
 
-describe("assessExtensions", () => {
-  it("THE PUMP CASE: a transfer hook is refused, and the reason names it", () => {
-    const out = assessExtensions([ExtensionType.TransferHook, ExtensionType.MetadataPointer, ExtensionType.TokenMetadata]);
-    expect(out.supported).to.equal(false);
-    expect(out.reason).to.contain("transfer hook");
-  });
-
-  it("harmless extensions are fine -- metadata on a mint is not a reason to refuse it", () => {
-    expect(assessExtensions([ExtensionType.MetadataPointer, ExtensionType.TokenMetadata])).to.deep.equal(SUPPORTED);
-    expect(assessExtensions([])).to.deep.equal(SUPPORTED);
-  });
-
-  it("lists every offending extension, not just the first, so the user sees the whole problem", () => {
-    const out = assessExtensions([ExtensionType.PermanentDelegate, ExtensionType.TransferFeeConfig, ExtensionType.TransferHook]);
-    expect(out.rejected).to.have.length(3);
-    expect(out.reason).to.contain("permanent delegate");
-    expect(out.reason).to.contain("transfer fee");
-    expect(out.reason).to.contain("transfer hook");
-    expect(out.reason).to.contain(" and "); // reads as a sentence, not a dump
-  });
-
-  it("each of the five is refused on its own", () => {
-    for (const ext of REJECTED_MINT_EXTENSIONS) {
-      expect(assessExtensions([ext]).supported, String(ext)).to.equal(false);
-    }
-  });
-
-  it("the user-facing sentence names the asset and says what to do", () => {
-    const msg = describeIncompatibleAsset("PUMP", assessExtensions([ExtensionType.TransferHook]));
-    expect(msg).to.contain("PUMP");
-    expect(msg).to.contain("transfer hook");
-    expect(msg).to.contain("Remove it from the basket");
+describe("the user-facing sentence", () => {
+  it("names the asset and says what to do", () => {
+    const msg = describeIncompatibleAsset("PUMP", {
+      supported: false,
+      rejected: [ExtensionType.TransferHook],
+      reason: "runs a transfer hook, which can block or alter every transfer",
+    });
+    expect(msg).to.include("PUMP");
+    expect(msg).to.include("transfer hook");
+    expect(msg).to.include("Remove it from the basket");
   });
 });

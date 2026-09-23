@@ -653,6 +653,47 @@ pub fn mul_div_floor(a: u64, b: u64, c: u64) -> Result<u64> {
 ///   created vault token account frozen and unusable.
 /// - `ConfidentialTransferMint`: balances aren't plainly readable, breaking
 ///   the balance-delta accounting this program relies on throughout.
+/// Issuers whose PermanentDelegate the protocol accepts.
+///
+/// A permanent delegate can move tokens out of ANY account holding that mint,
+/// including a Reserve vault. That is unacceptable from an anonymous mint, and
+/// unavoidable in a regulated tokenised equity -- the issuer must be able to
+/// act on the underlying. So it is allowed only for issuers named here.
+///
+/// `5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq` is xStocks' delegate; the
+/// same key is the delegate on all 1,025 of their Solana mints (verified
+/// on-chain 2026-09-23 across TSLAx, NVDAx, SPYx, COINx, HOODx and a random
+/// sample), so new listings are covered without touching this list.
+const APPROVED_PERMANENT_DELEGATES: [Pubkey; 1] = [
+    Pubkey::from_str_const("5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq"),
+];
+
+/// Validates a Token-2022 asset mint by what its extensions are CONFIGURED to
+/// do, not merely by which extension types are present.
+///
+/// The previous version rejected on presence alone, which over-blocked badly:
+/// xStocks' mints declare a TransferHook with NO hook program set and a
+/// ConfidentialTransferMint that does not auto-approve accounts. Neither can
+/// affect us, yet every tokenised equity on Solana was refused because of them.
+///
+/// What each rule protects, and why the configured value is what matters:
+///
+/// * TransferHook -- arbitrary code on every transfer. Harmless when no
+///   program is set; that mint transfers exactly like any other.
+/// * TransferFeeConfig -- the amount that arrives is less than the amount
+///   sent, which breaks the balance-delta accounting every deposit,
+///   redemption and rebalance relies on. Harmless at zero, in BOTH the
+///   current and the scheduled fee, since the newer one takes effect on its
+///   own epoch without anyone acting.
+/// * PermanentDelegate -- see APPROVED_PERMANENT_DELEGATES above.
+/// * ConfidentialTransferMint -- balances that are not publicly readable make
+///   NAV uncomputable. A vault must opt IN per account, so this is harmless
+///   while new accounts are not auto-approved; the protocol never opts in.
+/// * NonTransferable -- the vault could never pay a redemption. Never allowed.
+///
+/// Anything this function accepts must still be disclosed: an approved issuer
+/// can seize (permanent delegate), and pause or freeze. That is a property of
+/// the asset, not a defect here.
 pub fn validate_asset_mint_extensions(
     mint_info: &AccountInfo,
     token_program_id: &Pubkey,
@@ -663,15 +704,10 @@ pub fn validate_asset_mint_extensions(
         return Ok(());
     }
 
-    // Token-2022: inspect the mint's extension TLV data. This block uses the
-    // `spl_token_2022` crate's extension-introspection API
-    // (`StateWithExtensions`, `ExtensionType`) re-exported via
-    // `anchor_spl::token_2022::spl_token_2022`. Verify these exact type/enum
-    // names against the installed `spl-token-2022` version once a toolchain
-    // is available -- this is the single most likely spot to need a small
-    // fix (e.g. a renamed extension variant) before this compiles.
     use anchor_spl::token_2022::spl_token_2022::extension::{
-        BaseStateWithExtensions, ExtensionType, StateWithExtensions,
+        confidential_transfer::ConfidentialTransferMint, permanent_delegate::PermanentDelegate,
+        transfer_fee::TransferFeeConfig, transfer_hook::TransferHook, BaseStateWithExtensions,
+        ExtensionType, StateWithExtensions,
     };
     use anchor_spl::token_2022::spl_token_2022::state::Mint as Token2022Mint;
 
@@ -682,17 +718,58 @@ pub fn validate_asset_mint_extensions(
         .get_extension_types()
         .map_err(|_| error!(SsrError::UnsupportedTokenProgram))?;
 
-    const REJECTED: [ExtensionType; 5] = [
-        ExtensionType::TransferFeeConfig,
-        ExtensionType::TransferHook,
-        ExtensionType::PermanentDelegate,
-        ExtensionType::NonTransferable,
-        ExtensionType::ConfidentialTransferMint,
-    ];
-
     for ext in extensions {
-        if REJECTED.contains(&ext) {
-            return Err(error!(SsrError::UnsupportedMintExtension));
+        match ext {
+            // Never holdable: the vault could not pay a redemption.
+            ExtensionType::NonTransferable | ExtensionType::NonTransferableAccount => {
+                return Err(error!(SsrError::UnsupportedMintExtension));
+            }
+
+            ExtensionType::TransferHook => {
+                let hook = mint_with_extensions
+                    .get_extension::<TransferHook>()
+                    .map_err(|_| error!(SsrError::UnsupportedMintExtension))?;
+                let program_id: Option<Pubkey> = hook.program_id.into();
+                if program_id.is_some() {
+                    return Err(error!(SsrError::UnsupportedMintExtension));
+                }
+            }
+
+            ExtensionType::TransferFeeConfig => {
+                let fee = mint_with_extensions
+                    .get_extension::<TransferFeeConfig>()
+                    .map_err(|_| error!(SsrError::UnsupportedMintExtension))?;
+                let older: u16 = fee.older_transfer_fee.transfer_fee_basis_points.into();
+                let newer: u16 = fee.newer_transfer_fee.transfer_fee_basis_points.into();
+                // A scheduled non-zero fee activates on its own epoch with no
+                // further action, so a zero fee today is not enough.
+                if older != 0 || newer != 0 {
+                    return Err(error!(SsrError::UnsupportedMintExtension));
+                }
+            }
+
+            ExtensionType::PermanentDelegate => {
+                let pd = mint_with_extensions
+                    .get_extension::<PermanentDelegate>()
+                    .map_err(|_| error!(SsrError::UnsupportedMintExtension))?;
+                let delegate: Option<Pubkey> = pd.delegate.into();
+                match delegate {
+                    None => {}
+                    Some(d) if APPROVED_PERMANENT_DELEGATES.contains(&d) => {}
+                    Some(_) => return Err(error!(SsrError::UnsupportedMintExtension)),
+                }
+            }
+
+            ExtensionType::ConfidentialTransferMint => {
+                let ct = mint_with_extensions
+                    .get_extension::<ConfidentialTransferMint>()
+                    .map_err(|_| error!(SsrError::UnsupportedMintExtension))?;
+                if bool::from(ct.auto_approve_new_accounts) {
+                    return Err(error!(SsrError::UnsupportedMintExtension));
+                }
+            }
+
+            _ => {}
         }
     }
 
