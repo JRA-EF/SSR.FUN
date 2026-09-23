@@ -109,7 +109,12 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 }
 
 
-export function CreateDTR() {
+/**
+ * @param chainPicker Rendered over the hero art in place of the connect gate's
+ *   own heading and CTA, so choosing a chain is the first thing on the page
+ *   (the header already carries a Connect Wallet button).
+ */
+export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   const [, setLocation] = useLocation();
   const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints, setWalletModalOpen } = useAppStore();
   const { toast } = useToast();
@@ -917,18 +922,22 @@ export function CreateDTR() {
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
-        <div className="max-w-md mx-auto space-y-6">
-          <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
-          <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
-          {/* Inline margins: FABLE's unlayered element reset zeroes <p> margins
-              with higher cascade priority than Tailwind's layered spacing. */}
-          <p className="text-muted-foreground" style={{ marginTop: 15, marginBottom: 12 }}>
-            You need to connect a wallet to deploy<br />and manage a Reserve.
-          </p>
-          <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
-            Connect Wallet
-          </Button>
-        </div>
+        {chainPicker ? (
+          <div className="max-w-md mx-auto">{chainPicker}</div>
+        ) : (
+          <div className="max-w-md mx-auto space-y-6">
+            <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
+            <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
+            {/* Inline margins: FABLE's unlayered element reset zeroes <p> margins
+                with higher cascade priority than Tailwind's layered spacing. */}
+            <p className="text-muted-foreground" style={{ marginTop: 15, marginBottom: 12 }}>
+              You need to connect a wallet to deploy<br />and manage a Reserve.
+            </p>
+            <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
+              Connect Wallet
+            </Button>
+          </div>
+        )}
       </div>
     );
   }

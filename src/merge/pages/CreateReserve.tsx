@@ -8,6 +8,7 @@
 // reload and can be linked to directly.
 import { lazy, Suspense } from "react";
 import { usePath, navigate } from "../../lib/router";
+import { useAppStore } from "@/store/useAppStore";
 import { CreateDTR } from "./CreateDTR";
 
 // viem is only needed on the Robinhood branch; keep it out of the main bundle.
@@ -64,30 +65,64 @@ export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange:
   );
 }
 
-export function CreateReserve() {
-  const chain = chainFromPath(usePath());
+/** The "Launch on" block: label, segmented control, and the chosen chain's one-liner. */
+function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (c: ChainChoice) => void }) {
   const blurb = CHAINS.find((c) => c.v === chain)?.blurb;
   return (
-    <div>
-      {/* Centred to match the page beneath it (the connect gate and the wizard
-          are both centre-weighted), and compact so choosing a chain reads as
-          one step of Launch rather than a slab bolted above the page. */}
-      <div className="container mx-auto px-4 md:px-8 pt-8 pb-2 flex flex-col items-center gap-2.5 text-center">
-        <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-          Launch on
-        </p>
-        <ChainPicker value={chain} onChange={(c) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create")} />
-        <p className="text-sm text-muted-foreground max-w-md">{blurb}</p>
-      </div>
-      {chain === "solana" ? (
+    <div className="flex flex-col items-center gap-2.5 text-center">
+      <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+        Launch on
+      </p>
+      <ChainPicker value={chain} onChange={onChange} />
+      <p className="text-sm text-muted-foreground max-w-md">{blurb}</p>
+    </div>
+  );
+}
+
+export function CreateReserve() {
+  const chain = chainFromPath(usePath());
+  const solanaConnected = useAppStore((s) => s.wallet.connected);
+  const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
+  const picker = <ChainChoiceBlock chain={chain} onChange={onChange} />;
+
+  // Solana, no wallet yet: the chain choice takes the place of the connect
+  // gate's own heading and CTA, sitting over the hero art. The header already
+  // has a Connect Wallet button, so a second one here was just noise in front
+  // of the decision the page actually starts with.
+  if (chain === "solana" && !solanaConnected) return <CreateDTR chainPicker={picker} />;
+
+  if (chain === "solana") {
+    return (
+      <div>
+        <div className="container mx-auto px-4 md:px-8 pt-8 pb-2">{picker}</div>
         <CreateDTR />
-      ) : (
-        <div className="container mx-auto px-4 md:px-8 py-8 max-w-3xl">
-          <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
-            <RobinhoodCreateForm />
-          </Suspense>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Robinhood: the same hero treatment as the Solana gate, so switching
+          chains does not change the shape of the page. */}
+      <div className="container mx-auto px-4 py-16 text-center relative">
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+          <img
+            src="/create-gate-hero.jpg"
+            alt=""
+            className="w-full h-full object-cover"
+            style={{ objectPosition: "center 30%", transform: "translateX(-14%) scale(1.3)" }}
+            onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+          />
+          <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
-      )}
+        <div className="max-w-md mx-auto">{picker}</div>
+      </div>
+      <div className="container mx-auto px-4 md:px-8 pb-8 max-w-3xl">
+        <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
+          <RobinhoodCreateForm />
+        </Suspense>
+      </div>
     </div>
   );
 }
