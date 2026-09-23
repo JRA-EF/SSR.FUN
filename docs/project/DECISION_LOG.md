@@ -6489,3 +6489,33 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0210",
+  "date": "2026-09-23",
+  "title": "DEC-0205 Mainnet upgrade EXECUTED via Squads (set_reserve_token_metadata live); buffer rent refunded to the deployer wallet; VITE_TOKEN_METADATA_LIVE=true deployed; Metaplex metadata backfilled onto all 24 named Reserve Token mints",
+  "status": "confirmed-implemented (on-chain upgrade + production env + backfill; nothing left staged)",
+  "decision": "Executed the staged DEC-0205 program upgrade through the controlled 1-of-3 Squads multisig G8pgvV8wGrscorppA3VrcAWrV6QGP4TvTps1czaejzH8 (vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW): Squads upgrade #7 'set_reserve_token_metadata (DEC-0205)', buffer Gnf2kNFGKHqGNeHtKW4WmynuN1iM4astQj81dwYQjSZR, spill CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8, created/approved/executed by the Creator wallet EME96L9J... alone (threshold 1). Then: (a) VITE_TOKEN_METADATA_LIVE=true added to the ssr-fun Production env and the app redeployed from a clean worktree at main @ 73c9940 (dpl_7p2oGnff7pVT1zpHspAobMNrKYsf, aliased to ssr.fun); (b) scripts/backfill_token_metadata.ts --cluster mainnet run as the Protocol Admin (CgHFxD4X...): 24 created, 0 updated, 1 skipped (reserveId 0, the hidden smoke test with an unresolvable metadata record), 0 failed.",
+  "context": "Creator, 2026-09-23 afternoon: 'i havent gotten the solana back from the last ship' -- the 5.38 SOL the DEC-0205 buffer had locked since 22 September could only return on execute or close, and only the Squads vault could do either. The Creator chose 'execute upgrade now and give me the sol back'. Three things needed untangling in the Squads app along the way, recorded here so the next upgrade is a two-minute job: (1) the Squad to use is the one whose vault is HFmq... (multisig G8pg...); an older abandoned Squad (GjEAq7Xg..., vault 2AHTzDAA..., legacy deployer as member) and an unrelated empty account the Creator first pasted are NOT it; (2) 'Add Upgrade' under Developers -> Programs only registers a bookkeeping row (upgrade #7, 'Upgrade Date: Never') -- the on-chain proposal is created by opening that row and initiating the upgrade transaction, then Approve + Execute under Transactions; (3) the first on-chain attempt (tx 4PzgFKYq...) failed with Squads error 6005 NotAMember because the connected wallet had switched to the deployer CgHFxD4X..., which is deliberately not a member (DEC-0178); reconnecting as EME96L9J... fixed it. The Creator wallet held 0.043 SOL, so 0.1 SOL was sent to it from the deployer wallet first (tx 3NdpQES1...). The spill field is where the buffer rent is refunded; it is unrelated to the signing wallet.",
+  "rationale": "Execute now rather than hold for the tokenized-stock (permanent-delegate) change: the refund unblocks funding the next buffer, and the metadata instruction has been proven on DevNet since 17 September. The stock change ships as its own upgrade.",
+  "alternativesConsidered": [
+    "Hold the buffer and bundle the permanent-delegate change for xStocks into one upgrade (rejected: keeps 5.38 SOL locked for days and delays on-chain names/symbols that wallets and Jupiter already need)",
+    "Close the buffer instead of executing (rejected: same Squads vote for no benefit)",
+    "Backfill only the displayable Reserves (rejected: every Reserve Token that exists in a wallet deserves a name; the tool already skips only the one with no metadata record)"
+  ],
+  "impact": "Program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 last deployed at slot 449738286 with programdata sha256 4a1faa7b23fe533f... (identical to the 17 September artifact and to the buffer that was verified before execute); upgrade authority unchanged (HFmq...). Buffer closed; the deployer wallet CgHFxD4X... went from 2.24 to 8.99 SOL on execute (5.38 SOL buffer rent plus lamports the loader released from the program data account), then, between 15:04 and 15:05 UTC and NOT by this session, two System transfers signed with the deployer key sent 5.3771 SOL (tx 3k3R47EASB...) and 2 SOL (tx 3W25Pu79PS...) to the Developer wallet 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa; the backfill then cost 24 x 0.0137 SOL (metadata rent + fees) = 0.33 SOL; balance at 15:07 UTC 1.2869 SOL. The Creator is being asked to confirm the two transfers were theirs or the Developer's; if not, the deployer key (also the ProtocolConfig authority) must be treated as shared and rotated. Every named Mainnet Reserve Token (ALPHA x7, BETA, CHARLIE x4, DELTA x4, ECHO, FOXTROT, GOLF, H, I x2, Kuj Reserve, Strategic Solana Reserve) has a Metaplex Token Metadata account with name, symbol and a URI at https://ssr.fun/api/mainnet/token-metadata?id=<id>&reserve=<address> (verified publicly reachable, HTTP 200, not behind the beta gate). The Launch flow now sets metadata in the create batch and the Manage page's metadata button is active. Still open from DEC-0205: (6) Jupiter verification submissions, (7) the public docs' 'Name, symbol, picture' wording (DEC-0204) should now also describe the on-chain Metaplex record.",
+  "affectedAreas": [
+    "Mainnet program (on-chain): upgrade executed; no repo diff",
+    "Vercel ssr-fun Production env: VITE_TOKEN_METADATA_LIVE=true (new); dpl_7p2oGnff7pVT1zpHspAobMNrKYsf",
+    "24 Metaplex metadata accounts created on Mainnet by the backfill (signer CgHFxD4X...)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "verification": [
+    "Before execute: on-chain buffer body sha256 == 4a1faa7b23fe533f... == target/deploy/ssr_protocol.so (1,058,352 bytes); buffer authority HFmq...; multisig G8pg... decoded from chain: members PSpQ (Boss), 52b7 (Developer), EME9 (Creator), threshold 1, config authority EME9; transaction_index 6, all six proposals Executed.",
+    "After execute: programdata 2YF7aofg... slot 449738286, first 1,058,352 bytes sha256 4a1faa7b23fe533f..., authority HFmq...; buffer account balance 0 (closed); CgHF 8.9939 SOL.",
+    "vercel env ls production: VITE_TOKEN_METADATA_LIVE present; vercel inspect dpl_7p2oGnff7pVT1zpHspAobMNrKYsf: target production, Ready, alias https://ssr.fun.",
+    "Backfill dry run listed 24 CREATE + 1 SKIP; live run: created=24 updated=0 skipped=1 failed=0 with one signature per Reserve. Metaplex metadata PDAs read back for C6xZ6b (Strategic Solana Reserve / SOLSSR), 64LhgC (I) and 3uxU5U (ALPHA) with the expected name, symbol and https://ssr.fun/api/mainnet/token-metadata URI; curl of that URI for SOLSSR: HTTP 200 JSON with name/symbol/description/image."
+  ]
+}
+```
