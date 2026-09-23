@@ -25,35 +25,39 @@ const CHAINS: { v: ChainChoice; label: string; blurb: string }[] = [
   {
     v: "robinhood",
     label: "Robinhood Chain",
-    blurb: "Holds tokenized equities (NVDA, SPY, AMZN…) and USDG. You seed the basket from your own wallet; buys and sells are in kind.",
+    blurb: "Holds tokenized equities (NVDA, SPY, AMZN) and USDG. You seed the basket from your own wallet; buys and sells are in kind.",
   },
 ];
 
-/** An explicit, equal choice between the chains -- neither is the afterthought. */
+/**
+ * An equal choice between the chains, as a segmented control.
+ *
+ * Built from labels + radios rather than <button>s on purpose: merge.css
+ * restyles any `.merge-scope button` carrying a bg-primary/bg-action class
+ * into an uppercase Lexend Giga action button, which turned the selected
+ * option into a giant CTA and left the other one in body type.
+ */
 export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange: (c: ChainChoice) => void }) {
   return (
-    <div className="grid sm:grid-cols-2 gap-3" role="radiogroup" aria-label="Chain">
+    <div className="inline-flex rounded-full border border-border bg-secondary/40 p-1" role="radiogroup" aria-label="Chain">
       {CHAINS.map((c) => {
         const active = value === c.v;
         return (
-          <button
+          <label
             key={c.v}
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange(c.v)}
-            className={`text-left rounded-xl border p-4 transition-colors ${
-              active ? "border-primary bg-primary/10" : "border-border bg-card/40 hover:border-primary/40"
+            className={`cursor-pointer select-none rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+              active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <span className="flex items-center gap-2">
-              <span
-                aria-hidden="true"
-                className={`w-3.5 h-3.5 rounded-full border-2 ${active ? "border-primary bg-primary" : "border-muted-foreground"}`}
-              />
-              <span className="font-merge-display font-bold">{c.label}</span>
-            </span>
-            <span className="block text-sm text-muted-foreground mt-2">{c.blurb}</span>
-          </button>
+            <input
+              type="radio"
+              name="ssr-create-chain"
+              className="sr-only"
+              checked={active}
+              onChange={() => onChange(c.v)}
+            />
+            {c.label}
+          </label>
         );
       })}
     </div>
@@ -62,13 +66,18 @@ export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange:
 
 export function CreateReserve() {
   const chain = chainFromPath(usePath());
+  const blurb = CHAINS.find((c) => c.v === chain)?.blurb;
   return (
     <div>
-      <div className="container mx-auto px-4 md:px-8 pt-8 max-w-3xl">
-        <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground mb-3">
-          Choose a chain
+      {/* Centred to match the page beneath it (the connect gate and the wizard
+          are both centre-weighted), and compact so choosing a chain reads as
+          one step of Launch rather than a slab bolted above the page. */}
+      <div className="container mx-auto px-4 md:px-8 pt-8 pb-2 flex flex-col items-center gap-2.5 text-center">
+        <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+          Launch on
         </p>
         <ChainPicker value={chain} onChange={(c) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create")} />
+        <p className="text-sm text-muted-foreground max-w-md">{blurb}</p>
       </div>
       {chain === "solana" ? (
         <CreateDTR />

@@ -18,6 +18,9 @@ export interface EvmWalletState {
 }
 
 let state: EvmWalletState = { wallet: null, account: null, connecting: false };
+/** When the in-flight attempt started, so a prompt the user never answers cannot wedge the button. */
+let connectStartedAt = 0;
+const CONNECT_STUCK_MS = 60_000;
 const listeners = new Set<() => void>();
 let listening = false;
 
@@ -27,7 +30,10 @@ function set(next: Partial<EvmWalletState>) {
 }
 
 export async function connectEvmWallet(): Promise<void> {
-  if (state.connecting) return;
+  // A wallet prompt the user ignores never settles, so a stale "connecting"
+  // must not disable the control forever.
+  if (state.connecting && Date.now() - connectStartedAt < CONNECT_STUCK_MS) return;
+  connectStartedAt = Date.now();
   set({ connecting: true });
   try {
     const [{ ROBINHOOD }, { connectWallet }] = await Promise.all([import("@/lib/evmChain"), import("@/lib/evmReserve")]);
