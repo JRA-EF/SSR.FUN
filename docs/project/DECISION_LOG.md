@@ -6456,3 +6456,36 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0209",
+  "date": "2026-09-23",
+  "title": "Neon spend bounded: compute capped at 0.5 CU with a 5-minute idle suspend, and the warm-cache keeper moved from a self-warming every-minute loop to one refresh every 10 minutes",
+  "status": "confirmed-implemented (Neon endpoint settings changed via the Neon API; app: vercel.json cron + api/mainnet/warm-cache-cron.ts, deployed)",
+  "decision": "1) Production Neon endpoint ep-holy-cake-awlrie9s (project little-hall-61768380, branch br-morning-dew-aw8y0ekb): autoscaling limits min 0.25 / max 0.5 CU (was max 8 CU) and suspend_timeout_seconds 300 (the shortest the Launch plan allows; 120 and 180 were refused with 'suspend interval is too short for your plan'). Set with the Neon REST API using a scoped API key the Creator created and that now lives only in .env.local (gitignored) as NEON_API_KEY. 2) api/mainnet/warm-cache-cron runs on '*/10 * * * *' and performs exactly ONE snapshot refresh per invocation (the ~52 s self-warming loop of ~4 refreshes 15 s apart is removed; REFRESH_SPACING_MS/BUDGET_MS/sleep are gone; the JSON response keeps its `refreshes` field). Expected effect: Neon compute sleeps roughly half of every 10-minute cycle (~5 min awake after each run) instead of 24/7, so ~90-95 CU-hours/month (~$10) instead of ~180 (~$19), with a hard ceiling of 0.5 CU x 720 h = 360 CU-hours (~$38); the cron's Vercel function time drops from ~21 hours/day to well under an hour.",
+  "context": "Creator, after the DEC-0208 upgrade: 'is there a risk of very high spend' and then 'if you can do something to limit the spendage here that'd be awesome'. The Launch plan has no spend cap of its own and allowed the endpoint to autoscale to 8 CU. Compute-hours are the only material Neon cost for this workload (database 23 MB, transfer a few MB/day), and they are driven by how long the compute is awake, which the every-minute keeper made permanent. What actually depends on the one-minute cadence: nothing hard. The client (ReserveSnapshotHydrator.tsx) paints from whatever snapshot it gets, only logs its age, and immediately runs its own live discovery poll, so the snapshot's freshness governs the first frame only. The NAV recorder (lib/reserve-nav-history/navMath.ts) already refuses to record more than one point per Reserve per 15 minutes, so a 10-minute cron yields points every 20 minutes -- the same chart resolution in practice (a 15-minute cron was rejected because scheduler jitter would make the 15-minute threshold miss every other run, giving 30-minute gaps). api/mainnet/reserves-snapshot.ts's own 10 s edge cache and the client's 3-attempt fetch absorb the ~0.5-1 s cold start a visitor pays when the compute is asleep.",
+  "rationale": "Bound the worst case first (0.5 CU cap: no query pattern can run the bill above ~$38/month), then cut the expected case by letting the compute sleep, which needs the keeper to stop touching the database every minute. Ten minutes is the balance between savings and first-paint freshness: every 5 minutes would never let a 5-minute suspend fire; every 15+ would save ~$3 more but interact badly with the NAV throttle and make first paint up to a quarter-hour stale. One refresh per invocation also removes ~21 function-hours/day on Vercel that bought ~15 s freshness nobody consumed.",
+  "alternativesConsidered": [
+    "Keep the every-minute self-warming loop and rely on the 0.5 CU cap alone (rejected: bounds the ceiling but leaves the expected ~$19/month, all of it spent keeping a 23 MB database awake for a first-paint cache)",
+    "Suspend after 60-180 s with a 5-minute cron (rejected: the Neon API refuses anything under 300 s on Launch)",
+    "Every 5 minutes with the 300 s suspend (rejected: the compute would never idle long enough to suspend, so no Neon saving)",
+    "Every 15 or 30 minutes (rejected for now: only ~$3-4/month more saving, stale first paint, and the 15-minute NAV throttle turns 15-minute jitter into 30-minute gaps)",
+    "Vercel Spend Management as the guard (not relied on: unclear whether Marketplace charges count toward it)"
+  ],
+  "impact": "Expected Neon cost ~$10/month, hard ceiling ~$38/month at the compute cap. First paint on the homepage/Discover uses a snapshot up to 10 minutes old (prices/AUM), corrected by the live poll within seconds, exactly as before but from an older starting point. When the compute is asleep the first database-backed request pays a ~0.5-1 s cold start (snapshot, names, pictures, activity); the every-minute warm-cache-cron log stream (1,440 invocations/day) becomes 144. NAV history gains a point per Reserve every 20 minutes instead of every 15-16. The DEC-0208 Decisions Required item for the compute cap is closed; the metadata CDN-cache item stays open.",
+  "affectedAreas": [
+    "vercel.json (crons: /api/mainnet/warm-cache-cron '*/1' -> '*/10')",
+    "api/mainnet/warm-cache-cron.ts (header rewritten; single refreshOnce per invocation; REFRESH_SPACING_MS, BUDGET_MS, sleep removed)",
+    "Neon endpoint ep-holy-cake-awlrie9s settings (infrastructure): max 0.5 CU, suspend 300 s",
+    ".env.local (gitignored): NEON_API_KEY for future endpoint reads/changes",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "verification": [
+    "Neon API GET .../endpoints before: min 0.25, max 8, suspend_timeout_seconds 0 (plan default), state active. PATCH max 0.5 -> read back min 0.25 / max 0.5, state active, pending none; PATCH suspend 120 and 180 -> 'suspend interval is too short for your plan'; PATCH 300 -> ok.",
+    "Database still answering after the resize: reserve_snapshot latest 2026-09-23 11:18:07 UTC read in 411 ms.",
+    "npx tsc -p api/mainnet/tsconfig.json --noEmit: exit 0; oxlint api/mainnet/warm-cache-cron.ts: clean. No test pins the schedule or the removed constants (grep over tests/ for warm-cache-cron and '*/1 * * * *': only vercel.json).",
+    "Post-deploy check recorded in PROJECT_STATUS: snapshot generated_at cadence and the endpoint's current_state between runs."
+  ]
+}
+```

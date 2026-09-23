@@ -4,10 +4,16 @@
 // of running the on-chain discovery burst in their browser (the burst that
 // self-inflicted the rpc-proxy 429s and broke Discover under load).
 //
-// Vercel Cron can't fire faster than once/minute, so this handler SELF-WARMS:
-// one invocation refreshes the snapshot every ~15s for ~52s (staying under the
-// api/mainnet/* maxDuration of 60), giving ~15s effective freshness with zero
-// external scheduler. Register in vercel.json `crons` at "*/1 * * * *".
+// Cadence (DEC-0209): ONE refresh per invocation, scheduled in vercel.json
+// `crons` at "*/10 * * * *". It used to self-warm (a ~52 s loop refreshing
+// every ~15 s, fired every minute) for ~15 s freshness -- but that kept the
+// production Neon compute awake 24/7 (its idle-suspend is 5 min on the Launch
+// plan) and exhausted the Free plan's quota in September 2026, and a
+// snapshot's age does not matter much: the client paints from it once and
+// immediately runs its own live poll (ReserveSnapshotHydrator.tsx). A 10-min
+// cadence lets Neon sleep about half of every cycle, keeps NAV points landing
+// every 20 min (the recorder's own throttle is 15 min, navMath.ts), and cuts
+// this function's runtime ~98%. Freshness now: <= 10 min at first paint.
 //
 // Same CRON_SECRET pattern as api/kpis/kpis-backfill-cron.ts: a real scheduled
 // invocation carries `Authorization: Bearer $CRON_SECRET`; `?dryRun=true` skips
@@ -53,10 +59,6 @@ const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
 const CLUSTER = "mainnet-beta";
 const MAX_KNOWN_MINTS = 2000;
-const REFRESH_SPACING_MS = 15_000;
-const BUDGET_MS = 52_000; // under the api/mainnet/* maxDuration (60s in vercel.json)
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function getHeader(req: ApiRequest, name: string): string | undefined {
   const v = req.headers[name] ?? req.headers[name.toLowerCase()];
@@ -235,23 +237,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     // Like metadataCache, invocation-scoped: the last recorded NAV point per
     // Reserve is read from the DB once, then advanced in memory per refresh.
     const navRecorder = createNavRecorderState();
-    const deadline = Date.now() + BUDGET_MS;
+    // One refresh per invocation (see the header): the response keeps the
+    // `refreshes` field so existing log/dashboard readers still parse it.
     let refreshes = 0;
     let lastReserveCount = 0;
     let lastError: string | null = null;
-
-    do {
-      try {
-        lastReserveCount = await refreshOnce(connection, candidateAssetMints, metadataCache, navRecorder);
-        refreshes++;
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : String(e);
-        console.error("api/mainnet/warm-cache-cron: refresh failed:", e);
-      }
-      // Only sleep for another cycle if a full (spacing + typical refresh) fits.
-      if (Date.now() + REFRESH_SPACING_MS + 3_000 < deadline) await sleep(REFRESH_SPACING_MS);
-      else break;
-    } while (Date.now() < deadline);
+    try {
+      lastReserveCount = await refreshOnce(connection, candidateAssetMints, metadataCache, navRecorder);
+      refreshes++;
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      console.error("api/mainnet/warm-cache-cron: refresh failed:", e);
+    }
 
     res.status(200).json({
       ok: refreshes > 0,
