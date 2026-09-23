@@ -129,13 +129,16 @@ export function CreateReserve() {
     <div>
       {/* Robinhood: the same hero treatment as the Solana gate, so switching
           chains does not change the shape of the page. */}
-      <div className="container mx-auto px-4 relative text-center flex items-center justify-center min-h-[300px] sm:min-h-[400px] py-12">
-        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[300px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+      <div className="container mx-auto px-4 relative text-center flex items-center justify-center min-h-[320px] sm:min-h-[440px] py-12">
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[320px] sm:h-[440px] overflow-hidden pointer-events-none -z-10">
           <img
             src="/create-gate-hero.jpg"
             alt=""
             className="w-full h-full object-cover"
-            style={{ objectPosition: "center 42%", transform: "translateX(-14%) scale(1.3)" }}
+            // 1800x1028 art: the crest starts ~12% down, so the window must
+            // open near the top of the frame. No scale() -- magnifying about
+            // the centre is what cropped the head off.
+            style={{ objectPosition: "center 14%" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
