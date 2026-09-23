@@ -66,36 +66,60 @@ export function injectedProvider(): EIP1193Provider {
 }
 
 /**
- * Asks the wallet for this chain, adding it if the wallet has never seen it.
- * 4902 is the EIP-1193 "unrecognised chain" code; anything else is a real
- * failure and is re-thrown rather than swallowed.
+ * Puts the wallet on this chain, adding it if it has never seen it.
+ *
+ * MUST run AFTER eth_requestAccounts: wallets differ on whether an
+ * unauthorized site may switch or add a chain, and several (Phantom among
+ * them) simply fail or no-op until the site is connected -- which is what made
+ * connecting take several attempts.
+ *
+ * "Unrecognised chain" is reported inconsistently: EIP-1193 says 4902, but
+ * wallets also wrap it in -32603, and some only say so in the message. All of
+ * those mean "add it first", so they are treated the same.
  */
+function needsChainAdded(e: unknown): boolean {
+  const err = e as { code?: number; message?: string; data?: { originalError?: { code?: number } } };
+  const code = err?.code ?? err?.data?.originalError?.code;
+  return code === 4902 || code === -32603 || /unrecognized|unrecognised|not added|add .*chain/i.test(err?.message ?? "");
+}
+
 export async function ensureChain(provider: EIP1193Provider, cfg: ChainConfig) {
   const hexId = `0x${cfg.chain.id.toString(16)}`;
+  const current = (await provider.request({ method: "eth_chainId" }).catch(() => null)) as string | null;
+  if (current && current.toLowerCase() === hexId.toLowerCase()) return; // already there
+
   try {
     await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexId }] });
+    return;
   } catch (e) {
-    if ((e as { code?: number }).code !== 4902) throw e;
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [
-        {
-          chainId: hexId,
-          chainName: cfg.chain.name,
-          nativeCurrency: cfg.chain.nativeCurrency,
-          rpcUrls: [...cfg.chain.rpcUrls.default.http],
-          blockExplorerUrls: [cfg.explorer],
-        },
-      ],
-    } as never);
+    if (!needsChainAdded(e)) throw e;
+  }
+  await provider.request({
+    method: "wallet_addEthereumChain",
+    params: [
+      {
+        chainId: hexId,
+        chainName: cfg.chain.name,
+        nativeCurrency: cfg.chain.nativeCurrency,
+        rpcUrls: [...cfg.chain.rpcUrls.default.http],
+        blockExplorerUrls: [cfg.explorer],
+      },
+    ],
+  } as never);
+  // Adding does not always switch, and a wallet can refuse silently.
+  const after = (await provider.request({ method: "eth_chainId" }).catch(() => null)) as string | null;
+  if (after && after.toLowerCase() !== hexId.toLowerCase()) {
+    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexId }] });
   }
 }
 
-export async function connectWallet(cfg: ChainConfig): Promise<{ wallet: WalletClient; account: Address }> {
-  const provider = injectedProvider();
-  await ensureChain(provider, cfg);
+export async function connectWallet(cfg: ChainConfig, chosen?: EIP1193Provider): Promise<{ wallet: WalletClient; account: Address }> {
+  const provider = chosen ?? injectedProvider();
+  // Authorise the site FIRST; only then put the wallet on our chain. Several
+  // wallets refuse or silently ignore a chain switch from an unconnected site.
   const [account] = (await provider.request({ method: "eth_requestAccounts" })) as Address[];
   if (!account) throw new Error("The wallet returned no account.");
+  await ensureChain(provider, cfg);
   const wallet = createWalletClient({ account, chain: cfg.chain, transport: custom(provider) });
   return { wallet, account };
 }

@@ -60,4 +60,29 @@ describe("merge.css's action-button treatment cannot capture non-CTA controls", 
     expect(rule).to.include("white-space: nowrap");
     expect(rule).to.include("flex-shrink: 0");
   });
+
+  it("asks the wallet for accounts BEFORE switching chains", () => {
+    // Live 2026-09-23 (Phantom): wallets differ on whether an unauthorized
+    // site may switch/add a chain, and several no-op until connected -- doing
+    // it first made connecting take several attempts.
+    const src = read("src/merge/lib/evmReserve.ts");
+    const fn = src.slice(src.indexOf("export async function connectWallet"), src.indexOf("export function describeEvmError"));
+    expect(fn.indexOf("eth_requestAccounts"), "requestAccounts must come first").to.be.lessThan(fn.indexOf("ensureChain"));
+  });
+
+  it("discovers wallets via EIP-6963 rather than trusting window.ethereum", () => {
+    // window.ethereum is one slot several extensions race for; with Phantom and
+    // MetaMask both installed, connect hit whichever won.
+    const src = read("src/merge/components/robinhood/useEvmWallet.ts");
+    expect(src).to.include("eip6963:requestProvider");
+    expect(src).to.include("eip6963:announceProvider");
+    expect(read("src/components/EvmWalletChip.tsx"), "offers a choice when several are installed").to.include("discoverEvmProviders");
+  });
+
+  it("treats every flavour of \"unrecognised chain\" as needing the chain added", () => {
+    const src = read("src/merge/lib/evmReserve.ts");
+    const fn = src.slice(src.indexOf("function needsChainAdded"), src.indexOf("export async function ensureChain"));
+    expect(fn).to.include("4902");
+    expect(fn).to.include("-32603");
+  });
 });
