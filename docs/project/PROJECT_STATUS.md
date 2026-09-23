@@ -474,7 +474,7 @@ A second, independently significant finding from the same investigation: ~~there
 - **Production (former coming-soon): project `ssr-fun-final`** kept with its deployment history (`ssr-fun-final.vercel.app`, `dpl_7P8tBKcozeT1Prw9ZG34mRujLrv1` lineage) but no longer holds any custom domain since 2026-09-07 (DEC-0186); the Coming Soon page is obsolete. `strategic-super-reserve.com` is a separate Cloudflare-hosted marketing site outside this Vercel team (not managed from this repo).
 
 ## Last Updated
-2026-09-23, later (DEPLOYED TO PRODUCTION: `main` -- DEC-0209 warm-cache keeper every 10 min with one refresh per run; Neon endpoint capped at 0.5 CU with a 5-min suspend via the Neon API (deployment ID recorded in the follow-up status commit).)
+2026-09-23, later (DEPLOYED TO PRODUCTION: `main` -- DEC-0209 warm-cache keeper every 10 min with one refresh per run; Neon endpoint capped at 0.5 CU with a 5-min suspend via the Neon API. `dpl_BMWry9Uiyi38XTBhAd6J16MHEbZV` = `main` @ `b879b36`, Ready, aliased to ssr.fun, clean-worktree deploy; `design` merged from `main` as `b4cebb2`.)
 
 Previously: 2026-09-23 (DEPLOYED TO PRODUCTION: `main` -- `dpl_H6U2ksncQbpLVeQ8AnEZ59foLW8j` = `main` @ `1dd4cc4`, Ready, aliased to ssr.fun, clean-worktree deploy; `design` merged from `main` as `aff2ce2` -- DEC-0208 Mainnet smoke-test Reserve #0 hidden (warm snapshot regenerated 11:01 UTC without it); earlier the same morning the production Neon database was upgraded Free -> Launch by the Creator after a quota suspension (HTTP 402) had taken down Reserve names, pictures, All-Time Volume and the warm snapshot -- no deploy was needed for that part. See Decisions Required for the compute cap and metadata-cache follow-ups.)
 
