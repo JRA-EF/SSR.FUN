@@ -1,39 +1,62 @@
-// The connected EVM wallet, shared by every Robinhood surface (create form,
-// reserve page) so connecting once is enough. Separate from the Solana
-// wallet adapter on purpose -- they are different wallets on different chains.
+// The connected EVM wallet, shared by every Robinhood surface: the header
+// chip, the Create form, Portfolio and the reserve page. Connecting once is
+// enough everywhere.
+//
+// Deliberately viem-free at import time -- the Shell header imports this, and
+// the Shell is in the main bundle. The EVM stack is dynamic-imported only when
+// someone actually connects, so the Solana app never pays for it.
+//
+// Separate from the Solana wallet adapter on purpose: different chains,
+// different wallets, and a user may well connect one and not the other.
 import { useSyncExternalStore } from "react";
 import type { Address, WalletClient } from "viem";
-import { ROBINHOOD } from "@/lib/evmChain";
-import { connectWallet } from "@/lib/evmReserve";
 
-interface EvmWallet {
+export interface EvmWalletState {
   wallet: WalletClient | null;
   account: Address | null;
+  connecting: boolean;
 }
 
-let state: EvmWallet = { wallet: null, account: null };
+let state: EvmWalletState = { wallet: null, account: null, connecting: false };
 const listeners = new Set<() => void>();
 let listening = false;
 
-export async function connectEvmWallet() {
-  const { wallet, account } = await connectWallet(ROBINHOOD);
-  state = { wallet, account };
+function set(next: Partial<EvmWalletState>) {
+  state = { ...state, ...next };
   listeners.forEach((l) => l());
-  if (!listening) {
-    listening = true;
-    const provider = (window as unknown as { ethereum?: { on?: (e: string, f: () => void) => void } }).ethereum;
-    // A wallet can switch account or network under us; never keep acting on
-    // a stale one -- drop the connection and let the user reconnect.
-    const reset = () => {
-      state = { wallet: null, account: null };
-      listeners.forEach((l) => l());
-    };
-    provider?.on?.("accountsChanged", reset);
-    provider?.on?.("chainChanged", reset);
+}
+
+export async function connectEvmWallet(): Promise<void> {
+  if (state.connecting) return;
+  set({ connecting: true });
+  try {
+    const [{ ROBINHOOD }, { connectWallet }] = await Promise.all([import("@/lib/evmChain"), import("@/lib/evmReserve")]);
+    const { wallet, account } = await connectWallet(ROBINHOOD);
+    set({ wallet, account });
+    if (!listening) {
+      listening = true;
+      const provider = (window as unknown as { ethereum?: { on?: (e: string, f: () => void) => void } }).ethereum;
+      // A wallet can switch account or network under us; never keep acting on
+      // a stale one -- drop the connection and let the user reconnect.
+      const reset = () => set({ wallet: null, account: null });
+      provider?.on?.("accountsChanged", reset);
+      provider?.on?.("chainChanged", reset);
+    }
+  } finally {
+    set({ connecting: false });
   }
 }
 
-export function useEvmWallet(): EvmWallet {
+export function disconnectEvmWallet() {
+  set({ wallet: null, account: null });
+}
+
+/** True when the browser has any injected EVM wallet at all. */
+export function hasInjectedEvmWallet(): boolean {
+  return typeof window !== "undefined" && !!(window as unknown as { ethereum?: unknown }).ethereum;
+}
+
+export function useEvmWallet(): EvmWalletState {
   return useSyncExternalStore(
     (l) => {
       listeners.add(l);
