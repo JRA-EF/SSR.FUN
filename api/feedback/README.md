@@ -1,16 +1,39 @@
 # Vercel routes for the agent-feedback pipeline
 
-These deploy the feedback queue + form. Two options:
+Full design, the permanent-record table, and daemon setup live in
+`tools/agent-feedback-daemon/README.md`. Routes here:
 
-**A. Standalone Vercel project (recommended — decoupled from SSR):**
-Deploy this `vercel/` dir as its own project. Set env: `DATABASE_URL` (a Neon
-Postgres), `FEEDBACK_DAEMON_SECRET`. The `agent_feedback` table auto-creates.
-Point the daemon's `VERCEL_BASE_URL` at this project's URL.
+| route | auth | purpose |
+|---|---|---|
+| `POST /api/feedback/submit` | public (BotID + rate limits) | store one submission, status `new` |
+| `GET  /api/feedback/form` | public | legacy URL, 302 → `/feedback` |
+| `GET  /api/feedback/pending` | Bearer `FEEDBACK_DAEMON_SECRET` | daemon claims `new` items → `raised` |
+| `POST /api/feedback/ack` | Bearer | `dispatched` / `dismissed` + `handledBy` |
+| `GET  /api/feedback/item?id=` | Bearer | one row (daemon restart recovery) |
+| `GET  /api/feedback/list?status=&limit=` | Bearer | newest-first listing |
+| `POST /api/feedback/resolve` | Bearer | fixer's conclusion → `resolved` |
+| `GET  /api/feedback/board[?format=csv&statuses=]` | dashboard session or Bearer | team board items with history; CSV export |
+| `POST /api/feedback/board` | dashboard session or Bearer | change status/priority, add a note, or (people only) start/stop the fixer agent |
+| `GET  /api/feedback/agent-requests` | Bearer | daemon claims start/stop requests made on the board |
+| `POST /api/feedback/agent-requests` | Bearer | daemon reports a request's outcome |
 
-**B. Fold into the SSR repo:** copy `api/feedback/*` -> `SSR.FUN/api/feedback/`
-and `lib/agent-feedback/db.ts` -> `SSR.FUN/lib/agent-feedback/`, COMMIT on a
-branch, and verify `npm run build` passes (as untracked files they broke the
-SSR monorepo's `tsc -b`; commit + a build check before relying on it).
+`_auth.ts` holds the shared Bearer check. Store: `lib/agent-feedback/db.ts`
+(Neon `agent_feedback`; schema created and migrated on first request, no
+manual migration). Rows are never deleted.
 
-Routes: form.ts (public form), submit.ts (public POST), pending.ts +
-ack.ts (Bearer FEEDBACK_DAEMON_SECRET). See ../README.md for the full flow.
+## Team board (`/internal/feedback-board`)
+Behind the same `SSR_DASHBOARD_PASSWORD` login as `/internal/status`.
+Columns: Reported, In progress, Blocked, Testing, Live, and Rejected (hidden
+by default). Priority is Urgent, High, Normal, or Low and sorts each column.
+
+- Every change is appended to `agent_feedback_board_events` with who, when,
+  from, to, and the note. Nothing is edited or deleted.
+- Telegram decisions place unplaced items: dismissed goes to Rejected,
+  approved goes to In progress. A placement someone already made is kept.
+- Start and Stop queue a row in `agent_feedback_agent_requests`. The Mac
+  daemon claims it, pastes it into the fixer session (refusing if no agent is
+  running), and reports done or failed, which shows on the card.
+- Only a person can mark an item Live or start/stop the agent. The fixer agent
+  moves items with `feedback-daemon.py --board <id> <status> "<note>"`.
+- Export CSV downloads the current status filter. User-written cells that
+  start with `= + - @` are prefixed with `'` so spreadsheets do not run them.

@@ -7,8 +7,11 @@ import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
 import { launchpadBadgeText, matchesLaunchpadFilter, LAUNCHPAD_FILTER_OPTIONS, type LaunchpadFilter } from "@/lib/launchpadLabels";
+import { issuerBadgeText, issuerBadgeTitle, matchesIssuerFilter, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
 import type { CatalogueAssetLaunchpad } from "@/hooks/useMainnetAssetCatalogue";
+import type { TokenIssuerId } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
+import { LaunchShell } from "@/components/LaunchHero";
 import { normalizeYouTubeChannelUrl } from "@/lib/youtube";
 import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import {
@@ -38,7 +41,8 @@ import {
   type PendingReserveDeploy,
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
-import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, type LaunchAssetPlan } from "@/lib/launchFunding";
+import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, formatAllocationUsd, type LaunchAssetPlan } from "@/lib/launchFunding";
+import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
@@ -131,8 +135,8 @@ export function CreateDTR() {
     }
   }, [mainnetCatalogue.tokens]);
 
-  // DevNet fixtures carry no launchpad field; Mainnet catalogue entries may.
-  type SelectableAsset = { symbol: string; name: string; mint: string; decimals: number; real: true; launchpad?: CatalogueAssetLaunchpad | null };
+  // DevNet fixtures carry no launchpad or issuer field; Mainnet catalogue entries may.
+  type SelectableAsset = { symbol: string; name: string; mint: string; decimals: number; real: true; launchpad?: CatalogueAssetLaunchpad | null; issuer?: TokenIssuerId | null };
   const SELECTABLE_ASSETS = useMemo<SelectableAsset[]>(() => {
     if (!IS_MAINNET) return DEVNET_REAL_ASSETS;
     return [MAINNET_USDC_ASSET, ...mainnetCatalogue.tokens.filter((t) => t.symbol !== MAINNET_USDC_ASSET.symbol)];
@@ -143,6 +147,11 @@ export function CreateDTR() {
   // a token the catalogue would not otherwise offer.
   const [launchpadFilter, setLaunchpadFilter] = useState<LaunchpadFilter>("all");
   const launchpadFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.launchpad);
+  // Issuer filter, same rules: it narrows the LIST, never widens what is
+  // eligible. Only shown once the catalogue actually carries a tokenised
+  // asset, so it cannot appear as an empty control.
+  const [issuerFilter, setIssuerFilter] = useState<IssuerFilter>("all");
+  const issuerFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.issuer);
 
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -910,7 +919,7 @@ export function CreateDTR() {
             src="/create-gate-hero.jpg"
             alt=""
             className="w-full h-full object-cover"
-            style={{ objectPosition: "center 30%", transform: "translateX(-14%) scale(1.3)" }}
+            style={{ objectPosition: "center 20%" }}
             onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
           />
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
@@ -953,6 +962,19 @@ export function CreateDTR() {
 
   const updateWeight = (symbol: string, newWeight: number) => {
     setAssets(assets.map(a => a.symbol === symbol ? { ...a, weight: newWeight } : a));
+  };
+
+  // Quick-fill (DEC-0203), the direct-deposit-split idea: set a few weights by
+  // hand and let a button do the arithmetic that makes the column add up.
+  // All three go through basketAllocation.ts's integer-bps helpers so the
+  // total is exactly 100%, never 99.9% from float rounding.
+  const applyWeights = (next: number[]) => setAssets((prev) => prev.map((a, i) => ({ ...a, weight: next[i] ?? a.weight })));
+  const assignRestTo = (symbol: string) => {
+    setAssets((prev) => {
+      const i = prev.findIndex((a) => a.symbol === symbol);
+      const next = assignRemainder(prev.map((a) => a.weight), i);
+      return prev.map((a, j) => ({ ...a, weight: next[j] ?? a.weight }));
+    });
   };
 
   const totalWeight = assets.reduce((sum, a) => sum + a.weight, 0);
@@ -1080,7 +1102,16 @@ export function CreateDTR() {
         : undefined;
     const realAssets = assets.map((a) => {
       const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
-      return { mint: meta.mint, decimals: meta.decimals, weightBps: Math.round((a.weight / totalWeight) * 10_000), seedWeightFraction: a.weight / totalWeight };
+      // DEC-0201: carry the asset's own token program from the catalogue --
+      // it decides which program the Reserve's vault is created under and is
+      // recorded on-chain permanently at registration.
+      return {
+        mint: meta.mint,
+        decimals: meta.decimals,
+        weightBps: Math.round((a.weight / totalWeight) * 10_000),
+        seedWeightFraction: a.weight / totalWeight,
+        ...(("tokenProgram" in meta && meta.tokenProgram) ? { tokenProgram: meta.tokenProgram as string } : {}),
+      };
     });
     const seedTotalUsd = parseFloat(initialSeedUsdc) || 10;
 
@@ -1110,14 +1141,21 @@ export function CreateDTR() {
           }));
           const feasibility = assessLaunchFeasibility({ assets: plan, seedTotalUsd, walletUsdcRaw });
           if (!feasibility.feasible) {
+            // Lead with the fix, then at most three examples -- a 10-asset
+            // composition used to render ten near-identical lines and bury
+            // the one number that resolves them (DEC-0199).
+            const fix =
+              feasibility.minimumRecommendedSeedUsd > seedTotalUsd
+                ? `Raise the initial amount to at least ${formatAllocationUsd(feasibility.minimumRecommendedSeedUsd)} (or drop the smallest-weight assets).`
+                : feasibility.missingUsdcUi > 0
+                  ? `Add ${feasibility.missingUsdcUi.toFixed(2)} USDC to this wallet, or lower the initial amount.`
+                  : "";
+            const shown = feasibility.reasons.slice(0, 3).join(" ");
+            const more = feasibility.reasons.length > 3 ? ` (+${feasibility.reasons.length - 3} more assets in the same position.)` : "";
             toast({
               variant: "destructive",
               title: "This launch isn't fundable yet",
-              description: `${feasibility.reasons.join(". ")}.${
-                feasibility.minimumRecommendedSeedUsd > seedTotalUsd
-                  ? ` The recommended minimum initial amount for this composition is $${feasibility.minimumRecommendedSeedUsd.toFixed(2)}.`
-                  : ""
-              } Nothing was created on-chain.`,
+              description: `${fix ? fix + " " : ""}Nothing was created on-chain. ${shown}${more}`,
             });
             return;
           }
@@ -1169,7 +1207,13 @@ export function CreateDTR() {
             name,
             ticker: ticker.toUpperCase(),
             startedAt: Date.now(),
-            assets: realAssets.map((a) => ({ mint: a.mint, decimals: a.decimals, seedWeightFraction: a.seedWeightFraction, weightBps: a.weightBps })),
+            assets: realAssets.map((a) => ({
+              mint: a.mint,
+              decimals: a.decimals,
+              seedWeightFraction: a.seedWeightFraction,
+              weightBps: a.weightBps,
+              ...(("tokenProgram" in a && a.tokenProgram) ? { tokenProgram: a.tokenProgram as string } : {}),
+            })),
             seedTotalUsd,
           });
         },
@@ -1437,55 +1481,7 @@ export function CreateDTR() {
   const handleSubmit = handleSubmitReal;
 
   return (
-    <div className="container max-w-4xl mx-auto px-4 py-12 relative">
-      {/* Full-bleed hero art behind the page top (public/create-hero.jpg) —
-          the shared mascot-hero treatment: left scrim for the title, bottom
-          fade into the ground, hides itself if the file is absent. */}
-      <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[260px] sm:h-[460px] overflow-hidden pointer-events-none -z-10">
-        <img
-          src="/create-hero.jpg"
-          alt=""
-          className="w-full h-full object-cover"
-          style={{ objectPosition: "center 9%" }}
-          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-        />
-        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.78) 0%, hsl(var(--background) / 0.25) 45%, hsl(var(--background) / 0.05) 100%)" }} />
-        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
-      </div>
-
-      <div className="mb-8">
-        <h1 className="text-4xl font-merge-display font-bold mb-2">Launch a Reserve</h1>
-        <p className="text-muted-foreground">Launch a new Reserve on SSR.FUN, live on Solana {CLUSTER_LABEL}.</p>
-      </div>
-
-      <div className="flex justify-between mb-8 relative">
-        {/* Anchored to top-4 (16px = half of the w-8/h-8 circle below), not top-1/2 of the
-            whole step item -- top-1/2 measured against the full circle+label height, which
-            sits the line below the circles' true center. */}
-        <div className="absolute top-4 left-0 right-0 h-0.5 bg-border -z-10 -translate-y-1/2"></div>
-        <div
-          className="absolute top-4 left-0 h-0.5 bg-primary -z-10 -translate-y-1/2 transition-all duration-300"
-          style={{ width: `${((step - 1) / 3) * 100}%` }}
-        ></div>
-        
-        {[1, 2, 3, 4].map((s) => (
-          <div key={s} className="flex flex-col items-center gap-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors
-              ${s < step ? 'bg-primary text-primary-foreground' : 
-                s === step ? 'bg-background border-2 border-primary text-primary' : 
-                'bg-background border-2 border-border text-muted-foreground'}
-            `}>
-              {s}
-            </div>
-            <span className={`text-xs font-semibold hidden sm:block
-              ${s <= step ? 'text-foreground' : 'text-muted-foreground'}
-            `}>
-              {s === 1 ? "Identity" : s === 2 ? "Composition" : s === 3 ? "Economics" : "Review"}
-            </span>
-          </div>
-        ))}
-      </div>
-
+    <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} step={step}>
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>
@@ -1678,19 +1674,38 @@ export function CreateDTR() {
                     />
                   </div>
 
-                  {launchpadFilterAvailable && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label htmlFor="launchpad-filter" className="text-xs text-muted-foreground">Launched on</label>
-                      <select
-                        id="launchpad-filter"
-                        className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                        value={launchpadFilter}
-                        onChange={(e) => setLaunchpadFilter(e.target.value as LaunchpadFilter)}
-                      >
-                        {LAUNCHPAD_FILTER_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
+                  {(launchpadFilterAvailable || issuerFilterAvailable) && (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      {issuerFilterAvailable && (
+                        <div className="flex items-center gap-2">
+                          <label htmlFor="issuer-filter" className="text-xs text-muted-foreground">Asset type</label>
+                          <select
+                            id="issuer-filter"
+                            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                            value={issuerFilter}
+                            onChange={(e) => setIssuerFilter(e.target.value as IssuerFilter)}
+                          >
+                            {ISSUER_FILTER_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {launchpadFilterAvailable && (
+                        <div className="flex items-center gap-2">
+                          <label htmlFor="launchpad-filter" className="text-xs text-muted-foreground">Launched on</label>
+                          <select
+                            id="launchpad-filter"
+                            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                            value={launchpadFilter}
+                            onChange={(e) => setLaunchpadFilter(e.target.value as LaunchpadFilter)}
+                          >
+                            {LAUNCHPAD_FILTER_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
@@ -1698,11 +1713,17 @@ export function CreateDTR() {
                       .filter(a => !assets.some(selected => selected.symbol === a.symbol))
                       .filter(a => matchesAssetSearch(a, assetSearch))
                       .filter(a => matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter))
+                      .filter(a => matchesIssuerFilter(a.issuer ?? null, issuerFilter))
                       .map(asset => (
                         <div key={asset.symbol} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
                           <div>
                             <span className="font-semibold">{asset.name}</span>
                             <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{asset.symbol}</span>
+                            {asset.issuer && (
+                              <span className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-primary/40 text-primary" title={issuerBadgeTitle(asset.issuer)}>
+                                {issuerBadgeText(asset.issuer)}
+                              </span>
+                            )}
                             {asset.launchpad && (
                               <span className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-border text-muted-foreground" title="Where this token was launched, verified on-chain. Not a safety rating.">
                                 {launchpadBadgeText(asset.launchpad)}
@@ -1729,7 +1750,12 @@ export function CreateDTR() {
                         if (noMatches) {
                           return <div className="p-4 text-center text-sm text-muted-foreground">No assets match "{assetSearch.trim()}".</div>;
                         }
-                        const noneForLaunchpad = launchpadFilter !== "all" && remaining.filter((a) => matchesAssetSearch(a, assetSearch)).every((a) => !matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter));
+                        const searched = remaining.filter((a) => matchesAssetSearch(a, assetSearch));
+                        const noneForIssuer = issuerFilter !== "all" && searched.every((a) => !matchesIssuerFilter(a.issuer ?? null, issuerFilter));
+                        if (noneForIssuer) {
+                          return <div className="p-4 text-center text-sm text-muted-foreground">No eligible assets of that type{assetSearch.trim() ? ` match "${assetSearch.trim()}"` : ""}.</div>;
+                        }
+                        const noneForLaunchpad = launchpadFilter !== "all" && searched.filter((a) => matchesIssuerFilter(a.issuer ?? null, issuerFilter)).every((a) => !matchesLaunchpadFilter(a.launchpad ?? null, launchpadFilter));
                         if (noneForLaunchpad) {
                           return <div className="p-4 text-center text-sm text-muted-foreground">No eligible assets from that launchpad{assetSearch.trim() ? ` match "${assetSearch.trim()}"` : ""}.</div>;
                         }
@@ -1742,9 +1768,38 @@ export function CreateDTR() {
                 <div className="space-y-4">
                   <div className="flex justify-between items-center bg-muted/50 p-3 rounded-lg border border-border">
                     <span className="font-semibold text-sm">Total Allocated</span>
-                    <span className={`font-merge-mono font-bold ${totalWeight > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
-                      {(totalWeight * 100).toFixed(1)}%
-                    </span>
+                    <div className="flex items-center gap-3">
+                      {/* Quick-fill (DEC-0203) -- the arithmetic, not a new
+                          allocation model. Only shown once there is something
+                          to act on. */}
+                      {assets.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                            title="Give every selected asset an equal share of 100%"
+                            onClick={() => applyWeights(splitEvenly(assets.length))}
+                          >
+                            Split evenly
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                            title="Set every asset to 0% and leave the basket in USDC"
+                            onClick={() => applyWeights(clearAll(assets.length))}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                      )}
+                      <span className={`font-merge-mono font-bold ${totalWeight > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
+                        {(totalWeight * 100).toFixed(1)}%
+                      </span>
+                    </div>
                   </div>
                   
                   {unallocatedWeight > 0 && totalWeight <= 1.0001 && (
@@ -1778,6 +1833,23 @@ export function CreateDTR() {
                               />
                               <span className="text-muted-foreground ml-1 text-sm">%</span>
                             </div>
+                            {/* "Rest": hand this asset everything still
+                                unallocated, so the column reaches exactly 100%
+                                without the user doing the subtraction. Hidden
+                                rather than disabled when nothing is left --
+                                a dead button invites clicking. */}
+                            {unallocatedBps(assets.map((a) => a.weight)) > 0 && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-2 text-xs font-merge-mono"
+                                title={`Add the remaining ${(unallocatedWeight * 100).toFixed(1)}% to ${asset.symbol}`}
+                                onClick={() => assignRestTo(asset.symbol)}
+                              >
+                                +{(unallocatedWeight * 100).toFixed(1)}%
+                              </Button>
+                            )}
                             <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeAsset(asset.symbol)}>
                               <X className="w-4 h-4" />
                             </Button>
@@ -1934,7 +2006,7 @@ export function CreateDTR() {
                       onValueChange={(v) => setManagerBuyTaxPct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">
-                      For future secondary-market trading (e.g. a DEX listing) -- not applied when minting directly from the Reserve. Default is 0%.
+                      Charged in USDC on every Buy made through SSR.fun, on top of the purchase, and split 50/50 between you and the protocol. Default is 0%.
                     </p>
                   </div>
 
@@ -1950,12 +2022,12 @@ export function CreateDTR() {
                       onValueChange={(v) => setManagerSellTaxPct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">
-                      For future secondary-market trading (e.g. a DEX listing) -- not applied when redeeming directly from the Reserve. Default is 0%.
+                      Taken in USDC out of the proceeds of every Sell made through SSR.fun, and split 50/50 between you and the protocol. Default is 0%.
                     </p>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground italic">
-                  Buy Tax and Sell Tax are saved with this Reserve for when a secondary market exists, but are not enforced by any on-chain instruction today -- minting and redeeming directly from the Reserve are never taxed.
+                  Buy Tax and Sell Tax apply to trades made through SSR.fun's own Buy and Sell (the tax is added to those transactions). They are not applied to plain wallet transfers or to trades on other venues.
                 </p>
               </div>
 
@@ -2582,6 +2654,6 @@ export function CreateDTR() {
           </>
         )}
       </Card>
-    </div>
+    </LaunchShell>
   );
 }

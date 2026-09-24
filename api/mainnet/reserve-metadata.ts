@@ -19,7 +19,7 @@
 // metadata_uri points at, so (like every other public read in this app)
 // it needs no dashboard auth: it must be resolvable by anyone/anything
 // reading a Reserve's metadata later.
-import { validateReserveMetadataPayload, computeMetadataId } from "../../lib/reserve-metadata/payload";
+import { validateReserveMetadataPayload, computeMetadataId, toWalletFacingMetadata, type ReserveMetadataPayload } from "../../lib/reserve-metadata/payload";
 import { getSql } from "../../lib/reserve-metadata/db";
 import { parseJsonBody } from "../devnet/_lib/apiTypes";
 
@@ -85,7 +85,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         res.status(404).json({ error: "No Reserve metadata found for this id." });
         return;
       }
-      res.status(200).json(row.payload);
+      // DEC-0200: served to WALLETS and EXPLORERS, not just this app -- the
+      // on-chain metadata_uri points straight here. Emit the Metaplex
+      // convention (symbol/image) alongside the stored app keys, and allow
+      // cross-origin reads so an external consumer can actually fetch it.
+      // Cached hard: the row is immutable (content-addressed id).
+      res.setHeader?.("Access-Control-Allow-Origin", "*");
+      res.setHeader?.("Cache-Control", "public, max-age=3600, s-maxage=86400, immutable");
+      res.status(200).json(toWalletFacingMetadata(row.payload as ReserveMetadataPayload));
     } catch (e) {
       res.status(503).json({ error: e instanceof Error ? e.message : "Failed to read Reserve metadata." });
     }

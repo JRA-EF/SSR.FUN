@@ -42,6 +42,14 @@ export async function fetchJupiterVerifiedList(): Promise<JupiterFetchResult> {
 export interface CatalogueSnapshotRow {
   mint: string;
   symbol: string | null;
+  /**
+   * The token's full name ("Tesla xStock", "Jupiter"). Jupiter returns it and
+   * the catalogue table has always had the column, but this shaping function
+   * dropped it, so every one of the 3,358 rows stored a null name and the
+   * picker's "Search by name, ticker, or contract address" could never match
+   * a name -- typing "Tesla" or "Solana" found nothing. Fixed 2026-09-23.
+   */
+  name: string | null;
   organicScore: number | null;
   verified: boolean;
   decimals: number | null;
@@ -53,6 +61,7 @@ export function shapeSnapshotRows(result: JupiterFetchResult): CatalogueSnapshot
   return result.tokens.map((t) => ({
     mint: t.id,
     symbol: t.symbol ?? null,
+    name: t.name ?? null,
     organicScore: t.organicScore ?? null,
     verified: t.isVerified ?? true, // every entry returned BY the verified-tag query is, by construction, verified -- explicit fallback only in case a future API revision omits the field
     decimals: typeof t.decimals === "number" ? t.decimals : null,
@@ -137,10 +146,11 @@ export async function runWeeklyJupiterSnapshot(options?: { force?: boolean }): P
       on conflict (snapshot_id, mint) do nothing
     `;
     await sql`
-      insert into ledger_asset_catalogue (mint, symbol, decimals, token_program, jupiter_verified, jupiter_organic_score, added_to_catalogue_at, first_seen_snapshot_id, last_seen_snapshot_id, updated_at)
-      values (${r.mint}, ${r.symbol}, ${r.decimals}, ${r.tokenProgram}, ${r.verified}, ${r.organicScore}, now(), ${snapshotId}, ${snapshotId}, now())
+      insert into ledger_asset_catalogue (mint, symbol, name, decimals, token_program, jupiter_verified, jupiter_organic_score, added_to_catalogue_at, first_seen_snapshot_id, last_seen_snapshot_id, updated_at)
+      values (${r.mint}, ${r.symbol}, ${r.name}, ${r.decimals}, ${r.tokenProgram}, ${r.verified}, ${r.organicScore}, now(), ${snapshotId}, ${snapshotId}, now())
       on conflict (mint) do update set
         symbol = coalesce(${r.symbol}, ledger_asset_catalogue.symbol),
+        name = coalesce(${r.name}, ledger_asset_catalogue.name),
         decimals = coalesce(${r.decimals}, ledger_asset_catalogue.decimals),
         token_program = coalesce(${r.tokenProgram}, ledger_asset_catalogue.token_program),
         jupiter_verified = ${r.verified},

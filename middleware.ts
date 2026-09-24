@@ -60,6 +60,14 @@ const CRON_PATHS = new Set([
   // ever saw the token (live 2026-09-08). The human-facing form/submit stay gated.
   '/api/feedback/pending',
   '/api/feedback/ack',
+  '/api/feedback/item',
+  '/api/feedback/list',
+  '/api/feedback/resolve',
+  // The team feedback board API is called by people (dashboard session cookie)
+  // AND by the fixer agent (daemon bearer, no cookie), so api/feedback/board.ts
+  // checks both credentials itself and rejects everything else with 401.
+  '/api/feedback/board',
+  '/api/feedback/agent-requests',
 ])
 
 const SITE_LOGIN_PATH = '/api/site/login'
@@ -82,26 +90,23 @@ const PUBLIC_PATHS = new Set([
   '/apple-touch-seal.png',
   '/favicon.svg',
   '/robots.txt',
+  // Public feedback form (BotID + rate-limited submit, see api/feedback/submit.ts).
+  '/feedback',
+  '/feedback.html',
+  '/api/feedback/submit',
 ])
-
-// The public Documentation site (docs.html, /docs and /docs/<slug> via the
-// vercel.json rewrites). Deliberately OUTSIDE the closed-beta gate: it is
-// written for people who do not have a BETA key (DEX and wallet teams, token
-// holders) and contains only public information -- program addresses,
-// account layouts, and how Reserve Tokens behave. It is its own bundle with
-// no wallet/store/RPC code, so nothing gated leaks through it.
-const DOCS_PUBLIC_PREFIX = '/docs'
-function isPublicDocsPath(pathname: string): boolean {
-  return pathname === DOCS_PUBLIC_PREFIX || pathname === '/docs.html' || pathname.startsWith(DOCS_PUBLIC_PREFIX + '/')
-}
 
 // Reserve metadata and picture READS. A Reserve's on-chain metadata_uri
 // points at these GET endpoints (api/*/reserve-metadata.ts's header: "must
 // be resolvable by anyone/anything reading a Reserve's metadata later"), and
 // the Documentation site tells DEX/wallet teams to resolve a Reserve Token
-// through them. Gating them made every live Reserve's metadata link a dead
-// 401 for the outside world. GET only: the content-addressed POST writes
-// stay behind the site gate.
+// through them. Behind the beta gate they all answered 401 to every wallet,
+// explorer and indexer on earth -- verified live against ssr.fun on
+// 2026-09-11 -- so the metadata a Reserve publishes on-chain was unreadable
+// by the only consumers it exists for. GET only: the content-addressed POST
+// writes (creating metadata/images) stay behind the site gate exactly as
+// before. Never add a path here that returns anything a beta visitor could
+// not already see on-chain.
 const PUBLIC_READ_API_PATHS = new Set([
   '/api/mainnet/reserve-metadata',
   '/api/mainnet/reserve-image',
@@ -112,6 +117,20 @@ const PUBLIC_READ_API_PATHS = new Set([
 ])
 function isPublicReadApi(request: Request, pathname: string): boolean {
   return (request.method === 'GET' || request.method === 'HEAD') && PUBLIC_READ_API_PATHS.has(pathname)
+}
+
+// The opaque prefix Vercel BotID uses for its proxied script/telemetry (see vercel.json).
+const BOTID_PROXY_PREFIX = '/149e9513-01fa-4fb0-aad4-566afd725d1b/'
+
+// The public Documentation site (docs.html, /docs and /docs/<slug> via the
+// vercel.json rewrites). Deliberately OUTSIDE the closed-beta gate: it is
+// written for people who do not have a BETA key (DEX and wallet teams, token
+// holders) and contains only public information -- program addresses,
+// account layouts, and how Reserve Tokens behave. It is its own bundle with
+// no wallet/store/RPC code, so nothing gated leaks through it.
+const DOCS_PUBLIC_PREFIX = '/docs'
+function isPublicDocsPath(pathname: string): boolean {
+  return pathname === DOCS_PUBLIC_PREFIX || pathname === '/docs.html' || pathname.startsWith(DOCS_PUBLIC_PREFIX + '/')
 }
 
 function comingSoonResponse(request: Request): Response {
@@ -316,6 +335,8 @@ const INTERNAL_PAGE_PATHS = new Set([
   '/internal-status.html',
   '/internal/feedback',
   '/internal-feedback.html',
+  '/internal/feedback-board',
+  '/internal-feedback-board.html',
   '/road-to-mainnet',
   '/road-to-mainnet.html',
   '/internal/kpis',
@@ -334,6 +355,18 @@ export default async function middleware(request: Request): Promise<Response> {
   // Public Documentation site and the metadata/picture reads it relies on
   // (see DOCS_PUBLIC_PREFIX / PUBLIC_READ_API_PATHS above).
   if (isPublicDocsPath(url.pathname) || isPublicReadApi(request, url.pathname)) return next()
+  // DEC-0200: the crawlable Reserve share page. A social-card fetcher or
+  // search crawler has no beta session and never will, so gating /r/ would
+  // make every shared link preview as the Coming Soon page. It exposes only
+  // what the metadata endpoint above already does -- a Reserve's name,
+  // ticker, description and picture -- and links onward into the gated app,
+  // which still asks for a key.
+  if (url.pathname === '/r' || url.pathname.startsWith('/r/')) return next()
+  if (url.pathname === '/api/mainnet/share') return next()
+  // Vercel BotID's proxied challenge/telemetry paths (vercel.json rewrites to
+  // api.vercel.com/bot-protection) -- fetched by the feedback page's client
+  // script from any visitor, never carries a session cookie.
+  if (url.pathname.startsWith(BOTID_PROXY_PREFIX)) return next()
 
   const cookieHeader = request.headers.get('cookie')
 

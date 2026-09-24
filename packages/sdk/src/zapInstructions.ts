@@ -53,6 +53,13 @@ export interface ZapAssetLeg {
   reserveAsset: string;
   vault: string;
   vaultBalanceRaw: string;
+  /**
+   * The token program that owns this asset (DEC-0201). Optional so existing
+   * call sites keep compiling; absent means classic SPL Token, which is what
+   * every Reserve created before Token-2022 assets were selectable holds.
+   * Builders resolve it through resolveLegTokenProgram, never by assuming.
+   */
+  tokenProgram?: string;
 }
 
 export interface BuildBuyZapParams {

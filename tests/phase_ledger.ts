@@ -230,13 +230,26 @@ describe("lib/ledger/jupiterCatalogue.ts -- weekly snapshot diffing", () => {
 
   it("shapeSnapshotRows maps Jupiter's raw token shape to the snapshot row shape, defaulting isVerified to true (every entry from the verified-tag query is verified by construction) and decimals/tokenProgram to null when Jupiter omits them", () => {
     const rows = shapeSnapshotRows({ fetchedAt: "now", mintCount: 1, tokens: [{ id: "Mint1", symbol: "TEST", organicScore: 42 }] });
-    expect(rows).to.deep.equal([{ mint: "Mint1", symbol: "TEST", organicScore: 42, verified: true, decimals: null, tokenProgram: null }]);
+    expect(rows).to.deep.equal([{ mint: "Mint1", symbol: "TEST", name: null, organicScore: 42, verified: true, decimals: null, tokenProgram: null }]);
   });
 
   it("shapeSnapshotRows carries decimals/tokenProgram through when Jupiter provides them -- api/ledger/asset-catalogue.ts's Reserve Asset picker requires decimals to safely offer a mint", () => {
     const rows = shapeSnapshotRows({ fetchedAt: "now", mintCount: 1, tokens: [{ id: "Mint2", symbol: "JUP", organicScore: 88, decimals: 6, tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }] });
     expect(rows[0].decimals).to.equal(6);
     expect(rows[0].tokenProgram).to.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+  });
+
+  // Regression: this mapping dropped Jupiter's `name` for the catalogue's
+  // whole life, so all 3,358 stored rows had a null name and the asset
+  // picker's "Search by name, ticker, or contract address" could never match
+  // a name -- "Tesla" and "Solana" both found nothing.
+  it("shapeSnapshotRows carries the token NAME through -- the picker searches on it", () => {
+    const rows = shapeSnapshotRows({ fetchedAt: "now", mintCount: 2, tokens: [
+      { id: "Mint3", symbol: "TSLAx", name: "Tesla xStock", organicScore: 10 },
+      { id: "Mint4", symbol: "NONAME", organicScore: 1 },
+    ] });
+    expect(rows[0].name).to.equal("Tesla xStock");
+    expect(rows[1].name, "a token Jupiter gives no name for stays null, never an invented one").to.equal(null);
   });
 });
 

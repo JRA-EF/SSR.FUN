@@ -7,6 +7,8 @@ import { WalletPanel } from './WalletPanel'
 import { AcceptanceModal } from './AcceptanceModal'
 import { ReserveSearch } from './ReserveSearch'
 import { IS_MAINNET } from '@/lib/solana-config'
+import { EvmWalletChip } from './EvmWalletChip'
+import { EVM_ENABLED } from '@/lib/evmFeature'
 
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
@@ -112,6 +114,10 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
           <ReserveSearch />
           <ThemeToggle />
+          {/* Robinhood Chain wallet, beside the Solana one: both chains are
+              first-class, so both connect from the shell. Hidden while the
+              EVM surface is off (src/merge/lib/evmFeature.ts). */}
+          {EVM_ENABLED && <EvmWalletChip />}
           {wallet.connected ? (
             <div className="wallet-panel-wrap">
               <button

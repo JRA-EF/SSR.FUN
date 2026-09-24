@@ -1,5 +1,5 @@
 // Offline coverage for Reserve Token Metaplex metadata (the program's
-// set_reserve_token_metadata instruction and its client/API halves -- see
+// create_token_metadata instruction and its client/API halves -- see
 // docs/project/DECISION_LOG.md's entry for the pass that added it):
 // (1) the SDK's IDL carries the new instruction with the discriminator Anchor
 // derives from its name, in both the raw JSON and the camelCase TS mirror;
@@ -37,7 +37,12 @@ function anchorDiscriminator(preimage: string): number[] {
   return [...createHash("sha256").update(preimage).digest().subarray(0, 8)];
 }
 
-describe("IDL -- set_reserve_token_metadata is present and consistent", () => {
+describe("IDL -- create_token_metadata is present and consistent", () => {
+  // The DEPLOYED program publishes Metaplex metadata with `create_token_metadata`.
+  // A replacing variant (`set_reserve_token_metadata`) was written during the same
+  // pass but never shipped, so nothing here may pin it: the live program would
+  // reject that discriminator. Verified against the on-chain program before the
+  // staging merge.
   const idl = idlJson as unknown as {
     instructions: { name: string; discriminator: number[]; accounts: { name: string }[]; args: { name: string; type: string }[] }[];
     events: { name: string; discriminator: number[] }[];
@@ -46,45 +51,50 @@ describe("IDL -- set_reserve_token_metadata is present and consistent", () => {
   };
 
   it("carries the instruction with Anchor's sha256('global:<name>') discriminator", () => {
-    const ix = idl.instructions.find((i) => i.name === "set_reserve_token_metadata");
+    const ix = idl.instructions.find((i) => i.name === "create_token_metadata");
     expect(ix, "instruction missing from packages/sdk/idl/ssr_protocol.json").to.not.equal(undefined);
-    expect(ix!.discriminator).to.deep.equal(anchorDiscriminator("global:set_reserve_token_metadata"));
+    expect(ix!.discriminator).to.deep.equal(anchorDiscriminator("global:create_token_metadata"));
     expect(ix!.accounts.map((a) => a.name)).to.deep.equal([
-      "protocol_config",
       "reserve",
       "reserve_token_mint",
       "mint_authority",
       "metadata",
       "delegate",
-      "signer",
-      "token_metadata_program",
+      "payer",
+      "metadata_program",
       "system_program",
       "rent",
     ]);
     expect(ix!.args.map((a) => `${a.name}:${a.type}`)).to.deep.equal(["name:string", "symbol:string", "uri:string"]);
   });
 
-  it("carries the ReserveTokenMetadataSet event with its sha256('event:<name>') discriminator, and its type", () => {
-    const ev = idl.events.find((e) => e.name === "ReserveTokenMetadataSet");
+  it("never carries the undeployed set_reserve_token_metadata instruction", () => {
+    expect(idl.instructions.some((i) => i.name === "set_reserve_token_metadata")).to.equal(false);
+  });
+
+  it("carries the TokenMetadataPublished event with its sha256('event:<name>') discriminator, and its type", () => {
+    const ev = idl.events.find((e) => e.name === "TokenMetadataPublished");
     expect(ev).to.not.equal(undefined);
-    expect(ev!.discriminator).to.deep.equal(anchorDiscriminator("event:ReserveTokenMetadataSet"));
-    expect(idl.types.some((t) => t.name === "ReserveTokenMetadataSet")).to.equal(true);
+    expect(ev!.discriminator).to.deep.equal(anchorDiscriminator("event:TokenMetadataPublished"));
+    expect(idl.types.some((t) => t.name === "TokenMetadataPublished")).to.equal(true);
   });
 
-  it("appends the four TokenMetadata* errors after the last pre-existing code (append-only error enum)", () => {
-    const names = ["TokenMetadataNameInvalid", "TokenMetadataSymbolInvalid", "TokenMetadataUriInvalid", "TokenMetadataAddressMismatch"];
-    const codes = names.map((n) => idl.errors.find((e) => e.name === n)?.code);
-    expect(codes).to.deep.equal([6062, 6063, 6064, 6065]);
+  it("appends TokenMetadataFieldTooLong after the last pre-existing code (append-only error enum)", () => {
+    const err = idl.errors.find((e) => e.name === "TokenMetadataFieldTooLong");
+    expect(err).to.not.equal(undefined);
+    expect(err!.code).to.equal(6062);
+    expect(Math.max(...idl.errors.map((e) => e.code))).to.equal(6062);
   });
 
-  it("the camelCase TS mirror carries the same instruction (typed program.methods.setReserveTokenMetadata resolves)", () => {
+  it("the camelCase TS mirror carries the same instruction (typed program.methods.createTokenMetadata resolves)", () => {
     // The TS file is a type-only module; check its text rather than importing a type at runtime.
     const fs = require("node:fs") as typeof import("node:fs");
     const ts = fs.readFileSync(require.resolve("../packages/sdk/idl/ssr_protocol.ts"), "utf8");
-    expect(ts).to.include('"name": "setReserveTokenMetadata"');
-    expect(ts).to.include('"name": "tokenMetadataProgram"');
-    expect(ts).to.include('"name": "reserveTokenMetadataSet"');
-    expect(ts).to.include('"name": "tokenMetadataAddressMismatch"');
+    expect(ts).to.include('"name": "createTokenMetadata"');
+    expect(ts).to.include('"name": "metadataProgram"');
+    expect(ts).to.include('"name": "tokenMetadataPublished"');
+    expect(ts).to.include('"name": "tokenMetadataFieldTooLong"');
+    expect(ts).to.not.include('"name": "setReserveTokenMetadata"');
   });
 });
 

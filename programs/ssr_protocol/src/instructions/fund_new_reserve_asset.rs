@@ -72,7 +72,13 @@ pub fn handler(ctx: Context<FundNewReserveAsset>, amount: u64) -> Result<()> {
         authority: ctx.accounts.manager.to_account_info(),
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
-    token_interface::transfer_checked(cpi_ctx, amount, ctx.accounts.asset_mint.decimals)?;
+    // `amount` is what must ARRIVE in the vault -- a fee-bearing mint is
+    // grossed up so the funded balance is the figure the Manager asked for.
+    let to_send = crate::instructions::common::gross_up_for_transfer_fee(
+        &ctx.accounts.asset_mint.to_account_info(),
+        amount,
+    )?;
+    token_interface::transfer_checked(cpi_ctx, to_send, ctx.accounts.asset_mint.decimals)?;
 
     emit!(ReserveAssetFunded {
         reserve: ctx.accounts.reserve.key(),

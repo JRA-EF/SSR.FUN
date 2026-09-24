@@ -375,6 +375,10 @@ export function ManageDTR() {
     if (activeTab !== "activity" || !dtr?.onChain || activityStatus !== "idle") return;
     let cancelled = false;
     setActivityStatus("loading");
+    // Was hardcoded to /api/devnet/ for BOTH clusters, so a Mainnet Reserve's
+    // activity was indexed against the DevNet RPC and stored under a `devnet`
+    // cursor -- it then read back empty and the Reserve looked inactive
+    // despite real on-chain trades.
     fetch(`/api/${ACTIVITY_API_CLUSTER}/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
       .then(async (res) => {
         const data = await res.json();
@@ -1458,8 +1462,19 @@ export function ManageDTR() {
                     <p className="text-sm font-semibold text-muted-foreground mb-1">Root Manager</p>
                     <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.managerAddress}</p>
                   </div>
+                  {/* DEC-0200: the Reserve Token mint was absent from this page
+                      entirely, and "Reserve Contract" bound the Reserve PDA --
+                      so a manager had no way to read the address holders
+                      actually need. Mint first (the token's identity), Reserve
+                      account second, each labelled for what it is. */}
                   <div>
-                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Contract</p>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Token Mint</p>
+                    <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">
+                      {dtr.onChain?.reserveTokenMint ?? <span className="text-muted-foreground">Loading from chain...</span>}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Account</p>
                     <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.dtrAddress}</p>
                   </div>
                 </CardContent>
@@ -1615,7 +1630,7 @@ export function ManageDTR() {
                   </div>
                   {dtr.onChain && (dtr.feeConfig.managerBuyTaxPct > 0 || dtr.feeConfig.managerSellTaxPct > 0) && (
                     <p className="text-xs text-muted-foreground italic -mt-2">
-                      Buy Tax and Sell Tax are configuration for a future secondary market (e.g. a DEX listing) -- not enforced by minting or redeeming directly from this Reserve.
+                      Buy Tax and Sell Tax are charged in USDC on Buys and Sells made through SSR.fun and split 50/50 between the Manager's fee destination and the protocol. Not applied to plain transfers or trades on other venues.
                     </p>
                   )}
 

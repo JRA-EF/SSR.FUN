@@ -294,7 +294,13 @@ describe("lib/ledger/launchpadClassification.ts -- catalogue job helpers (pure)"
 describe("api/ledger/asset-catalogue.ts -- provenance never changes eligibility", () => {
   const base = (over: Partial<CatalogueRow>): CatalogueRow => ({ mint: Keypair.generate().publicKey.toBase58(), symbol: "X", name: "X", decimals: 6, organicScore: 1, tokenProgram: null, launchpad: null, launchpadStage: null, launchpadVenue: null, ...over });
 
-  it("a supported-launchpad token is still excluded when it is a Token-2022 mint or the reserved USDC symbol, exactly like any other token", () => {
+  // Token-2022 mints are NO LONGER excluded here. The program accepts them,
+  // and the ones it cannot hold are ruled out by mint EXTENSION, not by token
+  // program -- markIncompatibleMints flags those with ssr_status='disabled',
+  // which the catalogue query already filters out upstream of this function.
+  // The reserved "USDC" symbol is still excluded: the canonical Circle mint is
+  // pinned as a constant and no catalogue row may shadow it.
+  it("a supported-launchpad token keeps its Token-2022 program and is still excluded only for the reserved USDC symbol", () => {
     const rows = [
       base({ symbol: "T22", tokenProgram: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", launchpad: "bags.fm", launchpadStage: "graduated", launchpadVenue: "meteora-damm-v2" }),
       base({ symbol: "USDC", launchpad: "pump.fun", launchpadStage: "graduated", launchpadVenue: "pumpswap" }),
@@ -302,7 +308,9 @@ describe("api/ledger/asset-catalogue.ts -- provenance never changes eligibility"
       base({ symbol: "PLAIN" }),
     ];
     const out = dedupeBySymbolPreferOrganicScore(rows);
-    expect(out.map((t) => t.symbol).sort()).to.deep.equal(["OK", "PLAIN"]);
+    expect(out.map((t) => t.symbol).sort()).to.deep.equal(["OK", "PLAIN", "T22"]);
+    expect(out.find((t) => t.symbol === "T22")!.tokenProgram).to.equal("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+    expect(out.find((t) => t.symbol === "PLAIN")!.tokenProgram).to.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
     expect(out.find((t) => t.symbol === "OK")!.launchpad).to.deep.equal({ id: "pump.fun", stage: "graduated", venue: "pumpswap" });
     expect(out.find((t) => t.symbol === "PLAIN")!.launchpad).to.equal(null);
   });

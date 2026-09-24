@@ -659,6 +659,15 @@ input, select, textarea {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
+  /* A truncated address is ONE line, always. The nav is a flex row, so once it
+     got crowded (two chips: Solana and Robinhood) the chip shrank and broke
+     "52b7…7ERa" across two lines inside the pill. */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.wallet-chip .dot {
+  flex-shrink: 0;
 }
 
 .wallet-chip:hover { border-color: var(--accent); }

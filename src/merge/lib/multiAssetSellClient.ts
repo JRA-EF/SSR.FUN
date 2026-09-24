@@ -28,7 +28,8 @@ import { JupiterSwapNotLandedError, partitionSwapOutcomes, SWAP_AUTO_RETRY_LIMIT
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
-import { waitForLookupTable, type BuiltTransaction } from "./multiAssetBuyClient";
+import { waitForLookupTable, type BuiltTransaction, type TradeTaxPlan } from "./multiAssetBuyClient";
+import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 
 const log = (msg: string, extra?: Record<string, unknown>) => {
   console.info(`[multi-asset-sell] ${msg}`, extra ?? "");
@@ -40,6 +41,8 @@ export type MultiAssetSellProgressEvent =
   | { phase: "single-transaction" }
   | { phase: "redeeming" }
   | { phase: "swapping"; mint: string; index: number; total: number }
+  /** The manager's Sell tax (DEC-0198) is being paid out of the USDC proceeds -- the last step of a batch-mode sale. */
+  | { phase: "paying-tax" }
   /** A signed transaction is on the wire and being confirmed (re-broadcast until it lands) -- the wallet prompt is over. */
   | { phase: "confirming"; what: string; signature: string }
   | { phase: "awaiting-wallet" };
@@ -67,6 +70,10 @@ export interface PendingSellState {
   redeemConfirmed?: boolean;
   /** Per-leg swap progress: mint -> last submitted signature + whether it confirmed. */
   legSwaps: Record<string, { signature?: string; confirmed?: boolean }>;
+  /** Sell tax (DEC-0198): the USDC base the original build taxed, so an expired tax transaction can be rebuilt on the same base. */
+  taxBaseUsdcRaw?: string;
+  taxSignature?: string;
+  taxConfirmed?: boolean;
 }
 
 function readPendingSellMap(): Record<string, PendingSellState> {
@@ -122,6 +129,7 @@ export interface BuildSellResponse {
     walletReserveTokenRaw: string;
     walletUsdcRaw: string;
     walletSolLamports: string;
+    tradeTax?: TradeTaxPlan | null;
   };
   reserveAlt: string | null;
   altToRegister: string | null;
@@ -139,6 +147,9 @@ export interface BuildSellRequest {
   assetMints: string[];
   legsOnly?: string[];
   redeemDone?: boolean;
+  /** Rebuild only the Sell-tax transaction on this base (DEC-0198). */
+  taxOnly?: boolean;
+  taxBaseUsdcRaw?: string;
 }
 
 export async function requestSellBuild(body: BuildSellRequest, fetchImpl: typeof fetch = fetch): Promise<BuildSellResponse> {
@@ -272,11 +283,18 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   const canSignAll = typeof params.wallet.signAllTransactions === "function";
   const signMany = async (txs: VersionedTransaction[]): Promise<VersionedTransaction[]> => {
     if (txs.length === 0) return [];
+    // DEC-0200: see multiAssetBuyClient -- same guard on the sale path, which
+    // the 2026-09-11 QA also reported opening the wrong wallet.
+    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "sale" });
     params.onProgress?.({ phase: "awaiting-wallet" });
-    if (canSignAll) return params.wallet.signAllTransactions!(txs);
-    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
     const out: VersionedTransaction[] = [];
-    for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    if (canSignAll) {
+      out.push(...(await params.wallet.signAllTransactions!(txs)));
+    } else {
+      if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+      for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    }
+    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this sale`);
     return out;
   };
   const submit = (signed: VersionedTransaction, lastValidBlockHeight: number, what: string, onSubmitted?: (sig: string) => void) =>
@@ -397,5 +415,53 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     }
   }
 
+  // --- Sell tax (DEC-0198): the LAST step, only after every swap landed. ---
+  // The original build's tax transaction (signed in the same prompt) pays the
+  // manager's Sell tax out of the USDC that just arrived. If its blockhash
+  // expired by now, ONE rebuild on the same persisted base (taxOnly) and one
+  // more signature. A tax that fails on-chain is logged and does not undo the
+  // sale -- the seller already holds the USDC.
+  await payTaxIfAny(build, signed);
+
   return await verifyDelivery(lastSignature);
+
+  async function payTaxIfAny(b: BuildSellResponse, s: VersionedTransaction[]): Promise<void> {
+    const taxIdx = b.transactions.findIndex((t) => t.kind === "tax");
+    if (taxIdx < 0 || !b.plan.tradeTax) return;
+    if (pending!.taxConfirmed) return;
+    pending!.taxBaseUsdcRaw = b.plan.tradeTax.baseUsdcRaw;
+    savePendingSell(pending!);
+    if (pending!.taxSignature) {
+      const status = await reconcileSignature(pending!.taxSignature);
+      log("reconciling previous sell-tax signature", { signature: pending!.taxSignature, status });
+      if (status === "confirmed") {
+        pending!.taxConfirmed = true;
+        savePendingSell(pending!);
+        return;
+      }
+    }
+    params.onProgress?.({ phase: "paying-tax" });
+    const attempt = async (tx: BuiltTransaction, signedTx: VersionedTransaction) =>
+      submit(signedTx, tx.lastValidBlockHeight, `the ${b.plan.tradeTax!.taxPct.toFixed(2)}% Sell tax`, (sig) => {
+        pending!.taxSignature = sig;
+        savePendingSell(pending!);
+      });
+    let { signature, outcome } = await attempt(b.transactions[taxIdx], s[taxIdx]);
+    if (outcome.status === "expired") {
+      log("sell-tax transaction expired -- rebuilding it once on the same base");
+      params.onProgress?.({ phase: "building" });
+      const rebuild = await requestSellBuild(buildRequest({ redeemDone: true, taxOnly: true, taxBaseUsdcRaw: b.plan.tradeTax.baseUsdcRaw }));
+      const idx = rebuild.transactions.findIndex((t) => t.kind === "tax");
+      if (idx < 0) return;
+      const resigned = await signMany(rebuild.transactions.map(decode));
+      ({ signature, outcome } = await attempt(rebuild.transactions[idx], resigned[idx]));
+    }
+    if (outcome.status === "confirmed") {
+      pending!.taxConfirmed = true;
+      savePendingSell(pending!);
+      log("sell tax paid", { signature, taxUsdcRaw: b.plan.tradeTax.taxUsdcRaw });
+      return;
+    }
+    log("sell tax NOT paid (sale itself is complete)", { signature, outcome });
+  }
 }

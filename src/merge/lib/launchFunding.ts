@@ -144,13 +144,25 @@ export interface LaunchFeasibilityParams {
   /** The wallet's real, current raw USDC balance (6 decimals). */
   walletUsdcRaw: bigint;
   /**
-   * Smallest per-asset allocation considered practical to swap for --
-   * below this, a swap is uneconomic (network/priority fees rival the
-   * amount) and can be outright unquotable (confirmed live: Jupiter
-   * rejects computing a slippage threshold for a 1-raw-unit input,
-   * "Cannot compute other amount threshold, with amount 1 and slippageBps
-   * 150"). Applied to the DESIGNED allocation, never to a small remaining
-   * deficit on resume (the dust-skip already handles that case).
+   * Smallest per-asset allocation this app will even ASK Jupiter to swap.
+   * Applied to the DESIGNED allocation, never to a small remaining deficit
+   * on resume (the dust-skip handles that case).
+   *
+   * Deliberately just above Jupiter's own floor rather than an economic
+   * one (DEC-0199, Creator's call). Measured live 2026-09-11 against
+   * Jupiter's quote + swap-build endpoints for SOL and for two of the
+   * pump.fun-era mints that tripped the old check: BOTH succeeded at
+   * amount=1, i.e. $0.000001 -- there is no dollar minimum on the API.
+   * The older $0.50 default was set from one August incident ("Cannot
+   * compute other amount threshold, with amount 1 and slippageBps 150")
+   * that was route-dependent and does not reproduce; it was blocking
+   * perfectly launchable compositions.
+   *
+   * A swap this small still costs more in network fees and token-account
+   * rent (~$0.21 per new asset account) than it buys -- that is now said
+   * plainly in the launch preview and in the failure message instead of
+   * being enforced as a blanket block. The floor exists only so the app
+   * never sends a literally unquotable amount.
    */
   minPracticalSwapUsd?: number;
   /** Fractional buffer on the total USDC requirement for fees/slippage/price movement between quote and execution. */
@@ -170,7 +182,17 @@ export interface LaunchFeasibility {
   reasons: string[];
 }
 
-export const DEFAULT_MIN_PRACTICAL_SWAP_USD = 0.5;
+/** A dust-sized dollar figure shown honestly ("$0.000300"), a normal one as money ("$12.50"). */
+export function formatAllocationUsd(usd: number): string {
+  return `$${usd >= 0.01 ? usd.toFixed(2) : usd.toFixed(6)}`;
+}
+
+/** "HgBRWf...HCpump" -- recognisable without a wall of base58. */
+export function shortMintLabel(mint: string): string {
+  return mint.length > 14 ? `${mint.slice(0, 6)}...${mint.slice(-6)}` : mint;
+}
+
+export const DEFAULT_MIN_PRACTICAL_SWAP_USD = 0.0005; // 500 raw USDC units -- see minPracticalSwapUsd above
 export const DEFAULT_FEE_BUFFER_FRACTION = 0.03;
 
 /**
@@ -201,13 +223,13 @@ export function assessLaunchFeasibility(params: LaunchFeasibilityParams): Launch
     let reason: string | null = null;
 
     if (a.kind === "swap" && remaining > 0 && allocatedUsd < minPractical) {
-      // The DESIGNED allocation is dust -- uneconomic/unquotable per-swap.
+      // The DESIGNED allocation is below what any venue will route at all.
       // (A small REMAINING deficit against a mostly-funded asset is fine --
       // the funding loop's dust-skip handles that; this only rejects a plan
-      // whose intended allocation is itself impractical.)
+      // whose intended allocation is itself unroutable.)
       ok = false;
-      reason = `allocation $${allocatedUsd.toFixed(2)} is below the practical per-swap minimum of $${minPractical.toFixed(2)}`;
-      reasons.push(`${a.mint}: ${reason}`);
+      reason = `its share of the initial amount is ${formatAllocationUsd(allocatedUsd)}, below the ${formatAllocationUsd(minPractical)} minimum any swap venue will route`;
+      reasons.push(`${shortMintLabel(a.mint)}: ${reason}`);
     }
 
     if (a.kind !== "wrapped-sol" && a.seedWeightFraction > 0) {
@@ -222,14 +244,16 @@ export function assessLaunchFeasibility(params: LaunchFeasibilityParams): Launch
   const missingUsdcUi = Math.max(0, requiredUsdcUi - heldUsdcUi);
   if (missingUsdcUi > 0) {
     reasons.push(
-      `wallet holds ${heldUsdcUi.toFixed(2)} USDC but this launch needs ~${requiredUsdcUi.toFixed(2)} USDC (including a ${(buffer * 100).toFixed(0)}% fee/slippage buffer) -- ${missingUsdcUi.toFixed(2)} USDC short`,
+      `this wallet holds ${heldUsdcUi.toFixed(2)} USDC but the launch needs about ${requiredUsdcUi.toFixed(2)} USDC including a ${(buffer * 100).toFixed(0)}% fee and slippage buffer, so it is ${missingUsdcUi.toFixed(2)} USDC short`,
     );
   }
 
   // The precise recommended minimum: the smallest total seed at which the
   // smallest USDC-consuming allocation clears the practical per-swap floor.
+  // Rounded UP to USDC's own precision (6dp), not to cents: with a sub-cent
+  // floor (DEC-0199) cent-rounding turned a true $0.005 minimum into $0.01.
   const minimumRecommendedSeedUsd =
-    minFractionNeedingUsdc === Infinity ? 0 : Math.ceil((minPractical / minFractionNeedingUsdc) * 100) / 100;
+    minFractionNeedingUsdc === Infinity ? 0 : Math.ceil((minPractical / minFractionNeedingUsdc) * 1e6) / 1e6;
 
   return {
     feasible: reasons.length === 0,

@@ -180,13 +180,8 @@ pub enum SsrError {
     FeeSettlementInvalidAsset,
     #[msg("This FeeSettlement account does not belong to the supplied Reserve.")]
     FeeSettlementReserveMismatch,
-    // Appended at the end deliberately -- same append-only rule as above.
-    #[msg("Token metadata name must be 1-32 bytes.")]
-    TokenMetadataNameInvalid,
-    #[msg("Token metadata symbol must be 1-10 bytes.")]
-    TokenMetadataSymbolInvalid,
-    #[msg("Token metadata URI must be 1-200 bytes.")]
-    TokenMetadataUriInvalid,
-    #[msg("The supplied metadata account is not the Metaplex metadata PDA of this Reserve Token mint.")]
-    TokenMetadataAddressMismatch,
+
+    // --- Metaplex token metadata (2026-09-11, DEC-0200) ---
+    #[msg("Token name, symbol, or URI is empty or exceeds the Metaplex on-chain limit (32/10/200 bytes).")]
+    TokenMetadataFieldTooLong,
 }

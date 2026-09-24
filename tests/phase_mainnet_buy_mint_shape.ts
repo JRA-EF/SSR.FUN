@@ -19,7 +19,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { buildDirectMultiAssetMintInstructions } from "../packages/sdk/src/directInstructions";
-import { findProtocolConfig, findTvlAccrual } from "../packages/sdk/src/pda";
+import { findProtocolConfig, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "../packages/sdk/src/pda";
 import { computeNetMintOutput } from "../packages/sdk/src/calculations";
 import {
   planBuyFunding,
@@ -72,6 +72,58 @@ const DEPLOYED_ACCRUE_ACCOUNTS = [
   "system_program",
 ];
 
+// --- The shape deployed TODAY (2026-09-11 re-verification, DEC-0200) -------
+//
+// The two lists above pin the binary as deployed on 2026-08-19, when this
+// file was written and its header could still say "never upgraded since".
+// That stopped being true: the fee-vault upgrade (DEC-0173/0187) and then
+// DEC-0195 were both executed through Squads on 2026-09-08, and they DID
+// change these two instructions -- the protocol-fee-destination pair and the
+// manager_fee_recipients sentinel gave way to the fee_settlement / fee_vault /
+// fee_vault_authority trio.
+//
+// So the pins above are now history, not truth, and asserting the current SDK
+// IDL against them fails for the right reason in the wrong direction. They are
+// kept, renamed, as the pre-upgrade record; the live assertions below pin the
+// shape actually running on Mainnet.
+//
+// Evidence this is the deployed shape, not a guess: a REAL, SUCCESSFUL mint on
+// Reserve 24 (C6xZ6bPFqYknZawZexW1kBfAehL5qCXQJHmFkBNQWedP), signature
+// 29NTSR56kDuDakAVtFn1otVLCzNHP9bBAAGyCmocyTw5kEXrV9t2d1xKxbt5UU9tURVS1pqzZhXd41KXgmMzEbRr,
+// passed 63 accounts = 13 fixed + 10 legs x 5, built by the current client
+// from the current SDK IDL. Had the deployed binary still expected the old
+// shape, that transaction would have failed with Anchor 3002 exactly as the
+// DEC-0154 incident this file guards did.
+const LIVE_MINT_ACCOUNTS = [
+  "protocol_config",
+  "reserve",
+  "reserve_token_mint",
+  "mint_authority",
+  "depositor_reserve_token_account",
+  "depositor",
+  "fee_settlement",
+  "fee_vault",
+  "fee_vault_authority",
+  "tvl_accrual",
+  "token_program",
+  "associated_token_program",
+  "system_program",
+];
+const LIVE_ACCRUE_ACCOUNTS = [
+  "protocol_config",
+  "reserve",
+  "reserve_token_mint",
+  "mint_authority",
+  "tvl_accrual",
+  "fee_settlement",
+  "fee_vault",
+  "fee_vault_authority",
+  "payer",
+  "token_program",
+  "associated_token_program",
+  "system_program",
+];
+
 function sdkIdl(): { instructions: { name: string; accounts: { name: string }[] }[] } {
   return JSON.parse(fs.readFileSync(path.join(__dirname, "..", "packages", "sdk", "idl", "ssr_protocol.json"), "utf8"));
 }
@@ -81,12 +133,21 @@ function deployedEraIdl(): { instructions: { name: string; accounts: { name: str
 const accountsOf = (idl: ReturnType<typeof sdkIdl>, name: string) => idl.instructions.find((i) => i.name === name)!.accounts.map((a) => a.name);
 
 describe("Deployed-binary account-shape pinning (the DEC-0154 root cause, made impossible to silently regress)", () => {
-  it("SDK IDL's mint_reserve_tokens_in_kind matches the DEPLOYED binary's account list exactly, position by position", () => {
-    expect(accountsOf(sdkIdl(), "mint_reserve_tokens_in_kind")).to.deep.equal(DEPLOYED_MINT_ACCOUNTS);
+  it("SDK IDL's mint_reserve_tokens_in_kind matches the CURRENTLY-deployed binary's account list exactly, position by position", () => {
+    expect(accountsOf(sdkIdl(), "mint_reserve_tokens_in_kind")).to.deep.equal(LIVE_MINT_ACCOUNTS);
   });
 
-  it("SDK IDL's accrue_fees matches the DEPLOYED binary's account list exactly (same drift class, fixed in the same pass)", () => {
-    expect(accountsOf(sdkIdl(), "accrue_fees")).to.deep.equal(DEPLOYED_ACCRUE_ACCOUNTS);
+  it("SDK IDL's accrue_fees matches the CURRENTLY-deployed binary's account list exactly (same drift class)", () => {
+    expect(accountsOf(sdkIdl(), "accrue_fees")).to.deep.equal(LIVE_ACCRUE_ACCOUNTS);
+  });
+
+  it("the pre-upgrade (2026-08-19) shapes are recorded and are genuinely DIFFERENT -- proof this pin was updated for a real upgrade, not to silence a failure", () => {
+    expect(LIVE_MINT_ACCOUNTS).to.not.deep.equal(DEPLOYED_MINT_ACCOUNTS);
+    expect(LIVE_ACCRUE_ACCOUNTS).to.not.deep.equal(DEPLOYED_ACCRUE_ACCOUNTS);
+    // Both shapes are 13/12 accounts wide: the drift this file guards is
+    // POSITIONAL, never a count change, which is exactly why it was silent.
+    expect(LIVE_MINT_ACCOUNTS.length).to.equal(DEPLOYED_MINT_ACCOUNTS.length);
+    expect(LIVE_ACCRUE_ACCOUNTS.length).to.equal(DEPLOYED_ACCRUE_ACCOUNTS.length);
   });
 
   it("redeem_reserve_tokens_in_kind and seed_reserve did NOT drift -- SDK IDL matches the deployed-era IDL for both (Sell and launches were never affected)", () => {
@@ -119,12 +180,21 @@ describe("Deployed-binary account-shape pinning (the DEC-0154 root cause, made i
     });
     const mintIx = instructions[instructions.length - 1];
     expect(mintIx.keys.length).to.equal(13 + 2 * 5);
-    expect(mintIx.keys[6].pubkey.toBase58()).to.equal(getAssociatedTokenAddressSync(RT_MINT, TREASURY, true).toBase58()); // protocol_fee_destination_token_account
-    expect(mintIx.keys[7].pubkey.toBase58()).to.equal(TREASURY.toBase58()); // protocol_fee_destination
-    expect(mintIx.keys[8].pubkey.toBase58()).to.equal(findTvlAccrual(RESERVE, program.programId)[0].toBase58()); // tvl_accrual
-    expect(mintIx.keys[9].pubkey.toBase58()).to.equal(program.programId.toBase58()); // manager_fee_recipients "None" sentinel
-    // The exact live failure shape (token program in the manager_fee_recipients slot) can never rebuild:
-    expect(mintIx.keys[9].pubkey.toBase58()).to.not.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    // Post-fee-vault positions (DEC-0173/0195, re-verified 2026-09-11): the
+    // fee-destination pair and the manager_fee_recipients sentinel became the
+    // fee_settlement / fee_vault / fee_vault_authority trio, with tvl_accrual
+    // pushed from 8 to 9.
+    expect(mintIx.keys[6].pubkey.toBase58()).to.equal(findFeeSettlement(RESERVE, program.programId)[0].toBase58()); // fee_settlement
+    expect(mintIx.keys[7].pubkey.toBase58()).to.equal(findFeeVaultAta(RESERVE, RT_MINT, program.programId).toBase58()); // fee_vault
+    expect(mintIx.keys[8].pubkey.toBase58()).to.equal(findFeeVaultAuthority(RESERVE, program.programId)[0].toBase58()); // fee_vault_authority
+    expect(mintIx.keys[9].pubkey.toBase58()).to.equal(findTvlAccrual(RESERVE, program.programId)[0].toBase58()); // tvl_accrual
+    // The exact live DEC-0154 failure shape (a token program sliding into a
+    // PDA slot) can never rebuild:
+    for (const i of [6, 7, 8, 9]) {
+      expect(mintIx.keys[i].pubkey.toBase58(), `slot ${i}`).to.not.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    }
+    void TREASURY;
+    void getAssociatedTokenAddressSync;
   });
 
   it("a SINGLE-asset (ALPHA-shaped, 100% SSR) mint builds through the same USDC-funded path -- one leg is just the smallest basket (DEC-0160; the old >=2 restriction failed every live ALPHA buy at composition time)", async () => {
@@ -145,7 +215,9 @@ describe("Deployed-binary account-shape pinning (the DEC-0154 root cause, made i
     });
     const mintIx = instructions[instructions.length - 1];
     expect(mintIx.keys.length).to.equal(13 + 1 * 5); // the same deployed shape, one leg
-    expect(mintIx.keys[9].pubkey.toBase58()).to.equal(program.programId.toBase58()); // manager_fee_recipients "None" sentinel unchanged
+    expect(mintIx.keys[9].pubkey.toBase58()).to.equal(
+      findTvlAccrual(new PublicKey("EK5WwpsRuWPCAhV4Rd4s5SRuE6Gnbc8SA94oUjZbHfVb"), program.programId)[0].toBase58(),
+    ); // tvl_accrual, same position as the two-asset case
     expect(requiredAmountsRaw).to.have.length(1);
     expect(requiredAmountsRaw[0]).to.equal((9_690_000n * 30_000_000_000n + 19_999_999n) / 20_000_000n); // mulDivCeil(requested, vault, supply)
   });

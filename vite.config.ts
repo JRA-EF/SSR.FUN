@@ -50,10 +50,14 @@ export default defineConfig({
         docs: path.resolve(import.meta.dirname, './docs.html'),
         internalStatus: path.resolve(import.meta.dirname, './internal-status.html'),
         internalFeedback: path.resolve(import.meta.dirname, './internal-feedback.html'),
+        // Team feedback board (status of every public-form submission) -- see api/feedback/board.ts.
+        internalFeedbackBoard: path.resolve(import.meta.dirname, './internal-feedback-board.html'),
         internalKpis: path.resolve(import.meta.dirname, './internal-kpis.html'),
         // Protocol-Admin one-click page: signs set_fee_settlement_keeper (plain
         // HTML + web3.js from CDN, no app bundle) -- see the file's header.
         internalSetKeeper: path.resolve(import.meta.dirname, './internal-set-keeper.html'),
+        // Public feedback form (BotID-protected submit) -- see src/feedback/main.ts.
+        feedback: path.resolve(import.meta.dirname, './feedback.html'),
       },
     },
   },

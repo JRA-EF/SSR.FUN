@@ -33,7 +33,9 @@
 //
 //   B. TVL FEE ACCRUAL: `accrue_fees` is permissionless and is the ONLY thing
 //      that crystallizes the annual TVL fee. Called for every Reserve whose
-//      accumulator was last settled >= 7 days ago (or never started).
+//      accumulator was last settled >= 1 day ago (or never started) -- the
+//      program accrues on full elapsed days, so daily calls charge the fee
+//      daily (JRA's fee spec, 2026-09-10; was weekly before DEC-0198).
 //
 // Scheduled in vercel.json, allowlisted in middleware.ts CRON_PATHS. Same
 // CRON_SECRET / `?dryRun=true` conventions as every other cron here. Time
@@ -45,7 +47,13 @@
 // The keeper wallet is a dedicated secret (SSR_FEE_SETTLEMENT_KEEPER_SECRET,
 // JSON array or base64). Its SOL only pays transaction fees + first-use rent.
 import { ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction, sendAndConfirmTransaction, type AddressLookupTableAccount, type TransactionInstruction } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+// DEC-0201: a Reserve may hold Token-2022 assets, whose ATAs derive under a
+// different program. Deriving them classically would point the keeper at
+// accounts that can never hold the asset, so every ASSET-side address here
+// goes through the asset's own program. USDC and the Reserve Token stay
+// classic and keep using the plain helper.
+import { assetAta, resolveLegTokenProgram } from "@ssr/sdk";
 import {
   discoverAllReserves,
   enumerateReserveAssetMintsOnChain,
@@ -83,7 +91,7 @@ const TREASURY = new PublicKey(MAINNET_TREASURY_VAULT);
 // Under this route's own maxDuration (vercel.json: 300s for fee-settlement-cron;
 // each Reserve needs several sequential confirmations, ~20-60s).
 const BUDGET_MS = 270_000;
-const ACCRUE_MIN_ELAPSED_S = 7 * 24 * 60 * 60;
+const ACCRUE_MIN_ELAPSED_S = 24 * 60 * 60;
 const MAX_KNOWN_MINTS = 2000;
 
 /** Per-route runtime config (Vercel reads this export): settlement needs several sequential confirmations per Reserve, ~20-60s each Reserve. */
@@ -243,9 +251,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     // left in that staging ATA would otherwise never be looked at again (live
     // 2026-09-08: two skipped legs vanished from the candidate list).
     const [sa] = findSettlementAuthority(new PublicKey(r.reserve), PROGRAM_ID);
+    const mintPrograms = [...r.assets.map((a) => resolveLegTokenProgram({ tokenProgram: a.tokenProgram ?? null })), TOKEN_PROGRAM_ID];
     const mints = [...r.assets.map((a) => new PublicKey(a.assetMint)), MAINNET_USDC_MINT];
-    const stagingAtas = mints.map((m) => getAssociatedTokenAddressSync(m, sa, true));
-    const keeperAtas = keeper ? mints.map((m) => getAssociatedTokenAddressSync(m, keeper.publicKey)) : [];
+    const stagingAtas = mints.map((m, i) => assetAta(m, sa, mintPrograms[i], true));
+    const keeperAtas = keeper ? mints.map((m, i) => assetAta(m, keeper.publicKey, mintPrograms[i])) : [];
     const [infos, keeperInfos] = await Promise.all([
       connection.getMultipleAccountsInfo(stagingAtas).catch(() => stagingAtas.map(() => null)),
       keeperAtas.length ? connection.getMultipleAccountsInfo(keeperAtas).catch(() => keeperAtas.map(() => null)) : Promise.resolve([] as (null | { data: Buffer })[]),
@@ -340,11 +349,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         const read = await readReserveAndWallet(deps, reservePk, keeper.publicKey, null);
         const legs = read.orderedAssets;
         const [settlementAuthority] = findSettlementAuthority(reservePk, PROGRAM_ID);
-        const stagingAtaOf = (mint: PublicKey) => getAssociatedTokenAddressSync(mint, settlementAuthority, true);
+        const programOfMint = new Map(legs.map((l) => [l.mint, resolveLegTokenProgram(l)]));
+        const programFor = (mint: PublicKey) => programOfMint.get(mint.toBase58()) ?? TOKEN_PROGRAM_ID;
+        const stagingAtaOf = (mint: PublicKey) => assetAta(mint, settlementAuthority, programFor(mint), true);
         const usdcStaging = stagingAtaOf(MAINNET_USDC_MINT);
         const reserveTables = read.reserveAlt ? await fetchLookupTables(connection, [read.reserveAlt]) : [];
         const createStagingIxs = [
-          ...legs.map((l) => createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, stagingAtaOf(new PublicKey(l.mint)), settlementAuthority, new PublicKey(l.mint))),
+          ...legs.map((l) => createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, stagingAtaOf(new PublicKey(l.mint)), settlementAuthority, new PublicKey(l.mint), resolveLegTokenProgram(l))),
           createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, usdcStaging, settlementAuthority, MAINNET_USDC_MINT),
         ];
 
@@ -385,7 +396,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         // (left there when a split approve+transfer landed but its swap did not):
         // that balance is swapped too, straight into the USDC staging ATA.
         const stagingAtas = legs.map((l) => stagingAtaOf(new PublicKey(l.mint)));
-        const keeperAtas = legs.map((l) => getAssociatedTokenAddressSync(new PublicKey(l.mint), keeper.publicKey));
+        const keeperAtas = legs.map((l) => assetAta(new PublicKey(l.mint), keeper.publicKey, resolveLegTokenProgram(l)));
         const [stagedInfos, keeperInfos] = await Promise.all([connection.getMultipleAccountsInfo(stagingAtas), connection.getMultipleAccountsInfo(keeperAtas)]);
         const amountOf = (info: { data: Buffer } | null) => (info && info.data.length >= 72 ? info.data.readBigUInt64LE(64) : 0n);
         for (let i = 0; i < legs.length; i++) {
@@ -413,14 +424,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
               } else {
                 const built = builtR.value;
                 const keeperAta = keeperAtas[i];
+                // DEC-0201: every asset-side account and CPI uses the asset's
+                // own token program, so a Token-2022 asset settles identically.
+                const legProgram = resolveLegTokenProgram(leg);
                 const prelude: TransactionInstruction[] = [
-                  createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, keeperAta, keeper.publicKey, mint),
+                  createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, keeperAta, keeper.publicKey, mint, legProgram),
                   createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, usdcStaging, settlementAuthority, MAINNET_USDC_MINT),
                 ];
                 if (stagedAmount > 0n) {
-                  prelude.unshift(await buildApproveSettlementSwapInstruction({ program, programId: PROGRAM_ID, reserve: reservePk, assetMint: mint, keeper: keeper.publicKey, amount: stagedAmount }));
+                  prelude.unshift(await buildApproveSettlementSwapInstruction({ program, programId: PROGRAM_ID, reserve: reservePk, assetMint: mint, keeper: keeper.publicKey, amount: stagedAmount, assetTokenProgram: legProgram }));
                   // The keeper signs as the SPL DELEGATE the approval above just created -- bounded to exactly stagedAmount.
-                  prelude.push(createTransferInstruction(stagingAtaOf(mint), keeperAta, keeper.publicKey, stagedAmount));
+                  // TransferChecked (not Transfer): Token-2022 requires the
+                  // mint and decimals, and it is strictly safer on classic too.
+                  prelude.push(createTransferCheckedInstruction(stagingAtaOf(mint), mint, keeperAta, keeper.publicKey, stagedAmount, leg.decimals, [], legProgram));
                 }
                 const swapIxs = [
                   ...built.setupInstructions.map(deserializeJupiterInstruction).filter((ix) => !isComputeBudgetInstruction(ix)),

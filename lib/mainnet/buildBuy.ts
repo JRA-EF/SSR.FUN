@@ -43,6 +43,7 @@ import {
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
 import { assembleSingleBuyInstructions, buildWrapRecoveredSolInstructions, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
+import { ZERO_TRADE_TAX, buildTradeTaxInstructions, computeTradeTax, tradeTaxBps, tradeTaxPlan, type ReserveTradeTaxRates, type TradeTaxPlan } from "./tradeTax";
 import {
   BuildError,
   CORE_TX_COMPUTE_UNIT_LIMIT,
@@ -97,6 +98,8 @@ export interface BuildBuyResult {
     walletUsdcRaw: string;
     walletSolLamports: string;
     walletReserveTokenRaw: string;
+    /** The manager's Buy tax this purchase pays in USDC on top (DEC-0198), or null when the rate is 0 / this is a swaps-only rebuild. */
+    tradeTax: TradeTaxPlan | null;
   };
   reserveAlt: string | null;
   /** Set when alt-create/alt-extend transactions were prepended: the table's address to register (POST /api/mainnet/reserve-alt) once they land. */
@@ -130,9 +133,33 @@ export interface BuildBuyDeps extends ReadDeps {
   jupiterBuildInstructions(p: { quote: JupiterQuote; userPublicKey: string; apiKey: string }): Promise<JupiterCallResult<JupiterSwapInstructionsPayload>>;
   /** Read-only simulation of the single transaction before it is handed out (skipped when absent, e.g. offline tests). */
   simulate?: (tx: VersionedTransaction) => Promise<{ err: unknown; logs: string[] | null }>;
+  /** The manager's Buy/Sell tax rates from the Reserve's metadata_uri (DEC-0198); absent = no tax (offline tests). */
+  lookupTradeTax?: (metadataUri: string) => Promise<ReserveTradeTaxRates>;
 }
 
 // --- Pure decision helpers ---------------------------------------------------
+
+/**
+ * Pure: the USDC value this purchase is taxed on -- every leg's required
+ * deposit at its price (the USDC leg at 1), i.e. the purchase's full value
+ * whether the wallet already held some of it or not. Falls back to the USDC
+ * the plan actually spends when any leg's price is unknown.
+ */
+export function buyTaxBaseUsdcRaw(legs: { mint: string; decimals: number; requiredRaw: bigint; priceUsd: number | null }[], fallbackUsdcRaw: bigint): bigint {
+  let total = 0n;
+  for (const l of legs) {
+    if (l.requiredRaw <= 0n) continue;
+    if (l.mint === MAINNET_USDC_MINT) {
+      total += l.requiredRaw;
+      continue;
+    }
+    if (l.priceUsd === null || !Number.isFinite(l.priceUsd) || l.priceUsd <= 0) return fallbackUsdcRaw;
+    // requiredRaw x price -> USDC raw (6 decimals), integer math on a scaled price.
+    const priceScaled = BigInt(Math.round(l.priceUsd * 1e9)); // 9 decimals of price precision
+    total += (l.requiredRaw * priceScaled * 1_000_000n) / (10n ** BigInt(l.decimals) * 1_000_000_000n);
+  }
+  return total;
+}
 
 /** Pure: whether the one-transaction composition is even worth attempting. */
 export function shouldAttemptSingle(params: { swapLegCount: number; legsOnly: string[] | null; mintOnly: boolean }): boolean {
@@ -173,6 +200,10 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     })(),
   ]);
   const { orderedAssets, reserveTokenMint, mintAuthority, protocolConfig, supplyRaw, heldByMint, walletUsdcRaw, walletReserveTokenRaw, walletSolLamports, reserveAlt } = read;
+  // The manager's Buy tax rate (DEC-0198) -- resolved while the quotes run; a metadata failure means no tax, never a blocked purchase.
+  const taxRatesPromise: Promise<ReserveTradeTaxRates> = deps.lookupTradeTax
+    ? deps.lookupTradeTax(String(read.reserveAccount.metadataUri ?? "")).catch(() => ZERO_TRADE_TAX)
+    : Promise.resolve(ZERO_TRADE_TAX);
   // Prices for mints only discovered by the read (caller passed none).
   const priceMap =
     prices ?? (await deps.fetchPrices(orderedAssets.map((a) => a.mint).filter((m) => m !== MAINNET_USDC_MINT)).catch(() => new Map<string, { usdPrice: number | null | undefined }>()));
@@ -207,6 +238,29 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     throw new BuildError(422, `This purchase can't start yet: ${feasibility.reasons.join("; ")}. Nothing was submitted.`, { feasibility: serializeBuildResult(feasibility) });
   }
 
+  // Buy tax (DEC-0198): paid in USDC inside the mint transaction, so a
+  // swaps-only rebuild (legsOnly) never carries it and a mint-only rebuild
+  // always does. The wallet must cover it on top of the purchase itself.
+  const taxRates = await taxRatesPromise;
+  const taxSplit = computeTradeTax(buyTaxBaseUsdcRaw(legInputs, feasibility.requiredUsdcRaw), tradeTaxBps(taxRates.buyTaxPct));
+  const managerDestinationRaw = read.reserveAccount.feeConfig?.feeDestination;
+  const managerDestination = managerDestinationRaw ? new PublicKey(managerDestinationRaw) : null;
+  const protocolDestination = new PublicKey(MAINNET_TREASURY_VAULT);
+  const taxIxs =
+    !input.legsOnly && taxSplit.taxUsdcRaw > 0n && managerDestination
+      ? buildTradeTaxInstructions({ trader: wallet, usdcMint: new PublicKey(MAINNET_USDC_MINT), protocolDestination, managerDestination, split: taxSplit })
+      : [];
+  if (taxIxs.length > 0) {
+    const usdcNeeded = (input.mintOnly ? 0n : feasibility.requiredUsdcRaw) + taxSplit.taxUsdcRaw;
+    if (walletUsdcRaw < usdcNeeded) {
+      throw new BuildError(
+        422,
+        `This purchase can't start yet: this wallet holds ${(Number(walletUsdcRaw) / 1e6).toFixed(2)} USDC but the purchase plus its ${(taxSplit.taxBps / 100).toFixed(2)}% Buy tax (${(Number(taxSplit.taxUsdcRaw) / 1e6).toFixed(2)} USDC) needs ~${(Number(usdcNeeded) / 1e6).toFixed(2)} USDC. Nothing was submitted.`,
+      );
+    }
+  }
+  const tradeTax = taxIxs.length > 0 && managerDestination ? tradeTaxPlan(taxSplit, protocolDestination, managerDestination) : null;
+
   const swapActions = selectSwapActions(plan.actions, input.legsOnly, input.mintOnly);
   const wrapActions = plan.actions.filter((a): a is Extract<BuyFundingAction, { kind: "wrap-recovered-sol" }> => a.kind === "wrap-recovered-sol");
   const legIndexOf = (mint: string) => orderedAssets.findIndex((a) => a.mint === mint);
@@ -220,7 +274,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
       const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: action.usdcBudgetRaw, slippageBps: input.slippageBps, apiKey: deps.jupiterApiKey };
       let r = await deps.jupiterQuote({ ...base, maxAccounts: attemptSingle ? SINGLE_TX_SWAP_MAX_ACCOUNTS : null });
       if (r.kind !== "ok" && attemptSingle) r = await deps.jupiterQuote({ ...base, maxAccounts: null });
-      if (r.kind !== "ok") throw jupiterFailure("quote", action.mint, r);
+      if (r.kind !== "ok") throw jupiterFailure("quote", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw });
       if (!isPriceImpactAcceptable(r.value)) {
         throw new BuildError(422, `The swap for ${action.mint} has a price impact of ${Number(r.value.priceImpactPct).toFixed(1)}% -- too high to execute automatically; its on-chain liquidity is too thin right now.`, { mint: action.mint });
       }
@@ -258,16 +312,19 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     const sets = await Promise.all(
       quotes.map(async ({ action, quote }) => {
         const r = await deps.jupiterBuildInstructions({ quote, userPublicKey: wallet.toBase58(), apiKey: deps.jupiterApiKey });
-        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r);
+        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw, quote });
         return r.value;
       }),
     );
-    const instructions = assembleSingleBuyInstructions({
-      ataCreateInstructions: ataIxs,
-      swapSets: sets.map((s) => ({ setupInstructions: s.setupInstructions, swapInstruction: s.swapInstruction, addressLookupTableAddresses: s.addressLookupTableAddresses })),
-      wrapInstructions: wrapIxs,
-      mintInstruction: mintIx,
-    });
+    const instructions = [
+      ...assembleSingleBuyInstructions({
+        ataCreateInstructions: ataIxs,
+        swapSets: sets.map((s) => ({ setupInstructions: s.setupInstructions, swapInstruction: s.swapInstruction, addressLookupTableAddresses: s.addressLookupTableAddresses })),
+        wrapInstructions: wrapIxs,
+        mintInstruction: mintIx,
+      }),
+      ...taxIxs,
+    ];
     const swapTables = await fetchLookupTables(connection, sets.flatMap((s) => s.addressLookupTableAddresses));
     single = { instructions, swapTables };
   }
@@ -275,8 +332,8 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     ComputeBudgetProgram.setComputeUnitLimit({ units: MINT_TX_COMPUTE_UNIT_LIMIT }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }),
   ];
-  const mintFull = [...mintBudgetIxs, ...ataIxs, ...wrapIxs, mintIx];
-  const mintLean = [...mintBudgetIxs, ...wrapIxs, mintIx];
+  const mintFull = [...mintBudgetIxs, ...ataIxs, ...wrapIxs, mintIx, ...taxIxs];
+  const mintLean = [...mintBudgetIxs, ...wrapIxs, mintIx, ...taxIxs];
   const wouldBe = alt.wouldBeTable;
 
   const decision = decideMode({
@@ -313,7 +370,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     const swapTxs = await Promise.all(
       quotes.map(async ({ action, quote }) => {
         const r = await deps.jupiterBuildTransaction({ quote, userPublicKey: wallet.toBase58(), apiKey: deps.jupiterApiKey });
-        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r);
+        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw, quote });
         const tx = VersionedTransaction.deserialize(Buffer.from(r.value.swapTransaction, "base64"));
         tx.message.recentBlockhash = blockhash;
         return { kind: "swap" as const, mint: action.mint, legIndex: legIndexOf(action.mint), ...toBase64(tx), lastValidBlockHeight };
@@ -357,6 +414,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
       walletUsdcRaw: walletUsdcRaw.toString(),
       walletSolLamports: walletSolLamports.toString(),
       walletReserveTokenRaw: walletReserveTokenRaw.toString(),
+      tradeTax,
     },
     reserveAlt,
     altToRegister: decision.createAlt && alt.wouldBeAlt ? alt.wouldBeAlt.toBase58() : null,

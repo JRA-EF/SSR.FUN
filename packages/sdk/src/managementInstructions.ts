@@ -14,6 +14,7 @@
 // key could or should co-sign.
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { assetAta, resolveLegTokenProgram } from "./tokenPrograms";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
@@ -74,6 +75,8 @@ export async function buildAddReserveAssetActiveInstruction(
   delegate: PublicKey,
   assetMint: PublicKey,
   targetWeightBps: number,
+  /** DEC-0201: the asset's own token program; omit for classic SPL Token. */
+  assetTokenProgram?: PublicKey,
 ): Promise<TransactionInstruction> {
   const [protocolConfig] = findProtocolConfig(programId);
   const [reserveAsset] = findReserveAsset(reserve, assetMint, programId);
@@ -90,7 +93,8 @@ export async function buildAddReserveAssetActiveInstruction(
       vaultAuthority,
       delegate,
       signer,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      // DEC-0201: the asset's own program -- the vault is created under it.
+      tokenProgram: resolveLegTokenProgram({ tokenProgram: assetTokenProgram ?? null }),
       systemProgram: SystemProgram.programId,
     })
     .instruction();
@@ -103,10 +107,16 @@ export async function buildFundNewReserveAssetInstruction(
   manager: PublicKey,
   assetMint: PublicKey,
   amountRaw: bigint,
+  /** DEC-0201: the asset's own token program; omit for classic SPL Token. */
+  assetTokenProgram?: PublicKey,
 ): Promise<TransactionInstruction> {
   const [reserveAsset] = findReserveAsset(reserve, assetMint, programId);
   const [vault] = findReserveVault(reserve, assetMint, programId);
-  const managerTokenAccount = getAssociatedTokenAddressSync(assetMint, manager);
+  // DEC-0201: derive the manager's ATA under the asset's OWN program -- a
+  // classic-derived address for a Token-2022 mint is a different account that
+  // will never hold the asset.
+  const assetProgram = resolveLegTokenProgram({ tokenProgram: assetTokenProgram ?? null });
+  const managerTokenAccount = assetAta(assetMint, manager, assetProgram);
   return program.methods
     .fundNewReserveAsset(new BN(amountRaw.toString()))
     .accounts({
@@ -116,7 +126,7 @@ export async function buildFundNewReserveAssetInstruction(
       vault,
       managerTokenAccount,
       manager,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: assetProgram, // DEC-0201
     })
     .instruction();
 }
@@ -129,6 +139,8 @@ export async function buildRemoveReserveAssetInstruction(
   signer: PublicKey,
   delegate: PublicKey,
   assetMint: PublicKey,
+  /** DEC-0201: the asset's own token program; omit for classic SPL Token. */
+  assetTokenProgram?: PublicKey,
 ): Promise<TransactionInstruction> {
   const [reserveAsset] = findReserveAsset(reserve, assetMint, programId);
   const [vault] = findReserveVault(reserve, assetMint, programId);
@@ -144,7 +156,7 @@ export async function buildRemoveReserveAssetInstruction(
       manager: reserveManager,
       delegate,
       signer,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: resolveLegTokenProgram({ tokenProgram: assetTokenProgram ?? null }), // DEC-0201
     })
     .instruction();
 }

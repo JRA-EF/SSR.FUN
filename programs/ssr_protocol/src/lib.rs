@@ -236,13 +236,17 @@ pub mod ssr_protocol {
         instructions::update_metadata::handler(ctx, new_metadata_uri)
     }
 
-    pub fn set_reserve_token_metadata<'info>(
-        ctx: Context<'info, SetReserveTokenMetadata<'info>>,
+    /// Publishes Metaplex token metadata for this Reserve's token mint so
+    /// wallets and explorers show its name/symbol/image instead of a raw
+    /// address (DEC-0200). Idempotent; safe on Reserves created before this
+    /// instruction existed, which is how already-deployed tokens get repaired.
+    pub fn create_token_metadata<'info>(
+        ctx: Context<'info, CreateTokenMetadata<'info>>,
         name: String,
         symbol: String,
         uri: String,
     ) -> Result<()> {
-        instructions::set_reserve_token_metadata::handler(ctx, name, symbol, uri)
+        instructions::create_token_metadata::handler(ctx, name, symbol, uri)
     }
 
     pub fn update_protocol_config<'info>(

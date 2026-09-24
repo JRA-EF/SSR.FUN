@@ -137,6 +137,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       res.setHeader?.("Content-Type", contentType);
       // Content-addressed: the bytes behind an id can never change.
       res.setHeader?.("Cache-Control", "public, max-age=31536000, immutable");
+      // DEC-0200: a Reserve's on-chain metadata JSON points at this URL, so
+      // wallets, explorers and social-card fetchers load it cross-origin.
+      res.setHeader?.("Access-Control-Allow-Origin", "*");
       const bytes = Buffer.from(row.data_base64, "base64");
       res.status(200);
       if (res.send) res.send(bytes);

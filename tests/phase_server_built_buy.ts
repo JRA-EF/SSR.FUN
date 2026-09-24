@@ -114,6 +114,8 @@ interface FakeWorld {
   walletSol: number;
   reserveAlt: string | null;
   mintFeeBps: number;
+  /** Set to give the fake Reserve a fee destination + metadata (DEC-0198 tax cases). */
+  feeDestination?: PublicKey;
 }
 
 function makeDeps(world: FakeWorld, spies: { quotes: string[]; builds: string[]; instructionBuilds: string[] }): BuildBuyDeps {
@@ -124,7 +126,7 @@ function makeDeps(world: FakeWorld, spies: { quotes: string[]; builds: string[];
     programId: PROGRAM_ID,
     methods: real.methods,
     account: {
-      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: world.legs.length, feeConfig: { mintFeeBps: world.mintFeeBps } }) },
+      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: world.legs.length, metadataUri: "https://ssr.fun/api/mainnet/reserve-metadata?id=0123456789abcdef", feeConfig: { mintFeeBps: world.mintFeeBps, feeDestination: world.feeDestination } }) },
       reserveAsset: {
         fetchMultiple: async (pdas: PublicKey[]) =>
           pdas.map((pda) => {
@@ -318,6 +320,44 @@ describe("buildBuy.ts -- full build (fakes for RPC/program reads/Jupiter; real b
       expect((e as BuildBuyError).status).to.equal(422);
       expect((e as BuildBuyError).message).to.include(bad);
     }
+  });
+
+  it("Buy tax (DEC-0198): with a 1% manager rate the mint transaction ends with [create ATA, transfer] x2 paying 50/50 to the Treasury and the fee destination; a legs-only rebuild carries none; the wallet must cover purchase + tax", async () => {
+    const manager = Keypair.generate().publicKey;
+    const w = world(10, { feeDestination: manager });
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    const deps: BuildBuyDeps = { ...makeDeps(w, spies), lookupTradeTax: async () => ({ buyTaxPct: 1, sellTaxPct: 0 }) };
+    const r = await buildBuyTransactions(deps, baseInput(w));
+    expect(r.plan.tradeTax).to.not.equal(null);
+    expect(r.plan.tradeTax!.taxBps).to.equal(100);
+    expect(BigInt(r.plan.tradeTax!.protocolUsdcRaw) + BigInt(r.plan.tradeTax!.managerUsdcRaw)).to.equal(BigInt(r.plan.tradeTax!.taxUsdcRaw));
+    expect(BigInt(r.plan.tradeTax!.taxUsdcRaw)).to.equal(BigInt(r.plan.tradeTax!.baseUsdcRaw) / 100n);
+    expect(r.plan.tradeTax!.managerDestination).to.equal(manager.toBase58());
+    const mint = r.transactions.find((t) => t.kind === "mint")!;
+    const tx = VersionedTransaction.deserialize(Buffer.from(mint.base64, "base64"));
+    const ixs = tx.message.compiledInstructions;
+    const tokenProgram = TOKEN_PROGRAM_ID.toBase58();
+    const last4 = ixs.slice(-4).map((ix) => tx.message.staticAccountKeys[ix.programIdIndex]?.toBase58() ?? "lut");
+    expect(last4[1]).to.equal(tokenProgram);
+    expect(last4[3]).to.equal(tokenProgram);
+    // A swaps-only rebuild never carries the tax.
+    const legs = await buildBuyTransactions(deps, { ...baseInput(w), legsOnly: [w.legs[1].mint.toBase58()] });
+    expect(legs.plan.tradeTax).to.equal(null);
+    expect(legs.transactions.every((t) => t.kind === "swap" || t.kind === "alt-create" || t.kind === "alt-extend")).to.equal(true);
+    // Rate 0 -> no tax, no extra instructions.
+    const none = await buildBuyTransactions({ ...deps, lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 0 }) }, baseInput(w));
+    expect(none.plan.tradeTax).to.equal(null);
+    // Wallet that covers the purchase but not purchase + tax -> 422 naming the tax.
+    const poor = world(10, { feeDestination: manager, walletUsdcRaw: 0n });
+    const poorDeps: BuildBuyDeps = { ...makeDeps(poor, spies), lookupTradeTax: async () => ({ buyTaxPct: 1, sellTaxPct: 0 }) };
+    let err: unknown = null;
+    try {
+      await buildBuyTransactions(poorDeps, { ...baseInput(poor), mintOnly: true });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(BuildBuyError);
+    expect((err as Error).message).to.match(/Buy tax/);
   });
 
   it("the mint transaction carries the compute budget (priority fee) first", async () => {

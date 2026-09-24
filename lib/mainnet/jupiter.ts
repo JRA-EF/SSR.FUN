@@ -155,6 +155,77 @@ export async function fetchJupiterQuoteWithRetry(p: JupiterQuoteParams): Promise
   });
 }
 
+// --- Naming what actually failed (2026-09-11, DEC-0199) ---------------------
+// A swap failure used to read "Jupiter could not build the swap for <mint>",
+// which named neither the venue nor the amount, so nobody could tell a dead
+// route from a too-small amount from an excluded DEX. Jupiter's quote carries
+// the venues it chose (routePlan[].swapInfo.label); these helpers put them,
+// the exact amount, and Jupiter's own words into one sentence.
+
+/** Venue labels of a quote's route, in hop order (e.g. ["Meteora DLMM", "Raydium CLMM"]). Empty when the quote carries no routePlan. */
+export function routeLabelsOf(quote: JupiterQuote | null | undefined): string[] {
+  const plan = (quote as { routePlan?: unknown } | null | undefined)?.routePlan;
+  if (!Array.isArray(plan)) return [];
+  const labels: string[] = [];
+  for (const hop of plan) {
+    const label = (hop as { swapInfo?: { label?: unknown } })?.swapInfo?.label;
+    if (typeof label === "string" && label && !labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+/** "Meteora DLMM -> Raydium CLMM" for a multi-hop route, the bare name for one hop, "" for none. */
+export function describeRoute(labels: string[]): string {
+  return labels.join(" -> ");
+}
+
+/** "HgBRWf...HCpump" -- enough of a mint to recognise it without a wall of base58. */
+export function shortMint(mint: string): string {
+  return mint.length > 14 ? `${mint.slice(0, 6)}...${mint.slice(-6)}` : mint;
+}
+
+/** A raw USDC amount as a dollar figure with enough precision to show dust honestly ("$0.000300", "$12.50"). */
+export function formatUsdcRaw(raw: bigint): string {
+  const n = Number(raw) / 1e6;
+  return `$${n >= 0.01 ? n.toFixed(2) : n.toFixed(6)}`;
+}
+
+export interface SwapFailureContext {
+  /** "quote" = no route was found at all; "build" = a route was found but the swap transaction could not be built. */
+  stage: "quote" | "build";
+  inputMint: string;
+  outputMint: string;
+  amountRaw: bigint;
+  /** The successful quote, when there is one (stage "build") -- its routePlan names the venues. */
+  quote?: JupiterQuote | null;
+  /** Jupiter's own error text, passed through verbatim. */
+  message?: string | null;
+}
+
+/**
+ * One honest, specific sentence for a failed swap: what failed, on which
+ * venue(s), for exactly how much of what, in Jupiter's own words, plus the
+ * concrete next step. Never speculates about the cause -- when the amount is
+ * genuinely dust-sized it says so as an additional fact, not as the verdict.
+ */
+export function describeSwapFailure(p: SwapFailureContext): string {
+  const isUsdcIn = p.inputMint === MAINNET_USDC_MINT;
+  const amount = isUsdcIn ? formatUsdcRaw(p.amountRaw) : `${p.amountRaw.toString()} raw units of ${shortMint(p.inputMint)}`;
+  const target = shortMint(isUsdcIn ? p.outputMint : p.inputMint);
+  const said = p.message ? ` Jupiter said: "${p.message}".` : "";
+  const excluded = DEFAULT_EXCLUDED_DEXES.length ? ` (${DEFAULT_EXCLUDED_DEXES.join(" and ")} are excluded on purpose -- they returned broken routes.)` : "";
+  const tiny = isUsdcIn && p.amountRaw > 0n && p.amountRaw < 1_000n ? ` ${amount} is also smaller than this swap's own network fee, so it is worth raising the amount for this asset regardless.` : "";
+
+  if (p.stage === "build") {
+    const route = describeRoute(routeLabelsOf(p.quote));
+    const via = route ? `The ${route} route` : "The route Jupiter chose";
+    return `${via} quoted ${amount} into ${target} but could not build the swap.${said} Nothing was swapped and no fee was paid.${tiny}`;
+  }
+  const route = describeRoute(routeLabelsOf(p.quote));
+  const tried = route ? `Jupiter could only reach ${target} through ${route}, and that route would not quote ${amount}.` : `Jupiter found no route from ${amount} into ${target} on any venue it supports.`;
+  return `${tried}${said}${excluded} Nothing was swapped and no fee was paid.${tiny}`;
+}
+
 export interface JupiterBuildParams {
   quote: JupiterQuote;
   userPublicKey: string;

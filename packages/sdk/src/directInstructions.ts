@@ -35,6 +35,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
+import { assetAta, resolveLegTokenProgram } from "./tokenPrograms";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
@@ -111,8 +112,9 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
 
   const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
-  const userAssetAta = getAssociatedTokenAddressSync(mint, user);
-  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint));
+  const legTokenProgram = resolveLegTokenProgram(asset); // DEC-0201
+  const userAssetAta = assetAta(mint, user, legTokenProgram);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint, legTokenProgram));
 
   // Tier B (DEC-0184 settlement pipeline): mint_reserve_tokens_in_kind's fee
   // accounts changed shape. The protocol fee no longer goes to a caller-chosen
@@ -154,7 +156,7 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
       { pubkey: new PublicKey(asset.vault), isWritable: true, isSigner: false },
       { pubkey: userAssetAta, isWritable: true, isSigner: false },
       { pubkey: mint, isWritable: false, isSigner: false },
-      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+      { pubkey: legTokenProgram, isWritable: false, isSigner: false },
     ])
     .instruction();
   instructions.push(mintIx);
@@ -241,16 +243,20 @@ export async function buildDirectMultiAssetMintInstructions(params: BuildDirectM
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (const leg of assets) {
     const mint = new PublicKey(leg.mint);
-    const userAta = getAssociatedTokenAddressSync(mint, user);
+    // DEC-0201: this asset's OWN token program, never an assumed classic one.
+    // The ATA address differs per program, so deriving it wrong yields an
+    // account that will never hold the asset.
+    const legTokenProgram = resolveLegTokenProgram(leg);
+    const userAta = assetAta(mint, user, legTokenProgram);
     // Idempotent -- a no-op if multiAssetBuyClient.ts's funding step already
     // created this ATA (it always does, to fund it), harmless either way.
-    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint));
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint, legTokenProgram));
     remainingAccounts.push(
       { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
       { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
       { pubkey: userAta, isWritable: true, isSigner: false },
       { pubkey: mint, isWritable: false, isSigner: false },
-      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+      { pubkey: legTokenProgram, isWritable: false, isSigner: false },
     );
   }
 
@@ -308,12 +314,13 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
   const entitlement = (netShares * vaultBalance) / totalSupply; // mulDivFloor, matches computeRedemptionEntitlements
 
   const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
-  const userAssetAta = getAssociatedTokenAddressSync(mint, user);
+  const legTokenProgram = resolveLegTokenProgram(asset); // DEC-0201
+  const userAssetAta = assetAta(mint, user, legTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
   const { mintAuthority, feeSettlement, feeVault, feeVaultAuthority } = redeemFeeVaultAccounts(program, reserve, reserveTokenMint);
 
   const instructions: TransactionInstruction[] = [];
-  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint));
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint, legTokenProgram));
 
   const redeemIx = await program.methods
     .redeemReserveTokensInKind(new BN(params.reserveTokensToRedeem.toString()), [new BN(0)])
@@ -338,7 +345,7 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
       { pubkey: new PublicKey(asset.vault), isWritable: true, isSigner: false },
       { pubkey: userAssetAta, isWritable: true, isSigner: false },
       { pubkey: mint, isWritable: false, isSigner: false },
-      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+      { pubkey: legTokenProgram, isWritable: false, isSigner: false },
     ])
     .instruction();
   instructions.push(redeemIx);
@@ -406,14 +413,15 @@ export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirec
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (const leg of assets) {
     const mint = new PublicKey(leg.mint);
-    const userAta = getAssociatedTokenAddressSync(mint, user);
-    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint));
+    const legTokenProgram = resolveLegTokenProgram(leg); // DEC-0201, see the mint path above
+    const userAta = assetAta(mint, user, legTokenProgram);
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAta, user, mint, legTokenProgram));
     remainingAccounts.push(
       { pubkey: new PublicKey(leg.reserveAsset), isWritable: false, isSigner: false },
       { pubkey: new PublicKey(leg.vault), isWritable: true, isSigner: false },
       { pubkey: userAta, isWritable: true, isSigner: false },
       { pubkey: mint, isWritable: false, isSigner: false },
-      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+      { pubkey: legTokenProgram, isWritable: false, isSigner: false },
     );
   }
 

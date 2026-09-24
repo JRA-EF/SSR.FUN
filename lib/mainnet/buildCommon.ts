@@ -3,8 +3,9 @@
 // decision, v0 compilation/fit measurement, and Jupiter failure mapping.
 // Pure where possible (decideMode, hypotheticalLookupTable, fitsV0) so the
 // decisions are unit-testable without a wallet or Jupiter.
-import { AddressLookupTableAccount, AddressLookupTableProgram, Connection, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, unpackAccount } from "@solana/spl-token";
+import { AddressLookupTableAccount, AddressLookupTableProgram, Connection, PublicKey, TransactionInstruction, VersionedTransaction, type AccountInfo } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, type TokenProgramKindDecoded } from "@ssr/sdk";
 import {
   enumerateReserveAssetMintsOnChain,
   findProtocolConfig,
@@ -16,7 +17,7 @@ import {
 } from "@ssr/sdk";
 import { compileSingleBuyTransaction, fetchLookupTables, SingleTxTooLargeError } from "../../src/merge/lib/singleTxBuy";
 import { buildReserveAltAddresses, chunkAltAddresses } from "../../src/merge/lib/reserveAltClient";
-import { MAINNET_USDC_MINT, jupiterExhaustedResponse, type JupiterCallResult } from "./jupiter";
+import { MAINNET_USDC_MINT, describeSwapFailure, jupiterExhaustedResponse, type JupiterCallResult, type JupiterQuote } from "./jupiter";
 
 export const MAINNET_TREASURY_VAULT = "3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5";
 /** Above this many swap legs the one-transaction composition has never fit -- the single attempt is skipped outright. */
@@ -37,7 +38,8 @@ export class BuildError extends Error {
   }
 }
 
-export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single";
+/** "tax": the manager's Sell tax transfers, submitted by the client only after every swap of a batch-mode sale has landed (DEC-0198). */
+export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single" | "tax";
 
 export interface BuiltTransaction {
   kind: BuiltTxKind;
@@ -98,19 +100,37 @@ export function toBase64(tx: VersionedTransaction): { base64: string; bytes: num
   return { base64: Buffer.from(bytes).toString("base64"), bytes: bytes.length };
 }
 
-export function jupiterFailure(what: "quote" | "transaction", mint: string, r: Exclude<JupiterCallResult<unknown>, { kind: "ok" }>): BuildError {
-  if (r.kind === "specific-error") return new BuildError(502, `Jupiter could not ${what === "quote" ? "quote" : "build"} the swap for ${mint}: ${r.message}`, { mint });
+/**
+ * A failed Jupiter call as a user-facing BuildError. When the leg's context is
+ * known (amount + direction, and the quote itself for a build failure) the
+ * message names the venue(s) and the exact amount (DEC-0199); otherwise it
+ * falls back to the older mint-only wording.
+ */
+export function jupiterFailure(
+  what: "quote" | "transaction",
+  mint: string,
+  r: Exclude<JupiterCallResult<unknown>, { kind: "ok" }>,
+  context?: { inputMint: string; outputMint: string; amountRaw: bigint; quote?: JupiterQuote | null },
+): BuildError {
+  if (r.kind === "specific-error") {
+    const message = context
+      ? describeSwapFailure({ stage: what === "quote" ? "quote" : "build", inputMint: context.inputMint, outputMint: context.outputMint, amountRaw: context.amountRaw, quote: context.quote, message: r.message })
+      : `Jupiter could not ${what === "quote" ? "quote" : "build"} the swap for ${mint}: ${r.message}`;
+    return new BuildError(502, message, { mint });
+  }
   const x = jupiterExhaustedResponse(what, r.lastStatus);
   return new BuildError(x.status, `${x.error} (asset ${mint})`, { mint }, x.retryAfterSeconds);
 }
 
-export function tokenAmountFromInfo(pda: PublicKey, info: Parameters<typeof unpackAccount>[1]): bigint {
-  if (!info) return 0n;
-  try {
-    return unpackAccount(pda, info).amount;
-  } catch {
-    return 0n;
-  }
+/**
+ * Raw balance of a token account fetched via getMultipleAccountsInfo, decoded
+ * under whichever program owns it (a Token-2022 vault or ATA is a Token-2022
+ * account; the classic-only decoder this used before threw on those and the
+ * catch reported "0", so a Buy against a tokenized-stock Reserve computed its
+ * mint requirements from empty vaults). 0n when the account does not exist.
+ */
+export function tokenAmountFromInfo(pda: PublicKey, info: AccountInfo<Buffer> | null | undefined): bigint {
+  return tokenAccountAmountByOwner(pda, info);
 }
 
 // --- The parallel reads --------------------------------------------------------
@@ -157,15 +177,22 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
   const usdcMint = new PublicKey(MAINNET_USDC_MINT);
   const reserveAssetPdas = candidateMints.map((m) => findReserveAsset(reserve, m, ssrProgramId)[0]);
   const vaultPdas = candidateMints.map((m) => findReserveVault(reserve, m, ssrProgramId)[0]);
-  const walletAtas = candidateMints.map((m) => getAssociatedTokenAddressSync(m, wallet));
+  // DEC-0201: an asset's ATA address depends on its token program, and we do
+  // not know that until the ReserveAsset accounts come back in the same batch
+  // below. Rather than spend an extra sequential round trip on the Buy/Sell
+  // hot path, derive BOTH candidate addresses per mint and fetch them in the
+  // one call we were already making; the leg then picks the one its recorded
+  // program says is real. Classic-only Reserves are unaffected.
+  const walletAtasClassic = candidateMints.map((m) => assetAta(m, wallet, TOKEN_PROGRAM_ID));
+  const walletAtas2022 = candidateMints.map((m) => assetAta(m, wallet, TOKEN_2022_PROGRAM_ID));
   const walletUsdcAta = getAssociatedTokenAddressSync(usdcMint, wallet);
   const walletRtAta = getAssociatedTokenAddressSync(reserveTokenMint, wallet);
-  type ReserveAssetRow = { decimals: number; orderIndex: number } | null;
+  type ReserveAssetRow = { decimals: number; orderIndex: number; tokenProgram?: TokenProgramKindDecoded } | null;
   const [reserveAssets, vaultInfos, supply, walletInfos, walletSolLamports, reserveAlt] = await Promise.all([
     program.account.reserveAsset.fetchMultiple(reserveAssetPdas) as Promise<ReserveAssetRow[]>,
     connection.getMultipleAccountsInfo(vaultPdas),
     getTokenSupplyWithRetry(connection, reserveTokenMint),
-    connection.getMultipleAccountsInfo([...walletAtas, walletUsdcAta, walletRtAta]),
+    connection.getMultipleAccountsInfo([...walletAtasClassic, ...walletAtas2022, walletUsdcAta, walletRtAta]),
     connection.getBalance(wallet, "confirmed"),
     deps.lookupReserveAlt(reserve.toBase58()).catch(() => null),
   ]);
@@ -174,7 +201,15 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
   candidateMints.forEach((m, i) => {
     const ra = reserveAssets[i];
     if (!ra) return;
-    assets.push({ mint: m.toBase58(), decimals: ra.decimals, reserveAsset: reserveAssetPdas[i].toBase58(), vault: vaultPdas[i].toBase58(), vaultBalanceRaw: tokenAmountFromInfo(vaultPdas[i], vaultInfos[i]).toString() });
+    const legTokenProgram = tokenProgramFromKind(ra.tokenProgram);
+    assets.push({
+      mint: m.toBase58(),
+      decimals: ra.decimals,
+      reserveAsset: reserveAssetPdas[i].toBase58(),
+      vault: vaultPdas[i].toBase58(),
+      vaultBalanceRaw: tokenAmountFromInfo(vaultPdas[i], vaultInfos[i]).toString(),
+      tokenProgram: legTokenProgram.toBase58(),
+    });
     orderIndexes.push(ra.orderIndex);
   });
   const order = assets.map((_, i) => i).sort((a, b) => orderIndexes[a] - orderIndexes[b]);
@@ -183,8 +218,17 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
     throw new BuildError(422, `Could not resolve every registered asset of this Reserve (${orderedAssets.length} of ${reserveAccount.assetCount}) -- refusing to build against an incomplete asset list.`);
   }
   if (orderedAssets.length === 0) throw new BuildError(422, "This Reserve has no registered assets.");
+  // Each mint's real balance comes from whichever of the two derived ATAs its
+  // token program actually uses (DEC-0201). A mint we could not resolve a
+  // ReserveAsset for is read classically, which is what it was before.
+  const programByMint = new Map(assets.map((a) => [a.mint, a.tokenProgram ?? TOKEN_PROGRAM_ID.toBase58()]));
   const heldByMint = new Map<string, bigint>();
-  candidateMints.forEach((m, i) => heldByMint.set(m.toBase58(), tokenAmountFromInfo(walletAtas[i], walletInfos[i])));
+  candidateMints.forEach((m, i) => {
+    const is2022 = programByMint.get(m.toBase58()) === TOKEN_2022_PROGRAM_ID.toBase58();
+    const ata = is2022 ? walletAtas2022[i] : walletAtasClassic[i];
+    const info = is2022 ? walletInfos[candidateMints.length + i] : walletInfos[i];
+    heldByMint.set(m.toBase58(), tokenAmountFromInfo(ata, info));
+  });
   return {
     reserveAccount,
     reserveTokenMint,
@@ -194,8 +238,8 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
     orderedAssets,
     supplyRaw: BigInt(supply ? supply.value.amount : "0"),
     heldByMint,
-    walletUsdcRaw: tokenAmountFromInfo(walletUsdcAta, walletInfos[candidateMints.length]),
-    walletReserveTokenRaw: tokenAmountFromInfo(walletRtAta, walletInfos[candidateMints.length + 1]),
+    walletUsdcRaw: tokenAmountFromInfo(walletUsdcAta, walletInfos[candidateMints.length * 2]),
+    walletReserveTokenRaw: tokenAmountFromInfo(walletRtAta, walletInfos[candidateMints.length * 2 + 1]),
     walletSolLamports: BigInt(walletSolLamports),
     reserveAlt,
     readsMs: Date.now() - t0,

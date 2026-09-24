@@ -10,6 +10,7 @@
 // swap transaction off-chain (see the keeper script for that leg).
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { assetAta, resolveLegTokenProgram } from "./tokenPrograms";
 import * as anchor from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import {
@@ -67,13 +68,17 @@ export async function buildRedeemFeeVaultSharesInstruction(params: BuildRedeemFe
 
   const remainingAccounts = assets.flatMap((asset) => {
     const mint = new PublicKey(asset.mint);
-    const stagingAta = getAssociatedTokenAddressSync(mint, settlementAuthority, true);
+    // DEC-0201: the settlement staging ATA must be derived under the asset's
+    // OWN token program, or the keeper redeems fees into an account that can
+    // never hold them.
+    const legTokenProgram = resolveLegTokenProgram(asset);
+    const stagingAta = assetAta(mint, settlementAuthority, legTokenProgram, true);
     return [
       { pubkey: new PublicKey(asset.reserveAsset), isWritable: false, isSigner: false },
       { pubkey: new PublicKey(asset.vault), isWritable: true, isSigner: false },
       { pubkey: stagingAta, isWritable: true, isSigner: false },
       { pubkey: mint, isWritable: false, isSigner: false },
-      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+      { pubkey: legTokenProgram, isWritable: false, isSigner: false },
     ];
   });
 
@@ -99,6 +104,8 @@ export interface BuildApproveSettlementSwapParams {
   programId: PublicKey;
   reserve: PublicKey;
   assetMint: PublicKey;
+  /** DEC-0201: the asset's own token program; omit for classic SPL Token. */
+  assetTokenProgram?: PublicKey;
   keeper: PublicKey;
   amount: bigint;
 }
@@ -112,9 +119,10 @@ export interface BuildApproveSettlementSwapParams {
  */
 export async function buildApproveSettlementSwapInstruction(params: BuildApproveSettlementSwapParams): Promise<TransactionInstruction> {
   const { program, programId, reserve, assetMint, keeper, amount } = params;
+  const assetProgram = resolveLegTokenProgram({ tokenProgram: params.assetTokenProgram ?? null }); // DEC-0201
   const [settlementKeeperConfig] = findSettlementKeeperConfig(programId);
   const [settlementAuthority] = findSettlementAuthority(reserve, programId);
-  const stagingAta = getAssociatedTokenAddressSync(assetMint, settlementAuthority, true);
+  const stagingAta = assetAta(assetMint, settlementAuthority, assetProgram, true);
 
   return program.methods
     .approveSettlementSwap(new anchor.BN(amount.toString()))
@@ -125,7 +133,7 @@ export async function buildApproveSettlementSwapInstruction(params: BuildApprove
       stagingAta,
       settlementAuthority,
       keeper,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: assetProgram, // DEC-0201
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
     })
     .instruction();

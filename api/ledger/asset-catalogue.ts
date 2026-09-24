@@ -25,6 +25,7 @@
 // it.
 import { getSql } from "../../lib/ledger/db";
 import { isLaunchpadId, type LaunchpadId, type LaunchpadStage, type LaunchpadVenue } from "../../packages/sdk/src/launchpads";
+import { isTokenIssuerId, type TokenIssuerId } from "../../packages/sdk/src/issuers";
 
 interface ApiRequest {
   method?: string;
@@ -47,6 +48,8 @@ export interface CatalogueRow {
   launchpad?: string | null;
   launchpadStage?: string | null;
   launchpadVenue?: string | null;
+  /** Tokenised-asset issuer, proven on-chain by the mint's permanent delegate (packages/sdk/src/issuers.ts); null = not from a known issuer or not yet classified. */
+  issuer?: string | null;
 }
 
 /** Launchpad provenance as the picker shows it. Informational: it never affects whether a token is offered. */
@@ -61,10 +64,24 @@ export interface CatalogueToken {
   symbol: string;
   name: string;
   decimals: number;
+  /**
+   * The token program that owns this mint. Carried all the way to the
+   * instruction builders, which create the vault and derive every ATA under
+   * it. Rows captured before this column existed report classic SPL Token,
+   * which is what they are.
+   */
+  tokenProgram: string;
   launchpad: CatalogueTokenLaunchpad | null;
+  /** Who issued this tokenised real-world asset, or null. Informational: it never affects whether a token is offered. */
+  issuer: TokenIssuerId | null;
 }
 
 /** Pure: the stored columns -> the picker's launchpad object, or null. Only accepts the exact verified ids (a stray/unknown value is treated as no provenance, never surfaced). */
+/** Pure: the stored column -> the picker's issuer id, or null. Only the exact verified ids are accepted; a stray value is treated as no issuer. */
+export function issuerOfRow(row: Pick<CatalogueRow, "issuer">): TokenIssuerId | null {
+  return isTokenIssuerId(row.issuer) ? row.issuer : null;
+}
+
 export function launchpadOfRow(row: Pick<CatalogueRow, "launchpad" | "launchpadStage" | "launchpadVenue">): CatalogueTokenLaunchpad | null {
   if (!isLaunchpadId(row.launchpad)) return null;
   const stage: LaunchpadStage = row.launchpadStage === "graduated" ? "graduated" : "bonding";
@@ -74,30 +91,36 @@ export function launchpadOfRow(row: Pick<CatalogueRow, "launchpad" | "launchpadS
 }
 
 /**
- * The Token-2022 program's real, canonical Mainnet address. Every
- * client-side instruction builder in packages/sdk (createReserveFlow.ts,
- * directInstructions.ts, managementInstructions.ts, zapInstructions.ts,
- * ammInstructions.ts, rebalanceExecutionInstructions.ts) currently
- * hardcodes `tokenProgram: TOKEN_PROGRAM_ID` unconditionally -- even though
- * the on-chain ssr_protocol program itself is genuinely Token-2022-aware
- * (see programs/ssr_protocol/src/instructions/initialize_reserve_asset.rs's
- * `TokenInterface`/`TokenProgramKind::Token2022` handling), the CLIENT never
- * actually passes that program account for any mint, so a Token-2022 asset
- * would build a transaction with the WRONG token_program account and fail
- * on-chain regardless of anything fixed here. See
- * docs/project/DECISION_LOG.md's entry for this pass -- excluding these
- * mints from the picker is the properly-scoped fix until the SDK is updated
- * end-to-end (a separate, larger, cross-cutting change affecting Buy/Sell/
- * rebalance/zap too, not just Reserve creation).
+ * The Token-2022 program's real, canonical Mainnet address.
+ *
+ * These mints were excluded from the picker entirely until 2026-09-11,
+ * because every client-side instruction builder hardcoded the classic SPL
+ * Token program and would have built a transaction with the wrong program
+ * account. That exclusion cost far more than it looked: measured against the
+ * live catalogue, 1,587 of 3,224 Jupiter-verified mints are Token-2022 --
+ * 49% of the tradable universe, including most pump.fun-era tokens and PUMP
+ * itself, which is what surfaced it.
+ *
+ * The on-chain program was never the blocker: asset legs are InterfaceAccounts,
+ * each ReserveAsset records its own token_program, and the CPI uses whichever
+ * program the caller passes. DEC-0201 made the CLIENT pass it, so the
+ * exclusion below is gone and these mints are selectable.
  */
 export const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
-/** Pure -- unit-testable without a live database. Keeps at most one entry per symbol (the highest organic-score mint), excludes the reserved "USDC" symbol and any confirmed Token-2022 mint entirely (see TOKEN_2022_PROGRAM_ID), and returns entries sorted by score (nulls last) then symbol. A null/unknown tokenProgram (rows captured before this field existed) is never excluded -- only a POSITIVELY confirmed Token-2022 mint is. */
+/**
+ * Pure -- unit-testable without a live database. Keeps at most one entry per
+ * symbol (the highest organic-score mint), excludes the reserved "USDC"
+ * symbol, and returns entries sorted by score (nulls last) then symbol.
+ *
+ * Token-2022 mints are NO LONGER excluded (DEC-0201): each entry now carries
+ * its own token program through to the builders. A null/unknown tokenProgram
+ * reports classic SPL Token, which is what those rows are.
+ */
 export function dedupeBySymbolPreferOrganicScore(rows: CatalogueRow[]): CatalogueToken[] {
   const bestBySymbol = new Map<string, CatalogueRow>();
   for (const row of rows) {
     if (!row.symbol || row.symbol.toUpperCase() === "USDC") continue;
-    if (row.tokenProgram === TOKEN_2022_PROGRAM_ID) continue;
     const existing = bestBySymbol.get(row.symbol);
     const rowScore = row.organicScore ?? -Infinity;
     const existingScore = existing ? existing.organicScore ?? -Infinity : -Infinity;
@@ -105,8 +128,19 @@ export function dedupeBySymbolPreferOrganicScore(rows: CatalogueRow[]): Catalogu
   }
   return [...bestBySymbol.values()]
     .sort((a, b) => (b.organicScore ?? -Infinity) - (a.organicScore ?? -Infinity) || a.symbol.localeCompare(b.symbol))
-    .map((r) => ({ mint: r.mint, symbol: r.symbol, name: r.name || r.symbol, decimals: r.decimals, launchpad: launchpadOfRow(r) }));
+    .map((r) => ({
+      mint: r.mint,
+      symbol: r.symbol,
+      name: r.name || r.symbol,
+      decimals: r.decimals,
+      tokenProgram: r.tokenProgram === TOKEN_2022_PROGRAM_ID ? TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID,
+      launchpad: launchpadOfRow(r),
+      issuer: issuerOfRow(r),
+    }));
 }
+
+/** The classic SPL Token program -- the default for any row without a positively-confirmed Token-2022 owner. */
+export const SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 // Both limits must comfortably exceed Jupiter's real verified-list size
@@ -129,7 +163,8 @@ async function loadCatalogue(): Promise<{ tokens: CatalogueToken[]; updatedAt: n
       -- reads null instead of failing on a missing column
       to_jsonb(ledger_asset_catalogue) ->> 'launchpad' as "launchpad",
       to_jsonb(ledger_asset_catalogue) ->> 'launchpad_stage' as "launchpadStage",
-      to_jsonb(ledger_asset_catalogue) ->> 'launchpad_venue' as "launchpadVenue"
+      to_jsonb(ledger_asset_catalogue) ->> 'launchpad_venue' as "launchpadVenue",
+      to_jsonb(ledger_asset_catalogue) ->> 'issuer' as "issuer"
     from ledger_asset_catalogue
     where jupiter_verified = true
       and decimals is not null

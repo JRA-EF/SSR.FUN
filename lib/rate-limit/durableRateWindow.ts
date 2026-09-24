@@ -30,8 +30,11 @@ export interface DurableRateResult {
 }
 
 /**
- * Atomically records one hit against `key` in a fixed `windowMs` window and
- * reports whether the window is still at or under `maxCount`.
+ * Atomically records `weight` hits (default 1) against `key` in a fixed
+ * `windowMs` window and reports whether the window is still at or under
+ * `maxCount`. A weight lets a caller budget in units other than requests --
+ * e.g. the Robinhood RPC proxy spends one unit per JSON-RPC call, so a
+ * 20-call batch costs 20, not 1.
  *
  * @returns allowed=true while count <= maxCount; durable=false only if the DB
  *          threw (then allowed is reported true and the caller should fall
@@ -43,21 +46,23 @@ export async function checkDurableRateWindow(
   windowMs: number,
   maxCount: number,
   now: number = Date.now(),
+  weight: number = 1,
 ): Promise<DurableRateResult> {
+  const w = Number.isFinite(weight) && weight > 0 ? Math.ceil(weight) : 1
   try {
     const rows = await sql`
       INSERT INTO rate_limit_window (key, window_start, count)
-      VALUES (${key}, ${now}, 1)
+      VALUES (${key}, ${now}, ${w})
       ON CONFLICT (key) DO UPDATE SET
         window_start = CASE
           WHEN ${now} - rate_limit_window.window_start >= ${windowMs}
           THEN ${now} ELSE rate_limit_window.window_start END,
         count = CASE
           WHEN ${now} - rate_limit_window.window_start >= ${windowMs}
-          THEN 1 ELSE rate_limit_window.count + 1 END
+          THEN ${w} ELSE rate_limit_window.count + ${w} END
       RETURNING count, window_start
     `
-    const count = rows[0]?.count ?? 1
+    const count = rows[0]?.count ?? w
     return { allowed: count <= maxCount, durable: true, count }
   } catch {
     // DB unreachable/misconfigured -> fail open, signal non-durable so the

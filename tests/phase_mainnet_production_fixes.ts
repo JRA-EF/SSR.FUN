@@ -111,15 +111,23 @@ describe("api/ledger/asset-catalogue.ts -- dedupeBySymbolPreferOrganicScore (pur
     expect(result[0].name).to.equal("NONAME");
   });
 
-  it("excludes a confirmed Token-2022 mint entirely -- the client-side SDK hardcodes the classic Token program on every instruction it builds, so a Token-2022 asset would fail on-chain regardless of anything else fixed client-side", () => {
+  // DEC-0201 INVERTED this rule. Token-2022 mints used to be dropped here
+  // because every SDK builder hardcoded the classic program; they are now
+  // included and carry their own program through to the builders. The
+  // exclusion was costing 1,587 of 3,224 verified mints -- 49% of the
+  // tradable universe -- not just PUMP.
+  it("INCLUDES a Token-2022 mint and reports its real program, so the builders can create the vault and derive ATAs under it", () => {
     const rows = [row("Classic1", "AAA", 10, null, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"), row("T22Mint", "BBB", 10, null, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")];
     const result = dedupeBySymbolPreferOrganicScore(rows);
-    expect(result.map((r) => r.mint)).to.deep.equal(["Classic1"]);
+    expect(result.map((r) => r.mint).sort()).to.deep.equal(["Classic1", "T22Mint"]);
+    expect(result.find((r) => r.mint === "T22Mint")!.tokenProgram).to.equal("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+    expect(result.find((r) => r.mint === "Classic1")!.tokenProgram).to.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
   });
 
-  it("never excludes a row with a null/unknown tokenProgram (rows captured before this field existed) -- only a POSITIVELY confirmed Token-2022 mint is excluded", () => {
+  it("a row with a null/unknown tokenProgram reports CLASSIC SPL Token -- never an empty or guessed value a builder could pass on", () => {
     const result = dedupeBySymbolPreferOrganicScore([row("Legacy1", "CCC", 10, null, null)]);
     expect(result.map((r) => r.mint)).to.deep.equal(["Legacy1"]);
+    expect(result[0].tokenProgram).to.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
   });
 
   it("an empty input list produces an empty, valid (never fabricated) result", () => {
@@ -450,7 +458,11 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     await jupiterSwapHandler(makeValidReq() as never, res as never);
     expect(quoteCalls).to.equal(1);
     expect(res.statusCode).to.equal(502);
-    expect((res.body as { error?: string }).error).to.equal("The token X is not tradable");
+    // DEC-0199: the proxy now names the venue/amount/asset around Jupiter's
+    // own words instead of passing the bare string through. The contract this
+    // test guards -- no retry, 502, and Jupiter's real reason surfaced rather
+    // than a generic message -- is unchanged, so assert containment.
+    expect((res.body as { error?: string }).error).to.contain("The token X is not tradable");
   });
 
   it("retries a transient network-level failure and succeeds once a later attempt lands, exactly reproducing DELTA's real fix", async () => {
@@ -520,7 +532,9 @@ describe("api/mainnet/jupiter-swap.ts -- bounded retry distinguishes a transient
     await jupiterSwapHandler(makeValidReq() as never, res as never);
     expect(swapCalls).to.equal(1);
     expect(res.statusCode).to.equal(502);
-    expect((res.body as { error?: string }).error).to.equal("Simulation failed: insufficient funds for rent.");
+    // DEC-0199: same as the quote case above -- Jupiter's own words are
+    // surfaced, now inside a sentence that also names the route and amount.
+    expect((res.body as { error?: string }).error).to.contain("Simulation failed: insufficient funds for rent.");
   });
 
   // Live-observed 2026-08-25 (post-DEC-0151, Creator's topped-up Resume):
@@ -854,7 +868,15 @@ describe("createReserveClient.ts's real Connection method usage stays inside bot
   // confirmed directly in node_modules/@solana/web3.js/lib/index.cjs.js: it
   // calls getAccountInfoAndContext (itself a getAccountInfo wrapper)
   // internally and issues no RPC method of its own.
-  const METHOD_TO_RPC_NAME: Record<string, string> = { sendRawTransaction: "sendTransaction", getAddressLookupTable: "getAccountInfo" };
+  // web3.js helper names -> the JSON-RPC method actually put on the wire, which
+  // is what the proxy allowlists gate. getMultipleAccountsInfo added 2026-09-11
+  // (DEC-0205): the Reserve-creation preflight reads every selected mint in one
+  // call, and that helper sends getMultipleAccounts, already allowed.
+  const METHOD_TO_RPC_NAME: Record<string, string> = {
+    sendRawTransaction: "sendTransaction",
+    getAddressLookupTable: "getAccountInfo",
+    getMultipleAccountsInfo: "getMultipleAccounts",
+  };
 
   function extractConnectionMethodCalls(sourcePath: string): string[] {
     const source = fs.readFileSync(path.join(__dirname, "..", sourcePath), "utf8");
@@ -990,12 +1012,29 @@ describe("ATA derivation -- Token Program vs. Token-2022 consistency", () => {
     expect(ata.toBase58()).to.equal("63UUcPv7qnDjGXtS64VyUuYXQrLRNKoXK4ddWJP8YvM3");
   });
 
-  it("this app's client-side SDK genuinely only supports the classic Token program end to end (every instruction builder hardcodes TOKEN_PROGRAM_ID) -- excluding Token-2022 mints from the picker (see the asset-catalogue tests above) is therefore correct scoping, not an arbitrary restriction", () => {
-    const sdkFiles = ["packages/sdk/src/createReserveFlow.ts", "packages/sdk/src/directInstructions.ts", "packages/sdk/src/managementInstructions.ts"];
-    for (const file of sdkFiles) {
+  // DEC-0201 INVERTED this too. The old assertion pinned the hardcode as
+  // deliberate; it is now the defect. Every ASSET-side token program must be
+  // resolved per leg. The Reserve Token's own mint stays classic -- this
+  // program creates it -- so a bare classic reference is still expected in
+  // createReserveFlow (create_reserve) and managementInstructions (fee
+  // collection, close_reserve), just never for an asset.
+  it("no asset-side builder hardcodes a token program any more -- each resolves the leg's own", () => {
+    const assetBuilders = ["packages/sdk/src/directInstructions.ts", "packages/sdk/src/feeSettlementInstructions.ts"];
+    for (const file of assetBuilders) {
       const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
-      expect(source, file).to.include("tokenProgram: TOKEN_PROGRAM_ID");
-      expect(source, file).to.not.include(TOKEN_2022_PROGRAM_ID);
+      expect(source, file).to.include("resolveLegTokenProgram");
+      // The 5th remaining account of every asset leg is the leg's program.
+      expect(source, file).to.not.include("{ pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false }");
+    }
+    const creation = fs.readFileSync(path.join(__dirname, "..", "packages/sdk/src/createReserveFlow.ts"), "utf8");
+    expect(creation).to.include("resolveLegTokenProgram");
+  });
+
+  it("asset ATAs are derived under the asset's own program -- the silent half, since a classic-derived address for a Token-2022 mint is a different account that can never hold it", () => {
+    const files = ["packages/sdk/src/directInstructions.ts", "packages/sdk/src/feeSettlementInstructions.ts", "packages/sdk/src/createReserveFlow.ts"];
+    for (const file of files) {
+      const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+      expect(source, file).to.include("assetAta(");
     }
   });
 

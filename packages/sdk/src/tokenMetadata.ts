@@ -1,6 +1,6 @@
 // Metaplex Token Metadata for Reserve Tokens -- the client half of the
-// program's `set_reserve_token_metadata` instruction (programs/ssr_protocol/
-// src/instructions/set_reserve_token_metadata.rs). Every Reserve Token mint
+// program's `create_token_metadata` instruction (programs/ssr_protocol/
+// src/instructions/create_token_metadata.rs). Every Reserve Token mint
 // gets a Metaplex metadata account carrying the Reserve's name and symbol
 // on-chain plus a `uri` to the standard-format record (api/<cluster>/
 // token-metadata) that carries the description, picture and category, so
@@ -11,9 +11,12 @@
 import { Connection, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY, TransactionInstruction } from "@solana/web3.js";
 import * as anchor from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findMintAuthority, findProtocolConfig } from "./pda";
+import { findMintAuthority, findReserveTokenMint } from "./pda";
 
 export const TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+
+/** Alias used by the management-instruction callers. Same program. */
+export const METAPLEX_TOKEN_METADATA_PROGRAM_ID = TOKEN_METADATA_PROGRAM_ID;
 
 export const MAX_TOKEN_METADATA_NAME_LEN = 32;
 export const MAX_TOKEN_METADATA_SYMBOL_LEN = 10;
@@ -114,40 +117,69 @@ export function tokenMetadataUriFromReserveMetadataUri(reserveMetadataUri: strin
 }
 
 /**
- * `set_reserve_token_metadata`: creates the mint's Metaplex metadata account
- * or replaces its data. Signer must be the Reserve's root Manager, a
- * co-manager holding UPDATE_METADATA (`delegate` = the signer's own Delegate
- * PDA, only read on-chain in that case), or a protocol admin. The signer
- * pays the metadata account's rent on first creation (~0.0056 SOL).
+ * Publishes Metaplex metadata for a Reserve Token mint. The program signs the
+ * Metaplex CPI with the mint-authority PDA, so this is the ONLY way such a
+ * mint can ever get metadata -- no off-chain tool can do it.
+ *
+ * Idempotent on-chain: a mint that already has a metadata account is left
+ * untouched, so this doubles as the repair path for Reserves created before
+ * the instruction existed.
+ *
+ * `uri` must be a permanent HTTPS metadata URL, and `name`/`symbol` are
+ * capped on-chain at 32 and 10 bytes -- pass them through
+ * `fitTokenMetadataName` / `fitTokenMetadataSymbol` first.
  */
-export async function buildSetReserveTokenMetadataInstruction(
+export async function buildCreateTokenMetadataInstruction(
   program: Program<anchor.Idl>,
   programId: PublicKey,
   reserve: PublicKey,
-  reserveTokenMint: PublicKey,
-  signer: PublicKey,
+  payer: PublicKey,
   delegate: PublicKey,
-  fields: TokenMetadataFields,
+  name: string,
+  symbol: string,
+  uri: string,
 ): Promise<TransactionInstruction> {
-  validateTokenMetadataFields(fields);
-  const [protocolConfig] = findProtocolConfig(programId);
+  const [reserveTokenMint] = findReserveTokenMint(reserve, programId);
   const [mintAuthority] = findMintAuthority(reserve, programId);
   const [metadata] = findTokenMetadata(reserveTokenMint);
   return program.methods
-    .setReserveTokenMetadata(fields.name, fields.symbol, fields.uri)
+    .createTokenMetadata(name, symbol, uri)
     .accounts({
-      protocolConfig,
       reserve,
       reserveTokenMint,
       mintAuthority,
       metadata,
       delegate,
-      signer,
-      tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+      payer,
+      metadataProgram: TOKEN_METADATA_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       rent: SYSVAR_RENT_PUBKEY,
     } as any)
     .instruction();
+}
+
+/**
+ * Field-validating wrapper over `buildCreateTokenMetadataInstruction`, kept
+ * for the callers that pass a `TokenMetadataFields` record.
+ *
+ * IMPORTANT: despite the "set" in the name, the deployed program's
+ * `create_token_metadata` only ever CREATES. A mint whose metadata account
+ * already exists is left exactly as it is; this cannot rewrite a name, symbol
+ * or uri that is already on-chain. The replacing variant
+ * (`set_reserve_token_metadata`) was written but never deployed, so calling
+ * it would fail against the live program.
+ */
+export async function buildSetReserveTokenMetadataInstruction(
+  program: Program<anchor.Idl>,
+  programId: PublicKey,
+  reserve: PublicKey,
+  _reserveTokenMint: PublicKey,
+  signer: PublicKey,
+  delegate: PublicKey,
+  fields: TokenMetadataFields,
+): Promise<TransactionInstruction> {
+  validateTokenMetadataFields(fields);
+  return buildCreateTokenMetadataInstruction(program, programId, reserve, signer, delegate, fields.name, fields.symbol, fields.uri);
 }
 
 export interface OnChainTokenMetadata {
