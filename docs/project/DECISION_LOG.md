@@ -6669,3 +6669,33 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0212",
+  "date": "2026-09-24",
+  "title": "One dedicated BETA key issued for the Stocklana hackathon judges and published in the submission text; ssr-fun stays behind the closed-beta gate",
+  "status": "implemented and DEPLOYED TO PRODUCTION (env-only redeploy dpl_GuMcupoWSfkWZSkvp1rLaPAspquh); live-verified",
+  "decision": "A single new 30-day BETA key, STOCKLANA-TBE2-QAA4-RJH2, appended to the Production SSR_BETA_KEYS list on ssr-fun (now 111 keys: the 110 from DEC-0187 + DEC-0194 plus this one; SSR_TEAM_KEYS unchanged at 10). The key is written into the Stocklana hackathon submission (https://hackathons.solana.com/hackathons/stocklana/submit) so judges can open https://ssr.fun without asking. Recorded as row 121 of the access-key master (Desktop/ssr-access-keys-master.csv; the Google Sheet 'SSR.fun Access Keys (master)' still needs the same row added by hand). To revoke after judging: remove the key from SSR_BETA_KEYS and redeploy -- every session minted from it dies with it (lib/site/session.ts binds sessions to the configured key).",
+  "context": "Creator, 2026-09-24: 'give me the full copy pastable thing here - and dont forget to add a beta key' for the hackathon submission text. SSR_BETA_KEYS is a Sensitive (write-only) variable, so the list could not be read back from Vercel; it was rebuilt from the local master CSV (110 BETA rows, all Active in Vercel = Yes, all well-formed) plus the new key, and written whole. A dedicated key rather than one of the team's 110 so it can be revoked on its own once judging ends.",
+  "rationale": "Judges must get in without a back-and-forth; a public submission means the key is effectively public, so it must be its own revocable key with the shortest session the gate offers (30 days) rather than a TEAM key (400 days).",
+  "alternativesConsidered": [
+    "Publish one of the existing 110 BETA keys (rejected: revoking it later would also revoke whoever else it was issued to)",
+    "Open the gate for the judging window (rejected: DEC-0187's closed-beta decision stands; real funds are at stake on Mainnet)",
+    "A TEAM key (rejected: 400-day sessions for a key printed in a public submission)"
+  ],
+  "impact": "No code change. Production redeployed env-only from main @ be3348e as dpl_GuMcupoWSfkWZSkvp1rLaPAspquh (Ready, aliased to ssr.fun). The key must be removed after judging.",
+  "affectedAreas": [
+    "Vercel ssr-fun Production env SSR_BETA_KEYS (111 keys)",
+    "Desktop/ssr-access-keys-master.csv (row 121)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Vercel API edit of env i3ZPBopgKD9szQUY at 2026-09-24 12:27 UTC (comment: '110 BETA keys (DEC-0187 + DEC-0194) + 1 Stocklana hackathon judges key').",
+    "vercel deploy --prod from the clean worktree -> dpl_GuMcupoWSfkWZSkvp1rLaPAspquh, READY, alias ssr.fun.",
+    "POST https://ssr.fun/api/site/login: the new key -> 200; a bogus STOCKLANA key -> 401; an existing BETA key -> 200 (no key lost in the rewrite)."
+  ]
+}
+```
