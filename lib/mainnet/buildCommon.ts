@@ -3,9 +3,9 @@
 // decision, v0 compilation/fit measurement, and Jupiter failure mapping.
 // Pure where possible (decideMode, hypotheticalLookupTable, fitsV0) so the
 // decisions are unit-testable without a wallet or Jupiter.
-import { AddressLookupTableAccount, AddressLookupTableProgram, Connection, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, unpackAccount, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
-import { assetAta, tokenProgramFromKind, type TokenProgramKindDecoded } from "@ssr/sdk";
+import { AddressLookupTableAccount, AddressLookupTableProgram, Connection, PublicKey, TransactionInstruction, VersionedTransaction, type AccountInfo } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, type TokenProgramKindDecoded } from "@ssr/sdk";
 import {
   enumerateReserveAssetMintsOnChain,
   findProtocolConfig,
@@ -122,13 +122,15 @@ export function jupiterFailure(
   return new BuildError(x.status, `${x.error} (asset ${mint})`, { mint }, x.retryAfterSeconds);
 }
 
-export function tokenAmountFromInfo(pda: PublicKey, info: Parameters<typeof unpackAccount>[1]): bigint {
-  if (!info) return 0n;
-  try {
-    return unpackAccount(pda, info).amount;
-  } catch {
-    return 0n;
-  }
+/**
+ * Raw balance of a token account fetched via getMultipleAccountsInfo, decoded
+ * under whichever program owns it (a Token-2022 vault or ATA is a Token-2022
+ * account; the classic-only decoder this used before threw on those and the
+ * catch reported "0", so a Buy against a tokenized-stock Reserve computed its
+ * mint requirements from empty vaults). 0n when the account does not exist.
+ */
+export function tokenAmountFromInfo(pda: PublicKey, info: AccountInfo<Buffer> | null | undefined): bigint {
+  return tokenAccountAmountByOwner(pda, info);
 }
 
 // --- The parallel reads --------------------------------------------------------

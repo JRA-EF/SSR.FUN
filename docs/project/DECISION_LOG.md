@@ -6631,3 +6631,39 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0211",
+  "date": "2026-09-24",
+  "title": "Vault balances are decoded under the vault's OWN token program -- xStocks Reserves showed $0 holdings, $0 market cap and 'NAV could not be read' (TESTT)",
+  "status": "implemented (branch fix/xstocks-nav; not yet merged or deployed)",
+  "decision": "Every vault and wallet token-account read now decodes the account under whichever token program owns it, read from the account's own `owner` field, instead of spl-token's classic-program default. New in packages/sdk/src/tokenPrograms.ts: unpackTokenAccountByOwner (throws on a non-token account, exactly as before) and tokenAccountAmountByOwner (0n for a missing or non-token account -- the lenient reading the readers always had). Wired into the three vault readers: discovery.ts's batched getMultipleAccountsInfo pass (feeds the warm-cache snapshot, Discover, the homepage, the NAV recorder and the nav-history endpoint), readOnly.ts's fetchReserveOnChain (the detail page's targeted refresh, the post-launch redirect and resumability), and lib/mainnet/buildCommon.ts's tokenAmountFromInfo (server-built Buy/Sell reads of vaults and wallet ATAs). fetchTokenBalanceRaw takes an optional token program so a Token-2022 asset's balance is read at its own ATA; multiAssetBuyClient's post-buy leg re-reads pass each leg's program. ReserveAssetOnChain now carries tokenProgram like DiscoveredReserveAsset already did.",
+  "context": "Creator, 2026-09-24: 'we now support xstocks. the nav tho is not displaying correctly - both in chart and in the value in reserve in the composition section', with a screenshot of TESTT (Reserve BQitgmge3vYNwgEsAWG8bFGLycx5vLu2zuDdyMqEXSQB, id 27, eight xStocks at 12.5% each, 2 holders): Token Price $0.00, Market Cap $0, 'Price unavailable -- This Reserve's current NAV could not be read', every 'Value in Reserve' cell $0 while every per-asset price beside it was correct. Probed on Mainnet through the Helius endpoint: all eight vaults are Token-2022 accounts (175 bytes, owner = TokenzQd...) holding real balances (NVDAx vault 1,120,787 raw = 0.0112 NVDAx, and so on; supply 20 Reserve Tokens, so NAV is about $1). spl-token 0.4.15's unpackAccount(address, info) and getAccount(connection, address) default programId to the classic TOKEN_PROGRAM_ID and throw TokenInvalidAccountOwnerError when info.owner differs; discovery.ts caught that into an `issues` row and left the balance at '0', readOnly.ts's .catch(() => null) turned it into '0', buildCommon.ts's try/catch returned 0n. DEC-0201 fixed the instruction-building and ATA-derivation half of Token-2022 support; this is the read half it left behind. Zero holdings then cascade: computeAumFromPrices gives $0 AUM, NAV = 0/supply = 0, DTRDetail's lineSeries reports unavailable, computeNavUsd returns null so the recorder wrote no points (nothing bad to purge -- the launch anchor from the entry-price store will supply the series' start once balances read).",
+  "rationale": "The account's owner is the one chain-authoritative answer to 'which token program', available for free in the same getAccountInfo/getMultipleAccountsInfo response, so decoding by owner needs no extra round trip and can never disagree with the chain. Keeping the throw for an account owned by neither program preserves the invariant that a non-token account is never reported as a balance. Deriving the program from the ReserveAsset's recorded kind instead would also work for vaults but not for wallet ATAs, and would silently disagree with the chain if a record were ever wrong.",
+  "alternativesConsidered": [
+    "Pass the ReserveAsset's recorded token_program into each unpackAccount call (rejected: correct for vaults only; the owner field is authoritative for every account and costs nothing)",
+    "Use getParsedAccountInfo / getTokenAccountBalance, which are program-agnostic (rejected: one RPC call per vault instead of the existing batched getMultipleAccountsInfo, and both are rate-limited through the browser proxy)",
+    "Fix only discovery.ts, the reader behind the visible symptom (rejected: fetchReserveOnChain would re-zero the detail page on its next targeted refresh, and the server-built Buy would compute mint requirements from empty vaults)"
+  ],
+  "impact": "After deploy and the next warm-cache run (at most 10 minutes, DEC-0209) TESTT and every future Reserve holding Token-2022 assets show real Value in Reserve, AUM, NAV and a price chart; the NAV recorder starts recording points for them. Classic Reserves are unaffected (same decoder, same program). A Token-2022 vault that genuinely does not exist still reads as 0.",
+  "affectedAreas": [
+    "packages/sdk/src/tokenPrograms.ts (unpackTokenAccountByOwner, tokenAccountAmountByOwner)",
+    "packages/sdk/src/discovery.ts (batched vault decode)",
+    "packages/sdk/src/readOnly.ts (fetchReserveOnChain vault decode + tokenProgram field; fetchTokenBalanceRaw optional token program)",
+    "lib/mainnet/buildCommon.ts (tokenAmountFromInfo)",
+    "src/merge/lib/multiAssetBuyClient.ts (leg balance re-reads)",
+    "tests/phase_token_2022_assets.ts (+5 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Mainnet probe before the fix (Helius, 2026-09-24): TESTT's 8 vaults owner = Token-2022, data length 175; unpackAccount(vault, info) throws TokenInvalidAccountOwnerError on each; unpackAccount(vault, info, TOKEN_2022_PROGRAM_ID) returns 1120787 / 665571 / 498162 / 1007976 / 740265 / 339943 / 639323 / 342863.",
+    "Mainnet probe after the fix, through the rebuilt SDK dist: fetchReserveOnChain -> 8 assets, tokenProgram = Token-2022, the same eight balances; discoverAllReserves -> 27 Reserves, 0 issues, TESTT resolved 8/8 with the same balances, 797 ms.",
+    "npx tsc --noEmit -p packages/sdk: exit 0. npx tsc -b: only pre-existing errors from the not-locally-installed viem/botid packages (EVM/feedback files), none in touched files.",
+    "ts-mocha tests/phase_token_2022_assets.ts: 14 passing (5 new: Token-2022 175-byte vault decodes to its balance; classic unchanged; missing account = 0; foreign owner never decodes; classic-default call provably throws). Together with phase_discovery_reliability, phase_mainnet_production_fixes, phase_server_built_buy, phase_server_built_sell, phase_nav_history, phase_mint_extensions: 172 passing.",
+    "oxlint on the six touched files: clean."
+  ]
+}
+```

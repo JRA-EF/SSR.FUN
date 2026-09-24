@@ -16,8 +16,8 @@
 //
 // This module is the one place that answers "which token program owns this
 // mint", so no call site has to guess again.
-import { PublicKey } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { PublicKey, type AccountInfo } from "@solana/web3.js";
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, unpackAccount, type Account as TokenAccountDecoded } from "@solana/spl-token";
 
 export { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID };
 
@@ -77,6 +77,45 @@ export function assetAta(
   const ownerPk = typeof owner === "string" ? new PublicKey(owner) : owner;
   const programPk = typeof tokenProgram === "string" ? new PublicKey(tokenProgram) : tokenProgram;
   return getAssociatedTokenAddressSync(mintPk, ownerPk, allowOwnerOffCurve, programPk);
+}
+
+/**
+ * Decodes a token account under WHICHEVER program owns it.
+ *
+ * The other half of the Token-2022 bug, found the day the first xStocks
+ * Reserve went live (TESTT, 2026-09-24): spl-token's `unpackAccount` and
+ * `getAccount` default to the classic program and THROW
+ * TokenInvalidAccountOwnerError on an account the Token-2022 program owns.
+ * Every vault read caught that throw and reported "0" -- so a Reserve whose
+ * vaults genuinely held eight tokenized stocks showed $0 in every "Value in
+ * Reserve" cell, a $0 AUM, a NAV that "could not be read", and no price
+ * chart, while the per-asset prices beside them were fine.
+ *
+ * The account's own `owner` field is the authoritative answer to "which
+ * token program", so this decoder reads it from there and never assumes.
+ * An account owned by neither program still throws, exactly as before --
+ * a non-token account must never decode as a balance.
+ */
+export function unpackTokenAccountByOwner(address: PublicKey, info: AccountInfo<Buffer> | null | undefined): TokenAccountDecoded {
+  const program = info && isToken2022(info.owner) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+  return unpackAccount(address, info ?? null, program);
+}
+
+/**
+ * The raw balance held by a token account under whichever program owns it.
+ * 0n when the account does not exist (a vault or ATA that was never created
+ * holds nothing), and 0n when the account exists but is not a token account
+ * under either program -- the lenient reading the wallet/vault readers have
+ * always used. Callers that need the failure reported (discovery's
+ * `issues` list) use unpackTokenAccountByOwner directly.
+ */
+export function tokenAccountAmountByOwner(address: PublicKey, info: AccountInfo<Buffer> | null | undefined): bigint {
+  if (!info) return 0n;
+  try {
+    return unpackTokenAccountByOwner(address, info).amount;
+  } catch {
+    return 0n;
+  }
 }
 
 /** A leg's token program, accepting either an explicit program or a decoded kind, defaulting to classic. */

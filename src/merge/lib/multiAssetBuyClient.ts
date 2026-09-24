@@ -328,7 +328,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
 
   const acquiredRawByMint = (): Record<string, string> =>
     Object.fromEntries(params.assets.map((a) => [a.mint, acquiredRawOf(a.mint).toString()]).filter(([, v]) => v !== "0"));
-  const readLegBalances = async () => Promise.all(params.assets.map((a) => fetchTokenBalanceRaw(params.connection, new PublicKey(a.mint), owner).then(BigInt)));
+  const readLegBalances = async () => Promise.all(params.assets.map((a) => fetchTokenBalanceRaw(params.connection, new PublicKey(a.mint), owner, a.tokenProgram).then(BigInt)));
 
   let currentStage = "building this purchase on the server (nothing submitted yet)";
   let requiredAmountsRaw: bigint[] = [];

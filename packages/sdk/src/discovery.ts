@@ -32,12 +32,12 @@
 // account model itself already exposes verified counts to detect
 // under-resolution honestly (see `resolvedAssetCount`/`assetCount` below).
 import { Connection, PublicKey } from "@solana/web3.js";
-import { unpackAccount, unpackMint } from "@solana/spl-token";
+import { unpackMint } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "./readOnly";
 import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault, findSettlementKeeperConfig } from "./pda";
 import { withRateLimitRetry } from "./rpcResilience";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
-import { tokenProgramFromKind, type TokenProgramKindDecoded } from "./tokenPrograms";
+import { tokenProgramFromKind, unpackTokenAccountByOwner, type TokenProgramKindDecoded } from "./tokenPrograms";
 
 /**
  * Solana's `getMultipleAccounts` accepts up to ~100 pubkeys per call --
@@ -261,10 +261,14 @@ export async function discoverAllReserves(
     }
   }
 
-  // Vaults are raw SPL token accounts (not Anchor-decoded) -- batch the same
+  // Vaults are raw token accounts (not Anchor-decoded) -- batch the same
   // way via connection.getMultipleAccountsInfo, only for assets that
   // genuinely resolved above (a vault for a never-registered asset doesn't
-  // exist and was never fetched individually either).
+  // exist and was never fetched individually either). Decoded under
+  // whichever token program owns each vault: a Token-2022 asset's vault is a
+  // Token-2022 account, and the classic-only decoder this used before threw
+  // on every one of them, which the catch below then recorded as a "0"
+  // balance (see unpackTokenAccountByOwner).
   const resolvedAssetCandidates = assetCandidates.filter((c) => reserveAssetByPda.has(c.reserveAssetPda.toBase58()));
   const vaultBalanceByPda = new Map<string, string>();
   for (const batch of chunkArray(resolvedAssetCandidates, MAX_ACCOUNTS_PER_BATCH)) {
@@ -272,7 +276,7 @@ export async function discoverAllReserves(
       const infos = await withRateLimitRetry(() => connection.getMultipleAccountsInfo(batch.map((c) => c.vaultPda)));
       infos.forEach((info, i) => {
         try {
-          vaultBalanceByPda.set(batch[i].vaultPda.toBase58(), unpackAccount(batch[i].vaultPda, info).amount.toString());
+          vaultBalanceByPda.set(batch[i].vaultPda.toBase58(), unpackTokenAccountByOwner(batch[i].vaultPda, info).amount.toString());
         } catch (e) {
           issues.push({ reserveId: batch[i].id.toString(), scope: "vault", detail: batch[i].vaultPda.toBase58(), message: e instanceof Error ? e.message : String(e) });
         }

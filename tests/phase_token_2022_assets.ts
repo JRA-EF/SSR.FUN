@@ -15,7 +15,7 @@
 // These tests pin both halves.
 import { expect } from "chai";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, unpackAccount, AccountLayout, ACCOUNT_SIZE } from "@solana/spl-token";
 import {
   assetAta,
   isToken2022,
@@ -24,7 +24,10 @@ import {
   tokenProgramFromMintOwner,
   tokenProgramKindArg,
   tokenProgramName,
+  unpackTokenAccountByOwner,
+  tokenAccountAmountByOwner,
 } from "../packages/sdk/src/tokenPrograms";
+import { tokenAmountFromInfo } from "../lib/mainnet/buildCommon";
 
 const PUMP = new PublicKey("pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"); // real, Token-2022
 const OWNER = Keypair.generate().publicKey;
@@ -104,5 +107,92 @@ describe("no builder assumes a token program any more", () => {
     ];
     const resolved = legs.map((l) => resolveLegTokenProgram(l).toBase58());
     expect(resolved).to.deep.equal([TOKEN_PROGRAM_ID.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58(), TOKEN_PROGRAM_ID.toBase58()]);
+  });
+});
+
+// --- The NAV half: reading a Token-2022 vault's balance (2026-09-24) ---------
+// TESTT, the first Reserve holding xStocks (eight Token-2022 tokenized
+// stocks), showed $0 in every "Value in Reserve" cell, a $0 market cap and
+// "This Reserve's current NAV could not be read" while every per-asset price
+// beside them was fine. Probed on Mainnet: all eight vaults are Token-2022
+// accounts (175 bytes, owner = Token-2022) with real balances, and spl-token's
+// classic-default `unpackAccount` threw TokenInvalidAccountOwnerError on each
+// one -- which every vault reader caught and recorded as "0". These tests pin
+// the program-aware decoder that every vault and wallet read now goes through.
+
+function tokenAccountData(mint: PublicKey, owner: PublicKey, amount: bigint): Buffer {
+  const data = Buffer.alloc(ACCOUNT_SIZE);
+  AccountLayout.encode(
+    {
+      mint,
+      owner,
+      amount,
+      delegateOption: 0,
+      delegate: PublicKey.default,
+      state: 1,
+      isNativeOption: 0,
+      isNative: 0n,
+      delegatedAmount: 0n,
+      closeAuthorityOption: 0,
+      closeAuthority: PublicKey.default,
+    },
+    data,
+  );
+  return data;
+}
+
+/** A Token-2022 account: the classic 165-byte layout, the account-type byte (2 = Account), then TLV extension bytes. Sized like the live xStocks vaults (175 bytes). */
+function token2022AccountData(mint: PublicKey, owner: PublicKey, amount: bigint): Buffer {
+  const tlv = Buffer.alloc(9); // ImmutableOwner-style TLV padding; the decoder slices it, never parses it here
+  return Buffer.concat([tokenAccountData(mint, owner, amount), Buffer.from([2]), tlv]);
+}
+
+function accountInfo(owner: PublicKey, data: Buffer) {
+  return { executable: false, owner, lamports: 2_039_280, data, rentEpoch: 0 };
+}
+
+describe("vault balance reads decode under the vault's OWN token program (the NAV half)", () => {
+  const vault = Keypair.generate().publicKey;
+  const vaultAuthority = Keypair.generate().publicKey;
+  const NVDAX = new PublicKey("Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh"); // real xStocks NVDAx, Token-2022
+  const LIVE_NVDAX_VAULT_RAW = 1_120_787n; // what TESTT's NVDAx vault held when probed, 8 decimals
+
+  it("a Token-2022 vault (175 bytes, owner = Token-2022) decodes to its real balance -- this was reading as 0", () => {
+    const info = accountInfo(TOKEN_2022_PROGRAM_ID, token2022AccountData(NVDAX, vaultAuthority, LIVE_NVDAX_VAULT_RAW));
+    expect(info.data.length).to.equal(175);
+    expect(unpackTokenAccountByOwner(vault, info).amount).to.equal(LIVE_NVDAX_VAULT_RAW);
+    expect(tokenAccountAmountByOwner(vault, info)).to.equal(LIVE_NVDAX_VAULT_RAW);
+    expect(tokenAmountFromInfo(vault, info)).to.equal(LIVE_NVDAX_VAULT_RAW);
+  });
+
+  it("a classic vault still decodes exactly as before", () => {
+    const info = accountInfo(TOKEN_PROGRAM_ID, tokenAccountData(OWNER, vaultAuthority, 5_000_000n));
+    expect(unpackTokenAccountByOwner(vault, info).amount).to.equal(5_000_000n);
+    expect(tokenAccountAmountByOwner(vault, info)).to.equal(5_000_000n);
+    expect(tokenAmountFromInfo(vault, info)).to.equal(5_000_000n);
+  });
+
+  it("a missing account is an empty balance, not an error", () => {
+    expect(tokenAccountAmountByOwner(vault, null)).to.equal(0n);
+    expect(tokenAccountAmountByOwner(vault, undefined)).to.equal(0n);
+    expect(tokenAmountFromInfo(vault, null)).to.equal(0n);
+    expect(() => unpackTokenAccountByOwner(vault, null)).to.throw();
+  });
+
+  it("an account owned by neither token program is never decoded as a balance", () => {
+    const notAToken = accountInfo(Keypair.generate().publicKey, tokenAccountData(OWNER, vaultAuthority, 999n));
+    expect(() => unpackTokenAccountByOwner(vault, notAToken)).to.throw();
+    expect(tokenAccountAmountByOwner(vault, notAToken)).to.equal(0n);
+    expect(tokenAmountFromInfo(vault, notAToken)).to.equal(0n);
+  });
+
+  it("the decoder trusts the account's owner, not the caller's assumption -- a Token-2022 account is rejected under the classic program and vice versa", () => {
+    // Direct evidence of the original defect: the classic-default call throws.
+    const t22 = accountInfo(TOKEN_2022_PROGRAM_ID, token2022AccountData(NVDAX, vaultAuthority, 1n));
+    expect(() => unpackAccount(vault, t22)).to.throw();
+    expect(() => unpackAccount(vault, t22, TOKEN_2022_PROGRAM_ID)).not.to.throw();
+    const classic = accountInfo(TOKEN_PROGRAM_ID, tokenAccountData(OWNER, vaultAuthority, 1n));
+    expect(() => unpackAccount(vault, classic, TOKEN_2022_PROGRAM_ID)).to.throw();
+    expect(unpackTokenAccountByOwner(vault, classic).amount).to.equal(1n);
   });
 });
