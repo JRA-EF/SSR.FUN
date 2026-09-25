@@ -6699,3 +6699,36 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0213",
+  "date": "2026-09-25",
+  "title": "Rebalance tab offers the full Mainnet asset catalogue (xStocks included) and every composition action derives vaults/ATAs under the asset's own token program",
+  "status": "implemented and DEPLOYED TO PRODUCTION (dpl_4cHKa7i87NC4cT1Ru1Vw3b86K1sr = main @ bab2977, Ready, aliased to ssr.fun); live-verified",
+  "decision": "The Manager Dashboard's Rebalance tab 'Add a Reserve Asset' list on Mainnet is now the same live Jupiter-verified catalogue Create Reserve's picker uses (useMainnetAssetCatalogue: USDC plus every eligible token, the 835 xStocks tokens included), with the same search (name, ticker, or contract address), the same 'Asset type' filter (xStocks / crypto only) and the same issuer badge, plus the same per-Reserve asset cap and honest loading / unavailable states. The pure list logic lives in src/merge/lib/rebalanceAddableAssets.ts. The three composition actions in src/merge/lib/managementClient.ts (Submit Rebalance's add_reserve_asset_active per new asset, Fund, Remove) now read each mint's owner program from the chain in one batched getMultipleAccountsInfo and pass it to the SDK builders, and a NEW asset is checked with the same assessMintAccount rules as Create Reserve before the wallet opens (src/merge/lib/assetTokenPrograms.ts). A mint registered through Rebalance is added to the app's known Mainnet asset list immediately (addKnownAssetMints), as a launch does, and the catalogue is registered as dynamically supported on the Manage page too, so the Reserve stays tradable on the next refresh.",
+  "context": "Creator, 2026-09-25, with a screenshot of the ALPHA Reserve's Rebalance tab (SSR + USDC): 'theres an issue rebalancing' -- the picker read 'Every supported asset is already in your proposed composition' with nothing to add. Root cause 1: ManageDTR.tsx's ADDABLE_ASSETS was a module constant hard-coded to [] on Mainnet, left from the USDC-only launch; DEC-0201 migrated Create Reserve to the live catalogue but never this page, so no Mainnet Reserve could add anything through Rebalance. Root cause 2: DEC-0201 gave buildAddReserveAssetActiveInstruction / buildFundNewReserveAssetInstruction / buildRemoveReserveAssetInstruction an optional assetTokenProgram, but managementClient.ts never passed it, so registering, funding, or removing a Token-2022 asset (every xStocks token) would have derived the vault and the Manager's ATA under classic SPL Token and failed on-chain after the wallet approval.",
+  "rationale": "One catalogue, one search, one filter for both pickers so they can never disagree about what a Manager may hold. The token program is read from the chain rather than the catalogue because Rebalance acts on EXISTING assets too, which may predate the catalogue's token_program column; the mint's account owner is the authority the program itself consults and costs one batched read. An unsupported new mint is refused before signing for the same reason Create Reserve does it (a paid failure on instruction 1 otherwise). A failed mint read never blocks: it falls back to classic SPL Token and the transaction fails the way it always did, rather than a lookup hiccup blocking every classic-token Manager.",
+  "alternativesConsidered": [
+    "Carry tokenProgram from the catalogue entry through sessionAddedAssets to the client (rejected: leaves Fund/Remove of an existing Token-2022 asset unfixed, and a Reserve's existing assets have no catalogue entry in hand)",
+    "Keep the Rebalance picker USDC-only and route Managers to Create Reserve for stock baskets (rejected: the reported Reserve already exists and holds USDC; the product promise is that a live Reserve can be recomposed)",
+    "Show every catalogue token including those already in the proposal, greyed (rejected: the existing filter-out-already-proposed rule is right; only the offer list was wrong)"
+  ],
+  "impact": "Mainnet Managers can add any catalogue asset, xStocks included, through Rebalance and then Fund it. Submit Rebalance, Fund, and Remove each cost one extra batched RPC read. DevNet behaviour unchanged (fixtures list). New pure modules: rebalanceAddableAssets.ts, assetTokenPrograms.ts; RebalanceAssetPlan gained an optional symbol for the plain-language refusal.",
+  "affectedAreas": [
+    "src/merge/pages/ManageDTR.tsx (Rebalance tab picker, catalogue hook, known-mint registration after a confirmed action)",
+    "src/merge/lib/managementClient.ts (executeAddReserveAsset, executeSubmitRebalance, executeFundReserveAsset, executeRemoveReserveAsset)",
+    "src/merge/lib/assetTokenPrograms.ts, src/merge/lib/rebalanceAddableAssets.ts (new)",
+    "tests/phase_rebalance_addable_assets.ts (new, 12 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Production Neon, 2026-09-25: 835 catalogue rows with issuer = 'xstocks' pass every filter api/ledger/asset-catalogue.ts applies (3,277 tokens served in total), so the catalogue was never the gap -- the page's hard-coded [] was.",
+    "git show HEAD:src/merge/pages/ManageDTR.tsx: `const ADDABLE_ASSETS = IS_MAINNET ? [] : [...]`; managementClient.ts's three builder calls carried no assetTokenProgram argument.",
+    "Offline suite in the fix worktree: 1,225 passing, 5 failing -- the same 5 pre-existing failures (chart range selector x2, global native-control reset x2, deployed-binary account-shape pinning) in files that import nothing this change touched. tsc -b clean; vite build clean; oxlint on ManageDTR.tsx reports the same 7 pre-existing rules-of-hooks findings as HEAD, none new.",
+    "vercel --prod --yes from the clean fix worktree at bab2977 -> dpl_4cHKa7i87NC4cT1Ru1Vw3b86K1sr, target production, Ready, aliases https://ssr.fun and https://www.ssr.fun. Live-verified: https://ssr.fun/assets/main-nWyOaimn.js (the deployment's built main chunk, from its build log) contains the new picker's rebalance-issuer-filter element id, which no earlier build had."
+  ]
+}
+```

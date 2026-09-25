@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -39,6 +39,7 @@ import {
   fetchReserveTokenMetadata,
   fitTokenMetadataName,
   fitTokenMetadataSymbol,
+  registerDynamicSupportedAssetMints,
   type ActivityLogEntry,
   type ManagerFeeRecipientsOnChain,
   type OnChainTokenMetadata,
@@ -62,22 +63,26 @@ import {
 } from "@/lib/managementClient";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { applySliderWeightChange, type SliderAsset } from "@/lib/rebalanceSlider";
+import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
+import { addableAssetsForRebalance, type AddableAsset } from "@/lib/rebalanceAddableAssets";
+import { issuerBadgeText, issuerBadgeTitle, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
+import { MAX_ASSETS_PER_RESERVE } from "@/lib/createReserveClient";
 
 /**
  * Real DevNet SPL mints eligible to be added as a new Reserve Asset -- the
  * same set CreateDTR.tsx offers at creation time, minus wrapped SOL
  * (composition-management is meant for ordinary SPL test assets, not the
- * native-SOL zap leg). Empty on Mainnet: Mainnet Reserves are USDC-only for
- * this launch (see docs/project/DECISION_LOG.md's Mainnet-launch entries) --
- * DevNet's devUSDC/mock mints don't exist on Mainnet at all, so offering
- * them here would just be a confusing dead option, never a genuine one.
+ * native-SOL zap leg). DevNet only: on Mainnet the list is the live
+ * catalogue Create Reserve uses (see the useMainnetAssetCatalogue call in
+ * the component -- USDC plus every Jupiter-verified token, xStocks
+ * included), never a hard-coded set. DevNet's devUSDC/mock mints don't exist
+ * on Mainnet at all, so they are never offered there.
  */
-const ADDABLE_ASSETS = IS_MAINNET
-  ? []
-  : [
-      { symbol: DEVUSDC.symbol, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
-      ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({ symbol: m.symbol.toUpperCase(), mint: m.address, decimals: m.decimals })),
-    ];
+const DEVNET_ADDABLE_ASSETS: AddableAsset[] = [
+  { symbol: DEVUSDC.symbol, name: DEVUSDC.name, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
+  ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({ symbol: m.symbol.toUpperCase(), name: m.symbol.toUpperCase(), mint: m.address, decimals: m.decimals })),
+];
+const MAINNET_USDC_ADDABLE: AddableAsset = { symbol: "USDC", name: "USD Coin", mint: MAINNET_USDC_MINT, decimals: 6, issuer: null };
 
 // The rebalance slider model's permanent cash slot -- real USDC on Mainnet,
 // devUSDC on DevNet (see the effect below that seeds proposedWeightsBps).
@@ -274,7 +279,7 @@ function OnChainDelegateRow({
 
 export function ManageDTR() {
   const { dtrId } = useParams();
-  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates, setReserveProfileImage, setReserveYoutube, setReserveHeaderImage } = useAppStore();
+  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates, setReserveProfileImage, setReserveYoutube, setReserveHeaderImage, addKnownAssetMints } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const { toast } = useToast();
@@ -423,6 +428,27 @@ export function ManageDTR() {
   // left, current holdings with before/after weight comparison on the
   // right), separate from Delegates tab's own search-less list.
   const [rebalanceAssetSearch, setRebalanceAssetSearch] = useState("");
+  // Same "Asset type" filter as Create Reserve's picker (xStocks / crypto
+  // only) -- narrows the list, never widens what the catalogue offers.
+  const [rebalanceIssuerFilter, setRebalanceIssuerFilter] = useState<IssuerFilter>("all");
+  // Mainnet only: the live catalogue Create Reserve's picker uses, so the
+  // Rebalance tab offers exactly the same assets (USDC plus every
+  // Jupiter-verified token, xStocks included). Registered as dynamically
+  // supported as soon as it loads, for the same reason CreateDTR.tsx does
+  // it: a Reserve that just registered a brand-new asset must still count
+  // as tradable (isReserveTradable) on the very next refresh, before the
+  // ledger's known-mints list catches up.
+  const mainnetCatalogue = useMainnetAssetCatalogue(IS_MAINNET);
+  useEffect(() => {
+    if (IS_MAINNET && mainnetCatalogue.tokens.length > 0) {
+      registerDynamicSupportedAssetMints(mainnetCatalogue.tokens.map((t) => t.mint));
+    }
+  }, [mainnetCatalogue.tokens]);
+  const offeredAddableAssets = useMemo<AddableAsset[]>(() => {
+    if (!IS_MAINNET) return DEVNET_ADDABLE_ASSETS;
+    return [MAINNET_USDC_ADDABLE, ...mainnetCatalogue.tokens.filter((t) => t.mint !== MAINNET_USDC_MINT)];
+  }, [mainnetCatalogue.tokens]);
+  const rebalanceIssuerFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.issuer);
   const [onChainTxPending, setOnChainTxPending] = useState<string | null>(null); // which action is in flight, for button disabling
 
   // Profile-picture editor (Overview tab's Reserve Identity card). The
@@ -766,6 +792,11 @@ export function ManageDTR() {
     try {
       const signature = await action();
       toast(transactionConfirmedToast(signature, `${label} confirmed`));
+      // A mint registered by this action joins the app's known Mainnet
+      // asset list right away (as CreateDTR.tsx does after a launch), so
+      // discovery keeps this Reserve tradable before the ledger's daily
+      // known-mints refresh would otherwise catch up.
+      if (IS_MAINNET && extraCandidateMints.length > 0) addKnownAssetMints(extraCandidateMints);
       await refreshRealReserveNow(extraCandidateMints);
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
@@ -1178,11 +1209,12 @@ export function ManageDTR() {
     ? [
         ...[...dtr.onChain.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((a) => ({
           mint: a.mint,
+          symbol: a.symbol,
           isNew: false,
           targetWeightBps: proposedWeightsBps[a.mint] ?? a.weightBps,
         })),
         ...sessionAddedAssets
-          .map((sa) => ({ mint: sa.mint, isNew: true, targetWeightBps: proposedWeightsBps[sa.mint] ?? 0 }))
+          .map((sa) => ({ mint: sa.mint, symbol: sa.symbol, isNew: true, targetWeightBps: proposedWeightsBps[sa.mint] ?? 0 }))
           .filter((a) => a.targetWeightBps > 0),
       ]
     : [];
@@ -2309,34 +2341,86 @@ export function ManageDTR() {
                       {/* Left: search + add a new reserve asset -- one click, purely local */}
                       <div className="space-y-4">
                         <h4 className="font-semibold text-sm">Add a Reserve Asset</h4>
+                        {IS_MAINNET && mainnetCatalogue.status === "loading" && (
+                          <p className="text-xs text-muted-foreground">Loading the full Mainnet asset list...</p>
+                        )}
+                        {IS_MAINNET && mainnetCatalogue.status === "unavailable" && (
+                          <p className="text-xs text-muted-foreground">Showing USDC only -- the full Mainnet asset list is temporarily unavailable.</p>
+                        )}
                         <div className="relative">
                           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                           <Input
-                            placeholder="Search assets to add..."
+                            placeholder="Search by name, ticker, or contract address..."
                             className="pl-9"
                             value={rebalanceAssetSearch}
                             onChange={(e) => setRebalanceAssetSearch(e.target.value)}
                           />
                         </div>
+                        {rebalanceIssuerFilterAvailable && (
+                          <div className="flex items-center gap-2">
+                            <label htmlFor="rebalance-issuer-filter" className="text-xs text-muted-foreground">Asset type</label>
+                            <select
+                              id="rebalance-issuer-filter"
+                              className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                              value={rebalanceIssuerFilter}
+                              onChange={(e) => setRebalanceIssuerFilter(e.target.value as IssuerFilter)}
+                            >
+                              {ISSUER_FILTER_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                         <div className="border border-border rounded-lg max-h-[280px] overflow-y-auto p-2 bg-muted/20 space-y-1">
-                          {ADDABLE_ASSETS.filter((a) => !proposedAssetRows.some((r) => r.mint === a.mint))
-                            .filter((a) => a.symbol.toLowerCase().includes(rebalanceAssetSearch.toLowerCase()))
-                            .map((a) => (
+                          {(() => {
+                            // The on-chain program caps a Reserve's assets; refusing here, before
+                            // anything is proposed, is what keeps Submit Rebalance from failing late.
+                            const atAssetLimit = proposedAssetRows.length >= MAX_ASSETS_PER_RESERVE;
+                            const { assets: addable, emptyState } = addableAssetsForRebalance(
+                              offeredAddableAssets,
+                              proposedAssetRows.map((r) => r.mint),
+                              rebalanceAssetSearch,
+                              rebalanceIssuerFilter,
+                            );
+                            if (atAssetLimit) {
+                              return (
+                                <div className="p-4 text-center text-sm text-muted-foreground">
+                                  This Reserve holds the maximum of {MAX_ASSETS_PER_RESERVE} assets. Remove one to add a different asset.
+                                </div>
+                              );
+                            }
+                            if (emptyState === "all-added") {
+                              return <div className="p-4 text-center text-sm text-muted-foreground">Every supported asset is already in your proposed composition.</div>;
+                            }
+                            if (emptyState === "no-match") {
+                              return <div className="p-4 text-center text-sm text-muted-foreground">No assets match "{rebalanceAssetSearch.trim()}".</div>;
+                            }
+                            if (emptyState === "none-for-type") {
+                              return <div className="p-4 text-center text-sm text-muted-foreground">No eligible assets of that type{rebalanceAssetSearch.trim() ? ` match "${rebalanceAssetSearch.trim()}"` : ""}.</div>;
+                            }
+                            return addable.map((a) => (
                               <div key={a.mint} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
-                                <span className="font-semibold font-merge-mono text-sm">{a.symbol}</span>
+                                <div className="min-w-0">
+                                  <span className="font-semibold text-sm">{a.name}</span>
+                                  <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{a.symbol}</span>
+                                  {a.issuer && (
+                                    <span className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-primary/40 text-primary" title={issuerBadgeTitle(a.issuer)}>
+                                      {issuerBadgeText(a.issuer)}
+                                    </span>
+                                  )}
+                                  <div className="text-xs text-muted-foreground font-merge-mono">{a.mint.slice(0, 4)}...{a.mint.slice(-4)}</div>
+                                </div>
                                 <Button
-                                  variant="ghost" size="sm" className="h-8 w-8 p-0"
+                                  variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0"
                                   disabled={!canManageLiquidityConfigOnChain}
                                   title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission to register a new asset." : undefined}
-                                  onClick={() => handleAddAssetToSession(a)}
+                                  onClick={() => handleAddAssetToSession({ symbol: a.symbol, mint: a.mint, decimals: a.decimals })}
                                 >
                                   <Plus className="w-4 h-4 text-primary" />
                                 </Button>
                               </div>
-                            ))}
-                          {ADDABLE_ASSETS.filter((a) => !proposedAssetRows.some((r) => r.mint === a.mint)).length === 0 && (
-                            <div className="p-4 text-center text-sm text-muted-foreground">Every supported asset is already in your proposed composition.</div>
-                          )}
+                            ));
+                          })()}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           Adding an asset here is free and only changes your proposal below -- it's registered on-chain, at zero
