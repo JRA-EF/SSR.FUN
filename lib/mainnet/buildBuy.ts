@@ -41,7 +41,7 @@ import {
   PROTOCOL_MIN_MINT_FEE_BPS,
 } from "@ssr/sdk";
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
-import { assembleSingleBuyInstructions, buildWrapRecoveredSolInstructions, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS } from "../../src/merge/lib/singleTxBuy";
+import { assembleSingleBuyInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
 import { ZERO_TRADE_TAX, buildTradeTaxInstructions, computeTradeTax, tradeTaxBps, tradeTaxPlan, type ReserveTradeTaxRates, type TradeTaxPlan } from "./tradeTax";
 import {
@@ -345,7 +345,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     hasRegisteredAlt: reserveAlt !== null,
   });
   if (decision.mode === "unfit") {
-    throw new BuildError(422, `This Reserve's mint references ${mintIx.keys.length} accounts and cannot fit one transaction even with a trading lookup table -- nothing was built.`);
+    throw new BuildError(422, `This Reserve's mint touches ${countAccountLocks(wallet, mintLean)} accounts (Solana allows ${SOLANA_MAX_TX_ACCOUNT_LOCKS} per transaction) and cannot fit one transaction even with a trading lookup table -- nothing was built.`);
   }
 
   // ONE fresh blockhash for every transaction, fetched last so it is as young as possible.

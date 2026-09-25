@@ -15,7 +15,7 @@
 //    "Error: insufficient funds" on the wSOL deposit transfer, because the
 //    wSOL ATA had just been emptied and closed [4Mgj2LxT...]
 import { expect } from "chai";
-import { ComputeBudgetProgram, PublicKey, SystemProgram } from "@solana/web3.js";
+import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
   planBuyFunding,
@@ -33,6 +33,8 @@ import {
   SingleTxTooLargeError,
   SINGLE_TX_COMPUTE_UNIT_LIMIT,
   type JupiterInstructionJson,
+  countAccountLocks,
+  SOLANA_MAX_TX_ACCOUNT_LOCKS,
 } from "../src/merge/lib/singleTxBuy";
 import { describeOnChainError } from "../packages/sdk/src/errors";
 import jupiterSwapHandler from "../api/mainnet/jupiter-swap";
@@ -177,6 +179,37 @@ describe("Single-transaction composition (singleTxBuy.ts) -- one wallet approval
     expect(() =>
       compileSingleBuyTransaction({ payer: OWNER, recentBlockhash: blockhash, instructions: huge, lookupTables: [] }),
     ).to.throw(SingleTxTooLargeError);
+  });
+
+  it("a composition that fits the BYTE limit through a lookup table but locks more than 64 accounts is typed unfit too (the live STOCKLANA TooManyAccountLocks)", () => {
+    // 66 distinct transfer destinations, all in one lookup table: every key
+    // compresses to a one-byte index, so the message serializes far under
+    // 1232 bytes -- exactly the composition the runtime still refuses.
+    const blockhash = PublicKey.default.toBase58();
+    const destinations = Array.from({ length: 66 }, (_, i) => new PublicKey(Buffer.alloc(32, i + 1)));
+    const table = new AddressLookupTableAccount({
+      key: new PublicKey(Buffer.alloc(32, 255)),
+      state: { deactivationSlot: BigInt("18446744073709551615"), lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: OWNER, addresses: destinations },
+    });
+    // ONE instruction naming n table accounts: about n bytes of indexes on
+    // the wire (62 separate transfers would overrun 1232 bytes by themselves).
+    const PROGRAM = new PublicKey(Buffer.alloc(32, 254));
+    const ixs = (n: number) => [new TransactionInstruction({ programId: PROGRAM, keys: destinations.slice(0, n).map((pubkey) => ({ pubkey, isSigner: false, isWritable: true })), data: Buffer.alloc(0) })];
+    // payer + program + 62 accounts = 64: the ceiling, allowed.
+    expect(countAccountLocks(OWNER, ixs(62))).to.equal(SOLANA_MAX_TX_ACCOUNT_LOCKS);
+    const atCeiling = compileSingleBuyTransaction({ payer: OWNER, recentBlockhash: blockhash, instructions: ixs(62), lookupTables: [table] });
+    expect(atCeiling.serialize().length).to.be.lessThan(1233);
+    // One more destination: still tiny on the wire, but 65 locks.
+    expect(countAccountLocks(OWNER, ixs(63))).to.equal(65);
+    let caught: unknown = null;
+    try {
+      compileSingleBuyTransaction({ payer: OWNER, recentBlockhash: blockhash, instructions: ixs(63), lookupTables: [table] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).to.be.instanceOf(SingleTxTooLargeError);
+    expect((caught as SingleTxTooLargeError).accountLocks).to.equal(65);
+    expect((caught as SingleTxTooLargeError).message).to.include("65 accounts");
   });
 });
 
