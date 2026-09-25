@@ -47,6 +47,7 @@ import {
 import { AmbiguousConfirmationError } from "./rpcResilience";
 import { assertSignedBy, assertSignerReady } from "./assertSigner";
 import { fetchPriorityFeeMicroLamports, submitAndConfirmWithRebroadcast } from "./createReserveClient";
+import { describeUnsupportedNewAssets, fetchMintAccounts, resolveAssetTokenPrograms } from "./assetTokenPrograms";
 import { SSR_PROGRAM_ID, IS_MAINNET } from "./solana-config";
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
@@ -184,20 +185,31 @@ export async function executeAddReserveAsset(
   const program = buildReadOnlyProgram(connection) as any;
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const mintPk = new PublicKey(assetMint);
+  // The vault is created under the asset's OWN program (Token-2022 for
+  // every xStocks token) -- see assetTokenPrograms.ts for why this is read
+  // from the chain and why an unsupported mint is refused before signing.
+  const infos = await fetchMintAccounts(connection, [mintPk]);
+  const blocked = describeUnsupportedNewAssets([{ mint: mintPk }], infos);
+  if (blocked.length > 0) throw new Error(`${blocked.join(" ")} Nothing was changed on-chain.`);
+  const [{ tokenProgram }] = resolveAssetTokenPrograms([mintPk], infos);
   const ix = await buildAddReserveAssetActiveInstruction(
     program,
     programId,
     reservePk,
     wallet.publicKey,
     actingDelegate,
-    new PublicKey(assetMint),
+    mintPk,
     targetWeightBps,
+    tokenProgram,
   );
   return signAndSend(connection, wallet, new Transaction().add(ix), "asset addition");
 }
 
 export interface RebalanceAssetPlan {
   mint: string;
+  /** The asset's ticker, for the plain-language refusal when a new mint is unsupported; falls back to the address. */
+  symbol?: string;
   /** True if this asset is not yet registered on-chain for this Reserve --
    * gets an add_reserve_asset_active(target_weight_bps=0) instruction first.
    * Registering at 0 (rather than the asset's real final weight) is what
@@ -236,6 +248,15 @@ export async function executeSubmitRebalance(
   const program = buildReadOnlyProgram(connection) as any;
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  // Every NEW asset's vault is created under the mint's own token program
+  // (Token-2022 for every xStocks token), read from the chain in one batch;
+  // an unsupported mint (transfer hook, ...) is refused before the wallet
+  // opens, exactly as Create Reserve does. See assetTokenPrograms.ts.
+  const newAssets = assetPlan.filter((a) => a.isNew).map((a) => ({ mint: new PublicKey(a.mint), symbol: a.symbol }));
+  const infos = await fetchMintAccounts(connection, newAssets.map((a) => a.mint));
+  const blocked = describeUnsupportedNewAssets(newAssets, infos);
+  if (blocked.length > 0) throw new Error(`${blocked.join(" ")} Nothing was changed on-chain.`);
+  const programByMint = new Map(resolveAssetTokenPrograms(newAssets.map((a) => a.mint), infos).map((r) => [r.mint.toBase58(), r.tokenProgram]));
   const tx = new Transaction();
   for (const a of assetPlan) {
     if (!a.isNew) continue;
@@ -247,6 +268,7 @@ export async function executeSubmitRebalance(
       actingDelegate,
       new PublicKey(a.mint),
       0,
+      programByMint.get(a.mint),
     );
     tx.add(ix);
   }
@@ -272,7 +294,12 @@ export async function executeFundReserveAsset(
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
-  const ix = await buildFundNewReserveAssetInstruction(program, programId, new PublicKey(reserve), wallet.publicKey, new PublicKey(assetMint), amountRaw);
+  const mintPk = new PublicKey(assetMint);
+  // The Manager's ATA and the vault are derived under the asset's own
+  // program -- for a Token-2022 asset the classic derivation names an
+  // account that does not exist. See assetTokenPrograms.ts.
+  const [{ tokenProgram }] = resolveAssetTokenPrograms([mintPk], await fetchMintAccounts(connection, [mintPk]));
+  const ix = await buildFundNewReserveAssetInstruction(program, programId, new PublicKey(reserve), wallet.publicKey, mintPk, amountRaw, tokenProgram);
   return signAndSend(connection, wallet, new Transaction().add(ix), "asset funding");
 }
 
@@ -287,6 +314,10 @@ export async function executeRemoveReserveAsset(
   const program = buildReadOnlyProgram(connection) as any;
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const mintPk = new PublicKey(assetMint);
+  // Closing the vault (and refunding its rent) goes through the asset's own
+  // program -- see assetTokenPrograms.ts.
+  const [{ tokenProgram }] = resolveAssetTokenPrograms([mintPk], await fetchMintAccounts(connection, [mintPk]));
   const ix = await buildRemoveReserveAssetInstruction(
     program,
     programId,
@@ -294,7 +325,8 @@ export async function executeRemoveReserveAsset(
     new PublicKey(reserveManager),
     wallet.publicKey,
     actingDelegate,
-    new PublicKey(assetMint),
+    mintPk,
+    tokenProgram,
   );
   return signAndSend(connection, wallet, new Transaction().add(ix), "asset removal");
 }
