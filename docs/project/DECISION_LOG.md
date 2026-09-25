@@ -6765,3 +6765,35 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0215",
+  "date": "2026-09-25",
+  "title": "The one-transaction Buy/Sell composition is judged against Solana's 64-account-lock ceiling, not only the 1232-byte ceiling -- STOCKLANA (10 xStocks) Buy refused with TooManyAccountLocks",
+  "status": "implemented (branch fix/account-locks); deploy pending in this session",
+  "decision": "src/merge/lib/singleTxBuy.ts's compileSingleBuyTransaction -- the ONE v0 compiler behind the server's fitsV0/compileV0 (lib/mainnet/buildCommon.ts, used by buildBuy.ts and buildSell.ts) and the client's single-transaction Buy -- now counts the distinct accounts a composition would lock (fee payer + every program id + every instruction key, static or lookup-table loaded; countAccountLocks) and throws the existing SingleTxTooLargeError (new accountLocks field and a message naming the count) when it exceeds SOLANA_MAX_TX_ACCOUNT_LOCKS = 64, before the byte check. decideMode therefore sees 'single does not fit' and falls back to the step-by-step (batch) flow exactly as it does for an oversized message; a core mint/redeem that cannot fit on its own is refused with the lock count in the 422 message instead of the raw key length.",
+  "context": "Creator, 2026-09-25, buying https://ssr.fun/#/dtr/mainnet-beta-29 (STOCKLANA, Reserve 5TwkGaCtZCspGEN2yzRM3mxkzGvb1dnkFEHrkn8FVbwE, ten xStocks, all Token-2022): 'Buy Failed -- Transaction failed on-chain (\"TooManyAccountLocks\"). This was caught by a read-only simulation BEFORE anything was signed or submitted', stage 'building this purchase on the server', every leg reported 'fully funded', Reserve Tokens minted: no. Root cause: the server pre-flight simulation runs ONLY in single mode, and single mode was chosen because fitsV0 measures bytes alone -- lookup tables shrink bytes, never the runtime's lock count (MAX_TX_ACCOUNT_LOCKS = 64; the increase_tx_account_lock_limit feature is not active on Mainnet). Measured through the production build API for the buyer's wallet 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen: the 10-leg mint transaction alone is 16 static + 40 table-loaded = 56 accounts, so composing even one top-up Jupiter swap into it crosses 64. The wallet already held the acquired amounts the report listed (verified 10/10 legs); the retry needed a small top-up, the server composed it with the mint, the byte check passed, the simulation failed, and the purchase was refused instead of falling back. TESTT (8 legs, 48 accounts) never hit this.",
+  "rationale": "The lock ceiling is a property of the composition, independent of tables, so the compiler that already owns the byte verdict is the one place to enforce it; every caller's existing fallback (single -> batch) then engages with no new branch. Counting before compiling also avoids web3.js's own static-key assertion masking the real reason.",
+  "alternativesConsidered": [
+    "Cap the number of assets a Reserve may hold at 8 (rejected: the program and the 10-asset launch flow work; only the one-transaction composition was over-eager)",
+    "Never attempt single mode for Token-2022 baskets (rejected: the ceiling is about account count, not token program; a 6-asset basket with two swaps composes fine)",
+    "Simulate the batch mint too and surface its errors (separate concern; the batch path already verifies each leg on-chain before the mint)"
+  ],
+  "impact": "A Buy or Sell whose one-transaction form would lock more than 64 accounts now takes the step-by-step path (swaps, then mint/redeem) instead of failing pre-flight. No change for compositions under the ceiling. The 422 for a core mint/redeem that cannot fit at all now states the account count against the 64 limit.",
+  "affectedAreas": [
+    "src/merge/lib/singleTxBuy.ts (SOLANA_MAX_TX_ACCOUNT_LOCKS, countAccountLocks, SingleTxTooLargeError.accountLocks, compileSingleBuyTransaction)",
+    "lib/mainnet/buildBuy.ts, lib/mainnet/buildSell.ts (unfit message)",
+    "tests/phase_single_tx_buy.ts (+1 test)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Production build API (mintOnly) for STOCKLANA x wallet 6BjT...: mode=batch, mint tx 994 bytes, 16 static + 40 ALT-loaded = 56 accounts, 14 instructions.",
+    "Wallet 6BjT... Token-2022 ATAs hold exactly the ten amounts the failure report listed (131627, 455767, 270143, 260692, 202765, 403369, 409557, 299742, 136714, 297422 raw).",
+    "connection.simulateTransaction of the server's mint-only transaction for that wallet: 1 token OK (297,894 CU), 5 tokens OK, 10 tokens SPL InsufficientFunds (holdings cover fewer than 10) -- so the retry's top-up swap is what pushed the composition into single mode.",
+    "ts-mocha phase_single_tx_buy + phase_server_built_buy + phase_server_built_sell + phase_one_approval_buy: 44 passing (new: one instruction naming 62 table accounts = 64 locks compiles under 1232 bytes; 63 = 65 locks throws SingleTxTooLargeError with accountLocks 65). oxlint clean; tsc -b clean for touched files (only the pre-existing viem/botid module errors remain)."
+  ]
+}
+```
