@@ -6732,3 +6732,35 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0214",
+  "date": "2026-09-25",
+  "title": "Rebalance proposal is re-derived from the chain and normalised to exactly 100% on every on-chain read; a trash icon on every proposed asset takes it out of the list",
+  "status": "implemented; production deployment recorded in the follow-up status commit",
+  "decision": "The Rebalance tab's proposed composition is no longer seeded fill-gaps-only. On every on-chain read (first load, each discovery poll, the refresh after the Manager's own submit) src/merge/lib/rebalanceProposal.ts's reseedProposal rebuilds it: an on-chain asset whose target changed on-chain (or is seen for the first time) takes its real target, an asset whose target is unchanged keeps the Manager's in-progress slider value, assets added this session keep their proposed weight, the cash slot is always present, and the result is normalised to exactly 10,000 bps (shortfall into USDC; excess out of USDC first, then proportionally from the rest). While a discovery pass has not resolved every asset the Reserve holds (assetsResolvedFully false) nothing is normalised, no slack is invented, an amber notice explains it, and Submit Rebalance is disabled -- update_targets must name every registered asset, so such a submit would fail on-chain anyway. Every proposed row now carries a trash icon top-right: a not-yet-submitted asset leaves the list and its weight moves to USDC; an asset already registered on-chain is proposed at 0% (weight to USDC, or spread across the others when it is USDC itself), collapses to a one-line strip with Restore, and is left out of the slider model so no later edit can push weight back into it. The session-added USDC cash slot cannot be trashed (it is the slot every other weight moves through); its slider sets it to 0%.",
+  "context": "Creator, 2026-09-25: 'now its readjusting automatically to 200% - should be 100%. review the flow please. we had this working perfectly once. also dont forget to add the trash icon on the top right of every reserve asset to remove from list entirely and readjust the other %'s accordingly'. Reviewed the whole flow: applySliderWeightChange provably preserves whatever total it starts from (47 slider/proposal tests), so a 200% total can only be SEEDED. The old effect copied an on-chain weight into the proposal the first time its mint was seen and never again, and folded any shortfall into the cash slot at that moment; a weight taken from a stale read (the 10-minute warm snapshot) or a partial read (a discovery pass whose candidate-mint list lacked one of the Reserve's mints -- ALPHA's SSR mint is NOT in the ledger's 14-mint known list, so a live pass with only USDC as a candidate resolves 1 of 2) stayed, and when the other asset later appeared with its real weight it was added on top: 100% + 100%. ALPHA itself was probed live on Mainnet during the review (reserve H7NDKmf9pKow6v7eQfBchxRtPb8thP1STsRARGPWwo73: 2 assets, SSR 0 bps / USDC 10,000 bps, unchanged), so the 200% arose inside the local editor, not from a submitted rebalance. The exact click sequence was not captured; the fix removes the whole class rather than one trigger.",
+  "rationale": "The sliders must always start from the real on-chain targets, and the total must be 100% by construction -- not by hoping a one-time seed stays consistent with later reads. Keeping an unchanged asset's in-progress value is what stops a 15-second poll from snapping sliders back mid-edit; resetting only what genuinely changed on-chain is what makes a stale or partial seed self-correct. Pausing Rebalance while an asset is unresolved is honest: the alternative was proposing against an incomplete picture and failing on-chain after the wallet approval. An on-chain asset cannot 'leave the list' through a rebalance (remove_reserve_asset needs an empty vault and the last order_index), so the trash icon proposes 0% and collapses the row, and says so.",
+  "alternativesConsidered": [
+    "Reset the entire proposal on every on-chain change (rejected: a poll that merely re-reports the same targets would wipe an in-progress edit every 15 seconds)",
+    "Silently rescale whatever total appears back to 100% after each edit (rejected: hides the seeding defect and still lets a stale weight survive)",
+    "Hide a trashed on-chain asset entirely (rejected: it remains registered and in update_targets; the collapsed strip with Restore keeps that visible and reversible)",
+    "Widen discovery's candidate list to the whole catalogue so no asset is ever unresolved (rejected for now: multiplies per-poll RPC volume for every visitor; the ledger known-mints list plus addKnownAssetMints after a rebalance is the intended path, and the tab now copes honestly when it lags)"
+  ],
+  "impact": "Rebalance total can no longer exceed 100% from seeding; an in-progress edit is preserved across polls; Rebalance pauses (with copy) while the chain view is incomplete. Trash icon on every proposed row; the X on new rows replaced by it. distributeProportionally exported from rebalanceSlider.ts for reuse. RebalanceAssetPlan unchanged; update_targets still names every on-chain asset (trashed ones at 0).",
+  "affectedAreas": [
+    "src/merge/pages/ManageDTR.tsx (seeding effect, slider model input, trash/restore handlers, collapsed row, under-resolution notice, Submit gating)",
+    "src/merge/lib/rebalanceProposal.ts (new), src/merge/lib/rebalanceSlider.ts (export)",
+    "tests/phase_rebalance_proposal.ts (new, 17 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live Mainnet probe 2026-09-25 (fetchReserveOnChain with the ledger's known mints + all 835 xStocks + the snapshot's mints as candidates): ALPHA assetCount 2, resolved 2, SSR 0 bps (vault 7,393,735,877 raw), USDC 10,000 bps (vault 0). The same probe with only the ledger's known list resolved 1 of 2 -- the under-resolution path is real for this Reserve.",
+    "Offline suite in the fix worktree: 1,230 passing, the same 5 pre-existing unrelated failures as DEC-0213. tsc -b clean; vite build clean; oxlint on the changed files reports nothing beyond the 7 pre-existing rules-of-hooks findings.",
+    "tests/phase_rebalance_proposal.ts pins both 200% sequences (stale 100% seed + later 100% asset; partial read + later-resolved asset) and that an unchanged poll preserves an in-progress edit."
+  ]
+}
+```
