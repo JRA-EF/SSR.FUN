@@ -63,6 +63,7 @@ import {
 } from "@/lib/managementClient";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { applySliderWeightChange, type SliderAsset } from "@/lib/rebalanceSlider";
+import { reseedProposal } from "@/lib/rebalanceProposal";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { addableAssetsForRebalance, type AddableAsset } from "@/lib/rebalanceAddableAssets";
 import { issuerBadgeText, issuerBadgeTitle, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
@@ -664,47 +665,49 @@ export function ManageDTR() {
   // on-chain branch. `sessionAddedAssets` holds assets the user has added
   // to the proposed composition THIS SESSION but not yet submitted --
   // ordinary slider rows, removable pre-submit with zero transactions.
-  // `proposedWeightsBps` is the live proposed composition in bps, seeded
-  // (fill-gaps-only) from each on-chain asset's real weight. Neither state
-  // is touched by adjusting a slider, adding, or removing an asset -- only
-  // Submit Rebalance ever prompts the wallet.
+  // `proposedWeightsBps` is the live proposed composition in bps, derived
+  // from each on-chain asset's real weight (see rebalanceProposal.ts).
+  // Neither state is touched by adjusting a slider, adding, or removing an
+  // asset -- only Submit Rebalance ever prompts the wallet.
   const [sessionAddedAssets, setSessionAddedAssets] = useState<{ mint: string; symbol: string; decimals: number }[]>([]);
   const [proposedWeightsBps, setProposedWeightsBps] = useState<Record<string, number>>({});
+  // On-chain assets the Manager took out of the list with the trash icon:
+  // proposed at 0% and shown collapsed, since an asset that is already
+  // registered on-chain cannot leave the composition by a rebalance alone
+  // (remove_reserve_asset needs an empty vault and the last order_index).
+  const [removedOnChainMints, setRemovedOnChainMints] = useState<ReadonlySet<string>>(() => new Set());
+  // The on-chain targets the proposal has already accounted for -- what lets
+  // reseedProposal tell "changed on-chain" from "re-reported unchanged".
+  const chainSeenRef = useRef<Record<string, number>>({});
 
-  // Seeds proposedWeightsBps from each on-chain asset's real weight
-  // whenever a new mint appears (e.g. after Submit Rebalance's own
-  // refresh) -- fills gaps only, never clobbers an in-progress edit. If the
-  // Reserve's on-chain assets don't already sum to 10,000bps and the cash
-  // slot isn't already registered, auto-seeds a cash-slot row (as a
-  // session-added asset) holding the slack -- this model has no separate
-  // "unallocated" concept, the cash slot absorbs it.
+  // Re-derives proposedWeightsBps whenever the on-chain composition is
+  // (re)read. An asset whose on-chain target changed takes the real target;
+  // one whose target is unchanged keeps the in-progress edit; the total is
+  // normalised to exactly 100% whenever every on-chain asset is visible --
+  // and never normalised (nor padded with invented slack) while one is not.
+  // This replaced a fill-gaps-only seed that could keep a stale weight AND
+  // add a later-resolved asset's real weight on top (the "200%" report).
   useEffect(() => {
     if (!dtr?.onChain) return;
     const onChainAssets = dtr.onChain.assets;
-    const existingTotal = onChainAssets.reduce((s, a) => s + a.weightBps, 0);
-    const slack = Math.max(0, 10_000 - existingTotal);
+    const resolvedFully = dtr.onChain.assetsResolvedFully !== false;
     const hasOnChainCashSlot = onChainAssets.some((a) => a.mint === CASH_SLOT_MINT);
+    const onChainMintSet = new Set(onChainAssets.map((a) => a.mint));
+    // A removed on-chain asset that is no longer on-chain (removed for good) needs no pin any more.
+    setRemovedOnChainMints((prev) => {
+      const kept = [...prev].filter((m) => onChainMintSet.has(m));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+    // The updater must stay pure (React may invoke it more than once), so
+    // the "seen" bookkeeping is captured before and written after it.
+    const chainNow = onChainAssets.map((a) => ({ mint: a.mint, weightBps: a.weightBps }));
+    const seenBefore = chainSeenRef.current;
+    setProposedWeightsBps((prev) => reseedProposal(prev, chainNow, seenBefore, CASH_SLOT_MINT, resolvedFully, removedOnChainMints).weights);
+    chainSeenRef.current = reseedProposal({}, chainNow, seenBefore, CASH_SLOT_MINT, resolvedFully).chainSeen;
     // The cash slot (devUSDC on DevNet, real USDC on Mainnet) is this
     // model's permanent cash slot -- always present in the proposed
     // composition (even at 0%) so every edit has somewhere to move weight
-    // to/from, and any currently-unallocated on-chain weight (slack) is
-    // folded into its seed value rather than left floating outside the
-    // model, which would otherwise make 100% unreachable by any slider edit.
-    setProposedWeightsBps((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const a of onChainAssets) {
-        if (!(a.mint in next)) {
-          next[a.mint] = a.mint === CASH_SLOT_MINT ? a.weightBps + slack : a.weightBps;
-          changed = true;
-        }
-      }
-      if (!hasOnChainCashSlot && !(CASH_SLOT_MINT in next)) {
-        next[CASH_SLOT_MINT] = slack;
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
+    // to/from; as a session-added row when the Reserve does not hold it yet.
     if (!hasOnChainCashSlot) {
       setSessionAddedAssets((prev) => (prev.some((a) => a.mint === CASH_SLOT_MINT) ? prev : [...prev, { mint: CASH_SLOT_MINT, symbol: CASH_SLOT_SYMBOL, decimals: CASH_SLOT_DECIMALS }]));
     }
@@ -731,7 +734,7 @@ export function ManageDTR() {
       return pruned.length === prev.length ? prev : pruned;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dtr?.onChain?.assets.map((a) => `${a.mint}:${a.weightBps}`).join(",")]);
+  }, [dtr?.onChain?.assets.map((a) => `${a.mint}:${a.weightBps}`).join(","), dtr?.onChain?.assetsResolvedFully, removedOnChainMints]);
 
   /** Re-fetches this Reserve's on-chain state immediately after a confirmed composition/wind-down/rebalance tx, rather than waiting for RealReserveSync's next poll. `extraCandidateMints` covers a mint just registered this call (e.g. via add_reserve_asset_active) that wouldn't otherwise be in the known asset list yet. */
   async function refreshRealReserveNow(extraCandidateMints: string[] = []) {
@@ -1176,7 +1179,12 @@ export function ManageDTR() {
    */
   function handleSliderChange(mint: string, newWeightBps: number) {
     setProposedWeightsBps((prev) => {
-      const current: SliderAsset[] = proposedAssetRows.map((r) => ({ mint: r.mint, weightBps: prev[r.mint] ?? 0 }));
+      // An asset taken out of the list stays out of the model (pinned at 0)
+      // unless it is the one being edited -- so no other slider can push
+      // weight back into it.
+      const current: SliderAsset[] = proposedAssetRows
+        .filter((r) => r.mint === mint || !removedOnChainMints.has(r.mint))
+        .map((r) => ({ mint: r.mint, weightBps: prev[r.mint] ?? 0 }));
       const updated = applySliderWeightChange(current, mint, newWeightBps, CASH_SLOT_MINT);
       const next = { ...prev };
       for (const a of updated) next[a.mint] = a.weightBps;
@@ -1197,6 +1205,32 @@ export function ManageDTR() {
     setProposedWeightsBps((prev) => {
       const next = { ...prev };
       delete next[mint];
+      return next;
+    });
+  }
+
+  /**
+   * The trash icon on a proposed row. A not-yet-submitted asset simply leaves
+   * the list. An asset already registered on-chain is proposed at 0% -- its
+   * weight moves to the cash slot (or, for the cash slot itself, spreads
+   * across the other assets) -- and its row collapses; it stays registered
+   * until the separate Remove action once its vault is empty. Pure local
+   * state, never a transaction.
+   */
+  function handleRemoveFromProposal(row: { mint: string; isNew: boolean }) {
+    if (row.isNew) {
+      handleRemoveSessionAsset(row.mint);
+      return;
+    }
+    handleSliderChange(row.mint, 0);
+    setRemovedOnChainMints((prev) => new Set([...prev, row.mint]));
+  }
+
+  /** Puts a collapsed on-chain row back in the list, still at 0% until its slider is moved. */
+  function handleRestoreToProposal(mint: string) {
+    setRemovedOnChainMints((prev) => {
+      const next = new Set(prev);
+      next.delete(mint);
       return next;
     });
   }
@@ -1223,6 +1257,10 @@ export function ManageDTR() {
   const hasRebalanceChanges = dtr.onChain
     ? submitNeedsLiquidityConfig || dtr.onChain.assets.some((a) => (proposedWeightsBps[a.mint] ?? a.weightBps) !== a.weightBps)
     : false;
+  // update_targets must name every registered asset; while a discovery pass
+  // could not resolve one, a submit would fail on-chain and the sliders
+  // would be proposing against an incomplete picture -- so Rebalance pauses.
+  const rebalanceChainVisible = dtr.onChain ? dtr.onChain.assetsResolvedFully !== false : true;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl relative">
@@ -2500,6 +2538,23 @@ export function ManageDTR() {
                               const projectedUsd = (proposedBps / 10_000) * totalReserveUsd;
                               const isDrivenToZero = proposedBps === 0 && row.benchmarkBps > 0;
                               const canRemoveOnChain = !row.isNew && isEmpty && row.mint === lastOnChainMint;
+                              const isCashSlot = row.mint === CASH_SLOT_MINT;
+                              const isSessionCashSlot = row.isNew && isCashSlot;
+
+                              if (removedOnChainMints.has(row.mint)) {
+                                // Taken out of the list: proposed at 0%, collapsed, restorable.
+                                return (
+                                  <div key={row.mint} className="px-3 py-2 border border-dashed border-border rounded-lg bg-muted/20 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                    <span>
+                                      <span className="font-semibold font-merge-mono text-foreground">{row.symbol}</span> set to 0% for this rebalance. It stays registered
+                                      on-chain until you use Remove once its balance is empty.
+                                    </span>
+                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs shrink-0" onClick={() => handleRestoreToProposal(row.mint)}>
+                                      Restore
+                                    </Button>
+                                  </div>
+                                );
+                              }
 
                               return (
                                 <div key={row.mint} className="p-3 border border-border rounded-lg bg-card space-y-2.5">
@@ -2513,15 +2568,22 @@ export function ManageDTR() {
                                       <span className="text-xs text-muted-foreground font-merge-mono">
                                         {formatUsdc(balanceUsd, { compact: true })} bal.
                                       </span>
-                                      {row.isNew && (
-                                        <Button
-                                          variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                                          onClick={() => handleRemoveSessionAsset(row.mint)}
-                                          title="Remove from proposed composition"
-                                        >
-                                          <X className="w-3.5 h-3.5" />
-                                        </Button>
-                                      )}
+                                      <Button
+                                        variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                        disabled={!canUpdateTargetsOnChain || isSessionCashSlot}
+                                        onClick={() => handleRemoveFromProposal(row)}
+                                        title={
+                                          isSessionCashSlot
+                                            ? "USDC is the cash slot every other weight moves through, so it always stays in the list. Set it to 0% with its slider instead."
+                                            : row.isNew
+                                              ? "Remove from the proposed composition. The weight it held moves to USDC."
+                                              : isCashSlot
+                                                ? "Set USDC to 0% and spread its weight across the other assets. It stays registered on-chain."
+                                                : "Take this asset out of the rebalance: proposed at 0%, its weight moves to USDC. It stays registered on-chain until you use Remove once its balance is empty."
+                                        }
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </Button>
                                     </div>
                                   </div>
 
@@ -2626,20 +2688,29 @@ export function ManageDTR() {
                             rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint),
                           )
                         }
-                        disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null}
+                        disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null || !rebalanceChainVisible}
                         title={
                           !canUpdateTargetsOnChain
                             ? "You need the Root Manager or a co-manager with Update Targets permission to submit a rebalance."
                             : !canSubmitRebalance
                               ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission to register a new asset."
-                              : undefined
+                              : !rebalanceChainVisible
+                                ? "Not every asset this Reserve holds could be read right now. Rebalancing resumes once all of them are visible."
+                                : undefined
                         }
                         className="w-full sm:w-auto font-bold gap-2"
                       >
                         <Save className="w-4 h-4" /> {onChainTxPending === "Submit Rebalance" ? "Confirming..." : "Submit Rebalance"}
                       </Button>
                     </div>
-                    {totalProposedBps !== 10_000 && (
+                    {!rebalanceChainVisible && (
+                      <div className="bg-amber-500/10 text-amber-700 dark:text-amber-400 p-3 rounded text-sm flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        This Reserve holds {dtr.onChain.assetCount} assets on-chain but only {dtr.onChain.assets.length} could be read right now.
+                        Rebalancing is paused until every asset is visible, so no weight can be misplaced. This usually clears on the next refresh.
+                      </div>
+                    )}
+                    {rebalanceChainVisible && totalProposedBps !== 10_000 && (
                       <div className="bg-destructive/10 text-destructive p-3 rounded text-sm flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0" />
                         Proposed weights must total exactly 100% before submitting.

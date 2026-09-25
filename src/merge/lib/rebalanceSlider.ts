@@ -31,7 +31,7 @@ export interface SliderAsset {
  * any entry that would go negative -- so a full drain always lands every
  * pool asset on exactly 0, never off by a stray bps.
  */
-function distributeProportionally(
+export function distributeProportionally(
   pool: SliderAsset[],
   amount: number,
   direction: "add" | "subtract",
