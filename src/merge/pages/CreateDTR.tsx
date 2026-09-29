@@ -112,7 +112,7 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 }
 
 
-export function CreateDTR() {
+export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   const [, setLocation] = useLocation();
   const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints, setWalletModalOpen } = useAppStore();
   const { toast } = useToast();
@@ -925,6 +925,9 @@ export function CreateDTR() {
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
+        {/* Same chooser on the gate as in the wizard -- a visitor who has not
+            connected yet must still be able to switch chains. */}
+        {chainPicker && <div className="flex justify-center mb-10">{chainPicker}</div>}
         <div className="max-w-md mx-auto space-y-6">
           <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
@@ -1481,7 +1484,7 @@ export function CreateDTR() {
   const handleSubmit = handleSubmitReal;
 
   return (
-    <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} step={step}>
+    <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} step={step} chainPicker={chainPicker}>
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>

@@ -36,7 +36,7 @@ const CHAINS: { v: ChainChoice; label: string; blurb: string }[] = [
  */
 export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange: (c: ChainChoice) => void }) {
   return (
-    <div className="inline-flex rounded-full border border-border bg-secondary/40 p-1" role="radiogroup" aria-label="Chain">
+    <div className="inline-flex rounded-full border border-border/70 bg-background/70 backdrop-blur-sm shadow-sm p-1" role="radiogroup" aria-label="Chain">
       {CHAINS.map((c) => {
         const active = value === c.v;
         return (
@@ -78,22 +78,19 @@ function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (
 export function CreateReserve() {
   const chain = chainFromPath(usePath(), EVM_ENABLED);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
+  // The chooser is handed DOWN into each chain's page so it renders on that
+  // page's hero art, above the heading -- not as a strip of page-level chrome
+  // on the plain ground above it, which read as a separate site. With one
+  // chain there is no choice to present, so nothing is passed at all.
+  const picker = EVM_ENABLED ? <ChainChoiceBlock chain={chain} onChange={onChange} /> : undefined;
+
   return (
     <div>
-      {/* The chain control is page-level chrome on the plain ground, above the
-          wizard -- the wizard brings its own hero wash behind its heading.
-          With one chain there is no choice to present, so the whole block
-          goes rather than showing a control with a single option. */}
-      {EVM_ENABLED && (
-        <div className="container mx-auto px-4 md:px-8 pt-8 flex justify-center">
-          <ChainChoiceBlock chain={chain} onChange={onChange} />
-        </div>
-      )}
       {chain === "solana" ? (
-        <CreateDTR />
+        <CreateDTR chainPicker={picker} />
       ) : (
         <Suspense fallback={<p className="container mx-auto px-4 py-12 text-muted-foreground">Loading…</p>}>
-          <RobinhoodCreateForm />
+          <RobinhoodCreateForm chainPicker={picker} />
         </Suspense>
       )}
     </div>

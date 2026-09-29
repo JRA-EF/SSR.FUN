@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import type { ReactNode } from "react";
 import { LaunchShell } from "@/components/LaunchHero";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -19,7 +20,7 @@ const pc = publicClientFor(cfg);
 const short = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
 type Status = { text: string; kind: "ok" | "err" | "busy" } | null;
 
-export function RobinhoodCreateForm() {
+export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   const { wallet, account } = useEvmWallet();
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
@@ -133,7 +134,7 @@ export function RobinhoodCreateForm() {
   }
 
   return (
-    <LaunchShell subtitle="Launch a new Reserve on SSR.FUN, live on Robinhood Chain." step={step}>
+    <LaunchShell subtitle="Launch a new Reserve on SSR.FUN, live on Robinhood Chain." step={step} chainPicker={chainPicker}>
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>
