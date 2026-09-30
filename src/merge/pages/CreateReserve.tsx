@@ -61,16 +61,22 @@ export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange:
   );
 }
 
-/** The "Launch on" block: label, segmented control, and the chosen chain's one-liner. */
-function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (c: ChainChoice) => void }) {
+/**
+ * The "Launch on" block: label, segmented control, and the chosen chain's
+ * one-liner. It is the FIRST field of the Identity step (step 1) in both
+ * wizards -- the chain is part of what the creator defines, not page chrome
+ * standing above every step -- so by default it is laid out like the fields
+ * around it. The wallet gate, which is centred text, asks for `centered`.
+ */
+function ChainChoiceBlock({ chain, onChange, centered = false }: { chain: ChainChoice; onChange: (c: ChainChoice) => void; centered?: boolean }) {
   const blurb = CHAINS.find((c) => c.v === chain)?.blurb;
   return (
-    <div className="flex flex-col items-center gap-2.5 text-center">
+    <div className={`flex flex-col gap-2 ${centered ? "items-center text-center" : "items-start"}`}>
       <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
         Launch on
       </p>
       <ChainPicker value={chain} onChange={onChange} />
-      <p className="text-sm text-muted-foreground max-w-md">{blurb}</p>
+      <p className="text-xs text-muted-foreground max-w-md">{blurb}</p>
     </div>
   );
 }
@@ -78,16 +84,17 @@ function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (
 export function CreateReserve() {
   const chain = chainFromPath(usePath(), EVM_ENABLED);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
-  // The chooser is handed DOWN into each chain's page so it renders on that
-  // page's hero art, above the heading -- not as a strip of page-level chrome
-  // on the plain ground above it, which read as a separate site. With one
+  // The chooser is handed DOWN into each chain's wizard, which renders it as
+  // the first field of its Identity step (and, on Solana, on the wallet gate
+  // too, so a visitor who has not connected can still switch). With one
   // chain there is no choice to present, so nothing is passed at all.
   const picker = EVM_ENABLED ? <ChainChoiceBlock chain={chain} onChange={onChange} /> : undefined;
+  const gatePicker = EVM_ENABLED ? <ChainChoiceBlock chain={chain} onChange={onChange} centered /> : undefined;
 
   return (
     <div>
       {chain === "solana" ? (
-        <CreateDTR chainPicker={picker} />
+        <CreateDTR chainPicker={picker} gateChainPicker={gatePicker} />
       ) : (
         <Suspense fallback={<p className="container mx-auto px-4 py-12 text-muted-foreground">Loading…</p>}>
           <RobinhoodCreateForm chainPicker={picker} />

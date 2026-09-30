@@ -291,7 +291,16 @@ export interface ReserveMetadataInput {
   sellTaxPct: number;
   /** Optional HTTPS URL of the Reserve's profile picture (the reserve-image store's permanent URL -- see reserveImageClient.ts). Omit entirely when the Reserve has none; the server also drops an empty value, keeping pre-existing payloads' content-addressed ids unchanged. */
   imageUrl?: string;
+  /** Optional HTTPS URL of the wide header banner (same store). Same omit-when-absent rule. */
+  headerImageUrl?: string;
+  /** Optional HTTPS link to the creator's YouTube channel. Same omit-when-absent rule. */
+  youtubeChannelUrl?: string;
+  /** Optional HTTPS link to the featured video. Same omit-when-absent rule. */
+  youtubeFeaturedVideoUrl?: string;
 }
+
+/** Which metadata/image store route pair a payload is minted under: the two Solana clusters, or Robinhood Chain. */
+export type MetadataStoreCluster = "devnet" | "mainnet" | "robinhood";
 
 /**
  * Uploads a Reserve's off-chain metadata (name/ticker/description/category/
@@ -321,7 +330,7 @@ export interface ReserveMetadataInput {
  * fixed-format URL scheme) this should always be far under the limit, but a
  * caller must never trust that without checking.
  */
-export async function uploadReserveMetadata(origin: string, input: ReserveMetadataInput, cluster: "devnet" | "mainnet" = "devnet"): Promise<string> {
+export async function uploadReserveMetadata(origin: string, input: ReserveMetadataInput, cluster: MetadataStoreCluster = "devnet"): Promise<string> {
   const path = `/api/${cluster}/reserve-metadata`;
   const response = await fetch(`${origin}${path}`, {
     method: "POST",

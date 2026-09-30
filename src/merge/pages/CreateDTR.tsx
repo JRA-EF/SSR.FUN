@@ -112,7 +112,15 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 }
 
 
-export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
+export function CreateDTR({
+  chainPicker,
+  gateChainPicker,
+}: {
+  /** The chain chooser, rendered as the FIRST field of step 1 (Reserve Identity). */
+  chainPicker?: ReactNode;
+  /** The same chooser, centred, for the connect-wallet gate -- a visitor who has not connected can still switch chains. */
+  gateChainPicker?: ReactNode;
+} = {}) {
   const [, setLocation] = useLocation();
   const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints, setWalletModalOpen } = useAppStore();
   const { toast } = useToast();
@@ -925,9 +933,6 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 55% 90% at 50% 62%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.5) 55%, hsl(var(--background) / 0.05) 100%)" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
         </div>
-        {/* Same chooser on the gate as in the wizard -- a visitor who has not
-            connected yet must still be able to switch chains. */}
-        {chainPicker && <div className="flex justify-center mb-10">{chainPicker}</div>}
         <div className="max-w-md mx-auto space-y-6">
           <Rocket className="w-16 h-16 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-merge-display font-bold">Connect Wallet<br />to Deploy</h1>
@@ -939,6 +944,10 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
           <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
             Connect Wallet
           </Button>
+          {/* The chain choice sits with the gate's own content, below the
+              call to action, so a visitor without a Solana wallet can still
+              reach Robinhood Chain -- not as a strip above the page. */}
+          {gateChainPicker && <div className="flex justify-center pt-8">{gateChainPicker}</div>}
         </div>
       </div>
     );
@@ -1484,7 +1493,7 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   const handleSubmit = handleSubmitReal;
 
   return (
-    <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} step={step} chainPicker={chainPicker}>
+    <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} step={step}>
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>
@@ -1493,6 +1502,9 @@ export function CreateDTR({ chainPicker }: { chainPicker?: ReactNode } = {}) {
               <CardDescription>Define the basic information for your new reserve.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* The chain is the first thing a creator decides, so it is the
+                  first field of Identity -- not chrome standing above every step. */}
+              {chainPicker && <div className="pb-6 border-b border-border/40">{chainPicker}</div>}
               <div className="space-y-2">
                 <Label>Profile Picture (optional)</Label>
                 <div className="flex items-start gap-4">

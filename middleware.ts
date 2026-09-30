@@ -114,6 +114,10 @@ const PUBLIC_READ_API_PATHS = new Set([
   '/api/devnet/reserve-metadata',
   '/api/devnet/reserve-image',
   '/api/devnet/token-metadata',
+  // A Robinhood Chain reserve's on-chain `mandate` points at these (see
+  // src/merge/lib/evmReserveMeta.ts) -- same public-read rule as above.
+  '/api/robinhood/reserve-metadata',
+  '/api/robinhood/reserve-image',
 ])
 function isPublicReadApi(request: Request, pathname: string): boolean {
   return (request.method === 'GET' || request.method === 'HEAD') && PUBLIC_READ_API_PATHS.has(pathname)

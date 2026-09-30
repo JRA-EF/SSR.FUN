@@ -6,16 +6,16 @@
 import type { ReactNode } from "react";
 import { LaunchHeader, LaunchStepper } from "./LaunchStepper";
 
+// The chain chooser is NOT part of this shell: it is the first field of
+// each wizard's Identity step (step 1), so it no longer stands above every
+// step as page chrome -- see CreateReserve.tsx.
 export function LaunchShell({
   subtitle,
   step,
-  chainPicker,
   children,
 }: {
   subtitle: string;
   step: number;
-  /** The chain chooser, rendered ON the hero art above the heading (never on the plain ground above it). */
-  chainPicker?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -34,10 +34,6 @@ export function LaunchShell({
         <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.78) 0%, hsl(var(--background) / 0.25) 45%, hsl(var(--background) / 0.05) 100%)" }} />
         <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.15) 68%, hsl(var(--background)) 100%)" }} />
       </div>
-
-      {/* The chain choice belongs ON the art with everything else: as page-level
-          chrome above the hero it read as a separate strip on white ground. */}
-      {chainPicker && <div className="flex justify-center mb-8">{chainPicker}</div>}
 
       <LaunchHeader subtitle={subtitle} />
       <LaunchStepper step={step} />
