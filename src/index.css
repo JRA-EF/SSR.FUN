@@ -924,6 +924,41 @@ input, select, textarea {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
+/* Liquidity trust badges (DEC-0196): the pool's lock state + depth, shown on
+   Reserve cards. Same taxonomy as the Reserve page's badges -- amber caution
+   for unlocked, accent for a running lock, action yellow for permanent, and
+   green for deep liquidity. Tokens adapt per theme. */
+.badge-liq-unlocked {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+}
+
+.badge-liq-locked {
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+}
+
+.badge-liq-forever {
+  color: var(--text);
+  border-color: color-mix(in srgb, #ede871 60%, var(--line-strong));
+  background: color-mix(in srgb, #ede871 22%, transparent);
+}
+
+.badge-liq-deep {
+  color: var(--up);
+  border-color: color-mix(in srgb, var(--up) 40%, transparent);
+  background: color-mix(in srgb, var(--up) 9%, transparent);
+}
+
+.fcard-liq {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
 /* stat blocks */
 .stat-row {
   display: grid;

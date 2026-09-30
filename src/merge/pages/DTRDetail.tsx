@@ -26,6 +26,7 @@ import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested, MultiAssetBuy
 import { executeMultiAssetSellMainnet } from "@/lib/multiAssetSellClient";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
+import { LiquidityBadges, LiquidityFirstMintIntro } from "@/components/LiquidityModule";
 import {
   AmbiguousConfirmationError,
   BALANCE_CACHE_TTL_MS,
@@ -571,7 +572,7 @@ function resolveBuyAsset(_onChain: OnChainReserveMeta | undefined): { mint: Publ
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade, setWalletModalOpen } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade, setWalletModalOpen, liquidityPreviews } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
@@ -656,6 +657,10 @@ export function DTRDetail() {
   // "genuinely stuck." A signature is recorded (and shown) the instant
   // submission succeeds, before confirmation even starts.
   const [buyPhase, setBuyPhase] = useState<TxPhase>("idle");
+  // Liquidity Module (design preview): the post-first-mint prompt below is
+  // shown to the Reserve's root Manager after their own confirmed Buy while
+  // no liquidity exists for this Reserve -- dismissible, never blocking.
+  const [liquidityIntroDismissed, setLiquidityIntroDismissed] = useState(false);
   // Synchronous same-tick duplicate-click/concurrent-attempt guard for Buy
   // (DEC-0154) -- see handleBuyMultiAssetMainnet; React state alone leaves a
   // pre-render window a fast double-click can slip through.
@@ -1949,6 +1954,10 @@ export function DTRDetail() {
         </div>
       )}
 
+      {buyPhase === "confirmed" && dtr.managerAddress === wallet.address && !liquidityPreviews[dtr.id] && !liquidityIntroDismissed && (
+        <LiquidityFirstMintIntro dtr={dtr} onDismiss={() => setLiquidityIntroDismissed(true)} />
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Details & Charts */}
         <div className="lg:col-span-2 space-y-8">
@@ -2001,6 +2010,14 @@ export function DTRDetail() {
                         {mintAddressCopied ? <Check className="w-3 h-3 text-positive" /> : <Copy className="w-3 h-3" />}
                       </button>
                     </div>
+                    {/* Liquidity trust badges + pool link -- public signal for
+                        every viewer once this Reserve has a pool. Same 45px
+                        indent as the CA line so the row sits under the name. */}
+                    {liquidityPreviews[dtr.id] && (
+                      <div className="pl-[45px] pt-1.5">
+                        <LiquidityBadges pool={liquidityPreviews[dtr.id]} dtr={dtr} withPoolLink />
+                      </div>
+                    )}
                   </div>
                   <div className="text-right max-sm:text-left shrink-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>

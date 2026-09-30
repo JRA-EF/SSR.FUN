@@ -57,6 +57,7 @@ export function Discover() {
   const dtrs = useAppStore((s) => s.dtrs);
   const chainDiscoveryStatus = useAppStore((s) => s.chainDiscoveryStatus);
   const chainDiscoveryError = useAppStore((s) => s.chainDiscoveryError);
+  const liquidityPreviews = useAppStore((s) => s.liquidityPreviews);
   const [searchFilter, setSearchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [sortBy, setSortBy] = useState<SortKey>("default");
@@ -155,7 +156,7 @@ export function Discover() {
 
       <div className="fcards">
         {visibleDtrs.map((dtr) => {
-          const cardProps = buildReserveCardProps(dtr, IS_MAINNET);
+          const cardProps = buildReserveCardProps(dtr, IS_MAINNET, liquidityPreviews[dtr.id]);
           return (
             <ReserveCard
               key={dtr.id}

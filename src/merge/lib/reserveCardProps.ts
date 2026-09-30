@@ -6,6 +6,7 @@ import { isReserveTradable } from "@ssr/sdk";
 import { formatUsdc, formatUsdcOrUnavailable, buildLineSeries } from "./calculations";
 import { applyDesignDemo } from "./designDemo";
 import { computeMarketCap } from "./onChainReserve";
+import { isDeepLiquidity, liquidityBadgeKind, lockRemainingDays, poolTvlUsd, type LiquidityPoolPreview } from "./liquidityPreview";
 import { normalizeReserveCategory, type DTR } from "./types";
 
 export interface ReserveCardData {
@@ -26,6 +27,32 @@ export interface ReserveCardData {
   sparklineIsFallback: boolean;
   topAssets: string[];
   metrics: { key: string; label: string; value: string; tone?: "up" | "down" }[];
+  /** Liquidity trust badges (DEC-0196) -- present only when this Reserve has a pool. */
+  liquidityBadge?: ReserveCardLiquidityBadge;
+}
+
+/** Plain-data shape ReserveCard renders as the liquidity trust pills -- computed here so Discover and Featured Reserves can never drift. */
+export interface ReserveCardLiquidityBadge {
+  kind: "unlocked" | "locked" | "forever";
+  label: string;
+  /** True once pool TVL clears the deep-liquidity threshold: renders the extra emerald badge. */
+  deep: boolean;
+}
+
+/** Same badge wording as the Reserve page (LiquidityBadges in LiquidityModule.tsx), compacted for a card row. */
+export function buildLiquidityBadge(dtr: DTR, pool: LiquidityPoolPreview | undefined): ReserveCardLiquidityBadge | undefined {
+  if (!pool) return undefined;
+  const nav = dtr.nav > 0 && Number.isFinite(dtr.nav) ? dtr.nav : 1;
+  const tvl = poolTvlUsd(pool, nav);
+  const tvlCompact = formatUsdc(tvl, { compact: true });
+  const kind = liquidityBadgeKind(pool.lock);
+  const deep = isDeepLiquidity(tvl);
+  if (kind === "permanent") return { kind: "forever", label: "Liquidity locked forever", deep };
+  if (kind === "locked") {
+    const days = lockRemainingDays(pool.lock) ?? 0;
+    return { kind: "locked", label: `${tvlCompact} liquidity · locked · ${days}d left`, deep };
+  }
+  return { kind: "unlocked", label: `${tvlCompact} liquidity · unlocked`, deep };
 }
 
 /**
@@ -43,7 +70,7 @@ export interface ReserveCardData {
  * constraint documented in onChainReserve.ts's own header). Real callers
  * (Discover.tsx, the landing page) pass the real IS_MAINNET themselves.
  */
-export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): ReserveCardData {
+export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, pool?: LiquidityPoolPreview): ReserveCardData {
   const clusterLabel = isMainnet ? "Mainnet" : "DevNet";
   // dtr.nav can be 0 when a Reserve's assets are under-resolved (AUM reads as
   // $0) even though it already has token supply -- guard against NaN rather
@@ -91,6 +118,7 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false): Res
         tone: premiumDiscount !== null ? (premiumDiscount >= 0 ? "up" : "down") : undefined,
       },
     ],
+    liquidityBadge: buildLiquidityBadge(dtr, pool),
   };
 }
 

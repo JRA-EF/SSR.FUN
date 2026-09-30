@@ -15,7 +15,8 @@ const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 const SETTLEMENT_SYMBOL = IS_MAINNET ? 'USDC' : 'devUSDC'
 
 function FeaturedCard({ dtr }: { dtr: DTR }) {
-  const cardProps = buildReserveCardProps(dtr, IS_MAINNET)
+  const pool = useAppStore(s => s.liquidityPreviews[dtr.id])
+  const cardProps = buildReserveCardProps(dtr, IS_MAINNET, pool)
   return (
     <ReserveCard
       {...cardProps}

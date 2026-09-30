@@ -6037,3 +6037,67 @@
   ]
 }
 ```
+
+## DEC-0195
+
+```json
+{
+  "id": "DEC-0195",
+  "date": "2026-09-30",
+  "status": "confirmed-implemented",
+  "decision": "Liquidity Module v1 direction confirmed and implemented as an explicitly-labelled front-end DESIGN PREVIEW on the design branch: a Reserve's root Manager (only) can seed DEX liquidity for their Reserve Token from inside SSR.fun -- Raydium for a Solana Reserve, Uniswap for a Robinhood Chain Reserve, with every DEX reference in the UI derived from the Reserve's home chain (dexInfoFor(reserveChain(dtr)), never hardcoded). Surfaces: a dismissible split-layout prompt on the Reserve page after the root Manager's own confirmed Buy while no pool exists; a 'Liquidity' tab in the Manager Dashboard (visible to the root Manager only) with the add-liquidity form, and once preview liquidity exists, a pool dashboard showing TVL, the pool address ALWAYS rendered as a hyperlink (header chip + pool card, with copy), lock status with countdown, and a one-click 'Collect' whose fees route to the Reserve treasury, never the connected wallet. Amounts: $1,000 soft floor with warning, $10,000 highlighted recommendation, both sides balanced at the Reserve Token's current value. Locks: none / timed (1-3-6-12 months) / permanent; locks only ever strengthen (extend or upgrade, never shorten or weaken).",
+  "context": "Creator directive (Yeh), 2026-09-29/30 Claude session: Reserve Tokens are mint/sell instruments on SSR.fun with no external market until someone seeds a pool; the creator needs a first-class flow to add liquidity, lock it, see the pool address at any stage, and collect fees to the treasury; DEX must switch Raydium/Uniswap by the chain the mint token and vault are on. Full product spec in docs/project/LIQUIDITY_MODULE_SPEC.md (added in this pass, with 8 OPEN questions needing rulings).",
+  "rationale": "A pool activates the NAV-vs-market arbitrage loop that keeps market price tracking backing, gives the Reserve a public chart and discoverability, and adds LP trading fees as a creator revenue stream. Shipping the UI as an honestly-labelled local preview lets the Creator iterate on the flow immediately without violating the repo's no-fabricated-success rule (the removed buyDTRToken mock trade): no preview surface ever presents itself as a confirmed on-chain outcome.",
+  "alternativesConsidered": [
+    "Wire real Raydium pool creation immediately -- rejected for this pass: significant client/program work, and the flow itself needed Creator review first.",
+    "Show the post-mint step as a modal -- rejected by Creator directive: split-screen presentation, dismissible, never blocking.",
+    "Route collected LP fees to the connected wallet -- rejected by Creator directive: fees go to the Reserve treasury wallet (OPEN-8 records which treasury exactly and the tokenomics interaction still needing a ruling)."
+  ],
+  "impact": "New: src/merge/lib/liquidityPreview.ts (types, chain-aware DEX rule, deterministic preview accrual), src/merge/components/LiquidityModule.tsx (LiquidityPanel / LiquiditySection / LiquidityFirstMintIntro), docs/project/LIQUIDITY_MODULE_SPEC.md. Modified: useAppStore.ts (persisted liquidityPreviews slice + 3 actions), ManageDTR.tsx (root-Manager-only Liquidity tab), DTRDetail.tsx (post-first-mint prompt). No on-chain, API, or deploy changes; no existing behaviour altered when the tab is unused.",
+  "affectedAreas": [
+    "src/merge/lib/liquidityPreview.ts",
+    "src/merge/components/LiquidityModule.tsx",
+    "src/merge/store/useAppStore.ts",
+    "src/merge/pages/ManageDTR.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "docs/project/LIQUIDITY_MODULE_SPEC.md",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Working-tree changes on the design branch clone (~/SSRdotFun/SSR.FUN), uncommitted pending Creator review on the panel dev server.",
+    "Product spec + open questions: docs/project/LIQUIDITY_MODULE_SPEC.md (OPEN-1..OPEN-8)."
+  ]
+}
+```
+
+## DEC-0196
+
+```json
+{
+  "id": "DEC-0196",
+  "date": "2026-09-30",
+  "status": "confirmed-implemented",
+  "decision": "Liquidity trust badges are a public Reserve-page signal (Creator directive, same session as DEC-0195): once a Reserve has a pool, every viewer sees, under the Reserve name, (a) one lock-state badge -- Unlocked (amber, open lock, '$X LIQUIDITY · UNLOCKED'), Locked (accent, '100% LOCKED · Nd LEFT' countdown), or Locked forever (action yellow, 'LIQUIDITY LOCKED FOREVER') -- (b) an additional emerald 'Deep liquidity' badge when pool TVL >= DEEP_LIQUIDITY_USD ($100k placeholder, spec OPEN-9), stacking with the lock badge rather than replacing it, and (c) a hyperlinked pool-address chip ('<DEX> pool: <addr>' -> explorer) so the pool is reachable from the Reserve page at any time. DEX naming stays chain-derived per DEC-0195. Visual source: the 'Liquidity trust badge states' canvas artboard.",
+  "context": "Creator directive 2026-09-30: 'We need to indicate the link to the pool on the reserve page if there is one and we also should have a different badge for different liquidity types (unlocked, locked, permanently locked, ones with VERY thick liquidity).'",
+  "rationale": "Lock state and depth are the two independent trust axes a buyer cares about; separate stacking badges keep four states legible without a 6-way hybrid taxonomy, and an expired timed lock honestly degrades to Unlocked.",
+  "alternativesConsidered": [
+    "One combined badge encoding lock state + depth -- rejected: hybrid labels get long and the axes are independent.",
+    "Deep threshold relative to AUM now -- deferred to OPEN-9; $100k absolute is the placeholder."
+  ],
+  "impact": "New LiquidityBadges component (LiquidityModule.tsx); liquidityPreview.ts gains DEEP_LIQUIDITY_USD/isDeepLiquidity/liquidityBadgeKind; DTRDetail.tsx renders badges + pool chip under the Reserve identity block for all viewers when a preview pool exists. Discover-card badges are a planned follow-up, not in this pass. Preview-only, per DEC-0195.",
+  "affectedAreas": [
+    "src/merge/lib/liquidityPreview.ts",
+    "src/merge/components/LiquidityModule.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "docs/project/LIQUIDITY_MODULE_SPEC.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Uncommitted working-tree change on the design branch clone, reviewed live by the Creator on the panel dev server.",
+    "Design canvas artboard 'Liquidity trust badge states' (Badges.dc.html)."
+  ]
+}
+```

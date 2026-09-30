@@ -4,6 +4,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { makePreviewPoolAddress, strongerLock, type LiquidityLock, type LiquidityPoolPreview, type ReserveChain } from "@/lib/liquidityPreview";
 import type {
   DTR,
   Delegate,
@@ -171,6 +172,26 @@ interface AppState {
    */
   recordConfirmedTrade: (dtrId: string, side: "buy" | "sell", tokenAmount: number, usdcAmount: number) => void;
 
+  /**
+   * Liquidity Module -- DESIGN PREVIEW state, keyed by DTR id (see
+   * src/merge/lib/liquidityPreview.ts and
+   * docs/project/LIQUIDITY_MODULE_SPEC.md). Purely local: no pool exists on
+   * any chain and no funds move; every surface rendering this is labelled
+   * as a preview. The real Raydium/Uniswap integration replaces these three
+   * actions (build + sign + confirm, then persist the observed on-chain
+   * result) while keeping their call sites.
+   */
+  liquidityPreviews: Record<string, LiquidityPoolPreview>;
+  /** Creates the preview pool on first use (root Manager only in the UI), or tops an existing one up. Locks only ever strengthen. */
+  addLiquidityPreview: (
+    dtrId: string,
+    input: { chain: ReserveChain; quoteSymbol: LiquidityPoolPreview["quoteSymbol"]; baseTokens: number; quoteUsd: number; lock: LiquidityLock },
+  ) => void;
+  /** Applies a stronger lock to the preview position; a weaker lock than the current one is ignored. */
+  lockLiquidityPreview: (dtrId: string, lock: LiquidityLock) => void;
+  /** Marks accrued preview fees as collected to the Reserve treasury and restarts accrual. */
+  collectLiquidityPreviewFees: (dtrId: string, amountUsd: number) => void;
+
   addDelegate: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   updateDelegatePermissions: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   removeDelegate: (dtrId: string, address: string) => ActionResult;
@@ -212,6 +233,7 @@ export const useAppStore = create<AppState>()(
       dtrs: [...REAL_PLACEHOLDER_DTRS],
       quarantinedReserves: {},
       profiles: {},
+      liquidityPreviews: {},
       chainDiscoveryStatus: "loading",
       chainDiscoveryError: null,
       setChainDiscoveryStatus: (status, error) => set({ chainDiscoveryStatus: status, chainDiscoveryError: error ?? null }),
@@ -277,6 +299,53 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           dtrs: state.dtrs.map((d) => (d.id === dtrId ? { ...d, headerImageUrl: headerImageUrl ?? undefined } : d)),
         }));
+      },
+
+      addLiquidityPreview: (dtrId, input) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          const now = Date.now();
+          const pool: LiquidityPoolPreview = existing
+            ? {
+                ...existing,
+                baseTokens: existing.baseTokens + input.baseTokens,
+                quoteUsd: existing.quoteUsd + input.quoteUsd,
+                lock: strongerLock(existing.lock, input.lock),
+              }
+            : {
+                poolAddress: makePreviewPoolAddress(dtrId),
+                chain: input.chain,
+                quoteSymbol: input.quoteSymbol,
+                baseTokens: input.baseTokens,
+                quoteUsd: input.quoteUsd,
+                createdTs: now,
+                lock: input.lock,
+                collectedTotalUsd: 0,
+                collectedThroughTs: now,
+              };
+          return { liquidityPreviews: { ...state.liquidityPreviews, [dtrId]: pool } };
+        });
+      },
+
+      lockLiquidityPreview: (dtrId, lock) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          if (!existing) return state;
+          return { liquidityPreviews: { ...state.liquidityPreviews, [dtrId]: { ...existing, lock: strongerLock(existing.lock, lock) } } };
+        });
+      },
+
+      collectLiquidityPreviewFees: (dtrId, amountUsd) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          if (!existing) return state;
+          return {
+            liquidityPreviews: {
+              ...state.liquidityPreviews,
+              [dtrId]: { ...existing, collectedTotalUsd: existing.collectedTotalUsd + amountUsd, collectedThroughTs: Date.now() },
+            },
+          };
+        });
       },
 
       syncRealHolding: (dtrId, tokenBalanceRaw, nav) => {

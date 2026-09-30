@@ -11,6 +11,7 @@ import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWa
 import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt, fetchReserveAltAddress } from "@/lib/reserveAltClient";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
+import { LiquiditySection } from "@/components/LiquidityModule";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,7 +22,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { formatPct, formatUsdc, formatUsdcOrUnavailable } from "@/lib/calculations";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
-import { ChevronLeft, Shield, Users, Sliders, Save, Plus, X, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, History, ExternalLink, Search } from "lucide-react";
+import { ChevronLeft, Shield, Users, Sliders, Save, Plus, X, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, History, ExternalLink, Search, Droplets } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Slider } from "@/components/ui/slider";
 import { displayDelegateName, getDelegateLabel, setDelegateLabel, shortenAddress } from "@/lib/delegateLabels";
@@ -309,7 +310,7 @@ export function ManageDTR() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageState.kind, dtrId, connection]);
 
-  const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance" | "activity">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance" | "liquidity" | "activity">("overview");
 
   // DL-01b fix: lazy-loaded only when the Activity tab is actually opened
   // (never an unconditional background poll). Reads from the Reserve
@@ -1116,6 +1117,15 @@ export function ManageDTR() {
           >
             <Sliders className="w-4 h-4" /> Rebalance
           </button>
+
+          {isRoot && (
+            <button
+              onClick={() => setActiveTab("liquidity")}
+              className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors flex items-center gap-3 ${activeTab === "liquidity" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+            >
+              <Droplets className="w-4 h-4" /> Liquidity
+            </button>
+          )}
 
           {dtr.onChain && (
             <button
@@ -2332,6 +2342,8 @@ export function ManageDTR() {
               )}
             </div>
           )}
+
+          {activeTab === "liquidity" && isRoot && <LiquiditySection dtr={dtr} />}
 
           {activeTab === "activity" && dtr.onChain && (
             <div className="space-y-6">
