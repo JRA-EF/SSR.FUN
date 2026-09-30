@@ -3,8 +3,10 @@
 // chain on load: basket, fees, and a USD mark from Uniswap v3 spot prices.
 import { useCallback, useEffect, useState } from "react";
 import type { Address } from "viem";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Play } from "lucide-react";
 import { Link } from "wouter";
+import { normalizeReserveCategory } from "@/lib/types";
+import { parseYouTubeVideoId, youTubeThumbnailUrl } from "@/lib/youtube";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -69,6 +71,7 @@ export function RobinhoodReserveDetail({ address }: { address: Address }) {
   const [snap, setSnap] = useState<ReserveSnapshot | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [connectErr, setConnectErr] = useState<string | null>(null);
+  const [videoPlaying, setVideoPlaying] = useState(false);
 
   const [myShares, setMyShares] = useState<bigint>(0n);
   const [gas, setGas] = useState<bigint | null>(null);
@@ -225,9 +228,35 @@ export function RobinhoodReserveDetail({ address }: { address: Address }) {
 
   const perShare = (b: ReserveSnapshot["basket"][number]) => (snap.totalSupply === 0n ? 0n : (b.amount * 10n ** BigInt(dec)) / snap.totalSupply);
   const hasStockTokens = snap.basket.some((b) => b.uiMultiplier !== undefined);
+  // The creator's profile (see lib/evmReserveMeta.ts) -- the same description,
+  // category, pictures and video panel a Solana Reserve page shows. Absent for
+  // a reserve created outside this app; the on-chain facts still render.
+  const meta = snap.meta;
+  const categoryLabel = meta?.category.trim() ? normalizeReserveCategory(meta.category) : null;
+  const featuredVideoId = meta?.youtube ? parseYouTubeVideoId(meta.youtube.featuredVideoUrl) : null;
+  const channelHandle = (() => {
+    const u = meta?.youtube?.channelUrl;
+    if (!u) return null;
+    try {
+      const parsed = new URL(u);
+      return parsed.pathname.split("/").find((seg) => seg.startsWith("@")) ?? parsed.hostname;
+    } catch {
+      return u;
+    }
+  })();
 
   return (
     <div className="container mx-auto px-4 md:px-8 py-10 relative">
+      {meta?.headerImageUrl && (
+        /* Creator-uploaded header: the same treatment as the Solana Reserve
+           page -- absolutely positioned BEHIND the top of the page (content
+           does not move down), soft wash + bottom fade into the ground. */
+        <div aria-hidden="true" className="absolute top-0 left-1/2 w-screen -translate-x-1/2 h-[240px] sm:h-[400px] overflow-hidden pointer-events-none -z-10">
+          <img src={meta.headerImageUrl} alt="" className="w-full h-full object-cover" style={{ objectPosition: "center 30%" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, hsl(var(--background) / 0.5) 0%, hsl(var(--background) / 0.15) 45%, hsl(var(--background) / 0.05) 100%)" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 0%, hsl(var(--background) / 0.2) 68%, hsl(var(--background)) 100%)" }} />
+        </div>
+      )}
       <div className="flex items-center gap-4 mb-6">
         {back}
         <div className="ml-auto">
@@ -246,13 +275,18 @@ export function RobinhoodReserveDetail({ address }: { address: Address }) {
             <CardHeader className="flex flex-col gap-3 pb-2">
               <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center font-merge-display font-bold text-sm" style={avatarStyle(snap.symbol)}>
-                    {snap.symbol.slice(0, 2)}
-                  </div>
+                  {meta?.imageUrl ? (
+                    <img src={meta.imageUrl} alt="" className="w-11 h-11 rounded-full shrink-0 object-cover border border-border" />
+                  ) : (
+                    <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center font-merge-display font-bold text-sm" style={avatarStyle(snap.symbol)}>
+                      {snap.symbol.slice(0, 2)}
+                    </div>
+                  )}
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h1 className="text-2xl font-merge-display font-bold truncate">{snap.name}</h1>
                       <Badge variant="secondary">{snap.symbol}</Badge>
+                      {categoryLabel && <Badge variant="outline">{categoryLabel}</Badge>}
                       <span className="badge-verified">Live on Robinhood Chain</span>
                     </div>
                     <a href={explorerAddr(address)} target="_blank" rel="noopener noreferrer" className="font-merge-mono text-xs text-muted-foreground hover:text-primary break-all">
@@ -265,6 +299,9 @@ export function RobinhoodReserveDetail({ address }: { address: Address }) {
                   <p className="font-merge-mono font-bold text-2xl">{usd(snap.navPerShare, 4)}</p>
                 </div>
               </div>
+              {meta?.description.trim() && (
+                <p className="text-sm text-muted-foreground whitespace-pre-line">{meta.description.trim()}</p>
+              )}
             </CardHeader>
             <CardContent>
               {/* No price history on Robinhood yet -- say so rather than draw a flat line. */}
@@ -414,6 +451,51 @@ export function RobinhoodReserveDetail({ address }: { address: Address }) {
                 )}
               </CardContent>
             </Card>
+
+            {meta?.youtube && (
+              /* Creator videos, under Buy/Sell exactly where the Solana page
+                 puts them: the featured video plays inline (no redirect); only
+                 the explicit "Watch on YouTube" link leaves the page. */
+              <Card className="bg-card border-card-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-merge-display">From the Creator</CardTitle>
+                  <CardDescription className="text-xs">
+                    <a href={meta.youtube.channelUrl} target="_blank" rel="noreferrer" style={{ color: "inherit" }} className="hover:underline">
+                      {channelHandle} on YouTube
+                    </a>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0">
+                  {featuredVideoId && (
+                    <div className="relative aspect-video rounded-xl overflow-hidden border border-border bg-black">
+                      {videoPlaying ? (
+                        <iframe
+                          src={`https://www.youtube-nocookie.com/embed/${featuredVideoId}?autoplay=1&rel=0&modestbranding=1`}
+                          title="Featured by the creator"
+                          className="absolute inset-0 w-full h-full"
+                          style={{ border: 0 }}
+                          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                          allowFullScreen
+                        />
+                      ) : (
+                        <button type="button" onClick={() => setVideoPlaying(true)} className="group block w-full h-full text-left" aria-label="Play the creator's featured video">
+                          <img src={youTubeThumbnailUrl(featuredVideoId)} alt="" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+                          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(7,4,41,0) 55%, rgba(7,4,41,0.55) 100%)" }} />
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            <span className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-transform duration-200 group-hover:scale-110" style={{ background: "rgba(255,255,255,0.92)" }}>
+                              <Play className="w-5 h-5 ml-0.5" style={{ color: "#070429", fill: "#070429" }} />
+                            </span>
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <a href={meta.youtube.channelUrl} target="_blank" rel="noreferrer" className="text-[11px] font-medium hover:underline" style={{ color: "hsl(var(--primary))" }}>
+                    Watch on YouTube ↗
+                  </a>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       </div>

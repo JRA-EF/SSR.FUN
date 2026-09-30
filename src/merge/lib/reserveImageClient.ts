@@ -91,6 +91,56 @@ export async function fileToHeaderImageDataUrl(file: File): Promise<string> {
   }
 }
 
+/** Decoded byte length of a base64 data URL's payload. */
+export function dataUrlByteLength(dataUrl: string): number {
+  const comma = dataUrl.indexOf(",");
+  const b64 = comma === -1 ? "" : dataUrl.slice(comma + 1);
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+
+/** Mirrors lib/reserve-image/payload.ts's MAX_IMAGE_BYTES -- the store refuses anything larger. */
+export const RESERVE_IMAGE_STORE_MAX_BYTES = 400_000;
+
+/**
+ * Re-encodes a header banner (from fileToHeaderImageDataUrl) until it fits
+ * the image store's byte cap, stepping the WebP quality down and then the
+ * width, so a wide photograph can be STORED (the Robinhood flow keeps the
+ * header in the metadata payload) rather than only held in this browser.
+ * Returns the input untouched when it already fits; throws when even the
+ * smallest attempt does not.
+ */
+export async function fitHeaderImageDataUrl(dataUrl: string, maxBytes = RESERVE_IMAGE_STORE_MAX_BYTES): Promise<string> {
+  if (dataUrlByteLength(dataUrl) <= maxBytes) return dataUrl;
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("The header image could not be re-encoded -- try a different one."));
+    img.src = dataUrl;
+  });
+  const attempts: { width: number; quality: number }[] = [
+    { width: 1800, quality: 0.65 },
+    { width: 1500, quality: 0.6 },
+    { width: 1200, quality: 0.55 },
+    { width: 1000, quality: 0.5 },
+  ];
+  for (const { width: maxWidth, quality } of attempts) {
+    const scale = Math.min(1, maxWidth / image.naturalWidth);
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("This browser could not process the image -- try a different browser.");
+    ctx.drawImage(image, 0, 0, width, height);
+    const webp = canvas.toDataURL("image/webp", quality);
+    const out = webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/jpeg", quality);
+    if (dataUrlByteLength(out) <= maxBytes) return out;
+  }
+  throw new Error("The header image is too large to store even after resizing -- try a simpler or smaller picture.");
+}
+
 /**
  * Uploads a normalized picture (from fileToProfileImageDataUrl) and returns
  * its short permanent HTTPS URL. Idempotent server-side (content-hashed id,
@@ -104,7 +154,7 @@ export async function fileToHeaderImageDataUrl(file: File): Promise<string> {
  * metadata payload, no update_metadata transaction, no wallet approval --
  * RealReserveSync's pointer merge makes every viewer pick it up.
  */
-export async function uploadReserveImage(origin: string, dataUrl: string, cluster: "devnet" | "mainnet", reserve?: string): Promise<string> {
+export async function uploadReserveImage(origin: string, dataUrl: string, cluster: "devnet" | "mainnet" | "robinhood", reserve?: string): Promise<string> {
   const path = `/api/${cluster}/reserve-image`;
   const response = await fetch(`${origin}${path}`, {
     method: "POST",

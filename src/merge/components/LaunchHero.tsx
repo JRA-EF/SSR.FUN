@@ -6,7 +6,18 @@
 import type { ReactNode } from "react";
 import { LaunchHeader, LaunchStepper } from "./LaunchStepper";
 
-export function LaunchShell({ subtitle, step, children }: { subtitle: string; step: number; children: ReactNode }) {
+// The chain chooser is NOT part of this shell: it is the first field of
+// each wizard's Identity step (step 1), so it no longer stands above every
+// step as page chrome -- see CreateReserve.tsx.
+export function LaunchShell({
+  subtitle,
+  step,
+  children,
+}: {
+  subtitle: string;
+  step: number;
+  children: ReactNode;
+}) {
   return (
     <div className="container max-w-4xl mx-auto px-4 py-12 relative">
       {/* Full-bleed hero art behind the page top (public/create-hero.jpg) —

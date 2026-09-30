@@ -82,9 +82,14 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
   // legacy/non-canonical category actually present in the data (e.g. "DevNet
   // Fixture") so nothing already on-chain becomes unfilterable.
   const categories = useMemo(() => {
-    const present = dtrs.map((d) => normalizeReserveCategory(d.category));
+    const present = [
+      ...dtrs.map((d) => normalizeReserveCategory(d.category)),
+      // Robinhood reserves carry the same creator-chosen category (see
+      // directoryEntry.ts's robinhoodEntry), so they filter the same way.
+      ...robinhood.reserves.map((r) => normalizeReserveCategory(r.meta?.category)),
+    ];
     return Array.from(new Set([...RESERVE_CATEGORIES, ...present])).sort((a, b) => a.localeCompare(b));
-  }, [dtrs]);
+  }, [dtrs, robinhood.reserves]);
 
   const entries = useMemo<DirectoryEntry[]>(() => {
     const sol = dtrs.map((dtr) =>

@@ -35,6 +35,7 @@ import {
   type AssetRef,
   type ChainConfig,
 } from "./evmChain";
+import { fetchEvmReserveMeta, type EvmReserveMeta } from "./evmReserveMeta";
 
 /** Reserve ids in the app's /dtr/:id route (see evmReserveId.ts, which the router uses viem-free). */
 export { RH_ID_PREFIX, rhReserveId, rhAddressFromId } from "./evmReserveId";
@@ -234,10 +235,19 @@ export interface ReserveSnapshot {
   /** Sum of priced legs; null if any leg could not be priced. */
   aumUsd: number | null;
   navPerShare: number | null;
+  /** The Folio's free-text field as written on-chain ("" if the contract has none). */
+  mandate: string;
+  /**
+   * The reserve's off-chain profile (description, category, pictures,
+   * creator links) when its mandate points at this app's metadata store --
+   * see evmReserveMeta.ts. Null for a reserve created elsewhere or when the
+   * store could not be reached; the on-chain name and symbol still render.
+   */
+  meta: EvmReserveMeta | null;
 }
 
 export async function loadReserve(pc: PublicClient, cfg: ChainConfig, ssr: Address): Promise<ReserveSnapshot> {
-  const [name, symbol, decimals, totalSupply, mintFee, maxAuctionLength, feeDetails, totalAssets] = await Promise.all([
+  const [name, symbol, decimals, totalSupply, mintFee, maxAuctionLength, feeDetails, totalAssets, mandate] = await Promise.all([
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "name" }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "symbol" }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "decimals" }),
@@ -246,9 +256,14 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig, ssr: Addre
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "maxAuctionLength" }),
     pc.readContract({ address: cfg.feeRegistry, abi: FEE_REGISTRY_ABI, functionName: "getFeeDetails", args: [ssr] }),
     pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "totalAssets" }),
+    // Best-effort: a contract without the getter is still a reserve.
+    pc.readContract({ address: ssr, abi: SSR_ABI, functionName: "mandate" }).catch(() => ""),
   ]);
   const [, feeNumerator, feeDenominator, feeFloor] = feeDetails;
   const [assets, amounts] = totalAssets;
+  // Profile resolution runs alongside the basket reads; it is a same-origin
+  // fetch (no RPC budget) and never throws.
+  const metaPromise = fetchEvmReserveMeta(mandate, typeof window !== "undefined" ? window.location.origin : "");
 
   const basket = await Promise.all(
     assets.map(async (a, i): Promise<BasketRow> => {
@@ -289,6 +304,8 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig, ssr: Addre
     basket,
     aumUsd,
     navPerShare: aumUsd !== null && supply > 0 ? aumUsd / supply : null,
+    mandate,
+    meta: await metaPromise,
   };
 }
 
@@ -357,6 +374,13 @@ export interface CreateReserveInput {
   mintFee: bigint;
   tvlFee: bigint;
   owner: Address;
+  /**
+   * The Folio's free-text field. The Create form passes the permanent URL of
+   * the reserve's metadata payload (see evmReserveMeta.ts's
+   * mandateForMetadataId) so the reserve is self-describing on-chain, the
+   * way a Solana Reserve's metadata_uri is.
+   */
+  mandate: string;
 }
 
 /**
@@ -406,7 +430,7 @@ export async function createReserve(
         tvlFee: input.tvlFee,
         mintFee: input.mintFee,
         folioFeeForSelf: 0n,
-        mandate: input.name,
+        mandate: input.mandate,
       },
       {
         trustedFillerEnabled: false,

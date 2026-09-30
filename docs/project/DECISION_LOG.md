@@ -6800,3 +6800,43 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0216",
+  "date": "2026-09-30",
+  "title": "Launch on Robinhood Chain: the chain choice is the first field of step 1, and the Identity step asks for and stores the same fields as Solana (profile picture, category, description, YouTube links, header image), with the on-chain `mandate` as the EVM metadata pointer",
+  "status": "implemented, fast-forwarded onto main (5a94d8e) and DEPLOYED TO PRODUCTION (dpl_2a4dQsCottx7UpPpzrsJCyxnJmvg, 2026-09-30, aliased to ssr.fun); live-verified",
+  "decision": "(1) The 'Launch on' chooser is no longer rendered by LaunchShell above the heading of every step; CreateReserve.tsx hands it to each wizard, which renders it as the FIRST field of its Reserve Identity card (step 1). It appears nowhere else: the Solana connect-wallet gate shows no chooser (the Creator, testing the preview, asked for the gate copy to go), so a visitor meets the chain choice exactly once, at the start of step 1. (2) RobinhoodCreateForm's Identity step now has exactly CreateDTR's fields in the same order: profile picture, name, ticker (same A-Z / TICKER_MAX_LENGTH rule), category (RESERVE_CATEGORIES), description, YouTube channel, featured video, header image. (3) The profile is stored the way a Solana Reserve's is: pictures to the content-addressed image store (new api/robinhood/reserve-image.ts), text and links to the metadata store (new api/robinhood/reserve-metadata.ts, same reserve_metadata table), and the payload's permanent URL written on-chain -- as the Folio's `mandate` string (deploySSR's additionalDetails.mandate, previously set to the reserve's name), the EVM counterpart of Solana's metadata_uri. loadReserve reads `mandate()` back, and when it is one of this app's metadata URLs (src/merge/lib/evmReserveMeta.ts, judged by path + 16-hex id, host-agnostic) fetches the profile onto ReserveSnapshot.meta; Discover/Featured cards and the Robinhood reserve page render description, category, avatar, header banner and the 'From the Creator' video panel from it. (4) lib/reserve-metadata/payload.ts gains three optional link fields (headerImageUrl, youtubeChannelUrl, youtubeFeaturedVideoUrl): HTTPS-only, byte-bounded like imageUrl, serialised in a fixed order after it, OMITTED when blank so every existing payload keeps its content-addressed id. (5) middleware.ts's PUBLIC_READ_API_PATHS allows GET on the two Robinhood routes, as for the Solana ones.",
+  "context": "Creator, 2026-09-30: 'on ssr.fun we're live with robinhood chain, users can switch to that on user creation. but some things to improve- right now the chain is a standing header in the create process. it should be embedded in the first step, right at the beggining. also, all the fields to create a reserve with need to be the same as in SVM, meaning that image and header and youtube links etc etc. should be all the same unless there's a very specific limitation on EVM.' Before this pass the Robinhood Identity step had only name and ticker, and a Robinhood reserve had no off-chain profile at all (the directory card showed a basket-derived sentence and the ticker-initial avatar).",
+  "rationale": "The Folio contract has one free-text field, `mandate`, settable at deploy and later by BRAND_MANAGER; storing the metadata URL there makes a Robinhood reserve self-describing on-chain exactly like a Solana one, readable by any viewer of any deployment (the routes share one Neon store, and the id is judged host-agnostically), and editable later without redeploying. Reusing the existing metadata/image stores and validator (with a third route pair, following the devnet/mainnet separate-file convention) keeps one schema for both chains. The header image and YouTube links go INTO the payload for Robinhood -- on Solana they are still device-local (useAppStore) -- because the payload is the only place an EVM reserve can carry them; the fields are optional and omitted-when-absent so Solana payloads are untouched.",
+  "alternativesConsidered": [
+    "A server-side reserve-address -> metadata pointer table (rejected: needs a new table and an unauthenticated write path; the mandate is on-chain, signed by the deployer, and already exists)",
+    "Keeping header/YouTube device-local for Robinhood like Solana (rejected: an EVM reserve has no local DTR record to hang them on, and server-side is what the Creator's 'same as SVM' means for every viewer)",
+    "Manager buy/sell taxes on Robinhood (not done: a Solana-metadata rule the EVM contracts do not implement -- stored as 0 in the payload; this is the 'specific EVM limitation' case)",
+    "Extending the Solana upload to persist header/YouTube in the payload too (deferred: would change the metadata bytes of every new Solana Reserve; noted as a follow-up)"
+  ],
+  "impact": "Both Launch wizards show the chain chooser inside step 1 only. A Robinhood reserve created from the app now has a full profile everywhere a Solana one does. Reserves created before this pass (e.g. the first mainnet reserve, mandate 'Strategic Equity Reserve') are unaffected: they show on-chain name/symbol and the basket-derived card line as before. One extra same-origin fetch per Robinhood reserve on load (cached immutable). Header images are re-encoded down to the store's 400 KB cap before upload (fitHeaderImageDataUrl).",
+  "affectedAreas": [
+    "src/merge/pages/CreateReserve.tsx (ChainChoiceBlock `centered` prop; picker + gatePicker handed down)",
+    "src/merge/components/LaunchHero.tsx (chainPicker slot removed)",
+    "src/merge/pages/CreateDTR.tsx (picker as the first Identity field; gate chooser below the CTA)",
+    "src/merge/components/robinhood/RobinhoodCreateForm.tsx (full Identity parity; profile upload before deploy; mandate)",
+    "src/merge/components/robinhood/RobinhoodReserveDetail.tsx (header banner, avatar, category, description, From the Creator panel)",
+    "src/merge/lib/evmReserveMeta.ts (new, viem-free), src/merge/lib/evmReserve.ts (mandate read, meta on the snapshot, CreateReserveInput.mandate), src/merge/lib/evmChain.ts (SSR_ABI mandate)",
+    "src/merge/lib/directoryEntry.ts, src/merge/pages/Discover.tsx (profile on cards; Robinhood categories filterable)",
+    "lib/reserve-metadata/payload.ts (+3 optional link fields), src/merge/lib/createReserveClient.ts (ReserveMetadataInput, MetadataStoreCluster), src/merge/lib/reserveImageClient.ts (robinhood cluster; fitHeaderImageDataUrl)",
+    "api/robinhood/reserve-metadata.ts, api/robinhood/reserve-image.ts (new), middleware.ts (public GET allowlist)",
+    "tests/phase_robinhood_create_parity.ts (new, 17 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live read 2026-09-30 of the first mainnet reserve 0xADEd2d2967AC92EE8FB52612D3436511F302Fe2f: mandate() = 'Strategic Equity Reserve', version() = 6.0.0 -- the getter exists on the deployed Folio.",
+    "tsc -b clean (after building packages/sdk); oxlint clean on every touched file; VITE_ENABLE_EVM=true vite build succeeds.",
+    "Live 2026-09-30 after the deploy: GET https://ssr.fun/api/robinhood/reserve-metadata?id=0123456789abcdef -> 404 {error: No Reserve metadata found for this id} (public read works, not the 401 gate); GET reserve-image without id -> 400; POST without a site session -> 401 (writes stay gated). The Creator tested preview dpl_CLC374967cxoGt1Vh6DuD74dYS44 first: 'other than that it looks good lets ship to ssr.fun'.",
+    "ts-mocha: phase_robinhood_create_parity 17 passing; phase_evm_feature_flag + phase_robinhood_ui_contract + phase_metadata_uri + phase_reserve_profile_image + phase_create_reserve_delegate_and_metadata 98 passing."
+  ]
+}
+```

@@ -36,7 +36,7 @@ const CHAINS: { v: ChainChoice; label: string; blurb: string }[] = [
  */
 export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange: (c: ChainChoice) => void }) {
   return (
-    <div className="inline-flex rounded-full border border-border bg-secondary/40 p-1" role="radiogroup" aria-label="Chain">
+    <div className="inline-flex rounded-full border border-border/70 bg-background/70 backdrop-blur-sm shadow-sm p-1" role="radiogroup" aria-label="Chain">
       {CHAINS.map((c) => {
         const active = value === c.v;
         return (
@@ -61,16 +61,23 @@ export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange:
   );
 }
 
-/** The "Launch on" block: label, segmented control, and the chosen chain's one-liner. */
+/**
+ * The "Launch on" block: label, segmented control, and the chosen chain's
+ * one-liner. It is the FIRST field of the Identity step (step 1) in both
+ * wizards -- the chain is part of what the creator defines, not page chrome
+ * standing above every step -- so by default it is laid out like the fields
+ * around it. It appears nowhere else: not on the Solana connect-wallet gate
+ * (Creator, 2026-09-30), so a visitor meets it exactly once, at the start.
+ */
 function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (c: ChainChoice) => void }) {
   const blurb = CHAINS.find((c) => c.v === chain)?.blurb;
   return (
-    <div className="flex flex-col items-center gap-2.5 text-center">
+    <div className="flex flex-col gap-2 items-start">
       <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
         Launch on
       </p>
       <ChainPicker value={chain} onChange={onChange} />
-      <p className="text-sm text-muted-foreground max-w-md">{blurb}</p>
+      <p className="text-xs text-muted-foreground max-w-md">{blurb}</p>
     </div>
   );
 }
@@ -78,22 +85,18 @@ function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (
 export function CreateReserve() {
   const chain = chainFromPath(usePath(), EVM_ENABLED);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
+  // The chooser is handed DOWN into each chain's wizard, which renders it as
+  // the first field of its Identity step and nowhere else. With one chain
+  // there is no choice to present, so nothing is passed at all.
+  const picker = EVM_ENABLED ? <ChainChoiceBlock chain={chain} onChange={onChange} /> : undefined;
+
   return (
     <div>
-      {/* The chain control is page-level chrome on the plain ground, above the
-          wizard -- the wizard brings its own hero wash behind its heading.
-          With one chain there is no choice to present, so the whole block
-          goes rather than showing a control with a single option. */}
-      {EVM_ENABLED && (
-        <div className="container mx-auto px-4 md:px-8 pt-8 flex justify-center">
-          <ChainChoiceBlock chain={chain} onChange={onChange} />
-        </div>
-      )}
       {chain === "solana" ? (
-        <CreateDTR />
+        <CreateDTR chainPicker={picker} />
       ) : (
         <Suspense fallback={<p className="container mx-auto px-4 py-12 text-muted-foreground">Loading…</p>}>
-          <RobinhoodCreateForm />
+          <RobinhoodCreateForm chainPicker={picker} />
         </Suspense>
       )}
     </div>

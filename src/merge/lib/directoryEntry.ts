@@ -54,12 +54,18 @@ export function robinhoodEntry(r: ReserveSnapshot): DirectoryEntry {
   const byValue = [...r.basket].sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0));
   const price = r.navPerShare;
   const aum = r.aumUsd;
+  // The creator's own profile (description, category, picture) when the
+  // reserve's mandate points at this app's metadata store -- the same fields
+  // a Solana card shows. A reserve created elsewhere falls back to a
+  // basket-derived line and the ticker-initial avatar, never an invented one.
+  const meta = r.meta;
+  const category = normalizeReserveCategory(meta?.category);
   return {
     key: `rh:${r.address}`,
     chain: "robinhood",
     name: r.name,
     ticker: r.symbol,
-    category: null,
+    category,
     aum: aum ?? 0,
     price: price ?? 0,
     change24h: 0,
@@ -67,9 +73,10 @@ export function robinhoodEntry(r: ReserveSnapshot): DirectoryEntry {
     card: {
       name: r.name,
       ticker: r.symbol,
-      description: `A basket of ${byValue.map((b) => b.symbol).join(", ")} held on Robinhood Chain.`,
+      description: meta?.description.trim() || `A basket of ${byValue.map((b) => b.symbol).join(", ")} held on Robinhood Chain.`,
       avatarLabel: r.symbol.slice(0, 2),
-      categoryLabel: "Robinhood Chain",
+      avatarImageUrl: meta?.imageUrl,
+      categoryLabel: meta?.category.trim() ? category : "Robinhood Chain",
       sourceBadge: { label: "Live on Robinhood Chain", tone: "onchain" },
       priceFormatted: price === null ? "Price unavailable" : formatUsdc(price),
       changePct: 0,

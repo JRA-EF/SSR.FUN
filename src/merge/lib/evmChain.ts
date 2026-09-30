@@ -185,6 +185,10 @@ export const D18 = 10n ** 18n;
 export const SSR_ABI = [
   { type: "function", name: "name", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
   { type: "function", name: "symbol", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
+  // The Folio's one free-text field. An SSR.FUN reserve stores its metadata
+  // URL here (see evmReserveMeta.ts); verified live on the first mainnet
+  // reserve 2026-09-30 (Folio 6.0.0 answers `mandate()`).
+  { type: "function", name: "mandate", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
   { type: "function", name: "decimals", inputs: [], outputs: [{ type: "uint8" }], stateMutability: "view" },
   { type: "function", name: "totalSupply", inputs: [], outputs: [{ type: "uint256" }], stateMutability: "view" },
   { type: "function", name: "balanceOf", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },

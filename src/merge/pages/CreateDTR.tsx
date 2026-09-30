@@ -112,7 +112,12 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 }
 
 
-export function CreateDTR() {
+export function CreateDTR({
+  chainPicker,
+}: {
+  /** The chain chooser, rendered as the FIRST field of step 1 (Reserve Identity) -- and nowhere else (Creator, 2026-09-30: not on the connect-wallet gate). */
+  chainPicker?: ReactNode;
+} = {}) {
   const [, setLocation] = useLocation();
   const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints, setWalletModalOpen } = useAppStore();
   const { toast } = useToast();
@@ -1490,6 +1495,9 @@ export function CreateDTR() {
               <CardDescription>Define the basic information for your new reserve.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* The chain is the first thing a creator decides, so it is the
+                  first field of Identity -- not chrome standing above every step. */}
+              {chainPicker && <div className="pb-6 border-b border-border/40">{chainPicker}</div>}
               <div className="space-y-2">
                 <Label>Profile Picture (optional)</Label>
                 <div className="flex items-start gap-4">
