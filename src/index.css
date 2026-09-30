@@ -1876,6 +1876,21 @@ input, select, textarea {
   overflow: hidden;
 }
 
+.lc2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* When the card carries a liquidity badge row (DEC-0196), the description
+   reserves 2 lines instead of 3 -- the badge row occupies the third line's
+   space, so the badge hugs the text and card heights stay aligned. */
+.fcard-desc-with-liq {
+  min-height: 41px;
+}
+
 .section {
   padding: 64px 0 0;
 }

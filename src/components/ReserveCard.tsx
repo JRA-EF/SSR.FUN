@@ -98,7 +98,7 @@ export function ReserveCard({
         </div>
       </div>
 
-      <p className="fcard-desc lc3">{description}</p>
+      <p className={`fcard-desc ${liquidityBadge ? 'lc2 fcard-desc-with-liq' : 'lc3'}`}>{description}</p>
 
       {liquidityBadge && (
         <div className="fcard-liq">
