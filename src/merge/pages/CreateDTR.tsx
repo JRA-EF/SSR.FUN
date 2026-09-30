@@ -114,12 +114,9 @@ function expectedApprovalCount(assets: { symbol: string }[]): number {
 
 export function CreateDTR({
   chainPicker,
-  gateChainPicker,
 }: {
-  /** The chain chooser, rendered as the FIRST field of step 1 (Reserve Identity). */
+  /** The chain chooser, rendered as the FIRST field of step 1 (Reserve Identity) -- and nowhere else (Creator, 2026-09-30: not on the connect-wallet gate). */
   chainPicker?: ReactNode;
-  /** The same chooser, centred, for the connect-wallet gate -- a visitor who has not connected can still switch chains. */
-  gateChainPicker?: ReactNode;
 } = {}) {
   const [, setLocation] = useLocation();
   const { wallet, registerRealReserve, syncRealHolding, addKnownAssetMints, setWalletModalOpen } = useAppStore();
@@ -944,10 +941,6 @@ export function CreateDTR({
           <Button className="rounded-full h-12 px-10 text-base mt-6" onClick={() => setWalletModalOpen(true)}>
             Connect Wallet
           </Button>
-          {/* The chain choice sits with the gate's own content, below the
-              call to action, so a visitor without a Solana wallet can still
-              reach Robinhood Chain -- not as a strip above the page. */}
-          {gateChainPicker && <div className="flex justify-center pt-8">{gateChainPicker}</div>}
         </div>
       </div>
     );

@@ -133,11 +133,13 @@ describe("the chain choice is the first field of step 1, not page chrome", () =>
     }
   });
 
-  it("the Solana wallet gate keeps a (centred) chooser so a visitor without a Solana wallet can still reach Robinhood Chain", () => {
+  it("the Solana connect-wallet gate shows NO chooser (Creator, 2026-09-30) -- the chain is met exactly once, at the start of step 1", () => {
     const src = read("src/merge/pages/CreateDTR.tsx");
-    const gate = src.indexOf("Connect Wallet<br />to Deploy");
-    expect(src.indexOf("gateChainPicker &&", gate)).to.be.greaterThan(gate);
-    expect(read("src/merge/pages/CreateReserve.tsx")).to.include("gateChainPicker={gatePicker}");
+    const gateStart = src.indexOf("if (!wallet.connected) {");
+    const gateEnd = src.indexOf("const handleNext", gateStart);
+    expect(gateStart).to.be.greaterThan(-1);
+    expect(src.slice(gateStart, gateEnd)).to.not.include("chainPicker");
+    expect(read("src/merge/pages/CreateReserve.tsx")).to.not.include("gateChainPicker");
   });
 });
 

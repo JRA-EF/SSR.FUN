@@ -66,12 +66,13 @@ export function ChainPicker({ value, onChange }: { value: ChainChoice; onChange:
  * one-liner. It is the FIRST field of the Identity step (step 1) in both
  * wizards -- the chain is part of what the creator defines, not page chrome
  * standing above every step -- so by default it is laid out like the fields
- * around it. The wallet gate, which is centred text, asks for `centered`.
+ * around it. It appears nowhere else: not on the Solana connect-wallet gate
+ * (Creator, 2026-09-30), so a visitor meets it exactly once, at the start.
  */
-function ChainChoiceBlock({ chain, onChange, centered = false }: { chain: ChainChoice; onChange: (c: ChainChoice) => void; centered?: boolean }) {
+function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (c: ChainChoice) => void }) {
   const blurb = CHAINS.find((c) => c.v === chain)?.blurb;
   return (
-    <div className={`flex flex-col gap-2 ${centered ? "items-center text-center" : "items-start"}`}>
+    <div className="flex flex-col gap-2 items-start">
       <p className="font-merge-display text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
         Launch on
       </p>
@@ -85,16 +86,14 @@ export function CreateReserve() {
   const chain = chainFromPath(usePath(), EVM_ENABLED);
   const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
   // The chooser is handed DOWN into each chain's wizard, which renders it as
-  // the first field of its Identity step (and, on Solana, on the wallet gate
-  // too, so a visitor who has not connected can still switch). With one
-  // chain there is no choice to present, so nothing is passed at all.
+  // the first field of its Identity step and nowhere else. With one chain
+  // there is no choice to present, so nothing is passed at all.
   const picker = EVM_ENABLED ? <ChainChoiceBlock chain={chain} onChange={onChange} /> : undefined;
-  const gatePicker = EVM_ENABLED ? <ChainChoiceBlock chain={chain} onChange={onChange} centered /> : undefined;
 
   return (
     <div>
       {chain === "solana" ? (
-        <CreateDTR chainPicker={picker} gateChainPicker={gatePicker} />
+        <CreateDTR chainPicker={picker} />
       ) : (
         <Suspense fallback={<p className="container mx-auto px-4 py-12 text-muted-foreground">Loading…</p>}>
           <RobinhoodCreateForm chainPicker={picker} />
