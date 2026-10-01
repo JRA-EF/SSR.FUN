@@ -12,6 +12,7 @@ import {
   OFFICIAL_STOCK_TOKEN_CODE_HASH,
   QUOTES,
   classifyToken,
+  dropSymbolImpersonators,
   isRobinhoodNamed,
   selectBestPool,
   sortForPicker,
@@ -88,6 +89,21 @@ describe("selectBestPool / spotFromSqrtPrice / sortForPicker", () => {
     // per AAPL that is 1e18 / 250e6 = 4e9.
     const sqrt = BigInt(Math.round(Math.sqrt(4e9) * 2 ** 96));
     expect(spotFromSqrtPrice(sqrt, AAPL, 18, QUOTES.USDG)).to.be.closeTo(250, 0.01);
+  });
+
+  it("dropSymbolImpersonators: a fake USDG/WETH or a fake stock-token symbol is dropped; the real ones and ordinary duplicates stay", () => {
+    const t = (address: string, symbol: string, issuer: "robinhood" | null): RobinhoodCatalogueToken => ({ address: address as `0x${string}`, symbol, name: symbol, decimals: 18, issuer, pool: null, depthUsd: 1, priceUsd: null });
+    const kept = dropSymbolImpersonators([
+      t(QUOTES.USDG.address, "USDG", null),
+      t("0x0000000000000000000000000000000000000001", "USDG", null),
+      t("0x0000000000000000000000000000000000000002", "weth", null),
+      t(QUOTES.WETH.address, "WETH", null),
+      t(AAPL, "AAPL", "robinhood"),
+      t("0x0000000000000000000000000000000000000003", "AAPL", null),
+      t("0x0000000000000000000000000000000000000004", "PEPE", null),
+      t("0x0000000000000000000000000000000000000005", "PEPE", null),
+    ]);
+    expect(kept.map((x) => x.address)).to.deep.equal([QUOTES.USDG.address, QUOTES.WETH.address, AAPL, "0x0000000000000000000000000000000000000004", "0x0000000000000000000000000000000000000005"]);
   });
 
   it("sortForPicker: USDG, WETH, stock tokens A-Z, then the rest by depth", () => {
