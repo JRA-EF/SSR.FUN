@@ -179,9 +179,10 @@ interface AppState {
    * src/merge/lib/liquidityPreview.ts and
    * docs/project/LIQUIDITY_MODULE_SPEC.md). Purely local: no pool exists on
    * any chain and no funds move; every surface rendering this is labelled
-   * as a preview. The real Raydium/Uniswap integration replaces these three
-   * actions (build + sign + confirm, then persist the observed on-chain
-   * result) while keeping their call sites.
+   * as a preview. The real integration replaces these four actions behind the
+   * liquidity adapter (LIQUIDITY_MODULE_SPEC.md Section 12.4; build + sign +
+   * confirm, then persist the observed on-chain result) while keeping their
+   * call sites.
    */
   liquidityPreviews: Record<string, LiquidityPoolPreview>;
   /** Creates the preview pool on first use (root Manager only in the UI), or tops an existing one up. Locks only ever strengthen. */
@@ -191,8 +192,10 @@ interface AppState {
   ) => void;
   /** Applies a stronger lock to the preview position; a weaker lock than the current one is ignored. */
   lockLiquidityPreview: (dtrId: string, lock: LiquidityLock) => void;
-  /** Marks accrued preview fees as collected to the Reserve treasury and restarts accrual. */
+  /** Marks accrued preview fees as collected to the creator treasury and restarts accrual. */
   collectLiquidityPreviewFees: (dtrId: string, amountUsd: number) => void;
+  /** Marks accrued preview fees as compounded: adds them to the position as balanced liquidity and restarts accrual (DEC-0222). */
+  compoundLiquidityPreviewFees: (dtrId: string, amountUsd: number, navPerToken: number) => void;
 
   addDelegate: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   updateDelegatePermissions: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
@@ -323,6 +326,7 @@ export const useAppStore = create<AppState>()(
                 createdTs: now,
                 lock: input.lock,
                 collectedTotalUsd: 0,
+                compoundedTotalUsd: 0,
                 collectedThroughTs: now,
               };
           return { liquidityPreviews: { ...state.liquidityPreviews, [dtrId]: pool } };
@@ -345,6 +349,26 @@ export const useAppStore = create<AppState>()(
             liquidityPreviews: {
               ...state.liquidityPreviews,
               [dtrId]: { ...existing, collectedTotalUsd: existing.collectedTotalUsd + amountUsd, collectedThroughTs: Date.now() },
+            },
+          };
+        });
+      },
+
+      compoundLiquidityPreviewFees: (dtrId, amountUsd, navPerToken) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          if (!existing || amountUsd <= 0) return state;
+          const nav = navPerToken > 0 ? navPerToken : 1;
+          return {
+            liquidityPreviews: {
+              ...state.liquidityPreviews,
+              [dtrId]: {
+                ...existing,
+                baseTokens: existing.baseTokens + amountUsd / 2 / nav,
+                quoteUsd: existing.quoteUsd + amountUsd / 2,
+                compoundedTotalUsd: (existing.compoundedTotalUsd ?? 0) + amountUsd,
+                collectedThroughTs: Date.now(),
+              },
             },
           };
         });

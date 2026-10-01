@@ -6933,3 +6933,68 @@
   ]
 }
 ```
+
+## DEC-0222
+
+```json
+{
+  "id": "DEC-0222",
+  "date": "2026-10-02",
+  "status": "confirmed-product-ruling",
+  "decision": "Liquidity Module product rulings from Yeh (spec author and decision-maker for the module), superseding the ambiguous parts of LIQUIDITY_MODULE_SPEC.md v0.2 and resolving OPEN-6 and OPEN-8: (1) DEX liquidity is OPTIONAL -- a Reserve is fully functional without a pool because the Reserve Token is redeemable at NAV against its reserve assets; launch is never blocked and the post-first-mint prompt is resumable from the dashboard. (2) 'Canonical pool' means the pool created through the SSR flow and shown by the app for badges, price-vs-NAV and liquidity reporting; SSR does not own the LP and cannot stop other pools existing. (3) LP capital is new creator capital, never taken from Reserve vault assets. (4) OPEN-8 resolved: the fee destination formerly called 'Reserve treasury' is the CREATOR'S treasury / creator-designated fee recipient, fixed at the Reserve level; LP trading fees are creator earnings, a separate creator-revenue bucket, not 'reserve fees' for the 50% $SSR buyback. (5) The creator must have BOTH Collect (harvest accrued fees to the fixed treasury without touching principal; may be permissionless because the destination cannot be redirected) AND Compound (creator-authorised; accrued fees form additional balanced canonical liquidity). Realising fees by withdrawing principal is not acceptable. (6) Locks constrain LP principal only: Unlocked (withdrawable), timed 1/3/6/12 months (extend-only, upgradeable to permanent, never shortened), permanent (never withdrawable); fees stay collectable/compoundable in every state and strengthen-only is enforced by the lock primitive on-chain, not by UI state. (7) Partial locks are dropped for v1: the lock is chosen per liquidity-addition tranche, and different tranches may carry different lock terms. (8) Trust badges, pool address, lock state and liquidity depth must derive from real chain state; preview/localStorage state never masquerades as live.",
+  "context": "Yeh's two clarification memos of 2026-10-01 ('product clarification / implementation handoff' and the rulings reply of the same evening) delivered to the Boss's Claude Code session after the DEC-0217/0218 preview reached the team test site. The v0.2 spec assumed fees to 'the Reserve treasury', Collect only, CPMM v1 and percentage-based partial locks.",
+  "rationale": "The LP exists to make the Reserve Token easier to trade externally; it is not the source of the token's fundamental liquidity, and the creator's LP fees are an optional revenue stream that must be realisable independently of the locked principal. Per-tranche locks give practically the same flexibility as percentage locks without splitting positions inside one operation.",
+  "alternativesConsidered": [
+    "Keep 'Reserve treasury' as the fee destination with LP fees counted toward the $SSR buyback -- rejected by Yeh: LP fees are creator economics, analogous to creator fees on token-launch products.",
+    "Collect only (fees compound into the LP unless withdrawn) -- rejected: forces the creator to choose between earning and keeping principal deployed.",
+    "Percentage-based partial locks (spec v0.2 Section 6) -- deferred: needs two positions per lock on the chosen primitive; per-tranche locks cover the use case."
+  ],
+  "impact": "LIQUIDITY_MODULE_SPEC.md bumped to v0.3 (Sections 2, 3.2, 4.1, 6, 7, 8 and new Section 12). Preview copy and store updated: 'Reserve treasury' becomes 'your creator treasury', a Compound action joins Collect, lock copy states that fees keep flowing in every lock state. Live implementation must satisfy these rulings; see DEC-0223 for the architecture.",
+  "affectedAreas": [
+    "docs/project/LIQUIDITY_MODULE_SPEC.md",
+    "src/merge/components/LiquidityModule.tsx",
+    "src/merge/lib/liquidityPreview.ts",
+    "src/merge/store/useAppStore.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Yeh's memos, 2026-10-01 (Boss session, branch feature/liquidity-arch).",
+    "Reserve Token mints are classic SPL Token (create_reserve.rs uses anchor_spl::token::Mint), so the Token-2022 compatibility risk in spec v0.2 Section 7.3 does not apply."
+  ]
+}
+```
+
+## DEC-0223
+
+```json
+{
+  "id": "DEC-0223",
+  "date": "2026-10-02",
+  "status": "confirmed-conditional-architecture",
+  "decision": "Solana liquidity architecture, conditional on Raydium: PREFERRED path is Raydium CPMM created through InitializeWithPermission on AmmConfig index 9 (LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC: 0.25% trade fee + 0.75% creator fee, 1.00% all-in for the trader), with pool_creator set to the creator's fixed fee treasury so CollectCreatorFee / CollectCreatorFeePermissionless pay only there, Compound = collect then deposit, Raydium's permanent LP lock for 'forever', and a minimal SPL LP-token escrow for timed locks. This requires a Raydium-granted Permission PDA (only Raydium's admin / permission-owner keys can create one; 8 exist on Mainnet) -- Yeh is contacting Raydium; NO permission has been obtained and none may be claimed. COMMITTED FALLBACK if Raydium declines or stalls: permissionless Raydium CLMM, Reserve Token / USDC, full-range position opened at NAV, fee tier 0.8% (AmmConfig index 17, DQeN7dZyQvXKT7YwmgqyuC7AYFkwMoP7RwtucsDEdfYZ, tick spacing 60; 12% protocol + 4% fund, 84% to LPs), created with CreateCustomizablePool using collect_fee_on = the USDC side (Token0Only or Token1Only depending on mint ordering) and enable_dynamic_fee = false. In the fallback the creator earns ordinary LP fees pro rata to their share of active liquidity (~0.672% of volume at 100% ownership), NOT a guaranteed creator fee. Collect = DecreaseLiquidityV2 with liquidity 0 to the fixed treasury's USDC account; Compound = harvest then IncreaseLiquidityV2 (or a new position for permanently locked tranches). Timed locks: a minimal SSR escrow program holding the position NFT (unlock_ts, extend-only, upgrade-to-permanent, harvest to the fixed treasury, no early withdrawal). Permanent locks: Raydium's native CLMM lock (LockClmmPosition / fee-key NFT); 'compound' on a permanently locked tranche = harvest -> open a new full-range position -> lock it too. Both paths sit behind a liquidity adapter interface so the UI, store and badges do not change when the primitive does. Fee tier is 0.8%, not 1.0%. Before implementation the NAV-arbitrage model must be re-run with real Jupiter quotes for representative 1-, 5- and 10-asset Reserves (scripts/liquidity_arb_band.ts); the 0.10% basket-execution assumption is not a constant.",
+  "context": "Research 2026-10-01/02 (Boss session): Raydium CPMM compounds LP fees into the pool with no separate claim (cp-swap source, docs.raydium.io/products/cpmm/fees); creator fees exist only on permissioned pools (Initialize hard-codes enable_creator_fee = false; InitializeWithPermission requires a Permission PDA created by Raydium's admin or RayqjDRsNEFuPcDE4JpEScwJvwusmHYuNZ3MgET4D7U). Mainnet decode of all 21 CPMM AmmConfigs found index 9 = exactly 0.25%/0.75% (98 pools, API showWithUI=false, creator_fee_share_rate currently 0). CLMM: 21 AmmConfigs on Mainnet incl. a permissionless 0.8% tier; CreateCustomizableParams { sqrt_price_x64, collect_fee_on: FromInput|Token0Only|Token1Only, enable_dynamic_fee } (raydium-clmm ed1eb41, 2026-09-29); DecreaseLiquidityV2 does not check the recipient token-account owner; Raydium's permanent lock keeps fee harvest but cannot take added liquidity. Raydium has no native timed lock; third-party lockers either cannot harvest from a custodied CLMM NFT or are unverified. Fee-only no-arb band with SSR defaults (mint 0.50% min, redemption 0%): 0.8% -> -0.90% / +1.40% (2.30% wide); 1.0% -> -1.10% / +1.60% (2.70% wide); live Jupiter round-trip execution cost measured at ~0% (1 asset), 0.12-0.25% (5 assets), ~0.3% (10 assets, $1k) on lite-api with rate limiting -- to be redone with the keyed API.",
+  "rationale": "Permissioned CPMM gives a creator fee that holds regardless of who later supplies liquidity and avoids building a CLMM/escrow stack; it beats comparable launch products on creator take at the same 1% trader cost. It depends on Raydium BD, so it cannot block shipping. The CLMM fallback meets every product rule in DEC-0222 (independent fee harvest, Collect+Compound, fees in USDC, locks on principal only) with no dependence on Raydium approval; full-range CLMM behaves like x*y=k so routing and depth match CPMM. 0.8% keeps the band under 2.5% while matching Bankr/Pons creator cash economics; each 0.2% of fee buys ~0.168% of creator take for ~0.4% of band width, so 1.0% was judged not worth the NAV drift. The band is asymmetric (+0.5% on the premium side) because of the minimum mint fee, independent of the DEX fee.",
+  "alternativesConsidered": [
+    "Standard CPMM (spec v0.2) -- rejected: fees compound into LP; Collect without withdrawing principal is impossible unless permanently locked.",
+    "CLMM at 1.0% (index 3) -- rejected by Yeh: wider arbitrage band for 0.168% more take.",
+    "Third-party locker for timed locks -- rejected: Jupiter Lock / Streamflow cannot harvest CLMM fees from escrow; UNCX/Team Finance claims unverified and fee-bearing.",
+    "SSR-escrow permanent lock (compoundable) -- rejected in favour of Raydium's native lock, which external tooling recognises; compounding a locked tranche opens a new locked position instead.",
+    "Building a custom creator-fee mechanism -- rejected by Yeh until Raydium's answer on permissioned CPMM is known."
+  ],
+  "impact": "Spec Section 5 matrix and new Section 12 record both paths. The preview labels the Solana pool type 'full-range position' (fallback) via dexInfoFor; permissioned CPMM flips it through the adapter. Live client work does not start until Raydium answers or Yeh calls the fallback. New open items: OPEN-10 (badge semantics when tranches carry different locks), OPEN-11 (whether the fee treasury can ever change and who can change it), OPEN-12 (CLMM position-NFT freeze list check for USDC/SOL before any lock is built).",
+  "affectedAreas": [
+    "docs/project/LIQUIDITY_MODULE_SPEC.md",
+    "src/merge/lib/liquidityPreview.ts",
+    "scripts/liquidity_arb_band.ts",
+    "future: src/merge/lib/liquidity adapter, SSR escrow program"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Mainnet getProgramAccounts decode of CPMM AmmConfig (dataSize 236) and CLMM AmmConfig (dataSize 117) on 2026-10-01; api-v3.raydium.io/main/clmm-config lists index 17 = 0.8%.",
+    "raydium-cp-swap 59fb845 (instructions/initialize.rs, initialize_with_permission.rs, admin/create_permission_pda.rs); raydium-clmm ed1eb41 (create_customizable_pool.rs, states/pool.rs CollectFeeOn).",
+    "Yeh's rulings 2026-10-01 evening: 0.8% tier; drop partial locks; USDC-only fees; dynamic fee off; adapter; record DEC-0222 now; do not claim Raydium permission."
+  ]
+}
+```

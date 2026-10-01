@@ -5,7 +5,8 @@
  *  - LiquidityPanel: the add-liquidity form (pair, amount, lock, submit).
  *  - LiquiditySection: the Manager Dashboard "Liquidity" tab (empty state ->
  *    panel; live preview state -> pool dashboard with hyperlinked pool
- *    address, lock status, and Collect-fees-to-treasury).
+ *    address, lock status, and the two fee actions: Collect to the creator
+ *    treasury or Compound back into the pool -- DEC-0222).
  *  - LiquidityFirstMintIntro: the split-layout prompt shown on the Reserve
  *    page right after the root Manager's own first mint.
  *
@@ -170,8 +171,8 @@ export function LiquidityPanel({ dtr, onDone }: { dtr: DTR; onDone?: () => void 
 
   const lockChoices: { mode: LiquidityLockMode; title: string; body: string; icon: typeof Lock }[] = [
     { mode: "none", title: "No lock", body: "You can withdraw anytime. The weakest trust signal for holders.", icon: Unlock },
-    { mode: "timed", title: "Lock for a period", body: "Held until the unlock date. You can extend later, never shorten.", icon: Lock },
-    { mode: "permanent", title: "Lock forever", body: "Permanent. You still collect the pool's trading fees.", icon: Lock },
+    { mode: "timed", title: "Lock for a period", body: "Held until the unlock date. You can extend later, never shorten. Trading fees stay yours throughout.", icon: Lock },
+    { mode: "permanent", title: "Lock forever", body: "Permanent. You keep earning the pool's trading fees and can collect or compound them anytime.", icon: Lock },
   ];
 
   return (
@@ -343,7 +344,7 @@ export function LiquidityPanel({ dtr, onDone }: { dtr: DTR; onDone?: () => void 
 
 /** The Manager Dashboard's Liquidity tab. Root Manager only -- the caller gates, and this double-checks. */
 export function LiquiditySection({ dtr }: { dtr: DTR }) {
-  const { wallet, liquidityPreviews, lockLiquidityPreview, collectLiquidityPreviewFees } = useAppStore();
+  const { wallet, liquidityPreviews, lockLiquidityPreview, collectLiquidityPreviewFees, compoundLiquidityPreviewFees } = useAppStore();
   const { toast } = useToast();
   const [addOpen, setAddOpen] = useState(false);
   const [poolAddressCopied, setPoolAddressCopied] = useState(false);
@@ -387,7 +388,15 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
     collectLiquidityPreviewFees(dtr.id, fees);
     toast({
       title: "Fees collected in this preview",
-      description: `${formatUsdc(fees)} routed to the Reserve treasury. In this design preview no funds actually move.`,
+      description: `${formatUsdc(fees)} sent to your creator treasury. In this design preview no funds actually move.`,
+    });
+  };
+
+  const compound = () => {
+    compoundLiquidityPreviewFees(dtr.id, fees, nav);
+    toast({
+      title: "Fees compounded in this preview",
+      description: `${formatUsdc(fees)} added back to the pool as balanced liquidity. In this design preview no funds actually move.`,
     });
   };
 
@@ -434,13 +443,19 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
         <Card>
           <CardContent className="pt-6 space-y-1">
             <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Fees earned</p>
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-merge-mono text-2xl">{formatUsdc(fees)}</p>
+            <p className="font-merge-mono text-2xl">{formatUsdc(fees)}</p>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
               <Button size="sm" disabled={fees < 0.01} onClick={collect}>
                 <Coins className="w-3.5 h-3.5 mr-1.5" /> Collect
               </Button>
+              <Button size="sm" variant="outline" disabled={fees < 0.01} onClick={compound}>
+                <Droplets className="w-3.5 h-3.5 mr-1.5" /> Compound
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground">Collected fees go to the Reserve treasury, never to your connected wallet.</p>
+            <p className="text-xs text-muted-foreground">
+              Fees accrue in USDC. Collect sends them to your creator treasury, never to your connected wallet; Compound adds them
+              back into the pool.
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -455,10 +470,10 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
                     style={{ width: `${Math.min(100, Math.max(2, (remainingDays / totalLockDays) * 100))}%` }}
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">100% of the position is locked. Extending is allowed, shortening never is.</p>
+                <p className="text-xs text-muted-foreground">100% of the position is locked. Extending is allowed, shortening never is. Fees keep accruing to you.</p>
               </>
             ) : pool.lock.mode === "permanent" ? (
-              <p className="text-xs text-muted-foreground">Permanent. You keep collecting trading fees but can never withdraw.</p>
+              <p className="text-xs text-muted-foreground">Permanent. You keep earning trading fees, collectable or compoundable, but can never withdraw.</p>
             ) : (
               <p className="text-xs text-muted-foreground">Nothing is locked. Locking is the strongest trust signal you can give holders.</p>
             )}
@@ -547,7 +562,7 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
                   size="sm"
                   onClick={() => {
                     lockLiquidityPreview(dtr.id, { mode: "permanent" });
-                    toast({ title: "Locked forever in this preview", description: "The position can never be withdrawn. Trading fees keep accruing to you." });
+                    toast({ title: "Locked forever in this preview", description: "The position can never be withdrawn. Trading fees keep accruing to you, collectable or compoundable." });
                   }}
                 >
                   <Lock className="w-3.5 h-3.5 mr-1.5" /> Lock forever
@@ -556,8 +571,8 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-4">
-            Withdrawing liquidity is only possible while the position is unlocked, and any withdrawal is publicly visible. Collected
-            fees always go to the Reserve treasury.
+            Withdrawing liquidity is only possible while the position is unlocked, and any withdrawal is publicly visible. Locking
+            never touches your fees: collected fees always go to your creator treasury, and compounded fees go back into the pool.
           </p>
           {addOpen && (
             <div className="mt-5 border-t border-border pt-5">

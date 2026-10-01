@@ -4,17 +4,21 @@
  * This is the front-end preview of the creator liquidity feature specced in
  * docs/project/LIQUIDITY_MODULE_SPEC.md: a Reserve's root Manager seeds a
  * DEX pool for their Reserve Token (Raydium on Solana, Uniswap on Robinhood
- * Chain), optionally locks the position, and collects accrued trading fees
- * into the Reserve treasury.
+ * Chain), optionally locks the position, and either collects accrued trading
+ * fees into their creator treasury or compounds them back into the pool
+ * (DEC-0222: fees are creator earnings; locks bind principal, never fees).
  *
  * Nothing in this file talks to a chain. Every surface rendering from it is
  * explicitly labelled a design preview, consistent with this repo's
  * no-fabricated-success rule (see the removed `buyDTRToken` mock trade in
  * DTRDetail.tsx): preview state is never presented as a confirmed on-chain
- * outcome. When the real Raydium/Uniswap integration lands it replaces the
- * three store actions in useAppStore.ts (`addLiquidityPreview`,
- * `lockLiquidityPreview`, `collectLiquidityPreviewFees`); the components are
- * written against this module's types so the swap stays contained.
+ * outcome. When the real integration lands it replaces the four store
+ * actions in useAppStore.ts (`addLiquidityPreview`, `lockLiquidityPreview`,
+ * `collectLiquidityPreviewFees`, `compoundLiquidityPreviewFees`) behind the
+ * liquidity adapter of LIQUIDITY_MODULE_SPEC.md Section 12.4 (DEC-0223:
+ * permissioned Raydium CPMM preferred, permissionless full-range CLMM at 0.8%
+ * as the committed fallback); the components are written against this
+ * module's types so the swap stays contained.
  */
 
 export type ReserveChain = "solana" | "robinhood";
@@ -23,7 +27,8 @@ export interface DexInfo {
   chain: ReserveChain;
   /** User-facing DEX name. The ONLY source for it -- components must never hardcode "Raydium"/"Uniswap". */
   name: "Raydium" | "Uniswap";
-  poolTypeLabel: "standard pool" | "full-range position";
+  /** User-facing pool-type wording. Solana reads "full-range position" in both DEC-0223 paths; the adapter owns this once live. */
+  poolTypeLabel: "full-range position";
   /** The non-USDC pairing option offered alongside USDC on this chain. */
   altPairSymbol: "SOL" | "ETH";
 }
@@ -37,7 +42,7 @@ export function dexInfoFor(chain: ReserveChain): DexInfo {
   if (chain === "robinhood") {
     return { chain, name: "Uniswap", poolTypeLabel: "full-range position", altPairSymbol: "ETH" };
   }
-  return { chain, name: "Raydium", poolTypeLabel: "standard pool", altPairSymbol: "SOL" };
+  return { chain, name: "Raydium", poolTypeLabel: "full-range position", altPairSymbol: "SOL" };
 }
 
 /**
@@ -70,8 +75,10 @@ export interface LiquidityPoolPreview {
   quoteUsd: number;
   createdTs: number;
   lock: LiquidityLock;
-  /** Fees already collected to the Reserve treasury in this preview, USD lifetime total. */
+  /** Fees already collected to the creator treasury in this preview, USD lifetime total. */
   collectedTotalUsd: number;
+  /** Fees compounded back into the position in this preview, USD lifetime total. */
+  compoundedTotalUsd: number;
   /** Fee accrual restarts from here after each collect. */
   collectedThroughTs: number;
 }
@@ -135,7 +142,12 @@ export function makePreviewPoolAddress(dtrId: string): string {
   return out;
 }
 
-/** Lock precedence: none < timed < permanent; a longer timed lock beats a shorter one. Locks strengthen, never weaken. */
+/**
+ * Lock precedence: none < timed < permanent; a longer timed lock beats a
+ * shorter one. Locks strengthen, never weaken. The preview keeps ONE lock per
+ * Reserve; the live design locks per tranche (DEC-0222), with the badge rule
+ * for mixed tranches still open (spec OPEN-10).
+ */
 export function strongerLock(a: LiquidityLock, b: LiquidityLock): LiquidityLock {
   if (a.mode === "permanent" || b.mode === "permanent") return { mode: "permanent" };
   if (a.mode === "timed" && b.mode === "timed") {
