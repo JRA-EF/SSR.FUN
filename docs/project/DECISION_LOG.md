@@ -6893,9 +6893,9 @@
 {
   "id": "DEC-0220",
   "date": "2026-10-01",
-  "title": "The Buffer/global polyfill boots as classic scripts in index.html (public/polyfill-buffer.js), not as a line inside main.tsx -- fixes the blank page on the team test site",
+  "title": "The Buffer/global polyfill boots as classic scripts in index.html (public/assets/polyfill-buffer.js), not as a line inside main.tsx -- fixes the blank page on the team test site",
   "status": "implemented; on branch feat/evm-create-parity and staging, deployed to the team test site",
-  "decision": "index.html now loads `public/polyfill-buffer.js` (the `buffer` package built once as an IIFE named SSRBufferPolyfill, 27 KB minified) and assigns `window.Buffer` / `window.global` in a classic inline script, both before the `<script type=\"module\">` entry. Classic scripts run during parsing; module scripts are deferred, so the globals exist before any chunk of the app evaluates, whatever the bundler decides to split. `src/polyfills.ts` stays as the first import of main.tsx for dev and tests. A test (tests/phase_buffer_polyfill.ts) pins the script order and that the IIFE behaves like Buffer.",
+  "decision": "index.html now loads `public/assets/polyfill-buffer.js` (the `buffer` package built once as an IIFE named SSRBufferPolyfill, 27 KB minified) and assigns `window.Buffer` / `window.global` in a classic inline script, both before the `<script type=\"module\">` entry. Classic scripts run during parsing; module scripts are deferred, so the globals exist before any chunk of the app evaluates, whatever the bundler decides to split. `src/polyfills.ts` stays as the first import of main.tsx for dev and tests. A test (tests/phase_buffer_polyfill.ts) pins the script order and that the IIFE behaves like Buffer.",
   "context": "Creator, 2026-10-01, on strategic-super-reserve.fun after the DEC-0219 staging deploy: 'im getting a blank page ... just the purple background and thats it. in incognito it went as far as to ask me for a password' (the gate renders; the app bundle behind it did not). Reproduced locally with `vite preview` + headless Chrome on the branch, flag on AND off: `Uncaught ReferenceError: Buffer is not defined` from a new shared chunk (named after textarea.tsx) that Rolldown split out because the lazy RobinhoodCreateForm now shares calculations.ts (-> @ssr/sdk -> @solana/web3.js -> borsh) with main. borsh reads the Buffer global at module load; the shared chunk is imported at the top of main, so it ran before main.tsx's `import './polyfills'` line. Plain main (4b2ae27) does not split that chunk and renders.",
   "rationale": "The polyfill has to be a precondition of the whole bundle, not a module whose position depends on chunking. Two bundler-level fixes were tried and rejected: a second module <script> for polyfills.ts (Vite merges an HTML page's module scripts into one entry), and Rolldown's `inject` (applied to ESM modules but left the CommonJS borsh references as free globals; the chunk still threw). A classic script is independent of the module graph entirely and costs one small cached file.",
   "alternativesConsidered": [
@@ -6906,7 +6906,7 @@
   "impact": "Every page of the app boots with Buffer and global defined before any module code; the blank page is gone with the EVM flag on or off. One extra 27 KB classic script per first load (cached afterwards). docs.html and the internal pages are untouched (they carry no wallet code).",
   "affectedAreas": [
     "index.html",
-    "public/polyfill-buffer.js (new, generated)",
+    "public/assets/polyfill-buffer.js (new, generated)",
     "tests/phase_buffer_polyfill.ts (new)",
     "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
   ],

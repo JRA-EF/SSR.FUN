@@ -16,10 +16,10 @@
          main's own chunk: once the bundler split web3 into a chunk shared
          with a lazy page, that chunk was evaluated before main's polyfill
          line and the app died on "Buffer is not defined" with a blank page
-         (2026-10-01). public/polyfill-buffer.js is the `buffer` package as an
+         (2026-10-01). public/assets/polyfill-buffer.js is the `buffer` package as an
          IIFE (built with `npx rolldown node_modules/buffer/index.js --format
-         iife --name SSRBufferPolyfill --file public/polyfill-buffer.js --minify`). -->
-    <script src="/polyfill-buffer.js"></script>
+         iife --name SSRBufferPolyfill --file public/assets/polyfill-buffer.js --minify`). -->
+    <script src="/assets/polyfill-buffer.js"></script>
     <script>
       window.Buffer = window.Buffer || SSRBufferPolyfill.Buffer;
       window.global = window.global || window;

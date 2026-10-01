@@ -15,9 +15,9 @@ import vm from "node:vm";
 const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
 
 describe("Buffer polyfill boots before the app bundle", () => {
-  it("index.html loads public/polyfill-buffer.js and assigns window.Buffer as classic scripts, before the module entry", () => {
+  it("index.html loads public/assets/polyfill-buffer.js and assigns window.Buffer as classic scripts, before the module entry", () => {
     const html = read("index.html");
-    const poly = html.indexOf('<script src="/polyfill-buffer.js"></script>');
+    const poly = html.indexOf('<script src="/assets/polyfill-buffer.js"></script>');
     const assign = html.indexOf("window.Buffer = window.Buffer || SSRBufferPolyfill.Buffer;");
     const entry = html.indexOf('<script type="module" src="/src/main.tsx"></script>');
     expect(poly, "polyfill script present").to.be.greaterThan(-1);
@@ -27,8 +27,8 @@ describe("Buffer polyfill boots before the app bundle", () => {
     expect(html).to.include("window.global = window.global || window;");
   });
 
-  it("public/polyfill-buffer.js is a self-contained IIFE exposing SSRBufferPolyfill.Buffer that behaves like Buffer", () => {
-    const src = read("public/polyfill-buffer.js");
+  it("public/assets/polyfill-buffer.js is a self-contained IIFE exposing SSRBufferPolyfill.Buffer that behaves like Buffer", () => {
+    const src = read("public/assets/polyfill-buffer.js");
     expect(src).to.not.match(/\bimport\s*[({"']|\brequire\(/);
     const ctx: Record<string, unknown> = {};
     vm.createContext(ctx);
