@@ -22,6 +22,48 @@ export interface ReserveMetadataPayload {
    * id; an absent picture can never silently re-key existing rows.
    */
   imageUrl?: string;
+  /**
+   * Optional HTTPS URL of the wide header banner shown across the top of the
+   * Reserve's page (same content-addressed image store as imageUrl). Same
+   * omit-when-absent rule as imageUrl, for the same content-addressing
+   * reason. First consumer: Robinhood Chain Reserves, whose on-chain
+   * `mandate` string points at this payload (see
+   * src/merge/lib/evmReserveMeta.ts).
+   */
+  headerImageUrl?: string;
+  /** Optional HTTPS link to the creator's YouTube channel (the Reserve page's "From the Creator" panel). Omitted when absent. */
+  youtubeChannelUrl?: string;
+  /** Optional HTTPS link to the video featured at the top of that panel. Omitted when absent. */
+  youtubeFeaturedVideoUrl?: string;
+}
+
+/**
+ * The wallet/explorer-facing view of a stored payload (DEC-0200).
+ *
+ * Wallets, explorers and aggregators read the Metaplex off-chain JSON
+ * convention -- `name`, `symbol`, `image`, `description` -- while this store's
+ * own schema has always used `ticker` and `imageUrl`. Stored rows are
+ * content-addressed and IMMUTABLE (their hash is the id the on-chain
+ * `metadata_uri` points at), so the standard keys are added at READ time and
+ * never written: the bytes on disk keep their hash, and one document now
+ * satisfies both the app and any external consumer.
+ *
+ * Both spellings are emitted. The app keeps reading `ticker`/`imageUrl`, so
+ * nothing client-side needs to change.
+ */
+export interface WalletFacingMetadata extends ReserveMetadataPayload {
+  /** Metaplex convention; same value as `ticker`. */
+  symbol: string;
+  /** Metaplex convention; same value as `imageUrl`, omitted when there is none. */
+  image?: string;
+}
+
+export function toWalletFacingMetadata(payload: ReserveMetadataPayload): WalletFacingMetadata {
+  return {
+    ...payload,
+    symbol: payload.ticker,
+    ...(payload.imageUrl ? { image: payload.imageUrl } : {}),
+  };
 }
 
 /**
@@ -80,6 +122,28 @@ export function validateReserveMetadataPayload(body: unknown): ReserveMetadataPa
       throw new Error(`The profile picture link exceeds the ${MAX_IMAGE_URL_BYTES}-byte limit -- use a shorter permanent URL.`);
     }
     payload.imageUrl = imageUrl;
+  }
+
+  // The creator-profile links, in this fixed order after imageUrl, for the
+  // same key-order reason. Each is a bounded permanent HTTPS URL. The two
+  // YouTube links get the same scheme check as the pictures (a wallet or
+  // explorer may render them as links); the app's own youtube.ts decides
+  // what to embed from them at render time.
+  const optionalLinks: ["headerImageUrl" | "youtubeChannelUrl" | "youtubeFeaturedVideoUrl", string][] = [
+    ["headerImageUrl", "header image"],
+    ["youtubeChannelUrl", "YouTube channel"],
+    ["youtubeFeaturedVideoUrl", "featured video"],
+  ];
+  for (const [key, label] of optionalLinks) {
+    const raw = typeof p[key] === "string" ? (p[key] as string).trim() : "";
+    if (!raw) continue;
+    if (!/^https:\/\//i.test(raw)) {
+      throw new Error(`The ${label} link must be a permanent HTTPS URL.`);
+    }
+    if (new TextEncoder().encode(raw).length > MAX_IMAGE_URL_BYTES) {
+      throw new Error(`The ${label} link exceeds the ${MAX_IMAGE_URL_BYTES}-byte limit -- use a shorter permanent URL.`);
+    }
+    payload[key] = raw;
   }
 
   // Postgres' UTF-8 column type rejects a literal null byte outright (a raw

@@ -28,6 +28,18 @@ export const HIDDEN_RESERVE_ADDRESSES: ReadonlySet<string> = new Set([
   // keypair available in this environment matches this Reserve's manager
   // (6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen) either.
   "GNAvLuTNmccXx5bSAVQeqPSncay7kBNjjHZFKFvKUbo2",
+  // Mainnet reserveId 0 -- the DEC-0115 deployment smoke-test Reserve
+  // (9KkRx62F...): USDC-only, 0.9015 USDC seeded from the Creator wallet on
+  // deployment day purely to prove create/register/seed/mint/redeem worked
+  // on Mainnet. It has no Reserve metadata (its metadata_uri points at a
+  // JSON file on the old strategic-super-reserve.fun host that no longer
+  // exists), so every surface rendered it as "Unnamed Reserve (#0) / RSV0".
+  // Hidden at the Creator's request (2026-09-23) rather than wound down
+  // on-chain: it is Active and its manager IS the Creator wallet, so a
+  // genuine initiate_wind_down/close_reserve remains possible later.
+  // Address confirmed from the live Mainnet warm snapshot (reserveId "0",
+  // reserveTokenMint H1pBENeKt92iVTviuS2ztnaTDi5icGcA2F5ny8BUxKjT).
+  "9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i",
 ]);
 
 export function isHiddenReserveAddress(reserveAddress: string): boolean {

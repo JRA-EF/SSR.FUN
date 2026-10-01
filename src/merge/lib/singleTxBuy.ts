@@ -32,6 +32,32 @@ import { createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@sol
 import { WRAPPED_SOL_MINT } from "@ssr/sdk";
 
 export const SOLANA_MAX_TX_BYTES = 1232;
+
+/**
+ * Solana's per-transaction account-lock ceiling (MAX_TX_ACCOUNT_LOCKS in the
+ * runtime): every distinct account a transaction touches -- fee payer,
+ * program ids, every instruction key, whether static or loaded from a lookup
+ * table -- counts, and one over it fails at load time with
+ * TooManyAccountLocks. Lookup tables shrink BYTES, never this count, so a
+ * transaction can fit the 1232-byte wire limit and still be unrunnable.
+ *
+ * Found live 2026-09-25 on STOCKLANA (10 xStocks): the mint alone touches 56
+ * accounts, so composing even one top-up swap into the same transaction
+ * crossed 64; the byte check passed, the server's pre-flight simulation
+ * failed with TooManyAccountLocks, and the purchase was refused instead of
+ * falling back to the step-by-step flow.
+ */
+export const SOLANA_MAX_TX_ACCOUNT_LOCKS = 64;
+
+/** Distinct accounts the transaction would lock: payer, every program id, every instruction key. */
+export function countAccountLocks(payer: PublicKey, instructions: TransactionInstruction[]): number {
+  const keys = new Set<string>([payer.toBase58()]);
+  for (const ix of instructions) {
+    keys.add(ix.programId.toBase58());
+    for (const k of ix.keys) keys.add(k.pubkey.toBase58());
+  }
+  return keys.size;
+}
 /** Whole-purchase compute ceiling: worst case is several routed swaps (~200-400k CU each) plus the in-kind mint (~85k CU observed live). */
 export const SINGLE_TX_COMPUTE_UNIT_LIMIT = 1_400_000;
 /** Priority fee per CU -- ~0.00014 SOL at the full CU limit, in line with what Jupiter's own dynamic builds have been paying on this app's live swaps. */
@@ -92,14 +118,19 @@ export interface SwapInstructionSet {
 }
 
 export class SingleTxTooLargeError extends Error {
-  /** Serialized size in bytes when it could be measured; null when serialization itself overran web3.js's packet-size buffer (even further over the limit). */
+  /** Serialized size in bytes when it could be measured; null when serialization itself overran web3.js's packet-size buffer (even further over the limit), or when the account-lock ceiling was the verdict. */
   readonly bytes: number | null;
-  constructor(bytes: number | null) {
+  /** Distinct accounts the transaction would lock, when THAT is what made it unfit (over SOLANA_MAX_TX_ACCOUNT_LOCKS); null when size was. */
+  readonly accountLocks: number | null;
+  constructor(bytes: number | null, accountLocks: number | null = null) {
     super(
-      `The combined single-transaction purchase is ${bytes === null ? "larger than the serialization buffer" : `${bytes} bytes`}, over Solana's ${SOLANA_MAX_TX_BYTES}-byte limit -- falling back to the step-by-step flow.`,
+      accountLocks !== null
+        ? `The combined single-transaction purchase touches ${accountLocks} accounts, over Solana's ${SOLANA_MAX_TX_ACCOUNT_LOCKS}-account limit per transaction -- falling back to the step-by-step flow.`
+        : `The combined single-transaction purchase is ${bytes === null ? "larger than the serialization buffer" : `${bytes} bytes`}, over Solana's ${SOLANA_MAX_TX_BYTES}-byte limit -- falling back to the step-by-step flow.`,
     );
     this.name = "SingleTxTooLargeError";
     this.bytes = bytes;
+    this.accountLocks = accountLocks;
   }
 }
 
@@ -199,6 +230,10 @@ export function compileSingleBuyTransaction(params: {
   instructions: TransactionInstruction[];
   lookupTables: AddressLookupTableAccount[];
 }): VersionedTransaction {
+  // The lock ceiling first: it is independent of lookup tables, so a message
+  // that compiles and serializes under 1232 bytes can still be over it.
+  const locks = countAccountLocks(params.payer, params.instructions);
+  if (locks > SOLANA_MAX_TX_ACCOUNT_LOCKS) throw new SingleTxTooLargeError(null, locks);
   let message;
   try {
     message = new TransactionMessage({

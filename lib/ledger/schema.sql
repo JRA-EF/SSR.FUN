@@ -130,9 +130,31 @@ create table if not exists ledger_asset_catalogue (
   first_seen_snapshot_id     bigint,
   last_seen_snapshot_id      bigint,
   updated_at                 timestamptz not null default now(),
+  -- Launchpad provenance, verified ON-CHAIN by api/ledger/launchpad-classify-cron.ts
+  -- (packages/sdk/src/launchpads.ts): where the mint was launched, whether it is
+  -- still on its bonding curve, and the post-graduation venue. Informational
+  -- only -- never consulted by the asset picker's eligibility gates.
+  -- launchpad_checked_at null = never classified; non-null with launchpad null =
+  -- verified as not from a supported launchpad. Added by scripts/migrate-launchpads.mjs.
+  launchpad                  text check (launchpad in ('pump.fun', 'letsbonk.fun', 'bags.fm')),
+  launchpad_stage            text check (launchpad_stage in ('bonding', 'graduated')),
+  launchpad_venue            text check (launchpad_venue in ('pumpswap', 'raydium-cpmm', 'raydium-amm-v4', 'meteora-damm-v1', 'meteora-damm-v2')),
+  launchpad_evidence         jsonb,
+  launchpad_checked_at       timestamptz,
+  -- Tokenised-asset issuer, proven ON-CHAIN by the mint's Token-2022
+  -- PermanentDelegate (packages/sdk/src/issuers.ts), recorded by
+  -- lib/ledger/markIncompatibleMints.ts in the same account read it already
+  -- does. Informational: it labels and filters the picker, never decides
+  -- eligibility. issuer_checked_at null = never classified; non-null with
+  -- issuer null = verified as not from a known issuer. Added by
+  -- scripts/migrate-issuers.mjs.
+  issuer                     text check (issuer in ('xstocks')),
+  issuer_checked_at          timestamptz,
   unique (mint)
 );
 create index if not exists ledger_asset_catalogue_status_idx on ledger_asset_catalogue (ssr_status);
+create index if not exists ledger_asset_catalogue_launchpad_idx on ledger_asset_catalogue (launchpad);
+create index if not exists ledger_asset_catalogue_issuer_idx on ledger_asset_catalogue (issuer);
 
 -- ============================================================================
 -- 9. Jupiter catalogue: weekly snapshots, so SSR can prove which assets were

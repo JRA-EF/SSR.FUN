@@ -295,6 +295,31 @@ export async function fetchAllTimeTradeVolumeUsd(clusters: ActivityCluster[]): P
   return (row as { volume_usd: number } | undefined)?.volume_usd ?? 0;
 }
 
+/**
+ * The same all-time mint + redeem USD volume as fetchAllTimeTradeVolumeUsd,
+ * broken out per Reserve address (one cheap GROUP BY over the same rows and
+ * the same definition, so a Reserve's own "All-Time Volume" on its detail
+ * page can never disagree with the homepage total it is part of). A Reserve
+ * with no indexed trade rows is simply absent -- the caller treats that as
+ * 0 indexed volume, never as unknown, since the aggregate itself succeeded.
+ */
+export async function fetchAllTimeTradeVolumeUsdByReserve(clusters: ActivityCluster[]): Promise<Record<string, number>> {
+  const sql = getSql();
+  const rows = (await sql`
+    with amounts as (
+      select reserve, amount_kind as k, amount_usd as u from reserve_activity_log where amount_kind is not null and cluster = any(${clusters})
+      union all
+      select reserve, amount_kind_2 as k, amount_usd_2 as u from reserve_activity_log where amount_kind_2 is not null and cluster = any(${clusters})
+    )
+    select reserve, coalesce(sum(u) filter (where k in ('mintVolume', 'redeemVolume')), 0)::float8 as volume_usd
+    from amounts
+    group by reserve
+  `) as { reserve: string; volume_usd: number }[];
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.reserve] = r.volume_usd;
+  return out;
+}
+
 /** Streams the FULL raw activity log as CSV -- every indexed event, every column -- the "one big file" export, scoped to `clusters` (Mainnet by default at the endpoint). Ordered oldest-first so a re-export is stably diffable. */
 export async function* streamActivityLogCsv(clusters: ActivityCluster[] = [...ACTIVITY_CLUSTERS]): AsyncGenerator<string> {
   const sql = getSql();

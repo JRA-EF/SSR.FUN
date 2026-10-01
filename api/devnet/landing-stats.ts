@@ -31,7 +31,7 @@ import {
 } from "@ssr/sdk";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
-import { fetchAllTimeTradeVolumeUsd } from "../../lib/reserve-activity/kpis";
+import { fetchAllTimeTradeVolumeUsd, fetchAllTimeTradeVolumeUsdByReserve } from "../../lib/reserve-activity/kpis";
 
 interface ApiRequest {
   method?: string;
@@ -61,6 +61,8 @@ const ASSET_TEST_PRICES_USD: Record<string, number> = {
 interface PerReserveStats {
   holders: number;
   volume24hUsd: number;
+  /** Per-Reserve all-time Ledger volume -- mirrors the Mainnet endpoint's field for shape parity (typically ~0 on DevNet, see volumeAllTimeUsd below). null on a Ledger read failure. */
+  volumeAllTimeUsd: number | null;
 }
 
 interface LandingStats {
@@ -114,6 +116,7 @@ async function computeLandingStats(): Promise<LandingStats> {
   // in parallel with the per-Reserve RPC walks -- see the Mainnet endpoint's
   // identical rationale. Scoped to 'devnet' so it never sums in Mainnet rows.
   const volumeAllTimePromise = fetchAllTimeTradeVolumeUsd(["devnet"]).catch(() => null);
+  const volumeAllTimeByReservePromise = fetchAllTimeTradeVolumeUsdByReserve(["devnet"]).catch(() => null);
 
   await Promise.all(
     displayable.map((reserve) =>
@@ -127,7 +130,7 @@ async function computeLandingStats(): Promise<LandingStats> {
             fetchReserveTokenHolderOwners(connection, new PublicKey(reserve.reserveTokenMint)),
             fetchReserve24hVolumeUsd(connection, program, new PublicKey(reserve.reserve), pricing, sinceUnixSec),
           ]);
-          perReserve[reserve.reserve] = { holders: reserveOwners.size, volume24hUsd: reserveVolume };
+          perReserve[reserve.reserve] = { holders: reserveOwners.size, volume24hUsd: reserveVolume, volumeAllTimeUsd: null };
           for (const owner of reserveOwners) globalOwners.add(owner);
           volume24hUsd += reserveVolume;
         } catch {
@@ -143,6 +146,10 @@ async function computeLandingStats(): Promise<LandingStats> {
   );
 
   const volumeAllTimeUsd = await volumeAllTimePromise;
+  const volumeAllTimeByReserve = await volumeAllTimeByReservePromise;
+  if (volumeAllTimeByReserve) {
+    for (const address of Object.keys(perReserve)) perReserve[address].volumeAllTimeUsd = volumeAllTimeByReserve[address] ?? 0;
+  }
 
   return { holders: globalOwners.size, volume24hUsd, volumeAllTimeUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
 }

@@ -23,7 +23,8 @@ const DEVUSDC_MINT = DEVUSDC.mint;
 const MOCK_X = DEVNET_FIXTURES.mints.mintX.address;
 const MOCK_Y = DEVNET_FIXTURES.mints.mintY.address;
 const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
-const HIDDEN_ADDRESS = "GNAvLuTNmccXx5bSAVQeqPSncay7kBNjjHZFKFvKUbo2"; // the real, documented HIDDEN_RESERVE_ADDRESSES entry
+const HIDDEN_ADDRESS = "GNAvLuTNmccXx5bSAVQeqPSncay7kBNjjHZFKFvKUbo2"; // the real, documented HIDDEN_RESERVE_ADDRESSES entry (DevNet EGAYQQ)
+const HIDDEN_MAINNET_SMOKE_TEST = "9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i"; // Mainnet reserveId 0, the DEC-0115 smoke-test Reserve
 
 function baseInput(overrides: Partial<ReserveEligibilityInput> = {}): ReserveEligibilityInput {
   return {
@@ -105,6 +106,12 @@ describe("evaluateReserveEligibility (packages/sdk/src/reserveEligibility.ts) --
 
   it("is NOT eligible for the explicit HIDDEN_RESERVE_ADDRESSES entry, regardless of everything else being valid", () => {
     const result = evaluateReserveEligibility(baseInput({ reserve: HIDDEN_ADDRESS }));
+    expect(result.eligible).to.equal(false);
+    expect(result.reason).to.match(/explicitly excluded/);
+  });
+
+  it("is NOT eligible for the Mainnet smoke-test Reserve (reserveId 0) even though it is Active and seeded -- hidden by address, not by name", () => {
+    const result = evaluateReserveEligibility(baseInput({ reserve: HIDDEN_MAINNET_SMOKE_TEST, status: "active", reserveTokenSupplyRaw: "901500" }));
     expect(result.eligible).to.equal(false);
     expect(result.reason).to.match(/explicitly excluded/);
   });

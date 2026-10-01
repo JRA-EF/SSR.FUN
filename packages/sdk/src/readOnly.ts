@@ -6,11 +6,12 @@
 // scanning.
 import { AnchorProvider, EventParser, Program } from "@anchor-lang/core";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
 import { findReserveAsset, findReserveVault, findManagerFeeRecipients, findFeeSettlement } from "./pda";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
+import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, type TokenProgramKindDecoded } from "./tokenPrograms";
 
 /**
  * A transient RPC failure (429/timeout) while reading token supply must
@@ -89,6 +90,8 @@ export function buildReadOnlyProgram(connection: Connection): Program<SsrProtoco
 
 export interface ReserveAssetOnChain {
   assetMint: string;
+  /** The token program that owns this asset's mint and vault, from the on-chain ReserveAsset (DEC-0201) -- same field discovery.ts reports. */
+  tokenProgram: string;
   reserveAsset: string;
   vault: string;
   decimals: number;
@@ -173,16 +176,21 @@ export async function fetchReserveOnChain(
     const [vaultPda] = findReserveVault(reserveAddress, mint, programId);
     const reserveAsset = await withRateLimitRetryGeneric(() => program.account.reserveAsset.fetchNullable(reserveAssetPda));
     if (!reserveAsset) continue;
-    const vaultInfo = await withRateLimitRetryGeneric(() => getAccount(connection, vaultPda)).catch(() => null);
+    // Read the raw account and decode it under whichever token program owns
+    // it -- spl-token's getAccount defaults to the classic program and throws
+    // on a Token-2022 vault, which the old .catch(() => null) here turned
+    // into a silent "0" balance for every tokenized-stock asset.
+    const vaultInfo = await withRateLimitRetryGeneric(() => connection.getAccountInfo(vaultPda)).catch(() => null);
     assets.push({
       assetMint: mint.toBase58(),
+      tokenProgram: tokenProgramFromKind(reserveAsset.tokenProgram as TokenProgramKindDecoded).toBase58(),
       reserveAsset: reserveAssetPda.toBase58(),
       vault: vaultPda.toBase58(),
       decimals: reserveAsset.decimals,
       targetWeightBps: reserveAsset.targetWeightBps,
       enabled: reserveAsset.enabled,
       orderIndex: reserveAsset.orderIndex,
-      vaultBalanceRaw: vaultInfo ? vaultInfo.amount.toString() : "0",
+      vaultBalanceRaw: tokenAccountAmountByOwner(vaultPda, vaultInfo).toString(),
     });
   }
   assets.sort((a, b) => a.orderIndex - b.orderIndex);
@@ -322,11 +330,17 @@ export async function fetchFeeSettlement(connection: Connection, programId: Publ
   };
 }
 
-/** Fetches a wallet's Reserve Token balance for a given mint; returns "0" if the ATA doesn't exist yet. */
-export async function fetchTokenBalanceRaw(connection: Connection, mint: PublicKey, owner: PublicKey): Promise<string> {
-  const ata = await getAssociatedTokenAddress(mint, owner);
-  const info = await getAccount(connection, ata).catch(() => null);
-  return info ? info.amount.toString() : "0";
+/**
+ * The wallet's raw balance of `mint`. Pass the mint's token program for a
+ * Token-2022 asset: its associated token account is a different address
+ * from the classic derivation, and the account decodes only under its own
+ * program. Without it the classic derivation is used, which is right for
+ * every classic mint (USDC, devUSDC, every Reserve Token).
+ */
+export async function fetchTokenBalanceRaw(connection: Connection, mint: PublicKey, owner: PublicKey, tokenProgram?: PublicKey | string | null): Promise<string> {
+  const ata = tokenProgram ? assetAta(mint, owner, tokenProgram) : await getAssociatedTokenAddress(mint, owner);
+  const info = await connection.getAccountInfo(ata).catch(() => null);
+  return tokenAccountAmountByOwner(ata, info).toString();
 }
 
 // --- Landing-page KPI reads: real Reserve Token holder counts + real 24h volume ---

@@ -58,10 +58,18 @@ export async function fetchReserveSnapshot(origin: string): Promise<ReserveSnaps
 }
 
 /** Build the DTR[] the store renders from a snapshot, via the same builder the
- *  live poll uses. delegates/entryPrices are left empty here (the poll fills
- *  them); mintMeta comes baked into the snapshot so symbols paint on the first
- *  frame; prices are converted from the flat USD map to AssetPriceInfo. */
-export function buildDtrsFromSnapshot(snapshot: ReserveSnapshot, walletKey: string | null): DTR[] {
+ *  live poll uses. delegates are left empty here (the poll fills them);
+ *  mintMeta comes baked into the snapshot so symbols paint on the first
+ *  frame; prices are converted from the flat USD map to AssetPriceInfo.
+ *  `entryPrices` (reserve address -> mint -> USD entry price, the DEC-0172
+ *  Entry Price Store map) is optional: when the hydrator passes it, the
+ *  first paint already carries per-asset P&L (Composition table + the
+ *  shareable performance card) instead of waiting for the first live poll. */
+export function buildDtrsFromSnapshot(
+  snapshot: ReserveSnapshot,
+  walletKey: string | null,
+  entryPrices: Record<string, Record<string, number>> = {},
+): DTR[] {
   const asOf = snapshot.generatedAt ? new Date(snapshot.generatedAt).getTime() : Date.now();
   const priceByMint: Record<string, AssetPriceInfo> = {};
   for (const [mint, price] of Object.entries(snapshot.priceByMint || {})) {
@@ -79,7 +87,7 @@ export function buildDtrsFromSnapshot(snapshot: ReserveSnapshot, walletKey: stri
       SOLANA_CLUSTER,
       snapshot.mintMeta ?? {},
       priceByMint,
-      {},
+      entryPrices[reserve.reserve] ?? {},
     ),
   );
 }

@@ -19,6 +19,11 @@ export function Feedback() {
         <a href={FEEDBACK_SHEET_URL} target="_blank" rel="noreferrer" className="fb-btn fb-btn-primary" style={{ display: "inline-block", textDecoration: "none" }}>
           Open Feedback Sheet →
         </a>
+        <p className="fb-muted fb-small" style={{ marginTop: 16 }}>
+          <a href="/internal/feedback-board" className="fb-muted fb-small" style={{ textDecoration: "underline" }}>
+            Feedback board: submissions from the public form →
+          </a>
+        </p>
         <p className="fb-muted fb-small" style={{ marginTop: 20 }}>
           <a href="/internal/status" className="fb-muted fb-small" style={{ textDecoration: "underline" }}>
             ← Status Dashboard

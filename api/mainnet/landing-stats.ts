@@ -36,7 +36,7 @@ import {
 import { fetchJupiterPrices } from "./asset-prices";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
-import { fetchAllTimeTradeVolumeUsd } from "../../lib/reserve-activity/kpis";
+import { fetchAllTimeTradeVolumeUsd, fetchAllTimeTradeVolumeUsdByReserve } from "../../lib/reserve-activity/kpis";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 
@@ -77,6 +77,8 @@ const ASSET_PRICES_USD: Record<string, number> = { [MAINNET_USDC_MINT]: 1 };
 interface PerReserveStats {
   holders: number;
   volume24hUsd: number;
+  /** This Reserve's all-time mint + redeem USD volume from the Ledger (same definition as volumeAllTimeUsd below, broken out per Reserve -- the detail page's "All-Time Volume" tile). null when the Ledger read failed (rendered "Unavailable", never a fabricated 0). */
+  volumeAllTimeUsd: number | null;
 }
 
 interface LandingStats {
@@ -164,6 +166,12 @@ async function computeLandingStats(): Promise<LandingStats> {
     console.error("api/mainnet/landing-stats: all-time volume read failed:", e);
     return null;
   });
+  // Per-Reserve breakdown of the same figure, for the detail page's
+  // "All-Time Volume" tile -- same source, same best-effort contract.
+  const volumeAllTimeByReservePromise = fetchAllTimeTradeVolumeUsdByReserve(["mainnet-beta"]).catch((e) => {
+    console.error("api/mainnet/landing-stats: per-Reserve all-time volume read failed:", e);
+    return null;
+  });
 
   // Live USD prices for every asset any displayable Reserve holds -- one
   // batched Jupiter Price read, best-effort per mint (an unpriced mint's
@@ -187,7 +195,7 @@ async function computeLandingStats(): Promise<LandingStats> {
             fetchReserveTokenHolderOwners(connection, new PublicKey(reserve.reserveTokenMint)),
             fetchReserve24hVolumeUsd(connection, program, new PublicKey(reserve.reserve), pricing, sinceUnixSec),
           ]);
-          perReserve[reserve.reserve] = { holders: reserveOwners.size, volume24hUsd: reserveVolume };
+          perReserve[reserve.reserve] = { holders: reserveOwners.size, volume24hUsd: reserveVolume, volumeAllTimeUsd: null };
           for (const owner of reserveOwners) globalOwners.add(owner);
           volume24hUsd += reserveVolume;
         } catch {
@@ -199,6 +207,12 @@ async function computeLandingStats(): Promise<LandingStats> {
   );
 
   const volumeAllTimeUsd = await volumeAllTimePromise;
+  const volumeAllTimeByReserve = await volumeAllTimeByReservePromise;
+  if (volumeAllTimeByReserve) {
+    // The aggregate succeeded, so a Reserve absent from it genuinely has no
+    // indexed trade rows: 0, not unknown.
+    for (const address of Object.keys(perReserve)) perReserve[address].volumeAllTimeUsd = volumeAllTimeByReserve[address] ?? 0;
+  }
 
   return { holders: globalOwners.size, volume24hUsd, volumeAllTimeUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
 }

@@ -10,15 +10,18 @@ import { checkDurableRateWindow, type RateLimitQuery } from "../lib/rate-limit/d
  */
 function makeFakeSql(store = new Map<string, { window_start: number; count: number }>()): RateLimitQuery {
   return async (strings, ...values) => {
-    // positional args in the query, in order: key, now, now, windowMs, now, windowMs
+    // positional args in the query, in order:
+    //   VALUES (key, now, weight), window_start CASE (now, windowMs, now),
+    //   count CASE (now, windowMs, weight, weight)
     const key = values[0] as string;
     const now = values[1] as number;
-    const windowMs = values[3] as number;
+    const weight = values[2] as number;
+    const windowMs = values[4] as number;
     const cur = store.get(key);
     if (!cur || now - cur.window_start >= windowMs) {
-      store.set(key, { window_start: now, count: 1 });
+      store.set(key, { window_start: now, count: weight });
     } else {
-      cur.count += 1;
+      cur.count += weight;
     }
     const row = store.get(key)!;
     return [{ count: row.count, window_start: row.window_start }];
@@ -26,6 +29,24 @@ function makeFakeSql(store = new Map<string, { window_start: number; count: numb
 }
 
 describe("checkDurableRateWindow -- durable cross-instance limiter", () => {
+  it("spends `weight` units per hit, so a caller can budget in calls rather than requests", async () => {
+    // The Robinhood RPC proxy charges one unit per JSON-RPC call: a 20-call
+    // batch must cost 20, or batching would multiply every limit by 20.
+    const sql = makeFakeSql();
+    const a = await checkDurableRateWindow(sql, "calls", 60_000, 50, 1_000_000, 20);
+    const b = await checkDurableRateWindow(sql, "calls", 60_000, 50, 1_000_000, 20);
+    const c = await checkDurableRateWindow(sql, "calls", 60_000, 50, 1_000_000, 20);
+    expect([a.count, b.count, c.count]).to.deep.equal([20, 40, 60]);
+    expect([a.allowed, b.allowed, c.allowed]).to.deep.equal([true, true, false]);
+  });
+
+  it("treats a missing or non-positive weight as 1 (existing callers unchanged)", async () => {
+    const sql = makeFakeSql();
+    expect((await checkDurableRateWindow(sql, "w", 1000, 5, 1)).count).to.equal(1);
+    expect((await checkDurableRateWindow(sql, "w", 1000, 5, 1, 0)).count).to.equal(2);
+    expect((await checkDurableRateWindow(sql, "w", 1000, 5, 1, -3)).count).to.equal(3);
+  });
+
   it("admits exactly maxCount requests inside one window, then blocks", async () => {
     const sql = makeFakeSql();
     const results: boolean[] = [];

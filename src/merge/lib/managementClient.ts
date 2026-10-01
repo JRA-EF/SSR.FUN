@@ -20,6 +20,7 @@ import {
   buildAddDelegateInstruction,
   buildAddReserveAssetActiveInstruction,
   buildCloseReserveInstruction,
+  findManagerFeeRecipients,
   buildCollectFeesInstruction,
   buildCollectProtocolFeeInstruction,
   buildCollectManagerFeeShareInstruction,
@@ -32,27 +33,39 @@ import {
   buildUpdateDelegatePermissionsInstruction,
   buildUpdateMetadataInstruction,
   buildUpdateTargetsInstruction,
+  buildSetReserveTokenMetadataInstruction,
   describeOnChainError,
   findDelegate,
   fetchProtocolConfig,
+  fitTokenMetadataName,
+  fitTokenMetadataSymbol,
+  tokenMetadataOriginFor,
+  tokenMetadataUriFromReserveMetadataUri,
   validateMetadataUri,
   type RecipientInput,
 } from "@ssr/sdk";
 import { AmbiguousConfirmationError } from "./rpcResilience";
+import { assertSignedBy, assertSignerReady } from "./assertSigner";
 import { fetchPriorityFeeMicroLamports, submitAndConfirmWithRebroadcast } from "./createReserveClient";
+import { describeUnsupportedNewAssets, fetchMintAccounts, resolveAssetTokenPrograms } from "./assetTokenPrograms";
 import { SSR_PROGRAM_ID, IS_MAINNET } from "./solana-config";
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 /** Signs, submits, and confirms via bounded signature-status polling instead of `connection.confirmTransaction`'s websocket subscription. Prepends a priority-fee bid and re-sends the same signed bytes while polling (signature-idempotent) -- see createReserveClient.ts's signAndSend and its 2026-08-27 DELTA-incident section comment, which this mirrors. Never re-signs on an ambiguous result; throws AmbiguousConfirmationError (carrying the real signature) instead. */
-async function signAndSend(connection: Connection, wallet: WalletContextState, tx: Transaction): Promise<string> {
-  if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+async function signAndSend(connection: Connection, wallet: WalletContextState, tx: Transaction, action = "action"): Promise<string> {
+  // DEC-0200: assert a usable, connected signer up front, and assert after
+  // signing that the transaction really carries THIS account's signature --
+  // the 2026-09-11 "Solflare connected, Phantom opened" report. Every
+  // management action (rebalance included) funnels through here.
+  const signer = assertSignerReady({ wallet, action });
   const microLamports = await fetchPriorityFeeMicroLamports(connection);
   tx.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports }));
-  tx.feePayer = wallet.publicKey;
+  tx.feePayer = signer;
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
-  const signed = await wallet.signTransaction(tx);
+  const signed = await wallet.signTransaction!(tx);
+  assertSignedBy(signed, signer, wallet, `this ${action}`);
   // skipPreflight -- see createReserveClient.ts's signAndSend for why.
   const { signature, outcome } = await submitAndConfirmWithRebroadcast(connection, signed.serialize(), lastValidBlockHeight);
   if (outcome.status === "confirmed") return signature;
@@ -90,7 +103,7 @@ export async function executeUpdateTargets(
     assetMintsInOrder.map((m) => new PublicKey(m)),
     newTargetWeightsBps,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "target update");
 }
 
 /**
@@ -117,6 +130,47 @@ export async function executeUpdateMetadata(
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildUpdateMetadataInstruction(program, reservePk, wallet.publicKey, actingDelegate, newMetadataUri);
+  return signAndSend(connection, wallet, new Transaction().add(ix), "metadata update");
+}
+
+/** The protocol's root authority wallet (ProtocolConfig.authority) -- may publish any Reserve's token metadata (the program also accepts admin_2, which the read model does not expose). */
+export async function fetchProtocolAuthority(connection: Connection): Promise<string | null> {
+  const cfg = await fetchProtocolConfig(connection, programId);
+  return cfg ? cfg.authority : null;
+}
+
+/**
+ * Publishes (or refreshes) the Reserve Token's on-chain Metaplex metadata:
+ * name and symbol from the Reserve's current name/ticker (fitted to
+ * Metaplex's limits) and a uri pointing at the standard-format record
+ * derived from the Reserve's own metadata URI. One wallet approval; the
+ * signer pays the metadata account's rent the first time. Gated on-chain to
+ * the root Manager, a co-manager with UPDATE_METADATA, or a protocol admin.
+ */
+export async function executeSetReserveTokenMetadata(
+  connection: Connection,
+  wallet: WalletContextState,
+  reserve: string,
+  reserveTokenMint: string,
+  reserveMetadataUri: string,
+  reserveName: string,
+  ticker: string,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const uri = tokenMetadataUriFromReserveMetadataUri(
+    reserveMetadataUri,
+    reserve,
+    tokenMetadataOriginFor(IS_MAINNET ? "mainnet" : "devnet", typeof window !== "undefined" ? window.location.origin : null),
+  );
+  if (!uri) throw new Error("This Reserve's metadata record is not in a format that can be published for wallets and exchanges.");
+  const program = buildReadOnlyProgram(connection) as any;
+  const reservePk = new PublicKey(reserve);
+  const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const ix = await buildSetReserveTokenMetadataInstruction(program, programId, reservePk, new PublicKey(reserveTokenMint), wallet.publicKey, actingDelegate, {
+    name: fitTokenMetadataName(reserveName),
+    symbol: fitTokenMetadataSymbol(ticker),
+    uri,
+  });
   return signAndSend(connection, wallet, new Transaction().add(ix));
 }
 
@@ -131,20 +185,31 @@ export async function executeAddReserveAsset(
   const program = buildReadOnlyProgram(connection) as any;
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const mintPk = new PublicKey(assetMint);
+  // The vault is created under the asset's OWN program (Token-2022 for
+  // every xStocks token) -- see assetTokenPrograms.ts for why this is read
+  // from the chain and why an unsupported mint is refused before signing.
+  const infos = await fetchMintAccounts(connection, [mintPk]);
+  const blocked = describeUnsupportedNewAssets([{ mint: mintPk }], infos);
+  if (blocked.length > 0) throw new Error(`${blocked.join(" ")} Nothing was changed on-chain.`);
+  const [{ tokenProgram }] = resolveAssetTokenPrograms([mintPk], infos);
   const ix = await buildAddReserveAssetActiveInstruction(
     program,
     programId,
     reservePk,
     wallet.publicKey,
     actingDelegate,
-    new PublicKey(assetMint),
+    mintPk,
     targetWeightBps,
+    tokenProgram,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "asset addition");
 }
 
 export interface RebalanceAssetPlan {
   mint: string;
+  /** The asset's ticker, for the plain-language refusal when a new mint is unsupported; falls back to the address. */
+  symbol?: string;
   /** True if this asset is not yet registered on-chain for this Reserve --
    * gets an add_reserve_asset_active(target_weight_bps=0) instruction first.
    * Registering at 0 (rather than the asset's real final weight) is what
@@ -183,6 +248,15 @@ export async function executeSubmitRebalance(
   const program = buildReadOnlyProgram(connection) as any;
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  // Every NEW asset's vault is created under the mint's own token program
+  // (Token-2022 for every xStocks token), read from the chain in one batch;
+  // an unsupported mint (transfer hook, ...) is refused before the wallet
+  // opens, exactly as Create Reserve does. See assetTokenPrograms.ts.
+  const newAssets = assetPlan.filter((a) => a.isNew).map((a) => ({ mint: new PublicKey(a.mint), symbol: a.symbol }));
+  const infos = await fetchMintAccounts(connection, newAssets.map((a) => a.mint));
+  const blocked = describeUnsupportedNewAssets(newAssets, infos);
+  if (blocked.length > 0) throw new Error(`${blocked.join(" ")} Nothing was changed on-chain.`);
+  const programByMint = new Map(resolveAssetTokenPrograms(newAssets.map((a) => a.mint), infos).map((r) => [r.mint.toBase58(), r.tokenProgram]));
   const tx = new Transaction();
   for (const a of assetPlan) {
     if (!a.isNew) continue;
@@ -194,6 +268,7 @@ export async function executeSubmitRebalance(
       actingDelegate,
       new PublicKey(a.mint),
       0,
+      programByMint.get(a.mint),
     );
     tx.add(ix);
   }
@@ -207,7 +282,7 @@ export async function executeSubmitRebalance(
     assetPlan.map((a) => a.targetWeightBps),
   );
   tx.add(updateIx);
-  return signAndSend(connection, wallet, tx);
+  return signAndSend(connection, wallet, tx, "rebalance");
 }
 
 export async function executeFundReserveAsset(
@@ -219,8 +294,13 @@ export async function executeFundReserveAsset(
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
-  const ix = await buildFundNewReserveAssetInstruction(program, programId, new PublicKey(reserve), wallet.publicKey, new PublicKey(assetMint), amountRaw);
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  const mintPk = new PublicKey(assetMint);
+  // The Manager's ATA and the vault are derived under the asset's own
+  // program -- for a Token-2022 asset the classic derivation names an
+  // account that does not exist. See assetTokenPrograms.ts.
+  const [{ tokenProgram }] = resolveAssetTokenPrograms([mintPk], await fetchMintAccounts(connection, [mintPk]));
+  const ix = await buildFundNewReserveAssetInstruction(program, programId, new PublicKey(reserve), wallet.publicKey, mintPk, amountRaw, tokenProgram);
+  return signAndSend(connection, wallet, new Transaction().add(ix), "asset funding");
 }
 
 export async function executeRemoveReserveAsset(
@@ -234,6 +314,10 @@ export async function executeRemoveReserveAsset(
   const program = buildReadOnlyProgram(connection) as any;
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
+  const mintPk = new PublicKey(assetMint);
+  // Closing the vault (and refunding its rent) goes through the asset's own
+  // program -- see assetTokenPrograms.ts.
+  const [{ tokenProgram }] = resolveAssetTokenPrograms([mintPk], await fetchMintAccounts(connection, [mintPk]));
   const ix = await buildRemoveReserveAssetInstruction(
     program,
     programId,
@@ -241,9 +325,10 @@ export async function executeRemoveReserveAsset(
     new PublicKey(reserveManager),
     wallet.publicKey,
     actingDelegate,
-    new PublicKey(assetMint),
+    mintPk,
+    tokenProgram,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "asset removal");
 }
 
 /** Grants delegateWallet the given permission bitmask on `reserve`. `restricted` delegates are gated by the signer's own ADD_RESTRICTED_DELEGATE permission; an unrestricted grant is root-manager-only regardless of the signer's own delegate status -- see add_delegate.rs. */
@@ -269,7 +354,7 @@ export async function executeAddDelegate(
     permissions,
     restricted,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "co-manager grant");
 }
 
 export async function executeUpdateDelegatePermissions(
@@ -292,7 +377,7 @@ export async function executeUpdateDelegatePermissions(
     new PublicKey(delegateWallet),
     newPermissions,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "permission update");
 }
 
 export async function executeRemoveDelegate(
@@ -306,7 +391,7 @@ export async function executeRemoveDelegate(
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildRemoveDelegateInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, new PublicKey(delegateWallet));
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "co-manager removal");
 }
 
 /**
@@ -341,7 +426,7 @@ export async function executeCollectFees(
     new PublicKey(protocolConfig.defaultProtocolFeeDestination),
     wallet.publicKey,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "fee collection");
 }
 
 /**
@@ -370,7 +455,7 @@ export async function executeCollectProtocolFee(
     new PublicKey(protocolConfig.defaultProtocolFeeDestination),
     wallet.publicKey,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "protocol fee collection");
 }
 
 // --- DEC-0094: multi-recipient Manager fees ---
@@ -387,7 +472,7 @@ export async function executeInitializeManagerFeeRecipients(
   const reservePk = new PublicKey(reserve);
   const [actingDelegate] = findDelegate(reservePk, wallet.publicKey, programId);
   const ix = await buildInitializeManagerFeeRecipientsInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, wallet.publicKey, recipients);
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "fee recipient setup");
 }
 
 /**
@@ -428,7 +513,7 @@ export async function executeUpdateFeeRecipients(
   }
 
   const updateIx = await buildUpdateFeeRecipientsInstruction(program, programId, reservePk, wallet.publicKey, actingDelegate, newRecipients);
-  return signAndSend(connection, wallet, new Transaction().add(updateIx));
+  return signAndSend(connection, wallet, new Transaction().add(updateIx), "fee recipient update");
 }
 
 /** Permissionless -- pays out ONE named recipient's own accrued balance. `managerFeeRecipientsExists` should reflect whether this Reserve has opted into multi-recipient routing (fetchManagerFeeRecipients's `initialized` flag); the legacy fallback path is used when it hasn't. */
@@ -462,14 +547,14 @@ export async function executeCollectManagerFeeShare(
     wallet.publicKey,
     managerFeeRecipientsExists,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "fee claim");
 }
 
 export async function executeInitiateWindDown(connection: Connection, wallet: WalletContextState, reserve: string): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
   const ix = await buildInitiateWindDownInstruction(program, new PublicKey(reserve), wallet.publicKey);
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "wind-down");
 }
 
 export async function executeCloseReserve(
@@ -481,13 +566,19 @@ export async function executeCloseReserve(
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
   const program = buildReadOnlyProgram(connection) as any;
+  // manager_fee_recipients is Option on-chain: pass the None sentinel for a
+  // Reserve that never opted into multi-recipient routing (live 2026-09-08:
+  // the PDA path failed 3012 AccountNotInitialized on such a Reserve).
+  const reservePk = new PublicKey(reserve);
+  const recipientsExists = (await connection.getAccountInfo(findManagerFeeRecipients(reservePk, programId)[0])) !== null;
   const ix = await buildCloseReserveInstruction(
     program,
     programId,
-    new PublicKey(reserve),
+    reservePk,
     new PublicKey(reserveTokenMint),
     wallet.publicKey,
     assetMintsInOrder.map((m) => new PublicKey(m)),
+    recipientsExists,
   );
-  return signAndSend(connection, wallet, new Transaction().add(ix));
+  return signAndSend(connection, wallet, new Transaction().add(ix), "Reserve closure");
 }

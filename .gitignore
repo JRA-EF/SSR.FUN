@@ -39,3 +39,4 @@ devnet-fixtures/
 # not meaningful, never intentionally created.
 api/**/package-lock.json
 .env*
+docs/project/ROADMAP.built.html

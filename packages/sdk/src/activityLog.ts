@@ -49,6 +49,62 @@ export interface ActivityLogEntry {
   /** USD value of amountRaw at the moment this event was INDEXED (DEC-0176) -- frozen once stored, never re-priced. Undefined when no valuation context was supplied or the value genuinely could not be priced (never a fabricated guess). */
   amountUsd?: number;
   amountUsd2?: number;
+  /**
+   * DEC-0206: for a `feeUsdcDistributed` event only, the exact USDC (raw,
+   * 6 decimals) the settlement keeper delivered to EACH Manager fee
+   * recipient in this one transaction -- read straight from the event's own
+   * managerRecipients/managerAmounts (zero-amount recipients are never
+   * emitted on-chain, so every entry here is a real transfer). Undefined for
+   * every other event kind. Persisted as jsonb by lib/reserve-activity so
+   * the Manage page can show a recipient's USDC total without walking RPC.
+   */
+  payouts?: FeePayout[];
+}
+
+/** One recipient's USDC delivery inside a feeUsdcDistributed event (DEC-0206). Raw base units (6 decimals) as a decimal string. */
+export interface FeePayout {
+  wallet: string;
+  usdcRaw: string;
+}
+
+/**
+ * Pure (DEC-0206): the per-recipient USDC deliveries carried by ONE decoded
+ * Anchor event, or undefined for any event kind that carries none. Amounts
+ * are stringified raw u64s (BN-safe), wallets base58. A malformed pair of
+ * arrays (lengths differ) yields only the overlapping prefix -- never a
+ * fabricated amount for a recipient the event did not actually pay.
+ */
+export function extractFeePayouts(name: string, data: Record<string, unknown>): FeePayout[] | undefined {
+  if (name !== "feeUsdcDistributed") return undefined;
+  const wallets = Array.isArray(data.managerRecipients) ? (data.managerRecipients as unknown[]) : [];
+  const amounts = Array.isArray(data.managerAmounts) ? (data.managerAmounts as unknown[]) : [];
+  const n = Math.min(wallets.length, amounts.length);
+  const out: FeePayout[] = [];
+  for (let i = 0; i < n; i++) {
+    const w = wallets[i];
+    const wallet = w && typeof (w as { toBase58?: () => string }).toBase58 === "function" ? (w as { toBase58(): string }).toBase58() : String(w);
+    out.push({ wallet, usdcRaw: String(amounts[i] ?? 0) });
+  }
+  return out;
+}
+
+/**
+ * DEC-0206 backfill helper: re-decodes one already-indexed transaction's
+ * logs and returns the payouts of the `eventIndex`-th feeUsdcDistributed
+ * event in it (same per-kind ordinal fetchReserveActivityLog assigns), or
+ * null when the logs carry no such event. Lets lib/reserve-activity fill the
+ * `payouts` column for rows indexed before the column existed without
+ * re-walking the Reserve's whole history.
+ */
+export function extractFeePayoutsFromLogs(program: Program<SsrProtocol>, logs: string[], eventIndex: number): FeePayout[] | null {
+  const eventParser = new EventParser(program.programId, program.coder);
+  let ordinal = 0;
+  for (const event of eventParser.parseLogs(logs)) {
+    if (event.name !== "feeUsdcDistributed") continue;
+    if (ordinal === eventIndex) return extractFeePayouts(event.name, event.data as Record<string, unknown>) ?? [];
+    ordinal++;
+  }
+  return null;
 }
 
 /**
@@ -115,6 +171,14 @@ export function valueActivityEventUsd(name: string, data: Record<string, unknown
  * Connection -- same rationale as createReserveResume.ts's split from
  * createReserveClient.ts.
  */
+/** Pure: a raw USDC u64 (6 decimals) as a "$0.05" string for activity summaries (DEC-0206). Never throws on a malformed value -- falls back to the raw text. */
+export function formatUsdcRaw(v: unknown): string {
+  const raw = String(v ?? 0);
+  if (!/^\d+$/.test(raw)) return `${raw} raw`;
+  const n = Number(raw) / 1e6;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+}
+
 export function summarizeActivityEvent(
   name: string,
   data: Record<string, unknown>,
@@ -297,7 +361,7 @@ export function summarizeActivityEvent(
       // valueActivityEventUsd's amountUsd/amountUsd2.
       return {
         actor: pk(data.distributedBy),
-        summary: `Fee settlement delivered in USDC: ${String(data.protocolUsdc)} raw to the treasury, ${String(data.managerUsdc)} raw across ${Array.isArray(data.managerRecipients) ? (data.managerRecipients as unknown[]).length : 0} manager recipient(s)`,
+        summary: `Fee settlement paid out in USDC: ${formatUsdcRaw(data.protocolUsdc)} to the Protocol treasury, ${formatUsdcRaw(data.managerUsdc)} across ${Array.isArray(data.managerRecipients) ? (data.managerRecipients as unknown[]).length : 0} Manager fee recipient(s)`,
       };
     case "feeSettlementKeeperSet":
       return { actor: pk(data.authority), summary: `Fee-settlement keeper changed: ${pk(data.oldKeeper)} -> ${pk(data.newKeeper)}` };
@@ -413,6 +477,7 @@ export async function fetchReserveActivityLog(
           amountKind2: decoded.amountKind2,
           amountUsd: usd.amountUsd,
           amountUsd2: usd.amountUsd2,
+          payouts: extractFeePayouts(event.name, event.data as Record<string, unknown>),
         });
         if (entries.length >= ACTIVITY_MAX_ENTRIES) break;
       }

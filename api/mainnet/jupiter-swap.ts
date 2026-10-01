@@ -23,6 +23,8 @@ import {
   MAX_SLIPPAGE_BPS,
   U64_MAX,
   buildJupiterSwapInstructionsWithRetry,
+  describeSwapFailure,
+  routeLabelsOf,
   buildJupiterSwapTransactionWithRetry,
   fetchJupiterQuoteWithRetry,
   isPriceImpactAcceptable,
@@ -138,7 +140,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   const quoteResult = await fetchJupiterQuoteWithRetry({ inputMint, outputMint, amount, slippageBps, maxAccounts, apiKey });
   if (quoteResult.kind === "specific-error") {
-    res.status(502).json({ error: quoteResult.message });
+    // DEC-0199: name the amount, the asset and the excluded venues rather
+    // than passing Jupiter's bare string through with no context.
+    res.status(502).json({ error: describeSwapFailure({ stage: "quote", inputMint, outputMint, amountRaw: amount, message: quoteResult.message }) });
     return;
   }
   if (quoteResult.kind === "exhausted") {
@@ -159,7 +163,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     ? await buildJupiterSwapInstructionsWithRetry({ quote, userPublicKey, apiKey })
     : await buildJupiterSwapTransactionWithRetry({ quote, userPublicKey, apiKey });
   if (built.kind === "specific-error") {
-    res.status(502).json({ error: built.message });
+    res.status(502).json({ error: describeSwapFailure({ stage: "build", inputMint, outputMint, amountRaw: amount, quote, message: built.message }), routeLabels: routeLabelsOf(quote) });
     return;
   }
   if (built.kind === "exhausted") {
@@ -174,5 +178,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     inAmount: quote.inAmount,
     outAmount: quote.outAmount,
     priceImpactPct: quote.priceImpactPct,
+    // The venues this swap actually routes through -- surfaced so a later
+    // on-chain failure can name them too (DEC-0199).
+    routeLabels: routeLabelsOf(quote),
   });
 }

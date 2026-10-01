@@ -159,7 +159,20 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
     expect(recipient.signer, "recipient must be a signer -- the on-chain claimant-only enforcement").to.equal(true);
   });
 
-  it("mint_reserve_tokens_in_kind: the SDK IDL tracks the DEPLOYED Mainnet binary (pre-fee-settlement shape), NOT the Rust source tree -- DEC-0154. The 2026-08-21 fee-settlement redesign changed this instruction's accounts in source, but that program change was never deployed to Mainnet; regenerating the IDL from source anyway made every built mint fail on-chain with Anchor 3002 AccountDiscriminatorMismatch (confirmed live 2026-08-25, the failed CHARLI buy). This assertion may only change together with a real Mainnet program upgrade.", () => {
+  // DEC-0154's rule is "the SDK IDL tracks the DEPLOYED binary, and this pin
+  // may only change together with a real Mainnet program upgrade." That
+  // upgrade happened: the DEC-0173 fee-vault change and DEC-0195 were both
+  // executed through Squads on 2026-09-08, and seed_reserve/redeem below were
+  // re-pinned for it in that pass -- mint and accrue_fees were simply missed,
+  // so they kept asserting a shape the chain no longer runs.
+  //
+  // Re-pinned 2026-09-11 (DEC-0200) against the deployed shape, evidenced by a
+  // real successful mint on Reserve 24 passing 63 accounts = 13 fixed + 10
+  // legs x 5, signature
+  // 29NTSR56kDuDakAVtFn1otVLCzNHP9bBAAGyCmocyTw5kEXrV9t2d1xKxbt5UU9tURVS1pqzZhXd41KXgmMzEbRr.
+  // Had the deployed binary still wanted the old shape, that transaction would
+  // have failed with Anchor 3002 exactly as the DEC-0154 incident did.
+  it("mint_reserve_tokens_in_kind: the SDK IDL tracks the DEPLOYED Mainnet binary -- the post-DEC-0173 fee-vault shape. May only change together with a real Mainnet program upgrade.", () => {
     const ix = (idl as any).instructions.find((i: any) => i.name === "mint_reserve_tokens_in_kind");
     const names = ix.accounts.map((a: any) => a.name);
     expect(names).to.deep.equal([
@@ -169,10 +182,10 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
       "mint_authority",
       "depositor_reserve_token_account",
       "depositor",
-      "protocol_fee_destination_token_account",
-      "protocol_fee_destination",
+      "fee_settlement",
+      "fee_vault",
+      "fee_vault_authority",
       "tvl_accrual",
-      "manager_fee_recipients",
       "token_program",
       "associated_token_program",
       "system_program",
@@ -235,7 +248,11 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
     expect(ix.accounts.find((a: any) => a.name === "manager_fee_recipients").optional).to.equal(true);
   });
 
-  it("accrue_fees: the SDK IDL tracks the DEPLOYED Mainnet binary (pre-fee-settlement shape), NOT the Rust source tree -- same DEC-0154 rule and rationale as mint_reserve_tokens_in_kind above. May only change together with a real Mainnet program upgrade.", () => {
+  // Re-pinned 2026-09-11 (DEC-0200) for the same executed upgrade as
+  // mint_reserve_tokens_in_kind above. Independently corroborated: the hourly
+  // fee keeper has been calling accrue_fees successfully against the deployed
+  // binary with the fee-vault trio since DEC-0196.
+  it("accrue_fees: the SDK IDL tracks the DEPLOYED Mainnet binary -- the post-DEC-0173 fee-vault shape. May only change together with a real Mainnet program upgrade.", () => {
     const ix = (idl as any).instructions.find((i: any) => i.name === "accrue_fees");
     const names = ix.accounts.map((a: any) => a.name);
     expect(names).to.deep.equal([
@@ -244,9 +261,9 @@ describe("packages/sdk/idl/ssr_protocol.json -- 2026-08-14 pass hand-added entri
       "reserve_token_mint",
       "mint_authority",
       "tvl_accrual",
-      "protocol_fee_destination_token_account",
-      "protocol_fee_destination",
-      "manager_fee_recipients",
+      "fee_settlement",
+      "fee_vault",
+      "fee_vault_authority",
       "payer",
       "token_program",
       "associated_token_program",

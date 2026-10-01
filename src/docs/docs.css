@@ -1,0 +1,420 @@
+/* ---------------------------------- documentation site ---------------------------------- */
+/* /docs (docs.html -> src/docs/*). Native design system only: every color,
+   radius, font, and shadow below is a src/index.css :root token, per the
+   UI baseline. Reuses .nav/.nav-logo/.theme-btn/.btn/.seg/.callout/.footer
+   from index.css; the rules here are the docs-specific layout on top. */
+
+.docs-page {
+  padding: 40px 0 96px;
+}
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 48px;
+  align-items: start;
+}
+
+/* Header links: own class (not .nav-links) so the main app's responsive
+   rules that hide its primary nav never hide these. */
+.docs-nav-links {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.docs-nav-links::-webkit-scrollbar { display: none; }
+
+/* --- sidebar --- */
+
+.docs-side {
+  position: sticky;
+  top: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.docs-side-link {
+  display: block;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+
+.docs-side-link:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+.docs-side-link.active {
+  color: var(--text);
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+/* --- index cards --- */
+
+.docs-index-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.docs-index-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+
+.docs-index-card:hover {
+  border-color: var(--line-strong);
+  text-decoration: none;
+}
+
+.docs-index-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+
+.docs-index-blurb {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+/* --- article --- */
+
+.doc-article {
+  max-width: 780px;
+  min-width: 0;
+}
+
+.doc-article h1 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 6px 0 10px;
+}
+
+.doc-lede {
+  color: var(--text-2);
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: 68ch;
+}
+
+.doc-updated {
+  color: var(--text-3);
+  font-size: 13px;
+  margin: 10px 0 22px;
+}
+
+.doc-article h2 {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 28px 0 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.doc-article h3 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 22px 0 6px;
+}
+
+.doc-article p,
+.doc-article li {
+  color: var(--text-2);
+  font-size: 14.5px;
+  line-height: 1.65;
+  max-width: 72ch;
+}
+
+.doc-article p { margin-bottom: 10px; }
+
+.doc-article ul,
+.doc-article ol {
+  padding-left: 20px;
+  margin: 6px 0 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.doc-article a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.doc-article strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.doc-article code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  overflow-wrap: anywhere;
+}
+
+/* --- tabs (WAI-ARIA tabs on the native .seg segmented control) --- */
+
+.doc-tabs { margin-top: 4px; }
+
+.doc-tablist {
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  max-width: 100%;
+}
+
+.doc-tablist button {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.doc-tablist button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.doc-panel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--r-sm);
+}
+
+.doc-panel > :first-child { margin-top: 0; }
+
+/* --- callouts (extends index.css .callout) --- */
+
+.doc-callout {
+  margin: 14px 0 16px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.doc-callout.good { border-left-color: var(--up); }
+
+/* --- code samples --- */
+
+.doc-code {
+  margin: 12px 0 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.doc-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.doc-code pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  tab-size: 2;
+}
+
+.doc-code pre:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.doc-code pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  overflow-wrap: normal;
+}
+
+.doc-copy {
+  font-family: var(--font-body);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-2);
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 9px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.doc-copy:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.doc-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* --- addresses --- */
+
+.doc-addr {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.doc-addr code { overflow-wrap: anywhere; }
+
+/* --- tables --- */
+
+.doc-table-wrap {
+  overflow-x: auto;
+  margin: 10px 0 16px;
+}
+
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin: 10px 0 16px;
+}
+
+.doc-table caption {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0 0 8px;
+}
+
+.doc-table th,
+.doc-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+.doc-table thead th {
+  border-top: none;
+  border-bottom: 1px solid var(--line-strong);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
+
+.doc-table tbody th {
+  color: var(--text);
+  font-weight: 600;
+  width: 32%;
+}
+
+.doc-facts tbody th { width: 30%; }
+
+.doc-ok { color: var(--up); }
+.doc-bad { color: var(--down); }
+.doc-pending { color: var(--warn); font-weight: 600; }
+
+/* --- steps --- */
+
+.doc-steps li { padding-left: 4px; }
+
+.doc-steps li::marker {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- footer column titles (the main app inlines this style) --- */
+
+.footer-col-title {
+  color: var(--text-2);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+/* ---------------------------------- responsive ---------------------------------- */
+
+@media (max-width: 900px) {
+  .docs-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .docs-side {
+    position: static;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 4px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    scrollbar-width: none;
+  }
+
+  .docs-side::-webkit-scrollbar { display: none; }
+
+  .docs-side-link { white-space: nowrap; }
+
+  .docs-index-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .docs-page { padding: 24px 0 64px; }
+  .container.docs-layout { padding: 0 16px; }
+  .doc-article h1 { font-size: 24px; }
+  .docs-nav-links { display: none; }
+  .doc-table th, .doc-table td { padding: 8px 8px; }
+  .doc-facts tbody th { width: 38%; }
+}
+
+/* Index cards are anchors inside .doc-article: keep the card text in body
+   colors, not the inline-link style, so only the title reads as the link. */
+.doc-article a.docs-index-card {
+  color: var(--text-2);
+  text-decoration: none;
+}

@@ -225,3 +225,58 @@ describe("applySliderWeightChange (src/merge/lib/rebalanceSlider.ts)", () => {
     expect(find(assets, DEVUSDC)).to.equal(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// QA 2026-09-11 (DEC-0200): the tester explicitly LIKED that raising the SSR
+// allocation reduced USDC and left every other asset untouched, and asked for
+// that behaviour to be preserved. It already works; these tests exist so a
+// future change to the rebalance UI cannot quietly replace it with a global
+// proportional redistribution. If one of these fails, the model changed --
+// that is a product decision, not a refactor.
+describe("QA-preferred rebalance behaviour -- raising one asset must only draw from USDC", () => {
+  const SSR = MINT_X;
+
+  function reserve(): SliderAsset[] {
+    return [
+      { mint: DEVUSDC, weightBps: 4000 },
+      { mint: SSR, weightBps: 3000 },
+      { mint: MINT_Y, weightBps: 2000 },
+      { mint: MINT_Z, weightBps: 1000 },
+    ];
+  }
+
+  it("raising SSR 30% -> 50% takes the whole 20% from USDC and leaves the other two assets byte-identical", () => {
+    const before = reserve();
+    const after = applySliderWeightChange(before, SSR, 5000, DEVUSDC);
+    expect(find(after, SSR)).to.equal(5000);
+    expect(find(after, DEVUSDC)).to.equal(2000); // 4000 - 2000
+    expect(find(after, MINT_Y)).to.equal(2000); // untouched
+    expect(find(after, MINT_Z)).to.equal(1000); // untouched
+    expect(sum(after)).to.equal(10_000);
+    expect(before).to.deep.equal(reserve()); // input never mutated
+  });
+
+  it("lowering SSR returns the freed weight to USDC only -- the other assets never move", () => {
+    const after = applySliderWeightChange(reserve(), SSR, 1000, DEVUSDC);
+    expect(find(after, SSR)).to.equal(1000);
+    expect(find(after, DEVUSDC)).to.equal(6000); // 4000 + 2000
+    expect(find(after, MINT_Y)).to.equal(2000);
+    expect(find(after, MINT_Z)).to.equal(1000);
+    expect(sum(after)).to.equal(10_000);
+  });
+
+  it("only when USDC is exhausted do other assets contribute, and the result still totals exactly 100%", () => {
+    // Raising SSR to 80% needs 50%, but USDC only holds 40%.
+    const after = applySliderWeightChange(reserve(), SSR, 8000, DEVUSDC);
+    expect(find(after, SSR)).to.equal(8000);
+    expect(find(after, DEVUSDC)).to.equal(0);
+    expect(find(after, MINT_Y)).to.be.lessThan(2000);
+    expect(find(after, MINT_Z)).to.be.lessThan(1000);
+    expect(sum(after)).to.equal(10_000);
+  });
+
+  it("a no-op drag (same value) changes nothing at all", () => {
+    const after = applySliderWeightChange(reserve(), SSR, 3000, DEVUSDC);
+    expect(after).to.deep.equal(reserve());
+  });
+});

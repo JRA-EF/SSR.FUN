@@ -39,6 +39,7 @@ import { partitionSwapOutcomes, JupiterSwapNotLandedError, SWAP_AUTO_RETRY_LIMIT
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { computeSwapShortfallPct } from "./createReserveResume";
 import { advanceAssetFunding, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
+import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 import { shouldSubmitMint, buildBuyStateReport, countableAcquiredRaw, computeOwnerTokenDeltaRaw, type BuyStateReport, type TokenBalanceEntry } from "./multiAssetBuyPlan";
 import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
@@ -150,7 +151,18 @@ export function clearPendingBuy(wallet: string, reserve: string): void {
 
 // --- The server's build contract (api/mainnet/build-buy.ts) -----------------
 
-export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single";
+export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single" | "tax";
+/** The manager's Buy/Sell tax a build charges in USDC (DEC-0198), as the server reports it. */
+export interface TradeTaxPlan {
+  taxPct: number;
+  taxBps: number;
+  baseUsdcRaw: string;
+  taxUsdcRaw: string;
+  protocolUsdcRaw: string;
+  managerUsdcRaw: string;
+  protocolDestination: string;
+  managerDestination: string;
+}
 export interface BuiltTransaction {
   kind: BuiltTxKind;
   mint?: string;
@@ -172,6 +184,7 @@ export interface BuildBuyResponse {
     walletUsdcRaw: string;
     walletSolLamports: string;
     walletReserveTokenRaw: string;
+    tradeTax?: TradeTaxPlan | null;
   };
   reserveAlt: string | null;
   altToRegister: string | null;
@@ -315,7 +328,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
 
   const acquiredRawByMint = (): Record<string, string> =>
     Object.fromEntries(params.assets.map((a) => [a.mint, acquiredRawOf(a.mint).toString()]).filter(([, v]) => v !== "0"));
-  const readLegBalances = async () => Promise.all(params.assets.map((a) => fetchTokenBalanceRaw(params.connection, new PublicKey(a.mint), owner).then(BigInt)));
+  const readLegBalances = async () => Promise.all(params.assets.map((a) => fetchTokenBalanceRaw(params.connection, new PublicKey(a.mint), owner, a.tokenProgram).then(BigInt)));
 
   let currentStage = "building this purchase on the server (nothing submitted yet)";
   let requiredAmountsRaw: bigint[] = [];
@@ -336,11 +349,19 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   const canSignAll = typeof params.wallet.signAllTransactions === "function";
   const signMany = async (txs: VersionedTransaction[]): Promise<VersionedTransaction[]> => {
     if (txs.length === 0) return [];
+    // DEC-0200: the purchase was planned against `owner`; refuse to sign with
+    // a different account, and verify afterwards that this account really
+    // signed (catches another extension answering the request).
+    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "purchase" });
     params.onProgress?.({ phase: "awaiting-wallet" });
-    if (canSignAll) return params.wallet.signAllTransactions!(txs);
-    if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
     const out: VersionedTransaction[] = [];
-    for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    if (canSignAll) {
+      out.push(...(await params.wallet.signAllTransactions!(txs)));
+    } else {
+      if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
+      for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
+    }
+    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this purchase`);
     return out;
   };
   const throwOutcome = (outcome: ConfirmationOutcome, signature: string, what: string, atomicNote: string) => {

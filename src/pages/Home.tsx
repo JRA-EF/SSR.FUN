@@ -5,24 +5,22 @@ import { HeroPlatforms } from '../components/HeroPlatforms'
 import { ReserveCard } from '../components/ReserveCard'
 import { avatarStyle } from '../lib/avatarStyle'
 import { useAppStore } from '@/store/useAppStore'
-import { buildReserveCardProps, selectFeaturedReserves } from '@/lib/reserveCardProps'
+import { robinhoodEntry, selectFeaturedEntries, solanaEntry, type DirectoryEntry } from '@/lib/directoryEntry'
+import { useRobinhoodReserves } from '@/hooks/useRobinhoodReserves'
 import { computeMarketCap } from '@/lib/onChainReserve'
 import { useLandingStats } from '@/hooks/useLandingStats'
 import { IS_MAINNET } from '@/lib/solana-config'
-import type { DTR } from '@/lib/types'
 
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 const SETTLEMENT_SYMBOL = IS_MAINNET ? 'USDC' : 'devUSDC'
 
-function FeaturedCard({ dtr }: { dtr: DTR }) {
-  const pool = useAppStore(s => s.liquidityPreviews[dtr.id])
-  const cardProps = buildReserveCardProps(dtr, IS_MAINNET, pool)
+function FeaturedCard({ entry }: { entry: DirectoryEntry }) {
   return (
     <ReserveCard
-      {...cardProps}
-      avatarStyle={avatarStyle(dtr.ticker)}
+      {...entry.card}
+      avatarStyle={avatarStyle(entry.ticker)}
       renderCta={({ className, children }) => (
-        <Link to={`/dtr/${dtr.id}`} className={className}>{children}</Link>
+        <Link to={entry.href} className={className}>{children}</Link>
       )}
     />
   )
@@ -32,9 +30,11 @@ export function Home() {
   const dtrs = useAppStore(s => s.dtrs)
   const chainDiscoveryStatus = useAppStore(s => s.chainDiscoveryStatus)
   const chainDiscoveryError = useAppStore(s => s.chainDiscoveryError)
+  // Liquidity pool previews (DEC-0217/0218): a Featured card shows the same trust badges as Discover's.
+  const liquidityPreviews = useAppStore(s => s.liquidityPreviews)
 
+  const robinhood = useRobinhoodReserves()
   const onChainDtrs = useMemo(() => dtrs.filter(d => Boolean(d.onChain)), [dtrs])
-  const featured = useMemo(() => selectFeaturedReserves(dtrs), [dtrs])
   // Total Reserve Market Cap = sum over every live Reserve of circulating
   // Reserve Token supply x displayed Token Price (computeMarketCap) --
   // genuinely computed per Reserve, never a relabeled AUM sum, per the
@@ -45,6 +45,25 @@ export function Home() {
   const stillDiscovering = chainDiscoveryStatus === 'loading' && onChainDtrs.length === 0
   const discoveryUnavailable = chainDiscoveryStatus === 'error' && onChainDtrs.length === 0
   const landingStats = useLandingStats()
+
+  // Featured spans BOTH chains: the largest live reserves, ranked together,
+  // so Robinhood is a first-class citizen of the landing page rather than a
+  // section bolted on underneath.
+  const featured = useMemo(
+    () =>
+      selectFeaturedEntries([
+        ...dtrs
+          .filter(d => Boolean(d.onChain) && d.onChain?.status !== 'windDown')
+          .map(d =>
+            solanaEntry(d, IS_MAINNET, {
+              status: landingStats.status,
+              volumeAllTimeUsd: d.onChain ? landingStats.data?.perReserve[d.onChain.reserve]?.volumeAllTimeUsd : undefined,
+            }, liquidityPreviews[d.id]),
+          ),
+        ...robinhood.reserves.map(robinhoodEntry),
+      ]),
+    [dtrs, robinhood.reserves, landingStats.status, landingStats.data, liquidityPreviews],
+  )
 
   return (
     <>
@@ -129,15 +148,15 @@ export function Home() {
               kpi-strip section above already shows that exact state, once,
               so this section never repeats the same loading/error notice a
               second time on the same page load. */}
-          {stillDiscovering || discoveryUnavailable ? null : featured.length === 0 ? (
+          {(stillDiscovering || discoveryUnavailable) && featured.length === 0 ? null : featured.length === 0 ? (
             <div className="callout">
               No Reserves have launched yet. <Link to="/create">Launch a Reserve</Link> to be the
               first.
             </div>
           ) : (
             <div className="fcards">
-              {featured.map(dtr => (
-                <FeaturedCard key={dtr.id} dtr={dtr} />
+              {featured.map(entry => (
+                <FeaturedCard key={entry.key} entry={entry} />
               ))}
             </div>
           )}

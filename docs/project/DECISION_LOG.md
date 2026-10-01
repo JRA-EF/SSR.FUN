@@ -6043,6 +6043,809 @@
 ```json
 {
   "id": "DEC-0195",
+  "date": "2026-09-08",
+  "status": "prepared-awaiting-squads-execute",
+  "decision": "Next Mainnet program upgrade staged, carrying exactly two program fixes already on main: (1) DEC-0192 -- `mut` on AccrueFees.reserve_token_mint (the deployed struct lacked it, so the IDL marked the mint read-only and every real TVL-fee billing failed with PrivilegeEscalation; the keeper works around it today by passing the account writable); (2) DEC-0193 -- two-pass close_reserve (collect every ReserveAsset account first, then close, instead of interleaving the vault-close CPI with the Rust-side account close per iteration, which made close_reserve fail with UnbalancedInstruction on any 2+-asset Reserve). Program source diff vs the deployed DEC-0173 build is ONLY accrue_fees.rs (+7) and close_reserve.rs (+15). Reproducibility re-proven first: on-chain programdata (slot 445241220) sha256 079c957375a03d9d9ad4137f2efbddae3aa0fe96eddcedb689d18500e821c53e == a fresh cargo-build-sbf of merge 41380f2 in a temporary worktree (byte-identical, 1,015,416 bytes). New binary: 1,017,088 bytes, sha256 c59e8a069e206abf83d3eeb17d2a356080efecab2677031becefd232a73c7d6b; cargo test 17/17; clippy 3 warnings (the 3 pre-existing, zero new). IDL regenerated with anchor idl build/type: the only change vs the hand-patched IDL of DEC-0192 is the new doc comment on that account (cosmetic) -- committed. Program-data capacity 1,035,896 bytes already fits (no extend). Buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK written from the developer key, dump sha256 == build, authority set to the Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW; buffer rent 6.442 SOL (refunded to the spill account on execute). Frontend prebuilt from main and gate-checked at /private/tmp/ssr_post_upgrade2_output -- this upgrade changes NO account shapes (only a writable flag the keeper already forces), so the frontend may be deployed before or after the execute; no cutover window. execute_rebalance_leg is deliberately NOT in this upgrade: it CPIs the DevNet AMM program, which does not exist on Mainnet, so making rebalances move holdings on Mainnet is a design change (Jupiter-routed legs or a keeper), not a patch.",
+  "context": "DEC-0192 and DEC-0193 fixes were committed to main during the 2026-09-08 Mainnet checklist pass (docs/project/final-fixes.md); the developer asked for the next steps on both lists, and the program list's next step is this upgrade. Same coordinated recipe as DEC-0187.",
+  "rationale": "Ship the two proven fixes together in one Squads execute; keep the risky design change (rebalance execution on Mainnet) out of it.",
+  "alternativesConsidered": ["Include a Mainnet rebalance leg implementation -- rejected: unspecified design, needs its own decision.", "Skip the accrue `mut` since the keeper already works around it -- rejected: every other builder (scripts, future UI) would repeat the failure, and the IDL should tell the truth."],
+  "impact": "After execute: close_reserve works on multi-asset Reserves (Reserve 21 can be closed), accrue_fees works with an IDL-built read-only mint. Developer key holds 2.68 SOL until the buffer rent refunds on execute.",
+  "affectedAreas": ["Mainnet buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK (authority: Squads vault)", "packages/sdk/idl/ssr_protocol.{json,ts} (regenerated)", "docs/project/PROJECT_STATUS.md"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Reproduction: worktree at 41380f2, cargo-build-sbf -> sha256 079c9573...ec41, byte-identical to on-chain.", "git diff --stat 41380f2 HEAD -- programs/: accrue_fees.rs +7, close_reserve.rs +15, nothing else.", "cargo test: 17 passed; clippy: 3 pre-existing warnings.", "solana program show CBXaPG3e...: Authority HFmqpPVV..., Data Length 1017088, Balance 6.442263249 SOL; dump sha256 c59e8a06...7d6b.", "Squads fields: Program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 / Buffer CBXaPG3epq6HziXnSTSMTQ3RUw4Y1uSXmyMFy3ZccrqK / Spill 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa."]
+}
+```
+
+## DEC-0196
+
+```json
+{
+  "id": "DEC-0196",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented-deployed",
+  "decision": "The USDC fee-settlement keeper now actually settles. After the Creator/Boss signed set_fee_settlement_keeper (keeper AuaJRdbR... on chain, first hourly runs from 15:15 UTC), the keeper ran three times without moving a cent; a local real run with the keeper key exposed four defects, each fixed in api/mainnet/fee-settlement-cron.ts / lib/mainnet/jupiter.ts / packages/sdk: (1) redeem_fee_vault_shares failed preflight with ReserveAssetMismatch (common.rs:326) because the per-asset settlement staging ATAs had never been created -- now created idempotently, in their own transaction(s) when more than three (the 10-asset Reserve hit MaxInstructionTraceLengthExceeded with all ten creations + the redeem in one tx); (2) the settlement swap asked Jupiter to swap from the keeper's EMPTY ATA while the approve_settlement_swap allowance sits on the staging ATA (Jupiter 0x1789 on every run) -- now one atomic v0 transaction [approve -> SPL transfer of exactly the approved amount signed by the keeper as delegate -> Jupiter swap with destinationTokenAccount = the Reserve's USDC staging ATA], split into two only when it does not fit, with a sweep of any asset left in the keeper ATA by a split run; (3) buildDistributeFeeUsdcInstruction derived the Treasury's USDC ATA without allowOwnerOffCurve -- the Treasury is a Squads PDA, so spl-token threw TokenOwnerOffCurveError with an empty message and every distribute was silently skipped; (4) single sends were being dropped -- every keeper send now re-broadcasts until confirmed, the route's maxDuration is 300s (270s loop budget) and the cron uses the shared Jupiter helper (venue exclusions, JUPITER_API_BASE). First full settlement executed locally with the keeper key, then the fix deployed to prod and dev.",
+  "context": "MFE-01 payout clause; tester items #1/#4 (fees reaching managers). The keeper registration was the only step needing an admin; everything after it was code.",
+  "rationale": "Running the exact handler locally with the real keeper key was the only way to see the per-Reserve errors (the scheduled run's JSON is not retrievable and CRON_SECRET is write-only). Each fix is the minimal correct one against the deployed program; no program change was needed.",
+  "alternativesConsidered": ["Rewrite the Jupiter swap instruction's source account to the staging ATA (pure delegate swap) -- rejected as fragile: Jupiter's route programs may constrain the source account's owner; the delegate transfer into the keeper ATA inside the same transaction is equivalent and robust.", "Wait for a program upgrade adding on-chain swap support -- rejected: unnecessary."],
+  "impact": "10 Reserves redeemed, 21+ settlement swaps landed, 10 distribute_fee_usdc: 0.314650 USDC to the Treasury vault (USDC ATA created by the run) and 0.303919 USDC to manager wallets, splits matching FeeSettlement + recipient tables. Two legs (Reserve 17 98sM..., Reserve 20 ZEC) skipped by route errors and retry hourly. The keeper briefly holds an asset only inside an atomic transaction (or between the two halves of a split, swept next run).",
+  "affectedAreas": ["api/mainnet/fee-settlement-cron.ts", "lib/mainnet/jupiter.ts (destinationTokenAccount)", "packages/sdk/src/feeSettlementInstructions.ts (allowOwnerOffCurve)", "vercel.json (fee-settlement-cron maxDuration 300)", "docs/project/final-fixes.md MFE-01", "rtm_controls MFE-01"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Local real run #1: 9 Reserves redeem preflight ReserveAssetMismatch; Reserve 21 swap quote 401 (lite base ignored by the old cron). Run #2 (after fixes 1,2,4): 8 redeems landed, 21 swaps landed, distribute produced empty-message errors on all 10. Isolated repro: TokenOwnerOffCurveError from getAssociatedTokenAddressSync(usdc, treasury). Run #3 (after fix 3): 10 distributions -- signatures and per-wallet USDC deltas in docs/project/final-fixes.md MFE-01; Treasury USDC balance 0.314650 after."]
+## DEC-0197
+
+```json
+{
+  "id": "DEC-0197",
+  "date": "2026-09-14",
+  "status": "confirmed-implemented",
+  "decision": "Reserve price history is now SERVER-SIDE and shared (the Reserve NAV History store: table reserve_nav_history, lib/reserve-nav-history/*, appended by api/mainnet/warm-cache-cron.ts on every ~15s refresh with a throttle of >=0.5% move after >=60s, or >=15 min quiet; served by the new GET /api/mainnet/reserve-nav-history, downsampled to <=600 points per Reserve). Each served series is prefixed by a derived LAUNCH ANCHOR: the Reserve's current holdings valued at their ENTRY prices (the DEC-0172 Entry Price Store), stamped at the earliest entry-price capture time -- so 'All-Time Performance' is the value-weighted aggregate of the Composition table's per-asset P&L. The client (navHistoryClient.ts) fetches it once per discovery pass and once on the warm-cache first paint and merges it UNDER the browser's own live points (calculations.ts mergePriceHistories); the browser only extends history forward. On the Reserve detail page: the % next to Token Price and the middle stat tile now show ALL-TIME performance (tile renamed from '7D Performance' to 'All-Time Performance'; 'Not yet available' / '--' until the server history has been merged at least once, never a misleading 0%); the third tile is renamed from '24h Volume' to 'All-Time Volume', reading a new per-Reserve volumeAllTimeUsd on both landing-stats endpoints (same Ledger definition as the DEC-0180 homepage figure, via a new fetchAllTimeTradeVolumeUsdByReserve GROUP BY). The chart discloses, when a window reaches back before recording started, that the earlier segment runs straight from the launch value.",
+  "context": "Creator report with screenshot (BETA Reserve): 'all time chart is not moving and all time pnl% below the token price at 0% despite one of the underlying tokens being up 1300% and the reserve is highly profitable'; plus 'change the 7D performance in the mid of Market cap and 24h volume to all time performance and all time volume'. Root cause (already recorded as an open risk on 2026-08-28 under DEC-0172): a Reserve's priceHistory lived only in each browser -- and on Mainnet was deliberately never persisted across reloads (useAppStore partialize) -- so every visit started a fresh history at the current NAV: buildLineSeries fell back to its flatline ('No price movement recorded yet.') and every change figure measured NAV against itself. The Ledger could not rebuild the past either: its amount_usd values are frozen at INDEXING time (DEC-0176), not trade time.",
+  "rationale": "Only a server-side, shared time series can give every visitor the same real history; the warm-cache cron already computes every Reserve's balances and validated prices every ~15s, so recording NAV there costs one small insert per refresh and zero extra RPC. The entry-price anchor is the one honest pre-recording baseline the system already owns (server-captured, write-once, never client-supplied) and it makes the Reserve-level figure consistent by construction with the per-asset P&L rows the Creator was comparing against. Live check against the real snapshot: BETA anchor 2.2206 (2026-08-28) vs NAV 6.81 today = +207%, DELTA +103%, ALPHA +3.7%. The first recorded points were written by one manual recorder pass on 2026-09-14 09:24 UTC so recorded history starts now, not at the next deploy.",
+  "alternativesConsidered": [
+    "Rebuild history from the Ledger's mint/redeem rows (rejected: amount_usd is valued at indexing time, so trade-implied NAVs are not historical)",
+    "Persist priceHistory in localStorage on Mainnet (rejected: still per-browser, and partialize deliberately drops on-chain DTRs to avoid the 7->1->7 rehydration race)",
+    "Show the all-time figure only as the sum of per-asset P&L without a chart anchor (rejected: the chart's 'All' range would stay flat, which was half the report)",
+    "Record every 15s tick unthrottled (rejected: ~5.7k rows/day/Reserve for a volatile basket; the 60s floor + 0.5% move + 15 min quiet interval bounds it to <=1440/day while keeping every real move)"
+  ],
+  "impact": "Every Mainnet visitor now sees one shared Price History that starts at the launch value and accumulates real recorded movement from 2026-09-14 onward; 24h/7d changes are measured inside their own windows from that history. Detail-page stat strip: Market Cap | All-Time Performance | All-Time Volume. New DB table reserve_nav_history (migration applied to the production Neon DB this session via scripts/migrate-nav-history.mjs; idempotent). New endpoint is a cheap DB read (edge-cached 30s), gated by the site cookie like the other /api/mainnet reads. Payload per discovery pass <= 12 Reserves x 600 points, client-cached 60s. DevNet behaviour unchanged (no recorder; per-browser history as before). Homepage/Discover cards untouched. NOT YET DEPLOYED: code is on the working tree, uncommitted; the cron starts recording on the next production deploy of main.",
+  "affectedAreas": [
+    "lib/reserve-nav-history/{schema.sql,db.ts,navMath.ts,recorder.ts,package.json} (new)",
+    "scripts/migrate-nav-history.mjs, scripts/verify_nav_history.ts (new)",
+    "api/mainnet/reserve-nav-history.ts (new GET), api/mainnet/warm-cache-cron.ts (recorder call)",
+    "lib/reserve-activity/kpis.ts (fetchAllTimeTradeVolumeUsdByReserve), api/mainnet/landing-stats.ts + api/devnet/landing-stats.ts (perReserve.volumeAllTimeUsd), src/merge/hooks/useLandingStats.ts",
+    "src/merge/lib/navHistoryClient.ts (new), calculations.ts (mergePriceHistories, calcAllTimeChangePct), types.ts (DTR.priceHistoryRecordedFrom), onChainReserve.ts (mergeDiscoveredReserves server history), store/useAppStore.ts, RealReserveSync.tsx, ReserveSnapshotHydrator.tsx",
+    "src/merge/pages/DTRDetail.tsx (all-time % by Token Price; All-Time Performance + All-Time Volume tiles; pre-recording chart note)",
+    "tsconfig.node.json (exclude lib/reserve-nav-history), tests/phase_nav_history.ts (new, 22 tests)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_nav_history.ts: 22 passing (navMath, assembleNavHistory anchor logic, mergePriceHistories, calcAllTimeChangePct, calcRecentChanges window isolation, mergeDiscoveredReserves wiring).",
+    "npx tsc -b: exit 0. oxlint on all changed files: 0 errors (4 pre-existing exhaustive-deps warnings in DTRDetail.tsx, identical count on HEAD).",
+    "node scripts/migrate-nav-history.mjs -> 'Confirmed table present: reserve_nav_history' on the production Neon host.",
+    "scripts/verify_nav_history.ts (real handler, real DB): 12 Reserves served; BETA anchor 2026-08-28 @ 2.2206, nav now 6.8248, all-time +207.34%; DELTA +103.52%; --record wrote 12 rows, recordedFrom=2026-09-14T09:24 for every Reserve."
+  ]
+}
+```
+
+## DEC-0198
+
+```json
+{
+  "id": "DEC-0198",
+  "date": "2026-09-14",
+  "status": "confirmed-implemented",
+  "decision": "Every Reserve detail page gets a shareable PERFORMANCE CARD ('PnL card'), opened from a small share glyph in the top-right corner of the Reserve display (next to Token Price in the chart card). ONE logic for holders and Managers alike: the card shows the Reserve's own all-time gain since launch (the same calcAllTimeChangePct figure as the page), up to three of its reserve assets with a POSITIVE gain since entry, ranked by calcAssetPnlPct(current, entry) exactly as the Composition table computes it (Creator refinement same day: losers and unpriced assets are never listed, no weight figures anywhere, and the section is omitted entirely when there is no winner yet), the Reserve name, its ticker, the Manager wallet (truncated; a swap-in point for the Manager's profile name once profiles ship) and the site host. It never draws per-wallet position figures. Three approved SSR eagle mascot artworks (coin rain, boardroom, bull run; public/pnl/*.jpg, downscaled to 1600px) are selectable as the card background under a navy wash that keeps the left text column legible while the mascot stays visible on the right. The card is drawn with the plain 2D canvas API at 1200x630 (X's landscape ratio) at 2x, so it is a real PNG: the overlay offers Share on X (opens the X web intent with pre-filled text + the Reserve link, and copies the PNG to the clipboard so the user pastes it into the composer -- X's intent cannot attach images), Copy image, and Download.",
+  "context": "Creator request (2026-09-14): 'create PNL cards for reserves -- creators and users can have just the one logic, which is pnl on gains; use the fomo and pump.fun ones as inspiration; include the top 3 tokens who best performed, the symbol and name of the reserve and the manager wallet (soon profiles); use these [three eagle images] as alternatives in the card background, cool but not too much; the card comes as a symbol in the top-right corner of the reserve display which pops out with an option to share on socials, mainly X.'",
+  "rationale": "Reserve-level figures are the only ones that are the same for every viewer: a wallet's cost basis lives in this browser's local store only (DEC-0149/DEC-0158) and would be wrong on any other device, so a shared card built on it could claim gains the page itself does not. Reusing calcAllTimeChangePct and calcAssetPnlPct means the card can never disagree with the detail page, and DEC-0197's server-side history makes the all-time figure real for every visitor. A canvas render avoids adding an html-to-image dependency (none exists in the repo) and yields a real PNG for X, which has no image parameter on its share intent -- the copy-to-clipboard-then-open-composer flow is the same one pump.fun-style cards use. No Radix Dialog exists in the merge design system, so the overlay is a small hand-rolled portal; .merge-scope's unlayered position:relative + opaque background had to be overridden inline on the portal wrapper or the fixed overlay collapses to zero height.",
+  "alternativesConsidered": [
+    "Separate holder card with the wallet's own P&L (rejected for now: per-browser cost basis; revisit when positions are server-tracked)",
+    "html-to-image / html2canvas DOM capture (rejected: new dependency, font/CORS fragility; canvas draws the same fonts merge.css already loads)",
+    "Server-rendered OG image via /api/mainnet/reserve-image (deferred: would give a link preview on X; can reuse uploadReserveImage later)",
+    "Native Web Share API with files (deferred: desktop X does not accept it reliably; clipboard + intent works everywhere the clipboard image write is allowed)"
+  ],
+  "impact": "Bug found on the first preview (Creator: 'you simply removed the top performers -- they're gone'): the warm-cache first paint seeded every Reserve with an EMPTY entry-price map (buildDtrsFromSnapshot passed {}), so per-asset P&L -- the card's top performers AND the Composition table's P&L column -- stayed '--' until the first live discovery poll (30s+) landed; and a later poll whose entry-price fetch failed wiped a map already resolved. Fixed at the source: the hydrator fetches /api/mainnet/reserve-entry-prices alongside the snapshot (same cache key as the poll) and the merge preserves an existing map when the fresh pass has none. Also caught on the preview: the X post link must be the hash route (${origin}/#/dtr/<id>) -- the app is hash-routed (src/lib/router.tsx) and a bare /dtr/<id> path lands on the homepage. New share glyph on every Reserve detail page (desktop and mobile); overlay previews the card, offers three backgrounds, Share on X / Copy image / Download. 'Just launched' is shown instead of a figure when all-time performance is not yet available (never a fabricated 0%). No new dependencies; three static JPEGs (~660 KB total) under public/pnl. Committed as 74ce241 and deployed to production the same day (dpl_2sVqgS9qaWsKRRkUPwwSyvFS5Wou).",
+  "affectedAreas": [
+    "src/merge/lib/pnlCard.ts (new: data shape, canvas renderer, PNG/clipboard/X-intent helpers)",
+    "src/merge/components/ReservePnlCard.tsx (new: ReservePnlCardTrigger glyph + ReservePnlCardModal overlay)",
+    "src/merge/pages/DTRDetail.tsx (pnlCardData memo, trigger next to Token Price, modal mount)",
+    "src/merge/lib/ReserveSnapshotHydrator.tsx + reserveSnapshotClient.ts (warm-cache seed now fetches and carries the entry-price map, so per-asset P&L exists on the first paint), src/merge/lib/onChainReserve.ts (mergeDiscoveredReserves keeps an already-resolved entry-price map when a later pass carries none)",
+    "public/pnl/eagle-rain.jpg, eagle-couch.jpg, eagle-bull.jpg (new)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on the two new files: 0 warnings, 0 errors (DTRDetail's 4 exhaustive-deps warnings pre-exist on HEAD).",
+    "Headless Chrome renders of the card for all three backgrounds, a long-name/no-logo/not-yet-available variant, and the overlay at 1280px and 512px viewports checked visually this session.",
+    "Preview ssr-67afzponv (share-cookie Chrome profile, hash route #/dtr/mainnet-beta-8): BETA renders on the first paint with the share glyph present, all-time +225.58%, and the Composition table already showing STONK +1383.69% -- i.e. entry prices now arrive with the warm-cache seed. Real preview data: 10 of 12 Mainnet Reserves have at least one positive asset gain to list."
+  ]
+}
+```
+
+## DEC-0199
+
+```json
+{
+  "id": "DEC-0199",
+  "date": "2026-09-15",
+  "status": "confirmed-implemented",
+  "decision": "The Reserve cards on the homepage's Featured Reserves section and on Discover show exactly the same stats as the Reserve's own detail page: Price, Market Cap, All-Time PNL (%), All-Time Volume. The legacy 24h and Prem/Discount chips are removed from the cards. Everywhere the all-time gain is labelled, the word 'Performance' is replaced by 'PNL (%)': the detail page's middle stat tile (and its InfoTip label) is now 'All-Time PNL (%)'. The four card stats lay out as a deliberate 2x2 grid (src/index.css .fcard-metrics) instead of a wrapping flex row.",
+  "context": "Creator request (2026-09-15): 'in the front end, featured reserves and the discover reserve cards, it still displays a legacy prem/discount kpi -- instead it should be the same stats as it is inside: price, market cap, all time PNL(%), all time volume. and while you're at it lets replace the word performance by PNL(%) as it's shorter'. DEC-0197 (2026-09-14) had already changed the detail page's stat strip to All-Time Performance / All-Time Volume; the cards were never updated to match, and Prem/Discount was already known to carry no information (DTRDetail's stats-grid comment, 2026-08-24: Token Price IS NAV while every Buy/Sell executes at NAV, so it always reads ~0%).",
+  "rationale": "One shared builder (buildReserveCardProps) already feeds both card call sites, so the fix lives in one place and the cards cannot drift from each other. The all-time figure reuses calcAllTimeChangePct with the same Mainnet guard as the detail page (a '--' until the server launch anchor has been merged, never a misleading 0%), so a card and its page can never disagree. All-Time Volume comes from the same landing-stats fetch (perReserve[reserve].volumeAllTimeUsd) the Home KPIs and the detail page already read -- Discover now calls useLandingStats too -- with the same Loading/Unavailable placeholders, never a fabricated $0 for a live Reserve (a simulated DTR is honestly $0). A 2x2 grid was chosen because, with the longer labels, the old wrapping flex row stranded the fourth chip alone on a second line.",
+  "alternativesConsidered": [
+    "Keep 24h on the card as a fifth chip (rejected: the request is to mirror the detail page's set; the 24h change still shows under the price in the card header)",
+    "Extend the landing-stats API into the DTR store so the builder needs no extra argument (rejected: more plumbing for one figure; passing the hook state through keeps the builder pure and testable)",
+    "Leave the flex row wrapping (rejected on the headless-Chrome render: 3+1 ragged wrap)"
+  ],
+  "impact": "Featured Reserves (Home) and Discover cards now show Price / Market Cap / All-Time PNL (%) / All-Time Volume; Discover makes one extra landing-stats request (cached server-side 60s, same endpoint the Home page already hits). Detail page copy: 'All-Time Performance' -> 'All-Time PNL (%)'. Two existing tests that asserted on the Prem/Discount chip were rewritten; five new tests cover the exact stat set, PNL sign/tone, the Mainnet unmerged-anchor guard, and the volume placeholders.",
+  "affectedAreas": [
+    "src/merge/lib/reserveCardProps.ts (metrics + new optional ReserveCardStats argument)",
+    "src/pages/Home.tsx, src/merge/pages/Discover.tsx (pass landing-stats volume through)",
+    "src/merge/pages/DTRDetail.tsx (label rename)",
+    "src/index.css (.fcard-metrics 2x2 grid)",
+    "tests/phase_featured_cards_and_rpc_redaction.ts, tests/phase_landing_wallet_corrections.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on the four touched TS/TSX files: only DTRDetail's 4 pre-existing exhaustive-deps warnings.",
+    "ts-mocha tests/phase_featured_cards_and_rpc_redaction.ts tests/phase_landing_wallet_corrections.ts tests/phase_mainnet_pricing.ts: 68 passing.",
+    "Headless Chrome render of three cards (live with figures, live with '--'/Loading…, simulated with Unavailable) against src/index.css at 1280px: 2x2 stat grid with the Trade button pinned right."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0201",
+  "date": "2026-09-16",
+  "title": "Discover sorts by AUM (market cap) descending by default; Featured Reserves = plainly the top 3 on-chain Reserves by AUM",
+  "status": "implemented (not yet committed/deployed)",
+  "decision": "Discover's sort dropdown no longer has a 'Sort: Default' (discovery order) option: 'AUM: High to Low' is the first option and the initial state, and sortDtrs falls through to the AUM-descending comparator. selectFeaturedReserves (Home's Featured Reserves) now returns the top n (3) DTRs that have onChain data, sorted by AUM descending -- exactly the head of Discover's default order. The four curation gates it used to apply (assetsResolvedFully === true, isReserveTradable composition, name not 'Unnamed Reserve (#N)', status !== windDown) are removed.",
+  "context": "Creator request (2026-09-16): 'lets order the reserves in discover reserves by AUM/ market cap - thats the default sort. also the featured reserves for now should be the top 3 ones in AUM'. Before this pass Discover opened in raw discovery order and Featured already ranked by AUM but could skip a large Reserve that failed one of its curation gates, so the homepage's 'top 3' could disagree with the top of Discover.",
+  "rationale": "One ranking rule in one place: Featured is defined as the first 3 of Discover's default order, so the two surfaces can never disagree about which Reserves are biggest. The 'for now' in the request is honoured literally -- the gates are dropped rather than partially kept -- and documented in the selectFeaturedReserves header so a future curation rule (e.g. hiding windDown or unnamed Reserves again) is a deliberate new decision, not a leftover. The only exclusion kept is 'has onChain data': a purely local/simulated fixture DTR must never be featured on Mainnet regardless of its fixture AUM (DEC from the landing-page correction pass, unchanged).",
+  "alternativesConsidered": [
+    "Keep the windDown / unnamed / unresolved gates and only change Discover's default sort (rejected: the request says Featured should be the top 3 by AUM, and any gate reintroduces the Featured-vs-Discover mismatch)",
+    "Keep a 'Sort: Default' option meaning discovery order (rejected: nobody needs on-chain discovery order as a user-facing sort; AUM is the default now)",
+    "Compute Featured as Discover's sorted list sliced in Home.tsx instead of a shared helper (rejected: selectFeaturedReserves is already the single tested seam and keeps Home free of Discover's filter/sort code)"
+  ],
+  "impact": "Discover opens sorted by AUM descending; the dropdown loses the 'Sort: Default' entry. Featured Reserves on Home may now include a Reserve that is winding down, still resolving its assets, or carries a placeholder name if it ranks in the top 3 by AUM -- accepted for now per the request. The WD-01 Featured exclusion test (DEC-0164-era) is superseded and rewritten; ReserveSnapshotHydrator's mint pre-registration is still needed for Buy/Sell eligibility, only its comment about Featured is updated. isReserveTradable is no longer imported by reserveCardProps.ts.",
+  "affectedAreas": [
+    "src/merge/pages/Discover.tsx (SortKey, SORT_OPTIONS, sortDtrs default, initial sortBy)",
+    "src/merge/lib/reserveCardProps.ts (selectFeaturedReserves)",
+    "src/merge/lib/ReserveSnapshotHydrator.tsx (comment only)",
+    "tests/phase_featured_cards_and_rpc_redaction.ts, tests/phase_landing_wallet_corrections.ts (comment), tests/phase_road_to_mainnet_feedback.ts",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": "WD-01's Featured-curation clause (selectFeaturedReserves excluding windDown) and the earlier Featured-Reserves exclusion fix (assetsResolvedFully / isReserveTradable / Unnamed gates)",
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on Discover.tsx / reserveCardProps.ts / ReserveSnapshotHydrator.tsx: clean (a duplicate-case warning introduced mid-pass was fixed before finishing).",
+    "ts-mocha tests/phase_featured_cards_and_rpc_redaction.ts tests/phase_landing_wallet_corrections.ts tests/phase_road_to_mainnet_feedback.ts: 50 passing (Featured tests rewritten to assert inclusion of under-resolved / unsupported-asset / unnamed / windDown Reserves and top-N slicing by AUM)."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0202",
+  "date": "2026-09-16",
+  "title": "Featured Reserves never show a Reserve that is winding down (premise added on top of DEC-0201's top-3-by-AUM rule)",
+  "status": "confirmed-implemented",
+  "decision": "selectFeaturedReserves keeps DEC-0201's rule (top 3 on-chain Reserves by AUM, the head of Discover's default order) but additionally excludes any Reserve whose on-chain status is windDown; the next-ranked Reserve takes the freed slot. A winding-down Reserve remains fully visible and tradable-out on Discover (WD-01), it is only never curated as a Featured highlight.",
+  "context": "Creator, same day, on reviewing DEC-0201: 'winding down reserves should not display in featured. please add this premise and push and deploy'. DEC-0201 had removed the windDown gate together with the other curation gates.",
+  "rationale": "A Reserve on its way to closing is exactly what a homepage highlight should not promote; the AUM ranking still decides among the remaining candidates, so Featured stays the 'top of Discover' minus that one deliberate exception, documented in the selector's header so the rule is not mistaken for a leftover.",
+  "alternativesConsidered": [
+    "Also hide winding-down Reserves from Discover (rejected: holders must still find them to exit -- WD-01)",
+    "Reinstate all of DEC-0201's dropped gates (rejected: not requested; only the wind-down premise was added)"
+  ],
+  "impact": "Home's Featured Reserves skip windDown Reserves; nothing else changes. Pushed to main, design fast-forwarded, deployed to production (see evidence).",
+  "affectedAreas": [
+    "src/merge/lib/reserveCardProps.ts (selectFeaturedReserves)",
+    "src/merge/pages/Discover.tsx (comment)",
+    "tests/phase_featured_cards_and_rpc_redaction.ts (new windDown test), tests/phase_road_to_mainnet_feedback.ts (WD-01 Featured test restored)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": "DEC-0201's removal of the windDown gate (its other gate removals stand)",
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -p tsconfig.app.json --noEmit: exit 0. oxlint on Discover.tsx / reserveCardProps.ts: clean.",
+    "ts-mocha tests/phase_featured_cards_and_rpc_redaction.ts tests/phase_landing_wallet_corrections.ts tests/phase_road_to_mainnet_feedback.ts: 51 passing.",
+    "Commit / deployment IDs recorded in PROJECT_STATUS.md's 2026-09-16 entry."
+  ]
+}
+```
+
+## DEC-0203
+
+```json
+{
+  "id": "DEC-0203",
+  "date": "2026-09-17",
+  "title": "Public Documentation site at /docs (own Vite entry, outside the closed-beta gate) + Reserve metadata/picture GET endpoints made publicly readable",
+  "status": "confirmed-implemented",
+  "decision": "Added a public-facing Documentation section to SSR.fun at /docs, built as its own Vite entry (docs.html -> src/docs/*) in the native design system, with four tabbed documents: Getting started; Reserve Tokens on DEXes (why a Reserve Token shows as Unknown/unverified on Raydium and PumpSwap today, what DEXes read, how to resolve a mint to its Reserve and name with one RPC call, what is changing, and a brief for DEX teams); Adding liquidity (Raydium, PumpSwap, fees and risks); Protocol reference (program addresses, PDA seeds, Reserve account byte layout, fee limits, with copyable TypeScript). Served by vercel.json rewrites /docs and /docs/(.*) -> /docs.html and mirrored for vite dev/preview by a small plugin. The site gate (middleware.ts) now lets /docs, /docs/* and /docs.html through unauthenticated, and additionally lets GET/HEAD through for /api/{mainnet,devnet}/reserve-metadata and /api/{mainnet,devnet}/reserve-image (POST stays gated). The main app gained a 'Docs' primary-nav link and a 'Documentation' footer link.",
+  "context": "Creator: 'lets create a public facing docs page. include some code, but still make it accessible and simple with different tabs etc. we'll include a Documentation section in ssr.fun.' The immediate driver is the Raydium conversation: the Strategic Solana Reserve token (SSRSol) shows on PumpSwap as not on the verified list with no image, and on Raydium with no name or symbol, and the team wants to send Raydium docs that explain what a Reserve Token is and why. Code inspection confirmed the root cause the docs describe: create_reserve initializes a plain SPL mint (6 decimals, PDA mint authority, no freeze authority) and stores name/ticker/description/imageUrl only in the off-chain record behind Reserve.metadata_uri; no Metaplex Token Metadata account is ever created (no Metaplex integration exists in the repo, as the devUSDC-era notes already recorded), and no Reserve Token is on Jupiter's verified list. A second finding: since the site-wide gate (DEC-0129/0187) returned JSON 401 for every /api/* path, the metadata_uri stored on-chain for every live Reserve was a dead link to anyone outside the beta, contradicting api/*/reserve-metadata.ts's own header ('must be resolvable by anyone/anything reading a Reserve's metadata later').",
+  "rationale": "The docs must be reachable by people who do not have a BETA key (Raydium, wallet and token-list teams, holders), so a hash route inside the gated SPA was not an option; a separate light entry (no wallet adapters, store or RPC code, ~49 kB JS) can be exempted from the gate without exposing anything the gate protects. Real paths (/docs/<slug>?tab=<id>) make specific tabs linkable when sending the material to a partner. The docs tell DEX teams to resolve a Reserve Token through the on-chain metadata_uri, which only works if that GET is public; opening GET/HEAD alone keeps the bounded, content-addressed writes gated. Tabs use the native .seg segmented control per the UI baseline (WAI-ARIA tabs pattern, arrow-key navigation); code samples are plain monospace blocks with a copy button rather than a highlighter, so the pages stay readable for non-developers and add no dependency. The 'What is changing' tab describes the metadata fix (Metaplex metadata on every Reserve Token, standard-format record, updates flowing through, then Jupiter verification, then add-liquidity from SSR.fun) as in progress without dates, matching ROADMAP.html item 2 and its DEX-liquidity callout.",
+  "alternativesConsidered": [
+    "A #/docs hash route inside the main app (rejected: behind the closed-beta gate, so unreachable by the DEX teams it is written for; the main bundle also drags wallet/RPC code into a static page)",
+    "A static page in public/ like internal-roadmap.html (rejected: no tabs without hand-written JS, and the content must share the app design tokens and theme toggle)",
+    "A document or PDF sent to Raydium instead of a site section (rejected: Creator explicitly asked for a Documentation section in ssr.fun that can be linked)",
+    "Leaving the metadata/picture GET endpoints gated (rejected: makes the on-chain metadata_uri a dead link for the outside world and the docs' lookup instructions false; GET-only exposure was already the endpoints' design intent)",
+    "Also opening POST on those endpoints (rejected: no need, and the beta gate is the only thing bounding anonymous writes today)"
+  ],
+  "impact": "New public surface: /docs (four documents, 17 tabs). No program, IDL, database or environment change. Gate behavior change: /docs* and GET/HEAD on the four metadata/picture endpoints are public; every other route is gated exactly as before. NOT yet committed or deployed at the time of this entry. ssr.fun's robots.txt still disallows everything except /, so the docs are linkable but not indexed (open question for the Creator). The 'What is changing' tab makes a public statement that on-chain metadata for Reserve Tokens is in progress and will be backfilled for existing Reserves; that statement must be kept true or the tab edited.",
+  "affectedAreas": [
+    "docs.html, src/docs/** (main.tsx, DocsApp.tsx, router.tsx, docs.css, components/{DocTabs,CodeBlock,primitives}.tsx, content/{index,addresses,GettingStarted,ReserveTokensOnDexes,AddLiquidity,ProtocolReference}.tsx)",
+    "vite.config.ts (docs entry + /docs path rewrite plugin for dev/preview)",
+    "vercel.json (rewrites /docs, /docs/(.*) -> /docs.html)",
+    "middleware.ts (isPublicDocsPath, PUBLIC_READ_API_PATHS / isPublicReadApi)",
+    "src/components/Shell.tsx (Docs nav link, Documentation footer link)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b: exit 0. oxlint on src/docs, Shell.tsx, vite.config.ts, middleware.ts: no errors (only the pre-existing only-export-components fast-refresh warning pattern, same as src/lib/router.tsx). npm run build: clean; docs bundle docs-*.js 48.9 kB (14.7 kB gzip) + docs-*.css 5.5 kB.",
+    "vite preview on :5199: GET /docs and /docs/add-liquidity?tab=raydium -> 200 serving docs.html; headless Chrome screenshots of the index, the DEX guide's What-DEXes-read and Look-up tabs at 1280px, and the Adding-liquidity Raydium tab at 520px all render in the native light theme; --dump-dom on /docs/protocol-reference?tab=read shows the Read-a-Reserve tab selected via the ?tab= deep link; --dump-dom on / shows the Docs nav-link and the footer Documentation link.",
+    "Root-cause facts quoted in the docs verified in source: programs/ssr_protocol/src/instructions/create_reserve.rs (anchor_spl::token::Mint, mint::decimals = 6, mint::authority = PDA, no freeze authority, metadata_uri only), lib/reserve-metadata/payload.ts (name/ticker/description/category/buyTaxPct/sellTaxPct/imageUrl), no Metaplex program reference anywhere in the repo; Reserve byte offsets computed from state/reserve.rs (mint at 49, metadata_uri at 167) and the discriminator sha256('account:Reserve')[0..8] = 8MMas8GHex6."
+  ]
+}
+```
+
+## DEC-0204
+
+```json
+{
+  "id": "DEC-0204",
+  "date": "2026-09-17",
+  "title": "Public docs describe how Reserve Tokens work, never current gaps: \"Reserve Tokens on DEXes\" reframed, problem/fix framing removed everywhere; the Metaplex metadata fix is an internal program change, not a partner ask",
+  "status": "confirmed-implemented",
+  "decision": "Rewrote the public /docs content so every page reads as a neutral description of how the product works. \"Reserve Tokens on DEXes\" now has four tabs (How it works, On-chain properties, Identify a Reserve Token, For integrators): what happens on SSR.fun versus on an exchange, the mint’s on-chain properties, the one-call mint-to-Reserve lookup, and an integrator brief. Removed: the Overview’s \"shows as Unknown / unverified\" explanation, the \"What DEXes read\" today-vs-expected table, the Metaplex-metadata-PDA snippet that demonstrates a null account, the \"What is changing\" roadmap tab, and every \"being fixed\" / \"not yet\" / \"expect an unknown-token warning\" callout in Getting started, Adding liquidity and the Protocol reference (the Metaplex program address row is gone too). Slug, URL and the ?tab=lookup deep link are unchanged; the old ?tab=roadmap / ?tab=for-dex-teams / ?tab=what-dexes-read links fall back to the first tab. Standing rule going forward: public documentation explains mechanisms; gap analysis and fix plans live in this log, PROJECT_STATUS.md and chat.",
+  "context": "Creator, on reading the deployed DEC-0203 guide: \"can we fix this internally? ... please while u respond also remove that part from the documentation and make the documentation more like how it works\". The first version had been written as material to send Raydium and opened by explaining why Reserve Tokens look broken on Raydium/PumpSwap and promising a fix.",
+  "rationale": "The missing name/symbol/image is an SSR.fun-side gap (no Metaplex Token Metadata account on Reserve Token mints) that SSR.fun can close itself with a program instruction, so there is nothing for a partner to act on and no reason to publish the gap. A visitor or integrator needs to know what a Reserve Token is and how to identify one, which the reframed pages still give in full, including the mint-to-Reserve lookup code. Keeping the slug and the lookup tab id preserves any link already shared.",
+  "alternativesConsidered": [
+    "Keep the \"What is changing\" tab but soften it (rejected: the Creator asked for the part to be removed, and any public roadmap statement must be kept true)",
+    "Delete the DEX guide entirely (rejected: how a Reserve Token trades on an exchange and how to identify one is exactly the how-it-works content the Creator wants)",
+    "Keep the Metaplex-PDA snippet as a neutral \"how wallets read metadata\" example (rejected: for a Reserve Token it returns null today, which is the gap in disguise)"
+  ],
+  "impact": "Public copy only; no program, API, gate or environment change. Deployed to production from a clean worktree (IDs in PROJECT_STATUS.md). The internal fix itself (Metaplex metadata via a new program instruction signed by the mint-authority PDA, standard-format metadata record, backfill for existing Reserves, then Jupiter verification) is a separate piece of work: it needs a program upgrade through the Squads authority (as DEC-0195) and is NOT started by this entry; see the 2026-09-17 status entry for the plan as explained to the Creator.",
+  "affectedAreas": [
+    "src/docs/content/ReserveTokensOnDexes.tsx (rewritten)",
+    "src/docs/content/{GettingStarted,AddLiquidity,ProtocolReference,index}.tsx (callouts, steps, rows, blurb)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": "DEC-0203’s content framing of the \"Reserve Tokens on DEXes\" guide (its site, gate and endpoint decisions stand)",
+  "supersededBy": null,
+  "evidence": [
+    "npx tsc -b exit 0; oxlint src/docs 0 warnings/errors beyond the known fast-refresh pattern; vite build clean.",
+    "Grep over src/docs/content for roadmap / Unknown / unverified / being fixed / has not shipped / not yet: only the decode sample’s ?? \"Unknown\" status fallback remains.",
+    "vite preview + headless Chrome: How-it-works and On-chain-properties tabs render; DOM contains no literal \\u2019 escape sequences."
+  ]
+}
+```
+
+## DEC-0205
+
+```json
+{
+  "id": "DEC-0205",
+  "date": "2026-09-17",
+  "title": "Reserve Tokens get Metaplex Token Metadata: new set_reserve_token_metadata program instruction (built, DevNet-proven, Mainnet upgrade staged for Squads), standard-format token-metadata endpoint, launch-flow bundling, Manage-page publish control, admin backfill tool",
+  "status": "confirmed-implemented (program built and live-verified on a throwaway DevNet deployment; Mainnet upgrade NOT yet executed -- needs a funded buffer write and the Squads vote)",
+  "decision": "Every Reserve Token mint gets a Metaplex Token Metadata account carrying the Reserve's name and symbol on-chain and a uri to a standard-format JSON record (name/symbol/description/image/external_url/attributes) derived from the same stored Reserve metadata the app already keeps, so wallets, explorers and DEXes display Reserve Tokens like any established token. (1) PROGRAM: new instruction set_reserve_token_metadata(name, symbol, uri) -- creates the Metaplex metadata account via CreateMetadataAccountV3 when absent, otherwise UpdateMetadataAccountV2; the ['mint_authority', reserve] PDA signs as mint authority AND is installed as the metadata update authority (so no wallet-held key can ever edit it outside this program); is_mutable = true; creators/collection/uses none, seller fee 0; callable by the Reserve's root Manager, a co-manager (on-chain `Delegate`) holding UPDATE_METADATA, or either protocol admin (ProtocolConfig.is_admin -- the backfill path); Metaplex's own field limits (32/10/200 bytes) are re-checked first with four new append-only errors (6062-6065: TokenMetadataNameInvalid/SymbolInvalid/UriInvalid/AddressMismatch); the metadata PDA is re-derived and compared in the handler; new event ReserveTokenMetadataSet. anchor-spl gains the `metadata` feature (mpl-token-metadata 5.1.2-alpha.2). No existing account layout, instruction or discriminator changes. (2) API: GET /api/{mainnet,devnet}/token-metadata?id=<metadata id>&reserve=<reserve> serves the standard record from the existing reserve_metadata row (lib/reserve-metadata/tokenMetadata.ts pure mapping: ticker->symbol, imageUrl->image, category and 'SSR.fun Reserve Token' as attributes, external_url = the Reserve page), preferring the Reserve's CURRENT picture pointer (reserve_image_pointer) so a picture change reaches wallets without a transaction; public GET/HEAD via middleware PUBLIC_READ_API_PATHS, CORS *, 60s edge cache. (3) SDK: packages/sdk/src/tokenMetadata.ts -- Token Metadata program id, findTokenMetadata PDA, fitTokenMetadataName/Symbol (UTF-8-safe truncation to 32/10 bytes), validateTokenMetadataFields, tokenMetadataUriFromReserveMetadataUri (same id, sibling endpoint, Mainnet pinned to https://ssr.fun via tokenMetadataOriginFor), buildSetReserveTokenMetadataInstruction, decodeTokenMetadataAccount/fetchReserveTokenMetadata; IDL JSON + camelCase TS regenerated and surgically merged (transform self-validated against existing entries). (4) FRONTEND: the launch flow bundles the instruction right after create_reserve + asset registration (name/symbol from the Step-1 fields); the Manage page's Reserve Identity card gains a 'Wallets and Exchanges' block showing the on-chain status and a one-approval 'Publish to wallets and exchanges' / 'Publish again' control for the Manager, permitted co-managers and the protocol authority, flagging staleness when the Reserve's name/ticker no longer match. Both are gated behind VITE_TOKEN_METADATA_LIVE=true so a Mainnet build launched before the program upgrade never bundles an instruction the deployed program lacks. OnChainReserveMeta now carries metadataUri. (5) TOOLS: scripts/backfill_token_metadata.ts (per-cluster, dry-run, per-Reserve filter, idempotent: skips Reserves whose on-chain metadata already matches) for the protocol admin to backfill every existing Reserve after the upgrade; scripts/verify_token_metadata_local.ts (the end-to-end proof, see evidence).",
+  "context": "Creator, after the DEC-0204 conversation: 'Ok then lets add metadata to the spl tokens - include everything as per what the user inputs in the reserve creation including name, image, ticker, bio etc.' Root cause (DEC-0203/0204): create_reserve initialised a plain SPL mint with no Metaplex metadata account; name/ticker/description/image lived only in the app's off-chain record, which no wallet or DEX reads. Metaplex only lets the mint authority create that account, and every Reserve Token's mint authority is a program PDA, hence a program instruction. FOUND ON THE WAY: (a) DevNet's ProtocolConfig account is still the pre-DEC-0112 86-byte layout (no admin_2), so the DevNet program cannot deserialize it -- any DevNet instruction that loads ProtocolConfig (create_reserve, this one, ...) fails there and the SDK's fetchProtocolConfig throws 'Invalid bool'; DevNet has effectively been unusable for protocol-level flows since DEC-0112 without anyone noticing, because the team moved to Mainnet. (b) solana-test-validator still cannot start here (Windows symlink privilege, error 1314), as recorded before. (c) The native `cargo check`/`anchor idl build` fail on the GNU host toolchain because the WinLibs linker cannot handle the space in the user-profile path; cargo-build-sbf (MSVC host build scripts) works, and `anchor idl build` works with the MSVC toolchain set as rustup default for the duration of the build (RUSTUP_TOOLCHAIN=... makes anchor pass a literal '{toolchain}' placeholder and fail).",
+  "rationale": "One instruction for create-or-update keeps the client simple and idempotent (the backfill and the Manage button are the same call). The mint-authority PDA as update authority means the Reserve's metadata can only ever change through this program's permission model, matching how everything else about a Reserve works. The protocol-admin path exists purely so every already-launched Mainnet Reserve can be backfilled by the Foundation without collecting each Manager's signature; Managers and permitted co-managers keep full control afterwards. Deriving the token record from the existing stored payload (same id) means nothing is uploaded twice and a Manager's edits on SSR.fun propagate; taking the picture from the pointer store keeps the existing no-transaction picture flow intact. Pinning Mainnet URIs to https://ssr.fun avoids writing the gated old domains on-chain. The feature flag is the only safe way to ship the frontend now: the launch flow packs several instructions per transaction, and an unknown instruction would fail the whole create-and-register batch on Mainnet until the Squads upgrade executes. A throwaway DevNet deployment under a temporary program id was the only way to exercise the CPI against the real Metaplex program given (a) and (b); the temporary program was closed afterwards and its rent reclaimed.",
+  "alternativesConsidered": [
+    "Token-2022 metadata-pointer extension (rejected: the mints are classic SPL Token mints and cannot be migrated)",
+    "Create the metadata from the Foundation wallet off-chain (rejected: impossible -- Metaplex requires the mint authority to sign, and that is a program PDA)",
+    "Two instructions, create and update (rejected: one idempotent instruction is simpler for the client, the backfill tool and the Manage button)",
+    "Store the standard-format record separately (rejected: derive it from the existing payload so there is one source of truth and Manager edits propagate)",
+    "Ship the frontend without a flag (rejected: a Mainnet launch would fail in the create-and-register batch until the program upgrade executes)",
+    "Wait for a local validator / fix DevNet ProtocolConfig first (rejected for now: the throwaway DevNet deployment gave a full live proof today; the DevNet ProtocolConfig problem is recorded as its own open item)"
+  ],
+  "impact": "Program upgrade required on Mainnet (artifact target/deploy/ssr_protocol.so, 1,058,352 bytes, sha256 4a1faa7b23fe533f..., fits the existing 1,099,592-byte program account -- no extend). NOT executed: writing the buffer costs ~7.4 SOL and the mainnet-deployer / Protocol Admin wallet holds 0.53 SOL; after funding, the DEC-0195 procedure applies (write-buffer, set-buffer-authority to the Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW, Squads vote, verify slot + sha, then VITE_TOKEN_METADATA_LIVE=true redeploy, then the backfill tool as the Protocol Admin, then Jupiter verification). The DevNet program WAS upgraded in place (slot 499890250, extended by 200,000 bytes) but remains unusable for protocol flows because of its stale ProtocolConfig (see context). App changes are inert until the flag is set: the endpoint goes live immediately (harmless, read-only), the launch flow and Manage page behave exactly as before. Public docs (DEC-0204) still describe name/symbol/picture as living in the Reserve's metadata record; update them when the Mainnet upgrade and backfill are done.",
+  "affectedAreas": [
+    "programs/ssr_protocol/Cargo.toml (anchor-spl metadata feature), Cargo.lock",
+    "programs/ssr_protocol/src/instructions/set_reserve_token_metadata.rs (new), instructions/mod.rs, lib.rs, errors.rs (6062-6065), events.rs (ReserveTokenMetadataSet)",
+    "packages/sdk/idl/ssr_protocol.{json,ts} (merged), packages/sdk/src/tokenMetadata.ts (new), packages/sdk/src/index.ts",
+    "lib/reserve-metadata/tokenMetadata.ts (new), api/mainnet/token-metadata.ts, api/devnet/token-metadata.ts (new), middleware.ts",
+    "src/merge/lib/{createReserveClient,managementClient,onChainReserve,types,solana-config}.ts, src/merge/pages/{CreateDTR,ManageDTR}.tsx, .env.example",
+    "scripts/backfill_token_metadata.ts, scripts/verify_token_metadata_local.ts, tests/phase_token_metadata.ts (new)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "cargo-build-sbf (programs/ssr_protocol): Finished release; target/deploy/ssr_protocol.so 1,058,352 bytes, sha256 4a1faa7b23fe533f... (rebuilt after the temporary-id experiment and byte-identical to the preserved artifact).",
+    "anchor idl build (MSVC rustup default for the build): 34 instructions; set_reserve_token_metadata discriminator [246,76,137,45,38,13,14,165] = sha256(\"global:set_reserve_token_metadata\")[0..8]; event discriminator [180,103,248,54,162,177,209,0]; errors 6062-6065. Merge script validated its camelCase transform against update_metadata/create_reserve/MetadataUpdated/Reserve before touching the committed IDL pair.",
+    "LIVE, throwaway DevNet deployment of the same source with declare_id = 4J8yBiQcq7garmZvmJhnL23MNAJVYqvEEf2bAWgSCffS (deploy 2SBdrmJ1GeoxyUbVnKispDzZRmBjhWTar6cRkFnRW2Y8FtvzfFfE5QgKyWXNZTqq4MfAzLnwTxAQRVFk3ovzY29J), scripts/verify_token_metadata_local.ts ALL CHECKS PASSED: initialize_protocol; create_reserve (reserve FwaU8AKDiWtvDoBnfEU7ZRfD4v5gU7K65WQNMQsE8i94, mint D1jvJB7BirXqfWrLLd3atiz1sa5oChJzJ6kzHmYNgLbc); stranger rejected (Delegate not initialised); CREATE by manager MEnJMFzop3LLXtJNgZfYHkV99WFDrULWWNNmtiBWFEgNxnjVZPtn96zciMHrwgMtfybcAEgr9rFqnvejoW7NhU1 -> Metaplex account owned by metaqbxx..., name \"Strategic Solana Reserve\", symbol SSRSol, uri as derived, update authority = mint-authority PDA, is_mutable; UPDATE by manager 3f1Krmf8j1Qin9fBCKh5Wt2bM95K9XfKum91Z6W1d115tTJ3tAXR85UM9jgCM1ViUekZm1HHFnBXnqwoSmnivfrU; UPDATE by protocol authority 281iYgFr2UdxRo8Q7nqLDj9YMo43VcMWEaLfBeSRD13cfToBtXWmPVE4yC4x7sAXGRFLAgEQvKDSwL416tRGMMT9; 33-byte name -> TokenMetadataNameInvalid; wrong metadata PDA -> TokenMetadataAddressMismatch. Temporary program closed (5.377307 SOL reclaimed).",
+    "DevNet real program upgraded in place: extend +200,000 bytes, deploy signature 2E7mUQ8f7GmVRTZxfdBfunQDdxPyoVTLH94psRuh2SfgX4ebLfPLzAPr6CCK51eLtv9Jcte5hLEq3Za4pUA9EPoU, Last Deployed In Slot 499890250, Data Length 1,074,952. Its ProtocolConfig EZZnSAKQukuF7zP5m3wGFXUxpaRvqzcX9B6VjK2rwBqt is 86 bytes (expected 118); Mainnet’s is 118 with authority CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8 and admin_2 PSpQGPvw7tZedKJvN21dJkh3vdDQeXkwA5n9DKBRZw5.",
+    "Offline: tests/phase_token_metadata.ts + phase_metadata_uri + phase_reserve_profile_image + phase_create_reserve_delegate_and_metadata: 95 passing. npx tsc -b exit 0 (after npm run build --workspace=packages/sdk); oxlint on touched files clean; npm run build clean."
+  ]
+}
+```
+
+## DEC-0207
+
+```json
+{
+  "id": "DEC-0207",
+  "date": "2026-09-18",
+  "title": "Launchpad provenance for Reserve assets: on-chain detection of Pump.fun (-> PumpSwap), LetsBONK.fun (Raydium LaunchLab) and Bags.fm (Meteora DBC) as an informational label + picker filter; no eligibility change",
+  "status": "confirmed-implemented (not deployed; DB migration and cron not yet run)",
+  "decision": "Added launchpad provenance as an ADDITIVE, informational layer over the Reserve Asset catalogue. (1) SDK packages/sdk/src/launchpads.ts: verified program ids, PDA derivations, Anchor discriminators, byte offsets and decoders; pure classifyLaunchpad(mint, accounts) -> { launchpad, stage (bonding|graduated), venue, evidence }; detectLaunchpad(connection, mint) for single mints; classifyMintsBatch for catalogue-scale runs (batched PDA lookups + ONE scan of Bags-created DBC pools). Identities: Pump.fun = the mint's BondingCurve PDA owned by 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P (graduated when complete=1; venue PumpSwap pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA only via the canonical index-0 pool whose creator is the pump program's ['pool-authority', mint] PDA); LetsBONK.fun = Raydium LaunchLab LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj PoolState PDA ['pool', mint, WSOL] whose platform_config == FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1 (graduated when status=2; venue = the Raydium CPMM pool created by LaunchLab's ['vault_auth_seed'] authority PDA WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh, or AMM v4 by migrate_type); Bags.fm = Meteora DBC dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN VirtualPool whose creator == Bags launch authority BAGSB9TpGrZxQbEsrEznv5jXXdwyP6AXerN8aVRiAmcv (graduated when is_migrated=1; venue DAMM v2 / v1 by the DBC migration-metadata PDA that exists). Names, symbols, metadata, mint suffixes, API labels and domains are never inputs. (2) Catalogue: columns launchpad / launchpad_stage / launchpad_venue / launchpad_evidence / launchpad_checked_at on ledger_asset_catalogue (scripts/migrate-launchpads.mjs, schema.sql); daily bounded cron api/ledger/launchpad-classify-cron.ts (lib/ledger/launchpadClassification.ts: never-checked first, bonding re-checked every 2 days, everything every 30 days; RPC failures leave a mint unclassified, never 'not a launchpad'); LAUNCHPAD_DETECTION_ENABLED=false pauses it. (3) API/UI: asset-catalogue.ts returns launchpad {id, stage, venue}|null per token, read via to_jsonb so a deploy before the migration is safe; the Launch Reserve picker shows a badge ('Pump.fun · PumpSwap', 'LetsBONK.fun · bonding', ...) and a 'Launched on' filter (Any origin / Pump.fun / LetsBONK.fun / Bags.fm / Not from a launchpad) that only narrows the list. (4) Docs: docs/protocol/LAUNCHPADS.md (identifiers, layouts, research record, limitations). Every pre-existing gate is untouched: Jupiter verified list, Token-2022 exclusion, symbol de-duplication, USDC reservation, ssr_status.",
+  "context": "Creator asked to 'expand the supported Solana token launchpad list' to Pump.fun (PumpSwap as its post-graduation venue), LetsBONK.fun and Bags.fm, using verified on-chain program ids and account data rather than names/metadata/API labels/domains, confirming LetsBONK's and Bags's infrastructure first, preserving 'existing token-security checks (mint authority, freeze authority, Token-2022 extensions, liquidity, executable sell-route validation)', with tests, typecheck and build, and no deploy. FINDINGS THAT SHAPED THE WORK: (a) the repo had NO launchpad feature -- 'launchpad' only ever meant SSR.fun itself -- so this is new, additive; (b) the catalogue's existing asset validation is: Jupiter verified list (weekly snapshot), whole-program Token-2022 exclusion, one mint per symbol, USDC reserved, manual ssr_status -- there are NO mint-authority, freeze-authority, extension, liquidity or sell-route checks at listing time (sell routes are exercised at trade time by the Jupiter sell flow); those were preserved as they are (nothing weakened) and the gap is documented rather than claimed; (c) the local JUPITER_API_KEY in .env.local is rejected (401) by Jupiter, so no API label could have been used even as a hint; (d) research on Mainnet via the project Helius RPC: pump curve/canonical pool for SSR (BpdHpq...pump), LaunchLab pool for USELESS (Dz9m...bonk) with the PlatformConfig account literally carrying 'letsbonk.fun' / 'https://letsbonk.fun/', LaunchLab's migrated CPMM pool created by the ['vault_auth_seed'] PDA (8,784 such pools), 204,549 DBC pools with creator == Bags authority across 154,447 distinct configs (so config/fee-claimer is NOT a stable Bags identity; the required creator signer is), 0 Token-2022 Bags pools, migrated Bags pools split 363 DAMM v1 / 14 DAMM v2 / 23 neither on a 400 sample; controls USDC/JUP/random -> null.",
+  "rationale": "Program-owned launch accounts are the only thing an imitator cannot produce: only the pump program can create its bonding-curve PDA; LaunchLab is shared so the platform config address is the LetsBONK identity (and its on-chain name/web confirm it); DBC is shared and Bags creates a fresh config per token, so the creator signer -- which the program requires -- is the only stable, unforgeable Bags identity. Venues are accepted only when created by the launch program's own authority (community PumpSwap/CPMM pools for the same mint are ignored), and reported as unknown rather than guessed when they cannot be located. Provenance is written to the catalogue by a bounded daily job so the picker never does per-request RPC, and the batch path avoids the 6-10 s per-mint DBC scan a naive approach would cost for every non-launchpad token. Keeping provenance out of every eligibility path (and testing that Token-2022/USDC/dedupe behave identically with or without it) is what makes 'a supported launchpad does not make a token eligible or safe' true in code, not just in copy.",
+  "alternativesConsidered": [
+    "Use Jupiter Tokens v2 'launchpad' / 'graduatedPool' fields (rejected as the basis: API labels were explicitly excluded; also the local key is rejected)",
+    "Detect by mint-address suffix ('pump', 'bonk', 'BAGS') or metadata update authority (rejected: vanity suffixes and metadata are imitable; update authority is only corroborating)",
+    "Identify Bags by DBC config fee_claimer (rejected: 154,447 distinct configs for 204,549 pools; not stable)",
+    "Derive the LetsBONK CPMM venue from PlatformConfig.cpConfigId (rejected: USELESS migrated under a different amm config; locating the pool by LaunchLab-authority creator + mint is what matches reality)",
+    "Classify inside the weekly Jupiter snapshot (rejected: thousands of RPC calls inside a 60 s function; a separate bounded daily cron converges over a few runs)",
+    "Add mint/freeze-authority, extension, liquidity and sell-route checks now (rejected as out of scope: would change eligibility; recorded as a documented gap instead)"
+  ],
+  "impact": "Not deployed. Rollout order when the Creator decides: (1) node scripts/migrate-launchpads.mjs against production; (2) deploy; (3) the daily cron (05:30 UTC) classifies ~400 mints per run so the ~3,400-mint catalogue converges in about 9 days (or trigger with ?limit=2000 a few times); until then tokens simply show no badge. Reading the columns via to_jsonb means a deploy before the migration cannot break the picker. No program, IDL or on-chain change. Adds one Vercel cron and one CRON_PATHS entry.",
+  "affectedAreas": [
+    "packages/sdk/src/launchpads.ts (new), packages/sdk/src/index.ts",
+    "lib/ledger/launchpadClassification.ts (new), lib/ledger/schema.sql, scripts/migrate-launchpads.mjs (new)",
+    "api/ledger/launchpad-classify-cron.ts (new), api/ledger/asset-catalogue.ts, vercel.json (cron), middleware.ts (CRON_PATHS), .env.example",
+    "src/merge/hooks/useMainnetAssetCatalogue.ts, src/merge/lib/launchpadLabels.ts (new), src/merge/pages/CreateDTR.tsx",
+    "tests/phase_launchpads.ts (new), docs/protocol/LAUNCHPADS.md (new), docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Offline: tests/phase_launchpads.ts (27 cases: discriminators, verified PDAs, per-platform bonding/graduated/venue, third-party pools, wrong owner/discriminator/address, wrong platform config, non-Bags DBC creator, metadata-only lookalikes, precedence, catalogue helpers, gates unchanged with provenance present) + phase_ledger + phase_metadata_uri + phase_reserve_eligibility: 139 passing. npx tsc -b exit 0. oxlint on touched files: clean. npm run build: clean.",
+    "Live (Mainnet, 2026-09-18): detectLaunchpad -> SSR pump.fun/graduated/pumpswap (curve 795sG4tm..., pool C2TLNU8A...); USELESS letsbonk.fun/graduated/raydium-cpmm (pool GWqWrb44..., venue Q2sPHPdU...); EM64Njeu... bags.fm/graduated/meteora-damm-v1; ANXGDNJM...BAGS bags.fm/bonding; USDC, JUP, RAY, random key -> null. classifyMintsBatch on those 8 mints: 33 s total, identical results.",
+    "Research record with every address, offset and count: docs/protocol/LAUNCHPADS.md."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0206",
+  "date": "2026-09-18",
+  "title": "Manager fee recipients are shown in USDC on the Manage page: per-recipient USDC payouts indexed from the fee-settlement events, a Mainnet activity route, and the in-kind Reserve-Token balance demoted to a legacy footnote",
+  "status": "confirmed-implemented (app + endpoint + index; no program change)",
+  "decision": "The Fee Configuration panel on Manage Reserve now reports each Manager fee recipient in USDC -- what that wallet has actually received from the hourly fee settlement (exact on-chain amounts summed from every feeUsdcDistributed event, with payout count, last payout time and its transaction) and an estimate of what is still awaiting the next settlement (the Manager's fee-vault shares x that recipient's percentage x the Reserve Token price) -- instead of the 'total accrued / currently claimable 0 <ticker>' Reserve-Token line, which only ever described the pre-2026-09-08 in-kind path and is now shown only when a recipient genuinely has a legacy balance (with its Collect button relabelled 'Collect legacy balance'). Mechanics: (1) the SDK's activity-log decoder extracts the per-recipient (wallet, USDC) pairs from feeUsdcDistributed and the activity index persists them as a new `payouts` jsonb column on reserve_activity_log; rows indexed before the column existed are healed lazily from their stored signature (12 per request) instead of re-walking the Reserve's history. (2) The activity route handler is shared and cluster-bound: a new /api/mainnet/reserve-activity (HELIUS_MAINNET_RPC_URL, rows tagged 'mainnet-beta') next to the existing DevNet one, and the Manage page calls the route for its own cluster. `?scope=fees` returns only the per-recipient totals. (3) The feeUsdcDistributed activity summary reads in dollars. The on-chain fee model is unchanged: the fee is still taken at creation/mint as Reserve Token shares into the fee vault and converted to USDC by the keeper within the hour -- the Creator's 'collect the USDC at creation/mint value' reading is satisfied economically by that pipeline (the shares are redeemed at the Reserve's then-current value, minutes to an hour after the mint), and a literal USDC-at-mint deduction would be a program upgrade on the same blocked Squads path as DEC-0205, recorded as an open decision rather than done here.",
+  "context": "Creator, 2026-09-18, with a screenshot of Reserve 'I' (reserveId 25, 64LhgCSdBHKtxEwk45ocVMFphyARQ7nvXia7u8uAncQg, two 50/50 fee recipients): 'no fees claimable by the reserve manager (should be 0.25% of mint value in this case as there are 2 50/50 fee recipients) - and these are still displaying as \"currently claimable 0 I\" should BE ALWAYS USDC. the usdc should be collected from the USDC value at reserve creation or minting'. Read-only Mainnet inspection showed the protocol had already done exactly what the Creator expected, and the page simply did not show it: SeedReserve 08:47:15 UTC minted 200,000 fee shares (1% of the 20,000,000-share seed; FeeVaultCredited 100,000 protocol + 100,000 manager); the keeper's 09:15 run redeemed them (FeeSharesRedeemed), swapped both legs to USDC and DistributeFeeUsdc (2x6yYrNgeoYm...) paid 100,400 raw to the treasury and 50,200 + 50,199 raw USDC ($0.0502 / $0.050199, i.e. 0.25% of the ~$20 seed each) straight into the two recipients' USDC accounts. Nothing was claimable because nothing on this protocol is claimed -- the keeper pushes USDC to wallets -- yet the panel's only per-recipient numbers were the legacy in-kind ManagerFeeRecipients balances (0), and its 'settling to USDC' block only appears while shares sit in the vault. Two index defects surfaced on the way: the activity index stored only the Manager-side USDC total per distribution (amount_usd_2), not the per-recipient split; and the Manage page's Activity tab always called /api/devnet/reserve-activity, which syncs against HELIUS_RPC_URL and tags rows 'devnet' -- for a Mainnet Reserve that walks the wrong chain and, through indexer.ts's cluster self-heal, would discard the Reserve's real 'mainnet-beta' rows.",
+  "rationale": "The number a Manager needs is USDC received, and the only durable, exact source of it is the distribution event's own recipient/amount pair -- deriving it from the current routing split would be wrong whenever routing changed between payouts. Persisting it in the existing activity index (already walked per Reserve, already Postgres-backed, already cluster-aware) costs one jsonb column and no new pipeline; lazy healing keeps the migration additive and the per-request work bounded. Binding the route to a cluster fixes the latent Mainnet Activity-tab defect with the same change. Keeping the in-kind line only for non-zero legacy balances preserves the claimant-only collect path (DEC-0094 / 2026-08-14) for the few Reserves that still hold pre-upgrade shares without confusing every new Reserve with a zero in the wrong currency.",
+  "alternativesConsidered": [
+    "Walk the fee-settlement PDA's signatures live from the browser per page view (rejected: the keeper emits a DistributeFeeUsdc every hour for Reserves with staged assets -- hundreds of transactions per month -- far too heavy per view and no worse to index once)",
+    "Derive each recipient's share from the Manager USDC total x current allocation (rejected: wrong whenever routing changed between payouts; the event carries the exact split)",
+    "A separate fee-payout table + indexer (rejected: duplicates the activity index's walk, cursor and cluster handling for one extra column)",
+    "Re-walk every Reserve's history to fill the new column (rejected: a lazy, bounded heal from the stored signature fills it without re-scanning)",
+    "Change the program to deduct the Manager fee in USDC at mint (deferred: a program upgrade on the DEC-0195/DEC-0205 Squads path with the deployer wallet unfunded; the current shares-then-USDC pipeline already pays USDC within the hour -- recorded under Decisions Required)"
+  ],
+  "impact": "Manage Reserve's Fee Configuration panel: each recipient row reads '<pct>% of Manager share . USDC received $X (N payouts, last <time> <tx>) . awaiting settlement ~ $Y'; a 'Paid in USDC' badge replaces 'Claimable by this wallet'; the intro copy explains that fees are paid to wallets automatically and states the mint fee's Manager share; the vault block is retitled 'Awaiting the next settlement' with a USD estimate. Activity tab on Mainnet now syncs the right chain. New: api/mainnet/reserve-activity.ts, lib/reserve-activity/activityRoute.ts, lib/reserve-activity/feePayouts.ts, tests/phase_fee_payouts.ts. Schema: reserve_activity_log.payouts jsonb + partial index (applied to production Neon this session). Data: Reserve 25 indexed (backfill complete) with its two payouts; every previously-indexed Mainnet feeUsdcDistributed row healed by a one-off run of the same heal function. No program change; DevNet route behaviour unchanged apart from the shared handler and the extra `feePayouts` field.",
+  "affectedAreas": [
+    "packages/sdk/src/activityLog.ts (FeePayout, extractFeePayouts, extractFeePayoutsFromLogs, formatUsdcRaw, payouts on ActivityLogEntry)",
+    "lib/reserve-activity/schema.sql (payouts jsonb), lib/reserve-activity/indexer.ts (persist + coalesce payouts), lib/reserve-activity/feePayouts.ts (new), lib/reserve-activity/activityRoute.ts (new)",
+    "api/devnet/reserve-activity.ts (thin wrapper), api/mainnet/reserve-activity.ts (new)",
+    "src/merge/pages/ManageDTR.tsx (Fee Configuration panel, cluster-aware activity fetch)",
+    "tests/phase_fee_payouts.ts (new)",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Read-only Mainnet inspection (scripts run against HELIUS_MAINNET_RPC_URL, deleted afterwards): Reserve 25 CreateReserve+InitializeManagerFeeRecipients 5ayJ6NWwannA... 08:46:49 UTC; SeedReserve 3Rs8WHfGMna4... 08:47:15 (initialReserveTokens 19,800,000, mintFeeReserveTokens 200,000; FeeVaultCredited 100,000/100,000); RedeemFeeVaultShares eyhwW2NupkpP... 09:15:41; two ApproveSettlementSwap+Jupiter legs 09:15:43/45; DistributeFeeUsdc 2x6yYrNgeoYm... 09:15:47 (usdcDistributed 200,799; protocolUsdc 100,400; managerUsdc 100,399; managerAmounts 50,200 -> 6BjT...WZen, 50,199 -> EME9...upmq). FeeSettlement afterwards all zero; fee vault 0; both recipients' USDC ATAs exist (18,016,965 and 125,416 raw).",
+    "Production Neon before the change: no reserve_activity_log/cursor rows for Reserve 25 (24 Mainnet cursors, all complete, from the KPI sweep); 883 'mainnet-beta' rows overall. Migration: node scripts/migrate-reserve-activity.mjs -> 'Schema applied', information_schema shows payouts jsonb.",
+    "Local run of the same syncReserveActivity + healMissingFeePayouts + readFeePayoutTotals against production Neon for Reserve 25: backfillComplete true, pendingHeal 0, byRecipient [{6BjT...WZen: 50200, 1 payout, 1789722947, 2x6yYrNgeoYm...}, {EME9...upmq: 50199, ...}].",
+    "Offline: tests/phase_fee_payouts.ts 8 passing (extractFeePayouts on the live event shape, mismatched-length safety, dollar summary, aggregateFeePayouts sums/ordering/pendingHeal/BigInt-exactness); phase_kpis + phase_reserve_activity_cursor still passing (52). Full offline suite 1081 passing, 13 failing -- all pre-existing and unrelated (chart-range-selector CSS assertions, DEC-0154 IDL account-shape pins and the 6000-6061 error-range test that DEC-0205's IDL merge changed, two deploy-resumability cases); same failures with this work's files untouched.",
+    "npx tsc -p tsconfig.app.json, api/devnet, api/mainnet: exit 0; npm run build (sdk + tsc -b + vite build) clean; oxlint on every touched file: clean."
+  ]
+}
+```
+
+## DEC-0197
+
+```json
+{
+  "id": "DEC-0197",
+  "date": "2026-09-08",
+  "status": "confirmed-implemented",
+  "decision": "The public feedback form is a first-class, permanently-recorded intake. (1) The form moved from a serverless-rendered page at /api/feedback/form to a real Vite entry at /feedback (feedback.html + src/feedback/main.ts) so it can load Vercel BotID; POST /api/feedback/submit now runs rate limits (burst 5/10min per IP in-instance; durable 10/hour per IP and 120/hour global on the shared rate_limit_window table, ESM twin lib/agent-feedback/rateLimit*.ts) and then checkBotId -- 403 for bots, 503 fail-closed if the check itself errors; vercel.json carries the BotID proxy rewrites and both Vercel projects have the OIDC-token option on. (2) The Neon row (agent_feedback) is the permanent record of an item's whole life and is never deleted: new columns handled_by (the Telegram '@handle (user id)' that tapped Approve/Dismiss), resolution and resolved_at (the fixer agent's conclusion), status now new|raised|dispatched|dismissed|resolved; schema migrates itself with add-column-if-not-exists. New daemon routes item (one row), list (newest-first) and resolve, all Bearer-secret, all allowlisted through the site gate in middleware.ts; ack records handledBy. (3) The daemon no longer depends on memory: on Approve it recovers the item from /api/feedback/item if its in-memory copy is gone, so a restart cannot lose a submission; the Telegram message is edited to '✅ Approved by @who (id) → dispatched to <session>' / '🗑 Dismissed by …' and the log prints the same; the injected frame tells the fixer to run `feedback-daemon.py --resolve <id> \"<summary>\"` exactly once when done; new flags --list [status], --export <file.md>, --resolve.",
+  "context": "Creator: 'do the vercel botid and ratelimiting on the end point and let me know when we can test', then 'let's have it print who clicked Accept or Dismiss', then 'the issues raised via the feedback form need to be persisted, can't lose shit' after a daemon restart made an earlier item unrecoverable from memory.",
+  "rationale": "Submissions were already durable in Neon from the first commit, but the decision (who), the outcome (what the fixer did) and the daemon's ability to act after a restart were not. Putting all three on the same row keeps one source of truth with zero extra infrastructure; the markdown export exists so the record can be read without the database.",
+  "alternativesConsidered": ["Cloudflare Turnstile -- rejected: the site is on Vercel and BotID needs no widget or per-user challenge.", "Keeping the form under /api/* -- rejected: a serverless-rendered page cannot bundle the BotID client; a Vite entry can and is still outside the site gate via PUBLIC_PATHS.", "A separate log file on the Mac for who-approved -- rejected: not durable, not queryable, one more thing to lose."],
+  "impact": "Nothing submitted through the form can be lost by a daemon restart; every item shows who decided and what happened. Prod (ssr.fun) gets the new routes and the form with the next main deploy; the running daemon points at ssr.fun, so its item/list/resolve fallbacks work only after that deploy (dev has them now).",
+  "affectedAreas": ["feedback.html", "src/feedback/main.ts", "api/feedback/{submit,form,ack,item,list,resolve,_auth}.ts", "lib/agent-feedback/{db,rateLimit,rateLimitPure}.ts", "middleware.ts", "vercel.json", "vite.config.ts", "tools/agent-feedback-daemon/{feedback-daemon.py,README.md}", "tests/phase_feedback_rate_limit.mjs"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Dev (strategic-super-reserve.fun) after d9cf475: GET /feedback 200 'Send feedback' outside the gate; BotID proxy script 200; curl POST /api/feedback/submit -> 403 'Automated submissions are not accepted.'", "Daemon log 15:47:03 raised 0995f1e7-8e90-4006-b605-19af460cf2ce / 15:47:41 dispatched -> ssr-feedback (first real form submission, from 'Chuckles', approved in Telegram, triaged by the fixer).", "Unit: tests/phase_feedback_rate_limit.mjs + phase_beta_gate 23 passing; tsc node+app clean."]
+}
+```
+
+## DEC-0198
+
+```json
+{
+  "id": "DEC-0198",
+  "date": "2026-09-10",
+  "status": "confirmed-implemented",
+  "decision": "JRA's fee rule (2026-09-10: mint fee = 50% of the manager's rate with a 0.5% floor; annualized TVL fee calculated and charged daily, same structure; Buy/Sell tax on secondary markets = 50%, no minimum) reconciled with the deployed program and made real where it was not. (1) Mint and TVL split: already exactly this on chain since DEC-0094/0095 -- no change. (2) TVL cadence: the program accrues per full elapsed day but the keeper only called accrue_fees for Reserves 7+ days past their last accrual; ACCRUE_MIN_ELAPSED_S is now 24h, so the hourly keeper accrues each Reserve once a day (no program change). (3) Buy/Sell tax: it existed only as metadata sliders labelled 'for a future secondary market'. Per the Creator ('that alternative is OK for the moment') it is now charged on trades made THROUGH SSR.fun's own server-built Buy and Sell, in USDC, split 50/50 protocol Treasury / Reserve fee destination, no minimum: lib/mainnet/tradeTax.ts (pure split + SPL transfer instructions + metadata resolution), buildBuy.ts adds the transfers to the mint transaction (base = the purchase's full USDC value; wallet must cover purchase + tax), buildSell.ts folds them into the single transaction or appends ONE final 'tax' transaction the client submits only after every swap landed (base = each swap's minimum out at slippage + the USDC-leg entitlement); swaps-only rebuilds never carry it; an expired tax transaction is rebuilt once on the persisted base (taxOnly). Rates come from the Reserve's metadata_uri via the app's metadata store (Neon) with an HTTPS fallback; any metadata failure forgoes the tax rather than blocking the trade. UI: Buy/Sell tax rows on the Reserve page with the USDC estimate, Create/Manage copy no longer calls the sliders future-only. docs/protocol/FEE_MODEL.md is the persistent record of the whole model.",
+  "context": "JRA asked 'What do we need to do to make this a reality' after stating the rule; the Token-2022 transfer-fee route (taxes every transfer, one rate, new Reserves only, program upgrade) was laid out and deferred in favour of charging inside SSR.fun's own trades now.",
+  "rationale": "Two of three lines were already live; the cheapest honest path for the third is where the app already builds every transaction of a trade. Taking the Sell tax on the swaps' minimum out (not the quote) means the transfer can never exceed what actually arrives, so a single-mode sale cannot revert on slippage because of the tax.",
+  "alternativesConsidered": ["Token-2022 TransferFee extension on new Reserve Token mints (program upgrade; taxes wallet transfers too; cannot cover existing Reserves; partial DEX support) -- deferred, documented in FEE_MODEL.md.", "Charging the tax in Reserve Tokens instead of USDC -- rejected: would need the keeper to settle it; USDC pays the manager and Treasury instantly in the trader's own transaction.", "Routing the manager's half through ManagerFeeRecipients -- deferred: goes to FeeConfig.fee_destination for now."],
+  "impact": "Every Reserve whose manager set a non-zero Buy/Sell tax starts charging it on SSR.fun trades with this deploy; 0% Reserves are unchanged. TVL fees now crystallize daily instead of weekly (about one accrue_fees per Reserve per day from the keeper wallet). Nothing on chain changed; no signatures needed.",
+  "affectedAreas": ["lib/mainnet/tradeTax.ts (new)", "lib/mainnet/buildBuy.ts", "lib/mainnet/buildSell.ts", "lib/mainnet/buildCommon.ts (BuiltTxKind 'tax')", "api/mainnet/build-buy.ts (lookupTradeTax)", "api/mainnet/build-sell.ts (taxOnly)", "api/mainnet/fee-settlement-cron.ts (daily accrual)", "src/merge/lib/multiAssetSellClient.ts (tax step, taxOnly rebuild, pending state)", "src/merge/lib/multiAssetBuyClient.ts (types)", "src/merge/pages/{DTRDetail,CreateDTR,ManageDTR}.tsx", "docs/protocol/FEE_MODEL.md (new)", "tests/phase_trade_tax.ts (new), phase_server_built_{buy,sell}.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Offline: phase_trade_tax 13 cases + Buy/Sell full-build tax cases (mint tx ends with [create ATA, transfer] x2; batch Sell ends with one 'tax' tx of 6 instructions; legsOnly none; taxOnly one tx, no quotes; wallet short of purchase+tax -> 422 naming the Buy tax); tsc node+app clean; oxlint no new warnings.", "On-chain audit the same day: ProtocolConfig.default_protocol_fee_bps is read by no instruction (grep of programs/ssr_protocol/src) -- recorded in FEE_MODEL.md so nobody expects update_protocol_config's bps to charge anything."]
+}
+```
+
+## DEC-0199
+
+```json
+{
+  "id": "DEC-0199",
+  "date": "2026-09-11",
+  "status": "confirmed-implemented",
+  "decision": "The launch preflight's per-swap floor drops from $0.50 to $0.0005, and every swap failure now names the venue, the amount and the asset. The $0.50 default was set in August from ONE live error ('Cannot compute other amount threshold, with amount 1 and slippageBps 150') that was assumed to be a Jupiter size limit; it is not. Measured live 2026-09-11 against Jupiter's quote AND swap-build endpoints for SOL, 5UUH9RTDi... and HgBRWfYxE... (two of the exact mints in the Creator's rejected launch): every one quoted and built successfully at amount=1, i.e. $0.000001. There is no dollar minimum on the API; the August failure was route-dependent and does not reproduce. The floor now exists only so the app never sends a literally unquotable amount. Messages rewritten: lib/mainnet/jupiter.ts gains routeLabelsOf/describeRoute/shortMint/formatUsdcRaw/describeSwapFailure, which compose one sentence naming the venue(s) from the quote's routePlan (verified live: a $0.0003 route returns ['Meteora DLMM','Raydium','Raydium'] -> 'Meteora DLMM -> Raydium'), the exact amount at full precision (never a misleading '$0.00'), the asset, Jupiter's own words verbatim, and -- for a genuinely dust-sized amount only -- the fee reality as an additional fact, never as the verdict. A quote failure additionally names the deliberately-excluded venues (ZeroFi, Quantum) so an exclusion is not mistaken for dead liquidity. Wired into api/mainnet/jupiter-swap.ts (both failure paths; routeLabels also returned on success) and buildCommon.ts's jupiterFailure, which buildBuy/buildSell now call with each leg's direction, amount and quote. The Create Reserve toast leads with the fix and caps the examples at three instead of rendering one near-identical line per asset.",
+  "context": "The Creator hit 'This launch isn't fundable yet' on a $10 ten-asset launch: seven legs between $0.10 and $0.30, each rejected as 'below the practical per-swap minimum of $0.50', recommending $50. They asked whether the rule lived on the contract or the backend (neither -- it is frontend), then what Jupiter's actual minimum is, then set the floor to $0.0005 and asked for a better error.",
+  "rationale": "A guard whose stated justification is measurably false was blocking real launches, and its message named neither the venue nor the amount, so a dead route, an excluded DEX and a too-small amount all read identically. Measuring first, then keeping a floor only just above Jupiter's own, means the app stops pre-judging and lets the real failure speak with enough detail to act on.",
+  "alternativesConsidered": ["Keep an economic floor around $0.10-$0.21 (one new token account's rent) -- raised with the Creator and declined: the fee reality is now stated in the message rather than enforced as a block.", "Remove the floor entirely -- rejected: an amount of 0 or 1 raw unit is the one case genuinely worth refusing upfront.", "Reproduce the August error before changing the constant -- attempted; it does not reproduce on any of the three mints tested."],
+  "impact": "Launches previously blocked purely by the $0.50 rule now proceed. A per-asset allocation under $0.0005 is still refused upfront with the precise recommended minimum, now computed at USDC's 6dp precision (cent-rounding turned a true $0.005 minimum into $0.01). No on-chain change; nothing about fees, the tax (DEC-0198) or settlement is touched. The resume dust-skip (DUST_DEFICIT_USDC_RAW, $0.05) is deliberately unchanged -- it solves a different problem (re-swapping a few cents of remainder on every retry) and lowering it would reinvite the DELTA failure loop.",
+  "affectedAreas": ["src/merge/lib/launchFunding.ts (DEFAULT_MIN_PRACTICAL_SWAP_USD, reason text, 6dp recommended minimum, formatAllocationUsd/shortMintLabel)", "lib/mainnet/jupiter.ts (route naming + describeSwapFailure)", "lib/mainnet/buildCommon.ts (jupiterFailure context)", "lib/mainnet/buildBuy.ts", "lib/mainnet/buildSell.ts", "api/mainnet/jupiter-swap.ts", "src/merge/pages/CreateDTR.tsx (toast)", "tests/phase_swap_failure_messages.ts (new), tests/phase_launch_funding_state_machine.ts"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Live probe (Jupiter lite endpoint, same routing engine; the local JUPITER_API_KEY is a placeholder so the keyed host returned 401): quote AND /swap build both OK at amount=1 raw unit for So111..., 5UUH9RTDi..., HgBRWfYxE...; scattered failures in the sweep were HTTP 429 rate limits, not size rejections.", "Live routePlan for a $0.0003 USDC -> HgBRWfYxE... quote: ['Meteora DLMM','Raydium','Raydium'].", "Offline: 8 new message tests + 23 launch-feasibility tests; 105 passing across every Buy/Sell/launch suite; tsc node+app clean; oxlint no new warnings."]
+}
+```
+
+## DEC-0200
+
+```json
+{
+  "id": "DEC-0200",
+  "date": "2026-09-11",
+  "status": "confirmed-implemented",
+  "decision": "Internal QA pass of 2026-09-11 worked to green, with every reported cause re-verified before any code changed -- several were wrong, and two defects nobody reported were worse than the ones that were. (1) WALLET SIGNING: no code in this repo picks a provider; buy, sell, rebalance, create and close all thread the same WalletContextState and call wallet.signTransaction, with no window.solana/isPhantom access anywhere, so the Solflare-connected/Phantom-opened report originates inside wallet-adapter's Wallet-Standard resolution. Added assertSigner.ts and wired it at the shared choke points: refuse to build when no usable wallet is connected or the connected account is no longer the one the flow was planned for, and refuse to SUBMIT a transaction that came back without the connected account's signature, naming the wallet, the expected key and which transaction of a batch. Set an explicit WalletProvider localStorageKey, since the default key is shared with any other wallet-adapter app on the origin. (2) TOKEN IDENTITY: the fields labelled 'Contract Address' (DTRDetail) and 'Reserve Contract' (ManageDTR) both bound the Reserve PDA, never the token mint, and the mint was absent from ManageDTR entirely; both pages now lead with a labelled, explorer-linked Reserve Token Mint and keep a separate Reserve Account row, and the teammate's header CA no longer falls back to the PDA under a 'CA:' label. (3) METADATA: reserve token mints have NO Metaplex metadata account at all (verified: the PDA for Reserve 24's mint does not exist), which is why wallets show an address; new program instruction create_token_metadata CPIs CreateMetadataAccountV3 signed by the mint-authority PDA -- the only way such a mint can ever get metadata -- and is idempotent so it repairs already-deployed tokens. Separately, the on-chain metadata_uri resolved to an endpoint returning HTTP 401 to every external consumer; reserve-metadata and reserve-image GETs are now public with CORS, and the JSON emits Metaplex keys (symbol/image) alongside the app's (ticker/imageUrl) at read time, leaving the content-addressed bytes untouched. (4) TOKEN-2022: PUMP is missing because it is a Token-2022 mint and api/ledger/asset-catalogue.ts drops all of them -- 1,587 of 3,224 verified mints, 49%. Contrary to that file's own comment, the PROGRAM is already Token-2022-capable (asset legs use InterfaceAccount + per-leg token_program from remaining accounts, and ReserveAsset already stores token_program); the blocker is purely that every SDK builder hardcodes TOKEN_PROGRAM_ID in the leg's 5th remaining-account slot and in ATA derivation. No upgrade needed -- deferred to its own pass as a cross-cutting SDK change. (5) ACTIVITY: there was no Mainnet activity route at all; ManageDTR called /api/devnet unconditionally, so a Mainnet Reserve was indexed against the DevNet RPC and wrote a cursor tagged 'devnet' (Reserve 24: devnet cursor, backfill incomplete, 0 of 429 rows), and both routes read the log without a cluster filter. Added api/mainnet/reserve-activity.ts, scoped both routes by cluster, and made the client call the route for the active cluster; the indexer already drops rows under a mismatched cluster, so the poisoned cursor self-heals. (6) ORDERING: Discover's default sort key sorted nothing; AUM descending is now both the default and the fallback. (7) URLS/SHARING: the app is a hash router, so a crawler asking for #/dtr/24 sends the server only '/' and no rename could ever produce a card; added /r/<pool address>, a real path rendering the Reserve's own OpenGraph tags then forwarding humans into the hash app, keyed by ADDRESS per the Creator rather than a name slug (no slug table, no collisions, no backfill; the Reserve Token mint 301s to the canonical pool address).",
+  "context": "Creator-run QA session on ssr.fun, 2026-09-11, ahead of widening the beta. Reported: rebalance opening the wrong wallet, a hard-to-find and wrong mint address, wallets showing an address instead of a symbol, missing metadata in external interfaces, PUMP absent from asset selection, flatlined charts, a Reserve with activity showing inactive, no directory ordering, and internal-looking URLs. Four planning questions were put to the Creator: prepare both program changes (answered: both), the URL approach (answered: crawlable bridge), public metadata exposure (answered: allowlist both GETs), and slug style (answered mid-implementation: the pool address, not a name).",
+  "rationale": "Reproduce before changing: the mint the tester reported was correct, the symbol they reported (SSRSOL/SSRSol) was wrong in both spellings (canonical ticker is SOLSSR), the wallet bug had no in-repo cause, and PUMP's exclusion was a client-side hardcode rather than the program limitation the code comment claimed. Fixing what the evidence actually showed avoided a program upgrade that was not needed and caught two unreported defects -- unreadable metadata and the cluster-misattributed activity indexer -- that were doing more damage than several reported items.",
+  "impact": "Reserve Token metadata is now fetchable by wallets, explorers and indexers for the first time (verified 200 + symbol/image on dev, previously 401). Shared links render real per-Reserve social cards. A wrong-wallet signature can no longer be submitted silently. The directory orders by AUM. Mainnet activity indexes against the right cluster. NOT yet live for wallet symbol display: that needs the program upgrade, which is built and tested but NOT deployed -- the binary is 1,099,592 bytes against 1,035,896 bytes of on-chain capacity, so the program account must be extended first, and execution is a Squads action reserved for the Creator.",
+  "affectedAreas": ["src/merge/lib/assertSigner.ts (new)", "src/merge/lib/{SolanaProviders,managementClient,multiAssetBuyClient,multiAssetSellClient,createReserveClient}.ts", "src/merge/pages/{DTRDetail,ManageDTR,Discover}.tsx", "programs/ssr_protocol/src/instructions/create_token_metadata.rs (new)", "programs/ssr_protocol/src/{lib,errors,events}.rs", "packages/sdk/{idl,src/managementInstructions.ts}", "api/mainnet/{share,reserve-activity,reserve-metadata,reserve-image}.ts", "api/devnet/reserve-activity.ts", "lib/share/resolveReserve.ts (new)", "lib/reserve-metadata/payload.ts", "middleware.ts", "vercel.json", "tests/phase_{signer_identity,share_page}.ts (new) + 5 re-pinned suites"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["Reserve 24 = C6xZ6bPFqYknZawZexW1kBfAehL5qCXQJHmFkBNQWedP, mint AypyRkHVNBF37xvZvnS51P7j3FtUYjEDnEmLbMbH6wMC (derived PDA matches the reported address), classic SPL Token, 6 decimals, supply 110461444, mint authority 4priBMkGEiRZquLACqN52tidESgyFdwSz1DTFG1PN2mu (the program PDA, required for mint/redeem -- an intentional characteristic, never to be revoked for a warning score).", "Metaplex PDA ECVXFJwwyeNgv9LfprDHrjgCBdqLRxBoq3NxWduxzcge: does not exist.", "https://ssr.fun/api/mainnet/reserve-metadata?id=c4a4468076b5d47d returned HTTP 401 unauthenticated before this pass; after deploy, dev returns 200 with symbol SOLSSR and an image URL, and the image endpoint returns 200 image/webp.", "PUMP pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn: in ledger_asset_catalogue, jupiter_verified true, ssr_status unreviewed, token_program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb; catalogue split is 1637 classic / 1587 Token-2022 among verified mints.", "reserve_activity_cursor for Reserve 24 carried cluster 'devnet' with backfill_complete false and 0 of 429 log rows.", "Live share page on dev: /r/C6xZ6b... returns 200 with og:title 'Strategic Solana Reserve (SOLSSR)' and the real og:image; /r/<mint> 301s to it; an unknown address and a malformed one both 404.", "Offline suite 1052 passing, 5 failing -- all 5 reproduced identically at pre-merge commit 33693ff (4 CSS-contract, 1 currency-formatting), so unrelated and not masked. cargo test 20/20, clippy 3 pre-existing warnings and no new ones."]
+}
+```
+
+## DEC-0201
+
+```json
+{
+  "id": "DEC-0201",
+  "date": "2026-09-11",
+  "status": "confirmed-implemented",
+  "decision": "Token-2022 assets are supported end to end on the client, unblocking PUMP and every other Token-2022 mint. The exclusion in api/ledger/asset-catalogue.ts is removed and each catalogue entry now reports its own token program, which is carried through discovery, ZapAssetLeg, the create-reserve input and the persisted pending deployment into every instruction builder. New packages/sdk/src/tokenPrograms.ts is the single place that answers 'which program owns this mint', and its assetAta() replaces every bare getAssociatedTokenAddressSync on the asset side so no call site can derive an address without stating which program it means. Converted: directInstructions (Mainnet buy and sell, single and multi asset), createReserveFlow (registration + seed), managementInstructions (add/fund/remove asset), feeSettlementInstructions (the keeper's staging ATAs), lib/mainnet/buildCommon (wallet balance reads) and api/mainnet/fee-settlement-cron (staging and keeper ATAs, plus TransferChecked in place of Transfer for the bounded delegate move). The Reserve Token mint and USDC stay classic deliberately -- this program creates the former and the latter is classic -- so only the asset side changed.",
+  "context": "The 2026-09-11 QA pass (DEC-0200) reported PUMP missing from the asset picker. Investigation showed PUMP is in the catalogue, Jupiter-verified and not blocklisted, but is a Token-2022 mint, and dedupeBySymbolPreferOrganicScore dropped every Token-2022 row. The Creator asked for this to be built immediately once the scope was clear.",
+  "rationale": "The code comment justifying the exclusion said the on-chain program could not handle Token-2022 and that the client hardcode was 'the properly-scoped fix until the SDK is updated'. The first half was wrong: asset legs are InterfaceAccounts, ReserveAsset has always stored token_program, and the CPI uses whichever program the caller passes in the leg's 5th remaining account. So no program upgrade, no Squads execution and no on-chain change was needed -- only the client had to stop assuming. The quieter half of the bug mattered more than the loud one: an ATA derived under the classic program for a Token-2022 mint is a different address that can never hold the asset and always reads as zero, which during seed funding reads as 'the swap delivered nothing' and retries forever.",
+  "alternativesConsidered": ["Leave the exclusion and document it -- rejected once measured: it was costing 1,587 of 3,224 verified mints, not one token.", "Read each mint's owner at build time instead of carrying the program -- rejected for the hot path: ReserveAsset already records it authoritatively, and an extra lookup per leg buys nothing. The owner read survives only as a fallback where no program is known.", "Split the wallet-balance read into a second sequential RPC once the programs are known -- rejected: buildCommon now derives both candidate ATAs per mint inside the one batch it already fetched, so Buy/Sell gain no round trip."],
+  "impact": "Selectable assets roughly doubled: verified against the live catalogue, 3,201 rows -> 3,146 selectable, of which 1,574 are Token-2022, and PUMP (pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn) now resolves with its correct program. Existing classic-only Reserves are unaffected -- an absent or unknown token program still means classic everywhere. Also fixes a latent settlement defect: had a Token-2022 asset ever been registered, the fee keeper would have derived unusable staging ATAs and silently failed to settle its fees.",
+  "affectedAreas": ["packages/sdk/src/tokenPrograms.ts (new)", "packages/sdk/src/{discovery,directInstructions,createReserveFlow,managementInstructions,feeSettlementInstructions,zapInstructions,index}.ts", "lib/mainnet/buildCommon.ts", "api/ledger/asset-catalogue.ts", "api/mainnet/fee-settlement-cron.ts", "src/merge/lib/createReserveClient.ts", "src/merge/hooks/useMainnetAssetCatalogue.ts", "src/merge/pages/CreateDTR.tsx", "tests/phase_token_2022_assets.ts (new), tests/phase_mainnet_production_fixes.ts (two inverted invariants)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["PUMP on-chain: owner TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb (Token-2022), 6 decimals; catalogue row jupiter_verified true, ssr_status unreviewed -- so nothing but the Token-2022 filter was excluding it.", "Live catalogue split among verified mints: 1,637 classic / 1,587 Token-2022 at the time of measurement.", "After the change, running the real dedupeBySymbolPreferOrganicScore against live rows: 3,201 -> 3,146 selectable, 1,574 Token-2022, PUMP present with tokenProgram TokenzQd...", "9 new tests incl. proof that the classic and Token-2022 ATA derivations for the same mint and owner are genuinely different addresses. 1,062 passing overall; the 5 remaining failures are the pre-existing CSS/formatting ones verified unchanged at 33693ff. tsc clean on app, node, api/mainnet and api/ledger scopes."]
+}
+```
+
+## DEC-0202
+
+```json
+{
+  "id": "DEC-0202",
+  "date": "2026-09-11",
+  "status": "staged-awaiting-squads-execute",
+  "decision": "The DEC-0200 program upgrade (create_token_metadata) is staged for Squads execution. The program account was extended by 63,696 bytes first -- the new binary is 1,099,592 bytes against a prior capacity of 1,035,896, so no upgrade from this tree could have landed without it. Buffer HpB6TbVuGyzHRJWea5491rZDnhjcyQUYUjUtkj4d7N4k written from the developer key and its authority handed to the Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW. The upgrade carries exactly one new instruction and changes no existing account shape.",
+  "context": "Creator authorised getting the Squads approval ready after the 2026-09-11 QA pass established that reserve token mints carry no Metaplex metadata at all, which is why wallets render an address instead of SOLSSR.",
+  "rationale": "Reproducibility proven before spending: a clean rebuild of the committed tree produced sha256 23ce686e68c6bb50a410437a61a89fa0627fdf7282863bc7a9a66a3af9c07458 twice, and the on-chain buffer dump matches that hash byte for byte at the same 1,099,592 bytes. The IDL diff against the previously committed one adds create_token_metadata, the TokenMetadataPublished event and error 6062, with ZERO drift on any existing instruction's accounts or args -- so this upgrade cannot break an in-flight buy, sell, rebalance or settlement, and needs no coordinated frontend cutover.",
+  "impact": "Costs: 0.404197392 SOL of permanent rent for the account extension, and 6.964761082 SOL held in the buffer which refunds to the spill account on execute. Developer wallet 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa fell from 9.1274 to 1.7538 SOL and should be topped up before the next staging exercise. After execute, create_token_metadata can publish metadata for new Reserves and REPAIR existing mints (it is idempotent and signs the Metaplex CPI with the mint-authority PDA, the only key that can). Wallet symbol display remains broken until it is executed.",
+  "affectedAreas": ["Mainnet program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 (programdata extended)", "buffer HpB6TbVuGyzHRJWea5491rZDnhjcyQUYUjUtkj4d7N4k"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["solana program extend ... 63696 -> usable capacity now exactly 1,099,592 bytes.", "Clean rebuild sha256 23ce686e...7458, 1,099,592 bytes, reproduced across two independent builds.", "solana program dump of the buffer: identical sha256 and identical size.", "solana program show --buffers: authority HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW, balance 6.964761082 SOL.", "cargo test 20/20 including the three new wire-format tests; clippy 3 pre-existing warnings, none new."]
+}
+```
+
+```json
+{
+  "id": "DEC-0208",
+  "date": "2026-09-23",
+  "title": "Production Neon database moved from the Free plan to Launch after a quota suspension took down Reserve names, pictures and All-Time Volume; the Mainnet deployment smoke-test Reserve (reserveId 0) hidden from every public surface",
+  "status": "confirmed-implemented (Neon plan changed by the Creator in the Vercel dashboard, 2026-09-23 ~10:00 UTC; app: hidden-registry entry + tests, deployed; no program change)",
+  "decision": "1) The one Neon project every server-side store shares (little-hall-61768380, Vercel Marketplace resource neon-crimson-feather, team ssr14) is now on Neon's Launch plan (usage-based: $0.106/CU-hour, $0.35/GB-month, 500 GB transfer included, no monthly minimum, billed through the Vercel invoice). The Creator made the change; nothing in the repo changes for it. 2) The Mainnet Reserve at 9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i (reserveId 0, Reserve Token mint H1pBENeKt92iVTviuS2ztnaTDi5icGcA2F5ny8BUxKjT) is added to packages/sdk's HIDDEN_RESERVE_ADDRESSES, the existing address-keyed registry evaluateReserveEligibility consults first, so it disappears from Discover, Featured, the homepage KPI counts, the warm snapshot, landing-stats and Portfolio on the next warm-cache pass after deploy. It is NOT wound down on-chain.",
+  "context": "Creator, 2026-09-23 morning: 'the total reserve market cap took ages to load, all time volume is unavailable ... also all reserves lost their PNG and name etc. could be related to the recent metadata programme update.' Root cause was not the DEC-0205 metadata work (which is still only a written buffer awaiting the Squads execute). Reproducing the ledger read locally against .env.local's DATABASE_URL (which IS production) returned `NeonDbError: Server error (HTTP status 402): Your account or project has exceeded the quota. Upgrade your plan to increase limits.` Neon's Free plan allows 100 CU-hours per project per month and suspends compute until the next billing cycle once they are used. api/mainnet/warm-cache-cron (vercel.json `*/1 * * * *`, ~52 s per run, added 2026-09-04) keeps the compute awake permanently because Neon's 5-minute autosuspend never gets an idle window: ~180 CU-hours/month at the smallest 0.25 CU size, so the quota ran out around the third week of the first full month. Every symptom followed from the one outage: names/tickers come from reserve_metadata (a Reserve's on-chain metadata_uri points back at /api/mainnet/reserve-metadata?id=, so there is no on-chain fallback), pictures from reserve_image, All-Time Volume from reserve_activity_log (rendered 'Unavailable' by design when the ledger read fails, never a fabricated 0), and the homepage fell back from the warm snapshot to full client-side discovery, hence the slow market cap. After the upgrade the same query answered in 461 ms: Mainnet all-time volume $578.76 from 948 rows, 169 metadata payloads and 11 images intact, warm snapshot and NAV history writing again within the minute, database 23 MB. Then, with names back, the Creator asked to remove the one card still showing 'Unnamed Reserve (#0) / RSV0': reserveId 0 is the DEC-0115 deployment-day smoke-test Reserve (USDC-only, 0.9015 USDC seeded, manager = the Creator wallet CgHFxD4X..., metadata_uri https://strategic-super-reserve.fun/reserves/mainnet-smoke-test.json which no longer resolves).",
+  "rationale": "A plan change is the only thing that restores service today: the Free plan's suspension lasts until the billing cycle resets, and the product's instant homepage (warm cache) and minute-level NAV history are designed around an always-on database, so slowing the cron enough to fit 100 CU-hours (every 15 minutes or slower) would degrade the product to save ~$20/month. Launch has no minimum and the compute-size cap in the installation's Change Configuration screen (recommended: 0.5 CU max) bounds the worst case at roughly $40/month; the database holds only display data and indexes, so no protocol funds are exposed by it. For the smoke-test Reserve, the hidden registry is the documented mechanism (PROJECT_STATUS corrective pass, DEC-0058 lineage): explicit, address-verified, never a name/ticker heuristic that could hide a legitimately in-progress Reserve. Hiding rather than winding down keeps the option open: it is Active and its manager is the Creator wallet, so initiate_wind_down/close_reserve is possible later if wanted, unlike the EGAYQQ entry.",
+  "alternativesConsidered": [
+    "Wait for the Neon billing cycle to reset and slow warm-cache-cron to every 15+ minutes (rejected: days of outage now, and it trades the instant homepage and minute-level NAV history for ~$20/month)",
+    "Install a second Neon database from the Vercel Storage page (rejected: 'Install' creates a new empty database; the existing installation only needed its plan changed)",
+    "Hide 'unnamed' Reserves by heuristic (no metadata / null name) (rejected: the registry's own header rule -- a freshly created Reserve whose metadata upload lagged would vanish too; address-keyed only)",
+    "Wind reserveId 0 down on-chain now (deferred: needs the Creator wallet to sign initiate_wind_down and later close_reserve; hiding is immediate and reversible, and the wind-down remains available)",
+    "Cache reserve-metadata GET responses at the CDN so names survive a future database outage (deferred, recorded under Decisions Required: the payloads are content-addressed and immutable, so a long public max-age is safe)"
+  ],
+  "impact": "Reserve names, pictures, market cap speed and All-Time Volume are back on ssr.fun with no app change (the Neon upgrade alone). The daily activity indexer (kpis-backfill-cron, 03:00 UTC) missed 2026-09-21..23 while the database was suspended; it catches up at the next 03:00 run, and any Reserve's Activity tab heals its own rows earlier, so the all-time volume figure may rise slightly once trades from those days are indexed. reserveId 0 stops rendering everywhere after the first warm-cache pass following the deploy. Expected Neon cost ~$20/month at today's always-on load; the compute-size cap is the Creator's to set in the Vercel dashboard (Storage -> neon-crimson-feather -> Installation -> Change Configuration).",
+  "affectedAreas": [
+    "packages/sdk/src/hiddenReserves.ts (second entry: Mainnet reserveId 0)",
+    "tests/phase_reserve_eligibility.ts (new case: Active + seeded but hidden by address), tests/phase_buy_chart_category_deploy_pass.ts (registry now has exactly two entries)",
+    "Neon plan (infrastructure, no repo change): Free -> Launch on project little-hall-61768380",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "verification": [
+    "Local reproduction before the upgrade: a one-line @neondatabase/serverless query from inside the repo against .env.local DATABASE_URL -> HTTP 402 quota exceeded; Vercel runtime-log counts for the last 24 h showed 1440 error-level lines on /api/mainnet/warm-cache-cron (one per minute) plus 24 on fee-settlement-cron.",
+    "After the upgrade: the fetchAllTimeTradeVolumeUsd SQL returned 578.7635859301264 in 461 ms; reserve_activity_log 948 Mainnet rows (latest 2026-09-19 02:15 UTC), reserve_metadata 169, reserve_image 11, reserve_snapshot generated 2026-09-23 10:04:51 UTC, reserve_nav_history latest 10:04:28 UTC, pg_database_size 23 MB.",
+    "reserveId 0's address, mint, manager, status (active) and supply (901500) read from the live warm snapshot, which listed 13 displayable Reserves (0, 7, 8, 13, 16-20, 22-25) with metadataByReserve['0'] = null.",
+    "npx ts-mocha tests/phase_reserve_eligibility.ts tests/phase_buy_chart_category_deploy_pass.ts: 55 passing. Full offline suite: 1082 passing, 13 pre-existing unrelated failures (chart range selector CSS, DEC-0154 IDL account-shape pins, the 6000-6061 error-range test overtaken by DEC-0205's IDL merge) -- identical set to the DEC-0206/0207 sessions. npm run build --workspace=packages/sdk clean; npx tsc -p tsconfig.app.json --noEmit exit 0."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0209",
+  "date": "2026-09-23",
+  "title": "Neon spend bounded: compute capped at 0.5 CU with a 5-minute idle suspend, and the warm-cache keeper moved from a self-warming every-minute loop to one refresh every 10 minutes",
+  "status": "confirmed-implemented (Neon endpoint settings changed via the Neon API; app: vercel.json cron + api/mainnet/warm-cache-cron.ts, deployed)",
+  "decision": "1) Production Neon endpoint ep-holy-cake-awlrie9s (project little-hall-61768380, branch br-morning-dew-aw8y0ekb): autoscaling limits min 0.25 / max 0.5 CU (was max 8 CU) and suspend_timeout_seconds 300 (the shortest the Launch plan allows; 120 and 180 were refused with 'suspend interval is too short for your plan'). Set with the Neon REST API using a scoped API key the Creator created and that now lives only in .env.local (gitignored) as NEON_API_KEY. 2) api/mainnet/warm-cache-cron runs on '*/10 * * * *' and performs exactly ONE snapshot refresh per invocation (the ~52 s self-warming loop of ~4 refreshes 15 s apart is removed; REFRESH_SPACING_MS/BUDGET_MS/sleep are gone; the JSON response keeps its `refreshes` field). Expected effect: Neon compute sleeps roughly half of every 10-minute cycle (~5 min awake after each run) instead of 24/7, so ~90-95 CU-hours/month (~$10) instead of ~180 (~$19), with a hard ceiling of 0.5 CU x 720 h = 360 CU-hours (~$38); the cron's Vercel function time drops from ~21 hours/day to well under an hour.",
+  "context": "Creator, after the DEC-0208 upgrade: 'is there a risk of very high spend' and then 'if you can do something to limit the spendage here that'd be awesome'. The Launch plan has no spend cap of its own and allowed the endpoint to autoscale to 8 CU. Compute-hours are the only material Neon cost for this workload (database 23 MB, transfer a few MB/day), and they are driven by how long the compute is awake, which the every-minute keeper made permanent. What actually depends on the one-minute cadence: nothing hard. The client (ReserveSnapshotHydrator.tsx) paints from whatever snapshot it gets, only logs its age, and immediately runs its own live discovery poll, so the snapshot's freshness governs the first frame only. The NAV recorder (lib/reserve-nav-history/navMath.ts) already refuses to record more than one point per Reserve per 15 minutes, so a 10-minute cron yields points every 20 minutes -- the same chart resolution in practice (a 15-minute cron was rejected because scheduler jitter would make the 15-minute threshold miss every other run, giving 30-minute gaps). api/mainnet/reserves-snapshot.ts's own 10 s edge cache and the client's 3-attempt fetch absorb the ~0.5-1 s cold start a visitor pays when the compute is asleep.",
+  "rationale": "Bound the worst case first (0.5 CU cap: no query pattern can run the bill above ~$38/month), then cut the expected case by letting the compute sleep, which needs the keeper to stop touching the database every minute. Ten minutes is the balance between savings and first-paint freshness: every 5 minutes would never let a 5-minute suspend fire; every 15+ would save ~$3 more but interact badly with the NAV throttle and make first paint up to a quarter-hour stale. One refresh per invocation also removes ~21 function-hours/day on Vercel that bought ~15 s freshness nobody consumed.",
+  "alternativesConsidered": [
+    "Keep the every-minute self-warming loop and rely on the 0.5 CU cap alone (rejected: bounds the ceiling but leaves the expected ~$19/month, all of it spent keeping a 23 MB database awake for a first-paint cache)",
+    "Suspend after 60-180 s with a 5-minute cron (rejected: the Neon API refuses anything under 300 s on Launch)",
+    "Every 5 minutes with the 300 s suspend (rejected: the compute would never idle long enough to suspend, so no Neon saving)",
+    "Every 15 or 30 minutes (rejected for now: only ~$3-4/month more saving, stale first paint, and the 15-minute NAV throttle turns 15-minute jitter into 30-minute gaps)",
+    "Vercel Spend Management as the guard (not relied on: unclear whether Marketplace charges count toward it)"
+  ],
+  "impact": "Expected Neon cost ~$10/month, hard ceiling ~$38/month at the compute cap. First paint on the homepage/Discover uses a snapshot up to 10 minutes old (prices/AUM), corrected by the live poll within seconds, exactly as before but from an older starting point. When the compute is asleep the first database-backed request pays a ~0.5-1 s cold start (snapshot, names, pictures, activity); the every-minute warm-cache-cron log stream (1,440 invocations/day) becomes 144. NAV history gains a point per Reserve every 20 minutes instead of every 15-16. The DEC-0208 Decisions Required item for the compute cap is closed; the metadata CDN-cache item stays open.",
+  "affectedAreas": [
+    "vercel.json (crons: /api/mainnet/warm-cache-cron '*/1' -> '*/10')",
+    "api/mainnet/warm-cache-cron.ts (header rewritten; single refreshOnce per invocation; REFRESH_SPACING_MS, BUDGET_MS, sleep removed)",
+    "Neon endpoint ep-holy-cake-awlrie9s settings (infrastructure): max 0.5 CU, suspend 300 s",
+    ".env.local (gitignored): NEON_API_KEY for future endpoint reads/changes",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "verification": [
+    "Neon API GET .../endpoints before: min 0.25, max 8, suspend_timeout_seconds 0 (plan default), state active. PATCH max 0.5 -> read back min 0.25 / max 0.5, state active, pending none; PATCH suspend 120 and 180 -> 'suspend interval is too short for your plan'; PATCH 300 -> ok.",
+    "Database still answering after the resize: reserve_snapshot latest 2026-09-23 11:18:07 UTC read in 411 ms.",
+    "npx tsc -p api/mainnet/tsconfig.json --noEmit: exit 0; oxlint api/mainnet/warm-cache-cron.ts: clean. No test pins the schedule or the removed constants (grep over tests/ for warm-cache-cron and '*/1 * * * *': only vercel.json).",
+    "Post-deploy check recorded in PROJECT_STATUS: snapshot generated_at cadence and the endpoint's current_state between runs."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0210",
+  "date": "2026-09-23",
+  "title": "DEC-0205 Mainnet upgrade EXECUTED via Squads (set_reserve_token_metadata live); buffer rent refunded to the deployer wallet; VITE_TOKEN_METADATA_LIVE=true deployed; Metaplex metadata backfilled onto all 24 named Reserve Token mints",
+  "status": "confirmed-implemented (on-chain upgrade + production env + backfill; nothing left staged)",
+  "decision": "Executed the staged DEC-0205 program upgrade through the controlled 1-of-3 Squads multisig G8pgvV8wGrscorppA3VrcAWrV6QGP4TvTps1czaejzH8 (vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW): Squads upgrade #7 'set_reserve_token_metadata (DEC-0205)', buffer Gnf2kNFGKHqGNeHtKW4WmynuN1iM4astQj81dwYQjSZR, spill CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8, created/approved/executed by the Creator wallet EME96L9J... alone (threshold 1). Then: (a) VITE_TOKEN_METADATA_LIVE=true added to the ssr-fun Production env and the app redeployed from a clean worktree at main @ 73c9940 (dpl_7p2oGnff7pVT1zpHspAobMNrKYsf, aliased to ssr.fun); (b) scripts/backfill_token_metadata.ts --cluster mainnet run as the Protocol Admin (CgHFxD4X...): 24 created, 0 updated, 1 skipped (reserveId 0, the hidden smoke test with an unresolvable metadata record), 0 failed.",
+  "context": "Creator, 2026-09-23 afternoon: 'i havent gotten the solana back from the last ship' -- the 5.38 SOL the DEC-0205 buffer had locked since 22 September could only return on execute or close, and only the Squads vault could do either. The Creator chose 'execute upgrade now and give me the sol back'. Three things needed untangling in the Squads app along the way, recorded here so the next upgrade is a two-minute job: (1) the Squad to use is the one whose vault is HFmq... (multisig G8pg...); an older abandoned Squad (GjEAq7Xg..., vault 2AHTzDAA..., legacy deployer as member) and an unrelated empty account the Creator first pasted are NOT it; (2) 'Add Upgrade' under Developers -> Programs only registers a bookkeeping row (upgrade #7, 'Upgrade Date: Never') -- the on-chain proposal is created by opening that row and initiating the upgrade transaction, then Approve + Execute under Transactions; (3) the first on-chain attempt (tx 4PzgFKYq...) failed with Squads error 6005 NotAMember because the connected wallet had switched to the deployer CgHFxD4X..., which is deliberately not a member (DEC-0178); reconnecting as EME96L9J... fixed it. The Creator wallet held 0.043 SOL, so 0.1 SOL was sent to it from the deployer wallet first (tx 3NdpQES1...). The spill field is where the buffer rent is refunded; it is unrelated to the signing wallet.",
+  "rationale": "Execute now rather than hold for the tokenized-stock (permanent-delegate) change: the refund unblocks funding the next buffer, and the metadata instruction has been proven on DevNet since 17 September. The stock change ships as its own upgrade.",
+  "alternativesConsidered": [
+    "Hold the buffer and bundle the permanent-delegate change for xStocks into one upgrade (rejected: keeps 5.38 SOL locked for days and delays on-chain names/symbols that wallets and Jupiter already need)",
+    "Close the buffer instead of executing (rejected: same Squads vote for no benefit)",
+    "Backfill only the displayable Reserves (rejected: every Reserve Token that exists in a wallet deserves a name; the tool already skips only the one with no metadata record)"
+  ],
+  "impact": "Program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9 last deployed at slot 449738286 with programdata sha256 4a1faa7b23fe533f... (identical to the 17 September artifact and to the buffer that was verified before execute); upgrade authority unchanged (HFmq...). Buffer closed; the deployer wallet CgHFxD4X... went from 2.24 to 8.99 SOL on execute (5.38 SOL buffer rent plus lamports the loader released from the program data account), then, between 15:04 and 15:05 UTC and NOT by this session, two System transfers signed with the deployer key sent 5.3771 SOL (tx 3k3R47EASB...) and 2 SOL (tx 3W25Pu79PS...) to the Developer wallet 52b7pBNFNJpK7zEY4VJiMSnveu537ohxpv6VipC27ERa; the backfill then cost 24 x 0.0137 SOL (metadata rent + fees) = 0.33 SOL; balance at 15:07 UTC 1.2869 SOL. The Creator is being asked to confirm the two transfers were theirs or the Developer's; if not, the deployer key (also the ProtocolConfig authority) must be treated as shared and rotated. Every named Mainnet Reserve Token (ALPHA x7, BETA, CHARLIE x4, DELTA x4, ECHO, FOXTROT, GOLF, H, I x2, Kuj Reserve, Strategic Solana Reserve) has a Metaplex Token Metadata account with name, symbol and a URI at https://ssr.fun/api/mainnet/token-metadata?id=<id>&reserve=<address> (verified publicly reachable, HTTP 200, not behind the beta gate). The Launch flow now sets metadata in the create batch and the Manage page's metadata button is active. Still open from DEC-0205: (6) Jupiter verification submissions, (7) the public docs' 'Name, symbol, picture' wording (DEC-0204) should now also describe the on-chain Metaplex record.",
+  "affectedAreas": [
+    "Mainnet program (on-chain): upgrade executed; no repo diff",
+    "Vercel ssr-fun Production env: VITE_TOKEN_METADATA_LIVE=true (new); dpl_7p2oGnff7pVT1zpHspAobMNrKYsf",
+    "24 Metaplex metadata accounts created on Mainnet by the backfill (signer CgHFxD4X...)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "verification": [
+    "Before execute: on-chain buffer body sha256 == 4a1faa7b23fe533f... == target/deploy/ssr_protocol.so (1,058,352 bytes); buffer authority HFmq...; multisig G8pg... decoded from chain: members PSpQ (Boss), 52b7 (Developer), EME9 (Creator), threshold 1, config authority EME9; transaction_index 6, all six proposals Executed.",
+    "After execute: programdata 2YF7aofg... slot 449738286, first 1,058,352 bytes sha256 4a1faa7b23fe533f..., authority HFmq...; buffer account balance 0 (closed); CgHF 8.9939 SOL.",
+    "vercel env ls production: VITE_TOKEN_METADATA_LIVE present; vercel inspect dpl_7p2oGnff7pVT1zpHspAobMNrKYsf: target production, Ready, alias https://ssr.fun.",
+    "Backfill dry run listed 24 CREATE + 1 SKIP; live run: created=24 updated=0 skipped=1 failed=0 with one signature per Reserve. Metaplex metadata PDAs read back for C6xZ6b (Strategic Solana Reserve / SOLSSR), 64LhgC (I) and 3uxU5U (ALPHA) with the expected name, symbol and https://ssr.fun/api/mainnet/token-metadata URI; curl of that URI for SOLSSR: HTTP 200 JSON with name/symbol/description/image."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0211",
+  "date": "2026-09-24",
+  "title": "Vault balances are decoded under the vault's OWN token program -- xStocks Reserves showed $0 holdings, $0 market cap and 'NAV could not be read' (TESTT)",
+  "status": "implemented, merged to main (d72da09) and DEPLOYED TO PRODUCTION (dpl_HQqBTZBdxRjCagg4wFuQvAveorwR, 2026-09-24 10:27 UTC); live-verified",
+  "decision": "Every vault and wallet token-account read now decodes the account under whichever token program owns it, read from the account's own `owner` field, instead of spl-token's classic-program default. New in packages/sdk/src/tokenPrograms.ts: unpackTokenAccountByOwner (throws on a non-token account, exactly as before) and tokenAccountAmountByOwner (0n for a missing or non-token account -- the lenient reading the readers always had). Wired into the three vault readers: discovery.ts's batched getMultipleAccountsInfo pass (feeds the warm-cache snapshot, Discover, the homepage, the NAV recorder and the nav-history endpoint), readOnly.ts's fetchReserveOnChain (the detail page's targeted refresh, the post-launch redirect and resumability), and lib/mainnet/buildCommon.ts's tokenAmountFromInfo (server-built Buy/Sell reads of vaults and wallet ATAs). fetchTokenBalanceRaw takes an optional token program so a Token-2022 asset's balance is read at its own ATA; multiAssetBuyClient's post-buy leg re-reads pass each leg's program. ReserveAssetOnChain now carries tokenProgram like DiscoveredReserveAsset already did.",
+  "context": "Creator, 2026-09-24: 'we now support xstocks. the nav tho is not displaying correctly - both in chart and in the value in reserve in the composition section', with a screenshot of TESTT (Reserve BQitgmge3vYNwgEsAWG8bFGLycx5vLu2zuDdyMqEXSQB, id 27, eight xStocks at 12.5% each, 2 holders): Token Price $0.00, Market Cap $0, 'Price unavailable -- This Reserve's current NAV could not be read', every 'Value in Reserve' cell $0 while every per-asset price beside it was correct. Probed on Mainnet through the Helius endpoint: all eight vaults are Token-2022 accounts (175 bytes, owner = TokenzQd...) holding real balances (NVDAx vault 1,120,787 raw = 0.0112 NVDAx, and so on; supply 20 Reserve Tokens, so NAV is about $1). spl-token 0.4.15's unpackAccount(address, info) and getAccount(connection, address) default programId to the classic TOKEN_PROGRAM_ID and throw TokenInvalidAccountOwnerError when info.owner differs; discovery.ts caught that into an `issues` row and left the balance at '0', readOnly.ts's .catch(() => null) turned it into '0', buildCommon.ts's try/catch returned 0n. DEC-0201 fixed the instruction-building and ATA-derivation half of Token-2022 support; this is the read half it left behind. Zero holdings then cascade: computeAumFromPrices gives $0 AUM, NAV = 0/supply = 0, DTRDetail's lineSeries reports unavailable, computeNavUsd returns null so the recorder wrote no points (nothing bad to purge -- the launch anchor from the entry-price store will supply the series' start once balances read).",
+  "rationale": "The account's owner is the one chain-authoritative answer to 'which token program', available for free in the same getAccountInfo/getMultipleAccountsInfo response, so decoding by owner needs no extra round trip and can never disagree with the chain. Keeping the throw for an account owned by neither program preserves the invariant that a non-token account is never reported as a balance. Deriving the program from the ReserveAsset's recorded kind instead would also work for vaults but not for wallet ATAs, and would silently disagree with the chain if a record were ever wrong.",
+  "alternativesConsidered": [
+    "Pass the ReserveAsset's recorded token_program into each unpackAccount call (rejected: correct for vaults only; the owner field is authoritative for every account and costs nothing)",
+    "Use getParsedAccountInfo / getTokenAccountBalance, which are program-agnostic (rejected: one RPC call per vault instead of the existing batched getMultipleAccountsInfo, and both are rate-limited through the browser proxy)",
+    "Fix only discovery.ts, the reader behind the visible symptom (rejected: fetchReserveOnChain would re-zero the detail page on its next targeted refresh, and the server-built Buy would compute mint requirements from empty vaults)"
+  ],
+  "impact": "After deploy and the next warm-cache run (at most 10 minutes, DEC-0209) TESTT and every future Reserve holding Token-2022 assets show real Value in Reserve, AUM, NAV and a price chart; the NAV recorder starts recording points for them. Classic Reserves are unaffected (same decoder, same program). A Token-2022 vault that genuinely does not exist still reads as 0.",
+  "affectedAreas": [
+    "packages/sdk/src/tokenPrograms.ts (unpackTokenAccountByOwner, tokenAccountAmountByOwner)",
+    "packages/sdk/src/discovery.ts (batched vault decode)",
+    "packages/sdk/src/readOnly.ts (fetchReserveOnChain vault decode + tokenProgram field; fetchTokenBalanceRaw optional token program)",
+    "lib/mainnet/buildCommon.ts (tokenAmountFromInfo)",
+    "src/merge/lib/multiAssetBuyClient.ts (leg balance re-reads)",
+    "tests/phase_token_2022_assets.ts (+5 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Mainnet probe before the fix (Helius, 2026-09-24): TESTT's 8 vaults owner = Token-2022, data length 175; unpackAccount(vault, info) throws TokenInvalidAccountOwnerError on each; unpackAccount(vault, info, TOKEN_2022_PROGRAM_ID) returns 1120787 / 665571 / 498162 / 1007976 / 740265 / 339943 / 639323 / 342863.",
+    "Mainnet probe after the fix, through the rebuilt SDK dist: fetchReserveOnChain -> 8 assets, tokenProgram = Token-2022, the same eight balances; discoverAllReserves -> 27 Reserves, 0 issues, TESTT resolved 8/8 with the same balances, 797 ms.",
+    "npx tsc --noEmit -p packages/sdk: exit 0. npx tsc -b: only pre-existing errors from the not-locally-installed viem/botid packages (EVM/feedback files), none in touched files.",
+    "ts-mocha tests/phase_token_2022_assets.ts: 14 passing (5 new: Token-2022 175-byte vault decodes to its balance; classic unchanged; missing account = 0; foreign owner never decodes; classic-default call provably throws). Together with phase_discovery_reliability, phase_mainnet_production_fixes, phase_server_built_buy, phase_server_built_sell, phase_nav_history, phase_mint_extensions: 172 passing.",
+    "oxlint on the six touched files: clean.",
+    "Deployed 2026-09-24: fix/xstocks-nav fast-forwarded onto main (d0a4fbc -> d72da09, the exact commit production was running), `vercel deploy --prod` from the clean worktree -> dpl_HQqBTZBdxRjCagg4wFuQvAveorwR, Ready at 10:29:42 UTC, aliased to ssr.fun. The ssr-fun project is NOT GitHub-connected (no link on the project), so the push alone deploys nothing; the CLI deploy is required. design merged from main (cdb39b5).",
+    "Live-verified from the production Neon database at 10:30 UTC: the warm-cache cron's first run after the deploy (10:30:41 UTC) rebuilt the snapshot with TESTT's real vault balances (1120787, 665571, 498162, 1007976, 740265, 339943, 639323, 342863) and the NAV recorder wrote TESTT's FIRST point: nav_usd 0.99502 (AUM about $19.90 on a supply of 20). Production CRON_SECRET differs from the local .env.local value (manual trigger 401), so verification waited for the scheduled tick."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0212",
+  "date": "2026-09-24",
+  "title": "One dedicated BETA key issued for the Stocklana hackathon judges and published in the submission text; ssr-fun stays behind the closed-beta gate",
+  "status": "implemented and DEPLOYED TO PRODUCTION (env-only redeploy dpl_GuMcupoWSfkWZSkvp1rLaPAspquh); live-verified",
+  "decision": "A single new 30-day BETA key, STOCKLANA-TBE2-QAA4-RJH2, appended to the Production SSR_BETA_KEYS list on ssr-fun (now 111 keys: the 110 from DEC-0187 + DEC-0194 plus this one; SSR_TEAM_KEYS unchanged at 10). The key is written into the Stocklana hackathon submission (https://hackathons.solana.com/hackathons/stocklana/submit) so judges can open https://ssr.fun without asking. Recorded as row 121 of the access-key master (Desktop/ssr-access-keys-master.csv; the Google Sheet 'SSR.fun Access Keys (master)' still needs the same row added by hand). To revoke after judging: remove the key from SSR_BETA_KEYS and redeploy -- every session minted from it dies with it (lib/site/session.ts binds sessions to the configured key).",
+  "context": "Creator, 2026-09-24: 'give me the full copy pastable thing here - and dont forget to add a beta key' for the hackathon submission text. SSR_BETA_KEYS is a Sensitive (write-only) variable, so the list could not be read back from Vercel; it was rebuilt from the local master CSV (110 BETA rows, all Active in Vercel = Yes, all well-formed) plus the new key, and written whole. A dedicated key rather than one of the team's 110 so it can be revoked on its own once judging ends.",
+  "rationale": "Judges must get in without a back-and-forth; a public submission means the key is effectively public, so it must be its own revocable key with the shortest session the gate offers (30 days) rather than a TEAM key (400 days).",
+  "alternativesConsidered": [
+    "Publish one of the existing 110 BETA keys (rejected: revoking it later would also revoke whoever else it was issued to)",
+    "Open the gate for the judging window (rejected: DEC-0187's closed-beta decision stands; real funds are at stake on Mainnet)",
+    "A TEAM key (rejected: 400-day sessions for a key printed in a public submission)"
+  ],
+  "impact": "No code change. Production redeployed env-only from main @ be3348e as dpl_GuMcupoWSfkWZSkvp1rLaPAspquh (Ready, aliased to ssr.fun). The key must be removed after judging.",
+  "affectedAreas": [
+    "Vercel ssr-fun Production env SSR_BETA_KEYS (111 keys)",
+    "Desktop/ssr-access-keys-master.csv (row 121)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Vercel API edit of env i3ZPBopgKD9szQUY at 2026-09-24 12:27 UTC (comment: '110 BETA keys (DEC-0187 + DEC-0194) + 1 Stocklana hackathon judges key').",
+    "vercel deploy --prod from the clean worktree -> dpl_GuMcupoWSfkWZSkvp1rLaPAspquh, READY, alias ssr.fun.",
+    "POST https://ssr.fun/api/site/login: the new key -> 200; a bogus STOCKLANA key -> 401; an existing BETA key -> 200 (no key lost in the rewrite)."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0213",
+  "date": "2026-09-25",
+  "title": "Rebalance tab offers the full Mainnet asset catalogue (xStocks included) and every composition action derives vaults/ATAs under the asset's own token program",
+  "status": "implemented and DEPLOYED TO PRODUCTION (dpl_4cHKa7i87NC4cT1Ru1Vw3b86K1sr = main @ bab2977, Ready, aliased to ssr.fun); live-verified",
+  "decision": "The Manager Dashboard's Rebalance tab 'Add a Reserve Asset' list on Mainnet is now the same live Jupiter-verified catalogue Create Reserve's picker uses (useMainnetAssetCatalogue: USDC plus every eligible token, the 835 xStocks tokens included), with the same search (name, ticker, or contract address), the same 'Asset type' filter (xStocks / crypto only) and the same issuer badge, plus the same per-Reserve asset cap and honest loading / unavailable states. The pure list logic lives in src/merge/lib/rebalanceAddableAssets.ts. The three composition actions in src/merge/lib/managementClient.ts (Submit Rebalance's add_reserve_asset_active per new asset, Fund, Remove) now read each mint's owner program from the chain in one batched getMultipleAccountsInfo and pass it to the SDK builders, and a NEW asset is checked with the same assessMintAccount rules as Create Reserve before the wallet opens (src/merge/lib/assetTokenPrograms.ts). A mint registered through Rebalance is added to the app's known Mainnet asset list immediately (addKnownAssetMints), as a launch does, and the catalogue is registered as dynamically supported on the Manage page too, so the Reserve stays tradable on the next refresh.",
+  "context": "Creator, 2026-09-25, with a screenshot of the ALPHA Reserve's Rebalance tab (SSR + USDC): 'theres an issue rebalancing' -- the picker read 'Every supported asset is already in your proposed composition' with nothing to add. Root cause 1: ManageDTR.tsx's ADDABLE_ASSETS was a module constant hard-coded to [] on Mainnet, left from the USDC-only launch; DEC-0201 migrated Create Reserve to the live catalogue but never this page, so no Mainnet Reserve could add anything through Rebalance. Root cause 2: DEC-0201 gave buildAddReserveAssetActiveInstruction / buildFundNewReserveAssetInstruction / buildRemoveReserveAssetInstruction an optional assetTokenProgram, but managementClient.ts never passed it, so registering, funding, or removing a Token-2022 asset (every xStocks token) would have derived the vault and the Manager's ATA under classic SPL Token and failed on-chain after the wallet approval.",
+  "rationale": "One catalogue, one search, one filter for both pickers so they can never disagree about what a Manager may hold. The token program is read from the chain rather than the catalogue because Rebalance acts on EXISTING assets too, which may predate the catalogue's token_program column; the mint's account owner is the authority the program itself consults and costs one batched read. An unsupported new mint is refused before signing for the same reason Create Reserve does it (a paid failure on instruction 1 otherwise). A failed mint read never blocks: it falls back to classic SPL Token and the transaction fails the way it always did, rather than a lookup hiccup blocking every classic-token Manager.",
+  "alternativesConsidered": [
+    "Carry tokenProgram from the catalogue entry through sessionAddedAssets to the client (rejected: leaves Fund/Remove of an existing Token-2022 asset unfixed, and a Reserve's existing assets have no catalogue entry in hand)",
+    "Keep the Rebalance picker USDC-only and route Managers to Create Reserve for stock baskets (rejected: the reported Reserve already exists and holds USDC; the product promise is that a live Reserve can be recomposed)",
+    "Show every catalogue token including those already in the proposal, greyed (rejected: the existing filter-out-already-proposed rule is right; only the offer list was wrong)"
+  ],
+  "impact": "Mainnet Managers can add any catalogue asset, xStocks included, through Rebalance and then Fund it. Submit Rebalance, Fund, and Remove each cost one extra batched RPC read. DevNet behaviour unchanged (fixtures list). New pure modules: rebalanceAddableAssets.ts, assetTokenPrograms.ts; RebalanceAssetPlan gained an optional symbol for the plain-language refusal.",
+  "affectedAreas": [
+    "src/merge/pages/ManageDTR.tsx (Rebalance tab picker, catalogue hook, known-mint registration after a confirmed action)",
+    "src/merge/lib/managementClient.ts (executeAddReserveAsset, executeSubmitRebalance, executeFundReserveAsset, executeRemoveReserveAsset)",
+    "src/merge/lib/assetTokenPrograms.ts, src/merge/lib/rebalanceAddableAssets.ts (new)",
+    "tests/phase_rebalance_addable_assets.ts (new, 12 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Production Neon, 2026-09-25: 835 catalogue rows with issuer = 'xstocks' pass every filter api/ledger/asset-catalogue.ts applies (3,277 tokens served in total), so the catalogue was never the gap -- the page's hard-coded [] was.",
+    "git show HEAD:src/merge/pages/ManageDTR.tsx: `const ADDABLE_ASSETS = IS_MAINNET ? [] : [...]`; managementClient.ts's three builder calls carried no assetTokenProgram argument.",
+    "Offline suite in the fix worktree: 1,225 passing, 5 failing -- the same 5 pre-existing failures (chart range selector x2, global native-control reset x2, deployed-binary account-shape pinning) in files that import nothing this change touched. tsc -b clean; vite build clean; oxlint on ManageDTR.tsx reports the same 7 pre-existing rules-of-hooks findings as HEAD, none new.",
+    "vercel --prod --yes from the clean fix worktree at bab2977 -> dpl_4cHKa7i87NC4cT1Ru1Vw3b86K1sr, target production, Ready, aliases https://ssr.fun and https://www.ssr.fun. Live-verified: https://ssr.fun/assets/main-nWyOaimn.js (the deployment's built main chunk, from its build log) contains the new picker's rebalance-issuer-filter element id, which no earlier build had."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0214",
+  "date": "2026-09-25",
+  "title": "Rebalance proposal is re-derived from the chain and normalised to exactly 100% on every on-chain read; a trash icon on every proposed asset takes it out of the list",
+  "status": "implemented and DEPLOYED TO PRODUCTION (dpl_4QE9rjRNbNVFzBnsLsFYURYuez85 = main @ bd9c654, Ready, aliased to ssr.fun); live-verified",
+  "decision": "The Rebalance tab's proposed composition is no longer seeded fill-gaps-only. On every on-chain read (first load, each discovery poll, the refresh after the Manager's own submit) src/merge/lib/rebalanceProposal.ts's reseedProposal rebuilds it: an on-chain asset whose target changed on-chain (or is seen for the first time) takes its real target, an asset whose target is unchanged keeps the Manager's in-progress slider value, assets added this session keep their proposed weight, the cash slot is always present, and the result is normalised to exactly 10,000 bps (shortfall into USDC; excess out of USDC first, then proportionally from the rest). While a discovery pass has not resolved every asset the Reserve holds (assetsResolvedFully false) nothing is normalised, no slack is invented, an amber notice explains it, and Submit Rebalance is disabled -- update_targets must name every registered asset, so such a submit would fail on-chain anyway. Every proposed row now carries a trash icon top-right: a not-yet-submitted asset leaves the list and its weight moves to USDC; an asset already registered on-chain is proposed at 0% (weight to USDC, or spread across the others when it is USDC itself), collapses to a one-line strip with Restore, and is left out of the slider model so no later edit can push weight back into it. The session-added USDC cash slot cannot be trashed (it is the slot every other weight moves through); its slider sets it to 0%.",
+  "context": "Creator, 2026-09-25: 'now its readjusting automatically to 200% - should be 100%. review the flow please. we had this working perfectly once. also dont forget to add the trash icon on the top right of every reserve asset to remove from list entirely and readjust the other %'s accordingly'. Reviewed the whole flow: applySliderWeightChange provably preserves whatever total it starts from (47 slider/proposal tests), so a 200% total can only be SEEDED. The old effect copied an on-chain weight into the proposal the first time its mint was seen and never again, and folded any shortfall into the cash slot at that moment; a weight taken from a stale read (the 10-minute warm snapshot) or a partial read (a discovery pass whose candidate-mint list lacked one of the Reserve's mints -- ALPHA's SSR mint is NOT in the ledger's 14-mint known list, so a live pass with only USDC as a candidate resolves 1 of 2) stayed, and when the other asset later appeared with its real weight it was added on top: 100% + 100%. ALPHA itself was probed live on Mainnet during the review (reserve H7NDKmf9pKow6v7eQfBchxRtPb8thP1STsRARGPWwo73: 2 assets, SSR 0 bps / USDC 10,000 bps, unchanged), so the 200% arose inside the local editor, not from a submitted rebalance. The exact click sequence was not captured; the fix removes the whole class rather than one trigger.",
+  "rationale": "The sliders must always start from the real on-chain targets, and the total must be 100% by construction -- not by hoping a one-time seed stays consistent with later reads. Keeping an unchanged asset's in-progress value is what stops a 15-second poll from snapping sliders back mid-edit; resetting only what genuinely changed on-chain is what makes a stale or partial seed self-correct. Pausing Rebalance while an asset is unresolved is honest: the alternative was proposing against an incomplete picture and failing on-chain after the wallet approval. An on-chain asset cannot 'leave the list' through a rebalance (remove_reserve_asset needs an empty vault and the last order_index), so the trash icon proposes 0% and collapses the row, and says so.",
+  "alternativesConsidered": [
+    "Reset the entire proposal on every on-chain change (rejected: a poll that merely re-reports the same targets would wipe an in-progress edit every 15 seconds)",
+    "Silently rescale whatever total appears back to 100% after each edit (rejected: hides the seeding defect and still lets a stale weight survive)",
+    "Hide a trashed on-chain asset entirely (rejected: it remains registered and in update_targets; the collapsed strip with Restore keeps that visible and reversible)",
+    "Widen discovery's candidate list to the whole catalogue so no asset is ever unresolved (rejected for now: multiplies per-poll RPC volume for every visitor; the ledger known-mints list plus addKnownAssetMints after a rebalance is the intended path, and the tab now copes honestly when it lags)"
+  ],
+  "impact": "Rebalance total can no longer exceed 100% from seeding; an in-progress edit is preserved across polls; Rebalance pauses (with copy) while the chain view is incomplete. Trash icon on every proposed row; the X on new rows replaced by it. distributeProportionally exported from rebalanceSlider.ts for reuse. RebalanceAssetPlan unchanged; update_targets still names every on-chain asset (trashed ones at 0).",
+  "affectedAreas": [
+    "src/merge/pages/ManageDTR.tsx (seeding effect, slider model input, trash/restore handlers, collapsed row, under-resolution notice, Submit gating)",
+    "src/merge/lib/rebalanceProposal.ts (new), src/merge/lib/rebalanceSlider.ts (export)",
+    "tests/phase_rebalance_proposal.ts (new, 17 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live Mainnet probe 2026-09-25 (fetchReserveOnChain with the ledger's known mints + all 835 xStocks + the snapshot's mints as candidates): ALPHA assetCount 2, resolved 2, SSR 0 bps (vault 7,393,735,877 raw), USDC 10,000 bps (vault 0). The same probe with only the ledger's known list resolved 1 of 2 -- the under-resolution path is real for this Reserve.",
+    "Offline suite in the fix worktree: 1,230 passing, the same 5 pre-existing unrelated failures as DEC-0213. tsc -b clean; vite build clean; oxlint on the changed files reports nothing beyond the 7 pre-existing rules-of-hooks findings.",
+    "tests/phase_rebalance_proposal.ts pins both 200% sequences (stale 100% seed + later 100% asset; partial read + later-resolved asset) and that an unchanged poll preserves an in-progress edit.",
+    "vercel --prod --yes from the clean fix worktree at bd9c654 -> dpl_4QE9rjRNbNVFzBnsLsFYURYuez85, target production, Ready, aliases https://ssr.fun and https://www.ssr.fun. Live-verified: https://ssr.fun/assets/main-BhaUL2HQ.js (the deployment's built main chunk) contains the paused-rebalance notice, the collapsed-row copy and the picker id -- none of which any earlier build had."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0215",
+  "date": "2026-09-25",
+  "title": "The one-transaction Buy/Sell composition is judged against Solana's 64-account-lock ceiling, not only the 1232-byte ceiling -- STOCKLANA (10 xStocks) Buy refused with TooManyAccountLocks",
+  "status": "implemented, merged to main (cf8e5da) and DEPLOYED TO PRODUCTION (dpl_53C5XuBwHxyB1jKaajP5zPq7mwGz, 2026-09-25); live-verified",
+  "decision": "src/merge/lib/singleTxBuy.ts's compileSingleBuyTransaction -- the ONE v0 compiler behind the server's fitsV0/compileV0 (lib/mainnet/buildCommon.ts, used by buildBuy.ts and buildSell.ts) and the client's single-transaction Buy -- now counts the distinct accounts a composition would lock (fee payer + every program id + every instruction key, static or lookup-table loaded; countAccountLocks) and throws the existing SingleTxTooLargeError (new accountLocks field and a message naming the count) when it exceeds SOLANA_MAX_TX_ACCOUNT_LOCKS = 64, before the byte check. decideMode therefore sees 'single does not fit' and falls back to the step-by-step (batch) flow exactly as it does for an oversized message; a core mint/redeem that cannot fit on its own is refused with the lock count in the 422 message instead of the raw key length.",
+  "context": "Creator, 2026-09-25, buying https://ssr.fun/#/dtr/mainnet-beta-29 (STOCKLANA, Reserve 5TwkGaCtZCspGEN2yzRM3mxkzGvb1dnkFEHrkn8FVbwE, ten xStocks, all Token-2022): 'Buy Failed -- Transaction failed on-chain (\"TooManyAccountLocks\"). This was caught by a read-only simulation BEFORE anything was signed or submitted', stage 'building this purchase on the server', every leg reported 'fully funded', Reserve Tokens minted: no. Root cause: the server pre-flight simulation runs ONLY in single mode, and single mode was chosen because fitsV0 measures bytes alone -- lookup tables shrink bytes, never the runtime's lock count (MAX_TX_ACCOUNT_LOCKS = 64; the increase_tx_account_lock_limit feature is not active on Mainnet). Measured through the production build API for the buyer's wallet 6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen: the 10-leg mint transaction alone is 16 static + 40 table-loaded = 56 accounts, so composing even one top-up Jupiter swap into it crosses 64. The wallet already held the acquired amounts the report listed (verified 10/10 legs); the retry needed a small top-up, the server composed it with the mint, the byte check passed, the simulation failed, and the purchase was refused instead of falling back. TESTT (8 legs, 48 accounts) never hit this.",
+  "rationale": "The lock ceiling is a property of the composition, independent of tables, so the compiler that already owns the byte verdict is the one place to enforce it; every caller's existing fallback (single -> batch) then engages with no new branch. Counting before compiling also avoids web3.js's own static-key assertion masking the real reason.",
+  "alternativesConsidered": [
+    "Cap the number of assets a Reserve may hold at 8 (rejected: the program and the 10-asset launch flow work; only the one-transaction composition was over-eager)",
+    "Never attempt single mode for Token-2022 baskets (rejected: the ceiling is about account count, not token program; a 6-asset basket with two swaps composes fine)",
+    "Simulate the batch mint too and surface its errors (separate concern; the batch path already verifies each leg on-chain before the mint)"
+  ],
+  "impact": "A Buy or Sell whose one-transaction form would lock more than 64 accounts now takes the step-by-step path (swaps, then mint/redeem) instead of failing pre-flight. No change for compositions under the ceiling. The 422 for a core mint/redeem that cannot fit at all now states the account count against the 64 limit.",
+  "affectedAreas": [
+    "src/merge/lib/singleTxBuy.ts (SOLANA_MAX_TX_ACCOUNT_LOCKS, countAccountLocks, SingleTxTooLargeError.accountLocks, compileSingleBuyTransaction)",
+    "lib/mainnet/buildBuy.ts, lib/mainnet/buildSell.ts (unfit message)",
+    "tests/phase_single_tx_buy.ts (+1 test)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Production build API (mintOnly) for STOCKLANA x wallet 6BjT...: mode=batch, mint tx 994 bytes, 16 static + 40 ALT-loaded = 56 accounts, 14 instructions.",
+    "Wallet 6BjT... Token-2022 ATAs hold exactly the ten amounts the failure report listed (131627, 455767, 270143, 260692, 202765, 403369, 409557, 299742, 136714, 297422 raw).",
+    "connection.simulateTransaction of the server's mint-only transaction for that wallet: 1 token OK (297,894 CU), 5 tokens OK, 10 tokens SPL InsufficientFunds (holdings cover fewer than 10) -- so the retry's top-up swap is what pushed the composition into single mode.",
+    "ts-mocha phase_single_tx_buy + phase_server_built_buy + phase_server_built_sell + phase_one_approval_buy: 44 passing (new: one instruction naming 62 table accounts = 64 locks compiles under 1232 bytes; 63 = 65 locks throws SingleTxTooLargeError with accountLocks 65). oxlint clean; tsc -b clean for touched files (only the pre-existing viem/botid module errors remain).",
+    "Deployed 2026-09-25: fix/account-locks fast-forwarded onto main (902e67a -> cf8e5da), vercel deploy --prod from the clean worktree -> dpl_53C5XuBwHxyB1jKaajP5zPq7mwGz, Ready, aliased to ssr.fun; design merged from main (e1e34a2).",
+    "Live re-run of the failing shape through the production build API for wallet 6BjT... with 3 of 10 legs short (3 top-up swaps, within SINGLE_TX_MAX_SWAP_LEGS = 4, i.e. exactly the composition that was refused): HTTP 200, mode batch, swap x3 (19-21 accounts each) + mint (56 accounts). With every leg recorded as acquired: HTTP 200, mode batch, mint only, for 5 / 5.1 / 5.5 / 8 tokens. A fresh wallet (nothing acquired) at 4.9-10 tokens: HTTP 200, batch, 10 swaps + mint, every transaction at or under 56 accounts.",
+    "Seen once during verification and NOT part of this change: one build returned 422 'No real current USD price is available for XsoCS1Tf...' (the server refusing to guess a swap budget); the same mint priced fine in the builds a minute before and after, and Jupiter's price API returned $765.65 for it -- a transient upstream price gap, correctly refused with a retry message."
+  ]
+}
+```
+
+```json
+{
+  "id": "DEC-0216",
+  "date": "2026-09-30",
+  "title": "Launch on Robinhood Chain: the chain choice is the first field of step 1, and the Identity step asks for and stores the same fields as Solana (profile picture, category, description, YouTube links, header image), with the on-chain `mandate` as the EVM metadata pointer",
+  "status": "implemented, fast-forwarded onto main (5a94d8e) and DEPLOYED TO PRODUCTION (dpl_2a4dQsCottx7UpPpzrsJCyxnJmvg, 2026-09-30, aliased to ssr.fun); live-verified",
+  "decision": "(1) The 'Launch on' chooser is no longer rendered by LaunchShell above the heading of every step; CreateReserve.tsx hands it to each wizard, which renders it as the FIRST field of its Reserve Identity card (step 1). It appears nowhere else: the Solana connect-wallet gate shows no chooser (the Creator, testing the preview, asked for the gate copy to go), so a visitor meets the chain choice exactly once, at the start of step 1. (2) RobinhoodCreateForm's Identity step now has exactly CreateDTR's fields in the same order: profile picture, name, ticker (same A-Z / TICKER_MAX_LENGTH rule), category (RESERVE_CATEGORIES), description, YouTube channel, featured video, header image. (3) The profile is stored the way a Solana Reserve's is: pictures to the content-addressed image store (new api/robinhood/reserve-image.ts), text and links to the metadata store (new api/robinhood/reserve-metadata.ts, same reserve_metadata table), and the payload's permanent URL written on-chain -- as the Folio's `mandate` string (deploySSR's additionalDetails.mandate, previously set to the reserve's name), the EVM counterpart of Solana's metadata_uri. loadReserve reads `mandate()` back, and when it is one of this app's metadata URLs (src/merge/lib/evmReserveMeta.ts, judged by path + 16-hex id, host-agnostic) fetches the profile onto ReserveSnapshot.meta; Discover/Featured cards and the Robinhood reserve page render description, category, avatar, header banner and the 'From the Creator' video panel from it. (4) lib/reserve-metadata/payload.ts gains three optional link fields (headerImageUrl, youtubeChannelUrl, youtubeFeaturedVideoUrl): HTTPS-only, byte-bounded like imageUrl, serialised in a fixed order after it, OMITTED when blank so every existing payload keeps its content-addressed id. (5) middleware.ts's PUBLIC_READ_API_PATHS allows GET on the two Robinhood routes, as for the Solana ones.",
+  "context": "Creator, 2026-09-30: 'on ssr.fun we're live with robinhood chain, users can switch to that on user creation. but some things to improve- right now the chain is a standing header in the create process. it should be embedded in the first step, right at the beggining. also, all the fields to create a reserve with need to be the same as in SVM, meaning that image and header and youtube links etc etc. should be all the same unless there's a very specific limitation on EVM.' Before this pass the Robinhood Identity step had only name and ticker, and a Robinhood reserve had no off-chain profile at all (the directory card showed a basket-derived sentence and the ticker-initial avatar).",
+  "rationale": "The Folio contract has one free-text field, `mandate`, settable at deploy and later by BRAND_MANAGER; storing the metadata URL there makes a Robinhood reserve self-describing on-chain exactly like a Solana one, readable by any viewer of any deployment (the routes share one Neon store, and the id is judged host-agnostically), and editable later without redeploying. Reusing the existing metadata/image stores and validator (with a third route pair, following the devnet/mainnet separate-file convention) keeps one schema for both chains. The header image and YouTube links go INTO the payload for Robinhood -- on Solana they are still device-local (useAppStore) -- because the payload is the only place an EVM reserve can carry them; the fields are optional and omitted-when-absent so Solana payloads are untouched.",
+  "alternativesConsidered": [
+    "A server-side reserve-address -> metadata pointer table (rejected: needs a new table and an unauthenticated write path; the mandate is on-chain, signed by the deployer, and already exists)",
+    "Keeping header/YouTube device-local for Robinhood like Solana (rejected: an EVM reserve has no local DTR record to hang them on, and server-side is what the Creator's 'same as SVM' means for every viewer)",
+    "Manager buy/sell taxes on Robinhood (not done: a Solana-metadata rule the EVM contracts do not implement -- stored as 0 in the payload; this is the 'specific EVM limitation' case)",
+    "Extending the Solana upload to persist header/YouTube in the payload too (deferred: would change the metadata bytes of every new Solana Reserve; noted as a follow-up)"
+  ],
+  "impact": "Both Launch wizards show the chain chooser inside step 1 only. A Robinhood reserve created from the app now has a full profile everywhere a Solana one does. Reserves created before this pass (e.g. the first mainnet reserve, mandate 'Strategic Equity Reserve') are unaffected: they show on-chain name/symbol and the basket-derived card line as before. One extra same-origin fetch per Robinhood reserve on load (cached immutable). Header images are re-encoded down to the store's 400 KB cap before upload (fitHeaderImageDataUrl).",
+  "affectedAreas": [
+    "src/merge/pages/CreateReserve.tsx (ChainChoiceBlock `centered` prop; picker + gatePicker handed down)",
+    "src/merge/components/LaunchHero.tsx (chainPicker slot removed)",
+    "src/merge/pages/CreateDTR.tsx (picker as the first Identity field; gate chooser below the CTA)",
+    "src/merge/components/robinhood/RobinhoodCreateForm.tsx (full Identity parity; profile upload before deploy; mandate)",
+    "src/merge/components/robinhood/RobinhoodReserveDetail.tsx (header banner, avatar, category, description, From the Creator panel)",
+    "src/merge/lib/evmReserveMeta.ts (new, viem-free), src/merge/lib/evmReserve.ts (mandate read, meta on the snapshot, CreateReserveInput.mandate), src/merge/lib/evmChain.ts (SSR_ABI mandate)",
+    "src/merge/lib/directoryEntry.ts, src/merge/pages/Discover.tsx (profile on cards; Robinhood categories filterable)",
+    "lib/reserve-metadata/payload.ts (+3 optional link fields), src/merge/lib/createReserveClient.ts (ReserveMetadataInput, MetadataStoreCluster), src/merge/lib/reserveImageClient.ts (robinhood cluster; fitHeaderImageDataUrl)",
+    "api/robinhood/reserve-metadata.ts, api/robinhood/reserve-image.ts (new), middleware.ts (public GET allowlist)",
+    "tests/phase_robinhood_create_parity.ts (new, 17 tests)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live read 2026-09-30 of the first mainnet reserve 0xADEd2d2967AC92EE8FB52612D3436511F302Fe2f: mandate() = 'Strategic Equity Reserve', version() = 6.0.0 -- the getter exists on the deployed Folio.",
+    "tsc -b clean (after building packages/sdk); oxlint clean on every touched file; VITE_ENABLE_EVM=true vite build succeeds.",
+    "Live 2026-09-30 after the deploy: GET https://ssr.fun/api/robinhood/reserve-metadata?id=0123456789abcdef -> 404 {error: No Reserve metadata found for this id} (public read works, not the 401 gate); GET reserve-image without id -> 400; POST without a site session -> 401 (writes stay gated). The Creator tested preview dpl_CLC374967cxoGt1Vh6DuD74dYS44 first: 'other than that it looks good lets ship to ssr.fun'.",
+    "ts-mocha: phase_robinhood_create_parity 17 passing; phase_evm_feature_flag + phase_robinhood_ui_contract + phase_metadata_uri + phase_reserve_profile_image + phase_create_reserve_delegate_and_metadata 98 passing."
+  ]
+}
+```
+
+## DEC-0217
+
+```json
+{
+  "id": "DEC-0217",
   "date": "2026-09-30",
   "status": "confirmed-implemented",
   "decision": "Liquidity Module v1 direction confirmed and implemented as an explicitly-labelled front-end DESIGN PREVIEW on the design branch: a Reserve's root Manager (only) can seed DEX liquidity for their Reserve Token from inside SSR.fun -- Raydium for a Solana Reserve, Uniswap for a Robinhood Chain Reserve, with every DEX reference in the UI derived from the Reserve's home chain (dexInfoFor(reserveChain(dtr)), never hardcoded). Surfaces: a dismissible split-layout prompt on the Reserve page after the root Manager's own confirmed Buy while no pool exists; a 'Liquidity' tab in the Manager Dashboard (visible to the root Manager only) with the add-liquidity form, and once preview liquidity exists, a pool dashboard showing TVL, the pool address ALWAYS rendered as a hyperlink (header chip + pool card, with copy), lock status with countdown, and a one-click 'Collect' whose fees route to the Reserve treasury, never the connected wallet. Amounts: $1,000 soft floor with warning, $10,000 highlighted recommendation, both sides balanced at the Reserve Token's current value. Locks: none / timed (1-3-6-12 months) / permanent; locks only ever strengthen (extend or upgrade, never shorten or weaken).",
@@ -6066,27 +6869,27 @@
   "supersedes": null,
   "supersededBy": null,
   "evidence": [
-    "Working-tree changes on the design branch clone (~/SSRdotFun/SSR.FUN), uncommitted pending Creator review on the panel dev server.",
+    "Commit aac4e55a732fb023b7af269f412428f4123d686c (branch liquidity-design, authored as DEC-0195 on a stale design base; renumbered DEC-0217 on the 2026-10-01 merge into design because DEC-0195 was already the Squads upgrade entry on main).",
     "Product spec + open questions: docs/project/LIQUIDITY_MODULE_SPEC.md (OPEN-1..OPEN-8)."
   ]
 }
 ```
 
-## DEC-0196
+## DEC-0218
 
 ```json
 {
-  "id": "DEC-0196",
+  "id": "DEC-0218",
   "date": "2026-09-30",
   "status": "confirmed-implemented",
-  "decision": "Liquidity trust badges are a public Reserve-page signal (Creator directive, same session as DEC-0195): once a Reserve has a pool, every viewer sees, under the Reserve name, (a) one lock-state badge -- Unlocked (amber, open lock, '$X LIQUIDITY · UNLOCKED'), Locked (accent, '100% LOCKED · Nd LEFT' countdown), or Locked forever (action yellow, 'LIQUIDITY LOCKED FOREVER') -- (b) an additional emerald 'Deep liquidity' badge when pool TVL >= DEEP_LIQUIDITY_USD ($100k placeholder, spec OPEN-9), stacking with the lock badge rather than replacing it, and (c) a hyperlinked pool-address chip ('<DEX> pool: <addr>' -> explorer) so the pool is reachable from the Reserve page at any time. DEX naming stays chain-derived per DEC-0195. Visual source: the 'Liquidity trust badge states' canvas artboard.",
+  "decision": "Liquidity trust badges are a public Reserve-page signal (Creator directive, same session as DEC-0217): once a Reserve has a pool, every viewer sees, under the Reserve name, (a) one lock-state badge -- Unlocked (amber, open lock, '$X LIQUIDITY · UNLOCKED'), Locked (accent, '100% LOCKED · Nd LEFT' countdown), or Locked forever (action yellow, 'LIQUIDITY LOCKED FOREVER') -- (b) an additional emerald 'Deep liquidity' badge when pool TVL >= DEEP_LIQUIDITY_USD ($100k placeholder, spec OPEN-9), stacking with the lock badge rather than replacing it, and (c) a hyperlinked pool-address chip ('<DEX> pool: <addr>' -> explorer) so the pool is reachable from the Reserve page at any time. DEX naming stays chain-derived per DEC-0217. Visual source: the 'Liquidity trust badge states' canvas artboard.",
   "context": "Creator directive 2026-09-30: 'We need to indicate the link to the pool on the reserve page if there is one and we also should have a different badge for different liquidity types (unlocked, locked, permanently locked, ones with VERY thick liquidity).'",
   "rationale": "Lock state and depth are the two independent trust axes a buyer cares about; separate stacking badges keep four states legible without a 6-way hybrid taxonomy, and an expired timed lock honestly degrades to Unlocked.",
   "alternativesConsidered": [
     "One combined badge encoding lock state + depth -- rejected: hybrid labels get long and the axes are independent.",
     "Deep threshold relative to AUM now -- deferred to OPEN-9; $100k absolute is the placeholder."
   ],
-  "impact": "New LiquidityBadges component (LiquidityModule.tsx); liquidityPreview.ts gains DEEP_LIQUIDITY_USD/isDeepLiquidity/liquidityBadgeKind; DTRDetail.tsx renders badges + pool chip under the Reserve identity block for all viewers when a preview pool exists. Discover-card badges are a planned follow-up, not in this pass. Preview-only, per DEC-0195.",
+  "impact": "New LiquidityBadges component (LiquidityModule.tsx); liquidityPreview.ts gains DEEP_LIQUIDITY_USD/isDeepLiquidity/liquidityBadgeKind; DTRDetail.tsx renders badges + pool chip under the Reserve identity block for all viewers when a preview pool exists. Discover-card badges are a planned follow-up, not in this pass. Preview-only, per DEC-0217.",
   "affectedAreas": [
     "src/merge/lib/liquidityPreview.ts",
     "src/merge/components/LiquidityModule.tsx",
@@ -6096,7 +6899,7 @@
   "supersedes": null,
   "supersededBy": null,
   "evidence": [
-    "Uncommitted working-tree change on the design branch clone, reviewed live by the Creator on the panel dev server.",
+    "Commits aac4e55a732fb023b7af269f412428f4123d686c + 374a02440e62acec7c0107f63364c66bea30330d (branch liquidity-design; authored as DEC-0196, renumbered DEC-0218 on the 2026-10-01 merge -- DEC-0196 was already the USDC fee-settlement entry on main). Reviewed live by the Creator on their dev server.",
     "Design canvas artboard 'Liquidity trust badge states' (Badges.dc.html)."
   ]
 }

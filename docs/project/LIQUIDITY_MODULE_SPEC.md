@@ -1,6 +1,6 @@
 # SSR.fun Liquidity Module: Creator Liquidity and DEX Listing
 
-**Status:** v0.2. Front-end DESIGN PREVIEW implemented 2026-09-30 (DEC-0195): `src/merge/lib/liquidityPreview.ts`, `src/merge/components/LiquidityModule.tsx`, `useAppStore.liquidityPreviews`, the Manager Dashboard "Liquidity" tab (root Manager only), and the post-first-mint prompt on the Reserve page. The preview is local state, labelled as such on every surface, and moves no funds -- the real Raydium/Uniswap client replaces the three `*LiquidityPreview` store actions. Decisions marked OPEN need a ruling and a DEC entry in `docs/project/DECISION_LOG.md`.
+**Status:** v0.2. Front-end DESIGN PREVIEW implemented 2026-09-30 (DEC-0217): `src/merge/lib/liquidityPreview.ts`, `src/merge/components/LiquidityModule.tsx`, `useAppStore.liquidityPreviews`, the Manager Dashboard "Liquidity" tab (root Manager only), and the post-first-mint prompt on the Reserve page. The preview is local state, labelled as such on every surface, and moves no funds -- the real Raydium/Uniswap client replaces the three `*LiquidityPreview` store actions. Decisions marked OPEN need a ruling and a DEC entry in `docs/project/DECISION_LOG.md`.
 **Author:** Yeh (Enigma) with Claude. 2026-09-29.
 **Audience:** SSR.fun developers, design, and marketing.
 **Vocabulary note:** this is an internal document. User-facing copy derived from it must follow the Mandatory Terminology rules in the repo's `CLAUDE.md` (Reserve, reserve assets, Reserve Token, Co-Manager; never DTR/DTF/bundle/governance in anything public).
@@ -166,7 +166,7 @@ Approved-vocabulary framing, mechanism-light per the teasing protocol:
 Solana + Raydium only. Constant-product pool, SOL or USDC pairing, NAV-pinned initial price, $1k soft floor / $10k recommendation, lock states none/time/permanent at chosen percentage, canonical pool registry, dashboard Liquidity section, badges on Reserve detail. Robinhood/Uniswap as v1.1 once the Solana loop is proven.
 
 
-## 11. Liquidity trust badges and the Reserve-page pool link (added 2026-09-30, DEC-0196)
+## 11. Liquidity trust badges and the Reserve-page pool link (added 2026-09-30, DEC-0218)
 
 Once a Reserve has a pool, its liquidity state becomes a PUBLIC trust signal, shown to every viewer of the Reserve page (not just the Manager), directly under the Reserve name:
 

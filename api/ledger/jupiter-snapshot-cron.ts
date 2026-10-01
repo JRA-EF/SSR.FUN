@@ -10,6 +10,9 @@
 // docs/protocol/LEDGER_ARCHITECTURE.md for the exact Creator action needed
 // to unblock this.
 import { runWeeklyJupiterSnapshot } from "../../lib/ledger/jupiterCatalogue";
+import { markIncompatibleMints } from "../../lib/ledger/markIncompatibleMints";
+import { Connection } from "@solana/web3.js";
+import { resolveRpcUrl } from "../mainnet/_lib/rpc";
 
 interface ApiRequest {
   method?: string;
@@ -50,7 +53,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   try {
     const result = await runWeeklyJupiterSnapshot({ force });
-    res.status(200).json(result);
+    // DEC-0205: a Token-2022 mint carrying one of the five extensions the
+    // program refuses can never be registered as a Reserve asset, so it must
+    // not reach the picker. Read from the chain after each snapshot; a
+    // failure here leaves the catalogue exactly as the snapshot left it
+    // rather than failing the whole cron.
+    let extensions: unknown = null;
+    try {
+      extensions = await markIncompatibleMints(new Connection(resolveRpcUrl(), "confirmed"));
+    } catch (e) {
+      extensions = { error: e instanceof Error ? e.message : "extension scan failed" };
+    }
+    res.status(200).json({ ...result, extensions });
   } catch (e) {
     res.status(503).json({ error: e instanceof Error ? e.message : "Jupiter snapshot failed." });
   }

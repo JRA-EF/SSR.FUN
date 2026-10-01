@@ -89,3 +89,18 @@ alter table reserve_activity_log add column if not exists amount_usd_2 double pr
 alter table reserve_activity_log drop constraint if exists reserve_activity_log_reserve_signature_kind_key;
 create unique index if not exists reserve_activity_log_reserve_sig_kind_ordinal_key
   on reserve_activity_log (reserve, signature, kind, event_index);
+
+-- Per-recipient USDC fee payouts (DEC-0206). A feeUsdcDistributed event
+-- pays several Manager fee recipients in ONE transaction; amount_usd_2 only
+-- holds the Manager-side total, so the Manage page could not show what each
+-- recipient actually received. `payouts` stores the event's own
+-- managerRecipients/managerAmounts as [{"wallet": <base58>, "usdcRaw":
+-- <u64 string>}] -- exact on-chain USDC, never derived from the routing
+-- split (which can change between payouts). Null for every other kind and
+-- for feeUsdcDistributed rows indexed before this column existed; those are
+-- healed lazily by lib/reserve-activity/feePayouts.ts from the stored
+-- signature, never by re-walking a Reserve's history.
+alter table reserve_activity_log add column if not exists payouts jsonb;
+
+create index if not exists reserve_activity_log_fee_payouts_idx
+  on reserve_activity_log (reserve, cluster) where kind = 'feeUsdcDistributed';

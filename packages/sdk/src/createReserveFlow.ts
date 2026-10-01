@@ -9,6 +9,7 @@
 // holding minted test assets without immediately seeding a Reserve with them).
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { assetAta, resolveLegTokenProgram, TOKEN_PROGRAM_ID as SPL_TOKEN_PROGRAM_ID } from "./tokenPrograms";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
@@ -68,7 +69,10 @@ export async function buildCreateReserveInstruction(
       mintAuthority: addresses.mintAuthority,
       reserveTokenMint: addresses.reserveTokenMint,
       manager,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      // The RESERVE TOKEN mint itself is always classic SPL Token -- it is
+      // created by this program, not chosen by anyone (DEC-0201 changes only
+      // the ASSET side, see buildInitializeReserveAssetInstruction below).
+      tokenProgram: SPL_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     } as any)
     .instruction();
@@ -111,12 +115,26 @@ export interface ReserveAssetAddresses {
   mint: PublicKey;
   reserveAsset: PublicKey;
   vault: PublicKey;
+  /**
+   * The token program that owns this mint (DEC-0201). Optional: absent means
+   * classic SPL Token, which every asset selectable before Token-2022 support
+   * was. The VAULT is created under this program by initialize_reserve_asset,
+   * and the on-chain ReserveAsset records it, so getting it wrong here makes
+   * the asset permanently unusable -- callers read it from the mint account's
+   * owner (or the asset catalogue), never guess.
+   */
+  tokenProgram?: PublicKey;
 }
 
-export function deriveReserveAssetAddresses(reserve: PublicKey, mint: PublicKey, programId: PublicKey): ReserveAssetAddresses {
+export function deriveReserveAssetAddresses(
+  reserve: PublicKey,
+  mint: PublicKey,
+  programId: PublicKey,
+  tokenProgram?: PublicKey,
+): ReserveAssetAddresses {
   const [reserveAsset] = findReserveAsset(reserve, mint, programId);
   const [vault] = findReserveVault(reserve, mint, programId);
-  return { mint, reserveAsset, vault };
+  return { mint, reserveAsset, vault, ...(tokenProgram ? { tokenProgram } : {}) };
 }
 
 export async function buildInitializeReserveAssetInstruction(
@@ -136,7 +154,9 @@ export async function buildInitializeReserveAssetInstruction(
       vault: asset.vault,
       vaultAuthority: addresses.vaultAuthority,
       manager,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      // DEC-0201: the asset's OWN program -- this is what the instruction
+      // records on ReserveAsset and creates the vault under.
+      tokenProgram: resolveLegTokenProgram({ tokenProgram: asset.tokenProgram ?? null }),
       systemProgram: SystemProgram.programId,
     } as any)
     .instruction();
@@ -174,13 +194,15 @@ export async function buildSeedReserveInstruction(
   const [tvlAccrual] = findTvlAccrual(addresses.reserve, program.programId);
 
   const remainingAccounts = assets.flatMap((a) => {
-    const managerAssetAta = getAssociatedTokenAddressSync(a.mint, manager);
+    // DEC-0201: per-asset program, and an ATA derived under it.
+    const legTokenProgram = resolveLegTokenProgram({ tokenProgram: a.tokenProgram ?? null });
+    const managerAssetAta = assetAta(a.mint, manager, legTokenProgram);
     return [
       { pubkey: a.reserveAsset, isWritable: false, isSigner: false },
       { pubkey: a.vault, isWritable: true, isSigner: false },
       { pubkey: managerAssetAta, isWritable: true, isSigner: false },
       { pubkey: a.mint, isWritable: false, isSigner: false },
-      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+      { pubkey: legTokenProgram, isWritable: false, isSigner: false },
     ];
   });
 

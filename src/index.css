@@ -659,6 +659,15 @@ input, select, textarea {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
+  /* A truncated address is ONE line, always. The nav is a flex row, so once it
+     got crowded (two chips: Solana and Robinhood) the chip shrank and broke
+     "52b7…7ERa" across two lines inside the pill. */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.wallet-chip .dot {
+  flex-shrink: 0;
 }
 
 .wallet-chip:hover { border-color: var(--accent); }
@@ -924,7 +933,7 @@ input, select, textarea {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
-/* Liquidity trust badges (DEC-0196): the pool's lock state + depth, shown on
+/* Liquidity trust badges (DEC-0218): the pool's lock state + depth, shown on
    Reserve cards. Same taxonomy as the Reserve page's badges -- amber caution
    for unlocked, accent for a running lock, action yellow for permanent, and
    green for deep liquidity. Tokens adapt per theme. */
@@ -1824,9 +1833,15 @@ input, select, textarea {
 }
 
 .fcard-metrics {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
+  /* Four stats (Price, Market Cap, All-Time PNL (%), All-Time Volume --
+     the same row as the Reserve page, 2026-09-15) as a deliberate 2x2
+     grid: a wrapping flex row left the fourth chip stranded alone on its
+     own line once the labels got longer than the old 24h/Prem chips. */
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  justify-content: start;
+  column-gap: 18px;
+  row-gap: 10px;
   flex: 1;
   min-width: 0;
 }
@@ -1884,7 +1899,7 @@ input, select, textarea {
   overflow: hidden;
 }
 
-/* When the card carries a liquidity badge row (DEC-0196), the description
+/* When the card carries a liquidity badge row (DEC-0218), the description
    reserves 2 lines instead of 3 -- the badge row occupies the third line's
    space, so the badge hugs the text and card heights stay aligned. */
 .fcard-desc-with-liq {

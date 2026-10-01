@@ -28,7 +28,7 @@ export interface ReserveCardProps {
   sparklineValueFmt?: (v: number) => string
   topAssets?: string[]
   metrics: ReserveCardMetric[]
-  /** Liquidity trust badges (DEC-0196): lock state of the Reserve Token's pool, plus the deep-liquidity signal. Absent = no pool, no row. */
+  /** Liquidity trust badges (DEC-0218): lock state of the Reserve Token's pool, plus the deep-liquidity signal. Absent = no pool, no row. */
   liquidityBadge?: { kind: 'unlocked' | 'locked' | 'forever'; label: string; deep: boolean }
   ctaLabel?: string
   /** Rendered as the CTA — a router Link in both call sites, kept generic so this component doesn't depend on a specific router. */

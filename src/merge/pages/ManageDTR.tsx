@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -8,7 +8,7 @@ import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onChainDelegateFromDiscovered, computeMarketCap, type AssetPriceInfo } from "@/lib/onChainReserve";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
-import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT } from "@/lib/solana-config";
+import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt, fetchReserveAltAddress } from "@/lib/reserveAltClient";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { LiquiditySection } from "@/components/LiquidityModule";
@@ -30,13 +30,20 @@ import { decodeOnChainPermissions, hasOnChainPermission, ON_CHAIN_PERMISSION_FLA
 import {
   fetchReserveOnChain,
   fetchManagerFeeRecipients,
+  fetchFeeSettlement,
+  type FeeSettlementView,
   discoverDelegatesForReserve,
   DEVNET_FIXTURES,
   DEVUSDC,
   findReserve,
   validateFeeRecipientInputs,
+  fetchReserveTokenMetadata,
+  fitTokenMetadataName,
+  fitTokenMetadataSymbol,
+  registerDynamicSupportedAssetMints,
   type ActivityLogEntry,
   type ManagerFeeRecipientsOnChain,
+  type OnChainTokenMetadata,
   type RecipientInput,
 } from "@ssr/sdk";
 import {
@@ -51,26 +58,33 @@ import {
   executeRemoveReserveAsset,
   executeSubmitRebalance,
   executeUpdateDelegatePermissions,
+  executeSetReserveTokenMetadata,
+  fetchProtocolAuthority,
   type RebalanceAssetPlan,
 } from "@/lib/managementClient";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { applySliderWeightChange, type SliderAsset } from "@/lib/rebalanceSlider";
+import { reseedProposal } from "@/lib/rebalanceProposal";
+import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
+import { addableAssetsForRebalance, type AddableAsset } from "@/lib/rebalanceAddableAssets";
+import { issuerBadgeText, issuerBadgeTitle, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
+import { MAX_ASSETS_PER_RESERVE } from "@/lib/createReserveClient";
 
 /**
  * Real DevNet SPL mints eligible to be added as a new Reserve Asset -- the
  * same set CreateDTR.tsx offers at creation time, minus wrapped SOL
  * (composition-management is meant for ordinary SPL test assets, not the
- * native-SOL zap leg). Empty on Mainnet: Mainnet Reserves are USDC-only for
- * this launch (see docs/project/DECISION_LOG.md's Mainnet-launch entries) --
- * DevNet's devUSDC/mock mints don't exist on Mainnet at all, so offering
- * them here would just be a confusing dead option, never a genuine one.
+ * native-SOL zap leg). DevNet only: on Mainnet the list is the live
+ * catalogue Create Reserve uses (see the useMainnetAssetCatalogue call in
+ * the component -- USDC plus every Jupiter-verified token, xStocks
+ * included), never a hard-coded set. DevNet's devUSDC/mock mints don't exist
+ * on Mainnet at all, so they are never offered there.
  */
-const ADDABLE_ASSETS = IS_MAINNET
-  ? []
-  : [
-      { symbol: DEVUSDC.symbol, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
-      ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({ symbol: m.symbol.toUpperCase(), mint: m.address, decimals: m.decimals })),
-    ];
+const DEVNET_ADDABLE_ASSETS: AddableAsset[] = [
+  { symbol: DEVUSDC.symbol, name: DEVUSDC.name, mint: DEVUSDC.mint, decimals: DEVUSDC.decimals },
+  ...Object.values(DEVNET_FIXTURES.mints).map((m) => ({ symbol: m.symbol.toUpperCase(), name: m.symbol.toUpperCase(), mint: m.address, decimals: m.decimals })),
+];
+const MAINNET_USDC_ADDABLE: AddableAsset = { symbol: "USDC", name: "USD Coin", mint: MAINNET_USDC_MINT, decimals: 6, issuer: null };
 
 // The rebalance slider model's permanent cash slot -- real USDC on Mainnet,
 // devUSDC on DevNet (see the effect below that seeds proposedWeightsBps).
@@ -82,6 +96,45 @@ const COMPOSITION_BAR_COLORS = ["bg-primary", "bg-amber-500", "bg-sky-500", "bg-
 const CASH_SLOT_SYMBOL = IS_MAINNET ? "USDC" : DEVUSDC.symbol;
 const CASH_SLOT_DECIMALS = IS_MAINNET ? 6 : DEVUSDC.decimals;
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
+// DEC-0206: the Activity Log / fee-payout index is served per cluster
+// (api/mainnet/reserve-activity.ts vs api/devnet/reserve-activity.ts) --
+// each route syncs against its own chain and tags rows with its own cluster.
+const ACTIVITY_API_CLUSTER = IS_MAINNET ? "mainnet" : "devnet";
+/** What Manager fees are paid out in: real USDC on Mainnet, the zero-value devUSDC test token on DevNet. */
+const SETTLEMENT_SYMBOL = IS_MAINNET ? "USDC" : DEVUSDC.symbol;
+
+/** Mirror of lib/reserve-activity/feePayouts.ts's FeePayoutTotals -- the `?scope=fees` response body. */
+interface FeePayoutTotalsView {
+  byRecipient: { wallet: string; usdcRaw: string; payoutCount: number; lastTs: number; lastSignature: string }[];
+  pendingHeal: number;
+  backfillComplete: boolean;
+}
+
+/** Raw USDC base units (6 decimals) -> "$0.05". Sub-cent totals still show their real value rather than rounding to "$0.00". */
+function formatUsdcRawAmount(raw: string): string {
+  const value = Number(raw) / 1_000_000;
+  if (value > 0 && value < 0.01) return `$${value.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 })}`;
+  return formatUsdc(value);
+}
+
+/** Whether the Reserve Token price is trustworthy enough to value pending fee shares in USD (mirrors the AUM tile's own "Price unavailable" rule). */
+function managerFeePriceAvailable(d: { tokenPrice: number; onChain?: { priceSource?: string } }): boolean {
+  return d.tokenPrice > 0 && !(IS_MAINNET && d.onChain?.priceSource === "unavailable");
+}
+
+/**
+ * Estimated USD value of the Manager fee shares sitting in the fee vault
+ * (crystallized or already redeemed and awaiting the swap/payout leg) that
+ * ONE recipient will receive at the next settlement: (in vault + pending)
+ * x that recipient's allocation x the Reserve Token's current price. An
+ * estimate by nature -- the keeper's actual swap fixes the real USDC.
+ */
+function formatPendingManagerFeeUsd(fs: FeeSettlementView, allocationBps: number, tokenPrice: number, priceAvailable: boolean): string {
+  const managerShares = BigInt(fs.managerSharesInVault) + BigInt(fs.managerSharesPendingSettlement);
+  const recipientShares = (managerShares * BigInt(allocationBps)) / 10_000n;
+  if (!priceAvailable) return "value unavailable";
+  return `≈ ${formatUsdcRawAmount(Math.round((Number(recipientShares) / 1_000_000) * tokenPrice * 1_000_000).toString())}`;
+}
 
 /**
  * Verified-on-chain delegate row -- reused by both the Overview summary
@@ -228,7 +281,7 @@ function OnChainDelegateRow({
 
 export function ManageDTR() {
   const { dtrId } = useParams();
-  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates, setReserveProfileImage, setReserveYoutube, setReserveHeaderImage } = useAppStore();
+  const { wallet, dtrs, quarantinedReserves, chainDiscoveryStatus, addDelegate, updateDelegatePermissions, removeDelegate, rebalanceDTR, mergeOnChainReserve, setOnChainDelegates, setReserveProfileImage, setReserveYoutube, setReserveHeaderImage, addKnownAssetMints } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const { toast } = useToast();
@@ -314,7 +367,7 @@ export function ManageDTR() {
 
   // DL-01b fix: lazy-loaded only when the Activity tab is actually opened
   // (never an unconditional background poll). Reads from the Reserve
-  // Activity Log's own Postgres index (api/devnet/reserve-activity.ts,
+  // Activity Log's own Postgres index (api/{mainnet,devnet}/reserve-activity.ts,
   // lib/reserve-activity/) instead of walking live RPC directly from the
   // browser -- a live-RPC hiccup during that endpoint's best-effort
   // background sync is reported via `activitySyncError` but never blocks
@@ -329,7 +382,11 @@ export function ManageDTR() {
     if (activeTab !== "activity" || !dtr?.onChain || activityStatus !== "idle") return;
     let cancelled = false;
     setActivityStatus("loading");
-    fetch(`/api/devnet/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
+    // Was hardcoded to /api/devnet/ for BOTH clusters, so a Mainnet Reserve's
+    // activity was indexed against the DevNet RPC and stored under a `devnet`
+    // cursor -- it then read back empty and the Reserve looked inactive
+    // despite real on-chain trades.
+    fetch(`/api/${ACTIVITY_API_CLUSTER}/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}`)
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to load the activity log.");
@@ -373,6 +430,27 @@ export function ManageDTR() {
   // left, current holdings with before/after weight comparison on the
   // right), separate from Delegates tab's own search-less list.
   const [rebalanceAssetSearch, setRebalanceAssetSearch] = useState("");
+  // Same "Asset type" filter as Create Reserve's picker (xStocks / crypto
+  // only) -- narrows the list, never widens what the catalogue offers.
+  const [rebalanceIssuerFilter, setRebalanceIssuerFilter] = useState<IssuerFilter>("all");
+  // Mainnet only: the live catalogue Create Reserve's picker uses, so the
+  // Rebalance tab offers exactly the same assets (USDC plus every
+  // Jupiter-verified token, xStocks included). Registered as dynamically
+  // supported as soon as it loads, for the same reason CreateDTR.tsx does
+  // it: a Reserve that just registered a brand-new asset must still count
+  // as tradable (isReserveTradable) on the very next refresh, before the
+  // ledger's known-mints list catches up.
+  const mainnetCatalogue = useMainnetAssetCatalogue(IS_MAINNET);
+  useEffect(() => {
+    if (IS_MAINNET && mainnetCatalogue.tokens.length > 0) {
+      registerDynamicSupportedAssetMints(mainnetCatalogue.tokens.map((t) => t.mint));
+    }
+  }, [mainnetCatalogue.tokens]);
+  const offeredAddableAssets = useMemo<AddableAsset[]>(() => {
+    if (!IS_MAINNET) return DEVNET_ADDABLE_ASSETS;
+    return [MAINNET_USDC_ADDABLE, ...mainnetCatalogue.tokens.filter((t) => t.mint !== MAINNET_USDC_MINT)];
+  }, [mainnetCatalogue.tokens]);
+  const rebalanceIssuerFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.issuer);
   const [onChainTxPending, setOnChainTxPending] = useState<string | null>(null); // which action is in flight, for button disabling
 
   // Profile-picture editor (Overview tab's Reserve Identity card). The
@@ -380,6 +458,35 @@ export function ManageDTR() {
   // reserveImageClient.ts) and held here for preview until saved.
   const [pendingProfileImage, setPendingProfileImage] = useState<string | null>(null);
   const [profileImageError, setProfileImageError] = useState<string | null>(null);
+  // On-chain (Metaplex) token metadata of the Reserve Token -- what wallets
+  // and exchanges display. undefined = not loaded yet, null = none published.
+  const [tokenMetadataOnChain, setTokenMetadataOnChain] = useState<OnChainTokenMetadata | null | undefined>(undefined);
+  const [publishingTokenMetadata, setPublishingTokenMetadata] = useState(false);
+  const [tokenMetadataError, setTokenMetadataError] = useState<string | null>(null);
+  const [protocolAuthority, setProtocolAuthority] = useState<string | null>(null);
+  const reserveTokenMintForMetadata = TOKEN_METADATA_LIVE ? (dtr?.onChain?.reserveTokenMint ?? null) : null;
+  useEffect(() => {
+    if (!reserveTokenMintForMetadata) {
+      setTokenMetadataOnChain(undefined);
+      return;
+    }
+    let cancelled = false;
+    void fetchReserveTokenMetadata(connection, new PublicKey(reserveTokenMintForMetadata))
+      .then((m) => {
+        if (!cancelled) setTokenMetadataOnChain(m);
+      })
+      .catch(() => {
+        if (!cancelled) setTokenMetadataOnChain(undefined);
+      });
+    void fetchProtocolAuthority(connection)
+      .then((a) => {
+        if (!cancelled) setProtocolAuthority(a);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [connection, reserveTokenMintForMetadata]);
   // True while a picked picture is uploading/saving -- its own flag (not
   // onChainTxPending) because saving a picture no longer submits any
   // transaction at all.
@@ -392,6 +499,18 @@ export function ManageDTR() {
   // synthesized entry means this Reserve hasn't opted into multi-recipient
   // routing yet, see fetchManagerFeeRecipients's doc comment.
   const [feeRecipientsData, setFeeRecipientsData] = useState<ManagerFeeRecipientsOnChain | null>(null);
+  // The USDC fee-settlement vault position for this Reserve (DEC-0173). Mint &
+  // TVL fees accrue HERE (settled to USDC by the keeper), NOT into the in-kind
+  // pendingManagerFeeShares below -- surfaced so a Manager sees their real
+  // earned fees instead of a misleadingly-empty in-kind claimable.
+  const [feeSettlement, setFeeSettlement] = useState<FeeSettlementView | null>(null);
+  // DEC-0206: what each recipient has actually RECEIVED in USDC, read from
+  // the indexed feeUsdcDistributed events (api/*/reserve-activity?scope=fees).
+  // Manager fees are never claimed on this protocol -- the keeper pays USDC
+  // straight to each recipient's wallet -- so this, not an in-kind balance,
+  // is the number a Manager needs to see.
+  const [feePayouts, setFeePayouts] = useState<FeePayoutTotalsView | null>(null);
+  const [feePayoutsStatus, setFeePayoutsStatus] = useState<"loading" | "ready" | "error">("loading");
   // CLAIMANT-ONLY UI (2026-08-14 pass, see docs/project/DECISION_LOG.md):
   // keyed by recipient wallet, independent of `onChainTxPending` -- clicking
   // one recipient's Collect button must never show another recipient's row
@@ -418,9 +537,25 @@ export function ManageDTR() {
         dtr.onChain.pendingManagerFeeShares ?? "0",
       );
       setFeeRecipientsData(data);
+      const fs = await fetchFeeSettlement(connection, programId, new PublicKey(dtr.onChain.reserve));
+      setFeeSettlement(fs);
     } catch {
       // Transient RPC failure -- leave the last-known data in place rather
       // than flashing an empty state; the next poll will retry.
+    }
+    await refreshFeePayouts();
+  }
+
+  async function refreshFeePayouts() {
+    if (!dtr?.onChain) return;
+    try {
+      const res = await fetch(`/api/${ACTIVITY_API_CLUSTER}/reserve-activity?reserve=${encodeURIComponent(dtr.onChain.reserve)}&scope=fees`);
+      const data = await res.json();
+      if (!res.ok || !data?.feePayouts) throw new Error(data?.error || "Failed to load fee payouts.");
+      setFeePayouts(data.feePayouts as FeePayoutTotalsView);
+      setFeePayoutsStatus("ready");
+    } catch {
+      setFeePayoutsStatus("error");
     }
   }
 
@@ -531,47 +666,49 @@ export function ManageDTR() {
   // on-chain branch. `sessionAddedAssets` holds assets the user has added
   // to the proposed composition THIS SESSION but not yet submitted --
   // ordinary slider rows, removable pre-submit with zero transactions.
-  // `proposedWeightsBps` is the live proposed composition in bps, seeded
-  // (fill-gaps-only) from each on-chain asset's real weight. Neither state
-  // is touched by adjusting a slider, adding, or removing an asset -- only
-  // Submit Rebalance ever prompts the wallet.
+  // `proposedWeightsBps` is the live proposed composition in bps, derived
+  // from each on-chain asset's real weight (see rebalanceProposal.ts).
+  // Neither state is touched by adjusting a slider, adding, or removing an
+  // asset -- only Submit Rebalance ever prompts the wallet.
   const [sessionAddedAssets, setSessionAddedAssets] = useState<{ mint: string; symbol: string; decimals: number }[]>([]);
   const [proposedWeightsBps, setProposedWeightsBps] = useState<Record<string, number>>({});
+  // On-chain assets the Manager took out of the list with the trash icon:
+  // proposed at 0% and shown collapsed, since an asset that is already
+  // registered on-chain cannot leave the composition by a rebalance alone
+  // (remove_reserve_asset needs an empty vault and the last order_index).
+  const [removedOnChainMints, setRemovedOnChainMints] = useState<ReadonlySet<string>>(() => new Set());
+  // The on-chain targets the proposal has already accounted for -- what lets
+  // reseedProposal tell "changed on-chain" from "re-reported unchanged".
+  const chainSeenRef = useRef<Record<string, number>>({});
 
-  // Seeds proposedWeightsBps from each on-chain asset's real weight
-  // whenever a new mint appears (e.g. after Submit Rebalance's own
-  // refresh) -- fills gaps only, never clobbers an in-progress edit. If the
-  // Reserve's on-chain assets don't already sum to 10,000bps and the cash
-  // slot isn't already registered, auto-seeds a cash-slot row (as a
-  // session-added asset) holding the slack -- this model has no separate
-  // "unallocated" concept, the cash slot absorbs it.
+  // Re-derives proposedWeightsBps whenever the on-chain composition is
+  // (re)read. An asset whose on-chain target changed takes the real target;
+  // one whose target is unchanged keeps the in-progress edit; the total is
+  // normalised to exactly 100% whenever every on-chain asset is visible --
+  // and never normalised (nor padded with invented slack) while one is not.
+  // This replaced a fill-gaps-only seed that could keep a stale weight AND
+  // add a later-resolved asset's real weight on top (the "200%" report).
   useEffect(() => {
     if (!dtr?.onChain) return;
     const onChainAssets = dtr.onChain.assets;
-    const existingTotal = onChainAssets.reduce((s, a) => s + a.weightBps, 0);
-    const slack = Math.max(0, 10_000 - existingTotal);
+    const resolvedFully = dtr.onChain.assetsResolvedFully !== false;
     const hasOnChainCashSlot = onChainAssets.some((a) => a.mint === CASH_SLOT_MINT);
+    const onChainMintSet = new Set(onChainAssets.map((a) => a.mint));
+    // A removed on-chain asset that is no longer on-chain (removed for good) needs no pin any more.
+    setRemovedOnChainMints((prev) => {
+      const kept = [...prev].filter((m) => onChainMintSet.has(m));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+    // The updater must stay pure (React may invoke it more than once), so
+    // the "seen" bookkeeping is captured before and written after it.
+    const chainNow = onChainAssets.map((a) => ({ mint: a.mint, weightBps: a.weightBps }));
+    const seenBefore = chainSeenRef.current;
+    setProposedWeightsBps((prev) => reseedProposal(prev, chainNow, seenBefore, CASH_SLOT_MINT, resolvedFully, removedOnChainMints).weights);
+    chainSeenRef.current = reseedProposal({}, chainNow, seenBefore, CASH_SLOT_MINT, resolvedFully).chainSeen;
     // The cash slot (devUSDC on DevNet, real USDC on Mainnet) is this
     // model's permanent cash slot -- always present in the proposed
     // composition (even at 0%) so every edit has somewhere to move weight
-    // to/from, and any currently-unallocated on-chain weight (slack) is
-    // folded into its seed value rather than left floating outside the
-    // model, which would otherwise make 100% unreachable by any slider edit.
-    setProposedWeightsBps((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const a of onChainAssets) {
-        if (!(a.mint in next)) {
-          next[a.mint] = a.mint === CASH_SLOT_MINT ? a.weightBps + slack : a.weightBps;
-          changed = true;
-        }
-      }
-      if (!hasOnChainCashSlot && !(CASH_SLOT_MINT in next)) {
-        next[CASH_SLOT_MINT] = slack;
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
+    // to/from; as a session-added row when the Reserve does not hold it yet.
     if (!hasOnChainCashSlot) {
       setSessionAddedAssets((prev) => (prev.some((a) => a.mint === CASH_SLOT_MINT) ? prev : [...prev, { mint: CASH_SLOT_MINT, symbol: CASH_SLOT_SYMBOL, decimals: CASH_SLOT_DECIMALS }]));
     }
@@ -598,7 +735,7 @@ export function ManageDTR() {
       return pruned.length === prev.length ? prev : pruned;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dtr?.onChain?.assets.map((a) => `${a.mint}:${a.weightBps}`).join(",")]);
+  }, [dtr?.onChain?.assets.map((a) => `${a.mint}:${a.weightBps}`).join(","), dtr?.onChain?.assetsResolvedFully, removedOnChainMints]);
 
   /** Re-fetches this Reserve's on-chain state immediately after a confirmed composition/wind-down/rebalance tx, rather than waiting for RealReserveSync's next poll. `extraCandidateMints` covers a mint just registered this call (e.g. via add_reserve_asset_active) that wouldn't otherwise be in the known asset list yet. */
   async function refreshRealReserveNow(extraCandidateMints: string[] = []) {
@@ -659,6 +796,11 @@ export function ManageDTR() {
     try {
       const signature = await action();
       toast(transactionConfirmedToast(signature, `${label} confirmed`));
+      // A mint registered by this action joins the app's known Mainnet
+      // asset list right away (as CreateDTR.tsx does after a launch), so
+      // discovery keeps this Reserve tradable before the ledger's daily
+      // known-mints refresh would otherwise catch up.
+      if (IS_MAINNET && extraCandidateMints.length > 0) addKnownAssetMints(extraCandidateMints);
       await refreshRealReserveNow(extraCandidateMints);
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
@@ -726,6 +868,12 @@ export function ManageDTR() {
   // the !dtr.onChain branches above (hasManageDelegates/hasRebalance) keep
   // using the local-simulated system for a purely local/demo Reserve.
   const canUpdateMetadataOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_METADATA);
+  // Publishing the Reserve Token's on-chain metadata: same permission as
+  // editing the Reserve's metadata, plus the protocol authority (backfill).
+  const canPublishTokenMetadata = Boolean(dtr.onChain) && (canUpdateMetadataOnChain || (protocolAuthority !== null && protocolAuthority === wallet.address));
+  const tokenMetadataStale = Boolean(
+    tokenMetadataOnChain && (tokenMetadataOnChain.name !== fitTokenMetadataName(dtr.name) || tokenMetadataOnChain.symbol !== fitTokenMetadataSymbol(dtr.ticker)),
+  );
   const canUpdateTargetsOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.UPDATE_TARGETS);
   const canManageLiquidityConfigOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.MANAGE_LIQUIDITY_CONFIG);
   const canAddRestrictedDelegateOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.ADD_RESTRICTED_DELEGATE);
@@ -828,6 +976,29 @@ export function ManageDTR() {
         setProfileImageError(e instanceof Error ? e.message : "Failed to save the profile picture. Please try again.");
       } finally {
         setSavingProfileImage(false);
+      }
+    })();
+  };
+
+  // Handler: publish the Reserve Token's on-chain metadata (Reserve Identity card).
+  const handlePublishTokenMetadata = () => {
+    const onChainMeta = dtr.onChain;
+    if (!onChainMeta) return;
+    if (!onChainMeta.metadataUri) {
+      setTokenMetadataError("This Reserve's metadata record could not be read from the chain, so there is nothing to publish yet.");
+      return;
+    }
+    setTokenMetadataError(null);
+    setPublishingTokenMetadata(true);
+    void (async () => {
+      try {
+        await executeSetReserveTokenMetadata(connection, walletCtx, onChainMeta.reserve, onChainMeta.reserveTokenMint, onChainMeta.metadataUri!, dtr.name, dtr.ticker);
+        setTokenMetadataOnChain(await fetchReserveTokenMetadata(connection, new PublicKey(onChainMeta.reserveTokenMint)));
+        toast({ title: "Token metadata published", description: "Wallets and exchanges will now show this Reserve Token's name, symbol, and picture." });
+      } catch (e) {
+        setTokenMetadataError(e instanceof Error ? e.message : "Failed to publish the token metadata. Please try again.");
+      } finally {
+        setPublishingTokenMetadata(false);
       }
     })();
   };
@@ -1009,7 +1180,12 @@ export function ManageDTR() {
    */
   function handleSliderChange(mint: string, newWeightBps: number) {
     setProposedWeightsBps((prev) => {
-      const current: SliderAsset[] = proposedAssetRows.map((r) => ({ mint: r.mint, weightBps: prev[r.mint] ?? 0 }));
+      // An asset taken out of the list stays out of the model (pinned at 0)
+      // unless it is the one being edited -- so no other slider can push
+      // weight back into it.
+      const current: SliderAsset[] = proposedAssetRows
+        .filter((r) => r.mint === mint || !removedOnChainMints.has(r.mint))
+        .map((r) => ({ mint: r.mint, weightBps: prev[r.mint] ?? 0 }));
       const updated = applySliderWeightChange(current, mint, newWeightBps, CASH_SLOT_MINT);
       const next = { ...prev };
       for (const a of updated) next[a.mint] = a.weightBps;
@@ -1034,6 +1210,32 @@ export function ManageDTR() {
     });
   }
 
+  /**
+   * The trash icon on a proposed row. A not-yet-submitted asset simply leaves
+   * the list. An asset already registered on-chain is proposed at 0% -- its
+   * weight moves to the cash slot (or, for the cash slot itself, spreads
+   * across the other assets) -- and its row collapses; it stays registered
+   * until the separate Remove action once its vault is empty. Pure local
+   * state, never a transaction.
+   */
+  function handleRemoveFromProposal(row: { mint: string; isNew: boolean }) {
+    if (row.isNew) {
+      handleRemoveSessionAsset(row.mint);
+      return;
+    }
+    handleSliderChange(row.mint, 0);
+    setRemovedOnChainMints((prev) => new Set([...prev, row.mint]));
+  }
+
+  /** Puts a collapsed on-chain row back in the list, still at 0% until its slider is moved. */
+  function handleRestoreToProposal(mint: string) {
+    setRemovedOnChainMints((prev) => {
+      const next = new Set(prev);
+      next.delete(mint);
+      return next;
+    });
+  }
+
   // A session-added asset left at 0% is simply never submitted -- no point
   // registering a zero-weight asset (wastes an asset slot for nothing), so
   // it silently drops out of the plan rather than round-tripping through
@@ -1042,11 +1244,12 @@ export function ManageDTR() {
     ? [
         ...[...dtr.onChain.assets].sort((a, b) => a.orderIndex - b.orderIndex).map((a) => ({
           mint: a.mint,
+          symbol: a.symbol,
           isNew: false,
           targetWeightBps: proposedWeightsBps[a.mint] ?? a.weightBps,
         })),
         ...sessionAddedAssets
-          .map((sa) => ({ mint: sa.mint, isNew: true, targetWeightBps: proposedWeightsBps[sa.mint] ?? 0 }))
+          .map((sa) => ({ mint: sa.mint, symbol: sa.symbol, isNew: true, targetWeightBps: proposedWeightsBps[sa.mint] ?? 0 }))
           .filter((a) => a.targetWeightBps > 0),
       ]
     : [];
@@ -1055,6 +1258,10 @@ export function ManageDTR() {
   const hasRebalanceChanges = dtr.onChain
     ? submitNeedsLiquidityConfig || dtr.onChain.assets.some((a) => (proposedWeightsBps[a.mint] ?? a.weightBps) !== a.weightBps)
     : false;
+  // update_targets must name every registered asset; while a discovery pass
+  // could not resolve one, a submit would fail on-chain and the sliders
+  // would be proposing against an incomplete picture -- so Rebalance pauses.
+  const rebalanceChainVisible = dtr.onChain ? dtr.onChain.assetsResolvedFully !== false : true;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl relative">
@@ -1208,6 +1415,40 @@ export function ManageDTR() {
                       <p className="font-merge-mono font-medium">{dtr.ticker}</p>
                     </div>
                   </div>
+                  {dtr.onChain && TOKEN_METADATA_LIVE && (
+                    <div>
+                      <p className="text-sm font-semibold text-muted-foreground mb-1">Wallets and Exchanges</p>
+                      {tokenMetadataOnChain === undefined ? (
+                        <p className="text-sm text-muted-foreground">Checking the on-chain token metadata...</p>
+                      ) : tokenMetadataOnChain === null ? (
+                        <p className="text-sm text-muted-foreground">
+                          Not published yet. Wallets and exchanges show this Reserve Token without its name, symbol, or picture until the metadata is published on-chain.
+                        </p>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Published on-chain as <span className="font-medium text-foreground">{tokenMetadataOnChain.name}</span> (
+                          <span className="font-merge-mono">{tokenMetadataOnChain.symbol}</span>). Wallets and exchanges show this name, symbol, and picture.
+                          {tokenMetadataStale && " The Reserve's name or ticker has changed since -- publish again to update it."}
+                        </p>
+                      )}
+                      {canPublishTokenMetadata && tokenMetadataOnChain !== undefined && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant={tokenMetadataOnChain === null || tokenMetadataStale ? "default" : "outline"}
+                            disabled={publishingTokenMetadata}
+                            onClick={handlePublishTokenMetadata}
+                          >
+                            {publishingTokenMetadata ? "Publishing..." : tokenMetadataOnChain === null ? "Publish to wallets and exchanges" : "Publish again"}
+                          </Button>
+                          <p className="text-xs text-muted-foreground">
+                            Your wallet will ask you to approve one transaction{tokenMetadataOnChain === null ? " and pay a small one-time account fee" : ""}.
+                          </p>
+                        </div>
+                      )}
+                      {tokenMetadataError && <p className="text-sm text-destructive mt-2">{tokenMetadataError}</p>}
+                    </div>
+                  )}
                   <div>
                     <p className="text-sm font-semibold text-muted-foreground mb-2">YouTube</p>
                     {canEditProfilePicture ? (
@@ -1301,8 +1542,19 @@ export function ManageDTR() {
                     <p className="text-sm font-semibold text-muted-foreground mb-1">Root Manager</p>
                     <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.managerAddress}</p>
                   </div>
+                  {/* DEC-0200: the Reserve Token mint was absent from this page
+                      entirely, and "Reserve Contract" bound the Reserve PDA --
+                      so a manager had no way to read the address holders
+                      actually need. Mint first (the token's identity), Reserve
+                      account second, each labelled for what it is. */}
                   <div>
-                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Contract</p>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Token Mint</p>
+                    <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">
+                      {dtr.onChain?.reserveTokenMint ?? <span className="text-muted-foreground">Loading from chain...</span>}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground mb-1">Reserve Account</p>
                     <p className="font-merge-mono text-sm break-all bg-muted/50 p-2 rounded border border-border">{dtr.dtrAddress}</p>
                   </div>
                 </CardContent>
@@ -1458,7 +1710,7 @@ export function ManageDTR() {
                   </div>
                   {dtr.onChain && (dtr.feeConfig.managerBuyTaxPct > 0 || dtr.feeConfig.managerSellTaxPct > 0) && (
                     <p className="text-xs text-muted-foreground italic -mt-2">
-                      Buy Tax and Sell Tax are configuration for a future secondary market (e.g. a DEX listing) -- not enforced by minting or redeeming directly from this Reserve.
+                      Buy Tax and Sell Tax are charged in USDC on Buys and Sells made through SSR.fun and split 50/50 between the Manager's fee destination and the protocol. Not applied to plain transfers or trades on other venues.
                     </p>
                   )}
 
@@ -1475,8 +1727,10 @@ export function ManageDTR() {
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground mb-3">
-                        Fees accrue in-kind as pending Reserve Token shares. Only a recipient's own connected wallet can collect its balance --
-                        the root Manager cannot collect on a recipient's behalf, and recipients cannot collect for each other.
+                        Manager fees are paid in {SETTLEMENT_SYMBOL}. Every creation, mint and TVL fee is set aside in this Reserve's fee vault, and the hourly
+                        fee-settlement service converts it to {SETTLEMENT_SYMBOL} and pays each recipient's share straight into that wallet's {SETTLEMENT_SYMBOL} account --
+                        there is nothing to claim. The mint fee's Manager share is {dtr.onChain?.effectiveMintFeeManagerBps != null ? `${(dtr.onChain.effectiveMintFeeManagerBps / 100).toFixed(2)}%` : "its configured share"} of each mint,
+                        split between the recipients below by their percentages.
                         {feeRecipientsData && (
                           <>
                             {" "}
@@ -1486,20 +1740,70 @@ export function ManageDTR() {
                           </>
                         )}
                       </p>
+                      {feeSettlement && (BigInt(feeSettlement.managerSharesInVault) > 0n || BigInt(feeSettlement.managerSharesPendingSettlement) > 0n) && (
+                        <div className="p-3 mb-3 bg-muted/30 rounded-lg border border-border/50">
+                          <p className="text-xs font-semibold text-muted-foreground mb-1">Awaiting the next settlement</p>
+                          <p className="text-xs text-muted-foreground">
+                            Manager fees set aside but not yet paid out:{" "}
+                            <span className="font-merge-mono text-foreground">
+                              {formatPendingManagerFeeUsd(feeSettlement, 10_000, dtr.tokenPrice, managerFeePriceAvailable(dtr))}
+                            </span>
+                            {" "}({(Number(BigInt(feeSettlement.managerSharesInVault) + BigInt(feeSettlement.managerSharesPendingSettlement)) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker} in the fee vault).
+                            {" "}The settlement service runs every hour and pays it out in {SETTLEMENT_SYMBOL}.
+                          </p>
+                        </div>
+                      )}
+                      {feePayoutsStatus === "error" && (
+                        <p className="text-xs text-muted-foreground mb-3 flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" /> Couldn't load the {SETTLEMENT_SYMBOL} payout history just now -- the balances below refresh on the next load.
+                        </p>
+                      )}
+                      {feePayouts && (feePayouts.pendingHeal > 0 || !feePayouts.backfillComplete) && (
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Payout history is still syncing -- the {SETTLEMENT_SYMBOL} totals below may not yet include every past payout.
+                        </p>
+                      )}
                       <div className="space-y-2 mb-3">
                         {(feeRecipientsData?.recipients ?? []).map((r) => {
                           const isConnectedWallet = wallet.connected && wallet.address === r.wallet;
                           const isCollectingThisRow = collectingRecipient === r.wallet;
                           const lastCollection = lastRecipientCollection[r.wallet];
+                          const paid = feePayouts?.byRecipient.find((p) => p.wallet === r.wallet);
+                          const hasLegacyInKind = BigInt(r.pendingFeeShares) > 0n || BigInt(r.collectedFeeShares) > 0n;
                           return (
                             <div key={r.wallet} className="p-3 bg-muted/30 rounded-lg border border-border/50 flex items-center justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="font-merge-mono text-xs truncate">{r.wallet}</p>
                                 <p className="text-xs text-muted-foreground">
-                                  {(r.allocationBps / 100).toFixed(1)}% of Manager share &middot; total accrued / currently claimable{" "}
-                                  {(Number(r.pendingFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
-                                  {" "}&middot; total collected {(Number(r.collectedFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                  {(r.allocationBps / 100).toFixed(1)}% of Manager share &middot; {SETTLEMENT_SYMBOL} received{" "}
+                                  <span className="font-merge-mono text-foreground">
+                                    {feePayoutsStatus === "loading" ? "..." : formatUsdcRawAmount(paid?.usdcRaw ?? "0")}
+                                  </span>
+                                  {paid && paid.payoutCount > 0 && (
+                                    <>
+                                      {" "}({paid.payoutCount} {paid.payoutCount === 1 ? "payout" : "payouts"}, last {new Date(paid.lastTs * 1000).toLocaleString()}{" "}
+                                      <a href={explorerUrl("tx", paid.lastSignature)} target="_blank" rel="noreferrer" className="underline hover:text-foreground">
+                                        {paid.lastSignature.slice(0, 8)}...
+                                      </a>)
+                                    </>
+                                  )}
+                                  {feeSettlement && (BigInt(feeSettlement.managerSharesInVault) > 0n || BigInt(feeSettlement.managerSharesPendingSettlement) > 0n) && (
+                                    <>
+                                      {" "}&middot; awaiting settlement{" "}
+                                      <span className="font-merge-mono text-foreground">
+                                        {formatPendingManagerFeeUsd(feeSettlement, r.allocationBps, dtr.tokenPrice, managerFeePriceAvailable(dtr))}
+                                      </span>
+                                    </>
+                                  )}
                                 </p>
+                                {hasLegacyInKind && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Legacy in-kind balance (fees from before the 2026-09-08 fee-vault upgrade): claimable{" "}
+                                    {(Number(r.pendingFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}
+                                    {" "}&middot; collected {(Number(r.collectedFeeShares) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} {dtr.ticker}.
+                                    {" "}Only this recipient's own connected wallet can collect it.
+                                  </p>
+                                )}
                                 {lastCollection && (
                                   <p className="text-xs text-muted-foreground">
                                     Last collection: {new Date(lastCollection.ts * 1000).toLocaleString()} &middot;{" "}
@@ -1509,18 +1813,18 @@ export function ManageDTR() {
                                   </p>
                                 )}
                               </div>
-                              {isConnectedWallet ? (
+                              {isConnectedWallet && BigInt(r.pendingFeeShares) > 0n ? (
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   className="shrink-0 gap-1.5"
-                                  disabled={collectingRecipient !== null || r.pendingFeeShares === "0"}
+                                  disabled={collectingRecipient !== null}
                                   onClick={() => void collectRecipientFee(r.wallet)}
                                 >
-                                  <Coins className="w-3.5 h-3.5" /> {isCollectingThisRow ? "Confirming..." : "Collect"}
+                                  <Coins className="w-3.5 h-3.5" /> {isCollectingThisRow ? "Confirming..." : "Collect legacy balance"}
                                 </Button>
                               ) : (
-                                <Badge variant="secondary" className="shrink-0 text-xs">Claimable by this wallet</Badge>
+                                <Badge variant="secondary" className="shrink-0 text-xs">Paid in {SETTLEMENT_SYMBOL}{isConnectedWallet ? " to this wallet" : ""}</Badge>
                               )}
                             </div>
                           );
@@ -2085,34 +2389,86 @@ export function ManageDTR() {
                       {/* Left: search + add a new reserve asset -- one click, purely local */}
                       <div className="space-y-4">
                         <h4 className="font-semibold text-sm">Add a Reserve Asset</h4>
+                        {IS_MAINNET && mainnetCatalogue.status === "loading" && (
+                          <p className="text-xs text-muted-foreground">Loading the full Mainnet asset list...</p>
+                        )}
+                        {IS_MAINNET && mainnetCatalogue.status === "unavailable" && (
+                          <p className="text-xs text-muted-foreground">Showing USDC only -- the full Mainnet asset list is temporarily unavailable.</p>
+                        )}
                         <div className="relative">
                           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                           <Input
-                            placeholder="Search assets to add..."
+                            placeholder="Search by name, ticker, or contract address..."
                             className="pl-9"
                             value={rebalanceAssetSearch}
                             onChange={(e) => setRebalanceAssetSearch(e.target.value)}
                           />
                         </div>
+                        {rebalanceIssuerFilterAvailable && (
+                          <div className="flex items-center gap-2">
+                            <label htmlFor="rebalance-issuer-filter" className="text-xs text-muted-foreground">Asset type</label>
+                            <select
+                              id="rebalance-issuer-filter"
+                              className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                              value={rebalanceIssuerFilter}
+                              onChange={(e) => setRebalanceIssuerFilter(e.target.value as IssuerFilter)}
+                            >
+                              {ISSUER_FILTER_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                         <div className="border border-border rounded-lg max-h-[280px] overflow-y-auto p-2 bg-muted/20 space-y-1">
-                          {ADDABLE_ASSETS.filter((a) => !proposedAssetRows.some((r) => r.mint === a.mint))
-                            .filter((a) => a.symbol.toLowerCase().includes(rebalanceAssetSearch.toLowerCase()))
-                            .map((a) => (
+                          {(() => {
+                            // The on-chain program caps a Reserve's assets; refusing here, before
+                            // anything is proposed, is what keeps Submit Rebalance from failing late.
+                            const atAssetLimit = proposedAssetRows.length >= MAX_ASSETS_PER_RESERVE;
+                            const { assets: addable, emptyState } = addableAssetsForRebalance(
+                              offeredAddableAssets,
+                              proposedAssetRows.map((r) => r.mint),
+                              rebalanceAssetSearch,
+                              rebalanceIssuerFilter,
+                            );
+                            if (atAssetLimit) {
+                              return (
+                                <div className="p-4 text-center text-sm text-muted-foreground">
+                                  This Reserve holds the maximum of {MAX_ASSETS_PER_RESERVE} assets. Remove one to add a different asset.
+                                </div>
+                              );
+                            }
+                            if (emptyState === "all-added") {
+                              return <div className="p-4 text-center text-sm text-muted-foreground">Every supported asset is already in your proposed composition.</div>;
+                            }
+                            if (emptyState === "no-match") {
+                              return <div className="p-4 text-center text-sm text-muted-foreground">No assets match "{rebalanceAssetSearch.trim()}".</div>;
+                            }
+                            if (emptyState === "none-for-type") {
+                              return <div className="p-4 text-center text-sm text-muted-foreground">No eligible assets of that type{rebalanceAssetSearch.trim() ? ` match "${rebalanceAssetSearch.trim()}"` : ""}.</div>;
+                            }
+                            return addable.map((a) => (
                               <div key={a.mint} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
-                                <span className="font-semibold font-merge-mono text-sm">{a.symbol}</span>
+                                <div className="min-w-0">
+                                  <span className="font-semibold text-sm">{a.name}</span>
+                                  <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{a.symbol}</span>
+                                  {a.issuer && (
+                                    <span className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-primary/40 text-primary" title={issuerBadgeTitle(a.issuer)}>
+                                      {issuerBadgeText(a.issuer)}
+                                    </span>
+                                  )}
+                                  <div className="text-xs text-muted-foreground font-merge-mono">{a.mint.slice(0, 4)}...{a.mint.slice(-4)}</div>
+                                </div>
                                 <Button
-                                  variant="ghost" size="sm" className="h-8 w-8 p-0"
+                                  variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0"
                                   disabled={!canManageLiquidityConfigOnChain}
                                   title={!canManageLiquidityConfigOnChain ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission to register a new asset." : undefined}
-                                  onClick={() => handleAddAssetToSession(a)}
+                                  onClick={() => handleAddAssetToSession({ symbol: a.symbol, mint: a.mint, decimals: a.decimals })}
                                 >
                                   <Plus className="w-4 h-4 text-primary" />
                                 </Button>
                               </div>
-                            ))}
-                          {ADDABLE_ASSETS.filter((a) => !proposedAssetRows.some((r) => r.mint === a.mint)).length === 0 && (
-                            <div className="p-4 text-center text-sm text-muted-foreground">Every supported asset is already in your proposed composition.</div>
-                          )}
+                            ));
+                          })()}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           Adding an asset here is free and only changes your proposal below -- it's registered on-chain, at zero
@@ -2192,6 +2548,23 @@ export function ManageDTR() {
                               const projectedUsd = (proposedBps / 10_000) * totalReserveUsd;
                               const isDrivenToZero = proposedBps === 0 && row.benchmarkBps > 0;
                               const canRemoveOnChain = !row.isNew && isEmpty && row.mint === lastOnChainMint;
+                              const isCashSlot = row.mint === CASH_SLOT_MINT;
+                              const isSessionCashSlot = row.isNew && isCashSlot;
+
+                              if (removedOnChainMints.has(row.mint)) {
+                                // Taken out of the list: proposed at 0%, collapsed, restorable.
+                                return (
+                                  <div key={row.mint} className="px-3 py-2 border border-dashed border-border rounded-lg bg-muted/20 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                    <span>
+                                      <span className="font-semibold font-merge-mono text-foreground">{row.symbol}</span> set to 0% for this rebalance. It stays registered
+                                      on-chain until you use Remove once its balance is empty.
+                                    </span>
+                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs shrink-0" onClick={() => handleRestoreToProposal(row.mint)}>
+                                      Restore
+                                    </Button>
+                                  </div>
+                                );
+                              }
 
                               return (
                                 <div key={row.mint} className="p-3 border border-border rounded-lg bg-card space-y-2.5">
@@ -2205,15 +2578,22 @@ export function ManageDTR() {
                                       <span className="text-xs text-muted-foreground font-merge-mono">
                                         {formatUsdc(balanceUsd, { compact: true })} bal.
                                       </span>
-                                      {row.isNew && (
-                                        <Button
-                                          variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                                          onClick={() => handleRemoveSessionAsset(row.mint)}
-                                          title="Remove from proposed composition"
-                                        >
-                                          <X className="w-3.5 h-3.5" />
-                                        </Button>
-                                      )}
+                                      <Button
+                                        variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                        disabled={!canUpdateTargetsOnChain || isSessionCashSlot}
+                                        onClick={() => handleRemoveFromProposal(row)}
+                                        title={
+                                          isSessionCashSlot
+                                            ? "USDC is the cash slot every other weight moves through, so it always stays in the list. Set it to 0% with its slider instead."
+                                            : row.isNew
+                                              ? "Remove from the proposed composition. The weight it held moves to USDC."
+                                              : isCashSlot
+                                                ? "Set USDC to 0% and spread its weight across the other assets. It stays registered on-chain."
+                                                : "Take this asset out of the rebalance: proposed at 0%, its weight moves to USDC. It stays registered on-chain until you use Remove once its balance is empty."
+                                        }
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </Button>
                                     </div>
                                   </div>
 
@@ -2318,20 +2698,29 @@ export function ManageDTR() {
                             rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint),
                           )
                         }
-                        disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null}
+                        disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null || !rebalanceChainVisible}
                         title={
                           !canUpdateTargetsOnChain
                             ? "You need the Root Manager or a co-manager with Update Targets permission to submit a rebalance."
                             : !canSubmitRebalance
                               ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission to register a new asset."
-                              : undefined
+                              : !rebalanceChainVisible
+                                ? "Not every asset this Reserve holds could be read right now. Rebalancing resumes once all of them are visible."
+                                : undefined
                         }
                         className="w-full sm:w-auto font-bold gap-2"
                       >
                         <Save className="w-4 h-4" /> {onChainTxPending === "Submit Rebalance" ? "Confirming..." : "Submit Rebalance"}
                       </Button>
                     </div>
-                    {totalProposedBps !== 10_000 && (
+                    {!rebalanceChainVisible && (
+                      <div className="bg-amber-500/10 text-amber-700 dark:text-amber-400 p-3 rounded text-sm flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        This Reserve holds {dtr.onChain.assetCount} assets on-chain but only {dtr.onChain.assets.length} could be read right now.
+                        Rebalancing is paused until every asset is visible, so no weight can be misplaced. This usually clears on the next refresh.
+                      </div>
+                    )}
+                    {rebalanceChainVisible && totalProposedBps !== 10_000 && (
                       <div className="bg-destructive/10 text-destructive p-3 rounded text-sm flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0" />
                         Proposed weights must total exactly 100% before submitting.
