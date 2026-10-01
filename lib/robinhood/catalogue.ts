@@ -105,7 +105,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** On-chain strings as Postgres text: no NUL bytes (rejected by the encoder), trimmed, bounded. Launchpad tokens carry anything. */
 function cleanText(s: string | null | undefined, max = 96): string {
   // eslint-disable-next-line no-control-regex
-  return (s ?? "").replace(/\u0000/g, "").replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim().slice(0, max);
+  const stripped = (s ?? "").replace(/\u0000/g, "").replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
+  // Cut by code point, never through a surrogate pair, and drop any lone
+  // surrogate the chain hands us: a half emoji became "\ud83d" in the JSON
+  // body and the Neon endpoint refused the whole request.
+  const bounded = Array.from(stripped).slice(0, max).join("");
+  const wellFormed = (bounded as string & { toWellFormed?: () => string }).toWellFormed?.() ?? bounded.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "");
+  return wellFormed.replace(/�/g, "").trim();
 }
 /** Pause between consecutive log scans -- the public RPC throttles bursts. */
 const LOG_SCAN_PACE_MS = 250;
