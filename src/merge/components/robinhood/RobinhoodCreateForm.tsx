@@ -267,7 +267,9 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
         if (mintFee > LIMITS.MAX_MINT_FEE) return `Mint fee cannot exceed ${d18ToPercent(LIMITS.MAX_MINT_FEE)}%.`;
         if (mintFee !== 0n && mintFee < LIMITS.MIN_MINT_FEE) return `A non-zero mint fee must be at least ${d18ToPercent(LIMITS.MIN_MINT_FEE)}%.`;
         if (percentToD18(tvlFeePct) > LIMITS.MAX_TVL_FEE) return `TVL fee cannot exceed ${d18ToPercent(LIMITS.MAX_TVL_FEE)}% a year.`;
-        feeRecipientsForChain(feeDestination || account || "", feeRecipients);
+        // The primary destination defaults to the wallet, which may not be
+        // connected yet (the form can be filled first); validate what is set.
+        if (feeDestination || account) feeRecipientsForChain(feeDestination || account || "", feeRecipients);
         coManagersForChain(account ?? "", additionalManagers);
       } catch (e) {
         return e instanceof Error ? e.message : String(e);
@@ -838,7 +840,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
               <div className="space-y-6">
                 <h3 className="font-semibold text-lg pb-2">Fee Configuration</h3>
                 <p className="text-xs text-muted-foreground -mt-4">
-                  The protocol keeps {d18ToPercent((feeRule.num * 10n ** 18n) / (feeRule.den || 1n)) * 100}% of every fee, never less than a {d18ToPercent(feeRule.floor).toFixed(2)}% floor; the Manager receives the rest.
+                  The protocol keeps {d18ToPercent((feeRule.num * 10n ** 18n) / (feeRule.den || 1n)).toFixed(0)}% of every fee, never less than a {d18ToPercent(feeRule.floor).toFixed(2)}% floor; the Manager receives the rest.
                   The split below is read live from the chain&rsquo;s fee registry, and the Review step shows exactly what will be submitted.
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

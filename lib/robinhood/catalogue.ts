@@ -89,7 +89,8 @@ export interface DiscoveredPool {
 function isRangeTooBig(e: unknown): boolean {
   const m = ((e as { details?: string })?.details ?? (e as Error)?.message ?? "").toLowerCase();
   if (/too many requests|rate limit/.test(m)) return false;
-  return /logs matched by query exceeds limit|narrow the block range|query returned more than|response size exceeded|block range is too large/.test(m);
+  // "log query timed out" is the node giving up on a heavy window -- also a narrow-and-retry.
+  return /logs matched by query exceeds limit|narrow the block range|query returned more than|response size exceeded|block range is too large|query timed out|timed out/.test(m);
 }
 
 function isRateLimited(e: unknown): boolean {
