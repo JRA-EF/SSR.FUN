@@ -23,6 +23,9 @@
     },
     "api/ledger/*.ts": {
       "includeFiles": "packages/sdk/**"
+    },
+    "api/robinhood/catalogue-refresh-cron.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [
@@ -49,6 +52,10 @@
     {
       "path": "/api/ledger/launchpad-classify-cron",
       "schedule": "30 5 * * *"
+    },
+    {
+      "path": "/api/robinhood/catalogue-refresh-cron",
+      "schedule": "45 5 * * *"
     },
     {
       "path": "/api/mainnet/warm-cache-cron",

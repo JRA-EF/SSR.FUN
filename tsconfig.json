@@ -13,6 +13,7 @@
     { "path": "./api/devnet/tsconfig.json" },
     { "path": "./api/mainnet/tsconfig.json" },
     { "path": "./api/kpis/tsconfig.json" },
-    { "path": "./api/ledger/tsconfig.json" }
+    { "path": "./api/ledger/tsconfig.json" },
+    { "path": "./api/robinhood/tsconfig.json" }
   ]
 }
