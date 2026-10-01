@@ -280,11 +280,6 @@ export interface RefreshSummary {
   caughtUp: boolean;
 }
 
-interface StoredPool extends PoolRow {
-  liquidity: string | null;
-  updatedAt: string | null;
-}
-
 interface StoredToken {
   address: Address;
   name: string | null;
@@ -327,24 +322,38 @@ export async function runRobinhoodCatalogueRefresh(opts: RefreshOptions): Promis
   //    (its depth and price must stay current), every WETH/USDG pool (the
   //    ETH mark), and a rotating slice of everything else, oldest-read first,
   //    so a token whose pool fills up later is noticed within days.
-  const stored = (await sql`
-    select pool, token, quote, fee, liquidity::text as liquidity, updated_at::text as "updatedAt"
-    from robinhood_catalogue_pools
-  `) as StoredPool[];
-  // Known facts (name/symbol/decimals/code hash) so they are read once.
-  const known = (await sql`select address, name, symbol, decimals, code_hash as "codeHash", eligible from robinhood_asset_catalogue`) as StoredToken[];
-  const knownByAddr = new Map(known.map((t) => [t.address.toLowerCase(), t]));
-  const eligibleNow = new Set(known.filter((t) => t.eligible).map((t) => t.address.toLowerCase()));
-  const wethLower = QUOTES.WETH.address.toLowerCase();
-  const isKnown = (p: StoredPool) => knownByAddr.has(p.token.toLowerCase());
-  // "Unread" also covers a pool whose token never reached the catalogue (a run that died between the pool and token writes).
-  const unread = stored.filter((p) => p.updatedAt === null || !isKnown(p));
-  const current = stored.filter((p) => p.updatedAt !== null && isKnown(p) && (eligibleNow.has(p.token.toLowerCase()) || p.token.toLowerCase() === wethLower));
-  const rotating = stored
-    .filter((p) => p.updatedAt !== null && isKnown(p) && !eligibleNow.has(p.token.toLowerCase()) && p.token.toLowerCase() !== wethLower)
-    .sort((a, b) => Date.parse(a.updatedAt ?? "") - Date.parse(b.updatedAt ?? ""))
-    .slice(0, opts.rotatingPoolLimit ?? 3000);
-  const toRefresh: PoolRow[] = [...unread, ...current, ...rotating].map((p) => ({ pool: getAddress(p.pool), token: getAddress(p.token), quote: p.quote, fee: p.fee }));
+  // Selected in SQL: the pools table runs to hundreds of thousands of rows,
+  // more than the Neon HTTP driver will return in one response (64 MB).
+  const wethAddr = QUOTES.WETH.address;
+  const unread = (await sql`
+    select p.pool, p.token, p.quote, p.fee from robinhood_catalogue_pools p
+    where p.updated_at is null or not exists (select 1 from robinhood_asset_catalogue c where c.address = p.token)
+    limit 200000
+  `) as PoolRow[];
+  const current = (await sql`
+    select p.pool, p.token, p.quote, p.fee from robinhood_catalogue_pools p
+    join robinhood_asset_catalogue c on c.address = p.token
+    where p.updated_at is not null and (c.eligible or p.token = ${wethAddr})
+  `) as PoolRow[];
+  const rotatingLimit = opts.rotatingPoolLimit ?? 3000;
+  const rotating =
+    rotatingLimit > 0
+      ? ((await sql`
+          select p.pool, p.token, p.quote, p.fee from robinhood_catalogue_pools p
+          join robinhood_asset_catalogue c on c.address = p.token
+          where p.updated_at is not null and not c.eligible and p.token <> ${wethAddr}
+          order by p.updated_at asc
+          limit ${rotatingLimit}
+        `) as PoolRow[])
+      : [];
+  const seen = new Set<string>();
+  const toRefresh: PoolRow[] = [];
+  for (const p of [...unread, ...current, ...rotating]) {
+    const k = p.pool.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    toRefresh.push({ pool: getAddress(p.pool), token: getAddress(p.token), quote: p.quote, fee: p.fee });
+  }
   log(`refreshing ${toRefresh.length} pools (${unread.length} new, ${current.length} of eligible tokens, ${rotating.length} rotating)`);
   const facts = await refreshPools(pc, toRefresh);
   for (let i = 0; i < facts.length; i += 500) {
@@ -372,6 +381,13 @@ export async function runRobinhoodCatalogueRefresh(opts: RefreshOptions): Promis
   }
   const tokenAddresses = [...new Set([...byToken.keys(), QUOTES.USDG.address.toLowerCase()])].map((a) => getAddress(a));
 
+  // Known facts (name/symbol/decimals/code hash) for the touched tokens only, in chunks the driver can return.
+  const known: StoredToken[] = [];
+  for (let i = 0; i < tokenAddresses.length; i += 5000) {
+    const slice = tokenAddresses.slice(i, i + 5000);
+    known.push(...((await sql.query("select address, name, symbol, decimals, code_hash as \"codeHash\", eligible from robinhood_asset_catalogue where address = any($1)", [slice])) as StoredToken[]));
+  }
+  const knownByAddr = new Map(known.map((t) => [t.address.toLowerCase(), t]));
   const fresh = tokenAddresses.filter((a) => !knownByAddr.has(a.toLowerCase()));
   log(`${tokenAddresses.length} tokens touched, ${fresh.length} new`);
   const metas = fresh.length ? await readTokenMeta(pc, fresh) : [];
