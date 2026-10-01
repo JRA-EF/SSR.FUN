@@ -23,6 +23,7 @@ import {
   QUOTES,
   UNISWAP_V3_FACTORY,
   classifyToken,
+  dropSymbolImpersonators,
   isRobinhoodNamed,
   selectBestPool,
   sortForPicker,
@@ -522,5 +523,5 @@ export async function loadRobinhoodCatalogue(sql: Sql): Promise<{ tokens: Robinh
     depthUsd: r.depthUsd === null ? null : Number(r.depthUsd),
     priceUsd: r.priceUsd === null ? null : Number(r.priceUsd),
   }));
-  return { tokens: sortForPicker(tokens), updatedAt: state[0]?.updatedAt ?? null };
+  return { tokens: sortForPicker(dropSymbolImpersonators(tokens)), updatedAt: state[0]?.updatedAt ?? null };
 }

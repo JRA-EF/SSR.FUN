@@ -175,6 +175,27 @@ export interface RobinhoodCatalogueToken {
   priceUsd: number | null;
 }
 
+/**
+ * Pure: drops tokens that borrow a reserved symbol -- a token calling itself
+ * USDG or WETH that is not the real one, or a token calling itself AAPL that
+ * is not the code-proven stock token. Found live 2026-10-01: a 0.0000056-USD
+ * "USDG" sat above the real one in the picker. Two launchpad tokens sharing
+ * a symbol between themselves are both kept (the picker shows name and
+ * address); only reserved symbols are protected.
+ */
+export function dropSymbolImpersonators(tokens: RobinhoodCatalogueToken[]): RobinhoodCatalogueToken[] {
+  const reserved = new Map<string, string>([
+    ["USDG", QUOTES.USDG.address.toLowerCase()],
+    ["WETH", QUOTES.WETH.address.toLowerCase()],
+    ["ETH", QUOTES.WETH.address.toLowerCase()],
+  ]);
+  for (const t of tokens) if (t.issuer === "robinhood") reserved.set(t.symbol.toUpperCase(), t.address.toLowerCase());
+  return tokens.filter((t) => {
+    const owner = reserved.get(t.symbol.toUpperCase());
+    return owner === undefined || owner === t.address.toLowerCase();
+  });
+}
+
 /** Pure: the serving order -- the cash leg, then ETH, then stock tokens alphabetically, then everything else by depth. */
 export function sortForPicker(tokens: RobinhoodCatalogueToken[]): RobinhoodCatalogueToken[] {
   const rank = (t: RobinhoodCatalogueToken) => (t.symbol === "USDG" ? 0 : t.symbol === "WETH" ? 1 : t.issuer === "robinhood" ? 2 : 3);
