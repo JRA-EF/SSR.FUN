@@ -347,6 +347,10 @@ const INTERNAL_PAGE_PATHS = new Set([
   '/internal-kpis.html',
   '/internal/roadmap',
   '/internal-roadmap.html',
+  // Protocol-Admin one-click page that signs set_fee_settlement_keeper: team
+  // password required on top of the beta key, like every other internal page.
+  '/internal/set-keeper',
+  '/internal-set-keeper.html',
 ])
 
 export default async function middleware(request: Request): Promise<Response> {

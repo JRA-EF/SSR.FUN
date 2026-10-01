@@ -6904,3 +6904,32 @@
   ]
 }
 ```
+
+## DEC-0221
+
+```json
+{
+  "id": "DEC-0221",
+  "date": "2026-10-01",
+  "status": "confirmed-implemented",
+  "decision": "/internal/set-keeper (and its /internal-set-keeper.html source path) is added to middleware.ts INTERNAL_PAGE_PATHS so it sits behind Gate 2 (the SSR_DASHBOARD_PASSWORD team session) like every other /internal/* page, not behind the beta-key site gate alone. Numbered DEC-0221 because DEC-0219/0220 are already taken on origin/staging (Robinhood catalogue, Buffer polyfill).",
+  "context": "Boss codebase study 2026-10-01 (design branch). The Protocol-Admin one-click page that signs set_fee_settlement_keeper was reachable by any holder of a 30-day BETA key; every other internal page requires the team password on top. Same pass also back-fills .env.example with the server variables the code reads but the file never listed (RPC URLs, CRON_SECRET, DATABASE_URL, site-gate keys, SSR_FEE_SETTLEMENT_KEEPER_SECRET, JUPITER_API_BASE/EXCLUDE_DEXES, ROBINHOOD_RPC_URL, FEEDBACK_DAEMON_SECRET, VITE_ENABLE_EVM) and prepends dated 2026-10-01 current-state paragraphs to the stale Current Phase / Current Objective / Executive Summary sections of PROJECT_STATUS.md, leaving the historical text in place.",
+  "rationale": "The page cannot move funds by itself (it only asks the connected Protocol-Admin wallet to sign), but it is an admin-only control and the beta-key audience is now 100+ external testers; defence in depth costs two list entries. The .env.example gaps made a fresh clone impossible to configure from the repo alone.",
+  "alternativesConsidered": [
+    "Leave set-keeper ungated as an admin convenience -- rejected: the admin wallet holder can type the team password; external beta users should not see the page at all.",
+    "Rewrite the stale PROJECT_STATUS sections wholesale -- rejected for now: the Creator edits that file on main daily; prepending a dated snapshot keeps the merge trivial."
+  ],
+  "impact": "Gate 2 now covers 14 page paths. No behaviour change for team members who already hold the dashboard session. Documentation only otherwise.",
+  "affectedAreas": [
+    "middleware.ts",
+    ".env.example",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b and oxlint clean on design after the change.",
+    "Not yet deployed anywhere: lands via the next design -> main merge."
+  ]
+}
+```
