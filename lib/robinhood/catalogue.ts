@@ -100,6 +100,12 @@ function isRateLimited(e: unknown): boolean {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** On-chain strings as Postgres text: no NUL bytes (rejected by the encoder), trimmed, bounded. Launchpad tokens carry anything. */
+function cleanText(s: string | null | undefined, max = 96): string {
+  // eslint-disable-next-line no-control-regex
+  return (s ?? "").replace(/\u0000/g, "").replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim().slice(0, max);
+}
 /** Pause between consecutive log scans -- the public RPC throttles bursts. */
 const LOG_SCAN_PACE_MS = 250;
 
@@ -218,8 +224,8 @@ export async function readTokenMeta(pc: PublicClient, tokens: Address[]): Promis
       ]),
     });
     slice.forEach((a, k) => {
-      const name = res[k * 3].status === "success" ? String(res[k * 3].result) : null;
-      const symbol = res[k * 3 + 1].status === "success" ? String(res[k * 3 + 1].result) : null;
+      const name = res[k * 3].status === "success" ? cleanText(String(res[k * 3].result)) : null;
+      const symbol = res[k * 3 + 1].status === "success" ? cleanText(String(res[k * 3 + 1].result), 32) : null;
       const dec = res[k * 3 + 2].status === "success" ? Number(res[k * 3 + 2].result) : null;
       out.push({ address: a, name, symbol, decimals: dec !== null && Number.isFinite(dec) ? dec : null });
     });
@@ -278,6 +284,7 @@ interface StoredToken {
   symbol: string | null;
   decimals: number | null;
   codeHash: string | null;
+  eligible: boolean;
 }
 
 export async function runRobinhoodCatalogueRefresh(opts: RefreshOptions): Promise<RefreshSummary> {
@@ -317,12 +324,17 @@ export async function runRobinhoodCatalogueRefresh(opts: RefreshOptions): Promis
     select pool, token, quote, fee, liquidity::text as liquidity, updated_at::text as "updatedAt"
     from robinhood_catalogue_pools
   `) as StoredPool[];
-  const eligibleNow = new Set(((await sql`select address from robinhood_asset_catalogue where eligible = true`) as { address: string }[]).map((r) => r.address.toLowerCase()));
+  // Known facts (name/symbol/decimals/code hash) so they are read once.
+  const known = (await sql`select address, name, symbol, decimals, code_hash as "codeHash", eligible from robinhood_asset_catalogue`) as StoredToken[];
+  const knownByAddr = new Map(known.map((t) => [t.address.toLowerCase(), t]));
+  const eligibleNow = new Set(known.filter((t) => t.eligible).map((t) => t.address.toLowerCase()));
   const wethLower = QUOTES.WETH.address.toLowerCase();
-  const unread = stored.filter((p) => p.updatedAt === null);
-  const current = stored.filter((p) => p.updatedAt !== null && (eligibleNow.has(p.token.toLowerCase()) || p.token.toLowerCase() === wethLower));
+  const isKnown = (p: StoredPool) => knownByAddr.has(p.token.toLowerCase());
+  // "Unread" also covers a pool whose token never reached the catalogue (a run that died between the pool and token writes).
+  const unread = stored.filter((p) => p.updatedAt === null || !isKnown(p));
+  const current = stored.filter((p) => p.updatedAt !== null && isKnown(p) && (eligibleNow.has(p.token.toLowerCase()) || p.token.toLowerCase() === wethLower));
   const rotating = stored
-    .filter((p) => p.updatedAt !== null && !eligibleNow.has(p.token.toLowerCase()) && p.token.toLowerCase() !== wethLower)
+    .filter((p) => p.updatedAt !== null && isKnown(p) && !eligibleNow.has(p.token.toLowerCase()) && p.token.toLowerCase() !== wethLower)
     .sort((a, b) => Date.parse(a.updatedAt ?? "") - Date.parse(b.updatedAt ?? ""))
     .slice(0, opts.rotatingPoolLimit ?? 3000);
   const toRefresh: PoolRow[] = [...unread, ...current, ...rotating].map((p) => ({ pool: getAddress(p.pool), token: getAddress(p.token), quote: p.quote, fee: p.fee }));
@@ -353,9 +365,6 @@ export async function runRobinhoodCatalogueRefresh(opts: RefreshOptions): Promis
   }
   const tokenAddresses = [...new Set([...byToken.keys(), QUOTES.USDG.address.toLowerCase()])].map((a) => getAddress(a));
 
-  // Known facts (name/symbol/decimals/code hash) so they are read once.
-  const known = (await sql`select address, name, symbol, decimals, code_hash as "codeHash" from robinhood_asset_catalogue`) as StoredToken[];
-  const knownByAddr = new Map(known.map((t) => [t.address.toLowerCase(), t]));
   const fresh = tokenAddresses.filter((a) => !knownByAddr.has(a.toLowerCase()));
   log(`${tokenAddresses.length} tokens touched, ${fresh.length} new`);
   const metas = fresh.length ? await readTokenMeta(pc, fresh) : [];
@@ -391,8 +400,8 @@ export async function runRobinhoodCatalogueRefresh(opts: RefreshOptions): Promis
     const k = addr.toLowerCase();
     const meta = metaByAddr.get(k);
     const prior = knownByAddr.get(k);
-    const name = meta?.name ?? prior?.name ?? "";
-    const symbol = meta?.symbol ?? prior?.symbol ?? "";
+    const name = cleanText(meta?.name ?? prior?.name ?? "");
+    const symbol = cleanText(meta?.symbol ?? prior?.symbol ?? "", 32);
     const decimals = meta?.decimals ?? prior?.decimals ?? null;
     const codeHash = codeHashes.get(k) ?? prior?.codeHash ?? null;
     const isUsdg = k === QUOTES.USDG.address.toLowerCase();
