@@ -250,8 +250,8 @@ export interface RefreshOptions {
   rpcUrl?: string;
   /** Cap on the block span scanned for new pools in one run (the daily cron scans a day; the backfill loops). */
   maxBlocksPerRun?: bigint;
-  /** How many pools with no in-range liquidity at their last check are re-read this run (they come back slowly, one slice per run). */
-  dormantPoolLimit?: number;
+  /** How many pools of currently-ineligible tokens are re-read this run (oldest-read first; every pool comes round within days). */
+  rotatingPoolLimit?: number;
   log?: (s: string) => void;
 }
 
@@ -307,18 +307,26 @@ export async function runRobinhoodCatalogueRefresh(opts: RefreshOptions): Promis
     log(`  ${discovered.length} new pools`);
   }
 
-  // 2. Which pools to re-read: every live one, every never-read one, plus a slice of the dormant ones.
+  // 2. Which pools to re-read. The chain carries hundreds of thousands of
+  //    pools (launchpads create one per token), so a run reads: every pool
+  //    never read before, every pool of a token that is currently eligible
+  //    (its depth and price must stay current), every WETH/USDG pool (the
+  //    ETH mark), and a rotating slice of everything else, oldest-read first,
+  //    so a token whose pool fills up later is noticed within days.
   const stored = (await sql`
     select pool, token, quote, fee, liquidity::text as liquidity, updated_at::text as "updatedAt"
     from robinhood_catalogue_pools
   `) as StoredPool[];
-  const live = stored.filter((p) => p.updatedAt === null || (p.liquidity !== null && p.liquidity !== "0"));
-  const dormant = stored
-    .filter((p) => p.updatedAt !== null && (p.liquidity === null || p.liquidity === "0"))
+  const eligibleNow = new Set(((await sql`select address from robinhood_asset_catalogue where eligible = true`) as { address: string }[]).map((r) => r.address.toLowerCase()));
+  const wethLower = QUOTES.WETH.address.toLowerCase();
+  const unread = stored.filter((p) => p.updatedAt === null);
+  const current = stored.filter((p) => p.updatedAt !== null && (eligibleNow.has(p.token.toLowerCase()) || p.token.toLowerCase() === wethLower));
+  const rotating = stored
+    .filter((p) => p.updatedAt !== null && !eligibleNow.has(p.token.toLowerCase()) && p.token.toLowerCase() !== wethLower)
     .sort((a, b) => Date.parse(a.updatedAt ?? "") - Date.parse(b.updatedAt ?? ""))
-    .slice(0, opts.dormantPoolLimit ?? 1500);
-  const toRefresh: PoolRow[] = [...live, ...dormant].map((p) => ({ pool: getAddress(p.pool), token: getAddress(p.token), quote: p.quote, fee: p.fee }));
-  log(`refreshing ${toRefresh.length} pools (${live.length} live/new, ${dormant.length} dormant)`);
+    .slice(0, opts.rotatingPoolLimit ?? 3000);
+  const toRefresh: PoolRow[] = [...unread, ...current, ...rotating].map((p) => ({ pool: getAddress(p.pool), token: getAddress(p.token), quote: p.quote, fee: p.fee }));
+  log(`refreshing ${toRefresh.length} pools (${unread.length} new, ${current.length} of eligible tokens, ${rotating.length} rotating)`);
   const facts = await refreshPools(pc, toRefresh);
   for (let i = 0; i < facts.length; i += 500) {
     const slice = facts.slice(i, i + 500);

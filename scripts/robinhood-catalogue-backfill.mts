@@ -33,7 +33,8 @@ const rpcUrl = process.env.ROBINHOOD_RPC_URL || PUBLIC_RPC_URL;
 const started = Date.now();
 for (let pass = 1; ; pass++) {
   console.log(`--- pass ${pass} (${((Date.now() - started) / 1000).toFixed(0)}s elapsed)`);
-  const s = await runRobinhoodCatalogueRefresh({ sql, rpcUrl, maxBlocksPerRun: 10_000_000n, dormantPoolLimit: 0, log: (m) => console.log(m) });
+  // Every pool is read once when first seen; nothing rotates during the walk.
+  const s = await runRobinhoodCatalogueRefresh({ sql, rpcUrl, maxBlocksPerRun: 10_000_000n, rotatingPoolLimit: 0, log: (m) => console.log(m) });
   console.log(JSON.stringify(s));
   if (s.caughtUp) break;
 }
