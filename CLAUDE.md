@@ -54,6 +54,13 @@ As of commit `993b764` (see `docs/project/DECISION_LOG.md` DEC-0080, tag `ui-bas
 - **After pushing any `main` change that affects the UI** (pages, components, styles, copy, or anything the dev server renders), **also fast-forward `design`** in the same session: `git push origin origin/main:refs/heads/design`. If the push is rejected as non-fast-forward, the Boss has committed design work — merge `main` INTO `design` instead (never rebase or force-push their branch) and resolve conflicts preserving their design intent.
 - Design work flows back by merging `design` into `main` only when the Creator asks for it.
 
+## Collaboration Alignment (read first, write on every ship)
+
+`Collaboration Alignment/` at the repo root is the hand-off log between every human + LLM pair working on this repo (Boss directive, 2026-10-01). Two standing rules for any agent, in any session:
+
+- **Before starting new work, read every entry in `Collaboration Alignment/` you have not read yet** (newest first). Use it to avoid overwriting or duplicating in-flight work and to build on what others shipped.
+- **Every time you ship something** — push to a shared branch, deploy, program upgrade, env/config/infra change — **add one entry there in the same commit** (or the status commit after a deploy), following `Collaboration Alignment/README.md`'s template. Never edit another author's entry beyond a dated "Follow-up" line.
+
 ## Project Status and Decision Logging
 
 This repo has an internal, password-protected project dashboard at `/internal/status`, rendered server-side from two source-of-truth files:
