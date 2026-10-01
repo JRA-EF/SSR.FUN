@@ -10,6 +10,20 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Buffer/global for @solana/web3.js and friends, as CLASSIC scripts so
+         they run before any module script. src/polyfills.ts used to do this
+         from inside main.tsx, which held only while every Buffer user sat in
+         main's own chunk: once the bundler split web3 into a chunk shared
+         with a lazy page, that chunk was evaluated before main's polyfill
+         line and the app died on "Buffer is not defined" with a blank page
+         (2026-10-01). public/polyfill-buffer.js is the `buffer` package as an
+         IIFE (built with `npx rolldown node_modules/buffer/index.js --format
+         iife --name SSRBufferPolyfill --file public/polyfill-buffer.js --minify`). -->
+    <script src="/polyfill-buffer.js"></script>
+    <script>
+      window.Buffer = window.Buffer || SSRBufferPolyfill.Buffer;
+      window.global = window.global || window;
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
