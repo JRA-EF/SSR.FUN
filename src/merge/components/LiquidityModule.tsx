@@ -37,6 +37,7 @@ import {
   RECOMMENDED_LIQUIDITY_USD,
   accruedFeesUsd,
   dexInfoFor,
+  hasValidNav,
   isDeepLiquidity,
   liquidityBadgeKind,
   lockRemainingDays,
@@ -181,7 +182,7 @@ export function LiquidityPanel({ dtr, onDone }: { dtr: DTR; onDone?: () => void 
         <div className="space-y-2">
           <Label className="text-xs uppercase tracking-wider text-muted-foreground">Pair with</Label>
           <div className="flex gap-2">
-            {(["USDC", dex.altPairSymbol] as const).map((sym) => (
+            {(dex.altPairAvailable ? (["USDC", dex.altPairSymbol] as const) : (["USDC"] as const)).map((sym) => (
               <button
                 key={sym}
                 type="button"
@@ -392,8 +393,11 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
     });
   };
 
+  // Compound prices the fees into the position at the Reserve's real NAV; without one it stays unavailable (no $1 guess).
+  const canCompound = hasValidNav(dtr.nav) && fees >= 0.01;
   const compound = () => {
-    compoundLiquidityPreviewFees(dtr.id, fees, nav);
+    if (!canCompound) return;
+    compoundLiquidityPreviewFees(dtr.id, fees, dtr.nav);
     toast({
       title: "Fees compounded in this preview",
       description: `${formatUsdc(fees)} added back to the pool as balanced liquidity. In this design preview no funds actually move.`,
@@ -448,7 +452,7 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
               <Button size="sm" disabled={fees < 0.01} onClick={collect}>
                 <Coins className="w-3.5 h-3.5 mr-1.5" /> Collect
               </Button>
-              <Button size="sm" variant="outline" disabled={fees < 0.01} onClick={compound}>
+              <Button size="sm" variant="outline" disabled={!canCompound} onClick={compound} title={hasValidNav(dtr.nav) ? undefined : "Compound needs a current token value"}>
                 <Droplets className="w-3.5 h-3.5 mr-1.5" /> Compound
               </Button>
             </div>

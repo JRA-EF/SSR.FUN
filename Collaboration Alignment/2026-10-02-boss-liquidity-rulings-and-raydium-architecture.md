@@ -43,3 +43,5 @@ Documentation and preview-copy changes only; no on-chain or live-client code.
 - oxlint on the changed files and the repo test suite: see the commit message for results.
 - Preview behaviour (Compound button, copy) checked in the browser on the dev server; no deploy.
 - On-chain facts (AmmConfig decodes, Permission PDA count, CLMM config list) read from Mainnet RPC and `api-v3.raydium.io` on 2026-10-01; Raydium program sources at raydium-cp-swap `59fb845` and raydium-clmm `ed1eb41`.
+
+**Follow-up 2026-10-02 (same author):** review-fix commit per Yeh (DEC-0224). Solana pool label is now the neutral "liquidity pool" (not "full-range position"); the preview's pair selector is USDC-only on Solana (SOL = OPEN-2b); the spec no longer mentions DevNet; `scripts/liquidity_arb_band.ts` measures USDC→basket and basket→USDC separately against Jupiter mid; Compound is a no-op / disabled without a valid NAV (never a $1 fallback) with regression tests in `tests/phase_liquidity_preview.ts`; wording is "creator DEX earnings" (native CPMM creator fee vs. creator's share of CLMM LP fees). **Next free DEC id: 0225.**

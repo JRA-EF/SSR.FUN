@@ -4,7 +4,14 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { makePreviewPoolAddress, strongerLock, type LiquidityLock, type LiquidityPoolPreview, type ReserveChain } from "@/lib/liquidityPreview";
+import {
+  compoundPreviewPool,
+  makePreviewPoolAddress,
+  strongerLock,
+  type LiquidityLock,
+  type LiquidityPoolPreview,
+  type ReserveChain,
+} from "@/lib/liquidityPreview";
 import type {
   DTR,
   Delegate,
@@ -194,7 +201,7 @@ interface AppState {
   lockLiquidityPreview: (dtrId: string, lock: LiquidityLock) => void;
   /** Marks accrued preview fees as collected to the creator treasury and restarts accrual. */
   collectLiquidityPreviewFees: (dtrId: string, amountUsd: number) => void;
-  /** Marks accrued preview fees as compounded: adds them to the position as balanced liquidity and restarts accrual (DEC-0222). */
+  /** Marks accrued preview fees as compounded: adds them to the position as balanced liquidity and restarts accrual (DEC-0222). No-op without a valid NAV. */
   compoundLiquidityPreviewFees: (dtrId: string, amountUsd: number, navPerToken: number) => void;
 
   addDelegate: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
@@ -357,20 +364,10 @@ export const useAppStore = create<AppState>()(
       compoundLiquidityPreviewFees: (dtrId, amountUsd, navPerToken) => {
         set((state) => {
           const existing = state.liquidityPreviews[dtrId];
-          if (!existing || amountUsd <= 0) return state;
-          const nav = navPerToken > 0 ? navPerToken : 1;
-          return {
-            liquidityPreviews: {
-              ...state.liquidityPreviews,
-              [dtrId]: {
-                ...existing,
-                baseTokens: existing.baseTokens + amountUsd / 2 / nav,
-                quoteUsd: existing.quoteUsd + amountUsd / 2,
-                compoundedTotalUsd: (existing.compoundedTotalUsd ?? 0) + amountUsd,
-                collectedThroughTs: Date.now(),
-              },
-            },
-          };
+          if (!existing) return state;
+          const next = compoundPreviewPool(existing, amountUsd, navPerToken);
+          if (!next) return state;
+          return { liquidityPreviews: { ...state.liquidityPreviews, [dtrId]: next } };
         });
       },
 

@@ -4,9 +4,11 @@
  * This is the front-end preview of the creator liquidity feature specced in
  * docs/project/LIQUIDITY_MODULE_SPEC.md: a Reserve's root Manager seeds a
  * DEX pool for their Reserve Token (Raydium on Solana, Uniswap on Robinhood
- * Chain), optionally locks the position, and either collects accrued trading
- * fees into their creator treasury or compounds them back into the pool
- * (DEC-0222: fees are creator earnings; locks bind principal, never fees).
+ * Chain), optionally locks the position, and either collects their creator
+ * DEX earnings into their creator treasury or compounds them back into the
+ * pool (DEC-0222: locks bind principal, never earnings). "Creator DEX
+ * earnings" covers both a native CPMM creator fee (DEC-0223 preferred path)
+ * and the creator's share of CLMM LP-position fees (the fallback).
  *
  * Nothing in this file talks to a chain. Every surface rendering from it is
  * explicitly labelled a design preview, consistent with this repo's
@@ -27,10 +29,16 @@ export interface DexInfo {
   chain: ReserveChain;
   /** User-facing DEX name. The ONLY source for it -- components must never hardcode "Raydium"/"Uniswap". */
   name: "Raydium" | "Uniswap";
-  /** User-facing pool-type wording. Solana reads "full-range position" in both DEC-0223 paths; the adapter owns this once live. */
-  poolTypeLabel: "full-range position";
-  /** The non-USDC pairing option offered alongside USDC on this chain. */
+  /**
+   * User-facing pool-type wording. Solana stays architecture-neutral
+   * ("liquidity pool") until the live adapter knows which DEC-0223 primitive
+   * it is talking to; the adapter owns this label once live.
+   */
+  poolTypeLabel: "liquidity pool" | "full-range position";
+  /** The non-USDC pairing option on this chain, offered only when `altPairAvailable`. */
   altPairSymbol: "SOL" | "ETH";
+  /** v1 Solana is USDC-only (DEC-0223; a SOL pair is spec OPEN-2b), so the selector hides SOL. */
+  altPairAvailable: boolean;
 }
 
 /**
@@ -40,9 +48,9 @@ export interface DexInfo {
  */
 export function dexInfoFor(chain: ReserveChain): DexInfo {
   if (chain === "robinhood") {
-    return { chain, name: "Uniswap", poolTypeLabel: "full-range position", altPairSymbol: "ETH" };
+    return { chain, name: "Uniswap", poolTypeLabel: "full-range position", altPairSymbol: "ETH", altPairAvailable: true };
   }
-  return { chain, name: "Raydium", poolTypeLabel: "full-range position", altPairSymbol: "SOL" };
+  return { chain, name: "Raydium", poolTypeLabel: "liquidity pool", altPairSymbol: "SOL", altPairAvailable: false };
 }
 
 /**
@@ -140,6 +148,33 @@ export function makePreviewPoolAddress(dtrId: string): string {
     out += alphabet[x % alphabet.length];
   }
   return out;
+}
+
+/** A NAV the preview can price against: finite and strictly positive. */
+export function hasValidNav(navPerToken: number): boolean {
+  return Number.isFinite(navPerToken) && navPerToken > 0;
+}
+
+/**
+ * Compound (DEC-0222): fold `amountUsd` of accrued fees back into the
+ * position as balanced liquidity at the current NAV and restart accrual.
+ * Returns null -- the caller leaves state untouched -- when there is nothing
+ * to compound or the NAV is not usable; it never guesses a $1 NAV.
+ */
+export function compoundPreviewPool(
+  pool: LiquidityPoolPreview,
+  amountUsd: number,
+  navPerToken: number,
+  now: number = Date.now(),
+): LiquidityPoolPreview | null {
+  if (!(amountUsd > 0) || !hasValidNav(navPerToken)) return null;
+  return {
+    ...pool,
+    baseTokens: pool.baseTokens + amountUsd / 2 / navPerToken,
+    quoteUsd: pool.quoteUsd + amountUsd / 2,
+    compoundedTotalUsd: (pool.compoundedTotalUsd ?? 0) + amountUsd,
+    collectedThroughTs: now,
+  };
 }
 
 /**

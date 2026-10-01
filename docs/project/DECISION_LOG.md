@@ -6998,3 +6998,34 @@
   ]
 }
 ```
+
+## DEC-0224
+
+```json
+{
+  "id": "DEC-0224",
+  "date": "2026-10-02",
+  "status": "confirmed-implemented",
+  "decision": "Review corrections to DEC-0222/0223 before feature/liquidity-arch merges into design (Yeh, 2026-10-02): (1) the Solana pool-type label in the preview is architecture-neutral ('liquidity pool') until the live adapter knows the primitive -- 'full-range position' is CLMM-only wording and must not describe permissioned CPMM; (2) v1/fallback Solana pairing is USDC only: the preview's pair selector no longer offers SOL (dexInfoFor(...).altPairAvailable = false), SOL stays open as OPEN-2b; (3) the Liquidity spec uses staging/Mainnet verification language -- Solana DevNet is retired; (4) scripts/liquidity_arb_band.ts measures USDC->basket and basket->USDC costs independently against Jupiter's mid price instead of dividing a round trip by two, and the spec/script wording separates routing cost and price impact from the DEX side's own depth-driven impact; (5) compoundLiquidityPreviewFees never falls back to a $1 NAV: the pure compoundPreviewPool helper returns null (store no-op) without a valid NAV and the Compound button is disabled, with regression tests in tests/phase_liquidity_preview.ts; (6) terminology is 'creator DEX earnings' rather than 'LP fees = creator earnings', distinguishing a native CPMM creator fee (preferred path) from the creator's share of CLMM LP-position fees (fallback).",
+  "context": "Yeh's review of commit d6434a5 on feature/liquidity-arch.",
+  "rationale": "The preview must not pre-commit to a primitive the architecture leaves conditional; copy must not promise a SOL pair the fallback cannot deliver; a guessed NAV would misprice compounded liquidity; a halved round trip hides the direction-dependent cost the band depends on.",
+  "alternativesConsidered": [
+    "Keep 'full-range position' as the Solana label (true for the fallback) -- rejected: wrong for the preferred path and exactly the kind of mechanism wording the adapter should own.",
+    "Keep the SOL option visible but disabled -- rejected: simpler to hide it; OPEN-2b records the question."
+  ],
+  "impact": "liquidityPreview.ts (poolTypeLabel union, altPairAvailable, hasValidNav, compoundPreviewPool), useAppStore.ts (compound delegates to the helper), LiquidityModule.tsx (USDC-only selector on Solana, Compound gated on a valid NAV), spec v0.3 wording, scripts/liquidity_arb_band.ts, new tests/phase_liquidity_preview.ts. No deployment, no live liquidity implementation.",
+  "affectedAreas": [
+    "src/merge/lib/liquidityPreview.ts",
+    "src/merge/store/useAppStore.ts",
+    "src/merge/components/LiquidityModule.tsx",
+    "docs/project/LIQUIDITY_MODULE_SPEC.md",
+    "scripts/liquidity_arb_band.ts",
+    "tests/phase_liquidity_preview.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "See the review-fix commit on feature/liquidity-arch and the Follow-up line in Collaboration Alignment/2026-10-02-boss-liquidity-rulings-and-raydium-architecture.md."
+  ]
+}
+```

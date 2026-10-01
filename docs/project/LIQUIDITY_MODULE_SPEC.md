@@ -11,7 +11,7 @@
 
 When a creator launches a Reserve and mints the first Reserve Tokens, those tokens exist and are backed, but they are not tradeable anywhere except mint/sell on SSR.fun itself. This module gives the creator a first-class flow to add DEX liquidity for their Reserve Token, directly from SSR.fun:
 
-- **Solana Reserves:** liquidity pool on **Raydium**, paired with SOL or USDC.
+- **Solana Reserves:** liquidity pool on **Raydium**, paired with USDC (v1 is USDC-only; a SOL pair is OPEN-2b).
 - **Robinhood Chain Reserves:** liquidity pool on **Uniswap**, pairing asset TBD (see OPEN-2).
 - Presented as a **split-screen step** after the creator's first mint (not a popup or modal), and permanently available as a **Liquidity section in the creator dashboard**.
 - Recommends **at least $1,000** in total liquidity, **preferably $10,000**.
@@ -33,7 +33,7 @@ Without a pool there is no market price, no chart, no ticker on aggregators, and
 
 - **Discoverability.** The token appears on Dexscreener and aggregators within minutes of pool creation. This is the single biggest distribution unlock per dollar spent.
 - **The arbitrage loop that makes the product work.** If the market price rises above NAV, anyone can mint at NAV on SSR.fun and sell into the pool. If it falls below NAV, anyone can buy from the pool and sell/redeem at NAV. Arbitrageurs keep the market price tethered to NAV. This is the same create/redeem mechanism that keeps ETFs at fair value, and it is why the Premium/Discount metric already in the app UI becomes meaningful the moment a pool exists.
-- **Creator revenue.** LP positions earn the pool's trading fees. A creator who seeds and locks liquidity still earns swap fees on it (see Section 7), which stacks with mint fees, management fees, and buy/sell tax as a fourth creator revenue stream. **These are creator earnings** (DEC-0222): they go to the creator's fixed treasury, they are a separate bucket from reserve fees, and they do not count toward the 50% $SSR buyback. In the fallback architecture they are ordinary LP fees, earned pro rata to the creator's share of active liquidity, not a guaranteed creator fee (Section 12).
+- **Creator revenue.** LP positions earn the pool's trading fees. A creator who seeds and locks liquidity still earns swap fees on it (see Section 7), which stacks with mint fees, management fees, and buy/sell tax as a fourth creator revenue stream. **These are creator DEX earnings** (DEC-0222): they go to the creator's fixed treasury, they are a separate bucket from reserve fees, and they do not count toward the 50% $SSR buyback. The term covers two different mechanisms (Section 12): on permissioned CPMM a **native creator fee** that is independent of who supplies liquidity; on the CLMM fallback the **creator's share of LP-position fees**, earned pro rata to their share of active liquidity, not a guaranteed fee.
 - **LP capital is separate from Reserve backing.** Reserve assets back redemption and are never taken out of the Reserve to seed a pool. Pool capital is additional capital the creator supplies voluntarily (DEC-0222).
 
 Thin pools are worse than no pools in one respect: a $200 pool produces violent premium/discount swings and a chart that looks broken. This is why the flow pushes a $1,000 floor and a $10,000 recommendation.
@@ -58,7 +58,7 @@ The Manage view for a Reserve gains a **Liquidity** section with the exact same 
 - Pool exists or not, DEX, pair, and the **pool address, always rendered as a hyperlink** (to the pool's explorer page) and reachable at any stage: it appears both in the Liquidity section header, next to the live status pill, and in the pool detail card.
 - Current pool size (TVL), creator's LP share, fees earned.
 - Lock status: unlocked / locked until DATE / locked permanently, with a countdown where applicable.
-- Actions: add liquidity, lock (or extend a lock), and two fee actions: **Collect** (accrued fees go to the creator's fixed treasury, never to the connected wallet; the UI states this and shows the treasury address, hyperlinked) and **Compound** (accrued fees are added back to the canonical pool as balanced liquidity, increasing the creator's position). Fees accrue in USDC (Section 12). Removing liquidity is possible for unlocked tranches only, and the UI should be honest that removing liquidity is visible on-chain and erodes holder trust.
+- Actions: add liquidity, lock (or extend a lock), and two actions on the creator's DEX earnings: **Collect** (accrued earnings go to the creator's fixed treasury, never to the connected wallet; the UI states this and shows the treasury address, hyperlinked) and **Compound** (accrued fees are added back to the canonical pool as balanced liquidity, increasing the creator's position). Fees accrue in USDC (Section 12). Removing liquidity is possible for unlocked tranches only, and the UI should be honest that removing liquidity is visible on-chain and erodes holder trust.
 
 ---
 
@@ -68,7 +68,7 @@ The Manage view for a Reserve gains a **Liquidity** section with the exact same 
 
 | Field | Behavior |
 |---|---|
-| Pairing asset | Solana Reserves: SOL or USDC (selector). Robinhood: TBD (OPEN-2). |
+| Pairing asset | Solana Reserves: USDC only in v1 (the selector shows no alternative; SOL is OPEN-2b). Robinhood: TBD (OPEN-2). |
 | Reserve Token amount | Prefilled from the creator's balance; editable. |
 | Pairing asset amount | Auto-calculated from NAV so both sides match in value; editable with warning (see 4.3). |
 | Total liquidity readout | Big number: combined USD value of both sides. |
@@ -129,7 +129,7 @@ Locks apply to LP **principal**, never to earnings rights (DEC-0222). Three stat
 3. **Token program compatibility.** Resolved 2026-10-02: Reserve Token mints are classic SPL Token (`create_reserve.rs` uses `anchor_spl::token::Mint`), so no Token-2022 extension concerns apply. Remaining check: Raydium's CLMM position-NFT freeze list for USDC/SOL pools (OPEN-12).
 4. **Canonical pool registry.** DEX pools are permissionless; nothing stops a third party from creating a rogue pool for any Reserve Token directly on Raydium. The app therefore cannot "gate" pool existence, only the in-app flow. Ship a registry (protocol state or ledger table) mapping Reserve to its canonical pool address, set when the root Manager creates the pool through SSR.fun. The UI, charts, Premium/Discount metric, and badges read only the canonical pool. Document this limit honestly in internal materials.
 5. **Events and ledger.** Emit and index: pool created, liquidity added (tranche), lock created (tranche, unlock time or permanent), lock extended, fees collected, fees compounded, liquidity removed. The dashboard and badges render from the ledger plus chain reads; preview/localStorage state never masquerades as live.
-6. **Fee routing.** Collect claims accrued trading fees and pays them to the creator's treasury (the creator-designated fee recipient fixed at the Reserve level), not to the signing wallet; because the destination cannot be redirected, Collect may be permissionless. Compound is creator-authorised: it harvests the accrued USDC and forms additional balanced canonical liquidity. Fee accrual continues while liquidity is locked; neither action touches principal. Whether the treasury can ever change, and who can change it, is OPEN-11.
+6. **Earnings routing.** Collect claims the creator's accrued DEX earnings and pays them to the creator's treasury (the creator-designated fee recipient fixed at the Reserve level), not to the signing wallet; because the destination cannot be redirected, Collect may be permissionless. Compound is creator-authorised: it harvests the accrued USDC and forms additional balanced canonical liquidity. Fee accrual continues while liquidity is locked; neither action touches principal. Whether the treasury can ever change, and who can change it, is OPEN-11.
 7. **Premium/Discount metric.** Wire the existing UI metric to canonical-pool price vs NAV once a pool exists; keep the current flatline/empty state when none does.
 8. **Naming.** Internal identifiers are free (module name `liquidity`, whatever is idiomatic). User-facing copy follows Section 4.4 and the repo terminology rules. Log the shipped terminology as a DEC entry.
 9. **First-mint detection.** The split-screen trigger is: mint event where minter == root Manager AND Reserve has zero prior mint events AND no canonical pool. Make the trigger state resumable (creator dismisses, returns via dashboard).
@@ -163,7 +163,7 @@ Approved-vocabulary framing, mechanism-light per the teasing protocol:
 - "Mint it. List it. Lock it. Your Reserve Token, live on Raydium with one click."
 - "Liquidity you can verify. Creators can lock their Reserve Token's liquidity on-chain, for months or forever, and keep earning fees the whole time."
 - Never name pool types, escrow mechanics, registries, or arbitrage flows publicly. "Unchained ETF technology, socialised and agentic" remains the only technology description.
-- All public claims ship only after the feature actually works on DevNet/Mainnet as described. No forward-dated "is live" claims.
+- All public claims ship only after the feature actually works on the staging site against Mainnet as described. No forward-dated "is live" claims.
 
 ---
 
@@ -195,7 +195,7 @@ Two paths, both behind one adapter so the UI, store and badges do not change whe
 - Raydium CPMM `AmmConfig` index 9 (`LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC`) is 0.25% trade fee + 0.75% creator fee: 1.00% all-in for the trader. It is API-only (`showWithUI=false`); 98 pools use it today.
 - Creator fees exist only on pools created with `InitializeWithPermission`, which requires a `Permission` PDA that only Raydium's admin / permission-owner keys can create (8 exist on Mainnet). Yeh is approaching Raydium. If granted: `pool_creator` = the creator's fixed treasury, so `CollectCreatorFee` / `CollectCreatorFeePermissionless` can only pay there; Compound = collect then deposit; permanent lock = Raydium's LP lock (fee harvest retained); timed lock = minimal SPL LP-token escrow.
 - Since 2026-09-19 Raydium's program can keep a configurable share of creator fees at collection time (`creator_fee_share_rate`, currently 0 on index 9). This must be part of the Raydium conversation.
-- The creator fee here holds regardless of who else supplies liquidity. Normal LP economics remain separate and accrue to LP providers.
+- The creator fee here holds regardless of who else supplies liquidity. Normal LP economics remain separate and accrue to LP providers. The preview labels the Solana pool type neutrally as "liquidity pool" until the adapter knows which primitive is live; "full-range position" is CLMM-only wording.
 
 ### 12.2 Committed fallback: permissionless Raydium CLMM, full range, 0.8%
 
@@ -226,4 +226,4 @@ Fee-only no-arbitrage band with `ssr_protocol` defaults (mint fee 0.50%, redempt
 | **0.80%** | **−0.90%** | **+1.40%** | **2.30%** | **0.672%** |
 | 1.00% | −1.10% | +1.60% | 2.70% | 0.840% |
 
-The band is asymmetric because of the minimum mint fee. Basket execution (one Jupiter leg per constituent, both mint and redeem being in-kind) adds roughly 0% for a 1-asset Reserve, 0.12–0.25% round trip for 5 assets, ~0.3% for 10 assets at $1k (live quotes 2026-10-01, lite API, rate-limited). `scripts/liquidity_arb_band.ts` re-runs this with the keyed Jupiter API and must be run against real Reserve compositions before implementation (DEC-0223). A Reserve's own redemption fee widens the discount side by the same amount.
+The band is asymmetric because of the minimum mint fee. Basket execution (one Jupiter leg per constituent, both mint and redeem being in-kind) adds the USDC→basket buy cost on the premium side and the basket→USDC sell cost on the discount side; the two legs are measured separately against Jupiter's mid price, since routing cost and price impact differ by direction and are not a constant. First pass (live quotes 2026-10-01, free API, rate-limited, round-trip only): roughly 0% for a 1-asset Reserve, 0.12–0.25% for 5 assets, ~0.3% for 10 assets at $1k. `scripts/liquidity_arb_band.ts` measures each direction with the keyed Jupiter API and must be run against real Reserve compositions before implementation (DEC-0223). A Reserve's own redemption fee widens the discount side by the same amount.
