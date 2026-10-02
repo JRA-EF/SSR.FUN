@@ -6919,3 +6919,38 @@
   ]
 }
 ```
+
+## DEC-0221
+
+```json
+{
+  "id": "DEC-0221",
+  "date": "2026-10-02",
+  "status": "confirmed-implemented (fix on branch, not deployed)",
+  "decision": "Mainnet fee routing regression-tested end to end with real funds and proven exact; the production fee keeper was found dead since 2026-09-25 (out of SOL), refunded, and the drain fixed. (1) Two throwaway Reserves were created by the Creator wallet ...4Rw8: Reserve A (id 31, DYp3fCan...spB3Zs, USDC-only, mint fee 200 bps, Buy tax 2%, three fresh fee recipients 50/30/20) seeded 1 USDC and bought 5 USDC through lib/mainnet/buildBuy.ts with the production dependencies; Reserve B (id 32, AQ6bRL2X...N1AFeF, USDC + wSOL, mint fee 500 bps, two recipients 70/30) seeded 2 USDC + 0.01 SOL and bought 1 RT via the direct multi-asset mint. Every on-chain number matched fee_math.rs exactly: A fee shares 20,000 + 100,000 (P/M 50/50), redeemed to 120,000 USDC, distributed 60,000 to the Treasury ...jWQL5 and 30,000/18,000/12,000 to the recipients' own USDC ATAs; Buy tax 100,000 USDC split 50,000 Treasury / 50,000 fee destination inside the Buy transaction. B settled by the PRODUCTION keeper on its 12:15 UTC run: 200,000 RT redeemed into 133,333 USDC + 666,666 lamports, wSOL swapped on Jupiter to 81,279 USDC, 214,612 distributed 107,306 Treasury / 75,114 / 32,192 (largest-remainder rounding verified). TVL fee mechanism evidenced from live Reserve 24 (accrue_fees credited 6,305 RT as annualTvlFee, redeemed and distributed 6,256 USDC an hour later). Both fee types are paid out in USDC by the keeper; the Creator confirmed keeping that model. (2) Keeper wallet AuaJRdbR...GPhsF signed its last transaction 2026-09-25 06:15 UTC with 652,231 lamports left; no settlement ran for a week and six Reserves held unsettled fee shares. Root cause: accrue_fees returns before updating last_settled_ts when period_supply_seconds == 0, so the 14 never-seeded (assetsInitializing, zero-supply) Reserves stayed 'due' forever and the hourly keeper paid 5,000 lamports for each of them every hour (about 400 no-op transactions a day). Refunded 0.1 SOL from ...4Rw8 (sig 3SrSXr7c...Jfiu49R). Fix on branch fix/keeper-accrual-drain: isAccrualWorthSending (Active + nonzero supply) gates accrual candidates, and distribute_fee_usdc is skipped when the USDC staging account is empty (8 of 10 distributes on the 12:15 run moved nothing at about 65,000 lamports each). (3) Reserve A was settled by hand through the permissionless redeem_fee_vault_shares + distribute_fee_usdc to avoid waiting an hour; Reserve B was left to the keeper deliberately so the keeper-gated swap leg was exercised.",
+  "context": "JRA: 'the main objective is to get reserve fees to work properly ... verify that the mint fees are being charged in USDC in the correct proportion between the fee recipients and be 100% sure of this and that those are claimable by the respective recipients and then that the treasury wallet is getting the correct amount of USDC as well ... provide on chain proof'. Pre-flight found the keeper at 0.00065 SOL and a week of silence; the Creator approved the 0.1 SOL top-up and the test design, and later confirmed keeping USDC payout for both fee types ('ok no, lets do it like u suggested').",
+  "rationale": "A USDC-only Reserve removes Jupiter from the arithmetic so every split is checkable to the raw unit; a USDC+SOL Reserve settled by the real cron proves the keeper-gated swap path. Fresh recipient keypairs make every incoming transfer attributable. Skipping unbillable accruals and empty distributes removes the only recurring keeper cost that does not move money.",
+  "alternativesConsidered": [
+    "Wait for the hourly keeper for Reserve A too -- rejected for speed; the two instructions are permissionless and identical to the keeper's.",
+    "Pay TVL fees to recipients as Reserve Tokens (JRA's initial expectation) -- not pursued; the Creator chose to keep the USDC pipeline as built.",
+    "Program-side fix (accrue_fees always updating last_settled_ts) -- correct long-term but needs a Squads upgrade; the keeper-side gate is sufficient and immediate."
+  ],
+  "impact": "Fee routing confirmed correct on Mainnet for mint fee, Buy tax and TVL fee. Production settlement resumed 12:15 UTC 2026-10-02 (52 keeper transactions, 0 failures; Reserve 30 backlog cleared 50,000 USDC to the Treasury). Keeper balance after the run 0.0437 SOL; steady-state about 0.001 SOL per run, so a further top-up (about 0.5 SOL) and deploying the fix are required within about 2 days. Reserve 26 (...pAnzSh, 10 assets, no lookup table) cannot be redeemed until an ALT is registered; Reserves 27-29 have staged pump.fun legs retrying hourly; Reserve 25 has 141/141 pending with no route. Two test Reserves (31, 32) now exist on Mainnet; their Reserve Tokens are held by ...4Rw8.",
+  "affectedAreas": [
+    "api/mainnet/fee-settlement-cron.ts (isAccrualWorthSending, empty-staging skip, distributeSkipped)",
+    "tests/phase_fee_settlement_usdc.ts (+3 tests, 20 passing)",
+    "Mainnet state: Reserves 31 and 32 created; keeper wallet funded 0.1 SOL",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Report with every signature and decoded event: https://claude.ai/artifact/A2hXJwsQj5xvQDkgNJHFaC",
+    "Reserve A: create Kc24zTiM...DNPD9cU, seed 5qaMCmSD...ZaB18xHF (FeeVaultCredited 10,000/10,000), buy 31akUY8T...mToWdsZE (FeeVaultCredited 50,000/50,000; Treasury +50,000 and fee destination +50,000 USDC tax), redeem 5BGqhZRN...BiAZ25GG (FeeSharesRedeemed 120,000 -> 120,000 USDC staged), distribute 4DuZS2XY...PviEwYxF (FeeUsdcDistributed 120,000: 60,000 / 30,000 / 18,000 / 12,000). Treasury ATA 1,111,037 -> 1,221,037.",
+    "Reserve B: create 5YQK4PiR...5SyBg3k6, seed 4wn5yMzt...NyWh9cWg (75,000/75,000), buy 5RPKU5cM...tjYgzQAB (25,000/25,000); keeper redeem 24Pfw5Ae...rJ2e91AH (133,333 USDC + 666,666 lamports), swap 5NE3VU9b...GcJ7DNkt (approve_settlement_swap + Jupiter: 666,666 lamports -> 81,279 USDC into staging), distribute 5jozyZbe...YDztw5gZq (214,612: 107,306 / 75,114 / 32,192). Treasury ATA 1,221,037 -> 1,378,343 (+107,306 B, +50,000 Reserve 30).",
+    "TVL: Reserve 24 accrue_fees jcFGYSBQ...vfL3hyz1 (FeeVaultCredited 3,153/3,152 annualTvlFee), redeem FT57sFvV...iGvPrbK, distribute a6HSXhuH...YeMxd7kqE (6,256 USDC: 3,129 / 3,127).",
+    "Keeper: last pre-outage tx 2026-09-25T06:15:48Z (AccrueFees, post balance 652,231 lamports); the 1,000 most recent signatures spanned only 09-22..09-25 at 404-408 per day; refund 3SrSXr7c...Jfiu49R; 12:15 run = 29 AccrueFees + 5 Redeem + 2 ApproveSettlementSwap/Jupiter + 10 Distribute + 6 ATA creates, 0.057 SOL spent (0.048 rent).",
+    "Offline: tests/phase_fee_settlement_usdc.ts 20 passing; tsc -p tsconfig.node.json clean apart from the known missing viem/botid packages."
+  ]
+}
+```

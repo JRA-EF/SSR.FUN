@@ -21,7 +21,7 @@
 // convention).
 import { expect } from "chai";
 import { splitByWeight, apportionToRecipients, type FeeRecipientAllocation } from "../packages/sdk/src/feeMath";
-import { isQuoteSafeToExecute } from "../api/mainnet/fee-settlement-cron";
+import { isAccrualWorthSending, isQuoteSafeToExecute } from "../api/mainnet/fee-settlement-cron";
 
 describe("feeMath.ts -- splitByWeight (USDC fee-settlement pipeline, mirrors fee_math.rs::split_by_weight exactly)", () => {
   it("splits exactly, manager floor-rounded, protocol gets the exact remainder (protocol-favored, matching splitTotalFee's convention)", () => {
@@ -167,5 +167,21 @@ describe("USDC fee-settlement pipeline -- Protocol/Manager distribution (multi-r
     // scenario tests above never apply apportionToRecipients to
     // protocolShare, only to managerShare).
     expect(protocolShare).to.be.a("bigint");
+  });
+});
+
+describe("fee-settlement-cron.ts -- isAccrualWorthSending (DEC-0221, pure keeper-side accrual gate)", () => {
+  it("sends accrue_fees only for an Active Reserve with a nonzero Reserve Token supply", () => {
+    expect(isAccrualWorthSending({ status: "active", reserveTokenSupplyRaw: "1" })).to.equal(true);
+    expect(isAccrualWorthSending({ status: "active", reserveTokenSupplyRaw: "110461444" })).to.equal(true);
+  });
+  it("skips a Reserve with zero supply -- the program would return before updating last_settled_ts, so it stays due forever (the 2026-09-25 keeper SOL drain)", () => {
+    expect(isAccrualWorthSending({ status: "active", reserveTokenSupplyRaw: "0" })).to.equal(false);
+    expect(isAccrualWorthSending({ status: "assetsInitializing", reserveTokenSupplyRaw: "0" })).to.equal(false);
+  });
+  it("skips any non-Active status regardless of supply, and never throws on a malformed supply string", () => {
+    expect(isAccrualWorthSending({ status: "paused", reserveTokenSupplyRaw: "5" })).to.equal(false);
+    expect(isAccrualWorthSending({ status: "windingDown", reserveTokenSupplyRaw: "5" })).to.equal(false);
+    expect(isAccrualWorthSending({ status: "active", reserveTokenSupplyRaw: "not-a-number" })).to.equal(false);
   });
 });
