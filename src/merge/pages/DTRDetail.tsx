@@ -1442,6 +1442,9 @@ export function DTRDetail() {
         reserveAsset: a.reserveAsset,
         vault: a.vault,
         vaultBalanceRaw: a.vaultBalanceRaw,
+        // DEC-0227: the asset's own token program, so every wallet-balance read
+        // (xStocks are Token-2022) derives the right associated token account.
+        tokenProgram: a.tokenProgram,
       }));
       const [protocolConfig] = findProtocolConfig(SSR_PROGRAM_ID);
       const { signature } = await executeDirectMint({
@@ -1537,6 +1540,9 @@ export function DTRDetail() {
         reserveAsset: a.reserveAsset,
         vault: a.vault,
         vaultBalanceRaw: a.vaultBalanceRaw,
+        // DEC-0227: the asset's own token program, so every wallet-balance read
+        // (xStocks are Token-2022) derives the right associated token account.
+        tokenProgram: a.tokenProgram,
       }));
       const [protocolConfig] = findProtocolConfig(SSR_PROGRAM_ID);
       const reserveTokensRequested = usdToReserveTokensRequested(numBuyAmount, dtr.nav, RESERVE_TOKEN_DECIMALS);
@@ -1791,6 +1797,9 @@ export function DTRDetail() {
         reserveAsset: a.reserveAsset,
         vault: a.vault,
         vaultBalanceRaw: a.vaultBalanceRaw,
+        // DEC-0227: the asset's own token program, so every wallet-balance read
+        // (xStocks are Token-2022) derives the right associated token account.
+        tokenProgram: a.tokenProgram,
       }));
       const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
       // A Reserve composed purely of USDC redeems USDC directly -- no swap

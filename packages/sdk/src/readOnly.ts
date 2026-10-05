@@ -6,12 +6,12 @@
 // scanning.
 import { AnchorProvider, EventParser, Program } from "@anchor-lang/core";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
 import { findReserveAsset, findReserveVault, findManagerFeeRecipients, findFeeSettlement } from "./pda";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
-import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, type TokenProgramKindDecoded } from "./tokenPrograms";
+import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, tokenProgramFromMintOwner, type TokenProgramKindDecoded } from "./tokenPrograms";
 
 /**
  * A transient RPC failure (429/timeout) while reading token supply must
@@ -337,8 +337,27 @@ export async function fetchFeeSettlement(connection: Connection, programId: Publ
  * program. Without it the classic derivation is used, which is right for
  * every classic mint (USDC, devUSDC, every Reserve Token).
  */
+/**
+ * A wallet's raw balance of `mint` -- 0 when the associated token account
+ * does not exist.
+ *
+ * DEC-0227: when the caller does not know the mint's token program, it is
+ * read from the mint account's owner instead of assumed classic SPL Token.
+ * The classic-derived ATA for a Token-2022 mint (every xStock) is a
+ * different, empty address, so the old assumption read 0 for assets the
+ * wallet really held: a batch Buy of a Reserve holding xStocks swapped
+ * every leg successfully and then refused to mint ("still short after
+ * funding: acquired 0 raw") because this read came back 0 for the
+ * Token-2022 legs. Callers that know the program still pass it (no extra
+ * read).
+ */
 export async function fetchTokenBalanceRaw(connection: Connection, mint: PublicKey, owner: PublicKey, tokenProgram?: PublicKey | string | null): Promise<string> {
-  const ata = tokenProgram ? assetAta(mint, owner, tokenProgram) : await getAssociatedTokenAddress(mint, owner);
+  let program: PublicKey | string | null = tokenProgram ?? null;
+  if (!program) {
+    const mintInfo = await connection.getAccountInfo(mint).catch(() => null);
+    program = mintInfo ? tokenProgramFromMintOwner(mintInfo.owner) : TOKEN_PROGRAM_ID;
+  }
+  const ata = assetAta(mint, owner, program);
   const info = await connection.getAccountInfo(ata).catch(() => null);
   return tokenAccountAmountByOwner(ata, info).toString();
 }
