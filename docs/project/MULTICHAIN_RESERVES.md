@@ -44,6 +44,75 @@ having a market, not by someone adding it. This document is about making the
 factory answers and the quote pair is real. Re-verify at implementation time;
 do not trust this table alone.
 
+## Proven on a Base fork (2026-10-04)
+
+Everything below was executed against `anvil --fork-url https://mainnet.base.org`
+at block 52,190,137. No real funds, no help needed: USDC came from impersonating
+a holder on the fork, ETH from `anvil_setBalance`.
+
+**1. The whole stack deploys to Base unchanged.** `forge script
+script/SSRMainnet.s.sol --rpc-url <fork>` succeeded with no edits:
+
+| Contract | Address on the fork |
+|---|---|
+| MockRoleRegistry | `0xce3774eE9D08a2532B7Ff4b1B2aa0529a66f3B07` |
+| SSRDAOFeeRegistry | `0x78197f4Bf9Ab0E798E6ADE43e96a328996B8A455` |
+| SSRVersionRegistry | `0x17434891234feAe6a4389A26Fa566c2610a1b156` |
+| TrustedFillerRegistry | `0x75FB485650e1495ff4F7b666a58c95be0CC08b4d` |
+| SSRDeployer | `0xA19c9bC872a46Ad2B3EED81ec43349F8DB8f8D9F` |
+
+**2. `registerVersion` works.** Never run on any chain before. After calling it,
+`getLatestVersion()` returns version **"6.0.0"**, the deployer address, and
+`deprecated = false`. This is the first evidence that the staged 4663
+transaction in `ssr-evm/REGISTER_VERSION_TX.txt` will succeed.
+
+**3. The app's own launch code runs on Base unmodified.** Not a reimplementation
+— `createReserve` and `loadReserve` imported straight from
+`src/merge/lib/evmReserve.ts`, handed a `ChainConfig` pointing at Base. It
+approved both legs, deployed, and returned the reserve:
+
+```
+Base Core Two (BASE2)  0x8A26ACAb62F8165aa6b6DB1a583334b3B3917436
+  totalSupply 100.0000   maxAuctionLength 300s
+  basket: USDC 1000 | WETH 0.25
+```
+
+`listReserveAddresses` then found it from the factory's `SSRDeployed` logs, so
+directory discovery works too. `daoFeeBps 5000` and `feeFloor 5e15` confirm our
+raised fee caps are live on Base — the one behavioural change in the fork.
+
+**4. The surprise: a Base reserve shows no value.** `aumUsd` and `navPerShare`
+both came back **null**, and every basket leg priced **null**:
+
+```
+aumUsd null  navPerShare null
+  USDC ... "usd": null
+  WETH ... "usd": null
+```
+
+The cause is in `evmReserve.ts`. `v3Spot` reads
+`UNISWAP_V3.factory` — Robinhood's factory — as a module-level import, and
+`usdPrice` hardcodes `USDG` as the dollar. Neither is a parameter, so on Base
+no pool is ever found and nothing can be priced.
+
+**This is DEC-0211 again.** That entry fixed xStocks reserves reading as $0
+holdings / no NAV because vault balances were decoded under the wrong token
+program. Same shape of defect, other chain: a correct reserve that the UI
+reports as worthless.
+
+**5. Parameterising it fixes it.** The identical `v3Spot` math with Base's
+factory and USDC as the quote, against the same reserve:
+
+```
+WETH price from Base Uniswap v3: $2727.14
+  USDC  1000   $1000.00
+  WETH  0.25    $681.79
+AUM $1681.79   NAV/share $16.8179
+```
+
+So the work is a seam, not an algorithm. But it is **required before Base
+ships, not after** — see the phase change below.
+
 ## The one hard problem
 
 On Robinhood, token legitimacy has an **anchor**: every official stock token is
@@ -101,9 +170,9 @@ provable before anything new is deployed.
 Phase 0 ships with **zero user-visible change** and the full test suite green.
 If it cannot, the abstraction is wrong and nothing further should be built on it.
 
-### Phase 1 — a DEX adapter seam
+### Phase 1 — a DEX adapter seam (REQUIRED before Base, not optional)
 
-`evmSwap.ts` and `catalogueRules.ts` both hardcode Uniswap v3. Extract an
+Proof 4 above is this phase's acceptance test: without it a Base reserve reads as $0.\n\n`evmSwap.ts`, `catalogueRules.ts` AND `evmReserve.ts`'s `v3Spot`/`usdPrice` all hardcode Uniswap v3 and USDG. Extract an
 interface — `discoverPools`, `quote`, `buildSwap`, `poolDepth` — with
 `UniswapV3Adapter` as the first and only implementation, proved by re-running
 the Robinhood catalogue through it and getting the same 1,418 tokens.
