@@ -29,9 +29,6 @@ import {
   FEE_REGISTRY_ABI,
   SAFE_REBALANCE_DEFAULTS,
   SSR_ABI,
-  UNISWAP_V3,
-  USDG,
-  WETH,
   type AssetRef,
   type ChainConfig,
 } from "./evmChain";
@@ -190,9 +187,11 @@ const V3_POOL_ABI = parseAbi([
  * reserve's balanceOf holds -- so this stays correct for ERC-8056 stock
  * tokens without touching the multiplier.
  */
-async function v3Spot(pc: PublicClient, token: Address, tokenDec: number, quote: Address, quoteDec: number): Promise<number | null> {
+async function v3Spot(pc: PublicClient, cfg: ChainConfig, token: Address, tokenDec: number, quote: Address, quoteDec: number): Promise<number | null> {
+  const dex = cfg.dex;
+  if (!dex) return null;
   const pools = await Promise.all(
-    UNISWAP_V3.fees.map((fee) => pc.readContract({ address: UNISWAP_V3.factory, abi: V3_FACTORY_ABI, functionName: "getPool", args: [token, quote, fee] })),
+    dex.fees.map((fee) => pc.readContract({ address: dex.factory, abi: V3_FACTORY_ABI, functionName: "getPool", args: [token, quote, fee] })),
   );
   const live = pools.filter((p) => p !== zeroAddress);
   if (live.length === 0) return null;
@@ -210,14 +209,25 @@ async function v3Spot(pc: PublicClient, token: Address, tokenDec: number, quote:
   return tokenIs0 ? p1per0 : p1per0 === 0 ? null : 1 / p1per0;
 }
 
-/** USD (USDG) price of one whole token: direct USDG pool, else routed through WETH. */
-export async function usdPrice(pc: PublicClient, token: Address, decimals: number): Promise<number | null> {
-  if (token.toLowerCase() === USDG.toLowerCase()) return 1;
-  const direct = await v3Spot(pc, token, decimals, USDG, 6);
+/**
+ * USD price of one whole token on `cfg`'s DEX: the direct dollar pool, else
+ * routed through the native wrapper.
+ *
+ * The dollar and the wrapper come from the CHAIN, not from module constants.
+ * While they were constants this function read Robinhood's USDG and factory
+ * on every chain, so a Base reserve priced every leg at null and reported $0
+ * AUM with no NAV -- the same shape of defect as DEC-0211 on Solana.
+ * Returns null on a chain with no DEX configured rather than guessing.
+ */
+export async function usdPrice(pc: PublicClient, cfg: ChainConfig, token: Address, decimals: number): Promise<number | null> {
+  const q = cfg.quotes;
+  if (!cfg.dex || !q) return null;
+  if (token.toLowerCase() === q.usd.address.toLowerCase()) return 1;
+  const direct = await v3Spot(pc, cfg, token, decimals, q.usd.address, q.usd.decimals);
   if (direct !== null) return direct;
-  const inWeth = await v3Spot(pc, token, decimals, WETH, 18);
-  const wethUsd = await v3Spot(pc, WETH, 18, USDG, 6);
-  return inWeth !== null && wethUsd !== null ? inWeth * wethUsd : null;
+  const inNative = await v3Spot(pc, cfg, token, decimals, q.native.address, q.native.decimals);
+  const nativeUsd = await v3Spot(pc, cfg, q.native.address, q.native.decimals, q.usd.address, q.usd.decimals);
+  return inNative !== null && nativeUsd !== null ? inNative * nativeUsd : null;
 }
 
 // ------------------------------------------------------------------- reads
@@ -292,7 +302,7 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig, ssr: Addre
       }
       let usd: number | null = null;
       try {
-        const px = await usdPrice(pc, a, Number(dec));
+        const px = await usdPrice(pc, cfg, a, Number(dec));
         usd = px === null ? null : Number(formatUnits(amounts[i], Number(dec))) * px;
       } catch {
         usd = null;

@@ -27,6 +27,30 @@ export interface AssetRef {
   note?: string;
 }
 
+/**
+ * A Uniswap v3 deployment, or a fork of one. BNB's liquidity is on
+ * PancakeSwap v3, whose fee tiers differ from Uniswap's -- which is why the
+ * tiers travel with the deployment rather than being a module constant.
+ */
+export interface DexConfig {
+  factory: Address;
+  quoter: Address;
+  router: Address;
+  fees: readonly number[];
+}
+
+export interface QuoteRef {
+  address: Address;
+  symbol: string;
+  decimals: number;
+}
+
+/** The dollar leg and the native wrapper a chain prices through (USDG/WETH here, USDC/WETH on Base). */
+export interface ChainQuotes {
+  usd: QuoteRef;
+  native: QuoteRef;
+}
+
 export interface ChainConfig {
   key: "testnet" | "mainnet";
   chain: ReturnType<typeof defineChain>;
@@ -49,6 +73,19 @@ export interface ChainConfig {
   fillerRegistry: Address;
   /** Assets the UI offers when creating a reserve. A product choice, not a contract limit. */
   assets: AssetRef[];
+  /**
+   * The Uniswap-v3-compatible DEX this chain is priced and traded through.
+   *
+   * Absent on a chain that has none (the mock testnet). Pricing then returns
+   * null honestly, instead of what it used to do: read whichever factory
+   * address happened to be a module constant -- which on any chain but
+   * Robinhood mainnet finds no pool, so a perfectly good reserve reported
+   * $0 AUM and no NAV. Proven on a Base fork, 2026-10-04; see
+   * docs/project/MULTICHAIN_RESERVES.md.
+   */
+  dex?: DexConfig;
+  /** The two assets every price routes through: the dollar, and the native wrapper. */
+  quotes?: ChainQuotes;
   /** True when the instance and its assets are test fixtures, not real value. */
   isMock: boolean;
   faucetUrl?: string;
@@ -75,6 +112,19 @@ const mainnetChain = defineChain({
   contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
+/** Uniswap v3 on Robinhood Chain mainnet (Uniswap sdk-core, ROBINHOOD_ADDRESSES). */
+const ROBINHOOD_DEX: DexConfig = {
+  factory: "0x1f7d7550b1b028f7571e69a784071f0205fd2efa",
+  quoter: "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7",
+  router: "0xcaf681a66d020601342297493863e78c959e5cb2",
+  fees: [100, 500, 3000, 10000],
+};
+
+const ROBINHOOD_QUOTES: ChainQuotes = {
+  usd: { address: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", symbol: "USDG", decimals: 6 },
+  native: { address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", symbol: "WETH", decimals: 18 },
+};
+
 export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
   testnet: {
     key: "testnet",
@@ -92,6 +142,8 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
       { address: "0x638626af66bbaf2a8fe5a9c293a2f718f6f170cd", symbol: "WBTC", decimals: 8, faucetAmount: 1n },
     ],
     isMock: true,
+    // No DEX and no quote assets: these are mock tokens with no pools, so
+    // nothing here can be priced and usdPrice says so rather than guessing.
     faucetUrl: "https://docs.robinhood.com/chain/",
     notice:
       "Testnet fixtures. The reserve here is a TEST deployment: its name, its basket and its balances " +
@@ -122,6 +174,8 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     // lib/robinhood/catalogue.ts from Uniswap v3 pools, with Robinhood stock
     // tokens proven by their contract code), which the Launch form fetches.
     assets: ROBINHOOD_ASSETS,
+    dex: ROBINHOOD_DEX,
+    quotes: ROBINHOOD_QUOTES,
     notice:
       "Live on Robinhood Chain mainnet. This reserve holds real USDG and Robinhood stock tokens; " +
       "minting moves real assets into it and redeeming returns them.",
@@ -147,16 +201,14 @@ export const MULTIPLIER_WARNING =
   "or dividend. New reserves are created with atomic-swap pricing and a 5-minute auction cap.";
 
 /**
- * Uniswap v3 on Robinhood Chain mainnet (Uniswap sdk-core, ROBINHOOD_ADDRESSES).
- * Used only to MARK basket assets to USDG from pool spot prices (slot0) --
- * never to trade from the app.
+ * Robinhood mainnet's DEX and quote assets, kept as flat exports for the
+ * Robinhood-specific UI that still reads them directly. DERIVED from the
+ * chain config above -- these are a convenience, never a second source of
+ * truth, and nothing chain-agnostic may import them.
  */
-export const UNISWAP_V3 = {
-  factory: "0x1f7d7550b1b028f7571e69a784071f0205fd2efa" as Address,
-  fees: [100, 500, 3000, 10000] as const,
-};
-export const USDG: Address = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
-export const WETH: Address = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
+export const UNISWAP_V3 = { factory: ROBINHOOD_DEX.factory, fees: ROBINHOOD_DEX.fees };
+export const USDG: Address = ROBINHOOD_QUOTES.usd.address;
+export const WETH: Address = ROBINHOOD_QUOTES.native.address;
 
 /** The Robinhood network the app shows. Testnet stays configured for development only. */
 export const ROBINHOOD = CHAINS.mainnet;
