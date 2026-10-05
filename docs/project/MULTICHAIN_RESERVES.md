@@ -133,10 +133,18 @@ which is why that field exists rather than a constant.
 
 **3. Which DEX is deeper.** Both PancakeSwap v3 and Uniswap v3 are deployed on
 BNB with real liquidity. Pancake's USDT/WBNB pool at the 100 tier holds
-~4.19e24 against Uniswap's deepest ~2.03e24, so Pancake is the market to
-route through. Uniswap v3's factory is on BNB, but its quoter and router are
-NOT at the addresses they occupy on other chains -- both read as zero bytes of
-code. Nothing may be copied between chains without re-reading it.
+~4.0e24 against Uniswap's deepest ~1.6e24, so Pancake is the market to route
+through.
+
+> **Correction, 2026-10-05.** This entry previously said Uniswap's quoter and
+> router "are NOT at the addresses they occupy on other chains -- both read as
+> zero bytes of code". That was wrong. The reading came through an anvil fork
+> whose upstream had archive problems. Read directly against chain 56 by
+> `scripts/evm-chain-probe.mts`, both are deployed (8,273 and 24,497 bytes).
+> The lesson survives the correction, inverted: a failed or fork-mediated read
+> is UNKNOWN, never "absent", and only a clean direct read may retire a
+> candidate address. The probe now reports `UNREADABLE` separately from
+> `NO CODE` for exactly this reason.
 
 **Still unexercised on both chains:** the swap quoter and router. `createReserve`
 pulls the basket from the caller, so the fork runs never buy anything. The

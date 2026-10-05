@@ -1,0 +1,27 @@
+{
+  "name": "BNB Smart Chain",
+  "rpc": "https://bsc-dataseed1.defibit.io",
+  "native": "BNB",
+  "candidates": {
+    "dex": {
+      "pancakeswap-v3": {
+        "factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+        "quoter": "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997",
+        "router": "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+        "fees": [100, 500, 2500, 10000]
+      },
+      "uniswap-v3": {
+        "factory": "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7",
+        "quoter": "0x78D78E420Da98ad378D7799bE8f4AF69033EB077",
+        "router": "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2",
+        "fees": [100, 500, 3000, 10000]
+      }
+    },
+    "tokens": {
+      "USDT": "0x55d398326f99059fF775485246999027B3197955",
+      "USDC": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+      "WBNB": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"
+    },
+    "quotePair": ["USDT", "WBNB"]
+  }
+}
