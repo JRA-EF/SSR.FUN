@@ -6841,6 +6841,148 @@
 }
 ```
 
+## DEC-0219
+
+```json
+{
+  "id": "DEC-0219",
+  "date": "2026-10-01",
+  "title": "Launch on Robinhood Chain at full parity with Solana: live Uniswap-backed asset catalogue (stock tokens proven by code, launchpad tokens included, copycats refused), Solana-style Composition / Economics / Review steps, one USDG amount bought into the basket on Uniswap with 1:1 initial shares, fee routing + co-managers on-chain, and a hardened approve path for the Phantom 'Unexpected error'",
+  "status": "implemented and committed on main; preview deployment for the Creator's test, production deploy pending the Creator's go",
+  "decision": "(1) ASSET CATALOGUE. The Robinhood Launch form no longer composes from a 281-token constant found by name (src/merge/lib/robinhoodAssets.generated.ts, scripts/generate-robinhood-assets.mts -- deleted). It fetches GET /api/robinhood/asset-catalogue (public read, allowlisted in middleware.ts), served from two new Neon tables (lib/robinhood/schema.sql) that lib/robinhood/catalogue.ts fills: every Uniswap v3 pool on Robinhood Chain paired with USDG or WETH, from the v3 factory's PoolCreated logs (adaptive-window eth_getLogs, since the public RPC caps a call at 10,000 matches / 10M blocks); each pool's liquidity, quote balance and slot0 via Multicall3; each counterparty token's name/symbol/decimals; and, for every token NAMED like a Robinhood stock token, the keccak256 of its runtime code. Rules (lib/robinhood/catalogueRules.ts, pure): a token whose code hash equals the one every official Robinhood stock token shares (a 283-byte beacon proxy on beacon 0xe10b6f6b...) is issuer 'robinhood' and always eligible; a token that carries the '• Robinhood Token' name with ANY other code is refused as a copycat; every other token is eligible when its deepest live pool holds at least $1,000 of USDG/WETH -- which is exactly what a graduated launchpad token (Pons, Stonklauncher, Pools.trade, ...) has; USDG and WETH are always eligible. Each served entry carries the pool (address, fee tier, quote) it is priced and bought through, the pool's USD depth and the token's USD price. A daily cron (api/robinhood/catalogue-refresh-cron.ts, 05:45 UTC, maxDuration 300, CRON_SECRET, ROBINHOOD_RPC_URL with public-RPC fallback) scans new pools, refreshes every live pool plus a slice of dormant ones, and re-classifies; the first full walk is scripts/robinhood-catalogue-backfill.mts, run once by hand against production Neon after scripts/migrate-robinhood-catalogue.mjs. (2) COMPOSITION (step 2) is the Solana step: search box (name/ticker/address), 'Asset type' filter (stock tokens / other), the add-list with the 'Stock token' badge (code-proven), the selected basket with a number field, a slider, '+rest', remove, Split evenly / Clear, 'Unallocated USDG Reserve', the 12-asset cap. (3) ECONOMICS (step 3): ONE 'Initial Reserve Value (USDG)' field -- the 'Initial shares' input is gone; initial shares are minted 1:1 with the USDG put in (src/merge/lib/evmLaunchPlan.ts planLaunch: 6-decimal USDG -> 18-decimal shares), and after creation the Folio mints/redeems pro-rata against NAV as before. Mint Fee and Annualized TVL Fee sliders with the effective Protocol/Manager split computed from the chain's own fee registry (getFeeDetails, read live; evmLaunchPlan.effectiveFeeSplit mirrors SSRLib.computeMintFees), Fee Routing (Primary Fee Destination + up to 10 Additional Fee Recipients dividing the Manager's share) mapped to the Folio's feeRecipients list in the exact shape FolioLib.setFeeRecipients requires (strictly ascending addresses, non-zero portions, sum = 1e18 -- feeRecipientsForChain), and Co-Managers mapped to the basketManagers / auctionLaunchers / brandManagers roles (never DEFAULT_ADMIN). The 'Manager' owner-override field is gone (owner = the connected wallet, as on Solana). (4) REVIEW (step 4) is the Solana review: identity card (header, avatar, name, ticker, category), description + links, zebra Economics rows (initial value, tokens minted 1:1 with no fee at creation, configured and effective mint/TVL fees, rebalance pricing), the Reserve Metadata URL box (the profile is stored on entering Review, as on Solana, and the URL shown is the mandate that goes on-chain), a Wallet Cost Summary (per-asset USD with the live Uniswap quote and price impact, 'deposited directly' for USDG, the wallet's USDG balance with a shortfall warning, estimated gas in ETH with a USD mark and an ETH-balance warning, a USD total, the ordered list of wallet prompts, the expected result), Target Composition, Manager Fee Routing and Co-Managers. (5) LAUNCH (src/merge/lib/evmLaunch.ts + evmSwap.ts): fresh QuoterV2 quotes at the moment of launch, a leg whose quote lands more than 5% under the catalogue's spot is refused as too thin BEFORE anything is sent; the wallet's USDG balance is checked against the whole seed; USDG is approved to SwapRouter02 for exactly the swap total; each non-cash leg is bought with exactInputSingle (USDG-quoted pools) or exactInput over USDG -> WETH -> token (WETH-quoted pools) with amountOutMinimum = quote - 1%, and a leg the wallet already holds enough of is skipped (so a retry after a rejected prompt never buys twice); each asset is approved to the SSR factory for exactly the amount received; deploySSR runs with amounts = what was actually bought, initialShares = seed x 1e12, the fee-recipient list, the co-manager roles and the mandate. (6) APPROVE HARDENING (evmReserve.approveIfNeeded, also used by Mint on the reserve page): every approve is simulated through our own RPC first (a true revert is reported with its reason), gas is estimated by us and passed to the wallet explicitly, a non-zero -> non-zero allowance change that reverts is retried via approve(0), a user rejection (EIP-1193 4001, however viem wrapped it) is reported as such, and a wallet that still refuses a call that simulates clean is told so in plain words, naming MetaMask/Rabby as the alternative. The deploy call gets the same simulate + explicit gas treatment.",
+  "context": "Tester (the Creator), 2026-10-01, on the DEC-0216 production build: '1. basket comp - not the same format, no sliders etc. very challenging. we just need to mimic and reintroduce all elements same as sol flow. 2. only 281 tokens on RH chain we need to expand that. example of CA thats not in 0x4b3A3FF4Ec9D289727e24A8152F406Bada44264D. include all PONS tokens, all STONK tokens. 3. selecting number of shares shouldn't be possible - user selects the amount of USDC and tokens get minted 1:1 on creation - post creation they get minted proportionately to NAV. 4. the delegates selection, fee recepients etc. is cooked, let's re-implement as per SOL. 5. Review section is also incomplete. 6. Couldn't setup reserve using phantom The contract function \"approve\" reverted with the following reason: Unexpected error'. Live findings while investigating: 0x4b3A... is 'Frog In Hood' (FIH), a graduated launchpad token with a Uniswap v3 pool against WETH (fee 10000) -- not on either Pons factory's TokenLaunched logs nor Stonklauncher's poolOf, so launchpad provenance is not a usable gate; the Pons V2 factory (0x7ed598bc...) has launched more than 10,000 tokens per 5M blocks, almost all still on bonding curves (not tradable on Uniswap), and its graduates move to Uniswap v4; the hand-generated list carried copycats -- e.g. its 'ARM' 0x5f0e3d5d... is 1,535 bytes of code with 10,000,000 supply, no uiMultiplier() and a $0 pool, while the real stock tokens (AAPL 0xaF3D..., AMZN 0x12f1..., AAOI 0x521C...) are the same 283-byte beacon proxy (code hash 0x6c1fdd40...) with ERC-8056 uiMultiplier(); Phantom lists Robinhood Chain as a natively supported network, so the 'Unexpected error' is not an unsupported-chain case.",
+  "rationale": "Parity means the same steps, controls and semantics, not a lookalike -- so the Solana step markup and helpers (basketAllocation.ts, the fee-routing and co-manager controls, the Review layout) are reused as closely as the chain allows, and the one genuine difference (buy/sell taxes do not exist on the Folio) is stated on the Economics step rather than faked. Buying the basket with USDG on Uniswap is what makes 'the user selects the amount of USDC' true on this chain: the first mainnet reserve was itself seeded from Uniswap v3, the pools are the canonical venue for both stock tokens and graduated launchpad tokens, and QuoterV2 + amountOutMinimum give the same price protection Jupiter's quote + slippage give on Solana. The catalogue has to come from the chain rather than a list because launchpads graduate tokens daily and because name-matching was already letting fakes through; code-hash identity is the strongest on-chain proof available for a stock token (the beacon address is in the bytecode), and a depth floor is the honest gate for everything else (a dust pool cannot be seeded from, whatever launched it). The approve change is the one change that is right under every hypothesis for the Phantom failure: a real revert now shows its reason, a wallet-side failure is named as such with a working alternative, and the explicit gas limit removes the most common wallet-side failure on a young chain.",
+  "alternativesConsidered": [
+    "Tagging Pons / Stonk provenance per token from the launchpad factories' logs (deferred: Pons V2's TokenLaunched volume exceeds the RPC's 10,000-match cap in 5M-block windows, the example token matched neither factory, and provenance would be a label, not a gate -- the depth rule already admits every graduated token; a provenance badge can be layered on later)",
+    "Including pre-graduation bonding-curve tokens (rejected for now: they are not on Uniswap, so the app can neither price nor buy them; they become eligible the day they graduate)",
+    "Uniswap v4 pools, where Pons V2 graduates land (deferred: pricing and swapping v4 needs the PoolManager / Universal Router path; v3 covers every stock token and the v3-graduating launchpads today)",
+    "Keeping a regenerated static list in the bundle (rejected: tens of thousands of pools, daily graduations, and a 300 KB constant; Postgres + a daily cron is the Solana catalogue's own pattern)",
+    "Letting the creator still supply assets in kind (rejected: the Creator's item 3 is explicit, and in-kind seeding is why 'initial shares' existed)",
+    "Buy/Sell tax sliders on Robinhood (rejected: the Folio has no such hook; the step says so instead of showing dead controls)",
+    "Unlimited USDG approval to the router (rejected: approved for exactly the swap total, as the factory approvals already were)"
+  ],
+  "impact": "The Robinhood Launch flow asks for the same things as the Solana one and does the same thing with them. The asset picker offers every official stock token (proven, not by name) and every launchpad token with real Uniswap depth, refreshed daily; copycat 'Robinhood Token' contracts are no longer offered. Launch needs USDG and a little ETH for gas (the Review step shows both and warns on a shortfall); a thin pool is refused before any prompt. New daily cron and two Neon tables; the first backfill is a one-off local run. Mint on the reserve page inherits the hardened approve. Not covered: Uniswap v4-only tokens, bonding-curve tokens, and the Phantom failure itself could not be reproduced here (no wallet extension in this environment) -- the tester's retry is the verification.",
+  "affectedAreas": [
+    "lib/robinhood/catalogueRules.ts, lib/robinhood/catalogue.ts, lib/robinhood/db.ts, lib/robinhood/schema.sql, lib/robinhood/package.json (new)",
+    "api/robinhood/asset-catalogue.ts, api/robinhood/catalogue-refresh-cron.ts (new); middleware.ts (public GET allowlist); vercel.json (cron + maxDuration); tsconfig.json (api/robinhood reference), tsconfig.node.json (lib/robinhood exclude)",
+    "scripts/migrate-robinhood-catalogue.mjs, scripts/robinhood-catalogue-backfill.mts (new); scripts/generate-robinhood-assets.mts (deleted); src/merge/lib/robinhoodAssets.generated.ts (USDG + WETH only)",
+    "src/merge/hooks/useRobinhoodAssetCatalogue.ts (new)",
+    "src/merge/lib/evmLaunchPlan.ts (new, pure), src/merge/lib/evmSwap.ts (new), src/merge/lib/evmLaunch.ts (new)",
+    "src/merge/lib/evmReserve.ts (approveIfNeeded hardening; createReserve feeRecipients/coManagers/explicit gas; isUserRejection), src/merge/lib/evmChain.ts (comment)",
+    "src/merge/components/robinhood/RobinhoodCreateForm.tsx (steps 2-4 rewritten; launch via evmLaunch)",
+    "tests/phase_robinhood_launch_plan.ts, tests/phase_robinhood_catalogue.ts (new); tests/phase_robinhood_create_parity.ts (updated)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live 2026-10-01 (public RPC): 0x4b3A3FF4Ec9D289727e24A8152F406Bada44264D name 'Frog In Hood', symbol FIH, 18 decimals, 1e9 supply; Uniswap v3 pool vs WETH fee 10000 at 0x6c402550...; QuoterV2 quoteExactInput over USDG(500)WETH(10000)FIH for 10 USDG = 8,322.39 FIH. Not indexed in Pons V2 (0x7ed598bc...) or Pons legacy (0x0c37a24F...) TokenLaunched logs from block 30M; Stonklauncher factory 0x80a77001... poolOf(FIH) = 0x0.",
+    "Live 2026-10-01: AAPL 0xaF3D76f1..., AMZN 0x12f190a9..., AAOI 0x521Cf887... all 283 bytes, keccak256 0x6c1fdd40002dcb440c7fff6a84171404d279ccb057803b65826f7546acd65630, beacon 0xe10b6f6b275de231345c20d14ab812db62151b00 embedded; uiMultiplier() answers. 'ARM' 0x5f0e3d5d... and 'AAOI' 0x5F907800...: 1,535 bytes, 10,000,000 supply, no uiMultiplier(), pools holding $0.000002 of USDG -- copycats the old list offered.",
+    "Live 2026-10-01: Pons V2 TokenLaunched exceeded the RPC's 10,000-match cap in a 5M-block window; 94 launches in the last 20k blocks; 7 PoolGraduated in the last 200k blocks; a V2 graduate (0xd9a024ff...) has no v3 pool (v4). WETH-paired v3 pools exceed 10,000 in the first 5M blocks alone.",
+    "Uniswap v3 Robinhood Chain deployments (developers.uniswap.org): factory 0x1f7d7550..., QuoterV2 0x33e885ed..., SwapRouter02 0xcaf681a6.... Phantom's supported-networks page lists Robinhood Chain.",
+    "FolioLib.setFeeRecipients (reserve-protocol/reserve-index-dtf): recipient > previousRecipient, portion != 0, total == D18, len <= MAX_FEE_RECIPIENTS; initialize mints initialShares to the creator with no fee.",
+    "tsc -b clean; oxlint clean on every new/changed file; VITE_ENABLE_EVM=true vite build succeeds; ts-mocha phase_robinhood_launch_plan + phase_robinhood_catalogue 22 passing, phase_robinhood_create_parity / ui_contract / evm_feature_flag 31 passing; full offline suite 1,270 passing with the same 5 pre-existing failures as DEC-0216 (chart range selector x2, native-control reset x2, deployed-binary pinning).",
+    "scripts/migrate-robinhood-catalogue.mjs applied to production Neon 2026-10-01; the backfill's result is recorded in PROJECT_STATUS.md."
+  ]
+}
+```
+
+## DEC-0220
+
+```json
+{
+  "id": "DEC-0220",
+  "date": "2026-10-01",
+  "title": "The Buffer/global polyfill boots as classic scripts in index.html (public/assets/polyfill-buffer.js), not as a line inside main.tsx -- fixes the blank page on the team test site",
+  "status": "implemented; on branch feat/evm-create-parity and staging, deployed to the team test site",
+  "decision": "index.html now loads `public/assets/polyfill-buffer.js` (the `buffer` package built once as an IIFE named SSRBufferPolyfill, 27 KB minified) and assigns `window.Buffer` / `window.global` in a classic inline script, both before the `<script type=\"module\">` entry. Classic scripts run during parsing; module scripts are deferred, so the globals exist before any chunk of the app evaluates, whatever the bundler decides to split. `src/polyfills.ts` stays as the first import of main.tsx for dev and tests. A test (tests/phase_buffer_polyfill.ts) pins the script order and that the IIFE behaves like Buffer.",
+  "context": "Creator, 2026-10-01, on strategic-super-reserve.fun after the DEC-0219 staging deploy: 'im getting a blank page ... just the purple background and thats it. in incognito it went as far as to ask me for a password' (the gate renders; the app bundle behind it did not). Reproduced locally with `vite preview` + headless Chrome on the branch, flag on AND off: `Uncaught ReferenceError: Buffer is not defined` from a new shared chunk (named after textarea.tsx) that Rolldown split out because the lazy RobinhoodCreateForm now shares calculations.ts (-> @ssr/sdk -> @solana/web3.js -> borsh) with main. borsh reads the Buffer global at module load; the shared chunk is imported at the top of main, so it ran before main.tsx's `import './polyfills'` line. Plain main (4b2ae27) does not split that chunk and renders.",
+  "rationale": "The polyfill has to be a precondition of the whole bundle, not a module whose position depends on chunking. Two bundler-level fixes were tried and rejected: a second module <script> for polyfills.ts (Vite merges an HTML page's module scripts into one entry), and Rolldown's `inject` (applied to ESM modules but left the CommonJS borsh references as free globals; the chunk still threw). A classic script is independent of the module graph entirely and costs one small cached file.",
+  "alternativesConsidered": [
+    "Removing the shared import (formatUsdc) from the Robinhood form so the chunk is not split (rejected as the only fix: any future shared import would bring the blank page back)",
+    "Rolldown advancedChunks forcing node_modules + polyfills into one vendor chunk (rejected: ordering inside a chunk is still dependency-driven and fragile)",
+    "vite-plugin-node-polyfills (not installed; its inject approach is what failed above)"
+  ],
+  "impact": "Every page of the app boots with Buffer and global defined before any module code; the blank page is gone with the EVM flag on or off. One extra 27 KB classic script per first load (cached afterwards). docs.html and the internal pages are untouched (they carry no wallet code).",
+  "affectedAreas": [
+    "index.html",
+    "public/assets/polyfill-buffer.js (new, generated)",
+    "tests/phase_buffer_polyfill.ts (new)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Headless Chrome on `vite preview` of the branch before the fix: 0 <h1>/<nav> nodes and `Uncaught ReferenceError: Buffer is not defined` in assets/textarea-*.js, flag on and off; plain main renders 1. After the fix: /, /#/create?chain=robinhood, /#/discover and /#/portfolio each render with no console errors, flag on and off; the Robinhood launch page shows 'Launch on', 'Reserve Identity' and 'Connect EVM wallet'.",
+    "Chunk lists: main has no textarea chunk and no Buffer users outside main; the branch adds textarea (90x Buffer.from), table, tabs, rocket, evmReserveId, useRobinhoodReserves shared chunks.",
+    "ts-mocha tests/phase_buffer_polyfill.ts 3 passing."
+  ]
+}
+```
+
+## DEC-0221
+
+```json
+{
+  "id": "DEC-0221",
+  "date": "2026-10-02",
+  "status": "confirmed-implemented (fix on branch, not deployed)",
+  "decision": "Mainnet fee routing regression-tested end to end with real funds and proven exact; the production fee keeper was found dead since 2026-09-25 (out of SOL), refunded, and the drain fixed. (1) Two throwaway Reserves were created by the Creator wallet ...4Rw8: Reserve A (id 31, DYp3fCan...spB3Zs, USDC-only, mint fee 200 bps, Buy tax 2%, three fresh fee recipients 50/30/20) seeded 1 USDC and bought 5 USDC through lib/mainnet/buildBuy.ts with the production dependencies; Reserve B (id 32, AQ6bRL2X...N1AFeF, USDC + wSOL, mint fee 500 bps, two recipients 70/30) seeded 2 USDC + 0.01 SOL and bought 1 RT via the direct multi-asset mint. Every on-chain number matched fee_math.rs exactly: A fee shares 20,000 + 100,000 (P/M 50/50), redeemed to 120,000 USDC, distributed 60,000 to the Treasury ...jWQL5 and 30,000/18,000/12,000 to the recipients' own USDC ATAs; Buy tax 100,000 USDC split 50,000 Treasury / 50,000 fee destination inside the Buy transaction. B settled by the PRODUCTION keeper on its 12:15 UTC run: 200,000 RT redeemed into 133,333 USDC + 666,666 lamports, wSOL swapped on Jupiter to 81,279 USDC, 214,612 distributed 107,306 Treasury / 75,114 / 32,192 (largest-remainder rounding verified). TVL fee mechanism evidenced from live Reserve 24 (accrue_fees credited 6,305 RT as annualTvlFee, redeemed and distributed 6,256 USDC an hour later). Both fee types are paid out in USDC by the keeper; the Creator confirmed keeping that model. (2) Keeper wallet AuaJRdbR...GPhsF signed its last transaction 2026-09-25 06:15 UTC with 652,231 lamports left; no settlement ran for a week and six Reserves held unsettled fee shares. Root cause: accrue_fees returns before updating last_settled_ts when period_supply_seconds == 0, so the 14 never-seeded (assetsInitializing, zero-supply) Reserves stayed 'due' forever and the hourly keeper paid 5,000 lamports for each of them every hour (about 400 no-op transactions a day). Refunded 0.1 SOL from ...4Rw8 (sig 3SrSXr7c...Jfiu49R). Fix on branch fix/keeper-accrual-drain: isAccrualWorthSending (Active + nonzero supply) gates accrual candidates, and distribute_fee_usdc is skipped when the USDC staging account is empty (8 of 10 distributes on the 12:15 run moved nothing at about 65,000 lamports each). (3) Reserve A was settled by hand through the permissionless redeem_fee_vault_shares + distribute_fee_usdc to avoid waiting an hour; Reserve B was left to the keeper deliberately so the keeper-gated swap leg was exercised.",
+  "context": "JRA: 'the main objective is to get reserve fees to work properly ... verify that the mint fees are being charged in USDC in the correct proportion between the fee recipients and be 100% sure of this and that those are claimable by the respective recipients and then that the treasury wallet is getting the correct amount of USDC as well ... provide on chain proof'. Pre-flight found the keeper at 0.00065 SOL and a week of silence; the Creator approved the 0.1 SOL top-up and the test design, and later confirmed keeping USDC payout for both fee types ('ok no, lets do it like u suggested').",
+  "rationale": "A USDC-only Reserve removes Jupiter from the arithmetic so every split is checkable to the raw unit; a USDC+SOL Reserve settled by the real cron proves the keeper-gated swap path. Fresh recipient keypairs make every incoming transfer attributable. Skipping unbillable accruals and empty distributes removes the only recurring keeper cost that does not move money.",
+  "alternativesConsidered": [
+    "Wait for the hourly keeper for Reserve A too -- rejected for speed; the two instructions are permissionless and identical to the keeper's.",
+    "Pay TVL fees to recipients as Reserve Tokens (JRA's initial expectation) -- not pursued; the Creator chose to keep the USDC pipeline as built.",
+    "Program-side fix (accrue_fees always updating last_settled_ts) -- correct long-term but needs a Squads upgrade; the keeper-side gate is sufficient and immediate."
+  ],
+  "impact": "Fee routing confirmed correct on Mainnet for mint fee, Buy tax and TVL fee. Production settlement resumed 12:15 UTC 2026-10-02 (52 keeper transactions, 0 failures; Reserve 30 backlog cleared 50,000 USDC to the Treasury). Keeper balance after the run 0.0437 SOL; steady-state about 0.001 SOL per run, so a further top-up (about 0.5 SOL) and deploying the fix are required within about 2 days. Reserve 26 (...pAnzSh, 10 assets, no lookup table) cannot be redeemed until an ALT is registered; Reserves 27-29 have staged pump.fun legs retrying hourly; Reserve 25 has 141/141 pending with no route. Two test Reserves (31, 32) now exist on Mainnet; their Reserve Tokens are held by ...4Rw8.",
+  "affectedAreas": [
+    "api/mainnet/fee-settlement-cron.ts (isAccrualWorthSending, empty-staging skip, distributeSkipped)",
+    "tests/phase_fee_settlement_usdc.ts (+3 tests, 20 passing)",
+    "Mainnet state: Reserves 31 and 32 created; keeper wallet funded 0.1 SOL",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Report with every signature and decoded event: https://claude.ai/artifact/A2hXJwsQj5xvQDkgNJHFaC",
+    "Reserve A: create Kc24zTiM...DNPD9cU, seed 5qaMCmSD...ZaB18xHF (FeeVaultCredited 10,000/10,000), buy 31akUY8T...mToWdsZE (FeeVaultCredited 50,000/50,000; Treasury +50,000 and fee destination +50,000 USDC tax), redeem 5BGqhZRN...BiAZ25GG (FeeSharesRedeemed 120,000 -> 120,000 USDC staged), distribute 4DuZS2XY...PviEwYxF (FeeUsdcDistributed 120,000: 60,000 / 30,000 / 18,000 / 12,000). Treasury ATA 1,111,037 -> 1,221,037.",
+    "Reserve B: create 5YQK4PiR...5SyBg3k6, seed 4wn5yMzt...NyWh9cWg (75,000/75,000), buy 5RPKU5cM...tjYgzQAB (25,000/25,000); keeper redeem 24Pfw5Ae...rJ2e91AH (133,333 USDC + 666,666 lamports), swap 5NE3VU9b...GcJ7DNkt (approve_settlement_swap + Jupiter: 666,666 lamports -> 81,279 USDC into staging), distribute 5jozyZbe...YDztw5gZq (214,612: 107,306 / 75,114 / 32,192). Treasury ATA 1,221,037 -> 1,378,343 (+107,306 B, +50,000 Reserve 30).",
+    "TVL: Reserve 24 accrue_fees jcFGYSBQ...vfL3hyz1 (FeeVaultCredited 3,153/3,152 annualTvlFee), redeem FT57sFvV...iGvPrbK, distribute a6HSXhuH...YeMxd7kqE (6,256 USDC: 3,129 / 3,127).",
+    "Keeper: last pre-outage tx 2026-09-25T06:15:48Z (AccrueFees, post balance 652,231 lamports); the 1,000 most recent signatures spanned only 09-22..09-25 at 404-408 per day; refund 3SrSXr7c...Jfiu49R; 12:15 run = 29 AccrueFees + 5 Redeem + 2 ApproveSettlementSwap/Jupiter + 10 Distribute + 6 ATA creates, 0.057 SOL spent (0.048 rent).",
+    "Offline: tests/phase_fee_settlement_usdc.ts 20 passing; tsc -p tsconfig.node.json clean apart from the known missing viem/botid packages."
+  ]
+}
+```
+
+## DEC-0225
+
+```json
+{
+  "id": "DEC-0225",
+  "date": "2026-10-05",
+  "status": "confirmed-implemented (deployed to ssr.fun)",
+  "decision": "After a confirmed Buy, DTRDetail.tsx records the trade into the local holdings store FIRST and runs the on-chain refresh SECOND, in all four Buy handlers (ambiguous-confirmation reconcile, DevNet single-asset, Mainnet single-asset, Mainnet multi-asset). The chain refresh is the last writer of the token balance; the trade recorder only ever adds to the pre-refresh balance and sets the cost basis.",
+  "context": "JRA, 2026-10-05: 'Sell Failed -- This wallet holds 9846424 raw Reserve Tokens but the sale needs 19792307 raw. Nothing was submitted.' on SOLSSR (Reserve 24, wallet 6BjT...WZen). On-chain the wallet had bought 9,846,424 raw two minutes earlier (…mcDtQL, 7.897902 USDC at NAV 0.7941 = 9,945,883 pre-fee, minus the 1% mint fee). The old order ran refreshRealReserveNow() (syncRealHolding -> balance = 9,846,424) and THEN recordConfirmedTrade(... numBuyAmount / nav ...) which added 9,945,883 on top: 19,792,307 exactly. Max filled that figure; the sell client's own fresh chain read refused before signing. RealReserveSync's poll normally hides this within 30s, but on this day the poll was backed off to its 120s ceiling by Helius 429s (the account-cap incident), so the doubled position stayed on screen long enough to act on.",
+  "rationale": "syncRealHolding is documented (DEC-0158) as the owner of the balance and deliberately never touches cost basis; recordConfirmedTrade is the owner of cost basis and computes the weighted average from the balance BEFORE the purchase. Running the recorder first and the chain sync second satisfies both contracts with no new state: the recorder sees the pre-buy balance (correct basis), and the sync then overwrites the balance with the real post-mint figure (correct balance). refreshRealReserveNow already invalidates the 4s balance cache before reading, so the overwrite is a fresh read, not a cached pre-buy one.",
+  "alternativesConsidered": [
+    "Make recordConfirmedTrade skip the balance add for on-chain DTRs -- rejected: its weighted-average cost basis needs the pre-purchase balance, which the chain-synced balance no longer is; would need a second code path.",
+    "Have Max / the sell pre-check read the chain instead of the store -- rejected as the primary fix: the store is what every other surface (Portfolio, P&L) shows; the store must be right, not just the sell button.",
+    "Leave it: the poll self-heals in 30-120s -- rejected: a real user hit it with real funds."
+  ],
+  "impact": "A Buy's position shows the true on-chain balance immediately after confirmation instead of roughly double for up to two minutes. Cost basis unchanged. No chain, program, API, or store schema change.",
+  "affectedAreas": ["src/merge/pages/DTRDetail.tsx (four Buy handlers)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Chain: buy …mcDtQL 2026-10-05T10:11:15Z SOLSSR 0 -> 9,846,424 raw, USDC 225,968,011 -> 218,070,109; sell …dNh52n 10:13:09Z 9,846,424 -> 1,846,424 (the user's successful retry at 8 tokens).",
+    "Arithmetic: 7,897,902 / 0.7941 = 9,945,883 (pre-fee) x 0.99 = 9,846,424 (minted); 9,846,424 + 9,945,883 = 19,792,307 (the refused amount).",
+    "Offline: tsc --noEmit -p tsconfig.app.json clean; tests/phase_data_integrity.ts + tests/phase_mainnet_sell_and_perf.ts 27 passing."
+  ]
+}
+```
+
+
 ```json
 {
   "id": "DEC-0226",

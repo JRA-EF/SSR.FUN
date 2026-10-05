@@ -131,11 +131,23 @@ export async function connectWallet(cfg: ChainConfig, chosen?: EIP1193Provider):
  * simulation dump, so it is truncated rather than flooding the page.
  */
 export function describeEvmError(e: unknown): string {
-  const err = e as { shortMessage?: string; details?: string; message?: string };
+  const err = e as { shortMessage?: string; details?: string; message?: string; code?: number; cause?: { code?: number } };
+  if (isUserRejection(e)) return "You declined the request in your wallet. Nothing was sent.";
   if (err?.shortMessage) return err.shortMessage;
   if (err?.details) return err.details;
   const m = err?.message ?? String(e);
   return m.length > 240 ? `${m.slice(0, 240)}...` : m;
+}
+
+/** EIP-1193 4001, however deeply viem wrapped it. */
+export function isUserRejection(e: unknown): boolean {
+  let cur = e as { code?: number; cause?: unknown; name?: string; message?: string } | undefined;
+  for (let i = 0; i < 6 && cur; i++) {
+    if (cur.code === 4001 || cur.name === "UserRejectedRequestError") return true;
+    if (/user rejected|user denied|rejected the request/i.test(cur.message ?? "")) return true;
+    cur = cur.cause as typeof cur;
+  }
+  return false;
 }
 
 // ------------------------------------------------------------------ format
@@ -347,6 +359,19 @@ export function quoteRedeemProceeds(pc: PublicClient, ssr: Address, shares: bigi
  * Approves exactly what is needed, never unlimited: Folio uses the allowance
  * as the minter's slippage limit (see SSR.mint), so a max approval would
  * quietly remove that protection.
+ *
+ * Hardened after a tester's Phantom launch failed at the first approval
+ * with `The contract function "approve" reverted with the following reason:
+ * Unexpected error` (2026-10-01). "Unexpected error" is the WALLET's own
+ * message, not a revert reason the token contract produces, so the call now:
+ *   1. simulates the approve through our own RPC first -- a real on-chain
+ *      revert is reported with its reason, and costs nothing;
+ *   2. retries via approve(0) when a non-zero allowance is in the way (the
+ *      USDT-style rule some tokens enforce);
+ *   3. estimates gas itself and hands the wallet an explicit limit, so a
+ *      wallet that cannot estimate on Robinhood Chain has nothing to fail on;
+ *   4. tells the user, when the wallet still refuses something that
+ *      simulates clean, that it is the wallet and not the chain.
  */
 export async function approveIfNeeded(
   pc: PublicClient,
@@ -357,23 +382,57 @@ export async function approveIfNeeded(
   spender: Address,
   needed: bigint,
   onProgress?: (msg: string) => void,
+  label = "the asset",
 ) {
   if (needed === 0n) return;
   const allowance = await pc.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [account, spender] });
   if (allowance >= needed) return;
-  onProgress?.("Approving...");
-  const hash = await wallet.writeContract({ address: token, abi: ERC20_ABI, functionName: "approve", args: [spender, needed], chain: cfg.chain, account });
-  await pc.waitForTransactionReceipt({ hash });
+  onProgress?.(`Approving ${label}...`);
+  const send = async (amount: bigint) => {
+    const call = { address: token, abi: ERC20_ABI, functionName: "approve", args: [spender, amount], account, chain: cfg.chain } as const;
+    const { request } = await pc.simulateContract(call);
+    const gas = await pc.estimateContractGas(call);
+    let hash: `0x${string}`;
+    try {
+      hash = await wallet.writeContract({ ...request, gas: (gas * 130n) / 100n });
+    } catch (e) {
+      if (isUserRejection(e)) throw e;
+      throw new Error(
+        `Your wallet could not send the ${label} approval (it said: ${describeEvmError(e)}). The same approval simulates fine on Robinhood Chain, so the wallet failed to build or broadcast it -- try again, switch the wallet to Robinhood Chain and retry, or launch with MetaMask or Rabby.`,
+      );
+    }
+    await pc.waitForTransactionReceipt({ hash });
+  };
+  try {
+    await send(needed);
+  } catch (e) {
+    // Some tokens refuse a non-zero -> non-zero change; reset and retry once.
+    if (allowance > 0n && !isUserRejection(e)) {
+      onProgress?.(`Resetting the ${label} allowance first...`);
+      await send(0n);
+      await send(needed);
+      return;
+    }
+    throw e;
+  }
 }
 
 export interface CreateReserveInput {
   name: string;
   symbol: string;
-  legs: { asset: AssetRef; amount: bigint }[];
+  legs: { asset: Pick<AssetRef, "address" | "symbol" | "decimals">; amount: bigint }[];
   initialShares: bigint;
   mintFee: bigint;
   tvlFee: bigint;
   owner: Address;
+  /**
+   * The Folio's fee-recipient list (strictly ascending addresses, portions
+   * summing to 1e18) -- built by evmLaunchPlan.ts's feeRecipientsForChain
+   * from the form's primary destination + additional recipients.
+   */
+  feeRecipients: { recipient: Address; portion: bigint }[];
+  /** Co-managers: granted BASKET_MANAGER, AUCTION_LAUNCHER and BRAND_MANAGER alongside the owner (never DEFAULT_ADMIN). */
+  coManagers: Address[];
   /**
    * The Folio's free-text field. The Create form passes the permanent URL of
    * the reserve's metadata payload (see evmReserveMeta.ts's
@@ -405,16 +464,16 @@ export async function createReserve(
   onProgress?: (msg: string) => void,
 ): Promise<{ hash: `0x${string}`; reserve: Address }> {
   for (const leg of input.legs) {
-    await approveIfNeeded(pc, wallet, cfg, account, leg.asset.address, cfg.deployer, leg.amount, () =>
-      onProgress?.(`Approving ${leg.asset.symbol}...`),
-    );
+    await approveIfNeeded(pc, wallet, cfg, account, leg.asset.address, cfg.deployer, leg.amount, onProgress, leg.asset.symbol);
   }
   onProgress?.("Deploying the reserve...");
-  const { request, result } = await pc.simulateContract({
+  const managers = [input.owner, ...input.coManagers.filter((m) => m.toLowerCase() !== input.owner.toLowerCase())];
+  const call = {
     account,
     address: cfg.deployer,
     abi: DEPLOYER_ABI,
     functionName: "deploySSR",
+    chain: cfg.chain,
     args: [
       {
         name: input.name,
@@ -425,7 +484,7 @@ export async function createReserve(
       },
       {
         maxAuctionLength: SAFE_REBALANCE_DEFAULTS.maxAuctionLength,
-        feeRecipients: [{ recipient: input.owner, portion: D18 }],
+        feeRecipients: input.feeRecipients.length > 0 ? input.feeRecipients : [{ recipient: input.owner, portion: D18 }],
         immutableFeeRecipients: [],
         tvlFee: input.tvlFee,
         mintFee: input.mintFee,
@@ -438,13 +497,21 @@ export async function createReserve(
         bidsEnabled: true,
       },
       input.owner,
-      [input.owner],
-      [input.owner],
-      [input.owner],
+      managers,
+      managers,
+      managers,
       `0x${Date.now().toString(16).padStart(64, "0")}` as `0x${string}`,
     ],
-  });
-  const hash = await wallet.writeContract(request);
+  } as const;
+  const { request, result } = await pc.simulateContract(call);
+  const gas = await pc.estimateContractGas(call);
+  let hash: `0x${string}`;
+  try {
+    hash = await wallet.writeContract({ ...request, gas: (gas * 125n) / 100n });
+  } catch (e) {
+    if (isUserRejection(e)) throw e;
+    throw new Error(`Your wallet could not send the deployment (it said: ${describeEvmError(e)}). It simulates fine on Robinhood Chain; try again or launch with MetaMask or Rabby.`);
+  }
   await pc.waitForTransactionReceipt({ hash });
   return { hash, reserve: result[0] };
 }
