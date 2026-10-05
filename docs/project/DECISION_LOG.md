@@ -7022,3 +7022,32 @@
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0227",
+  "date": "2026-10-05",
+  "title": "Batch Buy of a Reserve holding xStocks refused to mint after every swap landed ('still short after funding: acquired 0 raw') -- the client read Token-2022 wallet balances through the classic token-account address; wallet-balance reads now derive the account under the mint's own program",
+  "status": "implemented, committed to main and DEPLOYED TO PRODUCTION (deployment ID in PROJECT_STATUS.md, Last Updated); offline-verified",
+  "decision": "(1) packages/sdk/src/readOnly.ts fetchTokenBalanceRaw: when the caller passes no token program, the mint account's owner is read and the associated token account is derived under THAT program (Token-2022 for every xStock), instead of defaulting to classic SPL Token; callers that pass the program pay no extra read. (2) src/merge/pages/DTRDetail.tsx: the three places that build the Buy/Sell asset legs from the live Reserve now pass each asset's tokenProgram (ReserveOnChain already carried it), so the multi-asset Buy/Sell clients' balance reads take the fast, explicit path. (3) New tests/phase_token2022_wallet_balance_read.ts (4 tests) pins the derivation with a fake connection.",
+  "context": "Creator, 2026-10-05 ~15:30 UTC, buying the just-launched Reserve #38 'ILOVESOLANA' (SOLA: JUP, Xs3o/Xsc9 xStocks, 6GmA) on ssr.fun: 'Buy Failed -- Reserve asset Xs3oZw... is still short after funding: this purchase has acquired 0 raw of the 1500750 raw required ... Verified on-chain after the failure: JUPy... fully funded; Xs3o... acquired 1529209 of the 1500750 raw needed; Xsc9... acquired 1075009 of 1056489; 6GmA... fully funded. Reserve Tokens minted: no.' Every swap had landed and the per-leg accounting had measured the output (fetchOwnedBalanceRawSettled resolves the program from the mint), but the pre-mint verification reads wallet balances with fetchTokenBalanceRaw(mint, owner, leg.tokenProgram) and DTRDetail built the legs WITHOUT tokenProgram, so for the two Token-2022 legs it derived the classic ATA (a different, empty account), read 0, and countableAcquiredRaw = min(held 0, acquired) = 0 -> the purchase stopped before the mint. The same report flagged only the classic-SPL legs as 'fully funded' for the same reason. The server-side build (lib/mainnet/buildBuy.ts) reads the legs correctly (DEC-0213), which is why the swaps were sized right. Reserves of classic-SPL assets never hit this; it is specific to Token-2022 legs on the batch path (the single-transaction path has no post-swap read). Also checked for the same report: Reserve #38's Reserve Token mint DOES have its Metaplex metadata ('ILOVESOLANA' / 'SOLA', created 15:27:03 UTC in the launch batch, uri serving 200 JSON with CORS) -- Phantom's 'Unknown' label for it is on Phantom's side (its token index had not picked the new mint up yet), not a missing record.",
+  "rationale": "The SDK already has the one correct ATA derivation (tokenPrograms.ts assetAta) and the rule that nothing may assume the classic program (DEC-0201); fetchTokenBalanceRaw was the one reader that still assumed it when uninformed. Resolving from the mint owner costs one account read only when the caller does not know the program, and makes every remaining uninformed call site correct at once; passing the program from the page keeps the hot path free of that read.",
+  "alternativesConsidered": [
+    "Only passing tokenProgram from DTRDetail (rejected alone: other readers -- the wallet's Buy-asset and Reserve-Token balance reads, DevNet onboarding -- would keep assuming classic SPL for any future Token-2022 mint)",
+    "Making the pre-mint check trust the per-leg acquired accounting without re-reading the wallet (rejected: the re-read is the double-spend guard DEC-0154 added on purpose)"
+  ],
+  "impact": "A batch Buy of any Reserve holding xStocks (or any Token-2022 asset) now proceeds to the mint after its swaps land. The Creator's failed SOLA purchase left the swapped assets in their wallet with the per-purchase record intact: retrying the Buy counts what was already acquired first and should go straight to the mint. Sell of such Reserves (redeem then sell legs) reads the redeemed Token-2022 legs correctly too.",
+  "affectedAreas": [
+    "packages/sdk/src/readOnly.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "tests/phase_token2022_wallet_balance_read.ts (new)",
+    "docs/project/DECISION_LOG.md, docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live read 2026-10-05: Reserve #38 DU7PFe6X... assets JUPy (Tokenkeg), Xs3o (Tokenz Token-2022), Xsc9 (Tokenz), 6GmA (Tokenkeg); Reserve Token mint EDBSB31W... metadata account B77j1V7P... name ILOVESOLANA symbol SOLA, created in tx 7K9LYVhc... at 15:27:03Z.",
+    "Offline: tests/phase_token2022_wallet_balance_read.ts 4 passing (Token-2022 ATA derived from the mint owner, classic unchanged, explicit program skips the mint read, unreadable mint falls back to classic); tsc -b exit 0 after rebuilding packages/sdk; vite build OK."
+  ]
+}
+```

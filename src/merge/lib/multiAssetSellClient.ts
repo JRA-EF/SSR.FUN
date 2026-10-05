@@ -23,7 +23,7 @@
 // sale resumes exactly where it stopped across refresh/reconnect.
 import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, type ZapAssetLeg } from "@ssr/sdk";
+import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, TOKEN_PROGRAM_ID, type ZapAssetLeg } from "@ssr/sdk";
 import { JupiterSwapNotLandedError, partitionSwapOutcomes, SWAP_AUTO_RETRY_LIMIT } from "./jupiterSwapClient";
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
@@ -196,8 +196,8 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   log("sell start", { reserve: reserveBase58, reserveTokensToRedeem: params.reserveTokensToRedeem.toString(), legs: params.assets.map((a) => a.mint) });
 
   const [preSaleUsdcRaw, preRedeemRtRaw] = await Promise.all([
-    fetchTokenBalanceRaw(params.connection, usdcMint, owner).then(BigInt),
-    fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner).then(BigInt),
+    fetchTokenBalanceRaw(params.connection, usdcMint, owner, TOKEN_PROGRAM_ID).then(BigInt),
+    fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner, TOKEN_PROGRAM_ID).then(BigInt),
   ]);
 
   let pending = readPendingSell(ownerBase58, reserveBase58);
