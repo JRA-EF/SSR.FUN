@@ -63,9 +63,43 @@ describe("DEC-0227 wallet balance read derives the ATA under the mint's own toke
   });
 
   it("falls back to classic SPL Token when the mint account itself cannot be read", async () => {
+    const unknownMint = Keypair.generate().publicKey;
     const reads: string[] = [];
-    const raw = await fetchTokenBalanceRaw(fakeConnection(new Map(), reads), mintClassic, owner);
+    const raw = await fetchTokenBalanceRaw(fakeConnection(new Map(), reads), unknownMint, owner);
     expect(raw).to.equal("0");
-    expect(reads[1]).to.equal(getAssociatedTokenAddressSync(mintClassic, owner).toBase58());
+    expect(reads).to.deep.equal([unknownMint.toBase58(), getAssociatedTokenAddressSync(unknownMint, owner).toBase58()]);
+  });
+});
+
+describe("DEC-0227 follow-up: the mint -> program lookup is remembered per session", () => {
+  it("reads the mint account once per mint, then only the token account", async () => {
+    const { clearMintTokenProgramCache } = await import("../packages/sdk/src/readOnly");
+    clearMintTokenProgramCache();
+    const owner = Keypair.generate().publicKey;
+    const mint = Keypair.generate().publicKey;
+    const ata = getAssociatedTokenAddressSync(mint, owner, false, TOKEN_2022_PROGRAM_ID);
+    const accounts = new Map<string, { owner: PublicKey; data: Buffer }>();
+    accounts.set(mint.toBase58(), { owner: TOKEN_2022_PROGRAM_ID, data: Buffer.alloc(82) });
+    accounts.set(ata.toBase58(), { owner: TOKEN_2022_PROGRAM_ID, data: tokenAccountData(mint, owner, 7n) });
+    const reads: string[] = [];
+    const conn = fakeConnection(accounts, reads);
+    expect(await fetchTokenBalanceRaw(conn, mint, owner)).to.equal("7");
+    expect(await fetchTokenBalanceRaw(conn, mint, owner)).to.equal("7");
+    expect(await fetchTokenBalanceRaw(conn, mint, owner)).to.equal("7");
+    expect(reads.filter((r) => r === mint.toBase58()).length).to.equal(1);
+    expect(reads.filter((r) => r === ata.toBase58()).length).to.equal(3);
+    clearMintTokenProgramCache();
+  });
+
+  it("does not remember a failed mint read, so the next call retries it", async () => {
+    const { clearMintTokenProgramCache } = await import("../packages/sdk/src/readOnly");
+    clearMintTokenProgramCache();
+    const owner = Keypair.generate().publicKey;
+    const mint = Keypair.generate().publicKey;
+    const reads: string[] = [];
+    const conn = fakeConnection(new Map(), reads);
+    await fetchTokenBalanceRaw(conn, mint, owner);
+    await fetchTokenBalanceRaw(conn, mint, owner);
+    expect(reads.filter((r) => r === mint.toBase58()).length).to.equal(2);
   });
 });

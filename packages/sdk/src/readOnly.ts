@@ -352,14 +352,35 @@ export async function fetchFeeSettlement(connection: Connection, programId: Publ
  * read).
  */
 export async function fetchTokenBalanceRaw(connection: Connection, mint: PublicKey, owner: PublicKey, tokenProgram?: PublicKey | string | null): Promise<string> {
-  let program: PublicKey | string | null = tokenProgram ?? null;
-  if (!program) {
-    const mintInfo = await connection.getAccountInfo(mint).catch(() => null);
-    program = mintInfo ? tokenProgramFromMintOwner(mintInfo.owner) : TOKEN_PROGRAM_ID;
-  }
+  const program = tokenProgram ?? (await resolveMintTokenProgram(connection, mint));
   const ata = assetAta(mint, owner, program);
   const info = await connection.getAccountInfo(ata).catch(() => null);
   return tokenAccountAmountByOwner(ata, info).toString();
+}
+
+/**
+ * mint -> owning token program, remembered for the life of the module: a
+ * mint's owner program never changes, so the lookup costs one account read
+ * per mint per session, not one per balance read (this reader sits on the
+ * discovery poll and every trade). A failed read is NOT remembered -- the
+ * classic program is used for that call only, and the next call retries.
+ */
+const MINT_TOKEN_PROGRAM_CACHE = new Map<string, PublicKey>();
+
+export async function resolveMintTokenProgram(connection: Connection, mint: PublicKey): Promise<PublicKey> {
+  const key = mint.toBase58();
+  const cached = MINT_TOKEN_PROGRAM_CACHE.get(key);
+  if (cached) return cached;
+  const mintInfo = await connection.getAccountInfo(mint).catch(() => null);
+  if (!mintInfo) return TOKEN_PROGRAM_ID;
+  const program = tokenProgramFromMintOwner(mintInfo.owner);
+  MINT_TOKEN_PROGRAM_CACHE.set(key, program);
+  return program;
+}
+
+/** Test seam: forgets every remembered mint -> program pair. */
+export function clearMintTokenProgramCache(): void {
+  MINT_TOKEN_PROGRAM_CACHE.clear();
 }
 
 // --- Landing-page KPI reads: real Reserve Token holder counts + real 24h volume ---
