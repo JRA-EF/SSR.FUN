@@ -29,7 +29,7 @@ const CASH: PlannedAsset = { address: USDG, symbol: "USDG", decimals: 6, weight:
 
 describe("planLaunch -- one USDG amount, weights, legs that add up", () => {
   it("splits the seed by weight in bps and the legs sum to exactly the seed", () => {
-    const plan = planLaunch([AAPL, FIH, CASH], parseUsdgAmount("10"), USDG);
+    const plan = planLaunch([AAPL, FIH, CASH], parseUsdgAmount("10", 6), USDG, 6);
     expect(plan.legs.map((l) => [l.asset.symbol, l.kind, l.usdgRaw.toString()])).to.deep.equal([
       ["AAPL", "swap", "6000000"],
       ["FIH", "swap", "3000000"],
@@ -41,32 +41,32 @@ describe("planLaunch -- one USDG amount, weights, legs that add up", () => {
   });
 
   it("mints initial shares 1:1 with the USDG put in (18 decimals from 6)", () => {
-    const plan = planLaunch([AAPL, { ...CASH, weight: 0.4 }], parseUsdgAmount("12.5"), USDG);
+    const plan = planLaunch([AAPL, { ...CASH, weight: 0.4 }], parseUsdgAmount("12.5", 6), USDG, 6);
     expect(plan.initialShares).to.equal(12_500_000n * 10n ** 12n);
     expect(plan.initialShares).to.equal(125n * 10n ** 17n);
   });
 
   it("an unallocated remainder becomes (or tops up) the USDG cash leg, so the column still sums to the seed", () => {
-    const plan = planLaunch([{ ...AAPL, weight: 0.25 }, { ...FIH, weight: 0.25 }], parseUsdgAmount("100"), USDG);
+    const plan = planLaunch([{ ...AAPL, weight: 0.25 }, { ...FIH, weight: 0.25 }], parseUsdgAmount("100", 6), USDG, 6);
     const cash = plan.legs.find((l) => l.kind === "usdg")!;
     expect(cash.usdgRaw).to.equal(50_000_000n);
     expect(cash.bps).to.equal(5000);
     expect(plan.legs.reduce((s, l) => s + l.usdgRaw, 0n)).to.equal(100_000_000n);
     // Rounding dust from an odd split lands on the cash leg, never lost.
-    const odd = planLaunch([{ ...AAPL, weight: 1 / 3 }, { ...FIH, weight: 1 / 3 }, { ...CASH, weight: 1 / 3 }], 1_000_001n, USDG);
+    const odd = planLaunch([{ ...AAPL, weight: 1 / 3 }, { ...FIH, weight: 1 / 3 }, { ...CASH, weight: 1 / 3 }], 1_000_001n, USDG, 6);
     expect(odd.legs.reduce((s, l) => s + l.usdgRaw, 0n)).to.equal(1_000_001n);
   });
 
   it("refuses weights over 100%, duplicates, a zero seed, and a non-cash asset without a pool", () => {
-    expect(() => planLaunch([{ ...AAPL, weight: 0.7 }, { ...FIH, weight: 0.4 }], 1_000_000n, USDG)).to.throw(/exceed 100%/);
-    expect(() => planLaunch([{ ...AAPL, weight: 0.3 }, { ...AAPL, weight: 0.3 }], 1_000_000n, USDG)).to.throw(/listed twice/);
-    expect(() => planLaunch([AAPL], 0n, USDG)).to.throw(/greater than zero/);
-    expect(() => planLaunch([{ ...AAPL, pool: null }], 1_000_000n, USDG)).to.throw(/no Uniswap pool/);
-    expect(() => parseUsdgAmount("abc")).to.throw(/greater than zero/);
+    expect(() => planLaunch([{ ...AAPL, weight: 0.7 }, { ...FIH, weight: 0.4 }], 1_000_000n, USDG, 6)).to.throw(/exceed 100%/);
+    expect(() => planLaunch([{ ...AAPL, weight: 0.3 }, { ...AAPL, weight: 0.3 }], 1_000_000n, USDG, 6)).to.throw(/listed twice/);
+    expect(() => planLaunch([AAPL], 0n, USDG, 6)).to.throw(/greater than zero/);
+    expect(() => planLaunch([{ ...AAPL, pool: null }], 1_000_000n, USDG, 6)).to.throw(/no Uniswap pool/);
+    expect(() => parseUsdgAmount("abc", 6)).to.throw(/greater than zero/);
   });
 
   it("lists the wallet prompts in launch order, swaps before factory approvals before deploy", () => {
-    const steps = launchSteps(planLaunch([AAPL, CASH], parseUsdgAmount("10"), USDG));
+    const steps = launchSteps(planLaunch([AAPL, CASH], parseUsdgAmount("10", 6), USDG, 6));
     expect(steps[0]).to.match(/^Approve 6 USDG for the Uniswap router/);
     expect(steps[1]).to.match(/^Swap 6 USDG for AAPL/);
     expect(steps[2]).to.match(/^Approve AAPL for the SSR factory/);
@@ -76,9 +76,9 @@ describe("planLaunch -- one USDG amount, weights, legs that add up", () => {
   });
 
   it("formats raw USDG without trailing zeros", () => {
-    expect(fmtUsdg(6_000_000n)).to.equal("6");
-    expect(fmtUsdg(1_234_560n)).to.equal("1.23456");
-    expect(fmtUsdg(5n)).to.equal("0.000005");
+    expect(fmtUsdg(6_000_000n, 6)).to.equal("6");
+    expect(fmtUsdg(1_234_560n, 6)).to.equal("1.23456");
+    expect(fmtUsdg(5n, 6)).to.equal("0.000005");
   });
 });
 
@@ -134,5 +134,51 @@ describe("swap protection", () => {
     expect(priceImpactBps(1000n, 1000n)).to.equal(0);
     expect(priceImpactBps(1100n, 1000n)).to.equal(0);
     expect(priceImpactBps(5n, 0n)).to.equal(0);
+  });
+});
+
+describe("the dollar's decimals come from the chain, not from a constant", () => {
+  // Regression. USDG_DECIMALS was a module constant of 6. BNB's USDT and USDC
+  // are both 18, so on that chain a 1,000-dollar seed parsed to 1e9 raw -- a
+  // billionth of a dollar -- while still minting 1,000 shares, and the
+  // price-impact guard's arithmetic was off by 1e12. Found on a BNB fork,
+  // 2026-10-05; see docs/project/MULTICHAIN_RESERVES.md.
+  const USDT18 = "0x55d398326f99059fF775485246999027B3197955" as const;
+  const CASH18: PlannedAsset = { address: USDT18, symbol: "USDT", decimals: 18, weight: 0.1, pool: null };
+
+  it("parses a seed at the chain's own precision, not always 6", () => {
+    expect(parseUsdgAmount("1000", 6).toString()).to.equal("1000000000");
+    expect(parseUsdgAmount("1000", 18).toString()).to.equal("1000000000000000000000");
+    // 15 fractional digits, padded to 18 -- exact. The old float path
+    // (Math.round(n * 10 ** 18)) could not represent this without drift.
+    expect(parseUsdgAmount("1234.567891234567891", 18).toString()).to.equal("1234567891234567891000");
+  });
+
+  it("truncates beyond the token's precision instead of inventing digits", () => {
+    expect(parseUsdgAmount("1.2345678", 6).toString()).to.equal("1234567");
+  });
+
+  it("mints one share per dollar on an 18-decimal chain, not 1e12 too many", () => {
+    const seed = parseUsdgAmount("1000", 18);
+    const plan = planLaunch([{ ...AAPL, weight: 0.9 }, CASH18], seed, USDT18, 18);
+    expect(plan.seedUsdgRaw.toString(), "the seed is a real 1,000 dollars").to.equal("1000000000000000000000");
+    expect(plan.initialShares.toString(), "1,000 shares at 18dp").to.equal("1000000000000000000000");
+    expect(plan.usdDecimals).to.equal(18);
+    // The legs must still sum to exactly the seed.
+    expect(plan.legs.reduce((t, l) => t + l.usdgRaw, 0n)).to.equal(seed);
+  });
+
+  it("still mints one share per dollar on a 6-decimal chain", () => {
+    const plan = planLaunch([{ ...AAPL, weight: 0.9 }, CASH], parseUsdgAmount("1000", 6), USDG, 6);
+    expect(plan.initialShares.toString()).to.equal("1000000000000000000000");
+  });
+
+  it("formats balances at the chain's precision", () => {
+    expect(fmtUsdg(1_000_000_000n, 6)).to.equal("1000");
+    expect(fmtUsdg(1000n * 10n ** 18n, 18)).to.equal("1000");
+  });
+
+  it("refuses a dollar whose decimals the share maths cannot express", () => {
+    expect(() => planLaunch([AAPL], 1n, USDG, 24)).to.throw(/cannot express/);
   });
 });

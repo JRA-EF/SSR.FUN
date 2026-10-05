@@ -43,13 +43,15 @@ export async function quoteLaunch(pc: PublicClient, cfg: ChainConfig, plan: Laun
     const px = priceUsd(leg.asset.address);
     let impactBps = 0;
     if (px !== null && px > 0) {
-      const usd = Number(leg.usdgRaw) / 1e6;
+      // The dollar's own scale, not a hardcoded 1e6: on an 18-decimal dollar
+      // this was off by 1e12 and the thin-market guard below misfired.
+      const usd = Number(leg.usdgRaw) / 10 ** plan.usdDecimals;
       const spotOut = BigInt(Math.floor((usd / px) * 10 ** leg.asset.decimals));
       impactBps = priceImpactBps(quotedOut, spotOut);
     }
     if (impactBps > LAUNCH_MAX_PRICE_IMPACT_BPS) {
       throw new Error(
-        `Not enough liquidity for ${leg.asset.symbol}: buying ${fmtUsdg(leg.usdgRaw)} USDG of it would move the price about ${(impactBps / 100).toFixed(1)}%. Lower its weight or the initial amount.`,
+        `Not enough liquidity for ${leg.asset.symbol}: buying ${fmtUsdg(leg.usdgRaw, plan.usdDecimals)} ${cfg.quotes?.usd.symbol ?? "USD"} of it would move the price about ${(impactBps / 100).toFixed(1)}%. Lower its weight or the initial amount.`,
       );
     }
     out.push({ leg, route, quotedOut, minOut: minOutAfterSlippage(quotedOut), impactBps });
@@ -87,7 +89,7 @@ export async function executeLaunch(
   if (!cash) throw new Error("This chain has no dollar asset configured, so a reserve cannot be seeded on it.");
   const usdgHeld = await erc20Balance(pc, cash.address, account);
   if (usdgHeld < plan.seedUsdgRaw) {
-    throw new Error(`This wallet holds ${fmtUsdg(usdgHeld)} ${cash.symbol} but the launch needs ${fmtUsdg(plan.seedUsdgRaw)} ${cash.symbol}. Add ${cash.symbol} or lower the initial amount.`);
+    throw new Error(`This wallet holds ${fmtUsdg(usdgHeld, plan.usdDecimals)} ${cash.symbol} but the launch needs ${fmtUsdg(plan.seedUsdgRaw, plan.usdDecimals)} ${cash.symbol}. Add ${cash.symbol} or lower the initial amount.`);
   }
 
   // 1. Buy each non-cash leg, skipping any the wallet already holds enough of.
@@ -105,7 +107,7 @@ export async function executeLaunch(
       if (!cfg.dex || !dollar) throw new Error("This chain has no DEX configured, so the basket cannot be bought.");
       await approveIfNeeded(pc, wallet, cfg, account, dollar.address, cfg.dex.router, routerSpend, onProgress, dollar.symbol);
     for (const q of pending) {
-      onProgress(`Buying ${q.leg.asset.symbol} with ${fmtUsdg(q.leg.usdgRaw)} USDG...`);
+      onProgress(`Buying ${q.leg.asset.symbol} with ${fmtUsdg(q.leg.usdgRaw, plan.usdDecimals)} ${cash.symbol}...`);
       const before = await erc20Balance(pc, q.leg.asset.address, account);
       await swapExactUsdgIn(pc, wallet, cfg, account, q.route!, q.leg.usdgRaw, q.minOut);
       const after = await erc20Balance(pc, q.leg.asset.address, account);

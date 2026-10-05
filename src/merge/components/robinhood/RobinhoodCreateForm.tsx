@@ -65,6 +65,8 @@ import { executeLaunch, quoteLaunch, type LegQuote } from "@/lib/evmLaunch";
 import { connectEvmWallet, useEvmWallet } from "./useEvmWallet";
 
 const cfg = ROBINHOOD;
+/** This chain's dollar precision -- 6 on Robinhood, 18 on BNB. Never assume. */
+const cashDecimals = cfg.quotes?.usd.decimals ?? 6;
 const pc = publicClientFor(cfg);
 const short = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
 type Status = { text: string; kind: "ok" | "err" | "busy" } | null;
@@ -239,9 +241,9 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
   const planned: { plan: LaunchPlan | null; error: string | null } = useMemo(() => {
     try {
       if (assets.length === 0) return { plan: null, error: null };
-      const seed = parseUsdgAmount(initialSeedUsdg || "0");
+      const seed = parseUsdgAmount(initialSeedUsdg || "0", cashDecimals);
       const planAssets: PlannedAsset[] = assets.map((a) => ({ address: a.address, symbol: a.symbol, decimals: a.decimals, weight: a.weight, pool: a.pool }));
-      return { plan: planLaunch(planAssets, seed, USDG), error: null };
+      return { plan: planLaunch(planAssets, seed, USDG, cashDecimals), error: null };
     } catch (e) {
       return { plan: null, error: e instanceof Error ? e.message : String(e) };
     }
@@ -830,7 +832,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                     <span>Funded directly in USDG from this wallet.</span>
                     {walletUsdg !== null && (
                       <span>
-                        Wallet Balance: <span className="font-merge-mono">{fmtUsdg(walletUsdg)} USDG</span>
+                        Wallet Balance: <span className="font-merge-mono">{fmtUsdg(walletUsdg, cashDecimals)} USDG</span>
                       </span>
                     )}
                   </p>
@@ -1109,11 +1111,11 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                         ))}
                         <div className="flex justify-between text-sm font-semibold">
                           <span>Reserve assets subtotal</span>
-                          <span className="font-merge-mono">{fmtUsdg(plan.seedUsdgRaw)} USDG</span>
+                          <span className="font-merge-mono">{fmtUsdg(plan.seedUsdgRaw, cashDecimals)} USDG</span>
                         </div>
                         {walletUsdg !== null && (
                           <p className={`text-xs ${walletUsdg < plan.seedUsdgRaw ? "text-destructive" : "text-muted-foreground"}`}>
-                            This wallet holds {fmtUsdg(walletUsdg)} USDG{walletUsdg < plan.seedUsdgRaw ? ` -- it needs ${fmtUsdg(plan.seedUsdgRaw)} USDG. Add USDG or lower the initial amount.` : "."}
+                            This wallet holds {fmtUsdg(walletUsdg, cashDecimals)} USDG{walletUsdg < plan.seedUsdgRaw ? ` -- it needs ${fmtUsdg(plan.seedUsdgRaw, cashDecimals)} USDG. Add USDG or lower the initial amount.` : "."}
                           </p>
                         )}
                         <p className="pt-3 border-t border-border/50 text-xs font-semibold text-foreground">Fees &amp; overhead (paid in ETH)</p>

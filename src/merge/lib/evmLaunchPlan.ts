@@ -8,11 +8,20 @@
 // Reserve Token per dollar at inception, exactly as on Solana. After that
 // the contract mints and redeems pro-rata against the basket (NAV), so the
 // creator never "picks a share count".
-import type { Address } from "viem";
+import { parseUnits, type Address } from "viem";
 
 export const D18 = 10n ** 18n;
-/** USDG has 6 decimals. */
-export const USDG_DECIMALS = 6;
+/**
+ * The DOLLAR'S decimals are a property of the chain, never a constant.
+ *
+ * This was `USDG_DECIMALS = 6` and it fed the seed parse, the share-minting
+ * multiplier and the price-impact guard. BNB's USDT and USDC are both 18
+ * decimals, so on that chain a 1,000-dollar seed parsed to 1e9 raw -- a
+ * billionth of a dollar -- while still minting 1,000 shares, and the
+ * thin-market guard's arithmetic was off by 1e12. Found on a BNB fork,
+ * 2026-10-05. Callers pass cfg.quotes.usd.decimals.
+ */
+export const SHARE_DECIMALS = 18;
 /** Same per-Reserve basket size as the Solana wizard. */
 export const RH_MAX_ASSETS_PER_RESERVE = 12;
 /** Price-protection on every launch swap: the quote's expected output minus this is the minimum accepted. */
@@ -44,6 +53,8 @@ export interface LaunchPlan {
   legs: LaunchLeg[];
   /** The whole seed in raw USDG; every leg sums to exactly this. */
   seedUsdgRaw: bigint;
+  /** Decimals of THIS chain's dollar, so everything downstream formats and sizes against the right unit. */
+  usdDecimals: number;
   /** Raw USDG that goes through the router (the sum of the swap legs). */
   swapUsdgRaw: bigint;
   /** Raw USDG deposited directly (the cash leg: an explicit USDG weight plus any unallocated remainder). */
@@ -57,11 +68,19 @@ export function toBps(weight: number): number {
   return Math.min(10_000, Math.round(weight * 10_000));
 }
 
-/** "10.5" -> 10_500_000n (raw USDG). Refuses zero, negatives and more than 6 decimals of precision after rounding. */
-export function parseUsdgAmount(input: string | number): bigint {
-  const n = typeof input === "number" ? input : parseFloat(String(input).trim());
-  if (!Number.isFinite(n) || n <= 0) throw new Error("Enter an initial amount in USDG greater than zero.");
-  return BigInt(Math.round(n * 10 ** USDG_DECIMALS));
+/**
+ * "10.5" -> the raw amount in this chain's dollar. Refuses zero and negatives,
+ * and truncates beyond that token's precision.
+ *
+ * Uses parseUnits rather than `Math.round(n * 10 ** decimals)`: at 18 decimals
+ * that float multiplication loses precision well before the last digit.
+ */
+export function parseUsdgAmount(input: string | number, decimals: number): bigint {
+  const text = String(input).trim();
+  const n = typeof input === "number" ? input : parseFloat(text);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("Enter an initial amount greater than zero.");
+  const [whole, frac = ""] = text.split(".");
+  return parseUnits(`${whole || "0"}.${frac.slice(0, decimals)}`, decimals);
 }
 
 export function isUsdg(address: string, usdg: Address): boolean {
@@ -74,8 +93,11 @@ export function isUsdg(address: string, usdg: Address): boolean {
  * than 100%: the rest stays as USDG in the reserve, as on Solana's
  * "Unallocated USDC Reserve". More than 100% is refused.
  */
-export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Address): LaunchPlan {
-  if (seedUsdgRaw <= 0n) throw new Error("Enter an initial amount in USDG greater than zero.");
+export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Address, usdDecimals: number): LaunchPlan {
+  if (seedUsdgRaw <= 0n) throw new Error("Enter an initial amount greater than zero.");
+  if (!Number.isInteger(usdDecimals) || usdDecimals < 0 || usdDecimals > SHARE_DECIMALS) {
+    throw new Error(`This chain's dollar reports ${usdDecimals} decimals, which the share maths cannot express.`);
+  }
   const bpsList = assets.map((a) => toBps(a.weight));
   const total = bpsList.reduce((s, b) => s + b, 0);
   if (total > 10_000) throw new Error("Target weights exceed 100%.");
@@ -112,7 +134,7 @@ export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Ad
       cash.bps = 10_000 - (total - cash.bps);
     } else {
       legs.push({
-        asset: { address: usdg, symbol: "USDG", decimals: USDG_DECIMALS, weight: (10_000 - total) / 10_000, pool: null },
+        asset: { address: usdg, symbol: "USDG", decimals: usdDecimals, weight: (10_000 - total) / 10_000, pool: null },
         bps: 10_000 - total,
         usdgRaw: remainder,
         kind: "usdg",
@@ -120,7 +142,8 @@ export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Ad
     }
   }
   if (legs.length === 0) throw new Error("Add at least one asset.");
-  return { legs, seedUsdgRaw, swapUsdgRaw, directUsdgRaw, initialShares: seedUsdgRaw * 10n ** BigInt(18 - USDG_DECIMALS) };
+  // One share per dollar, scaled from the dollar's own decimals to the share's 18.
+  return { legs, seedUsdgRaw, usdDecimals, swapUsdgRaw, directUsdgRaw, initialShares: seedUsdgRaw * 10n ** BigInt(SHARE_DECIMALS - usdDecimals) };
 }
 
 /** 1.25 (%) -> 0.0125e18. Fees are entered to two decimals of a percent. */
@@ -242,16 +265,18 @@ export function launchSteps(plan: LaunchPlan): string[] {
   const swaps = plan.legs.filter((l) => l.kind === "swap");
   const steps: string[] = [];
   if (swaps.length > 0) {
-    steps.push(`Approve ${fmtUsdg(plan.swapUsdgRaw)} USDG for the Uniswap router`);
-    for (const s of swaps) steps.push(`Swap ${fmtUsdg(s.usdgRaw)} USDG for ${s.asset.symbol} (skipped if your wallet already holds enough)`);
+    steps.push(`Approve ${fmtUsdg(plan.swapUsdgRaw, plan.usdDecimals)} USDG for the Uniswap router`);
+    for (const s of swaps) steps.push(`Swap ${fmtUsdg(s.usdgRaw, plan.usdDecimals)} USDG for ${s.asset.symbol} (skipped if your wallet already holds enough)`);
   }
   for (const l of plan.legs) steps.push(`Approve ${l.asset.symbol} for the SSR factory`);
   steps.push("Deploy the reserve (moves the assets in and mints your Reserve Tokens)");
   return steps;
 }
 
-export function fmtUsdg(raw: bigint): string {
-  const whole = raw / 1_000_000n;
-  const frac = (raw % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+/** Raw dollar amount -> human string, at this chain's dollar precision. */
+export function fmtUsdg(raw: bigint, decimals: number): string {
+  const unit = 10n ** BigInt(decimals);
+  const whole = raw / unit;
+  const frac = (raw % unit).toString().padStart(decimals, "0").replace(/0+$/, "");
   return frac ? `${whole}.${frac}` : whole.toString();
 }

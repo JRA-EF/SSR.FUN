@@ -149,6 +149,29 @@ run that worked used `https://bsc-dataseed1.defibit.io` with
 `anvil --no-storage-caching`. A real BNB rollout wants a keyed archive
 provider, as Robinhood already has.
 
+## Decimal assumptions — the risk the fork work actually surfaced
+
+Bigger than the DEX wiring, because it is silent and sits in the money path.
+`USDG_DECIMALS = 6` was a module constant feeding four things:
+
+| Site | Effect on an 18-decimal dollar |
+|---|---|
+| `parseUsdgAmount` | "1000" parsed to `1e9` raw — **a billionth of a dollar** |
+| `planLaunch` `initialShares` | `seedRaw * 10 ** (18-6)`, i.e. 1e12 too many |
+| `evmLaunch` price impact | `Number(raw) / 1e6` — guard arithmetic off by 1e12 |
+| `fmtUsdg` | every balance displayed 1e12 too large |
+
+The first two partially cancel to "about 1,000 shares", which is what makes it
+dangerous: a reserve created holding dust while the UI tells the creator they
+deposited a thousand dollars. And `LAUNCH_MAX_PRICE_IMPACT_BPS`, the guard that
+refuses a market too thin to seed from, was not doing its job.
+
+Fixed: the dollar's decimals come from `cfg.quotes.usd.decimals`, `LaunchPlan`
+carries `usdDecimals` so everything downstream sizes and formats against the
+right unit, and `parseUsdgAmount` uses `parseUnits` rather than
+`Math.round(n * 10 ** decimals)`, which loses precision at 18 well before the
+last digit. `tests/phase_robinhood_launch_plan.ts` pins all of it.
+
 ## The one hard problem
 
 On Robinhood, token legitimacy has an **anchor**: every official stock token is
@@ -235,7 +258,18 @@ remains chain-specific is the catalogue's `UNISWAP_V3_FEES` (BNB's tiers
 differ) and the eligibility floor, and confirming Pancake's quoter/router
 against the swap path, which no fork run has exercised yet.
 
-## Governance — the blocker that replicates
+## Governance — DECIDED: single key is accepted for now
+
+**2026-10-05, the Creator's call: the existing one-wallet governance is good
+enough for the port.** Base and BNB will carry the same MockRoleRegistry with a
+single-EOA admin that Robinhood has. This is recorded as a decision, not an
+oversight, and is not a blocker for Phase 2. `registerVersion` should still be
+run on each chain (it is free, and the fork proved it works). Revisit when a
+chain holds material value.
+
+The original analysis is kept below for whoever revisits it.
+
+## Governance — the original concern
 
 Every chain so far gets `MockRoleRegistry` (the contract from `test/utils/`)
 with `DEFAULT_ADMIN_ROLE` held by a **single EOA**, and `registerVersion` has
