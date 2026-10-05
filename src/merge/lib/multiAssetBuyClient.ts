@@ -67,7 +67,7 @@ export type MultiAssetBuyProgressEvent =
   | { phase: "single-transaction" }
   /** One-time setup (DEC-0171): this Reserve has no trading lookup table yet -- its create/extend transactions go first. */
   | { phase: "enabling-one-approval-trading" }
-  /** The purchase could not fit one transaction: the wallet is about to show `total` transactions to approve at once, `swaps` of them USDC-to-asset swaps (DEC-0217 -- the UI explains what the per-transaction previews mean). */
+  /** The purchase could not fit one transaction: the wallet is about to show `total` transactions to approve at once, `swaps` of them USDC-to-asset swaps (DEC-0226 -- the UI explains what the per-transaction previews mean). */
   | { phase: "signing-batch"; swaps: number; total: number }
   | { phase: "swapping"; mint: string; index: number; total: number }
   | { phase: "minting" }

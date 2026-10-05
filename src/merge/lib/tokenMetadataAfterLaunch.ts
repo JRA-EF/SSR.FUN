@@ -1,5 +1,5 @@
 // Post-launch safety net for a Reserve Token's on-chain (Metaplex) name and
-// symbol (DEC-0217) -- the PURE half (decision + copy), offline-testable. The
+// symbol (DEC-0226) -- the PURE half (decision + copy), offline-testable. The
 // live wiring (account read + publish transaction) is in
 // tokenMetadataAfterLaunchOnChain.ts, kept separate because that file pulls
 // in solana-config's import.meta.env, which ts-mocha cannot load.

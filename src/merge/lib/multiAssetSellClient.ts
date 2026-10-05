@@ -39,7 +39,7 @@ export type MultiAssetSellProgressEvent =
   /** The server is building every transaction of this sale (one request). */
   | { phase: "building" }
   | { phase: "single-transaction" }
-  /** The sale could not fit one transaction: the wallet is about to show `total` transactions at once, `swaps` of them asset-to-USDC sales (DEC-0217). */
+  /** The sale could not fit one transaction: the wallet is about to show `total` transactions at once, `swaps` of them asset-to-USDC sales (DEC-0226). */
   | { phase: "signing-batch"; swaps: number; total: number }
   | { phase: "redeeming" }
   | { phase: "swapping"; mint: string; index: number; total: number }

@@ -1,4 +1,4 @@
-// Offline coverage for DEC-0217: (1) the post-launch token-metadata safety
+// Offline coverage for DEC-0226: (1) the post-launch token-metadata safety
 // net's decision logic, (2) the wallet-prompt explanation shown when a Buy or
 // Sell cannot fit one transaction, (3) the launch success message's
 // visibility note, and (4) which warm-cache request URLs may trigger a
@@ -10,7 +10,7 @@ import { manualRefreshTrigger } from "../lib/reserve-warm-cache/manualRefresh";
 
 const someMetadata = { address: "a", mint: "m", updateAuthority: "u", name: "ALPHA", symbol: "ALPHA", uri: "https://ssr.fun/x", isMutable: true };
 
-describe("DEC-0217 post-launch token metadata safety net", () => {
+describe("DEC-0226 post-launch token metadata safety net", () => {
   it("does nothing when the metadata account already exists", async () => {
     let published = 0;
     const r = await ensureReserveTokenMetadataPublished({ read: async () => someMetadata, publish: async () => void published++ });
@@ -58,7 +58,7 @@ describe("DEC-0217 post-launch token metadata safety net", () => {
   });
 });
 
-describe("DEC-0217 wallet-prompt copy for multi-transaction Buy/Sell", () => {
+describe("DEC-0226 wallet-prompt copy for multi-transaction Buy/Sell", () => {
   it("names every transaction the wallet will show for a Buy and what the buyer ends up holding", () => {
     const s = describeBatchBuyWalletPrompt({ swaps: 3, total: 4, ticker: "STOCK" });
     expect(s).to.contain("approve 4 transactions at once");
@@ -98,7 +98,7 @@ describe("DEC-0217 wallet-prompt copy for multi-transaction Buy/Sell", () => {
   });
 });
 
-describe("DEC-0217 warm-cache manual refresh triggers", () => {
+describe("DEC-0226 warm-cache manual refresh triggers", () => {
   it("recognises the dry-run and the launch trigger, and nothing else", () => {
     expect(manualRefreshTrigger("/api/mainnet/warm-cache-cron?dryRun=true")).to.equal("dry-run");
     expect(manualRefreshTrigger("/api/mainnet/warm-cache-cron?dryRun=1&x=y")).to.equal("dry-run");

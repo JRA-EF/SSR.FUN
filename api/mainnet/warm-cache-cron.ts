@@ -19,7 +19,7 @@
 // invocation carries `Authorization: Bearer $CRON_SECRET`; `?dryRun=true` skips
 // that check for manual inspection but runs the identical real work, and so
 // does `?trigger=reserve-created`, which the Launch flow sends the moment a
-// Reserve is deployed (DEC-0217) so the new Reserve reaches every visitor's
+// Reserve is deployed (DEC-0226) so the new Reserve reaches every visitor's
 // first paint within seconds instead of at the next 10-minute tick (see
 // lib/reserve-warm-cache/manualRefresh.ts). This endpoint's path MUST also be
 // in middleware.ts's CRON_PATHS allowlist so the site password gate lets the

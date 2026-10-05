@@ -1,5 +1,5 @@
 // Plain-language copy for the moment a multi-transaction Buy or Sell opens
-// the wallet's sign-everything prompt (DEC-0217).
+// the wallet's sign-everything prompt (DEC-0226).
 //
 // Why this exists. When a purchase cannot fit one atomic transaction
 // (lib/mainnet/buildBuy.ts mode "batch"), the wallet shows one entry per
@@ -39,7 +39,7 @@ export function describeBatchSellWalletPrompt(p: { swaps: number; total: number;
 }
 
 /**
- * The line every Launch success message carries (DEC-0217): the Discover
+ * The line every Launch success message carries (DEC-0226): the Discover
  * page and other visitors' first paint come from a server snapshot that is
  * rebuilt a few seconds after launch and otherwise every ten minutes, and a
  * freshly used asset can take a moment longer to resolve on a reload.

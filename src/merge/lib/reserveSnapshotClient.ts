@@ -60,7 +60,7 @@ export async function fetchReserveSnapshot(origin: string): Promise<ReserveSnaps
 }
 
 /**
- * Asks the server to rebuild the warm snapshot NOW (DEC-0217). Called once
+ * Asks the server to rebuild the warm snapshot NOW (DEC-0226). Called once
  * by the Launch flow the moment a Reserve is fully deployed: the snapshot is
  * what every other visitor's Discover page paints from first, and the cron
  * alone would leave a brand-new Reserve invisible to them for up to ten

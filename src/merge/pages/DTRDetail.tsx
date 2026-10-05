@@ -1559,7 +1559,7 @@ export function DTRDetail() {
           } else if (e.phase === "signing-batch") {
             // The wallet is about to preview each transaction on its own
             // (swaps as USDC-out/asset-in, the mint unpreviewable) -- say what
-            // that means before the prompt opens (DEC-0217).
+            // that means before the prompt opens (DEC-0226).
             setMultiAssetBuyStep(describeBatchBuyWalletPrompt({ swaps: e.swaps, total: e.total, ticker: dtr.ticker }));
             setBuyPhase("awaiting-wallet");
           } else if (e.phase === "swapping") {

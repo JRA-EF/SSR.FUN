@@ -6843,7 +6843,7 @@
 
 ```json
 {
-  "id": "DEC-0217",
+  "id": "DEC-0226",
   "date": "2026-10-05",
   "title": "Wallet-facing fixes after the Creator's Phantom review: Reserve Token metadata is bundled on every Mainnet build and verified after launch; the Launch success message says the Reserve may take a few minutes to appear; the Discover snapshot is rebuilt the moment a Reserve launches; and a multi-transaction Buy/Sell explains the wallet's per-transaction previews before the prompt opens",
   "status": "implemented; committed to main; production deployment recorded in PROJECT_STATUS.md (Last Updated)",

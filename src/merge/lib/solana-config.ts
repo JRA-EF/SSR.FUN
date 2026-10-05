@@ -22,7 +22,7 @@ export const IS_MAINNET = SOLANA_CLUSTER === "mainnet-beta";
  * Mainnet must bundle the instruction into the launch batch -- the env flag
  * was only ever set on the Production environment, so a Preview/local
  * Mainnet build silently launched Reserve Tokens with no name or symbol
- * (three live Reserves, DEC-0217). DevNet still needs
+ * (three live Reserves, DEC-0226). DevNet still needs
  * VITE_TOKEN_METADATA_LIVE=true: until the DevNet program carries the
  * instruction, bundling it would fail the whole launch transaction with an
  * unknown-instruction error, and the Manage page hides the publish control.

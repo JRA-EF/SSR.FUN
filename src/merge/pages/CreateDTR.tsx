@@ -1374,7 +1374,7 @@ export function CreateDTR({
 
       // The launch batch carried create_token_metadata; confirm the account
       // really exists before telling the creator they are done, and publish
-      // it with one more approval if it somehow does not (DEC-0217 --
+      // it with one more approval if it somehow does not (DEC-0226 --
       // three live Reserves launched nameless from a build whose flag was
       // off). Best-effort: the Reserve is already fully deployed.
       let metadataNote: string | null = null;

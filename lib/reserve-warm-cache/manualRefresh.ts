@@ -9,7 +9,7 @@
 //                                   deployed, so the new Reserve reaches every
 //                                   visitor's first paint within seconds
 //                                   instead of at the next 10-minute tick
-//                                   (DEC-0217).
+//                                   (DEC-0226).
 export type ManualRefreshTrigger = "dry-run" | "reserve-created" | null;
 
 export function manualRefreshTrigger(url: string | undefined): ManualRefreshTrigger {

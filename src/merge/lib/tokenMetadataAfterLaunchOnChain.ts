@@ -1,4 +1,4 @@
-// Live wiring for tokenMetadataAfterLaunch.ts (DEC-0217): the Metaplex
+// Live wiring for tokenMetadataAfterLaunch.ts (DEC-0226): the Metaplex
 // metadata-account read and the Manage page's publish executor. Separate
 // file because managementClient -> solana-config uses import.meta.env, which
 // the offline ts-mocha suite cannot load; the decision logic stays pure there.
