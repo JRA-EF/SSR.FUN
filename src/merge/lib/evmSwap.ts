@@ -10,11 +10,22 @@
 // exactly the USDG the swaps will spend, and every swap carries a minimum
 // output (src/merge/lib/evmLaunchPlan.ts's slippage rule).
 import { encodePacked, parseAbi, zeroAddress, type Address, type PublicClient, type WalletClient } from "viem";
-import { ERC20_ABI, UNISWAP_V3, USDG, WETH, type ChainConfig } from "./evmChain";
+import { ERC20_ABI, type ChainConfig, type ChainQuotes, type DexConfig } from "./evmChain";
 import { describeEvmError } from "./evmReserve";
 
-export const UNISWAP_V3_QUOTER_V2: Address = "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7";
-export const UNISWAP_V3_SWAP_ROUTER_02: Address = "0xcaf681a66d020601342297493863e78c959e5cb2";
+/**
+ * Every address here now comes from the ChainConfig. A chain without a DEX
+ * cannot be traded on, and says so, rather than silently addressing
+ * Robinhood's router from some other network.
+ */
+function dexOf(cfg: ChainConfig): DexConfig {
+  if (!cfg.dex) throw new Error("This chain has no DEX configured, so assets cannot be bought on it.");
+  return cfg.dex;
+}
+function quotesOf(cfg: ChainConfig): ChainQuotes {
+  if (!cfg.quotes) throw new Error("This chain has no quote assets configured, so swaps cannot be routed.");
+  return cfg.quotes;
+}
 
 export const QUOTER_V2_ABI = parseAbi([
   "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
@@ -34,55 +45,68 @@ export interface SwapRoute {
   tokenOut: Address;
   /** Fee tier of the token's own pool. */
   fee: number;
-  quote: "USDG" | "WETH";
-  /** Fee tier of the USDG/WETH hop, for WETH-quoted tokens. */
+  /** Which leg the buy starts from: the chain's dollar, or its native wrapper. */
+  quote: "usd" | "native";
+  /** Fee tier of the dollar->native hop, for native-quoted tokens. */
   wethHopFee?: number;
 }
 
-let wethHopFeeCache: number | null = null;
+/** Per chain: the hop fee is a property of that chain's pools, not a global. */
+const nativeHopFeeCache = new Map<number, number>();
 
-/** The deepest USDG/WETH pool's fee tier -- the first hop of every WETH-quoted buy. */
-export async function bestWethHopFee(pc: PublicClient): Promise<number> {
-  if (wethHopFeeCache !== null) return wethHopFeeCache;
+/** The deepest dollar/native pool's fee tier -- the first hop of every native-quoted buy. */
+export async function bestNativeHopFee(pc: PublicClient, cfg: ChainConfig): Promise<number> {
+  const dex = dexOf(cfg), q = quotesOf(cfg);
+  // Keyed by chain: one shared cache handed a second chain the first chain's
+  // fee tier, which is a different pool entirely.
+  const cached = nativeHopFeeCache.get(cfg.chain.id);
+  if (cached !== undefined) return cached;
   const pools = await Promise.all(
-    UNISWAP_V3.fees.map(async (fee) => {
-      const p = await pc.readContract({ address: UNISWAP_V3.factory, abi: V3_FACTORY_ABI, functionName: "getPool", args: [USDG, WETH, fee] });
+    dex.fees.map(async (fee) => {
+      const p = await pc.readContract({ address: dex.factory, abi: V3_FACTORY_ABI, functionName: "getPool", args: [q.usd.address, q.native.address, fee] });
       if (p === zeroAddress) return { fee, liq: 0n };
       const liq = await pc.readContract({ address: p, abi: V3_POOL_ABI, functionName: "liquidity" }).catch(() => 0n);
       return { fee, liq };
     }),
   );
   const best = pools.reduce((a, b) => (b.liq > a.liq ? b : a));
-  if (best.liq === 0n) throw new Error("No USDG/WETH pool with liquidity was found on Robinhood Chain.");
-  wethHopFeeCache = best.fee;
+  if (best.liq === 0n) throw new Error(`No ${q.usd.symbol}/${q.native.symbol} pool with liquidity was found on ${cfg.chain.name}.`);
+  nativeHopFeeCache.set(cfg.chain.id, best.fee);
   return best.fee;
 }
 
-export async function routeFor(pc: PublicClient, tokenOut: Address, pool: { fee: number; quote: "USDG" | "WETH" }): Promise<SwapRoute> {
-  if (pool.quote === "USDG") return { tokenOut, fee: pool.fee, quote: "USDG" };
-  return { tokenOut, fee: pool.fee, quote: "WETH", wethHopFee: await bestWethHopFee(pc) };
+/**
+ * The catalogue still labels a pool's quote "USDG"/"WETH" (Robinhood's names);
+ * the route speaks in roles, so the same code works where the dollar is USDC.
+ * This is the one place the two vocabularies meet.
+ */
+export async function routeFor(pc: PublicClient, cfg: ChainConfig, tokenOut: Address, pool: { fee: number; quote: "USDG" | "WETH" }): Promise<SwapRoute> {
+  if (pool.quote === "USDG") return { tokenOut, fee: pool.fee, quote: "usd" };
+  return { tokenOut, fee: pool.fee, quote: "native", wethHopFee: await bestNativeHopFee(pc, cfg) };
 }
 
 /** Uniswap's packed path: tokenIn (20) fee (3) tokenOut (20) [fee (3) token (20)]. */
-export function encodeSwapPath(route: SwapRoute): `0x${string}` {
-  if (route.quote === "USDG") return encodePacked(["address", "uint24", "address"], [USDG, route.fee, route.tokenOut]);
-  if (route.wethHopFee === undefined) throw new Error("A WETH-quoted route needs the USDG/WETH hop fee.");
-  return encodePacked(["address", "uint24", "address", "uint24", "address"], [USDG, route.wethHopFee, WETH, route.fee, route.tokenOut]);
+export function encodeSwapPath(cfg: ChainConfig, route: SwapRoute): `0x${string}` {
+  const q = quotesOf(cfg);
+  if (route.quote === "usd") return encodePacked(["address", "uint24", "address"], [q.usd.address, route.fee, route.tokenOut]);
+  if (route.wethHopFee === undefined) throw new Error("A native-quoted route needs the dollar/native hop fee.");
+  return encodePacked(["address", "uint24", "address", "uint24", "address"], [q.usd.address, route.wethHopFee, q.native.address, route.fee, route.tokenOut]);
 }
 
 /** Expected output of spending `amountInUsdg` (raw) on the route, from QuoterV2 (eth_call; nothing is sent). */
-export async function quoteExactUsdgIn(pc: PublicClient, route: SwapRoute, amountInUsdg: bigint): Promise<bigint> {
+export async function quoteExactUsdgIn(pc: PublicClient, cfg: ChainConfig, route: SwapRoute, amountInUsdg: bigint): Promise<bigint> {
+  const dex = dexOf(cfg), q = quotesOf(cfg);
   try {
-    if (route.quote === "USDG") {
+    if (route.quote === "usd") {
       const { result } = await pc.simulateContract({
-        address: UNISWAP_V3_QUOTER_V2,
+        address: dex.quoter,
         abi: QUOTER_V2_ABI,
         functionName: "quoteExactInputSingle",
-        args: [{ tokenIn: USDG, tokenOut: route.tokenOut, amountIn: amountInUsdg, fee: route.fee, sqrtPriceLimitX96: 0n }],
+        args: [{ tokenIn: q.usd.address, tokenOut: route.tokenOut, amountIn: amountInUsdg, fee: route.fee, sqrtPriceLimitX96: 0n }],
       });
       return result[0];
     }
-    const { result } = await pc.simulateContract({ address: UNISWAP_V3_QUOTER_V2, abi: QUOTER_V2_ABI, functionName: "quoteExactInput", args: [encodeSwapPath(route), amountInUsdg] });
+    const { result } = await pc.simulateContract({ address: dex.quoter, abi: QUOTER_V2_ABI, functionName: "quoteExactInput", args: [encodeSwapPath(cfg, route), amountInUsdg] });
     return result[0];
   } catch (e) {
     throw new Error(`Uniswap could not quote this buy (${describeEvmError(e)}). The pool may have no liquidity in range right now.`);
@@ -99,21 +123,22 @@ export async function swapExactUsdgIn(
   amountInUsdg: bigint,
   minOut: bigint,
 ): Promise<`0x${string}`> {
-  const base = { address: UNISWAP_V3_SWAP_ROUTER_02, abi: SWAP_ROUTER_02_ABI, account, chain: cfg.chain } as const;
+  const q = quotesOf(cfg);
+  const base = { address: dexOf(cfg).router, abi: SWAP_ROUTER_02_ABI, account, chain: cfg.chain } as const;
   // Simulate first: a revert here is reported with its reason and costs
   // nothing; gas is estimated here and handed to the wallet explicitly.
   let hash: `0x${string}`;
-  if (route.quote === "USDG") {
+  if (route.quote === "usd") {
     const call = {
       ...base,
       functionName: "exactInputSingle",
-      args: [{ tokenIn: USDG, tokenOut: route.tokenOut, fee: route.fee, recipient: account, amountIn: amountInUsdg, amountOutMinimum: minOut, sqrtPriceLimitX96: 0n }],
+      args: [{ tokenIn: q.usd.address, tokenOut: route.tokenOut, fee: route.fee, recipient: account, amountIn: amountInUsdg, amountOutMinimum: minOut, sqrtPriceLimitX96: 0n }],
     } as const;
     const { request } = await pc.simulateContract(call);
     const gas = await pc.estimateContractGas(call);
     hash = await wallet.writeContract({ ...request, gas: (gas * 125n) / 100n });
   } else {
-    const call = { ...base, functionName: "exactInput", args: [{ path: encodeSwapPath(route), recipient: account, amountIn: amountInUsdg, amountOutMinimum: minOut }] } as const;
+    const call = { ...base, functionName: "exactInput", args: [{ path: encodeSwapPath(cfg, route), recipient: account, amountIn: amountInUsdg, amountOutMinimum: minOut }] } as const;
     const { request } = await pc.simulateContract(call);
     const gas = await pc.estimateContractGas(call);
     hash = await wallet.writeContract({ ...request, gas: (gas * 125n) / 100n });

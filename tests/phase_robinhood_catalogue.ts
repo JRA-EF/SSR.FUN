@@ -148,14 +148,27 @@ describe("wiring", () => {
 
   it("the launch sequence buys with USDG on Uniswap, approves exactly what it spends, and deploys 1:1 shares", () => {
     const launch = read("src/merge/lib/evmLaunch.ts");
-    expect(launch).to.include("UNISWAP_V3_SWAP_ROUTER_02");
+    // The router is the CHAIN's, not a module constant. It used to be
+    // UNISWAP_V3_SWAP_ROUTER_02 imported from evmSwap, which addressed
+    // Robinhood's router from whatever chain the app was on.
+    expect(launch).to.include("cfg.dex.router");
+    expect(launch, "the dollar leg is read from the chain, not named").to.include("cfg.quotes?.usd");
     expect(launch).to.include("initialShares: plan.initialShares");
     expect(launch).to.include("feeRecipients: input.feeRecipients");
     expect(launch).to.include("coManagers: input.coManagers");
+
     const swap = read("src/merge/lib/evmSwap.ts");
-    expect(swap).to.include('"0xcaf681a66d020601342297493863e78c959e5cb2"');
-    expect(swap).to.include('"0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7"');
+    expect(swap, "the quoter comes from the chain config").to.include("dex.quoter");
+    expect(swap, "the router comes from the chain config").to.include("dexOf(cfg).router");
+    expect(swap, "no chain's addresses may be literals in the swap layer").to.not.match(/"0x[0-9a-fA-F]{40}"/);
     expect(swap).to.include("amountOutMinimum: minOut");
+
+    // Robinhood's own addresses still exist -- in the chain config, which is
+    // the single place a chain's wiring is allowed to be written down.
+    const chain = read("src/merge/lib/evmChain.ts");
+    expect(chain, "Robinhood's router").to.include('"0xcaf681a66d020601342297493863e78c959e5cb2"');
+    expect(chain, "Robinhood's quoter").to.include('"0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7"');
+    expect(chain, "Robinhood's v3 factory").to.include('"0x1f7d7550b1b028f7571e69a784071f0205fd2efa"');
     const reserve = read("src/merge/lib/evmReserve.ts");
     expect(reserve, "approve is simulated, gas is explicit, non-zero allowances are reset").to.include("pc.simulateContract(call)");
     expect(reserve).to.include("estimateContractGas(call)");

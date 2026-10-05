@@ -10,9 +10,9 @@
 // holds a leg, and skips that swap -- the same "already holds enough"
 // rule the Solana launch uses.
 import type { Address, PublicClient, WalletClient } from "viem";
-import { USDG, type ChainConfig } from "./evmChain";
+import { type ChainConfig } from "./evmChain";
 import { approveIfNeeded, createReserve } from "./evmReserve";
-import { erc20Balance, quoteExactUsdgIn, routeFor, swapExactUsdgIn, UNISWAP_V3_SWAP_ROUTER_02, type SwapRoute } from "./evmSwap";
+import { erc20Balance, quoteExactUsdgIn, routeFor, swapExactUsdgIn, type SwapRoute } from "./evmSwap";
 import { LAUNCH_MAX_PRICE_IMPACT_BPS, fmtUsdg, minOutAfterSlippage, priceImpactBps, type ChainFeeRecipient, type LaunchLeg, type LaunchPlan } from "./evmLaunchPlan";
 
 export interface LegQuote {
@@ -29,7 +29,7 @@ export interface LegQuote {
  * seed from. `priceUsd` is the catalogue's last mark per asset, used only
  * to measure impact; the quote itself is live.
  */
-export async function quoteLaunch(pc: PublicClient, plan: LaunchPlan, priceUsd: (address: Address) => number | null): Promise<LegQuote[]> {
+export async function quoteLaunch(pc: PublicClient, cfg: ChainConfig, plan: LaunchPlan, priceUsd: (address: Address) => number | null): Promise<LegQuote[]> {
   const out: LegQuote[] = [];
   for (const leg of plan.legs) {
     if (leg.kind === "usdg") {
@@ -37,8 +37,8 @@ export async function quoteLaunch(pc: PublicClient, plan: LaunchPlan, priceUsd: 
       continue;
     }
     if (!leg.asset.pool) throw new Error(`${leg.asset.symbol} has no Uniswap pool to buy it through.`);
-    const route = await routeFor(pc, leg.asset.address, leg.asset.pool);
-    const quotedOut = await quoteExactUsdgIn(pc, route, leg.usdgRaw);
+    const route = await routeFor(pc, cfg, leg.asset.address, leg.asset.pool);
+    const quotedOut = await quoteExactUsdgIn(pc, cfg, route, leg.usdgRaw);
     if (quotedOut <= 0n) throw new Error(`Uniswap returned nothing for ${leg.asset.symbol}; the pool has no liquidity in range.`);
     const px = priceUsd(leg.asset.address);
     let impactBps = 0;
@@ -80,10 +80,14 @@ export async function executeLaunch(
 ): Promise<{ reserve: Address; hash: `0x${string}` }> {
   const { plan, quotes } = input;
 
-  // Enough USDG for the whole seed, checked before anything moves.
-  const usdgHeld = await erc20Balance(pc, USDG, account);
+  // Enough of the chain's dollar for the whole seed, checked before anything
+  // moves. The dollar is USDG on Robinhood and USDC on Base, so it is read
+  // from the chain rather than named here.
+  const cash = cfg.quotes?.usd;
+  if (!cash) throw new Error("This chain has no dollar asset configured, so a reserve cannot be seeded on it.");
+  const usdgHeld = await erc20Balance(pc, cash.address, account);
   if (usdgHeld < plan.seedUsdgRaw) {
-    throw new Error(`This wallet holds ${fmtUsdg(usdgHeld)} USDG but the launch needs ${fmtUsdg(plan.seedUsdgRaw)} USDG. Add USDG or lower the initial amount.`);
+    throw new Error(`This wallet holds ${fmtUsdg(usdgHeld)} ${cash.symbol} but the launch needs ${fmtUsdg(plan.seedUsdgRaw)} ${cash.symbol}. Add ${cash.symbol} or lower the initial amount.`);
   }
 
   // 1. Buy each non-cash leg, skipping any the wallet already holds enough of.
@@ -97,7 +101,9 @@ export async function executeLaunch(
   }
   if (pending.length > 0) {
     const routerSpend = pending.reduce((s, q) => s + q.leg.usdgRaw, 0n);
-    await approveIfNeeded(pc, wallet, cfg, account, USDG, UNISWAP_V3_SWAP_ROUTER_02, routerSpend, onProgress, "USDG");
+    const dollar = cfg.quotes?.usd;
+      if (!cfg.dex || !dollar) throw new Error("This chain has no DEX configured, so the basket cannot be bought.");
+      await approveIfNeeded(pc, wallet, cfg, account, dollar.address, cfg.dex.router, routerSpend, onProgress, dollar.symbol);
     for (const q of pending) {
       onProgress(`Buying ${q.leg.asset.symbol} with ${fmtUsdg(q.leg.usdgRaw)} USDG...`);
       const before = await erc20Balance(pc, q.leg.asset.address, account);

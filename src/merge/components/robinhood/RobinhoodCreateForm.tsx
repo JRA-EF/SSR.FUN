@@ -386,7 +386,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
     setQuotes(null);
     setQuoteError(null);
     const handle = setTimeout(() => {
-      Promise.all([quoteLaunch(pc, plan, priceOf), pc.getGasPrice().catch(() => null)])
+      Promise.all([quoteLaunch(pc, cfg, plan, priceOf), pc.getGasPrice().catch(() => null)])
         .then(([q, gp]) => {
           if (cancelled) return;
           setQuotes(q);
@@ -419,7 +419,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
 
       // Fresh quotes at the moment of launch, never the ones shown a minute ago.
       setStatus({ text: "Quoting the basket on Uniswap...", kind: "busy" });
-      const freshQuotes = await quoteLaunch(pc, plan, priceOf);
+      const freshQuotes = await quoteLaunch(pc, cfg, plan, priceOf);
 
       // The profile is stored BEFORE the wallet opens, so a store problem is
       // reported here rather than after assets have moved.
