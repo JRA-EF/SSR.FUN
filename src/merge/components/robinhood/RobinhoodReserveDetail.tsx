@@ -1,7 +1,7 @@
 // A Robinhood Chain reserve's page, reached through the same /dtr/:id route
 // as a Solana reserve (ids prefixed "rh-"). Everything shown is read from the
 // chain on load: basket, fees, and a USD mark from Uniswap v3 spot prices.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import { ChevronLeft, Play } from "lucide-react";
 import { Link } from "wouter";
@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { avatarStyle } from "../../../lib/avatarStyle";
-import { ROBINHOOD, MULTIPLIER_WARNING } from "@/lib/evmChain";
+import { ROBINHOOD, MULTIPLIER_WARNING, type ChainConfig } from "@/lib/evmChain";
 import {
   approveIfNeeded,
   describeEvmError,
@@ -34,13 +34,9 @@ import {
 import { connectEvmWallet, useEvmWallet } from "./useEvmWallet";
 
 type Status = { text: string; kind: "ok" | "err" | "busy" } | null;
-const cfg = ROBINHOOD;
-const pc = publicClientFor(cfg);
 const short = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
 const usd = (n: number | null, digits = 2) =>
   n === null ? "Price unavailable" : `$${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
-const explorerAddr = (a: string) => `${cfg.explorer}/address/${a}`;
-const explorerTx = (h: string) => `${cfg.explorer}/tx/${h}`;
 
 function StatusLine({ status, link }: { status: Status; link?: { href: string; label: string } | null }) {
   if (!status) return null;
@@ -66,7 +62,12 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export function RobinhoodReserveDetail({ address }: { address: Address }) {
+export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address: Address; chain?: ChainConfig }) {
+  // The chain is a PROP, not a module constant -- see RobinhoodCreateForm.
+  const cfg = chain;
+  const pc = useMemo(() => publicClientFor(cfg), [cfg]);
+  const explorerAddr = useCallback((a: string) => `${cfg.explorer}/address/${a}`, [cfg]);
+  const explorerTx = useCallback((h: string) => `${cfg.explorer}/tx/${h}`, [cfg]);
   const { wallet, account } = useEvmWallet();
   const [snap, setSnap] = useState<ReserveSnapshot | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);

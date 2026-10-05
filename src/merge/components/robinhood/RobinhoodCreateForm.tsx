@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ERC20_ABI, FEE_REGISTRY_ABI, LIMITS, ROBINHOOD, SAFE_REBALANCE_DEFAULTS, USDG, WETH } from "@/lib/evmChain";
+import { ERC20_ABI, FEE_REGISTRY_ABI, LIMITS, ROBINHOOD, SAFE_REBALANCE_DEFAULTS, USDG, WETH, type ChainConfig } from "@/lib/evmChain";
 import { describeEvmError, fmtUnits, publicClientFor, rhReserveId } from "@/lib/evmReserve";
 import { invalidateRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
 import { useRobinhoodAssetCatalogue, type RobinhoodAsset } from "@/hooks/useRobinhoodAssetCatalogue";
@@ -64,10 +64,6 @@ import {
 import { executeLaunch, quoteLaunch, type LegQuote } from "@/lib/evmLaunch";
 import { connectEvmWallet, useEvmWallet } from "./useEvmWallet";
 
-const cfg = ROBINHOOD;
-/** This chain's dollar precision -- 6 on Robinhood, 18 on BNB. Never assume. */
-const cashDecimals = cfg.quotes?.usd.decimals ?? 6;
-const pc = publicClientFor(cfg);
 const short = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
 type Status = { text: string; kind: "ok" | "err" | "busy" } | null;
 
@@ -107,7 +103,13 @@ function normalizeFeaturedVideoUrl(input: string): string {
 
 const usd = (n: number | null, digits = 2) => (n === null ? "USD unavailable" : `$${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`);
 
-export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode } = {}) {
+export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainPicker?: ReactNode; chain?: ChainConfig } = {}) {
+  // The chain is a PROP, not a module constant. While it was the latter the
+  // bundle could only ever address one chain, whatever the config said.
+  const cfg = chain;
+  /** This chain's dollar precision -- 6 on Robinhood, 18 on BNB. Never assume. */
+  const cashDecimals = cfg.quotes?.usd.decimals ?? 6;
+  const pc = useMemo(() => publicClientFor(cfg), [cfg]);
   const { wallet, account } = useEvmWallet();
 
   // ---- Identity (step 1): the same fields, in the same order, as CreateDTR.

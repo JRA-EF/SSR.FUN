@@ -51,8 +51,23 @@ export interface ChainQuotes {
   native: QuoteRef;
 }
 
+/**
+ * One key per CHAIN. This used to be `"testnet" | "mainnet"` -- Robinhood's two
+ * environments -- which made a second chain inexpressible.
+ */
+export type ChainKey = "robinhood" | "robinhood-testnet" | "base" | "bnb";
+
 export interface ChainConfig {
-  key: "testnet" | "mainnet";
+  key: ChainKey;
+  /** Prefix for this chain's reserve ids in the shared /dtr/:id route ("rh" -> "rh-0x..."). Unique across chains. */
+  idPrefix: string;
+  /**
+   * Whether the app OFFERS this chain. A config may be fully verified and
+   * still not live: Base and BNB below have real, probe-verified DEX and quote
+   * wiring but no deployed SSR stack, so they are reference entries for
+   * `.claude/skills/evm-chain-onboarding`, not choices a creator can make.
+   */
+  live: boolean;
   chain: ReturnType<typeof defineChain>;
   explorer: string;
   /** The live SSR instance, or null when none has been created yet. */
@@ -125,9 +140,29 @@ const ROBINHOOD_QUOTES: ChainQuotes = {
   native: { address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", symbol: "WETH", decimals: 18 },
 };
 
-export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
-  testnet: {
-    key: "testnet",
+const ZERO: Address = "0x0000000000000000000000000000000000000000";
+
+const baseChain = defineChain({
+  id: 8453,
+  name: "Base",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+  blockExplorers: { default: { name: "Basescan", url: "https://basescan.org" } },
+});
+
+const bnbChain = defineChain({
+  id: 56,
+  name: "BNB Smart Chain",
+  nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+  rpcUrls: { default: { http: ["https://bsc-dataseed1.defibit.io"] } },
+  blockExplorers: { default: { name: "BscScan", url: "https://bscscan.com" } },
+});
+
+export const CHAINS: Record<ChainKey, ChainConfig> = {
+  "robinhood-testnet": {
+    key: "robinhood-testnet",
+    idPrefix: "rht",
+    live: false,
     chain: testnetChain,
     explorer: "https://explorer.testnet.chain.robinhood.com",
     ssr: "0x33651dca47088f87e6fb7ef846c695aeb8195d66",
@@ -150,8 +185,10 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
       "are made up, and the assets are mock tokens anyone can mint. Nothing on this network is real value. " +
       "You still need testnet ETH for gas -- the faucet button only mints basket assets.",
   },
-  mainnet: {
-    key: "mainnet",
+  robinhood: {
+    key: "robinhood",
+    idPrefix: "rh",
+    live: true,
     chain: mainnetChain,
     explorer: "https://robinhoodchain.blockscout.com",
     // First reserve created through the mainnet factory, 2026-09-21:
@@ -180,7 +217,87 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
       "Live on Robinhood Chain mainnet. This reserve holds real USDG and Robinhood stock tokens; " +
       "minting moves real assets into it and redeeming returns them.",
   },
+
+  // ---------------------------------------------------------------------
+  // Reference entries. Every address below was read live from the chain by
+  // scripts/evm-chain-probe.mts on 2026-10-05 and the whole launch path was
+  // driven against a fork by scripts/verify_evm_chain_fork.mts. What they do
+  // NOT have is a deployed SSR stack, so `deployer` is the zero address and
+  // `live` is false. Deploy the stack, paste the five addresses in, flip
+  // `live`, and the chain is offered -- that is the entire remaining step.
+  // See .claude/skills/evm-chain-onboarding/SKILL.md.
+  // ---------------------------------------------------------------------
+  base: {
+    key: "base",
+    idPrefix: "base",
+    live: false,
+    chain: baseChain,
+    explorer: "https://basescan.org",
+    ssr: null,
+    deployer: ZERO,
+    deployerBlock: 0n,
+    versionRegistry: ZERO,
+    feeRegistry: ZERO,
+    roleRegistry: ZERO,
+    fillerRegistry: ZERO,
+    assets: [],
+    dex: {
+      factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+      quoter: "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+      router: "0x2626664c2603336E57B271c5C0b26F421741e481",
+      fees: [100, 500, 3000, 10000],
+    },
+    quotes: {
+      usd: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
+      native: { address: "0x4200000000000000000000000000000000000006", symbol: "WETH", decimals: 18 },
+    },
+    isMock: false,
+    notice: "Base is wired and fork-verified but has no deployed SSR stack yet.",
+  },
+  bnb: {
+    key: "bnb",
+    idPrefix: "bnb",
+    live: false,
+    chain: bnbChain,
+    explorer: "https://bscscan.com",
+    ssr: null,
+    deployer: ZERO,
+    deployerBlock: 0n,
+    versionRegistry: ZERO,
+    feeRegistry: ZERO,
+    roleRegistry: ZERO,
+    fillerRegistry: ZERO,
+    assets: [],
+    // PancakeSwap v3, not Uniswap: it is a Uniswap v3 fork answering the same
+    // calls (so no adapter), its USDT/WBNB pool is the deeper market, and its
+    // fee tiers differ -- 2500 where Uniswap has 3000.
+    dex: {
+      factory: "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+      quoter: "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997",
+      router: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+      fees: [100, 500, 2500, 10000],
+    },
+    // BOTH of these are 18 decimals on BNB, not the 6 a dollar has elsewhere.
+    quotes: {
+      usd: { address: "0x55d398326f99059fF775485246999027B3197955", symbol: "USDT", decimals: 18 },
+      native: { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", symbol: "WBNB", decimals: 18 },
+    },
+    isMock: false,
+    notice: "BNB Smart Chain is wired and fork-verified but has no deployed SSR stack yet.",
+  },
 };
+
+/** The chains a creator may actually choose, in display order. */
+export const LIVE_EVM_CHAINS: ChainConfig[] = Object.values(CHAINS).filter((c) => c.live);
+
+export function chainByKey(key: string): ChainConfig | null {
+  return (CHAINS as Record<string, ChainConfig | undefined>)[key] ?? null;
+}
+
+/** The chain owning a reserve-id prefix ("rh" -> Robinhood). Unique by construction; a duplicate prefix is a bug. */
+export function chainByIdPrefix(prefix: string): ChainConfig | null {
+  return Object.values(CHAINS).find((c) => c.idPrefix === prefix) ?? null;
+}
 
 /**
  * Robinhood's stock tokens implement ERC-8056: a corporate action (split,
@@ -211,7 +328,7 @@ export const USDG: Address = ROBINHOOD_QUOTES.usd.address;
 export const WETH: Address = ROBINHOOD_QUOTES.native.address;
 
 /** The Robinhood network the app shows. Testnet stays configured for development only. */
-export const ROBINHOOD = CHAINS.mainnet;
+export const ROBINHOOD = CHAINS.robinhood;
 
 /** Contract limits, mirrored from ssr-evm/contracts/utils/Constants.sol. */
 export const LIMITS = {

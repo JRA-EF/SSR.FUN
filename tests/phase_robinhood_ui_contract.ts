@@ -23,7 +23,13 @@ describe("Robinhood is integrated into the shared surfaces", () => {
     expect(read("src/merge/pages/Discover.tsx"), "Discover lists both chains").to.include("robinhoodEntry");
     expect(read("src/pages/Home.tsx"), "Featured spans both chains").to.include("robinhoodEntry");
     expect(read("src/merge/pages/Portfolio.tsx"), "Portfolio shows Robinhood holdings").to.include("RobinhoodHoldings");
-    expect(read("src/App.tsx"), "a Robinhood reserve opens on the shared /dtr/:id route").to.include("rhAddressFromId");
+    // The route used to call rhAddressFromId, which could only ever recognise
+    // Robinhood. It now parses the id's PREFIX and looks the chain up, so one
+    // route serves every EVM chain -- and a Robinhood id still resolves.
+    const app = read("src/App.tsx");
+    expect(app, "a reserve on any EVM chain opens on the shared /dtr/:id route").to.include("parseEvmReserveId");
+    expect(app, "the id's prefix selects the chain").to.include("chainByKey");
+    expect(app, "and that chain is handed to the page").to.include("chain={evmChain}");
   });
 
   it("offers the chain as an equal choice when launching", () => {

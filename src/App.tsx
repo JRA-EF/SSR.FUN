@@ -15,7 +15,8 @@ import { Manage } from './merge/pages/Manage'
 import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
 import { CreateReserve } from './merge/pages/CreateReserve'
-import { rhAddressFromId } from './merge/lib/evmReserveId'
+import { parseEvmReserveId } from './merge/lib/evmReserveId'
+import { chainByKey } from './merge/lib/evmChain'
 import { EVM_ENABLED } from './merge/lib/evmFeature'
 // Robinhood Chain reserve pages pull in viem, which the Solana app never
 // needs. Lazy so it lands in its own chunk instead of the main bundle.
@@ -46,14 +47,16 @@ function Routes() {
   }
 
   const dtr = matchPath('/dtr/:dtrId', path)
-  // With the EVM surface off, a /dtr/rh-<address> link is not a route this
+  // The id's prefix names its chain ("rh-" -> Robinhood), so one route serves
+  // every EVM chain. With the EVM surface off, none of them is a route this
   // build serves; it falls through to the Solana branch, which 404s it.
-  const rhAddress = EVM_ENABLED && dtr ? rhAddressFromId(dtr.dtrId) : null
-  if (rhAddress) {
+  const evmRef = EVM_ENABLED && dtr ? parseEvmReserveId(dtr.dtrId) : null
+  const evmChain = evmRef ? chainByKey(evmRef.chainKey) : null
+  if (evmRef && evmChain) {
     return (
       <MergeLayout>
         <Suspense fallback={<Loading />}>
-          <RobinhoodReserveDetail address={rhAddress} />
+          <RobinhoodReserveDetail address={evmRef.address} chain={evmChain} />
         </Suspense>
       </MergeLayout>
     )
