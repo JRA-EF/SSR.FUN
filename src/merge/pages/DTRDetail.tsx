@@ -1274,8 +1274,13 @@ export function DTRDetail() {
         setSettlementBalanceRaw(BigInt(freshRaw));
         setBuyPhase("confirmed");
         setBuyPendingSignature(null);
-        await refreshRealReserveNow();
+        // Record the trade BEFORE the chain refresh (DEC-0225): the recorder
+        // adds the bought amount to the local balance, and the refresh then
+        // overwrites that balance with the real on-chain figure (cost basis
+        // untouched, DEC-0158). The old order did the opposite and left the
+        // position double-counted until the next background poll.
         recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
+        await refreshRealReserveNow();
         setBuyAmount("");
         toast(transactionConfirmedToast(signature, "Buy confirmed"));
       } else {
@@ -1355,9 +1360,10 @@ export function DTRDetail() {
         onProgress: (e) => setBuyPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
       });
       setBuyPhase("confirmed");
-      await refreshRealReserveNow();
       const spentUsdc = Number(devUsdcAmountRaw) / 10 ** SETTLEMENT_DECIMALS;
+      // Trade first, chain refresh second -- see DEC-0225.
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
+      await refreshRealReserveNow();
       setBuyAmount("");
       toast(transactionConfirmedToast(signature, "Buy confirmed"));
     } catch (e) {
@@ -1451,9 +1457,10 @@ export function DTRDetail() {
         onProgress: (e) => setBuyPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
       });
       setBuyPhase("confirmed");
-      await refreshRealReserveNow();
       const spentUsdc = Number(usdcAmountRaw) / 10 ** buyAsset.decimals;
+      // Trade first, chain refresh second -- see DEC-0225.
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
+      await refreshRealReserveNow();
       setBuyAmount("");
       toast(transactionConfirmedToast(signature, "Buy confirmed"));
     } catch (e) {
@@ -1573,8 +1580,13 @@ export function DTRDetail() {
       });
       setMultiAssetBuyStep(null);
       setBuyPhase("confirmed");
-      await refreshRealReserveNow();
+      // Trade first, chain refresh second -- see DEC-0225. This is the path
+      // that produced the 2026-10-05 "holds 9,846,424 raw but the sale needs
+      // 19,792,307 raw" sell refusal: the refresh had already synced the
+      // real post-mint balance and the recorder then added the pre-fee
+      // purchase on top, so Max offered twice the position.
       recordConfirmedTrade(dtr.id, "buy", numBuyAmount / (dtr.nav || 1), numBuyAmount);
+      await refreshRealReserveNow();
       setBuyAmount("");
       toast(
         alreadyMinted

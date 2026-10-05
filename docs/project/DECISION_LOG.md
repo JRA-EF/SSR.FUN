@@ -6954,3 +6954,30 @@
   ]
 }
 ```
+
+## DEC-0225
+
+```json
+{
+  "id": "DEC-0225",
+  "date": "2026-10-05",
+  "status": "confirmed-implemented (deployed to ssr.fun)",
+  "decision": "After a confirmed Buy, DTRDetail.tsx records the trade into the local holdings store FIRST and runs the on-chain refresh SECOND, in all four Buy handlers (ambiguous-confirmation reconcile, DevNet single-asset, Mainnet single-asset, Mainnet multi-asset). The chain refresh is the last writer of the token balance; the trade recorder only ever adds to the pre-refresh balance and sets the cost basis.",
+  "context": "JRA, 2026-10-05: 'Sell Failed -- This wallet holds 9846424 raw Reserve Tokens but the sale needs 19792307 raw. Nothing was submitted.' on SOLSSR (Reserve 24, wallet 6BjT...WZen). On-chain the wallet had bought 9,846,424 raw two minutes earlier (…mcDtQL, 7.897902 USDC at NAV 0.7941 = 9,945,883 pre-fee, minus the 1% mint fee). The old order ran refreshRealReserveNow() (syncRealHolding -> balance = 9,846,424) and THEN recordConfirmedTrade(... numBuyAmount / nav ...) which added 9,945,883 on top: 19,792,307 exactly. Max filled that figure; the sell client's own fresh chain read refused before signing. RealReserveSync's poll normally hides this within 30s, but on this day the poll was backed off to its 120s ceiling by Helius 429s (the account-cap incident), so the doubled position stayed on screen long enough to act on.",
+  "rationale": "syncRealHolding is documented (DEC-0158) as the owner of the balance and deliberately never touches cost basis; recordConfirmedTrade is the owner of cost basis and computes the weighted average from the balance BEFORE the purchase. Running the recorder first and the chain sync second satisfies both contracts with no new state: the recorder sees the pre-buy balance (correct basis), and the sync then overwrites the balance with the real post-mint figure (correct balance). refreshRealReserveNow already invalidates the 4s balance cache before reading, so the overwrite is a fresh read, not a cached pre-buy one.",
+  "alternativesConsidered": [
+    "Make recordConfirmedTrade skip the balance add for on-chain DTRs -- rejected: its weighted-average cost basis needs the pre-purchase balance, which the chain-synced balance no longer is; would need a second code path.",
+    "Have Max / the sell pre-check read the chain instead of the store -- rejected as the primary fix: the store is what every other surface (Portfolio, P&L) shows; the store must be right, not just the sell button.",
+    "Leave it: the poll self-heals in 30-120s -- rejected: a real user hit it with real funds."
+  ],
+  "impact": "A Buy's position shows the true on-chain balance immediately after confirmation instead of roughly double for up to two minutes. Cost basis unchanged. No chain, program, API, or store schema change.",
+  "affectedAreas": ["src/merge/pages/DTRDetail.tsx (four Buy handlers)"],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Chain: buy …mcDtQL 2026-10-05T10:11:15Z SOLSSR 0 -> 9,846,424 raw, USDC 225,968,011 -> 218,070,109; sell …dNh52n 10:13:09Z 9,846,424 -> 1,846,424 (the user's successful retry at 8 tokens).",
+    "Arithmetic: 7,897,902 / 0.7941 = 9,945,883 (pre-fee) x 0.99 = 9,846,424 (minted); 9,846,424 + 9,945,883 = 19,792,307 (the refused amount).",
+    "Offline: tsc --noEmit -p tsconfig.app.json clean; tests/phase_data_integrity.ts + tests/phase_mainnet_sell_and_perf.ts 27 passing."
+  ]
+}
+```
