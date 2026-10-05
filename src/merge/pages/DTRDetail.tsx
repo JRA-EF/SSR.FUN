@@ -24,6 +24,7 @@ import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSig
 import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
 import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested, MultiAssetBuyError } from "@/lib/multiAssetBuyClient";
 import { executeMultiAssetSellMainnet } from "@/lib/multiAssetSellClient";
+import { describeBatchBuyWalletPrompt, describeBatchSellWalletPrompt } from "@/lib/walletPromptCopy";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import {
@@ -1555,6 +1556,12 @@ export function DTRDetail() {
           } else if (e.phase === "enabling-one-approval-trading") {
             setMultiAssetBuyStep("One-time setup: enabling one-approval trading for this Reserve (a small separate approval), then your purchase completes in a single transaction.");
             setBuyPhase("awaiting-wallet");
+          } else if (e.phase === "signing-batch") {
+            // The wallet is about to preview each transaction on its own
+            // (swaps as USDC-out/asset-in, the mint unpreviewable) -- say what
+            // that means before the prompt opens (DEC-0217).
+            setMultiAssetBuyStep(describeBatchBuyWalletPrompt({ swaps: e.swaps, total: e.total, ticker: dtr.ticker }));
+            setBuyPhase("awaiting-wallet");
           } else if (e.phase === "swapping") {
             setMultiAssetBuyStep(`Swapping your USDC into Reserve asset ${e.index + 1} of ${e.total}...`);
             setBuyPhase("awaiting-wallet");
@@ -1819,6 +1826,9 @@ export function DTRDetail() {
             } else if (e.phase === "single-transaction") {
               setMultiAssetSellStep("One transaction: your Reserve Tokens are redeemed and every asset sold into USDC -- a single wallet approval.");
               setSellPhase("preparing");
+            } else if (e.phase === "signing-batch") {
+              setMultiAssetSellStep(describeBatchSellWalletPrompt({ swaps: e.swaps, total: e.total, ticker: dtr.ticker }));
+              setSellPhase("awaiting-wallet");
             } else if (e.phase === "redeeming") {
               setMultiAssetSellStep("Redeeming your Reserve Tokens for the Reserve's assets...");
               setSellPhase("preparing");

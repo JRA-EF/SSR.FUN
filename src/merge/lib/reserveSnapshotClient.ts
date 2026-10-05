@@ -1,5 +1,7 @@
 // Client for the backend WARM CACHE (api/mainnet/reserves-snapshot, refreshed
-// every ~15s by api/mainnet/warm-cache-cron even with no users). On Mainnet the
+// every 10 minutes by api/mainnet/warm-cache-cron even with no users, and on
+// demand right after a Reserve is launched -- requestReserveSnapshotRefresh
+// below). On Mainnet the
 // homepage/Discover page hydrates from this ONE cheap read the instant it
 // mounts -- painting real Reserves immediately -- instead of waiting on the
 // in-browser on-chain discovery burst (which was slow and self-inflicted the
@@ -55,6 +57,27 @@ export async function fetchReserveSnapshot(origin: string): Promise<ReserveSnaps
     if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
   }
   return null;
+}
+
+/**
+ * Asks the server to rebuild the warm snapshot NOW (DEC-0217). Called once
+ * by the Launch flow the moment a Reserve is fully deployed: the snapshot is
+ * what every other visitor's Discover page paints from first, and the cron
+ * alone would leave a brand-new Reserve invisible to them for up to ten
+ * minutes. The server re-derives everything from the chain itself (nothing
+ * from this request is trusted), the refresh takes a few seconds, and the
+ * call is fire-and-forget: it never throws and never blocks the launch UI.
+ * Resolves true when the server reported a completed refresh.
+ */
+export async function requestReserveSnapshotRefresh(origin: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${origin}/api/mainnet/warm-cache-cron?trigger=reserve-created`, { method: "POST", cache: "no-store", credentials: "same-origin" });
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+    return body?.ok === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Build the DTR[] the store renders from a snapshot, via the same builder the
