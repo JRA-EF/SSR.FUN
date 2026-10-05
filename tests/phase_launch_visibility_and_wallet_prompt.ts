@@ -41,7 +41,7 @@ describe("DEC-0226 post-launch token metadata safety net", () => {
     expect(note).to.contain("Publish to wallets and exchanges");
   });
 
-  it("never publishes when the read itself failed", async () => {
+  it("never publishes when the read itself failed, and does not claim the name is missing", async () => {
     let published = 0;
     const r = await ensureReserveTokenMetadataPublished({
       read: async () => {
@@ -49,8 +49,12 @@ describe("DEC-0226 post-launch token metadata safety net", () => {
       },
       publish: async () => void published++,
     });
-    expect(r.outcome).to.equal("failed");
+    expect(r.outcome).to.equal("unverified");
+    expect(r.error).to.equal("429 Too Many Requests");
     expect(published).to.equal(0);
+    const note = describeAfterLaunchMetadataOutcome(r, "ALPHA");
+    expect(note).to.contain("Could not confirm");
+    expect(note).to.not.contain("without its name");
   });
 
   it("falls back to a generic noun for an empty ticker", () => {
@@ -77,6 +81,14 @@ describe("DEC-0226 wallet-prompt copy for multi-transaction Buy/Sell", () => {
 
   it("never reports fewer transactions than swaps + the mint", () => {
     expect(describeBatchBuyWalletPrompt({ swaps: 3, total: 1, ticker: "X" })).to.contain("approve 4 transactions");
+  });
+
+  it("names the one-time trading setup when the batch carries it, so the wallet's count adds up", () => {
+    const s = describeBatchBuyWalletPrompt({ swaps: 2, setup: 2, total: 5, ticker: "ECHO" });
+    expect(s).to.contain("approve 5 transactions at once: a one-time trading setup for this Reserve (2 transactions), 2 swaps of your USDC");
+    const sell = describeBatchSellWalletPrompt({ swaps: 1, setup: 1, total: 3, ticker: "ECHO" });
+    expect(sell).to.contain("approve 3 transactions at once: a one-time trading setup for this Reserve (1 transaction), then the redemption of your ECHO");
+    expect(describeBatchBuyWalletPrompt({ swaps: 1, setup: 0, total: 2, ticker: "X" })).to.not.contain("trading setup");
   });
 
   it("describes a Sell as redemption first, then sales into USDC", () => {

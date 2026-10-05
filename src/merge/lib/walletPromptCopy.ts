@@ -15,25 +15,30 @@
 // Pure and offline-testable; the clients pass the real transaction counts.
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-export function describeBatchBuyWalletPrompt(p: { swaps: number; total: number; ticker: string }): string {
+/** `setup`: one-time trading-table transactions prepended to the batch (DEC-0171), named so the count the wallet shows adds up. */
+export function describeBatchBuyWalletPrompt(p: { swaps: number; total: number; ticker: string; setup?: number }): string {
   const swaps = Math.max(0, Math.floor(p.swaps));
-  const total = Math.max(swaps + 1, Math.floor(p.total));
+  const setup = Math.max(0, Math.floor(p.setup ?? 0));
+  const total = Math.max(swaps + setup + 1, Math.floor(p.total));
   const ticker = p.ticker.trim() || "Reserve Token";
+  const setupPart = setup > 0 ? `a one-time trading setup for this Reserve (${setup} ${plural(setup, "transaction", "transactions")}), ` : "";
   const swapPart = swaps > 0 ? `${swaps} ${plural(swaps, "swap", "swaps")} of your USDC into the Reserve's assets, then ` : "";
   return (
-    `Your wallet will ask you to approve ${total} ${plural(total, "transaction", "transactions")} at once: ${swapPart}the deposit that mints your ${ticker}. ` +
+    `Your wallet will ask you to approve ${total} ${plural(total, "transaction", "transactions")} at once: ${setupPart}${swapPart}the deposit that mints your ${ticker}. ` +
     `The wallet previews each one separately, so the swaps read as USDC out and assets in -- those assets only pass through your wallet on their way into the Reserve. ` +
     `When everything lands you hold ${ticker}, not the assets.`
   );
 }
 
-export function describeBatchSellWalletPrompt(p: { swaps: number; total: number; ticker: string }): string {
+export function describeBatchSellWalletPrompt(p: { swaps: number; total: number; ticker: string; setup?: number }): string {
   const swaps = Math.max(0, Math.floor(p.swaps));
-  const total = Math.max(swaps + 1, Math.floor(p.total));
+  const setup = Math.max(0, Math.floor(p.setup ?? 0));
+  const total = Math.max(swaps + setup + 1, Math.floor(p.total));
   const ticker = p.ticker.trim() || "Reserve Token";
+  const setupPart = setup > 0 ? `a one-time trading setup for this Reserve (${setup} ${plural(setup, "transaction", "transactions")}), then ` : "";
   const swapPart = swaps > 0 ? `, then ${swaps} ${plural(swaps, "sale", "sales")} of those assets into USDC` : "";
   return (
-    `Your wallet will ask you to approve ${total} ${plural(total, "transaction", "transactions")} at once: the redemption of your ${ticker} into the Reserve's assets${swapPart}. ` +
+    `Your wallet will ask you to approve ${total} ${plural(total, "transaction", "transactions")} at once: ${setupPart}the redemption of your ${ticker} into the Reserve's assets${swapPart}. ` +
     `The wallet previews each one separately, so the assets appear in your wallet for a moment -- when everything lands you hold USDC.`
   );
 }
