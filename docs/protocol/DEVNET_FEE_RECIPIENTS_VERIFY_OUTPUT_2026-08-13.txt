@@ -1,6 +1,6 @@
 bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
 Deployer/payer: 6idsSUE6u7fqHg6edrdMEjNTnG62wyCANAsJ2YBmeuHk
-RPC: https://devnet.helius-rpc.com/?api-key=12f1afb9-dab5-4768-80f5-a06323782572
+RPC: https://devnet.helius-rpc.com/?api-key=<redacted>
 Program: 2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW
 
 =========================================================

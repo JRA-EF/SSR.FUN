@@ -118,6 +118,9 @@ const PUBLIC_READ_API_PATHS = new Set([
   // src/merge/lib/evmReserveMeta.ts) -- same public-read rule as above.
   '/api/robinhood/reserve-metadata',
   '/api/robinhood/reserve-image',
+  // The Robinhood Chain asset catalogue the Launch form composes from -- the
+  // same public-read rule as the Solana catalogue (api/ledger/asset-catalogue).
+  '/api/robinhood/asset-catalogue',
 ])
 function isPublicReadApi(request: Request, pathname: string): boolean {
   return (request.method === 'GET' || request.method === 'HEAD') && PUBLIC_READ_API_PATHS.has(pathname)

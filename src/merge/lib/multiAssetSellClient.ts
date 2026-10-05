@@ -39,6 +39,8 @@ export type MultiAssetSellProgressEvent =
   /** The server is building every transaction of this sale (one request). */
   | { phase: "building" }
   | { phase: "single-transaction" }
+  /** The sale could not fit one transaction: the wallet is about to show `total` transactions at once, `swaps` of them asset-to-USDC sales (DEC-0226). */
+  | { phase: "signing-batch"; swaps: number; total: number }
   | { phase: "redeeming" }
   | { phase: "swapping"; mint: string; index: number; total: number }
   /** The manager's Sell tax (DEC-0198) is being paid out of the USDC proceeds -- the last step of a batch-mode sale. */
@@ -327,6 +329,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   log("server build", { mode: build.mode, transactions: build.transactions.map((t) => ({ kind: t.kind, mint: t.mint, bytes: t.bytes })), timings: build.timings, quotedUsdcOutRaw: build.plan.quotedUsdcOutRaw });
 
   if (build.mode === "single") params.onProgress?.({ phase: "single-transaction" });
+  else params.onProgress?.({ phase: "signing-batch", swaps: build.transactions.filter((t) => t.kind === "swap").length, total: build.transactions.length });
   const signed = await signMany(build.transactions.map(decode));
 
   // Table setup first (if prepended).

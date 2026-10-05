@@ -46,6 +46,10 @@ import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/ba
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
+import { requestReserveSnapshotRefresh } from "@/lib/reserveSnapshotClient";
+import { RESERVE_VISIBILITY_NOTE } from "@/lib/walletPromptCopy";
+import { describeAfterLaunchMetadataOutcome, type AfterLaunchMetadataResult } from "@/lib/tokenMetadataAfterLaunch";
+import { ensureReserveTokenMetadataPublishedOnChain } from "@/lib/tokenMetadataAfterLaunchOnChain";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -217,9 +221,26 @@ export function CreateDTR({
    * return value) gets the exact same treatment -- never a different,
    * possibly-inconsistent "well it's sort of done" path.
    */
-  function finalizeResumedReserve(result: CreateReserveResult, pending: PendingReserveDeploy) {
+  async function finalizeResumedReserve(result: CreateReserveResult, pending: PendingReserveDeploy) {
     if (!walletCtx.publicKey) return;
     clearPendingReserveDeploy();
+    // A resumed deployment re-ran its registration batches without the
+    // token-metadata instruction, so this is where a nameless Reserve Token
+    // is most likely -- check once and publish if missing (one approval;
+    // best-effort, see tokenMetadataAfterLaunch.ts). Then ask the server to
+    // rebuild the Discover snapshot so the Reserve reaches everyone now.
+    let metadataNote: string | null = null;
+    if (TOKEN_METADATA_LIVE) {
+      setCreateStep(null);
+      const metadataResult: AfterLaunchMetadataResult = await ensureReserveTokenMetadataPublishedOnChain(connection, walletCtx, {
+        reserve: result.reserve,
+        reserveTokenMint: result.reserveTokenMint,
+        name: fitTokenMetadataName(pending.name),
+        ticker: fitTokenMetadataSymbol(pending.ticker),
+      });
+      metadataNote = describeAfterLaunchMetadataOutcome(metadataResult, pending.ticker);
+    }
+    if (IS_MAINNET) void requestReserveSnapshotRefresh(window.location.origin);
     // Same id-scheme requirement as handleSubmitReal's own dtrId -- see its comment above.
     const dtrId = `${SOLANA_CLUSTER}-${result.reserveId}`;
     const onChainResumed: OnChainReserveMeta = {
@@ -287,6 +308,8 @@ export function CreateDTR({
       title: "Reserve deployment resumed and completed",
       description: (
         <div className="space-y-1">
+          <div>{RESERVE_VISIBILITY_NOTE}</div>
+          {metadataNote && <div>{metadataNote}</div>}
           <div>
             Reserve:{" "}
             <a href={solscanUrl("address", result.reserve)} target="_blank" rel="noreferrer" className="underline">
@@ -343,7 +366,7 @@ export function CreateDTR({
     // whatever just failed.
     const result = await checkReserveGenuinelyComplete(connection, SSR_PROGRAM_ID, pending).catch(() => null);
     if (!result) return false;
-    finalizeResumedReserve(result, pending);
+    await finalizeResumedReserve(result, pending);
     return true;
   }
 
@@ -689,7 +712,7 @@ export function CreateDTR({
         solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
         clusterLabel: CLUSTER_LABEL,
       });
-      finalizeResumedReserve(result, pendingAtStart);
+      await finalizeResumedReserve(result, pendingAtStart);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (isWalletRejectionError(e)) {
@@ -1349,10 +1372,34 @@ export function CreateDTR({
         }
       }
 
+      // The launch batch carried create_token_metadata; confirm the account
+      // really exists before telling the creator they are done, and publish
+      // it with one more approval if it somehow does not (DEC-0226 --
+      // three live Reserves launched nameless from a build whose flag was
+      // off). Best-effort: the Reserve is already fully deployed.
+      let metadataNote: string | null = null;
+      if (TOKEN_METADATA_LIVE) {
+        setCreateStep(null);
+        const metadataResult: AfterLaunchMetadataResult = await ensureReserveTokenMetadataPublishedOnChain(connection, walletCtx, {
+          reserve: result.reserve,
+          reserveTokenMint: result.reserveTokenMint,
+          reserveMetadataUri: metadataUri,
+          name: fitTokenMetadataName(name),
+          ticker: fitTokenMetadataSymbol(ticker),
+        });
+        metadataNote = describeAfterLaunchMetadataOutcome(metadataResult, ticker);
+      }
+      // Rebuild the server snapshot every visitor's Discover page paints
+      // from, so this Reserve shows up for everyone within seconds instead of
+      // at the cron's next 10-minute tick. Fire-and-forget.
+      if (IS_MAINNET) void requestReserveSnapshotRefresh(window.location.origin);
+
       toast({
         title: `Reserve deployed on Solana ${IS_MAINNET ? "Mainnet" : "DevNet"}`,
         description: (
           <div className="space-y-1">
+            <div>{RESERVE_VISIBILITY_NOTE}</div>
+            {metadataNote && <div>{metadataNote}</div>}
             <div>
               Reserve:{" "}
               <a href={solscanUrl("address", result.reserve)} target="_blank" rel="noreferrer" className="underline">

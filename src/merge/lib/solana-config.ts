@@ -16,14 +16,18 @@ export const IS_MAINNET = SOLANA_CLUSTER === "mainnet-beta";
 
 /**
  * Whether the deployed program on this cluster carries the
- * set_reserve_token_metadata instruction (Reserve Token Metaplex metadata --
- * see packages/sdk/src/tokenMetadata.ts). Set VITE_TOKEN_METADATA_LIVE=true
- * once the program upgrade that adds it has executed on the cluster this
- * build targets; until then the launch flow must NOT bundle the instruction
- * (the transaction would fail with an unknown-instruction error and nothing
- * would be created) and the Manage page hides the publish control.
+ * create_token_metadata instruction (Reserve Token Metaplex metadata -- see
+ * packages/sdk/src/tokenMetadata.ts). On Mainnet it is ALWAYS on: the
+ * upgrade executed on 2026-09-23 (DEC-0210) and every build that targets
+ * Mainnet must bundle the instruction into the launch batch -- the env flag
+ * was only ever set on the Production environment, so a Preview/local
+ * Mainnet build silently launched Reserve Tokens with no name or symbol
+ * (three live Reserves, DEC-0226). DevNet still needs
+ * VITE_TOKEN_METADATA_LIVE=true: until the DevNet program carries the
+ * instruction, bundling it would fail the whole launch transaction with an
+ * unknown-instruction error, and the Manage page hides the publish control.
  */
-export const TOKEN_METADATA_LIVE = (import.meta.env.VITE_TOKEN_METADATA_LIVE as string | undefined) === "true";
+export const TOKEN_METADATA_LIVE = IS_MAINNET || (import.meta.env.VITE_TOKEN_METADATA_LIVE as string | undefined) === "true";
 
 // The dedicated RPC provider (Helius) is only ever reached through the
 // matching server-side proxy (api/devnet/rpc-proxy.ts or

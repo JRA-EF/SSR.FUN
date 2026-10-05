@@ -102,6 +102,26 @@ export function isQuoteSafeToExecute(priceImpactPct: number): boolean {
   return Number.isFinite(priceImpactPct) && priceImpactPct <= MAX_PRICE_IMPACT_PCT;
 }
 
+/**
+ * Pure: whether an `accrue_fees` call for this Reserve can do anything at all.
+ * The program returns before touching `last_settled_ts` when the accumulator
+ * has nothing to bill (`period_supply_seconds == 0`), which is permanently the
+ * case for a Reserve with zero Reserve Token supply (never seeded, still
+ * `assetsInitializing`). Such a Reserve therefore stays "due" forever and
+ * every hourly call is a paid no-op (5,000 lamports). Live 2026-09-08 ..
+ * 2026-09-25: 14 unseeded Reserves x 24 calls/day drained the keeper's 0.05 SOL
+ * and every settlement stopped for a week (DEC-0221). Only an Active Reserve
+ * with a nonzero supply is worth a transaction.
+ */
+export function isAccrualWorthSending(r: { status: string; reserveTokenSupplyRaw: string }): boolean {
+  if (r.status !== "active") return false;
+  try {
+    return BigInt(r.reserveTokenSupplyRaw) > 0n;
+  } catch {
+    return false;
+  }
+}
+
 function loadKeeperKeypair(): Keypair {
   const raw = process.env.SSR_FEE_SETTLEMENT_KEEPER_SECRET;
   if (!raw) throw new Error("SSR_FEE_SETTLEMENT_KEEPER_SECRET is not configured on this deployment.");
@@ -167,6 +187,8 @@ interface ReserveSettlementResult {
   redeemedShares?: string;
   assets: AssetSettlementResult[];
   distributeSignature?: string;
+  /** DEC-0221: set instead of distributeSignature when the staging account held no USDC (no transaction sent). */
+  distributeSkipped?: string;
   error?: string;
 }
 
@@ -288,12 +310,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         reserveId: r.reserveId,
         reserve: r.reserve,
         reserveTokenMint: r.reserveTokenMint,
+        status: r.status,
+        reserveTokenSupplyRaw: r.reserveTokenSupplyRaw,
         accumulatorInitialized: lastSettled !== null,
         elapsedDays: elapsedS === null ? "clock not started" : (elapsedS / 86400).toFixed(2),
         due: lastSettled === null || (elapsedS as number) >= ACCRUE_MIN_ELAPSED_S,
       };
     })
-    .filter((r) => r.due);
+    // DEC-0221: a due-but-unbillable Reserve (no supply) would be a paid no-op every hour, forever.
+    .filter((r) => r.due && isAccrualWorthSending(r));
 
   const status = {
     keeperWallet: keeper ? keeper.publicKey.toBase58() : null,
@@ -463,7 +488,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           result.assets.push(assetResult);
         }
 
-        // Step 3: distribute whatever USDC is now staged (idempotent no-op if none).
+        // Step 3: distribute whatever USDC is now staged. The instruction is an
+        // idempotent no-op on an empty staging account, but a no-op still costs the
+        // keeper the base fee plus the priority fee on the full compute budget
+        // (~65,000 lamports) -- live 12:15 UTC 2026-10-02, 8 of 10 distributes moved
+        // nothing (DEC-0221). Read the real balance first and skip when it is zero.
+        const stagedUsdcInfo = await connection.getAccountInfo(usdcStaging);
+        const stagedUsdc = stagedUsdcInfo && stagedUsdcInfo.data.length >= 72 ? stagedUsdcInfo.data.readBigUInt64LE(64) : 0n;
+        if (stagedUsdc === 0n) {
+          result.distributeSkipped = "no USDC staged";
+          results.push(result);
+          continue;
+        }
         const [managerFeeRecipientsAddr] = findManagerFeeRecipients(reservePk, PROGRAM_ID);
         const recipientsAccount = await program.account.managerFeeRecipients.fetchNullable(managerFeeRecipientsAddr);
         const managerRecipients = recipientsAccount

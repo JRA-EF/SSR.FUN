@@ -117,9 +117,10 @@ export const CHAINS: Record<"testnet" | "mainnet", ChainConfig> = {
     feeRegistry: "0x03079d5f8d3B6d27827315205D1328b193c48d31",
     roleRegistry: "0x3a96Fd76dAB64be73404BF59587beF21773Dcd94",
     fillerRegistry: "0x95CB8550056680a004019fD45db4347A622C2CFc",
-    // Every Robinhood stock token that trades against USDG, discovered
-    // on-chain -- see scripts/generate-robinhood-assets.mts. 279 of them as of
-    // 2026-09-23, plus the cash leg and WETH.
+    // Only the two quote assets live here. Everything a Reserve can hold on
+    // this chain is served by api/robinhood/asset-catalogue (built by
+    // lib/robinhood/catalogue.ts from Uniswap v3 pools, with Robinhood stock
+    // tokens proven by their contract code), which the Launch form fetches.
     assets: ROBINHOOD_ASSETS,
     notice:
       "Live on Robinhood Chain mainnet. This reserve holds real USDG and Robinhood stock tokens; " +

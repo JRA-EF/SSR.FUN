@@ -1,40 +1,94 @@
-// The Robinhood Chain branch of the Create page. Every reserve is its own
-// contract deployed through the SSR factory; the creator supplies the starting
-// basket from their own wallet.
+// The Robinhood Chain branch of the Launch page -- the same four-step wizard
+// as the Solana one (CreateDTR.tsx), step for step:
 //
-// Step 1 (Identity) asks for exactly what the Solana wizard asks for --
-// chain, profile picture, name, ticker, category, description, YouTube
-// links, header image -- and the whole profile is stored the same way: the
-// pictures go to the content-addressed image store, the text and links to the
-// metadata store, and the payload's permanent URL is written on-chain (here as
-// the Folio's `mandate`, the EVM counterpart of Solana's metadata_uri -- see
-// lib/evmReserveMeta.ts). Only the composition and economics differ, because
-// the chains genuinely do: a Robinhood reserve is seeded in kind.
-import { useRef, useState } from "react";
+//   1. Identity    the chain choice, then exactly the Solana fields, stored
+//                  the same way (profile picture / header to the image
+//                  store, text + links to the metadata store, the payload's
+//                  permanent URL on-chain as the Folio `mandate`).
+//   2. Composition the live asset catalogue (api/robinhood/asset-catalogue:
+//                  Robinhood stock tokens proven by their code, plus every
+//                  launchpad token with a real Uniswap pool), target weights
+//                  with sliders, the unallocated rest staying in USDG.
+//   3. Economics   ONE initial amount in USDG (never a share count), mint
+//                  and TVL fee sliders with the effective protocol/manager
+//                  split, fee routing (primary + additional recipients),
+//                  co-managers.
+//   4. Review      the summary, the metadata URL, a Wallet Cost Summary and
+//                  the list of wallet prompts, then Launch.
+//
+// Launch buys each non-cash leg with the creator's USDG on Uniswap v3
+// (lib/evmSwap.ts), deposits the cash leg directly, and deploys with initial
+// shares equal to the USDG put in -- one Reserve Token per dollar, as on
+// Solana; afterwards the contract mints and redeems against NAV. The
+// sequencing is lib/evmLaunch.ts; the arithmetic lib/evmLaunchPlan.ts.
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
+import { zeroAddress } from "viem";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import type { ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Slider } from "@/components/ui/slider";
 import { LaunchShell } from "@/components/LaunchHero";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { InfoTip } from "@/components/InfoTip";
+import { AlertCircle, ChevronLeft, ChevronRight, Plus, Rocket, Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ERC20_ABI, LIMITS, ROBINHOOD, SAFE_REBALANCE_DEFAULTS, type AssetRef } from "@/lib/evmChain";
-import { createReserve, describeEvmError, fmtUnits, parseAmount, parsePercentToD18, pctFromD18, publicClientFor, rhReserveId } from "@/lib/evmReserve";
+import { ERC20_ABI, FEE_REGISTRY_ABI, LIMITS, ROBINHOOD, SAFE_REBALANCE_DEFAULTS, USDG, WETH } from "@/lib/evmChain";
+import { describeEvmError, fmtUnits, publicClientFor, rhReserveId } from "@/lib/evmReserve";
 import { invalidateRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
-import { RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY } from "@/lib/types";
-import { TICKER_MAX_LENGTH } from "@/lib/calculations";
+import { useRobinhoodAssetCatalogue, type RobinhoodAsset } from "@/hooks/useRobinhoodAssetCatalogue";
+import { RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY, type FeeRecipient } from "@/lib/types";
+import { TICKER_MAX_LENGTH, formatUsdc } from "@/lib/calculations";
+import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
 import { fileToHeaderImageDataUrl, fileToProfileImageDataUrl, fitHeaderImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { uploadReserveMetadata, type ReserveMetadataInput } from "@/lib/createReserveClient";
 import { normalizeYouTubeChannelUrl, parseYouTubeVideoId } from "@/lib/youtube";
+import {
+  RH_MAX_ASSETS_PER_RESERVE,
+  coManagersForChain,
+  d18ToPercent,
+  effectiveFeeSplit,
+  estimateLaunchGas,
+  feeRecipientsForChain,
+  fmtUsdg,
+  launchSteps,
+  parseUsdgAmount,
+  percentToD18,
+  planLaunch,
+  type LaunchPlan,
+  type PlannedAsset,
+} from "@/lib/evmLaunchPlan";
+import { executeLaunch, quoteLaunch, type LegQuote } from "@/lib/evmLaunch";
 import { connectEvmWallet, useEvmWallet } from "./useEvmWallet";
 
 const cfg = ROBINHOOD;
 const pc = publicClientFor(cfg);
 const short = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
 type Status = { text: string; kind: "ok" | "err" | "busy" } | null;
+
+/** A selected basket row: a catalogue asset plus its target weight (fraction of 1). */
+interface BasketAsset extends RobinhoodAsset {
+  weight: number;
+}
+
+type IssuerFilter = "all" | "robinhood" | "other";
+const ISSUER_FILTER_OPTIONS: { value: IssuerFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "robinhood", label: "Stock tokens (Robinhood)" },
+  { value: "other", label: "Other Robinhood Chain tokens" },
+];
+
+/** The cash leg is a constant the form knows even when the catalogue is unavailable. */
+const USDG_ASSET: RobinhoodAsset = { address: USDG, symbol: "USDG", name: "Global Dollar", decimals: 6, issuer: null, pool: null, depthUsd: null, priceUsd: 1 };
+
+function matchesSearch(a: RobinhoodAsset, q: string): boolean {
+  const s = q.trim().toLowerCase();
+  if (!s) return true;
+  return a.symbol.toLowerCase().includes(s) || a.name.toLowerCase().includes(s) || a.address.toLowerCase().includes(s);
+}
 
 /**
  * The featured-video link as a permanent HTTPS URL for the metadata store:
@@ -48,6 +102,8 @@ function normalizeFeaturedVideoUrl(input: string): string {
   if (id) return `https://www.youtube.com/watch?v=${id}`;
   return raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
 }
+
+const usd = (n: number | null, digits = 2) => (n === null ? "USD unavailable" : `$${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`);
 
 export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode } = {}) {
   const { wallet, account } = useEvmWallet();
@@ -66,21 +122,47 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
   const [headerImage, setHeaderImage] = useState<string | null>(null);
   const [headerImageError, setHeaderImageError] = useState<string | null>(null);
 
-  // ---- Economics (step 3)
-  const [initialShares, setInitialShares] = useState("10");
-  const [mintFeePct, setMintFeePct] = useState("1");
-  const [tvlFeePct, setTvlFeePct] = useState("1");
-  const [owner, setOwner] = useState("");
+  // ---- Composition (step 2)
+  const catalogue = useRobinhoodAssetCatalogue(true);
+  const [assets, setAssets] = useState<BasketAsset[]>([]);
+  const [assetSearch, setAssetSearch] = useState("");
+  const [issuerFilter, setIssuerFilter] = useState<IssuerFilter>("all");
 
-  // ---- Composition (step 2). Rows hold the TYPED ticker, resolved against
-  // the full asset list on submit -- 281 tokens is far too many for a
-  // <select>, so this is a type-to-filter input backed by a datalist.
-  const [rows, setRows] = useState<{ symbol: string; amount: string }[]>(() => [
-    { symbol: "USDG", amount: "" },
-    { symbol: "", amount: "" },
-  ]);
-  const findAsset = (symbol: string) => cfg.assets.find((a) => a.symbol.toLowerCase() === symbol.trim().toLowerCase());
-  const [balances, setBalances] = useState<Record<string, string>>({});
+  // ---- Economics (step 3)
+  const [initialSeedUsdg, setInitialSeedUsdg] = useState("");
+  const [mintFeePct, setMintFeePct] = useState(0.5);
+  const [tvlFeePct, setTvlFeePct] = useState(1);
+  const [feeDestination, setFeeDestination] = useState("");
+  const feeDestinationUserEditedRef = useRef(false);
+  useEffect(() => {
+    if (!feeDestinationUserEditedRef.current && !feeDestination && account) setFeeDestination(account);
+  }, [account, feeDestination]);
+  const [feeRecipients, setFeeRecipients] = useState<FeeRecipient[]>([]);
+  const [newRecipientAddress, setNewRecipientAddress] = useState("");
+  const [newRecipientPct, setNewRecipientPct] = useState("");
+  const [feeRecipientAddError, setFeeRecipientAddError] = useState<string | null>(null);
+  const [additionalManagers, setAdditionalManagers] = useState<string[]>([]);
+  const [newManagerAddress, setNewManagerAddress] = useState("");
+  const [managerAddError, setManagerAddError] = useState<string | null>(null);
+
+  // The DAO's fee rule, read live from the registry (the chain's own numbers, not asserted).
+  const [feeRule, setFeeRule] = useState<{ num: bigint; den: bigint; floor: bigint }>({ num: 1n, den: 2n, floor: 5n * 10n ** 15n });
+  useEffect(() => {
+    pc.readContract({ address: cfg.feeRegistry, abi: FEE_REGISTRY_ABI, functionName: "getFeeDetails", args: [zeroAddress] })
+      .then(([, num, den, floor]) => setFeeRule({ num, den, floor }))
+      .catch(() => {});
+  }, []);
+
+  // ---- Review (step 4)
+  const [metadataUri, setMetadataUri] = useState<string | null>(null);
+  const [metadataUriError, setMetadataUriError] = useState<string | null>(null);
+  const [metadataUploading, setMetadataUploading] = useState(false);
+  const [quotes, setQuotes] = useState<LegQuote[] | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [gasPriceWei, setGasPriceWei] = useState<bigint | null>(null);
+  const [walletUsdg, setWalletUsdg] = useState<bigint | null>(null);
+  const [walletEth, setWalletEth] = useState<bigint | null>(null);
+
   const [status, setStatus] = useState<Status>(null);
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
@@ -96,22 +178,103 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
     }
   };
 
+  // ---- basket helpers (the Solana wizard's, verbatim in behaviour)
+  const selectable: RobinhoodAsset[] = useMemo(() => {
+    const fromCatalogue = catalogue.tokens.filter((t) => t.address.toLowerCase() !== USDG.toLowerCase());
+    return [USDG_ASSET, ...fromCatalogue];
+  }, [catalogue.tokens]);
+  const atAssetLimit = assets.length >= RH_MAX_ASSETS_PER_RESERVE;
+  const addAsset = (a: RobinhoodAsset) => {
+    if (assets.length >= RH_MAX_ASSETS_PER_RESERVE) return;
+    if (!assets.some((x) => x.address.toLowerCase() === a.address.toLowerCase())) setAssets([...assets, { ...a, weight: 0.1 }]);
+  };
+  const removeAsset = (address: string) => setAssets(assets.filter((a) => a.address.toLowerCase() !== address.toLowerCase()));
+  const updateWeight = (address: string, w: number) => setAssets(assets.map((a) => (a.address.toLowerCase() === address.toLowerCase() ? { ...a, weight: Number.isFinite(w) ? Math.max(0, Math.min(1, w)) : 0 } : a)));
+  const applyWeights = (next: number[]) => setAssets((prev) => prev.map((a, i) => ({ ...a, weight: next[i] ?? a.weight })));
+  const assignRestTo = (address: string) =>
+    setAssets((prev) => {
+      const i = prev.findIndex((a) => a.address.toLowerCase() === address.toLowerCase());
+      const next = assignRemainder(prev.map((a) => a.weight), i);
+      return prev.map((a, j) => ({ ...a, weight: next[j] ?? a.weight }));
+    });
+  const totalWeight = assets.reduce((s, a) => s + a.weight, 0);
+  const unallocatedWeight = Math.max(0, 1 - totalWeight);
+  const feeRecipientTotalPct = feeRecipients.reduce((s, r) => s + r.pct, 0);
+  const priceOf = (address: Address): number | null => {
+    if (address.toLowerCase() === USDG.toLowerCase()) return 1;
+    return assets.find((a) => a.address.toLowerCase() === address.toLowerCase())?.priceUsd ?? catalogue.tokens.find((t) => t.address.toLowerCase() === address.toLowerCase())?.priceUsd ?? null;
+  };
+  const ethUsd = catalogue.tokens.find((t) => t.address.toLowerCase() === WETH.toLowerCase())?.priceUsd ?? null;
+
+  const addFeeRecipient = () => {
+    setFeeRecipientAddError(null);
+    const address = newRecipientAddress.trim();
+    const pct = parseFloat(newRecipientPct);
+    if (!address) return setFeeRecipientAddError("Enter a wallet address first.");
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return setFeeRecipientAddError("That is not a valid 0x address.");
+    if (!pct || pct <= 0) return setFeeRecipientAddError("Enter a percentage greater than 0.");
+    if (feeRecipients.length + 1 >= 10) return setFeeRecipientAddError("Maximum of 10 recipients reached, including the Primary Fee Destination.");
+    if (feeRecipients.some((r) => r.address.toLowerCase() === address.toLowerCase())) return setFeeRecipientAddError("That address is already an additional recipient.");
+    if (address.toLowerCase() === (feeDestination || account || "").toLowerCase()) {
+      return setFeeRecipientAddError("That's already the Primary Fee Destination above -- it doesn't need to be added again as an additional recipient.");
+    }
+    setFeeRecipients([...feeRecipients, { address, pct }]);
+    setNewRecipientAddress("");
+    setNewRecipientPct("");
+  };
+  const removeFeeRecipient = (address: string) => setFeeRecipients(feeRecipients.filter((r) => r.address !== address));
+  const addManager = () => {
+    setManagerAddError(null);
+    const address = newManagerAddress.trim();
+    if (!address) return setManagerAddError("Enter a wallet address first.");
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return setManagerAddError("That is not a valid 0x address.");
+    if (address.toLowerCase() === (account ?? "").toLowerCase()) return setManagerAddError("That's your own wallet -- it is the root Manager already.");
+    if (additionalManagers.some((m) => m.toLowerCase() === address.toLowerCase())) return setManagerAddError("That address is already a co-manager.");
+    setAdditionalManagers([...additionalManagers, address]);
+    setNewManagerAddress("");
+  };
+  const removeManager = (address: string) => setAdditionalManagers(additionalManagers.filter((a) => a !== address));
+
+  // ---- the plan (pure) -- recomputed from the form on every render
+  const planned: { plan: LaunchPlan | null; error: string | null } = useMemo(() => {
+    try {
+      if (assets.length === 0) return { plan: null, error: null };
+      const seed = parseUsdgAmount(initialSeedUsdg || "0");
+      const planAssets: PlannedAsset[] = assets.map((a) => ({ address: a.address, symbol: a.symbol, decimals: a.decimals, weight: a.weight, pool: a.pool }));
+      return { plan: planLaunch(planAssets, seed, USDG), error: null };
+    } catch (e) {
+      return { plan: null, error: e instanceof Error ? e.message : String(e) };
+    }
+  }, [assets, initialSeedUsdg]);
+  const plan = planned.plan;
+  const planKey = plan ? plan.legs.map((l) => `${l.asset.address}:${l.usdgRaw}`).join("|") : "";
+
   /** Blocks Next until the current step is actually answerable. */
   function stepError(atStep: number): string | null {
     if (atStep === 1) {
       if (!name.trim()) return "Give the reserve a name.";
       if (!symbol.trim()) return "Give the reserve a ticker.";
-      return null;
     }
     if (atStep === 2) {
-      const filled = rows.filter((r) => r.symbol.trim() || r.amount.trim());
-      if (filled.length === 0) return "Add at least one asset.";
-      for (const r of filled) {
-        const a = findAsset(r.symbol);
-        if (!a) return `"${r.symbol.trim() || "(blank)"}" is not a token on Robinhood Chain.`;
-        if (!r.amount.trim()) return `Enter an amount for ${a.symbol}.`;
+      if (assets.length === 0) return "Add at least one asset.";
+      if (totalWeight > 1.0001) return "Total weight exceeds 100%. Please adjust allocations.";
+    }
+    if (atStep === 3) {
+      if (!initialSeedUsdg || parseFloat(initialSeedUsdg) <= 0) return "Enter the initial amount in USDG.";
+      if (feeRecipientTotalPct > 100) return "Recipient percentages exceed 100% of the Manager's fee share.";
+      try {
+        const mintFee = percentToD18(mintFeePct);
+        if (mintFee > LIMITS.MAX_MINT_FEE) return `Mint fee cannot exceed ${d18ToPercent(LIMITS.MAX_MINT_FEE)}%.`;
+        if (mintFee !== 0n && mintFee < LIMITS.MIN_MINT_FEE) return `A non-zero mint fee must be at least ${d18ToPercent(LIMITS.MIN_MINT_FEE)}%.`;
+        if (percentToD18(tvlFeePct) > LIMITS.MAX_TVL_FEE) return `TVL fee cannot exceed ${d18ToPercent(LIMITS.MAX_TVL_FEE)}% a year.`;
+        // The primary destination defaults to the wallet, which may not be
+        // connected yet (the form can be filled first); validate what is set.
+        if (feeDestination || account) feeRecipientsForChain(feeDestination || account || "", feeRecipients);
+        coManagersForChain(account ?? "", additionalManagers);
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
       }
-      return null;
+      if (planned.error) return planned.error;
     }
     return null;
   }
@@ -127,27 +290,34 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
     setStep((v) => Math.max(1, v - 1));
   };
 
-  const legsPreview = rows
-    .map((r) => ({ asset: findAsset(r.symbol), amount: r.amount }))
-    .filter((l): l is { asset: AssetRef; amount: string } => !!l.asset && !!l.amount.trim());
-
   async function connect() {
     try {
       await connectEvmWallet();
-      await loadBalances();
     } catch (e) {
       setStatus({ text: describeEvmError(e), kind: "err" });
     }
   }
 
-  /** Shows what the connected wallet actually holds, so a basket isn't sized blind. */
-  async function loadBalances(acct = account) {
-    if (!acct) return;
-    const entries = await Promise.all(
-      cfg.assets.map(async (a) => [a.address, fmtUnits(await pc.readContract({ address: a.address, abi: ERC20_ABI, functionName: "balanceOf", args: [acct] }), a.decimals, 8)] as const),
-    );
-    setBalances(Object.fromEntries(entries));
-  }
+  // Wallet balances for the cost summary.
+  useEffect(() => {
+    if (!account) {
+      setWalletUsdg(null);
+      setWalletEth(null);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([pc.readContract({ address: USDG, abi: ERC20_ABI, functionName: "balanceOf", args: [account] }), pc.getBalance({ address: account })])
+      .then(([u, e]) => {
+        if (!cancelled) {
+          setWalletUsdg(u);
+          setWalletEth(e);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [account, step]);
 
   /**
    * Stores the reserve's profile and returns the permanent metadata URL that
@@ -158,15 +328,12 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
     const origin = window.location.origin;
     let imageUrl: string | undefined;
     if (profileImageDataUrl) {
-      setStatus({ text: "Storing the profile picture...", kind: "busy" });
       imageUrl = await uploadReserveImage(origin, profileImageDataUrl, "robinhood");
     }
     let headerImageUrl: string | undefined;
     if (headerImage) {
-      setStatus({ text: "Storing the header image...", kind: "busy" });
       headerImageUrl = await uploadReserveImage(origin, await fitHeaderImageDataUrl(headerImage), "robinhood");
     }
-    setStatus({ text: "Storing the reserve profile...", kind: "busy" });
     const channelUrl = youtubeChannel.trim() ? normalizeYouTubeChannelUrl(youtubeChannel) : "";
     const featuredUrl = channelUrl ? normalizeFeaturedVideoUrl(youtubeFeatured) : "";
     const input: ReserveMetadataInput = {
@@ -186,42 +353,89 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
     return uploadReserveMetadata(origin, input, "robinhood");
   }
 
+  // Entering Review: store the profile (so the metadata URL can be shown,
+  // as on Solana), quote every swap leg live, and read the gas price.
+  const identityKey = [name, symbol, category, description, youtubeChannel, youtubeFeatured, profileImageDataUrl ?? "", headerImage ?? ""].join("\u0001");
+  useEffect(() => {
+    if (step !== 4) return;
+    let cancelled = false;
+    setMetadataUploading(true);
+    setMetadataUriError(null);
+    uploadProfile()
+      .then((uri) => {
+        if (!cancelled) setMetadataUri(uri);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setMetadataUri(null);
+          setMetadataUriError(e instanceof Error ? e.message : "The reserve profile could not be stored.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMetadataUploading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, identityKey]);
+
+  useEffect(() => {
+    if (step !== 4 || !plan) return;
+    let cancelled = false;
+    setQuotes(null);
+    setQuoteError(null);
+    const handle = setTimeout(() => {
+      Promise.all([quoteLaunch(pc, plan, priceOf), pc.getGasPrice().catch(() => null)])
+        .then(([q, gp]) => {
+          if (cancelled) return;
+          setQuotes(q);
+          setGasPriceWei(gp);
+        })
+        .catch((e) => {
+          if (!cancelled) setQuoteError(e instanceof Error ? e.message : String(e));
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, planKey]);
+
   async function submit() {
     if (!wallet || !account) return setStatus({ text: "Connect an EVM wallet first.", kind: "err" });
+    for (const s of [1, 2, 3]) {
+      const e = stepError(s);
+      if (e) return setStatus({ text: e, kind: "err" });
+    }
+    if (!plan) return setStatus({ text: planned.error ?? "The basket could not be planned.", kind: "err" });
     setSubmitting(true);
     try {
-      if (!name.trim()) throw new Error("Give the reserve a name.");
-      if (!symbol.trim()) throw new Error("Give the reserve a ticker.");
+      const mintFee = percentToD18(mintFeePct);
+      const tvlFee = percentToD18(tvlFeePct);
+      const chainRecipients = feeRecipientsForChain(feeDestination || account, feeRecipients);
+      const coManagers = coManagersForChain(account, additionalManagers);
 
-      const legs: { asset: AssetRef; amount: bigint }[] = [];
-      for (const r of rows) {
-        if (!r.symbol.trim() && !r.amount.trim()) continue;
-        const asset = findAsset(r.symbol);
-        if (!asset) throw new Error(`"${r.symbol.trim() || "(blank)"}" is not a token on Robinhood Chain. Type a ticker such as NVDA.`);
-        if (legs.some((l) => l.asset.address.toLowerCase() === asset.address.toLowerCase())) throw new Error(`${asset.symbol} is listed twice.`);
-        legs.push({ asset, amount: parseAmount(r.amount, asset.decimals, `${asset.symbol} amount`) });
-      }
-      if (legs.length === 0) throw new Error("Add at least one asset with an amount.");
-
-      const mintFee = parsePercentToD18(mintFeePct, "Mint fee");
-      const tvlFee = parsePercentToD18(tvlFeePct, "TVL fee");
-      if (mintFee > LIMITS.MAX_MINT_FEE) throw new Error(`Mint fee cannot exceed ${pctFromD18(LIMITS.MAX_MINT_FEE, 2)}.`);
-      if (mintFee !== 0n && mintFee < LIMITS.MIN_MINT_FEE) throw new Error(`A non-zero mint fee must be at least ${pctFromD18(LIMITS.MIN_MINT_FEE, 2)}.`);
-      if (tvlFee > LIMITS.MAX_TVL_FEE) throw new Error(`TVL fee cannot exceed ${pctFromD18(LIMITS.MAX_TVL_FEE, 2)} a year.`);
-
-      const ownerAddr = (owner.trim() || account) as Address;
-      if (!/^0x[0-9a-fA-F]{40}$/.test(ownerAddr)) throw new Error("Owner must be a valid address.");
+      // Fresh quotes at the moment of launch, never the ones shown a minute ago.
+      setStatus({ text: "Quoting the basket on Uniswap...", kind: "busy" });
+      const freshQuotes = await quoteLaunch(pc, plan, priceOf);
 
       // The profile is stored BEFORE the wallet opens, so a store problem is
       // reported here rather than after assets have moved.
-      const mandate = await uploadProfile();
+      let mandate = metadataUri;
+      if (!mandate) {
+        setStatus({ text: "Storing the reserve profile...", kind: "busy" });
+        mandate = await uploadProfile();
+        setMetadataUri(mandate);
+      }
 
-      const { reserve } = await createReserve(
+      const { reserve } = await executeLaunch(
         pc,
         wallet,
         cfg,
         account,
-        { name: name.trim(), symbol: symbol.trim(), legs, initialShares: parseAmount(initialShares, 18, "Initial shares"), mintFee, tvlFee, owner: ownerAddr, mandate },
+        { plan, quotes: freshQuotes, name: name.trim(), symbol: symbol.trim(), mintFee, tvlFee, owner: account, feeRecipients: chainRecipients, coManagers, mandate },
         (m) => setStatus({ text: m, kind: "busy" }),
       );
       invalidateRobinhoodReserves();
@@ -232,6 +446,10 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
       setSubmitting(false);
     }
   }
+
+  const mintSplit = effectiveFeeSplit(percentToD18(mintFeePct), feeRule.num, feeRule.den, feeRule.floor);
+  const tvlSplit = effectiveFeeSplit(percentToD18(tvlFeePct), feeRule.num, feeRule.den, feeRule.floor);
+  const seedUsd = parseFloat(initialSeedUsdg) || 0;
 
   return (
     <LaunchShell subtitle="Launch a new Reserve on SSR.FUN, live on Robinhood Chain." step={step}>
@@ -400,6 +618,12 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                 </p>
               </div>
             </CardContent>
+            <CardFooter className="justify-between border-t border-border/40 pt-6">
+              <span />
+              <Button onClick={next} disabled={!name.trim() || !symbol.trim()} className="font-bold gap-2">
+                Next <ChevronRight className="w-4 h-4" />
+              </Button>
+            </CardFooter>
           </>
         )}
 
@@ -407,176 +631,612 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
           <>
             <CardHeader>
               <CardTitle className="text-2xl font-merge-display">Basket Composition</CardTitle>
-              <CardDescription>
-                Any of the {cfg.assets.length} tokens on Robinhood Chain &mdash; stock tokens, ETFs, USDG or WETH. Start typing a
-                ticker. These assets leave your wallet and become the reserve&rsquo;s holdings.
-              </CardDescription>
+              <CardDescription>Select assets and set their target weights (must sum to ≤ 100%).</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {rows.map((r, i) => {
-                const asset = findAsset(r.symbol);
-                const unknown = r.symbol.trim().length > 0 && !asset;
-                return (
-                  <div key={i} className="grid grid-cols-[1.4fr_1fr_auto] gap-2 items-start">
-                    <div>
-                      <Input
-                        value={r.symbol}
-                        list="rh-asset-tickers"
-                        autoComplete="off"
-                        placeholder="Ticker (e.g. NVDA)"
-                        aria-invalid={unknown}
-                        onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, symbol: e.target.value.toUpperCase() } : x)))}
-                      />
-                      <p className={`text-xs mt-1 ${unknown ? "text-destructive" : "text-muted-foreground"}`}>
-                        {asset
-                          ? `${asset.note ?? asset.symbol}${balances[asset.address] ? ` · you hold ${balances[asset.address]}` : ""}`
-                          : unknown
-                            ? "Not a token on Robinhood Chain"
-                            : " "}
-                      </p>
-                    </div>
+            <CardContent className="space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Asset Selection */}
+                <div className="space-y-4">
+                  {catalogue.status === "loading" && <p className="text-xs text-muted-foreground">Loading the Robinhood Chain asset list...</p>}
+                  {catalogue.status === "unavailable" && (
+                    <p className="text-xs text-muted-foreground">Showing USDG only -- the Robinhood Chain asset list is temporarily unavailable.</p>
+                  )}
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
-                      value={r.amount}
-                      inputMode="decimal"
-                      placeholder="Amount"
-                      onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))}
+                      placeholder="Search by name, ticker, or contract address..."
+                      className="pl-9"
+                      value={assetSearch}
+                      onChange={(e) => setAssetSearch(e.target.value)}
                     />
-                    <Button variant="ghost" size="icon" onClick={() => rows.length > 1 && setRows(rows.filter((_, j) => j !== i))} aria-label="Remove asset">
-                      &times;
-                    </Button>
                   </div>
-                );
-              })}
-              {/* One datalist for every row: the browser filters, so hundreds of
-                  tickers stay usable without a bespoke combobox. */}
-              <datalist id="rh-asset-tickers">
-                {cfg.assets.map((a) => (
-                  <option key={a.address} value={a.symbol}>
-                    {a.note ?? a.symbol}
-                  </option>
-                ))}
-              </datalist>
-              <Button variant="outline" size="sm" onClick={() => setRows([...rows, { symbol: "", amount: "" }])}>
-                Add asset
-              </Button>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <div className="flex items-center gap-2">
+                      <label htmlFor="rh-issuer-filter" className="text-xs text-muted-foreground">Asset type</label>
+                      <select
+                        id="rh-issuer-filter"
+                        className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                        value={issuerFilter}
+                        onChange={(e) => setIssuerFilter(e.target.value as IssuerFilter)}
+                      >
+                        {ISSUER_FILTER_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {catalogue.status === "ready" && (
+                      <span className="text-xs text-muted-foreground">{selectable.length.toLocaleString()} assets, found on Uniswap and refreshed daily</span>
+                    )}
+                  </div>
+                  <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
+                    {(() => {
+                      const remaining = selectable.filter((a) => !assets.some((s) => s.address.toLowerCase() === a.address.toLowerCase()));
+                      const shown = remaining
+                        .filter((a) => matchesSearch(a, assetSearch))
+                        .filter((a) => issuerFilter === "all" || (issuerFilter === "robinhood" ? a.issuer === "robinhood" : a.issuer !== "robinhood"))
+                        .slice(0, 300);
+                      if (remaining.length === 0) return <div className="p-4 text-center text-sm text-muted-foreground">All available assets added.</div>;
+                      if (shown.length === 0) {
+                        return (
+                          <div className="p-4 text-center text-sm text-muted-foreground">
+                            {assetSearch.trim() ? `No assets match "${assetSearch.trim()}".` : "No eligible assets of that type."}
+                          </div>
+                        );
+                      }
+                      return shown.map((asset) => (
+                        <div key={asset.address} className="flex items-center justify-between p-2 hover:bg-muted rounded-md transition-colors">
+                          <div className="min-w-0">
+                            <span className="font-semibold">{asset.name}</span>
+                            <span className="text-xs text-muted-foreground ml-2 font-merge-mono">{asset.symbol}</span>
+                            {asset.issuer === "robinhood" && (
+                              <span
+                                className="text-[10px] uppercase tracking-wide ml-2 px-1.5 py-0.5 rounded border border-primary/40 text-primary"
+                                title="An official Robinhood stock token, proven by its contract code -- not by its name."
+                              >
+                                Stock token
+                              </span>
+                            )}
+                            <div className="text-xs text-muted-foreground font-merge-mono">
+                              {asset.address.slice(0, 6)}...{asset.address.slice(-4)}
+                              {asset.priceUsd !== null && asset.symbol !== "USDG" && <span className="ml-2">{usd(asset.priceUsd, asset.priceUsd < 1 ? 6 : 2)}</span>}
+                              {asset.depthUsd !== null && <span className="ml-2">· pool {usd(asset.depthUsd, 0)}</span>}
+                            </div>
+                          </div>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" disabled={atAssetLimit} onClick={() => addAsset(asset)}>
+                            <Plus className="w-4 h-4 text-primary" />
+                          </Button>
+                        </div>
+                      ));
+                    })()}
+                    {atAssetLimit && (
+                      <div className="p-3 text-center text-sm text-muted-foreground">
+                        This Reserve holds the maximum of {RH_MAX_ASSETS_PER_RESERVE} assets. Remove one to add a different asset.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Selected Basket */}
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center bg-muted/50 p-3 rounded-lg border border-border">
+                    <span className="font-semibold text-sm">Total Allocated</span>
+                    <div className="flex items-center gap-3">
+                      {assets.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" title="Give every selected asset an equal share of 100%" onClick={() => applyWeights(splitEvenly(assets.length))}>
+                            Split evenly
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" title="Set every asset to 0% and leave the basket in USDG" onClick={() => applyWeights(clearAll(assets.length))}>
+                            Clear
+                          </Button>
+                        </div>
+                      )}
+                      <span className={`font-merge-mono font-bold ${totalWeight > 1.0001 ? "text-destructive" : "text-primary"}`}>{(totalWeight * 100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+
+                  {unallocatedWeight > 0 && totalWeight <= 1.0001 && (
+                    <div className="flex justify-between items-center p-3 rounded-lg border border-dashed border-border/80 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-muted-foreground/30"></div>
+                        <span className="text-muted-foreground italic">Unallocated USDG Reserve</span>
+                      </div>
+                      <span className="font-merge-mono text-muted-foreground">{(unallocatedWeight * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    {assets.map((asset) => (
+                      <div key={asset.address} className="p-3 border border-border rounded-lg bg-card space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-semibold">{asset.symbol}</span>
+                            <span className="text-xs text-muted-foreground truncate max-w-[100px]">{asset.name}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center">
+                              <Input
+                                type="number"
+                                className="w-20 h-8 text-right font-merge-mono"
+                                value={+(asset.weight * 100).toFixed(1)}
+                                onChange={(e) => updateWeight(asset.address, parseFloat(e.target.value) / 100)}
+                                step="0.1"
+                                min="0"
+                                max="100"
+                              />
+                              <span className="text-muted-foreground ml-1 text-sm">%</span>
+                            </div>
+                            {unallocatedBps(assets.map((a) => a.weight)) > 0 && (
+                              <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-xs font-merge-mono" title={`Add the remaining ${(unallocatedWeight * 100).toFixed(1)}% to ${asset.symbol}`} onClick={() => assignRestTo(asset.address)}>
+                                +{(unallocatedWeight * 100).toFixed(1)}%
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeAsset(asset.address)}>
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <Slider value={[asset.weight * 100]} max={100} step={1} onValueChange={(v) => updateWeight(asset.address, v[0] / 100)} />
+                      </div>
+                    ))}
+                    {assets.length === 0 && (
+                      <div className="p-8 text-center border border-dashed border-border rounded-lg text-muted-foreground text-sm">
+                        Select assets from the list to build your basket.
+                      </div>
+                    )}
+                  </div>
+
+                  {totalWeight > 1.0001 && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>Total weight exceeds 100%. Please adjust allocations.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
             </CardContent>
+            <CardFooter className="justify-between border-t border-border/40 pt-6">
+              <Button variant="ghost" onClick={back} className="gap-2">
+                <ChevronLeft className="w-4 h-4" /> Back
+              </Button>
+              <Button onClick={next} disabled={assets.length === 0 || totalWeight > 1.0001} className="font-bold gap-2">
+                Next <ChevronRight className="w-4 h-4" />
+              </Button>
+            </CardFooter>
           </>
         )}
 
         {step === 3 && (
           <>
             <CardHeader>
-              <CardTitle className="text-2xl font-merge-display">Economics</CardTitle>
-              <CardDescription>Fees and the opening share count.</CardDescription>
+              <CardTitle className="text-2xl font-merge-display">Economics & Fees</CardTitle>
+              <CardDescription>Configure the fee structure and initial liquidity for your reserve.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <Label htmlFor="rhc-shares">Initial shares</Label>
-                  <Input id="rhc-shares" value={initialShares} onChange={(e) => setInitialShares(e.target.value)} inputMode="decimal" />
-                  <p className="text-xs text-muted-foreground mt-1">Sets the opening price per share against the basket you funded.</p>
-                </div>
-                <div>
-                  <Label htmlFor="rhc-mintfee">Mint fee (%)</Label>
-                  <Input id="rhc-mintfee" value={mintFeePct} onChange={(e) => setMintFeePct(e.target.value)} inputMode="decimal" />
-                </div>
-                <div>
-                  <Label htmlFor="rhc-tvlfee">Annual TVL fee (%)</Label>
-                  <Input id="rhc-tvlfee" value={tvlFeePct} onChange={(e) => setTvlFeePct(e.target.value)} inputMode="decimal" />
-                </div>
-                <div>
-                  <Label htmlFor="rhc-owner">Manager</Label>
-                  <Input id="rhc-owner" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="defaults to your wallet" />
+            <CardContent className="space-y-8">
+              <div className="space-y-4">
+                <h3 className="font-semibold text-lg pb-2">Initial Liquidity</h3>
+                <div className="space-y-2 max-w-md">
+                  <Label htmlFor="rh-seed" className="flex items-center gap-2">
+                    Initial Reserve Value (USDG)
+                    <InfoTip label="More information about the initial Reserve value">
+                      The USDG to seed the reserve with, from this wallet. Each non-cash asset is bought with it on Uniswap at launch; the unallocated rest stays in the reserve as USDG. You receive one Reserve Token per USDG put in -- after that, tokens are minted and redeemed against the reserve&rsquo;s NAV.
+                    </InfoTip>
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-3 flex items-center text-muted-foreground text-sm">$</span>
+                    <Input id="rh-seed" type="number" placeholder="e.g. 10.00" className="font-merge-mono pl-6" value={initialSeedUsdg} onChange={(e) => setInitialSeedUsdg(e.target.value)} />
+                  </div>
+                  <p className="text-xs text-muted-foreground flex justify-between">
+                    <span>Funded directly in USDG from this wallet.</span>
+                    {walletUsdg !== null && (
+                      <span>
+                        Wallet Balance: <span className="font-merge-mono">{fmtUsdg(walletUsdg)} USDG</span>
+                      </span>
+                    )}
+                  </p>
                 </div>
               </div>
-              <div className="rounded-lg border border-primary/40 bg-primary/10 p-3 text-sm">
-                The protocol fee rule (50% of the mint fee to the DAO, 0.5% floor) is applied by the chain.
+
+              <div className="space-y-6">
+                <h3 className="font-semibold text-lg pb-2">Fee Configuration</h3>
+                <p className="text-xs text-muted-foreground -mt-4">
+                  The protocol keeps {d18ToPercent((feeRule.num * 10n ** 18n) / (feeRule.den || 1n)).toFixed(0)}% of every fee, never less than a {d18ToPercent(feeRule.floor).toFixed(2)}% floor; the Manager receives the rest.
+                  The split below is read live from the chain&rsquo;s fee registry, and the Review step shows exactly what will be submitted.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <Label className="flex justify-between">
+                      <span>Mint Fee</span>
+                      <span className="font-merge-mono text-primary">{mintFeePct.toFixed(2)}%</span>
+                    </Label>
+                    <Slider value={[mintFeePct]} max={5} step={0.05} onValueChange={(v) => setMintFeePct(v[0])} />
+                    <p className="text-xs text-muted-foreground">Charged on new issuance. Protocol default is 0.50%.</p>
+                    <p className="text-xs font-merge-mono text-muted-foreground">
+                      Effective: {d18ToPercent(mintSplit.protocolD18).toFixed(2)}% Protocol + {d18ToPercent(mintSplit.managerD18).toFixed(2)}% Manager = {d18ToPercent(mintSplit.totalD18).toFixed(2)}% total
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <Label className="flex justify-between">
+                      <span>Annualized TVL Fee</span>
+                      <span className="font-merge-mono text-primary">{tvlFeePct.toFixed(2)}%</span>
+                    </Label>
+                    <Slider value={[tvlFeePct]} max={5} step={0.05} onValueChange={(v) => setTvlFeePct(v[0])} />
+                    <p className="text-xs text-muted-foreground">Accrues to Manager. Protocol default is 1.00%.</p>
+                    <p className="text-xs font-merge-mono text-muted-foreground">
+                      Effective: {d18ToPercent(tvlSplit.protocolD18).toFixed(2)}% Protocol + {d18ToPercent(tvlSplit.managerD18).toFixed(2)}% Manager = {d18ToPercent(tvlSplit.totalD18).toFixed(2)}% total
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground italic">
+                  Buy Tax and Sell Tax are a Solana-only rule: on Robinhood Chain every buy and sell is an in-kind mint or redeem against the contract, so there is nothing for a tax to attach to.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="font-semibold text-lg pb-2">Fee Routing</h3>
+                <div className="space-y-2">
+                  <Label htmlFor="rh-dest">Primary Fee Destination Wallet</Label>
+                  <Input
+                    id="rh-dest"
+                    value={feeDestination}
+                    onChange={(e) => {
+                      feeDestinationUserEditedRef.current = true;
+                      setFeeDestination(e.target.value);
+                    }}
+                    className="font-merge-mono text-sm"
+                    placeholder={account ?? "0x..."}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Address that receives the Manager&rsquo;s fee share on-chain (100%, unless you add more recipients below). Defaults to your connected wallet ({account ? short(account) : "—"})
+                    until you change it -- this is the exact wallet the Review step below will show as Primary.
+                  </p>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  <Label className="flex justify-between items-center">
+                    <span>Additional Fee Recipients ({feeRecipients.length + 1}/10)</span>
+                    <span className={`font-merge-mono text-xs ${feeRecipientTotalPct > 100 ? "text-destructive" : "text-muted-foreground"}`}>{feeRecipientTotalPct.toFixed(1)}% of the Manager&rsquo;s share</span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    These percentages divide the <strong>Manager&rsquo;s fee share</strong> -- not the total fee charged to depositors. Whatever&rsquo;s left after the recipients below goes to the Primary Fee Destination above. Up to 10 recipients total, including the Primary.
+                  </p>
+                  {feeRecipients.length > 0 && (
+                    <div className="space-y-2">
+                      {feeRecipients.map((r) => (
+                        <div key={r.address} className="flex items-center justify-between gap-3 p-2 rounded-lg border border-border bg-muted/20">
+                          <span className="font-merge-mono text-xs truncate">{r.address}</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant="secondary" className="font-merge-mono">{r.pct}% of Manager share</Badge>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => removeFeeRecipient(r.address)}>
+                              <X className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {feeRecipients.length + 1 < 10 ? (
+                    <div className="flex gap-2">
+                      <Input placeholder="Recipient wallet address" className="font-merge-mono text-sm" value={newRecipientAddress} onChange={(e) => { setNewRecipientAddress(e.target.value); setFeeRecipientAddError(null); }} />
+                      <Input type="number" placeholder="%" className="w-24 font-merge-mono" min="0" max="100" value={newRecipientPct} onChange={(e) => { setNewRecipientPct(e.target.value); setFeeRecipientAddError(null); }} />
+                      <Button variant="outline" onClick={addFeeRecipient} className="shrink-0 gap-1.5">
+                        <Plus className="w-4 h-4" /> Add
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Maximum of 10 recipients reached, including the Primary Fee Destination.</p>
+                  )}
+                  {feeRecipientAddError && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>{feeRecipientAddError}</p>
+                    </div>
+                  )}
+                  {feeRecipientTotalPct > 100 && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <p>Recipient percentages exceed 100% of the Manager&rsquo;s fee share. Please adjust.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="font-semibold text-lg pb-2">Co-Managers</h3>
+                <p className="text-xs text-muted-foreground">
+                  Add other wallets as Reserve Managers. They&rsquo;ll be able to rebalance, run auctions and edit the profile, but won&rsquo;t be able to change fees or manage other co-managers -- only the root Manager (you) can do that.
+                </p>
+                {additionalManagers.length > 0 && (
+                  <div className="space-y-2">
+                    {additionalManagers.map((address) => (
+                      <div key={address} className="flex items-center justify-between gap-3 p-2 rounded-lg border border-border bg-muted/20">
+                        <span className="font-merge-mono text-xs truncate">{address}</span>
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0" onClick={() => removeManager(address)}>
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Input placeholder="Manager wallet address" className="font-merge-mono text-sm" value={newManagerAddress} onChange={(e) => { setNewManagerAddress(e.target.value); setManagerAddError(null); }} />
+                  <Button variant="outline" onClick={addManager} className="shrink-0 gap-1.5">
+                    <Plus className="w-4 h-4" /> Add
+                  </Button>
+                </div>
+                {managerAddError && (
+                  <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p>{managerAddError}</p>
+                  </div>
+                )}
               </div>
             </CardContent>
+            <CardFooter className="justify-between border-t border-border/40 pt-6">
+              <Button variant="ghost" onClick={back} className="gap-2">
+                <ChevronLeft className="w-4 h-4" /> Back
+              </Button>
+              <Button onClick={next} disabled={!initialSeedUsdg || parseFloat(initialSeedUsdg) <= 0 || feeRecipientTotalPct > 100} className="font-bold gap-2">
+                Review <ChevronRight className="w-4 h-4" />
+              </Button>
+            </CardFooter>
           </>
         )}
 
         {step === 4 && (
           <>
             <CardHeader>
-              <CardTitle className="text-2xl font-merge-display">Review &amp; Launch</CardTitle>
-              <CardDescription>Check it over. Launching deploys a contract and moves these assets out of your wallet.</CardDescription>
+              <CardTitle className="text-2xl font-merge-display flex items-center gap-2">
+                Review & Deploy
+                <Badge className="font-merge-mono">Robinhood Chain</Badge>
+              </CardTitle>
+              <CardDescription>This will submit real transactions to the SSR factory on Robinhood Chain: your USDG buys the basket on Uniswap, then the reserve is deployed holding it.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
-              {headerImage && (
-                <div className="relative h-24 sm:h-32 rounded-xl overflow-hidden border border-border">
-                  <img src={headerImage} alt="Header preview" className="w-full h-full object-cover" style={{ objectPosition: "center 30%" }} />
-                  <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 55%, hsl(var(--background) / 0.9) 100%)" }} />
+            <CardContent className="space-y-8">
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                {headerImage && (
+                  <div className="relative h-24 sm:h-32 overflow-hidden border-b border-border">
+                    <img src={headerImage} alt="Header preview" className="w-full h-full object-cover" style={{ objectPosition: "center 30%" }} />
+                    <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, hsl(var(--background) / 0) 55%, hsl(var(--background) / 0.9) 100%)" }} />
+                  </div>
+                )}
+                <div className="bg-muted/50 p-4 border-b border-border flex justify-between items-center">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar className="h-12 w-12 border-2 border-border shadow-md">
+                      {profileImageDataUrl && <AvatarImage src={profileImageDataUrl} alt={symbol || "Reserve"} />}
+                      <AvatarFallback className="bg-primary/10 text-primary font-merge-display font-bold">{symbol.slice(0, 2) || "?"}</AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <h3 className="text-xl font-merge-display font-bold truncate">{name}</h3>
+                      <Badge variant="secondary" className="font-merge-mono mt-1">{symbol}</Badge>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className="bg-background shrink-0">{category}</Badge>
                 </div>
-              )}
-              <div className="flex items-center gap-3">
-                <Avatar className="h-12 w-12 border-2 border-border shadow-md">
-                  {profileImageDataUrl && <AvatarImage src={profileImageDataUrl} alt={symbol || "Reserve"} />}
-                  <AvatarFallback className="bg-primary/10 text-primary font-merge-display font-bold">{symbol.slice(0, 2) || "?"}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <p className="font-merge-display font-bold text-lg truncate">{name}</p>
-                  <p className="text-xs text-muted-foreground font-merge-mono">{symbol} &middot; {category}</p>
+                <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-sm font-semibold text-muted-foreground mb-2">Description</p>
+                      <p className="text-sm whitespace-pre-line">{description || "No description provided."}</p>
+                    </div>
+                    {(youtubeChannel.trim() || youtubeFeatured.trim()) && (
+                      <div className="text-xs space-y-1">
+                        <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">YouTube channel</span><span className="font-medium text-right break-all">{youtubeChannel.trim() ? normalizeYouTubeChannelUrl(youtubeChannel) : "—"}</span></div>
+                        <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">Featured video</span><span className="font-medium text-right break-all">{youtubeChannel.trim() && youtubeFeatured.trim() ? normalizeFeaturedVideoUrl(youtubeFeatured) : "—"}</span></div>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-muted-foreground mb-2">Economics</p>
+                    <div className="rounded-2xl border border-border/60 overflow-hidden">
+                      {(() => {
+                        const rows: Array<{ label: ReactNode; value: ReactNode; sub?: boolean }> = [
+                          { label: "Initial Reserve Value", value: <span className="font-merge-mono font-medium">{formatUsdc(seedUsd)} <span className="text-muted-foreground font-sans">in USDG (see Wallet Cost Summary below)</span></span> },
+                          { label: "Reserve Tokens minted to you", value: <span className="font-merge-mono font-medium">{seedUsd.toLocaleString(undefined, { maximumFractionDigits: 6 })} {symbol || "Reserve"} <span className="text-muted-foreground font-sans">(1 per USDG; no fee at creation)</span></span> },
+                          { label: "Mint Fee (configured)", value: <span className="font-merge-mono font-medium">{mintFeePct.toFixed(2)}%</span> },
+                          { sub: true, label: "↳ Protocol / Manager (effective)", value: <span className="font-merge-mono text-muted-foreground">{d18ToPercent(mintSplit.protocolD18).toFixed(2)}% / {d18ToPercent(mintSplit.managerD18).toFixed(2)}%</span> },
+                          { label: "TVL Fee (configured, annualized)", value: <span className="font-merge-mono font-medium">{tvlFeePct.toFixed(2)}%</span> },
+                          { sub: true, label: "↳ Protocol / Manager (effective)", value: <span className="font-merge-mono text-muted-foreground">{d18ToPercent(tvlSplit.protocolD18).toFixed(2)}% / {d18ToPercent(tvlSplit.managerD18).toFixed(2)}%</span> },
+                          { label: "Rebalance pricing", value: <span className="font-merge-mono font-medium">atomic swap, {String(SAFE_REBALANCE_DEFAULTS.maxAuctionLength)}s auction cap</span> },
+                        ];
+                        return rows.map((row, i) => (
+                          <div key={i} className={`flex justify-between gap-6 px-4 py-2.5 ${row.sub ? "text-xs" : "text-sm"} ${i % 2 === 0 ? "bg-secondary/50" : "bg-card"} ${row.sub ? "pl-7" : ""}`}>
+                            <span className="text-muted-foreground">{row.label}</span>
+                            <span className="text-right">{row.value}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-2">Identity</p>
-                <div className="text-sm space-y-1">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span className="font-medium">{name}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Ticker</span><span className="font-medium font-merge-mono">{symbol}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Chain</span><span className="font-medium">Robinhood Chain</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Category</span><span className="font-medium">{category}</span></div>
-                  <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">Description</span><span className="font-medium text-right whitespace-pre-line break-words">{description.trim() || "—"}</span></div>
-                  <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">YouTube channel</span><span className="font-medium text-right break-all">{youtubeChannel.trim() ? normalizeYouTubeChannelUrl(youtubeChannel) : "—"}</span></div>
-                  <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">Featured video</span><span className="font-medium text-right break-all">{youtubeChannel.trim() && youtubeFeatured.trim() ? normalizeFeaturedVideoUrl(youtubeFeatured) : "—"}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Profile picture</span><span className="font-medium">{profileImageDataUrl ? "Chosen" : "—"}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Header image</span><span className="font-medium">{headerImage ? "Chosen" : "—"}</span></div>
+
+              <div className={`bg-card border rounded-xl overflow-hidden ${metadataUriError ? "border-destructive/50" : "border-border"}`}>
+                <div className="bg-muted/50 p-4 border-b border-border">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    Reserve Metadata URL
+                    <InfoTip label="More information about the Reserve metadata URL">
+                      Your Reserve&rsquo;s name, ticker, description, category, pictures and links are stored at this permanent URL -- only this short link is written on-chain, as the reserve contract&rsquo;s mandate, exactly like a Solana Reserve&rsquo;s metadata URI.
+                    </InfoTip>
+                  </h3>
+                </div>
+                <div className="p-4">
+                  {metadataUploading && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-2">
+                      <span className="w-3.5 h-3.5 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" /> Uploading metadata...
+                    </p>
+                  )}
+                  {!metadataUploading && metadataUriError && <p className="text-sm text-destructive">{metadataUriError}</p>}
+                  {!metadataUploading && !metadataUriError && metadataUri && <p className="text-sm font-merge-mono break-all">{metadataUri}</p>}
                 </div>
               </div>
+
+              <div className="bg-card border border-primary/30 rounded-xl overflow-hidden">
+                <div className="bg-primary/5 p-4 border-b border-border">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    Wallet Cost Summary
+                    <InfoTip label="More information about the wallet cost summary">
+                      Everything this wallet will be asked to spend, shown before your wallet does: each asset going into your Reserve is bought with your USDG on Uniswap (the USDG holding is deposited directly), and gas is paid in ETH. Totals are across every transaction below -- your wallet shows one prompt per transaction, so any single prompt will show less than the total.
+                    </InfoTip>
+                  </h3>
+                </div>
+                <div className="p-4 space-y-3">
+                  {planned.error && <p className="text-sm text-destructive">{planned.error}</p>}
+                  {quoteError && <p className="text-sm text-destructive">{quoteError}</p>}
+                  {!planned.error && !quoteError && !quotes && <p className="text-sm text-muted-foreground">Quoting the basket on Uniswap...</p>}
+                  {plan && quotes && (() => {
+                    const swapCount = plan.legs.filter((l) => l.kind === "swap").length;
+                    const gas = estimateLaunchGas(plan.legs.length, swapCount);
+                    const gasWei = gasPriceWei === null ? null : gas * gasPriceWei;
+                    const gasEth = gasWei === null ? null : Number(gasWei) / 1e18;
+                    const gasUsd = gasEth === null || ethUsd === null ? null : gasEth * ethUsd;
+                    const steps = launchSteps(plan);
+                    return (
+                      <>
+                        <p className="text-xs font-semibold text-foreground">Goes into your Reserve (its actual holdings)</p>
+                        {quotes.map((q) => (
+                          <div key={q.leg.asset.address} className="flex justify-between text-sm gap-4">
+                            <span className="text-muted-foreground">{q.leg.asset.symbol}</span>
+                            <span className="font-merge-mono text-right">
+                              {usd(Number(q.leg.usdgRaw) / 1e6)}
+                              <span className="text-muted-foreground">
+                                {q.leg.kind === "usdg"
+                                  ? " (your USDG, deposited directly)"
+                                  : ` (≈ ${fmtUnits(q.quotedOut, q.leg.asset.decimals, 6)} ${q.leg.asset.symbol}, bought with your USDG${q.impactBps > 0 ? `, ~${(q.impactBps / 100).toFixed(2)}% price impact` : ""})`}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-sm font-semibold">
+                          <span>Reserve assets subtotal</span>
+                          <span className="font-merge-mono">{fmtUsdg(plan.seedUsdgRaw)} USDG</span>
+                        </div>
+                        {walletUsdg !== null && (
+                          <p className={`text-xs ${walletUsdg < plan.seedUsdgRaw ? "text-destructive" : "text-muted-foreground"}`}>
+                            This wallet holds {fmtUsdg(walletUsdg)} USDG{walletUsdg < plan.seedUsdgRaw ? ` -- it needs ${fmtUsdg(plan.seedUsdgRaw)} USDG. Add USDG or lower the initial amount.` : "."}
+                          </p>
+                        )}
+                        <p className="pt-3 border-t border-border/50 text-xs font-semibold text-foreground">Fees &amp; overhead (paid in ETH)</p>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Estimated gas ({steps.length} transactions)</span>
+                          <span className="font-merge-mono">
+                            {gasEth === null ? "estimate unavailable" : `${gasEth.toFixed(6)} ETH`}
+                            {gasUsd !== null && <span className="text-muted-foreground"> (≈ {usd(gasUsd)})</span>}
+                          </span>
+                        </div>
+                        {walletEth !== null && gasWei !== null && walletEth < gasWei && (
+                          <p className="text-xs text-destructive">This wallet holds {fmtUnits(walletEth, 18, 6)} ETH, under the estimated gas. Add ETH on Robinhood Chain first.</p>
+                        )}
+                        <div className="pt-3 border-t border-border/50 space-y-1.5">
+                          <div className="flex justify-between text-sm font-semibold">
+                            <span>Total (USD)</span>
+                            <span className="font-merge-mono text-primary">{gasUsd === null ? `${usd(seedUsd)} + gas` : `≈ ${usd(seedUsd + gasUsd)}`}</span>
+                          </div>
+                        </div>
+                        <div className="pt-3 border-t border-border/50 space-y-1.5 text-xs text-muted-foreground">
+                          <p className="font-semibold text-foreground">This will request up to {steps.length} wallet approvals:</p>
+                          {steps.map((s, i) => (
+                            <p key={i}>{i + 1}. {s}</p>
+                          ))}
+                          <p className="pt-1">
+                            Expected result: you&rsquo;ll spend the USDG and ETH above and receive{" "}
+                            <span className="font-merge-mono text-foreground">{seedUsd.toLocaleString(undefined, { maximumFractionDigits: 6 })} {symbol || "Reserve"}</span> tokens -- one per USDG, with no fee on the initial seed. Each swap accepts at most 1% less than quoted; a thin pool is refused before anything is sent.
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
               <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-2">Starting basket</p>
-                <div className="text-sm space-y-1">
-                  {legsPreview.map((l) => (
-                    <div key={l.asset.address} className="flex justify-between">
-                      <span className="text-muted-foreground">{l.asset.symbol} <span className="text-xs">{l.asset.note}</span></span>
-                      <span className="font-medium font-merge-mono">{l.amount}</span>
+                <p className="text-sm font-semibold text-muted-foreground mb-3">Target Composition</p>
+                <div className="space-y-2">
+                  {[...assets].sort((a, b) => b.weight - a.weight).map((asset) => (
+                    <div key={asset.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold">{asset.symbol}</span>
+                        <span className="text-muted-foreground text-xs">{asset.name}</span>
+                      </div>
+                      <span className="font-merge-mono font-bold">{(asset.weight * 100).toFixed(1)}%</span>
                     </div>
                   ))}
+                  {unallocatedWeight > 0 && (
+                    <div className="flex justify-between items-center p-2 rounded border border-dashed border-border/80 text-sm">
+                      <span className="text-muted-foreground italic">Unallocated USDG Reserve</span>
+                      <span className="font-merge-mono text-muted-foreground">{(unallocatedWeight * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
                 </div>
               </div>
+
               <div>
-                <p className="text-sm font-semibold text-muted-foreground mb-2">Economics</p>
-                <div className="text-sm space-y-1">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Initial shares</span><span className="font-medium font-merge-mono">{initialShares}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Mint fee</span><span className="font-medium font-merge-mono">{mintFeePct}%</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Annual TVL fee</span><span className="font-medium font-merge-mono">{tvlFeePct}%</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Manager</span><span className="font-medium font-merge-mono">{owner.trim() ? short(owner.trim()) : account ? short(account) : "your wallet"}</span></div>
+                <p className="text-sm font-semibold text-muted-foreground mb-1">Manager Fee Routing</p>
+                <p className="text-xs text-muted-foreground mb-3">This is the exact on-chain configuration that will be submitted. Percentages divide the Manager&rsquo;s fee share, not the total fee.</p>
+                <div className="space-y-2">
+                  {(() => {
+                    const additional = feeRecipients.reduce((s, r) => s + r.pct, 0);
+                    const primaryPct = Math.max(0, 100 - additional);
+                    return (
+                      <>
+                        {primaryPct > 0 && (
+                          <div className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                            <span className="font-merge-mono text-xs truncate">{feeDestination || account || "connect a wallet"}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge variant="outline" className="bg-background">Primary</Badge>
+                              <span className="font-merge-mono font-bold">{primaryPct.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                        )}
+                        {feeRecipients.map((r) => (
+                          <div key={r.address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                            <span className="font-merge-mono text-xs truncate">{r.address}</span>
+                            <span className="font-merge-mono font-bold shrink-0">{r.pct}%</span>
+                          </div>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
-              <div className="rounded-lg border border-primary/40 bg-primary/10 p-3 text-sm">
-                New reserves use <b>atomic-swap pricing</b> and a <b>{String(SAFE_REBALANCE_DEFAULTS.maxAuctionLength)}s auction cap</b>, so a
-                rebalance price can&rsquo;t go stale across a stock token&rsquo;s corporate action.
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Launching first stores the profile above (pictures, description, links) and writes its permanent link into the reserve contract, then asks your wallet to approve each asset and deploy.
-              </p>
+
+              {additionalManagers.length > 0 && (
+                <div>
+                  <p className="text-sm font-semibold text-muted-foreground mb-3">Co-Managers</p>
+                  <div className="space-y-2">
+                    {additionalManagers.map((address) => (
+                      <div key={address} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
+                        <span className="font-merge-mono text-xs truncate">{address}</span>
+                        <Badge variant="secondary" className="shrink-0">Co-Manager</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {!account && <p className="text-sm text-muted-foreground">Connect an EVM wallet to launch.</p>}
             </CardContent>
+            <CardFooter className="justify-between border-t border-border/40 pt-6">
+              <Button variant="ghost" onClick={back} disabled={submitting} className="gap-2">
+                <ChevronLeft className="w-4 h-4" /> Back
+              </Button>
+              <Button
+                onClick={submit}
+                disabled={!account || submitting || !plan || !quotes || metadataUploading || !metadataUri}
+                title={!account ? "Connect an EVM wallet to launch." : !quotes ? "Quoting the basket..." : metadataUploading ? "Uploading Reserve metadata..." : !metadataUri ? metadataUriError ?? "Storing the reserve profile..." : undefined}
+                className="font-bold gap-2 min-w-[150px]"
+              >
+                {submitting ? (
+                  <><span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Launching...</>
+                ) : !quotes && !quoteError ? (
+                  <><span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Quoting...</>
+                ) : (
+                  <><Rocket className="w-4 h-4" /> Launch Reserve</>
+                )}
+              </Button>
+            </CardFooter>
           </>
         )}
-
-        <CardFooter className="flex items-center justify-between gap-3 border-t border-border/60 pt-5">
-          <Button variant="outline" onClick={back} disabled={step === 1 || submitting}>
-            <ChevronLeft className="w-4 h-4 mr-1" /> Back
-          </Button>
-          {step < 4 ? (
-            <Button onClick={next} disabled={step === 1 && (!name.trim() || !symbol.trim())}>
-              Next <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          ) : (
-            <Button onClick={submit} disabled={!account || submitting}>{submitting ? "Launching..." : "Launch Reserve"}</Button>
-          )}
-        </CardFooter>
       </Card>
 
       {status && (

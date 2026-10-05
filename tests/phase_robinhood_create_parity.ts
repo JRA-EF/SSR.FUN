@@ -163,7 +163,7 @@ describe("the Robinhood form asks for every Solana identity field and stores the
     expect(form).to.include('"robinhood")');
     expect(form).to.include("fitHeaderImageDataUrl(headerImage)");
     expect(form).to.include('uploadReserveMetadata(origin, input, "robinhood")');
-    expect(form).to.include("owner: ownerAddr, mandate }");
+    expect(form).to.include("coManagers, mandate }");
     const evm = read("src/merge/lib/evmReserve.ts");
     expect(evm).to.include("mandate: input.mandate,");
     expect(evm).to.not.include("mandate: input.name,");

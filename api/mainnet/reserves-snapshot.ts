@@ -4,7 +4,8 @@
 // the full on-chain discovery burst (the burst that self-inflicted the
 // rpc-proxy 429s and left Discover showing "No Reserves launched yet" under
 // load -- see ssr-review/08-DEPLOY-INCIDENTS). The snapshot is refreshed every
-// ~15s even with zero users by api/mainnet/warm-cache-cron.ts.
+// 10 minutes even with zero users by api/mainnet/warm-cache-cron.ts (DEC-0209),
+// and on demand the moment a Reserve is launched (DEC-0226).
 //
 // The payload is exactly what RealReserveSync feeds its EXISTING
 // buildDtrFromDiscoveredReserve pipeline -- { reserves: DiscoveredReserve[],

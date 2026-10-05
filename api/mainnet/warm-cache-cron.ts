@@ -17,9 +17,13 @@
 //
 // Same CRON_SECRET pattern as api/kpis/kpis-backfill-cron.ts: a real scheduled
 // invocation carries `Authorization: Bearer $CRON_SECRET`; `?dryRun=true` skips
-// that check for manual inspection but runs the identical real work. This
-// endpoint's path MUST also be in middleware.ts's CRON_PATHS allowlist so the
-// site password gate lets the scheduler through.
+// that check for manual inspection but runs the identical real work, and so
+// does `?trigger=reserve-created`, which the Launch flow sends the moment a
+// Reserve is deployed (DEC-0226) so the new Reserve reaches every visitor's
+// first paint within seconds instead of at the next 10-minute tick (see
+// lib/reserve-warm-cache/manualRefresh.ts). This endpoint's path MUST also be
+// in middleware.ts's CRON_PATHS allowlist so the site password gate lets the
+// scheduler through.
 //
 // The discovery pass mirrors api/mainnet/landing-stats.ts exactly (same
 // candidate-mint sourcing, same discoverAllReserves + evaluateReserveEligibility
@@ -40,6 +44,7 @@ import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { getSql as getMetadataSql } from "../../lib/reserve-metadata/db";
 import { writeReserveSnapshot } from "../../lib/reserve-warm-cache/db";
+import { manualRefreshTrigger } from "../../lib/reserve-warm-cache/manualRefresh";
 import { createNavRecorderState, recordNavPoints, type NavRecorderState } from "../../lib/reserve-nav-history/recorder";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
 
@@ -204,8 +209,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
-  const dryRun = typeof req.url === "string" && /[?&]dryRun=(?:true|1)(?:&|$)/.test(req.url);
-  if (!dryRun) {
+  const trigger = manualRefreshTrigger(req.url);
+  const dryRun = trigger === "dry-run";
+  if (trigger === null) {
     const expected = process.env.CRON_SECRET;
     if (!expected) {
       res.status(500).json({ error: "CRON_SECRET is not configured on this deployment." });
@@ -258,6 +264,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       knownMints: knownMints.length,
       lastError,
       dryRun,
+      trigger: trigger ?? "cron",
     });
   } catch (e) {
     console.error("api/mainnet/warm-cache-cron: fatal:", e);
