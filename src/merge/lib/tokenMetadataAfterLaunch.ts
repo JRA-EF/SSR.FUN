@@ -23,8 +23,10 @@ export type AfterLaunchMetadataOutcome =
   | "already-published"
   /** It was missing and this call published it. */
   | "published"
-  /** It was missing and the publish failed or was declined, or the read itself failed; `error` says why. */
-  | "failed";
+  /** It was missing and the publish failed or was declined; `error` says why. */
+  | "failed"
+  /** The read itself failed (RPC hiccup), so nothing is known either way and nothing was published; `error` says why. */
+  | "unverified";
 
 export interface AfterLaunchMetadataResult {
   outcome: AfterLaunchMetadataOutcome;
@@ -45,8 +47,10 @@ export async function ensureReserveTokenMetadataPublished(deps: {
     existing = await deps.read();
   } catch (e) {
     // The read itself failing (RPC hiccup) must not trigger a publish that
-    // could be redundant -- report it and let Manage show the real state.
-    return { outcome: "failed", error: e instanceof Error ? e.message : String(e) };
+    // could be redundant, and must not be reported as "missing" either: the
+    // launch batch almost certainly carried the metadata. Let Manage show
+    // the real state.
+    return { outcome: "unverified", error: e instanceof Error ? e.message : String(e) };
   }
   if (existing) return { outcome: "already-published" };
   try {
@@ -70,5 +74,7 @@ export function describeAfterLaunchMetadataOutcome(result: AfterLaunchMetadataRe
       return `${t} is now named in wallets and exchanges.`;
     case "failed":
       return `Wallets will show ${t} without its name until you publish it: open Manage Reserve and use "Publish to wallets and exchanges" (one approval).`;
+    case "unverified":
+      return `Could not confirm the token's name for wallets just now (network hiccup); Manage Reserve shows the live state.`;
   }
 }

@@ -68,7 +68,7 @@ export type MultiAssetBuyProgressEvent =
   /** One-time setup (DEC-0171): this Reserve has no trading lookup table yet -- its create/extend transactions go first. */
   | { phase: "enabling-one-approval-trading" }
   /** The purchase could not fit one transaction: the wallet is about to show `total` transactions to approve at once, `swaps` of them USDC-to-asset swaps (DEC-0226 -- the UI explains what the per-transaction previews mean). */
-  | { phase: "signing-batch"; swaps: number; total: number }
+  | { phase: "signing-batch"; swaps: number; total: number; setup: number }
   | { phase: "swapping"; mint: string; index: number; total: number }
   | { phase: "minting" }
   /** A signed transaction is on the wire and being confirmed (re-broadcast until it lands) -- the wallet prompt is over. */
@@ -415,7 +415,13 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // ONE wallet prompt for every transaction.
     // ---------------------------------------------------------------------
     if (build.mode === "single") params.onProgress?.({ phase: "single-transaction" });
-    else params.onProgress?.({ phase: "signing-batch", swaps: build.transactions.filter((t) => t.kind === "swap").length, total: build.transactions.length });
+    else
+      params.onProgress?.({
+        phase: "signing-batch",
+        swaps: build.transactions.filter((t) => t.kind === "swap").length,
+        setup: build.transactions.filter((t) => t.kind === "alt-create" || t.kind === "alt-extend").length,
+        total: build.transactions.length,
+      });
     currentStage = build.mode === "single" ? "the single combined purchase transaction (swap, deposit, and mint in one atomic step)" : "signing every transaction of this purchase";
     const signed = await signMany(build.transactions.map(decode));
     const signedOf = (i: number) => signed[i];
