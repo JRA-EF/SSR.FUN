@@ -28,7 +28,7 @@ having a market, not by someone adding it. This document is about making the
 | ...so the app is multi-chain-ready | **False, and this is the crux.** `CHAINS` is `Record<"testnet" \| "mainnet", ChainConfig>` — keyed by Robinhood's two *environments*, not by chain. `export const ROBINHOOD = CHAINS.mainnet`, and `const cfg = ROBINHOOD` sits at **module scope** in `RobinhoodCreateForm.tsx:67` and `RobinhoodReserveDetail.tsx:37`. One chain is baked in at import time. |
 | Catalogue storage can hold a second chain | **False.** `robinhood_catalogue_pools` and `robinhood_asset_catalogue` both use the token/pool **address as primary key** with no chain column. The same address on two chains collides. |
 | Base Uniswap v3 constants | **Verified on-chain 2026-10-04, block 52,189,274** (see below). |
-| BNB can reuse the swap code | **False.** Uniswap v3 exists on BNB but the liquidity is on **PancakeSwap v3**. This needs a second DEX adapter, not new constants. |
+| BNB needs a PancakeSwap *adapter* | **Overstated -- corrected 2026-10-05.** PancakeSwap v3 is a Uniswap v3 fork and is ABI-compatible for everything the app reads. BNB passed the full fork check on config alone, no adapter. Its fee tiers differ (2500, not 3000), which the per-chain `dex.fees` already carries. The swap QUOTER/ROUTER remain unexercised -- see below. |
 
 ### Base constants, read live from chain 8453
 
@@ -113,6 +113,42 @@ AUM $1681.79   NAV/share $16.8179
 So the work is a seam, not an algorithm. But it is **required before Base
 ships, not after** — see the phase change below.
 
+## BNB, proven the same way (2026-10-05)
+
+Forked chain 56 with anvil, deployed the stack, ran the same checks. **All ten
+passed**, reporting AUM $1,785.75 and NAV/share $17.8575.
+
+Three findings worth keeping:
+
+**1. BNB needs no adapter.** The plan said PancakeSwap would need one. It does
+not: PancakeSwap v3 is a Uniswap v3 fork and answers the same `getPool`,
+`slot0` and `liquidity` calls, so pricing worked with nothing but a
+`ChainConfig` entry. The only difference is the fee tiers -- 100/500/**2500**/
+10000 rather than Uniswap's 3000 -- and those already travel with `dex.fees`.
+
+**2. BNB's dollar has 18 decimals.** USDT *and* USDC on chain 56 both report
+`decimals = 18`, not the 6 they have on Base and Ethereum. Anything that
+assumes a six-decimal dollar is wrong on BNB. `quotes.usd.decimals` carries it,
+which is why that field exists rather than a constant.
+
+**3. Which DEX is deeper.** Both PancakeSwap v3 and Uniswap v3 are deployed on
+BNB with real liquidity. Pancake's USDT/WBNB pool at the 100 tier holds
+~4.19e24 against Uniswap's deepest ~2.03e24, so Pancake is the market to
+route through. Uniswap v3's factory is on BNB, but its quoter and router are
+NOT at the addresses they occupy on other chains -- both read as zero bytes of
+code. Nothing may be copied between chains without re-reading it.
+
+**Still unexercised on both chains:** the swap quoter and router. `createReserve`
+pulls the basket from the caller, so the fork runs never buy anything. The
+launch flow's Uniswap/Pancake buy path is parameterised but unproven, and that
+is the next thing to test.
+
+**Infrastructure note.** Public BSC endpoints are archive-limited: bsc-dataseed
+returns "missing trie node", publicnode demands a token for archive reads. The
+run that worked used `https://bsc-dataseed1.defibit.io` with
+`anvil --no-storage-caching`. A real BNB rollout wants a keyed archive
+provider, as Robinhood already has.
+
 ## The one hard problem
 
 On Robinhood, token legitimacy has an **anchor**: every official stock token is
@@ -193,10 +229,11 @@ the Robinhood catalogue through it and getting the same 1,418 tokens.
 
 ### Phase 3 — BNB (chain 56)
 
-As Phase 2, plus a `PancakeSwapV3Adapter`. PancakeSwap v3 is a Uniswap v3 fork
-with different fee tiers (100/500/2500/10000) and its own factory, quoter and
-router, so the adapter is small but the fee-tier assumption in
-`UNISWAP_V3_FEES` must become part of the adapter, not a module constant.
+As Phase 2, with no adapter: the fork run showed PancakeSwap v3 answering the
+same calls as Uniswap v3, so a `ChainConfig` entry is the whole of it. What
+remains chain-specific is the catalogue's `UNISWAP_V3_FEES` (BNB's tiers
+differ) and the eligibility floor, and confirming Pancake's quoter/router
+against the swap path, which no fork run has exercised yet.
 
 ## Governance — the blocker that replicates
 
