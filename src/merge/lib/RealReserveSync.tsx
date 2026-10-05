@@ -30,7 +30,7 @@
 import { useEffect, useMemo } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, registerDynamicSupportedAssetMints, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
+import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, registerDynamicSupportedAssetMints, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT, TOKEN_PROGRAM_ID } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve, type AssetPriceInfo } from "./onChainReserve";
 import { fetchReserveImagePointers } from "./reserveImageClient";
@@ -295,7 +295,7 @@ export function RealReserveSync() {
               const balanceRaw = await getCached(
                 tokenBalanceCacheKey(connection.rpcEndpoint, dtr.onChain.reserveTokenMint, walletKey),
                 BALANCE_CACHE_TTL_MS,
-                () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), publicKey)),
+                () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), publicKey, TOKEN_PROGRAM_ID)),
               );
               syncRealHolding(dtr.id, balanceRaw, dtr.nav);
             } catch (e) {

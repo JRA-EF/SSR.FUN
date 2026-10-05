@@ -6,12 +6,12 @@
 // scanning.
 import { AnchorProvider, EventParser, Program } from "@anchor-lang/core";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
 import { findReserveAsset, findReserveVault, findManagerFeeRecipients, findFeeSettlement } from "./pda";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
-import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, type TokenProgramKindDecoded } from "./tokenPrograms";
+import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, tokenProgramFromMintOwner, type TokenProgramKindDecoded } from "./tokenPrograms";
 
 /**
  * A transient RPC failure (429/timeout) while reading token supply must
@@ -337,10 +337,50 @@ export async function fetchFeeSettlement(connection: Connection, programId: Publ
  * program. Without it the classic derivation is used, which is right for
  * every classic mint (USDC, devUSDC, every Reserve Token).
  */
+/**
+ * A wallet's raw balance of `mint` -- 0 when the associated token account
+ * does not exist.
+ *
+ * DEC-0227: when the caller does not know the mint's token program, it is
+ * read from the mint account's owner instead of assumed classic SPL Token.
+ * The classic-derived ATA for a Token-2022 mint (every xStock) is a
+ * different, empty address, so the old assumption read 0 for assets the
+ * wallet really held: a batch Buy of a Reserve holding xStocks swapped
+ * every leg successfully and then refused to mint ("still short after
+ * funding: acquired 0 raw") because this read came back 0 for the
+ * Token-2022 legs. Callers that know the program still pass it (no extra
+ * read).
+ */
 export async function fetchTokenBalanceRaw(connection: Connection, mint: PublicKey, owner: PublicKey, tokenProgram?: PublicKey | string | null): Promise<string> {
-  const ata = tokenProgram ? assetAta(mint, owner, tokenProgram) : await getAssociatedTokenAddress(mint, owner);
+  const program = tokenProgram ?? (await resolveMintTokenProgram(connection, mint));
+  const ata = assetAta(mint, owner, program);
   const info = await connection.getAccountInfo(ata).catch(() => null);
   return tokenAccountAmountByOwner(ata, info).toString();
+}
+
+/**
+ * mint -> owning token program, remembered for the life of the module: a
+ * mint's owner program never changes, so the lookup costs one account read
+ * per mint per session, not one per balance read (this reader sits on the
+ * discovery poll and every trade). A failed read is NOT remembered -- the
+ * classic program is used for that call only, and the next call retries.
+ */
+const MINT_TOKEN_PROGRAM_CACHE = new Map<string, PublicKey>();
+
+export async function resolveMintTokenProgram(connection: Connection, mint: PublicKey): Promise<PublicKey> {
+  const key = mint.toBase58();
+  const cached = MINT_TOKEN_PROGRAM_CACHE.get(key);
+  if (cached) return cached;
+  const mintInfo = await connection.getAccountInfo(mint).catch(() => null);
+  if (!mintInfo) return TOKEN_PROGRAM_ID;
+  const program = tokenProgramFromMintOwner(mintInfo.owner);
+  MINT_TOKEN_PROGRAM_CACHE.set(key, program);
+  return program;
+}
+
+/** Test seam: forgets every remembered mint -> program pair. */
+export function clearMintTokenProgramCache(): void {
+  MINT_TOKEN_PROGRAM_CACHE.clear();
 }
 
 // --- Landing-page KPI reads: real Reserve Token holder counts + real 24h volume ---
