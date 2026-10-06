@@ -838,7 +838,7 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
                   <Label htmlFor="rh-seed" className="flex items-center gap-2">
                     Initial Reserve Value ({cash.symbol})
                     <InfoTip label="More information about the initial Reserve value">
-                      The {cash.symbol} to seed the reserve with, from this wallet. Each non-cash asset is bought with it on {dexName} at launch; the unallocated rest stays in the reserve as {cash.symbol}. You receive one Reserve Token per {cash.symbol} put in -- after that, tokens are minted and redeemed against the reserve&rsquo;s NAV.
+                      The {cash.symbol} to seed the reserve with, from this wallet. It is swapped into each non-cash asset on {dexName} at launch; the unallocated rest stays in the reserve as {cash.symbol}. You receive one Reserve Token per {cash.symbol} put in -- after that, tokens are minted and redeemed against the reserve&rsquo;s NAV.
                     </InfoTip>
                   </Label>
                   <div className="relative">
@@ -887,7 +887,7 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground italic">
-                  Buy Tax and Sell Tax are a Solana-only rule: on {chainName} every buy and sell is an in-kind mint or redeem against the contract, so there is nothing for a tax to attach to.
+                  There is no Buy Tax or Sell Tax here: on {chainName} every mint and redemption is in kind against the contract. Buy Tax and Sell Tax apply only to secondary-market trades between holders, and are currently on hold.
                 </p>
               </div>
 
@@ -1009,7 +1009,7 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
                 Review & Deploy
                 <Badge className="font-merge-mono">{chainName}</Badge>
               </CardTitle>
-              <CardDescription>This will submit real transactions to the SSR factory on {chainName}: your {cash.symbol} buys the basket on {dexName}, then the reserve is deployed holding it.</CardDescription>
+              <CardDescription>This will submit real transactions to the SSR factory on {chainName}: your {cash.symbol} is swapped into the basket on {dexName}, then the reserve is deployed holding it.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-8">
               <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -1095,7 +1095,7 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
                   <h3 className="font-semibold flex items-center gap-2">
                     Wallet Cost Summary
                     <InfoTip label="More information about the wallet cost summary">
-                      Everything this wallet will be asked to spend, shown before your wallet does: each asset going into your Reserve is bought with your {cash.symbol} on {dexName} (the {cash.symbol} holding is deposited directly), and gas is paid in {gas}. Totals are across every transaction below -- your wallet shows one prompt per transaction, so any single prompt will show less than the total.
+                      Everything this wallet will be asked to spend, shown before your wallet does: your {cash.symbol} is swapped on {dexName} into each asset going into your Reserve (the {cash.symbol} holding is deposited directly), and gas is paid in {gas}. Totals are across every transaction below -- your wallet shows one prompt per transaction, so any single prompt will show less than the total.
                     </InfoTip>
                   </h3>
                 </div>
@@ -1121,7 +1121,7 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
                               <span className="text-muted-foreground">
                                 {q.leg.kind === "usdg"
                                   ? ` (your ${cash.symbol}, deposited directly)`
-                                  : ` (≈ ${fmtUnits(q.quotedOut, q.leg.asset.decimals, 6)} ${q.leg.asset.symbol}, bought with your ${cash.symbol}${q.impactBps > 0 ? `, ~${(q.impactBps / 100).toFixed(2)}% price impact` : ""})`}
+                                  : ` (≈ ${fmtUnits(q.quotedOut, q.leg.asset.decimals, 6)} ${q.leg.asset.symbol}, swapped from your ${cash.symbol}${q.impactBps > 0 ? `, ~${(q.impactBps / 100).toFixed(2)}% price impact` : ""})`}
                               </span>
                             </span>
                           </div>

@@ -211,7 +211,7 @@ export function assessBuyFeasibility(params: BuyFeasibilityParams): BuyFeasibili
   const reasons: string[] = [];
   if (missingUsdcRaw > 0n) {
     reasons.push(
-      `this wallet holds ${(Number(params.walletUsdcRaw) / 1e6).toFixed(2)} USDC but this purchase needs ~${(Number(requiredUsdcRaw) / 1e6).toFixed(2)} USDC -- ${(Number(missingUsdcRaw) / 1e6).toFixed(2)} USDC short`,
+      `this wallet holds ${(Number(params.walletUsdcRaw) / 1e6).toFixed(2)} USDC but this mint needs ~${(Number(requiredUsdcRaw) / 1e6).toFixed(2)} USDC -- ${(Number(missingUsdcRaw) / 1e6).toFixed(2)} USDC short`,
     );
   }
   if (missingSolLamports > 0n) {
@@ -291,15 +291,15 @@ export function buildBuyStateReport(
   const retrySummary = reserveTokenMinted
     ? "Your Reserve Tokens were already minted -- retrying will not mint again."
     : unfunded.length === 0
-      ? "This purchase already acquired every Reserve asset it needs -- retrying only re-submits the final mint, buying nothing again."
+      ? "This mint already acquired every Reserve asset it needs -- retrying only re-submits the final mint, swapping nothing again."
       : [
           wrapRecoverable.length > 0
-            ? `Retrying will re-wrap the SOL this purchase already bought with your USDC (it was auto-unwrapped to regular SOL outside this purchase's control) -- no extra USDC is spent for it.`
+            ? `Retrying will re-wrap the SOL this mint already swapped from your USDC (it was auto-unwrapped to regular SOL outside this mint's control) -- no extra USDC is spent for it.`
             : "",
           needsUsdc.length > 0
             ? `Retrying will swap USDC for only the genuine remaining shortfall of: ${needsUsdc.map((l) => l.symbol).join(", ")}.`
             : "",
-          "Whatever this purchase already acquired is counted first and never repurchased, and other assets already in your wallet are never used in place of your USDC.",
+          "Whatever this mint already acquired is counted first and never swapped for again, and other assets already in your wallet are never used in place of your USDC.",
         ]
           .filter(Boolean)
           .join(" ");

@@ -61,7 +61,7 @@ describe("planLaunch -- one USDG amount, weights, legs that add up", () => {
     expect(() => planLaunch([{ ...AAPL, weight: 0.7 }, { ...FIH, weight: 0.4 }], 1_000_000n, USDG, 6, "USDG")).to.throw(/exceed 100%/);
     expect(() => planLaunch([{ ...AAPL, weight: 0.3 }, { ...AAPL, weight: 0.3 }], 1_000_000n, USDG, 6, "USDG")).to.throw(/listed twice/);
     expect(() => planLaunch([AAPL], 0n, USDG, 6, "USDG")).to.throw(/greater than zero/);
-    expect(() => planLaunch([{ ...AAPL, pool: null }], 1_000_000n, USDG, 6, "USDG")).to.throw(/no Uniswap pool/);
+    expect(() => planLaunch([{ ...AAPL, pool: null }], 1_000_000n, USDG, 6, "USDG")).to.throw(/has no pool to swap USDG into it/);
     expect(() => parseUsdgAmount("abc", 6)).to.throw(/greater than zero/);
   });
 

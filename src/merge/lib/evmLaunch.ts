@@ -36,7 +36,7 @@ export async function quoteLaunch(pc: PublicClient, cfg: ChainConfig, plan: Laun
       out.push({ leg, route: null, quotedOut: leg.usdgRaw, minOut: leg.usdgRaw, impactBps: 0 });
       continue;
     }
-    if (!leg.asset.pool) throw new Error(`${leg.asset.symbol} has no Uniswap pool to buy it through.`);
+    if (!leg.asset.pool) throw new Error(`${leg.asset.symbol} has no ${cfg.dex?.name ?? "exchange"} pool to swap ${cfg.quotes?.usd.symbol ?? "the dollar"} into it.`);
     const route = await routeFor(pc, cfg, leg.asset.address, leg.asset.pool);
     const quotedOut = await quoteExactUsdgIn(pc, cfg, route, leg.usdgRaw);
     if (quotedOut <= 0n) throw new Error(`Uniswap returned nothing for ${leg.asset.symbol}; the pool has no liquidity in range.`);
@@ -51,7 +51,7 @@ export async function quoteLaunch(pc: PublicClient, cfg: ChainConfig, plan: Laun
     }
     if (impactBps > LAUNCH_MAX_PRICE_IMPACT_BPS) {
       throw new Error(
-        `Not enough liquidity for ${leg.asset.symbol}: buying ${fmtUsdg(leg.usdgRaw, plan.usdDecimals)} ${cfg.quotes?.usd.symbol ?? "USD"} of it would move the price about ${(impactBps / 100).toFixed(1)}%. Lower its weight or the initial amount.`,
+        `Not enough liquidity for ${leg.asset.symbol}: swapping ${fmtUsdg(leg.usdgRaw, plan.usdDecimals)} ${cfg.quotes?.usd.symbol ?? "USD"} into it would move the price about ${(impactBps / 100).toFixed(1)}%. Lower its weight or the initial amount.`,
       );
     }
     out.push({ leg, route, quotedOut, minOut: minOutAfterSlippage(quotedOut), impactBps });
@@ -104,10 +104,10 @@ export async function executeLaunch(
   if (pending.length > 0) {
     const routerSpend = pending.reduce((s, q) => s + q.leg.usdgRaw, 0n);
     const dollar = cfg.quotes?.usd;
-      if (!cfg.dex || !dollar) throw new Error("This chain has no DEX configured, so the basket cannot be bought.");
+      if (!cfg.dex || !dollar) throw new Error("This chain has no DEX configured, so the basket cannot be swapped into.");
       await approveIfNeeded(pc, wallet, cfg, account, dollar.address, cfg.dex.router, routerSpend, onProgress, dollar.symbol);
     for (const q of pending) {
-      onProgress(`Buying ${q.leg.asset.symbol} with ${fmtUsdg(q.leg.usdgRaw, plan.usdDecimals)} ${cash.symbol}...`);
+      onProgress(`Swapping ${fmtUsdg(q.leg.usdgRaw, plan.usdDecimals)} ${cash.symbol} into ${q.leg.asset.symbol}...`);
       const before = await erc20Balance(pc, q.leg.asset.address, account);
       await swapExactUsdgIn(pc, wallet, cfg, account, q.route!, q.leg.usdgRaw, q.minOut);
       const after = await erc20Balance(pc, q.leg.asset.address, account);

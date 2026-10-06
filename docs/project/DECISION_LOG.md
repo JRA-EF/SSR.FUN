@@ -6458,7 +6458,7 @@
   "impact": "Every Reserve whose manager set a non-zero Buy/Sell tax starts charging it on SSR.fun trades with this deploy; 0% Reserves are unchanged. TVL fees now crystallize daily instead of weekly (about one accrue_fees per Reserve per day from the keeper wallet). Nothing on chain changed; no signatures needed.",
   "affectedAreas": ["lib/mainnet/tradeTax.ts (new)", "lib/mainnet/buildBuy.ts", "lib/mainnet/buildSell.ts", "lib/mainnet/buildCommon.ts (BuiltTxKind 'tax')", "api/mainnet/build-buy.ts (lookupTradeTax)", "api/mainnet/build-sell.ts (taxOnly)", "api/mainnet/fee-settlement-cron.ts (daily accrual)", "src/merge/lib/multiAssetSellClient.ts (tax step, taxOnly rebuild, pending state)", "src/merge/lib/multiAssetBuyClient.ts (types)", "src/merge/pages/{DTRDetail,CreateDTR,ManageDTR}.tsx", "docs/protocol/FEE_MODEL.md (new)", "tests/phase_trade_tax.ts (new), phase_server_built_{buy,sell}.ts"],
   "supersedes": null,
-  "supersededBy": null,
+  "supersededBy": "DEC-0228 (the Buy/Sell tax part only: put on hold, never charged on a mint or redemption; the mint-fee floor and daily TVL cadence stand)",
   "evidence": ["Offline: phase_trade_tax 13 cases + Buy/Sell full-build tax cases (mint tx ends with [create ATA, transfer] x2; batch Sell ends with one 'tax' tx of 6 instructions; legsOnly none; taxOnly one tx, no quotes; wallet short of purchase+tax -> 422 naming the Buy tax); tsc node+app clean; oxlint no new warnings.", "On-chain audit the same day: ProtocolConfig.default_protocol_fee_bps is read by no instruction (grep of programs/ssr_protocol/src) -- recorded in FEE_MODEL.md so nobody expects update_protocol_config's bps to charge anything."]
 }
 ```
@@ -7048,6 +7048,39 @@
   "evidence": [
     "Live read 2026-10-05: Reserve #38 DU7PFe6X... assets JUPy (Tokenkeg), Xs3o (Tokenz Token-2022), Xsc9 (Tokenz), 6GmA (Tokenkeg); Reserve Token mint EDBSB31W... metadata account B77j1V7P... name ILOVESOLANA symbol SOLA, created in tx 7K9LYVhc... at 15:27:03Z.",
     "Offline: tests/phase_token2022_wallet_balance_read.ts 4 passing (Token-2022 ATA derived from the mint owner, classic unchanged, explicit program skips the mint read, unreadable mint falls back to classic); tsc -b exit 0 after rebuilding packages/sdk; vite build OK."
+  ]
+}
+```
+
+## DEC-0228
+
+```json
+{
+  "id": "DEC-0228",
+  "date": "2026-10-06",
+  "title": "Mandatory terminology: Mint / Redeem = the in-app flow, Buy / Sell = strictly secondary-market trades; the Buy/Sell tax is put ON HOLD (it was being charged on in-app mints and redemptions)",
+  "status": "implemented, committed to main (deployment recorded in PROJECT_STATUS.md); offline-verified",
+  "decision": "(1) Terminology, final and mandatory: getting Reserve Tokens from SSR.fun in the app is a MINT (paying USDC that the app swaps into the reserve assets, or depositing in kind); handing them back is a REDEEM; BUY and SELL mean strictly secondary-market trades of existing Reserve Tokens between holders (DEX pools, the future liquidity provision engine). Canonical spec docs/protocol/TERMINOLOGY.md; CLAUDE.md (Mandatory terminology) and a new AGENTS.md (for Codex, Cursor, Copilot, Gemini and other agents) carry the rule and instruct every AI to correct developers who use the words differently. Code identifiers (buildBuy/buildSell, api/mainnet/build-buy/build-sell, multiAssetBuyClient, tab value 'buy', ledger side values) are a carve-out, as with the Delegate rule. (2) All user-facing copy for the in-app flow renamed: the Reserve page's Buy/Sell tabs are now Mint/Redeem, plus buttons, toasts, errors, InfoTips, activity labels, Portfolio, Manage, Create, the Robinhood Chain pages, the docs site, legal pages, README and the living docs under docs/protocol, docs/architecture and docs/journey-map. Historical records are not rewritten. (3) Buy tax and Sell tax ON HOLD: lib/mainnet/tradeTaxHold.ts TRADE_TAX_ON_HOLD = true keeps api/mainnet/build-buy.ts and build-sell.ts from resolving any rate, so the mint and redeem builders add no tax; the Reserve page's Mint and Redeem panels no longer show a tax row; the Create Reserve sliders still record buyTaxPct/sellTaxPct and say the taxes are secondary-market only and on hold. The tax code (lib/mainnet/tradeTax.ts) is parked for the liquidity provision engine. (4) tests/phase_terminology_and_tax_hold.ts (8 tests) fails on any Buy/Sell/purchase wording in src/ UI copy outside a reasoned allowlist of secondary-market text, and pins the hold.",
+  "context": "Creator, 2026-10-06, reviewing the DEC-0221 handoff item 'decide whether the Buy tax's Manager half should follow the recipient split': 'thats the mint fee ... buy tax is for secondary markets / liquidity dex provision flow only', then: 'put the buy and sell taxes on hold for now, we haven't fully baked the liquidity provision engine yet ... mint is when u buy in app. buy is strictly secondary ... let's hard code this terminology so that llms always correct any devs devving ssr.fun'. JRA's 2026-09-10 rule already said 'Buy/sell tax on secondary markets', but the app labelled its in-app mint and redeem 'Buy' and 'Sell', so the 2026-09-10 fee entry (DEC-0198) charged the tax inside SSR.fun's mint and redeem transactions: a minter paid the mint fee AND the Buy tax for one primary transaction.",
+  "rationale": "The protocol's core is proportional in-kind mint and redeem at NAV; secondary trading does not exist in the app yet (the liquidity design DEC-0217/0218 is staging-only). Using market words for the primary flow caused a real mis-charge, so the words are fixed at the source (spec + agent instruction files + an enforcing test) rather than by convention. Holding the tax with a server-side flag is the smallest reversible change; keeping the parked code avoids rebuilding it for the liquidity engine.",
+  "alternativesConsidered": [
+    "Keep charging the tax on in-app mints/redemptions and only split the Manager half across recipients (rejected: contradicts the rule; the tax is secondary-only)",
+    "Delete the tax code (rejected: the liquidity provision engine will need it for secondary Buy/Sell)",
+    "Rename code identifiers and endpoints to mint/redeem too (rejected: breaks API clients, stored ledger values and history; carve-out instead, new code prefers mint/redeem)",
+    "Document the terms without a test (rejected: the Creator asked for it to be hard-coded so it cannot drift back)"
+  ],
+  "impact": "From the deploy on, no SSR.fun mint or redemption charges a Buy or Sell tax; Reserves whose Managers set a non-zero slider stop collecting it. Users see Mint and Redeem everywhere in the app. Any AI agent reading CLAUDE.md or AGENTS.md is told to correct 'buy/sell' for the in-app flow. The DEC-0221 open item about splitting the Manager half moves to the liquidity provision engine.",
+  "affectedAreas": [
+    "docs/protocol/TERMINOLOGY.md (new), AGENTS.md (new), CLAUDE.md, README.md",
+    "lib/mainnet/tradeTaxHold.ts (new), api/mainnet/build-buy.ts, api/mainnet/build-sell.ts",
+    "src/merge/pages/DTRDetail.tsx, CreateDTR.tsx, ManageDTR.tsx, Portfolio.tsx, CreateReserve.tsx, src/merge/components/robinhood/*, src/components/ReserveCard.tsx, src/merge/lib/* (user-facing error and step text), src/docs/content/*, src/pages/legal/*",
+    "docs/protocol/FEE_MODEL.md and other living docs under docs/protocol, docs/architecture, docs/journey-map, docs/project/FEE_SETTLEMENT_RUNBOOK.md, public/road-to-mainnet.html (descriptive text only)",
+    "tests/phase_terminology_and_tax_hold.ts (new), tests/phase_launch_visibility_and_wallet_prompt.ts, tests/phase_mainnet_buy_mint_shape.ts (copy assertions)"
+  ],
+  "supersedes": "DEC-0198 (2026-09-10 fee entry; the Buy/Sell tax part only)",
+  "supersededBy": null,
+  "evidence": [
+    "Offline: full phase suite 1304 passing, 5 failing -- the identical pre-existing set (chart range selector x2, global native-control reset x2, deployed-binary account-shape pinning, which needs target/idl). tests/phase_terminology_and_tax_hold.ts 8 passing; mutation check: a planted 'Buy confirmed' toast in Portfolio.tsx fails it. npx tsc -b exit 0; vite build OK; oxlint src shows the same 7 pre-existing rules-of-hooks errors in ManageDTR.tsx as origin/main, none new."
   ]
 }
 ```

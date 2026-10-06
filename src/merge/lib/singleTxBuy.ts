@@ -125,8 +125,8 @@ export class SingleTxTooLargeError extends Error {
   constructor(bytes: number | null, accountLocks: number | null = null) {
     super(
       accountLocks !== null
-        ? `The combined single-transaction purchase touches ${accountLocks} accounts, over Solana's ${SOLANA_MAX_TX_ACCOUNT_LOCKS}-account limit per transaction -- falling back to the step-by-step flow.`
-        : `The combined single-transaction purchase is ${bytes === null ? "larger than the serialization buffer" : `${bytes} bytes`}, over Solana's ${SOLANA_MAX_TX_BYTES}-byte limit -- falling back to the step-by-step flow.`,
+        ? `The combined single-transaction mint touches ${accountLocks} accounts, over Solana's ${SOLANA_MAX_TX_ACCOUNT_LOCKS}-account limit per transaction -- falling back to the step-by-step flow.`
+        : `The combined single-transaction mint is ${bytes === null ? "larger than the serialization buffer" : `${bytes} bytes`}, over Solana's ${SOLANA_MAX_TX_BYTES}-byte limit -- falling back to the step-by-step flow.`,
     );
     this.name = "SingleTxTooLargeError";
     this.bytes = bytes;

@@ -185,7 +185,7 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
       for (let i = 0; i < q.assets.length; i++) {
         await approveIfNeeded(pc, wallet, cfg, account, q.assets[i], address, q.amounts[i], (m) => setMintStatus({ text: m, kind: "busy" }));
       }
-      setMintStatus({ text: "Buying...", kind: "busy" });
+      setMintStatus({ text: "Minting...", kind: "busy" });
       const before = await pc.readContract({ address, abi: SSR_ABI, functionName: "balanceOf", args: [account] });
       const hash = await wallet.writeContract({ address, abi: SSR_ABI, functionName: "mint", args: [q.s, account, 0n], chain: cfg.chain, account });
       await pc.waitForTransactionReceipt({ hash });
@@ -207,7 +207,7 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
       // redeem() requires the asset array to match the basket EXACTLY, in the
       // contract's own order -- so it is read fresh rather than assumed.
       const [assets, amounts] = await quoteRedeemProceeds(pc, address, s);
-      setRedeemStatus({ text: "Selling...", kind: "busy" });
+      setRedeemStatus({ text: "Redeeming...", kind: "busy" });
       const hash = await wallet.writeContract({
         address,
         abi: SSR_ABI,
@@ -220,7 +220,7 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
       const got = describe(assets, amounts).join(" + ");
       await refresh();
       await refreshBalances();
-      setRedeemStatus({ text: `Sold for ${got}.`, kind: "ok" });
+      setRedeemStatus({ text: `Redeemed for ${got}.`, kind: "ok" });
       setRedeemLink({ href: explorerTx(hash), label: "View transaction" });
     } catch (e) {
       setRedeemStatus({ text: describeEvmError(e), kind: "err" });
@@ -392,8 +392,8 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
               <Tabs value={tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
                 <CardHeader className="pb-4">
                   <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="buy" className="buy-tab font-bold data-[state=active]:text-primary">Buy</TabsTrigger>
-                    <TabsTrigger value="sell" className="font-bold data-[state=active]:text-destructive">Sell</TabsTrigger>
+                    <TabsTrigger value="buy" className="buy-tab font-bold data-[state=active]:text-primary">Mint</TabsTrigger>
+                    <TabsTrigger value="sell" className="font-bold data-[state=active]:text-destructive">Redeem</TabsTrigger>
                   </TabsList>
                 </CardHeader>
                 <CardContent>
@@ -402,12 +402,12 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
                       In kind: you deposit every basket asset in proportion and receive shares.
                     </p>
                     <div>
-                      <Label htmlFor="rh-mint">Shares to buy</Label>
+                      <Label htmlFor="rh-mint">Shares to mint</Label>
                       <Input id="rh-mint" value={mintAmt} onChange={(e) => setMintAmt(e.target.value)} inputMode="decimal" />
                     </div>
                     <div className="flex gap-2">
                       <Button variant="outline" onClick={doQuote}>Quote</Button>
-                      <Button className="flex-1" onClick={doMint}>Buy</Button>
+                      <Button className="flex-1" onClick={doMint}>Mint</Button>
                     </div>
                     {mintQuote && (
                       <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm space-y-1">
@@ -422,12 +422,12 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
                       In kind: you burn shares and receive every basket asset in proportion.
                     </p>
                     <div>
-                      <Label htmlFor="rh-redeem">Shares to sell</Label>
+                      <Label htmlFor="rh-redeem">Shares to redeem</Label>
                       <Input id="rh-redeem" value={redeemAmt} onChange={(e) => setRedeemAmt(e.target.value)} inputMode="decimal" />
                     </div>
                     <div className="flex gap-2">
                       <Button variant="outline" onClick={() => setRedeemAmt(fmtUnits(myShares, dec, 18))} disabled={!account}>Max</Button>
-                      <Button className="flex-1" onClick={doRedeem}>Sell</Button>
+                      <Button className="flex-1" onClick={doRedeem}>Redeem</Button>
                     </div>
                     <StatusLine status={redeemStatus} link={redeemLink} />
                   </TabsContent>

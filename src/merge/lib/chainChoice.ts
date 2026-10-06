@@ -19,7 +19,7 @@ export interface ChainOption {
 export const SOLANA_OPTION: ChainOption = {
   v: "solana",
   label: "Solana",
-  blurb: "Settles in USDC. Buy and sell in one click; the Reserve swaps into its basket for you.",
+  blurb: "Settles in USDC. Mint and redeem in one click; the Reserve swaps into its basket for you.",
 };
 
 /**
@@ -31,7 +31,7 @@ export const EVM_LAUNCH_OPTIONS: ChainOption[] = [
   {
     v: "robinhood",
     label: "Robinhood Chain",
-    blurb: "Holds tokenized equities (NVDA, SPY, AMZN) and USDG. You seed the basket from your own wallet; buys and sells are in kind.",
+    blurb: "Holds tokenized equities (NVDA, SPY, AMZN) and USDG. You seed the basket from your own wallet; mints and redemptions are in kind.",
   },
 ];
 

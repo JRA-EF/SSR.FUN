@@ -19,7 +19,7 @@ import { describeEvmError } from "./evmReserve";
  * Robinhood's router from some other network.
  */
 function dexOf(cfg: ChainConfig): DexConfig {
-  if (!cfg.dex) throw new Error("This chain has no DEX configured, so assets cannot be bought on it.");
+  if (!cfg.dex) throw new Error("This chain has no DEX configured, so nothing can be swapped on it.");
   return cfg.dex;
 }
 function quotesOf(cfg: ChainConfig): ChainQuotes {
@@ -109,7 +109,7 @@ export async function quoteExactUsdgIn(pc: PublicClient, cfg: ChainConfig, route
     const { result } = await pc.simulateContract({ address: dex.quoter, abi: QUOTER_V2_ABI, functionName: "quoteExactInput", args: [encodeSwapPath(cfg, route), amountInUsdg] });
     return result[0];
   } catch (e) {
-    throw new Error(`Uniswap could not quote this buy (${describeEvmError(e)}). The pool may have no liquidity in range right now.`);
+    throw new Error(`Uniswap could not quote this swap (${describeEvmError(e)}). The pool may have no liquidity in range right now.`);
   }
 }
 

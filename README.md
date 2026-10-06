@@ -10,7 +10,7 @@ Live on Solana Mainnet at [ssr.fun](https://ssr.fun). Product documentation is a
 - **reserve assets**: the Solana tokens held inside a Reserve, custodied in program-owned vaults. Classic SPL mints, Token-2022 mints, and tokenized stocks (xStocks) are all supported.
 - **Reserve Token**: the fungible SPL token that represents ownership of a Reserve. Minting and redemption are proportional and in-kind, so the core accounting never depends on a price oracle.
 - **Co-Managers**: wallets the Manager grants scoped, revocable permissions to help run a Reserve.
-- **Buy and Sell**: single-asset entry and exit route through Jupiter, with USD pricing from Pyth, on top of the proportional core.
+- **Mint and Redeem**: minting with USDC routes the payment through Jupiter swaps into the reserve assets, with USD pricing from Pyth; redeeming returns the proportional reserve assets in kind or swapped back to USDC. Both sit on top of the proportional core.
 - **Fees**: management and protocol fees accrue on-chain and settle in USDC to the Manager's fee recipients and the protocol treasury.
 
 ## Deployed programs

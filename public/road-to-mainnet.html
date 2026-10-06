@@ -140,7 +140,7 @@
 
     <section id="architecture">
       <div class="section-head"><div><h2>Architecture — what's actually live today</h2><p>Every piece currently running, and how a request flows through them.</p></div></div>
-      <div class="notice info" style="margin-bottom:18px"><strong>Read this first.</strong> Reading data and writing data take genuinely different paths. Reads go through Helius to the deployed program. Writes (Buy/Sell/Create) currently go through a DevNet-only server-held key that stands in for real liquidity — that's the exact thing MS-01 and MS-05 below replace.</div>
+      <div class="notice info" style="margin-bottom:18px"><strong>Read this first.</strong> Reading data and writing data take genuinely different paths. Reads go through Helius to the deployed program. Writes (Mint/Redeem/Create) currently go through a DevNet-only server-held key that stands in for real liquidity — that's the exact thing MS-01 and MS-05 below replace.</div>
       <div class="flow">
         <div class="flow-row"><div class="flow-box user" style="max-width:280px">Your wallet<small>Phantom, Solflare, etc.</small></div></div>
         <div class="flow-arrow">↓ connect / sign</div>
@@ -154,7 +154,7 @@
             <div class="flow-box chain">Solana DevNet<small>ssr_protocol program, 23 instructions</small></div>
           </div>
           <div class="flow-col">
-            <div class="flow-label">Buy / Sell / Create</div>
+            <div class="flow-label">Mint / Redeem / Create</div>
             <div class="flow-box">Vercel serverless functions<small>api/devnet/*.ts</small></div>
             <div class="flow-arrow">↓</div>
             <div class="flow-box warn">DevNet swap authority<small>server-held key — stands in for real liquidity today</small></div>
@@ -175,7 +175,7 @@
         <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>Live — strategic-super-reserve.fun</span><h4>SSR.fun frontend</h4><p>Vite + React 19. Discover, Create Reserve, Portfolio, Manage, Reserve-detail pages, plus this checklist.</p></div>
         <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>Live on Solana DevNet</span><h4>ssr_protocol</h4><p>The core Anchor program. Reserve creation, mint/redeem, co-managers, pause, lifecycle. 23 instructions.</p></div>
         <div class="int-card risk"><span class="badge int-status"><span class="dot" style="background:var(--yellow)"></span>Written, never built or deployed</span><h4>ssr_devnet_amm</h4><p>A second, DevNet-only constant-product AMM meant to replace the fabricated swap legs below. Program ID reserved in Anchor.toml; no pools, no liquidity, nothing on-chain yet.</p></div>
-        <div class="int-card risk"><span class="badge int-status"><span class="dot" style="background:var(--yellow)"></span>DevNet-only, zero real value</span><h4>DevNet swap authority</h4><p>A server-held keypair that mints non-devUSDC legs on Buy and mints devUSDC on Sell — a stand-in for real liquidity, not real liquidity. This is what MS-01/MS-05 replace.</p></div>
+        <div class="int-card risk"><span class="badge int-status"><span class="dot" style="background:var(--yellow)"></span>DevNet-only, zero real value</span><h4>DevNet swap authority</h4><p>A server-held keypair that mints non-devUSDC legs on a mint and mints devUSDC on a redemption — a stand-in for real liquidity, not real liquidity. This is what MS-01/MS-05 replace.</p></div>
         <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>In use</span><h4>Vercel</h4><p>Hosting, serverless functions (api/*), Routing Middleware (the auth gate in front of this page), and environment/secret storage.</p></div>
         <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>DevNet tier</span><h4>Helius</h4><p>Dedicated Solana RPC provider. Server calls it directly; the browser goes through a same-origin proxy function so the API key is never exposed client-side.</p></div>
         <div class="int-card live"><span class="badge int-status"><span class="dot" style="background:var(--cyan)"></span>New, this page only</span><h4>Neon Postgres</h4><p>Backs this Road to Mainnet checklist's shared/collaborative state. Not read or written by the protocol or the main app at all.</p></div>
@@ -299,7 +299,7 @@
 
     <div id="panel-mainnet" class="tabpanel" role="tabpanel">
     <section id="mainnet-functions">
-      <div class="section-head"><div><h2>Mainnet function checklist</h2><p>Same 11 checks as the DevNet function checklist (DevNet tab), one item per protocol function, verified live against the deployed Mainnet program (<code>8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9</code>) with a real connected wallet and real USDC -- never a script, never a throwaway keypair, never DevNet evidence carried over. Reserve creation and Buy/Sell are already USDC-only for this launch (see the direct-USDC path); Add/Remove Reserve asset and Rebalance remain live protocol instructions but are out of scope for the initial single-asset launch and can stay Not applicable until a non-USDC Reserve asset is actually supported.</p></div><span class="badge"><span class="dot" style="background:var(--purple)"></span><span id="mfPassCount">0</span>/<span id="mfTotalCount">0</span> passed</span></div>
+      <div class="section-head"><div><h2>Mainnet function checklist</h2><p>Same 11 checks as the DevNet function checklist (DevNet tab), one item per protocol function, verified live against the deployed Mainnet program (<code>8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9</code>) with a real connected wallet and real USDC -- never a script, never a throwaway keypair, never DevNet evidence carried over. Reserve creation and Mint/Redeem are already USDC-only for this launch (see the direct-USDC path); Add/Remove Reserve asset and Rebalance remain live protocol instructions but are out of scope for the initial single-asset launch and can stay Not applicable until a non-USDC Reserve asset is actually supported.</p></div><span class="badge"><span class="dot" style="background:var(--purple)"></span><span id="mfPassCount">0</span>/<span id="mfTotalCount">0</span> passed</span></div>
       <div class="progress" style="margin-bottom:18px"><span id="mfBar"></span></div>
       <div class="notice" style="margin-bottom:18px"><strong>Real funds.</strong> Every "Passed" here should mean a genuine Mainnet transaction moved real USDC and Reserve Tokens exactly as expected -- not a build, not a DevNet result, not a server-signed smoke-test script. Record the real transaction signature (Solana Explorer, Mainnet) as evidence for each item.</div>
       <div class="toolbar">
@@ -367,7 +367,7 @@ const criticalFunctionItems=[
 // (program 8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9, see
 // docs/project/DECISION_LOG.md's DEC-0115/DEC-0116/DEC-0117) with real
 // funds and a genuine browser + wallet click-through -- never a script,
-// never DevNet evidence carried over. Reserve creation and Buy/Sell are
+// never DevNet evidence carried over. Reserve creation and Mint/Redeem are
 // USDC-only for this launch; the direct-USDC single-signer path
 // (packages/sdk/src/directInstructions.ts) replaces the DevNet zap
 // adapter entirely on Mainnet, so there is no "swap authority" leg to

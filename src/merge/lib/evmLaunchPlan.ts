@@ -108,7 +108,7 @@ export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Ad
     const k = a.address.toLowerCase();
     if (seen.has(k)) throw new Error(`${a.symbol} is listed twice.`);
     seen.add(k);
-    if (!isUsdg(a.address, usdg) && !a.pool) throw new Error(`${a.symbol} has no Uniswap pool to buy it through.`); // message pinned by tests
+    if (!isUsdg(a.address, usdg) && !a.pool) throw new Error(`${a.symbol} has no pool to swap ${usdSymbol} into it.`);
   }
   let allocated = 0n;
   const legs: LaunchLeg[] = [];

@@ -21,7 +21,7 @@ export const DOCS: DocEntry[] = [
   {
     slug: 'getting-started',
     title: 'Getting started',
-    blurb: 'What a Reserve is, what a Reserve Token is, and how buying, selling, and launching work.',
+    blurb: 'What a Reserve is, what a Reserve Token is, and how minting, redeeming, and launching work.',
     audience: 'Everyone',
     updated: '17 September 2026',
     render: () => <GettingStarted />,
