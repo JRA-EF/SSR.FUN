@@ -358,10 +358,17 @@ export async function listReserveAddresses(pc: PublicClient, cfg: ChainConfig): 
   // not appear -- caught by the BNB fork run, where it found 0 of 1.
   const head = await pc.getBlockNumber({ cacheTime: 0 });
   const spans: [bigint, bigint | "latest"][] = [];
+  // Public endpoints load-balance across nodes that can trail each other by a
+  // few blocks, and refuse a range ending past THEIR head ("block range extends
+  // beyond current head block"). So any span ending within LAG_MARGIN of the
+  // head we read is closed with "latest" instead of a number a lagging node may
+  // not have reached.
+  const LAG_MARGIN = 64n;
   for (let from = cfg.deployerBlock; from <= head; from += cfg.logChunk) {
     const to = from + cfg.logChunk - 1n;
-    // The final span reads to "latest", covering anything mined after `head`.
-    spans.push([from, to >= head ? "latest" : to]);
+    const last = to >= head - LAG_MARGIN;
+    spans.push([from, last ? "latest" : to]);
+    if (last) break;
   }
   // A few at a time: public endpoints throttle a burst as readily as a range.
   const out: Address[] = [];
