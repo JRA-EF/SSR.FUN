@@ -29,6 +29,23 @@ remembered constant, and never trust a "6 decimals" assumption.**
 Both real defects found during the Base/BNB port came from breaking that rule,
 and both were silent.
 
+## Step 0 — survey the free endpoints FIRST
+
+Before relying on any endpoint, measure what each one actually serves:
+receipts, `eth_getLogs` (and up to what range), and older state (forking needs
+it). Do this before anything else; on both BNB and Base it decided the design.
+
+| Chain | logs | receipts + state |
+|---|---|---|
+| BNB | publicnode only, ≤ 5,000 blocks | defibit, bnbchain.org, drpc, 1rpc — **not** publicnode |
+| Base | publicnode ≤ 2,000 blocks | mainnet.base.org, developer-access-mainnet.base.org — **not** publicnode |
+
+No free endpoint does both on either chain, so the proxy routes per method
+(`UPSTREAMS[chain].logsUrl`), wallets are handed an endpoint that serves
+receipts, and forks use one that serves older state.
+`developer-access-mainnet.base.org` forks Base in seconds where
+`mainnet.base.org` stalled a forge broadcast for 20+ minutes.
+
 ## Step 1 — discover and verify
 
 Write a candidates file (`scripts/evm-chains/<chain>.json`, see `base.json` and
@@ -65,7 +82,16 @@ dollar value of quote asset sitting in each token's deepest pool. Anything
 short of the floor is refused and listed. The output is a `starterAssets` block,
 each entry carrying the pool it is bought through and that pool's role
 (`"usd"` or `"native"`). On BNB at a $100k floor: 10 accepted, 11 refused —
-and DOGE turned out to be 8 decimals there.
+and DOGE turned out to be 8 decimals there. On Base: 9 accepted (cbBTC is 8
+decimals), 7 refused — wstETH, cbETH, LINK, EURC are thin *on Uniswap* because
+Base's liquidity for them is on Aerodrome, which needs its own adapter
+(Slipstream keys pools by tick spacing, not fee).
+
+Pass several endpoints (`RPCS=a,b,c`) — a single free one throttles a few
+hundred reads into failures. A failed read is reported as UNREADABLE and is
+never a refusal; a run with any UNREADABLE row is unfinished, so re-run it.
+The first Base run reported cbBTC and AERO as "not a readable ERC20" before
+that distinction existed.
 
 ## Step 2 — wire the ChainConfig
 

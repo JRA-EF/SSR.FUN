@@ -52,8 +52,11 @@ console.log(`${cfg.chain.name}: seeding ${seedHuman} ${cash.symbol} (${cash.deci
 // native-quoted asset (two-hop buy), one dollar-quoted asset, and the rest
 // left as cash.
 const sa = real.starterAssets;
-const nativeQuoted = sa.find((a) => a.pool.quote === "native" && a.symbol !== "WBNB")!;
-const usdQuoted = sa.find((a) => a.pool.quote === "usd" && a.symbol !== "USDC" && a.symbol !== "WBNB")!;
+// Never the chain's own quote assets: the point is one two-hop leg and one
+// direct leg into real basket tokens.
+const isQuote = (a: { address: string }) => [cfg.quotes!.usd.address, cfg.quotes!.native.address].some((x) => x.toLowerCase() === a.address.toLowerCase());
+const nativeQuoted = sa.find((a) => a.pool.quote === "native" && !isQuote(a))!;
+const usdQuoted = sa.find((a) => a.pool.quote === "usd" && !isQuote(a) && a.symbol !== "USDC")!;
 const ROLE = { usd: "USDG", native: "WETH" } as const;
 const planned: PlannedAsset[] = [
   { address: nativeQuoted.address, symbol: nativeQuoted.symbol, decimals: nativeQuoted.decimals, weight: 0.5, pool: { ...nativeQuoted.pool, quote: ROLE[nativeQuoted.pool.quote] } },
@@ -72,7 +75,7 @@ for (const q of quotes) console.log(`  quote ${q.leg.asset.symbol.padEnd(6)} imp
 const progress: string[] = [];
 const before = new Set((await listReserveAddresses(pc, cfg)).map((a) => a.toLowerCase()));
 const { reserve } = await executeLaunch(pc, wallet, cfg, account.address, {
-  plan, quotes, name: "BNB Launch Parity", symbol: "BNBLP",
+  plan, quotes, name: `${cfg.chain.name} Launch Parity`, symbol: "LPARITY",
   mintFee: 3n * 10n ** 15n, tvlFee: 0n, owner: account.address,
   feeRecipients: feeRecipientsForChain(account.address, []), coManagers: [], mandate: "",
 }, (m) => { progress.push(m); console.log(`  · ${m}`); });

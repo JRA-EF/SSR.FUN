@@ -151,7 +151,10 @@ export const UPSTREAMS: Record<string, { env: string; fallback: string; logsUrl?
   // publicnode and everything else to defibit -- otherwise every BNB write
   // would land and then fail to confirm in the UI.
   bnb: { env: "BNB_RPC_URL", fallback: "https://bsc-dataseed1.defibit.io", logsUrl: "https://bsc-rpc.publicnode.com" },
-  base: { env: "BASE_RPC_URL", fallback: "https://mainnet.base.org" },
+  // Same split on Base (measured 2026-10-06): publicnode serves getLogs up to
+  // 2,000 blocks but refuses receipts and older state; mainnet.base.org serves
+  // receipts and archive state but caps getLogs below 500 blocks.
+  base: { env: "BASE_RPC_URL", fallback: "https://mainnet.base.org", logsUrl: "https://base-rpc.publicnode.com" },
 };
 
 /** The chain a request names, or null for one this proxy does not serve. Absent means Robinhood. */

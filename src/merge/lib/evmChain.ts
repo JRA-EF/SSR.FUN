@@ -270,7 +270,8 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     idPrefix: "base",
     live: false,
     chain: baseChain,
-    logChunk: 500n,
+    // Logs go to publicnode via the proxy, which accepts 2,000 blocks.
+    logChunk: 2_000n,
     readProxyPath: "/api/robinhood/rpc-proxy?chain=base",
     explorer: "https://basescan.org",
     ssr: null,
@@ -292,6 +293,23 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       usd: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
       native: { address: "0x4200000000000000000000000000000000000006", symbol: "WETH", decimals: 18 },
     },
+    // Verified live 2026-10-06 by scripts/evm-chain-assets.mts: each has
+    // >= $100,000 of quote asset in its deepest Uniswap v3 pool. Refused at that
+    // floor ON UNISWAP: wstETH, cbETH, LINK, ZORA, EURC, USDbC, DAI -- most of
+    // their Base liquidity is on Aerodrome, which would need its own adapter
+    // (Slipstream keys pools by tick spacing, not fee). cbBTC is 8 decimals.
+    starterAssets: [
+      { address: "0x4200000000000000000000000000000000000006", symbol: "WETH", decimals: 18, pool: { address: "0x6c561B446416E1A00E8E93E221854d6eA4171372", fee: 3000, quote: "usd" } },
+      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8, pool: { address: "0x7AeA2E8A3843516afa07293a10Ac8E49906dabD1", fee: 500, quote: "native" } },
+      { address: "0x940181a94A35A4569E4529A3CDfB74e38FD98631", symbol: "AERO", decimals: 18, pool: { address: "0x3d5D143381916280ff91407FeBEB52f2b60f33Cf", fee: 3000, quote: "native" } },
+      { address: "0x532f27101965dd16442E59d40670FaF5eBB142E4", symbol: "BRETT", decimals: 18, pool: { address: "0xBA3F945812a83471d709BCe9C3CA699A19FB46f7", fee: 10000, quote: "native" } },
+      { address: "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842", symbol: "MORPHO", decimals: 18, pool: { address: "0x2F42Df4aF5312B492E9d7F7b2110D9c7bf2D9e4F", fee: 3000, quote: "native" } },
+      { address: "0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4", symbol: "TOSHI", decimals: 18, pool: { address: "0x4b0Aaf3EBb163dd45F663b38b6d93f6093EBC2d3", fee: 10000, quote: "native" } },
+      { address: "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b", symbol: "VIRTUAL", decimals: 18, pool: { address: "0x529d2863a1521d0b57db028168fdE2E97120017C", fee: 3000, quote: "usd" } },
+      { address: "0x63706e401c06ac8513145b7687A14804d17f814b", symbol: "AAVE", decimals: 18, pool: { address: "0x2e86514CFd61Fb19c5cf2b879d536D273d6E693d", fee: 3000, quote: "native" } },
+      { address: "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed", symbol: "DEGEN", decimals: 18, pool: { address: "0x0cA6485b7e9cF814A3Fd09d81672B07323535b64", fee: 10000, quote: "native" } },
+      { address: "0xc3De830EA07524a0761646a6a4e4be0e114a3C83", symbol: "UNI", decimals: 18, pool: { address: "0xAb365f161Dd501473a1ff0D2ef0dCE94E7398839", fee: 10000, quote: "native" } },
+    ],
     isMock: false,
     notice: "Base is wired and fork-verified but has no deployed SSR stack yet.",
   },
