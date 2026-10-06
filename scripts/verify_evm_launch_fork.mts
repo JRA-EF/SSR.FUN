@@ -31,7 +31,7 @@ const cfg: ChainConfig = {
   deployer: process.env.DEPLOYER as Address,
   feeRegistry: process.env.FEE_REGISTRY as Address,
   deployerBlock: BigInt(process.env.DEPLOYER_BLOCK!),
-  logChunk: 2n,
+  logChunk: BigInt(process.env.LOG_CHUNK ?? "2"),
 };
 const account = privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 const pc = createPublicClient({ chain: cfg.chain, transport: http(RPC) });

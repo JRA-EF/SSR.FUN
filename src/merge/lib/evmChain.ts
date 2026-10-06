@@ -295,18 +295,22 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
   bnb: {
     key: "bnb",
     idPrefix: "bnb",
-    live: false,
+    live: true,
     chain: bnbChain,
     logChunk: 5_000n,
     readProxyPath: "/api/robinhood/rpc-proxy?chain=bnb",
     explorer: "https://bscscan.com",
     ssr: null,
-    deployer: ZERO,
-    deployerBlock: 0n,
-    versionRegistry: ZERO,
-    feeRegistry: ZERO,
-    roleRegistry: ZERO,
-    fillerRegistry: ZERO,
+    // Deployed 2026-10-06 by scripts/go-live-evm-chain.sh at block 126,130,904;
+    // registerVersion -> "6.0.0", admin = the owner key 0x8b41e427... (the
+    // single-key governance the Creator accepted for the port). The deployer
+    // had never transacted on BNB, so these are Robinhood mainnet's addresses.
+    deployer: "0x81dd183c53C95F251869520d8DB10B0A4a4F8858",
+    deployerBlock: 126130904n,
+    versionRegistry: "0x835dd7fF172874749855aae0174c6ecAA82Ef1e6",
+    feeRegistry: "0x03079d5f8d3B6d27827315205D1328b193c48d31",
+    roleRegistry: "0x3a96Fd76dAB64be73404BF59587beF21773Dcd94",
+    fillerRegistry: "0x95CB8550056680a004019fD45db4347A622C2CFc",
     assets: [],
     // PancakeSwap v3, not Uniswap: it is a Uniswap v3 fork answering the same
     // calls (so no adapter), its USDT/WBNB pool is the deeper market, and its
@@ -341,7 +345,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       { address: "0x4B0F1812e5Df2A09796481Ff14017e6005508003", symbol: "TWT", decimals: 18, pool: { address: "0x8cCB4544b3030dACF3d4D71C658f04e8688e25b1", fee: 2500, quote: "native" } },
     ],
     isMock: false,
-    notice: "BNB Smart Chain is wired and fork-verified but has no deployed SSR stack yet.",
+    notice: "Live on BNB Smart Chain. Reserves hold real BEP-20 assets, swapped into on PancakeSwap; minting moves real assets in and redeeming returns them.",
   },
 };
 

@@ -33,6 +33,11 @@ export const EVM_LAUNCH_OPTIONS: ChainOption[] = [
     label: "Robinhood Chain",
     blurb: "Holds tokenized equities (NVDA, SPY, AMZN) and USDG. You seed the basket from your own wallet; mints and redemptions are in kind.",
   },
+  {
+    v: "bnb",
+    label: "BNB Chain",
+    blurb: "Holds BTCB, ETH, CAKE, SOL and other major BEP-20 assets, swapped into from USDT on PancakeSwap. Mints and redemptions are in kind.",
+  },
 ];
 
 export function launchOptions(evmEnabled: boolean): ChainOption[] {

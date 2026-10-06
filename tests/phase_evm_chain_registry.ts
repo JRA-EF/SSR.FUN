@@ -37,9 +37,11 @@ describe("the EVM chain registry", () => {
     for (const cfg of LIVE_EVM_CHAINS) {
       expect(cfg.deployer, `${cfg.key} is live but has no factory`).to.not.equal("0x0000000000000000000000000000000000000000");
     }
-    // Base and BNB are verified reference wiring, deliberately not offered.
+    // Base is verified reference wiring, deliberately not offered. BNB went
+    // live 2026-10-06 with a deployed, registered stack.
     expect(CHAINS.base.live).to.equal(false);
-    expect(CHAINS.bnb.live).to.equal(false);
+    expect(CHAINS.bnb.live).to.equal(true);
+    expect(CHAINS.bnb.deployer).to.equal("0x81dd183c53C95F251869520d8DB10B0A4a4F8858");
   });
 
   it("every chain that can be offered can also price -- a live chain with no DEX reports $0 reserves", () => {
@@ -120,7 +122,8 @@ describe("the launch chooser stays in step with the registry", () => {
 
   it("an unoffered chain in the URL falls back to Solana instead of rendering an unshipped form", () => {
     expect(chainFromPath("/create?chain=robinhood", true)).to.equal("robinhood");
-    expect(chainFromPath("/create?chain=bnb", true), "bnb is not live").to.equal("solana");
+    expect(chainFromPath("/create?chain=bnb", true), "bnb is live").to.equal("bnb");
+    expect(chainFromPath("/create?chain=base", true), "base is not live").to.equal("solana");
     expect(chainFromPath("/create?chain=robinhood", false)).to.equal("solana");
     expect(launchOptions(false).map((o) => o.v)).to.deep.equal(["solana"]);
     expect(pathForChain("solana")).to.equal("/create");
