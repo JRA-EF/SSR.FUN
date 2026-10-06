@@ -188,8 +188,8 @@ function Fees() {
       <Table
         head={['Fee', 'When it applies', 'How it is charged', 'Maximum']}
         rows={[
-          ['Mint fee', 'When Reserve Tokens are minted (a buy on SSR.fun).', 'Reduces the number of Reserve Tokens the buyer receives.', '5%'],
-          ['Redemption fee', 'When Reserve Tokens are redeemed (a sell on SSR.fun).', 'Keeps part of the backing in the Reserve for remaining holders.', '5%'],
+          ['Mint fee', 'When Reserve Tokens are minted on SSR.fun.', 'Reduces the number of Reserve Tokens the minter receives.', '5%'],
+          ['Redemption fee', 'When Reserve Tokens are redeemed on SSR.fun.', 'Keeps part of the backing in the Reserve for remaining holders.', '5%'],
           [
             'Ongoing fee',
             'Continuously, on the value of the Reserve.',

@@ -819,7 +819,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                   <Label htmlFor="rh-seed" className="flex items-center gap-2">
                     Initial Reserve Value (USDG)
                     <InfoTip label="More information about the initial Reserve value">
-                      The USDG to seed the reserve with, from this wallet. Each non-cash asset is bought with it on Uniswap at launch; the unallocated rest stays in the reserve as USDG. You receive one Reserve Token per USDG put in -- after that, tokens are minted and redeemed against the reserve&rsquo;s NAV.
+                      The USDG to seed the reserve with, from this wallet. It is swapped into each non-cash asset on Uniswap at launch; the unallocated rest stays in the reserve as USDG. You receive one Reserve Token per USDG put in -- after that, tokens are minted and redeemed against the reserve&rsquo;s NAV.
                     </InfoTip>
                   </Label>
                   <div className="relative">
@@ -868,7 +868,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground italic">
-                  Buy Tax and Sell Tax are a Solana-only rule: on Robinhood Chain every buy and sell is an in-kind mint or redeem against the contract, so there is nothing for a tax to attach to.
+                  There is no Buy Tax or Sell Tax here: on Robinhood Chain every mint and redemption is in kind against the contract. Buy Tax and Sell Tax apply only to secondary-market trades between holders, and are currently on hold.
                 </p>
               </div>
 
@@ -990,7 +990,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                 Review & Deploy
                 <Badge className="font-merge-mono">Robinhood Chain</Badge>
               </CardTitle>
-              <CardDescription>This will submit real transactions to the SSR factory on Robinhood Chain: your USDG buys the basket on Uniswap, then the reserve is deployed holding it.</CardDescription>
+              <CardDescription>This will submit real transactions to the SSR factory on Robinhood Chain: your USDG is swapped into the basket on Uniswap, then the reserve is deployed holding it.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-8">
               <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -1076,7 +1076,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                   <h3 className="font-semibold flex items-center gap-2">
                     Wallet Cost Summary
                     <InfoTip label="More information about the wallet cost summary">
-                      Everything this wallet will be asked to spend, shown before your wallet does: each asset going into your Reserve is bought with your USDG on Uniswap (the USDG holding is deposited directly), and gas is paid in ETH. Totals are across every transaction below -- your wallet shows one prompt per transaction, so any single prompt will show less than the total.
+                      Everything this wallet will be asked to spend, shown before your wallet does: your USDG is swapped on Uniswap into each asset going into your Reserve (the USDG holding is deposited directly), and gas is paid in ETH. Totals are across every transaction below -- your wallet shows one prompt per transaction, so any single prompt will show less than the total.
                     </InfoTip>
                   </h3>
                 </div>
@@ -1102,7 +1102,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                               <span className="text-muted-foreground">
                                 {q.leg.kind === "usdg"
                                   ? " (your USDG, deposited directly)"
-                                  : ` (≈ ${fmtUnits(q.quotedOut, q.leg.asset.decimals, 6)} ${q.leg.asset.symbol}, bought with your USDG${q.impactBps > 0 ? `, ~${(q.impactBps / 100).toFixed(2)}% price impact` : ""})`}
+                                  : ` (≈ ${fmtUnits(q.quotedOut, q.leg.asset.decimals, 6)} ${q.leg.asset.symbol}, swapped from your USDG${q.impactBps > 0 ? `, ~${(q.impactBps / 100).toFixed(2)}% price impact` : ""})`}
                               </span>
                             </span>
                           </div>

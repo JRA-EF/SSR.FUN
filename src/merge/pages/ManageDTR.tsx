@@ -327,9 +327,9 @@ export function ManageDTR() {
         assets: dtr.onChain.assets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
       });
       setTradingAlt(alt);
-      toast({ title: "One-approval trading enabled", description: "Buys and Sells of this Reserve can now complete in a single wallet approval for every trader." });
+      toast({ title: "One-approval mint and redeem enabled", description: "Mints and redemptions of this Reserve can now complete in a single wallet approval for everyone." });
     } catch (e) {
-      toast({ variant: "destructive", title: "Could not enable one-approval trading", description: e instanceof Error ? e.message : String(e) });
+      toast({ variant: "destructive", title: "Could not enable one-approval mint and redeem", description: e instanceof Error ? e.message : String(e) });
     } finally {
       setEnablingAlt(false);
     }
@@ -1593,15 +1593,15 @@ export function ManageDTR() {
               {IS_MAINNET && dtr.onChain && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-xl font-merge-display">One-Approval Trading</CardTitle>
+                    <CardTitle className="text-xl font-merge-display">One-Approval Mint and Redeem</CardTitle>
                     <CardDescription>
-                      A one-time on-chain lookup table for this Reserve lets every Buy and Sell complete in a single wallet approval instead of several
+                      A one-time on-chain lookup table for this Reserve lets every mint and redemption complete in a single wallet approval instead of several
                       separate ones. Creating it costs a small one-time network deposit (~0.003 SOL) paid by your wallet.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     {tradingAlt === "loading" ? (
-                      <p className="text-sm text-muted-foreground">Checking whether one-approval trading is enabled…</p>
+                      <p className="text-sm text-muted-foreground">Checking whether one-approval mint and redeem is enabled…</p>
                     ) : tradingAlt ? (
                       <div className="flex items-center gap-2 text-sm">
                         <Badge variant="secondary">Enabled</Badge>
@@ -1609,7 +1609,7 @@ export function ManageDTR() {
                       </div>
                     ) : (
                       <Button onClick={() => void enableOneApprovalTrading()} disabled={enablingAlt || !walletCtx.publicKey}>
-                        {enablingAlt ? "Enabling…" : "Enable one-approval trading"}
+                        {enablingAlt ? "Enabling…" : "Enable one-approval mint and redeem"}
                       </Button>
                     )}
                   </CardContent>
@@ -1710,7 +1710,7 @@ export function ManageDTR() {
                   </div>
                   {dtr.onChain && (dtr.feeConfig.managerBuyTaxPct > 0 || dtr.feeConfig.managerSellTaxPct > 0) && (
                     <p className="text-xs text-muted-foreground italic -mt-2">
-                      Buy Tax and Sell Tax are charged in USDC on Buys and Sells made through SSR.fun and split 50/50 between the Manager's fee destination and the protocol. Not applied to plain transfers or trades on other venues.
+                      Buy Tax and Sell Tax are the Manager's rates for secondary-market trades of this Reserve Token between holders. They are currently on hold and not charged anywhere, and never apply to mints or redemptions on SSR.fun.
                     </p>
                   )}
 

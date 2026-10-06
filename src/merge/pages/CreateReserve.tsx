@@ -18,11 +18,11 @@ export type { ChainChoice };
 const RobinhoodCreateForm = lazy(() => import("@/components/robinhood/RobinhoodCreateForm").then((m) => ({ default: m.RobinhoodCreateForm })));
 
 const CHAINS: { v: ChainChoice; label: string; blurb: string }[] = [
-  { v: "solana", label: "Solana", blurb: "Settles in USDC. Buy and sell in one click; the Reserve swaps into its basket for you." },
+  { v: "solana", label: "Solana", blurb: "Settles in USDC. Mint and redeem in one click; the Reserve swaps into its basket for you." },
   {
     v: "robinhood",
     label: "Robinhood Chain",
-    blurb: "Holds tokenized equities (NVDA, SPY, AMZN) and USDG. You seed the basket from your own wallet; buys and sells are in kind.",
+    blurb: "Holds tokenized equities (NVDA, SPY, AMZN) and USDG. You seed the basket from your own wallet; mints and redemptions are in kind.",
   },
 ];
 

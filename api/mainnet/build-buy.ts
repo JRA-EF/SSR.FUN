@@ -27,6 +27,7 @@ import {
 } from "../../lib/mainnet/jupiter";
 import { BuildBuyError, buildBuyTransactions, serializeBuildBuyResult } from "../../lib/mainnet/buildBuy";
 import { resolveReserveTradeTax, type ReserveTradeTaxRates } from "../../lib/mainnet/tradeTax";
+import { TRADE_TAX_ON_HOLD } from "../../lib/mainnet/tradeTaxHold";
 
 interface ApiResponseWithHeaders extends ApiResponse {
   setHeader?(name: string, value: string): void;
@@ -154,7 +155,8 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
         jupiterBuildTransaction: buildJupiterSwapTransactionWithRetry,
         jupiterBuildInstructions: buildJupiterSwapInstructionsWithRetry,
         lookupReserveAlt,
-        lookupTradeTax,
+        // DEC-0228: Buy/Sell tax is secondary-market only and on hold -- never charged on a mint or redemption.
+        ...(TRADE_TAX_ON_HOLD ? {} : { lookupTradeTax }),
         simulate: async (tx) => {
           const sim = await connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true });
           return { err: sim.value.err, logs: sim.value.logs ?? null };

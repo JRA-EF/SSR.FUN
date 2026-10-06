@@ -659,7 +659,7 @@
   "categories": [
     { "id": "discovery", "title": "Discovery & Wallet Connection" },
     { "id": "reserve-creation", "title": "Reserve Creation" },
-    { "id": "trading", "title": "Minting & Redeeming (Buy/Sell)" },
+    { "id": "trading", "title": "Minting & Redeeming" },
     { "id": "monitoring", "title": "Portfolio & Reserve Monitoring" },
     { "id": "management", "title": "Reserve Management & Governance" },
     { "id": "devnet-engineering", "title": "DevNet Engineering & Testing" }
@@ -746,7 +746,7 @@
               "thinking": "[Assumption] Is this a real market price or just a number the app made up?",
               "feeling": 3,
               "pain": "[Assumption] For DevNet Reserves, the displayed price is a fixed test conversion, not a live market -- this isn't obvious from the chart alone.",
-              "opportunity": "[Assumption] Label the chart 'DevNet test pricing', the same way the Buy tab already labels 'SOL Price (DevNet test)'.",
+              "opportunity": "[Assumption] Label the chart 'DevNet test pricing', the same way the Mint tab already labels 'SOL Price (DevNet test)'.",
               "evidence": "",
               "frontstage": "Price History card with timeframe buttons and a Recharts AreaChart (DTRDetail.tsx).",
               "backstage": "sampleLinePoints()/buildLineSeries() compute a deterministic series from stored price history; for chain-backed Reserves the current price point derives from on-chain NAV (vault value / Reserve Token supply).",
@@ -774,7 +774,7 @@
       "title": "Connect a wallet",
       "actor": "visitor",
       "category": "discovery",
-      "scenario": "A visitor who has been browsing decides they want to actually hold or trade a Reserve Token, which requires a connected Solana wallet.",
+      "scenario": "A visitor who has been browsing decides they want to actually mint, hold or redeem a Reserve Token, which requires a connected Solana wallet.",
       "goal": "Get a supported wallet connected on Solana DevNet with a clear understanding that nothing here touches Mainnet funds.",
       "stages": [
         {
@@ -844,7 +844,7 @@
               "thinking": "[Assumption] Do I really need to install yet another wallet extension just to try this?",
               "feeling": 2,
               "pain": "[Assumption] Onboarding friction for anyone without a Solana wallet already installed -- a real barrier before the very first transaction.",
-              "opportunity": "[Assumption] Offer a lightweight read-only/watch mode so a brand-new user can explore Buy/Sell math before installing anything.",
+              "opportunity": "[Assumption] Offer a lightweight read-only/watch mode so a brand-new user can explore Mint/Redeem math before installing anything.",
               "evidence": "",
               "frontstage": "'Wallet not installed' screen: 'Install the extension to connect it, or choose a different wallet,' with a 'Get Backpack' link and 'Choose another wallet.'",
               "backstage": "isDetected() found no matching adapter with Installed/Loadable readyState.",
@@ -860,7 +860,7 @@
       "actor": "reserve-creator",
       "category": "reserve-creation",
       "scenario": "A wallet-connected user with an idea for a basket of Solana assets wants to launch it as a real, on-chain Decentralized Token Reserve.",
-      "goal": "Get from an empty form to a live, seeded Reserve on Solana DevNet that immediately supports Buy and Sell, understanding exactly what it will cost before signing anything.",
+      "goal": "Get from an empty form to a live, seeded Reserve on Solana DevNet that immediately supports Mint and Redeem, understanding exactly what it will cost before signing anything.",
       "stages": [
         {
           "title": "Define",
@@ -957,7 +957,7 @@
               "id": "create-sig3-seed",
               "title": "Signs the seed transaction",
               "doing": "Approves the final prompt to seed the Reserve, then lands on the new Reserve's detail page.",
-              "thinking": "[Assumption] It's live -- and Buy/Sell already work on it.",
+              "thinking": "[Assumption] It's live -- and Mint/Redeem already work on it.",
               "feeling": 5,
               "pain": "",
               "opportunity": "",
@@ -1044,10 +1044,10 @@
     },
     {
       "id": "mint-reserve-tokens-buy",
-      "title": "Mint Reserve Tokens (Buy)",
+      "title": "Mint Reserve Tokens",
       "actor": "token-holder",
       "category": "trading",
-      "scenario": "A wallet-connected user viewing a chain-backed Reserve wants to buy in -- exchanging SOL for newly minted Reserve Tokens proportional to the Reserve's live composition.",
+      "scenario": "A wallet-connected user viewing a chain-backed Reserve wants to mint -- exchanging SOL for newly minted Reserve Tokens proportional to the Reserve's live composition.",
       "goal": "Spend a chosen amount of SOL and receive the correct, proportional amount of Reserve Tokens in a single, real DevNet transaction.",
       "stages": [
         {
@@ -1056,13 +1056,13 @@
             {
               "id": "buy-enter-amount",
               "title": "Enters a SOL amount",
-              "doing": "Types a SOL amount into the Buy tab.",
+              "doing": "Types a SOL amount into the Mint tab.",
               "thinking": "[Assumption] Let's see what I'd actually get for this.",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Buy tab (DTRDetail.tsx): SOL input, 25/50/75/Max quick-fill buttons.",
+              "frontstage": "Mint tab (DTRDetail.tsx): SOL input, 25/50/75/Max quick-fill buttons.",
               "backstage": "Client computes an estimated Reserve Tokens figure locally from the current NAV before any request is sent.",
               "support": "None yet -- local calculation."
             },
@@ -1086,14 +1086,14 @@
           "moments": [
             {
               "id": "buy-click",
-              "title": "Clicks Buy",
-              "doing": "Clicks 'Buy [TICKER]'.",
+              "title": "Clicks Mint",
+              "doing": "Clicks 'Mint [TICKER]'.",
               "thinking": "[Assumption] Here's the one wallet approval I was expecting.",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "'Processing…' spinner on the Buy button.",
+              "frontstage": "'Processing…' spinner on the Mint button.",
               "backstage": "executeBuyZap() (src/merge/lib/zapClient.ts) POSTs the Reserve address, its exact registered asset mints, the user's pubkey, and the SOL amount to /api/devnet/swap-sign.",
               "support": "api/devnet/swap-sign.ts (Vercel serverless function)."
             },
@@ -1137,20 +1137,20 @@
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Toast: 'Buy confirmed on Solana DevNet' with a clickable 'View transaction on Solana Explorer (DevNet)' link; a small 'Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value' note under the Buy button.",
+              "frontstage": "Toast: 'Mint confirmed on Solana DevNet' with a clickable 'View transaction on Solana Explorer (DevNet)' link; a small 'Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value' note under the Mint button.",
               "backstage": "refreshRealReserveNow() re-reads the Reserve via fetchReserveOnChain; RealReserveSync's next 15s poll will also pick up the change.",
               "support": "Solana Explorer (explorer.solana.com?cluster=devnet); Solana DevNet RPC."
             },
             {
               "id": "buy-insufficient-balance",
-              "title": "Tries to buy more than they hold",
-              "doing": "Instead, tries to Buy more SOL than their connected wallet holds.",
+              "title": "Tries to mint more than they hold",
+              "doing": "Instead, tries to Mint more SOL than their connected wallet holds.",
               "thinking": "[Assumption] Wait, I thought I had more DevNet SOL than that.",
               "feeling": 2,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Buy button shows 'Insufficient Balance' and is disabled -- caught before any signature is requested.",
+              "frontstage": "Mint button shows 'Insufficient Balance' and is disabled -- caught before any signature is requested.",
               "backstage": "buyAvailable is read directly from the connected wallet's live SOL balance; the button's disabled condition checks numBuyAmount > buyAvailable client-side.",
               "support": "Solana DevNet RPC (wallet balance query)."
             }
@@ -1160,7 +1160,7 @@
     },
     {
       "id": "redeem-reserve-tokens-sell",
-      "title": "Redeem Reserve Tokens (Sell)",
+      "title": "Redeem Reserve Tokens",
       "actor": "token-holder",
       "category": "trading",
       "scenario": "A user already holding Reserve Tokens for a chain-backed Reserve wants to redeem some of their balance back into SOL.",
@@ -1172,27 +1172,27 @@
             {
               "id": "sell-enter-amount",
               "title": "Enters a Reserve Token amount",
-              "doing": "Switches to the Sell tab and enters a Reserve Token amount, or taps a 25/50/75/Max quick-fill button scaled to their actual held balance.",
+              "doing": "Switches to the Redeem tab and enters a Reserve Token amount, or taps a 25/50/75/Max quick-fill button scaled to their actual held balance.",
               "thinking": "",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Sell tab: Reserve Token amount input, quick-fill buttons scaled to holding.tokenBalance.",
-              "backstage": "holding.tokenBalance comes from the same RealReserveSync poll that keeps Buy's balances current.",
+              "frontstage": "Redeem tab: Reserve Token amount input, quick-fill buttons scaled to holding.tokenBalance.",
+              "backstage": "holding.tokenBalance comes from the same RealReserveSync poll that keeps Mint's balances current.",
               "support": "Solana DevNet RPC."
             },
             {
               "id": "sell-click-sign",
               "title": "Signs the redeem transaction",
-              "doing": "Clicks 'Sell [TICKER]' and approves the single Phantom prompt.",
-              "thinking": "[Assumption] Same one-approval pattern as Buy -- good, at least it's consistent.",
+              "doing": "Clicks 'Redeem [TICKER]' and approves the single Phantom prompt.",
+              "thinking": "[Assumption] Same one-approval pattern as Mint -- good, at least it's consistent.",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
               "frontstage": "Phantom approval popup for the redeem transaction.",
-              "backstage": "executeSellZap() requests a partially-signed transaction from the same /api/devnet/swap-sign endpoint (action: 'sell'); the server rebuilds redeem_reserve_tokens_in_kind plus the swap-authority's own asset-leg transfers (and, for a wrapped-SOL leg, an immediate closeAccount to unwrap real lamports) in one atomic transaction.",
+              "backstage": "executeSellZap() requests a partially-signed transaction from the same /api/devnet/swap-sign endpoint (action: `'sell'`, the redeem action); the server rebuilds redeem_reserve_tokens_in_kind plus the swap-authority's own asset-leg transfers (and, for a wrapped-SOL leg, an immediate closeAccount to unwrap real lamports) in one atomic transaction.",
               "support": "api/devnet/swap-sign.ts; Solana DevNet program; SPL Token program."
             }
           ]
@@ -1209,7 +1209,7 @@
               "pain": "",
               "opportunity": "",
               "evidence": "",
-              "frontstage": "Toast: 'Sell confirmed on Solana DevNet' with an Explorer transaction link.",
+              "frontstage": "Toast: 'Redeem confirmed on Solana DevNet' with an Explorer transaction link.",
               "backstage": "redeem_reserve_tokens_in_kind burns the redeemed Reserve Tokens and releases each underlying asset proportionally from the vaults; any configured redemption fee is left in the vaults, permanently increasing per-share backing for remaining holders rather than being paid out separately.",
               "support": "Solana DevNet program; Solana Explorer."
             },
@@ -1219,10 +1219,10 @@
               "doing": "Instead, the transaction fails because the DevNet swap-authority wallet has run too low on its own real SOL to complete its side of the payout.",
               "thinking": "[Assumption] My tokens are fine, but I can't actually get my SOL out right now? That's alarming.",
               "feeling": 1,
-              "pain": "[Assumption] The swap-authority's own SOL balance is a real, monitored operational dependency for every Sell (it pays real SOL out of its own balance) -- it is not obvious to an end user that Sell's availability depends on a server-side wallet's balance rather than only their own.",
-              "opportunity": "[Assumption] If the swap-authority balance is low, disable Sell proactively (or show a maintenance banner) rather than letting the user's signed transaction fail.",
+              "pain": "[Assumption] The swap-authority's own SOL balance is a real, monitored operational dependency for every Redeem (it pays real SOL out of its own balance) -- it is not obvious to an end user that Redeem's availability depends on a server-side wallet's balance rather than only their own.",
+              "opportunity": "[Assumption] If the swap-authority balance is low, disable Redeem proactively (or show a maintenance banner) rather than letting the user's signed transaction fail.",
               "evidence": "",
-              "frontstage": "Generic 'Sell Failed' toast: 'The DevNet swap failed.'",
+              "frontstage": "Generic 'Redeem Failed' toast: 'The DevNet swap failed.'",
               "backstage": "The atomic transaction fails simulation or execution because the swap-authority's SystemProgram.transfer leg would exceed its own lamport balance; nothing is redeemed, nothing is charged -- the whole transaction reverts.",
               "support": "Swap-authority keypair's own DevNet SOL balance (a monitored, periodically-topped-up operational dependency, per docs/project/PROJECT_STATUS.md Risks)."
             },
@@ -1241,14 +1241,14 @@
             },
             {
               "id": "sell-while-paused",
-              "title": "Sells from a paused Reserve",
-              "doing": "Sells from a Reserve that its Manager has paused.",
+              "title": "Redeems from a paused Reserve",
+              "doing": "Redeems from a Reserve that its Manager has paused.",
               "thinking": "[Assumption] I expected everything to be blocked while paused, so this working is a pleasant surprise.",
               "feeling": 4,
               "pain": "",
-              "opportunity": "[Assumption] Explain this on the Sell tab itself when a Reserve is paused, since the asymmetry (Sell works, Buy doesn't) is a deliberate but non-obvious protocol design choice.",
+              "opportunity": "[Assumption] Explain this on the Redeem tab itself when a Reserve is paused, since the asymmetry (Redeem works, Mint doesn't) is a deliberate but non-obvious protocol design choice.",
               "evidence": "",
-              "frontstage": "Sell completes normally even though the Reserve shows a Paused status elsewhere.",
+              "frontstage": "Redeem completes normally even though the Reserve shows a Paused status elsewhere.",
               "backstage": "By design (see programs/ssr_protocol/src/state/reserve.rs, DEC-0016): pausing blocks mint/target-update/rebalance actions but deliberately leaves redemption available, so holders are never locked out of their own exit.",
               "support": "Solana DevNet program's pause-state checks."
             }
@@ -1262,7 +1262,7 @@
       "actor": "token-holder",
       "category": "monitoring",
       "scenario": "A user who already holds one or more Reserve Tokens wants to check their overall position and a specific Reserve's recent activity.",
-      "goal": "See an accurate, current view of everything they hold and how a given Reserve has been trading, across both real and simulated Reserves.",
+      "goal": "See an accurate, current view of everything they hold and how a given Reserve has been performing, across both real and simulated Reserves.",
       "stages": [
         {
           "title": "Portfolio overview",
@@ -1284,13 +1284,13 @@
               "id": "portfolio-view-holdings",
               "title": "Reviews Reserve Holdings",
               "doing": "Connects and reviews 'Reserve Holdings' -- balances, value, and allocation across every Reserve they hold, real and simulated alike.",
-              "thinking": "[Assumption] This matches what I just bought.",
+              "thinking": "[Assumption] This matches what I just minted.",
               "feeling": 4,
               "pain": "[Assumption] Nothing on this page visually distinguishes a real, on-chain holding from a fully simulated one -- a user could reasonably assume a simulated position also has DevNet-verifiable backing.",
               "opportunity": "[Assumption] A small 'On-chain (DevNet)' vs 'Simulated' tag per holding row would make the distinction explicit.",
               "evidence": "",
               "frontstage": "Portfolio page 'Reserve Holdings' section (Portfolio.tsx).",
-              "backstage": "Reads the same unified store 'dtrs'/holdings state that RealReserveSync keeps current for chain-backed Reserves every 15 seconds; simulated Reserves' holdings only change via the mocked buy/sell store actions.",
+              "backstage": "Reads the same unified store 'dtrs'/holdings state that RealReserveSync keeps current for chain-backed Reserves every 15 seconds; simulated Reserves' holdings only change via the mocked mint/redeem store actions.",
               "support": "Solana DevNet RPC (for chain-backed holdings only)."
             }
           ]
@@ -1301,27 +1301,27 @@
             {
               "id": "portfolio-recent-activity",
               "title": "Checks Recent Activity",
-              "doing": "Scrolls to 'Recent Activity' to see their own recent trades across all their Reserves.",
+              "doing": "Scrolls to 'Recent Activity' to see their own recent mints and redemptions across all their Reserves.",
               "thinking": "",
               "feeling": 3,
               "pain": "",
               "opportunity": "",
               "evidence": "",
               "frontstage": "'Recent Activity' section (Portfolio.tsx).",
-              "backstage": "Client-side trade history recorded at the moment of each buy/sell store action, real or simulated.",
+              "backstage": "Client-side activity history recorded at the moment of each mint/redeem store action, real or simulated.",
               "support": "None beyond the local store."
             },
             {
               "id": "portfolio-reserve-trades-empty",
-              "title": "Views a brand-new Reserve's empty trade table",
-              "doing": "Opens a brand-new Reserve's detail page and checks its own trade activity table before anyone has traded it.",
+              "title": "Views a brand-new Reserve's empty activity table",
+              "doing": "Opens a brand-new Reserve's detail page and checks its own mint/redeem activity table before anyone has minted or redeemed.",
               "thinking": "[Assumption] Is it broken, or just genuinely empty?",
               "feeling": 2,
-              "pain": "[Assumption] An empty trades table with no explanatory copy can read as a loading failure rather than 'nobody has traded this yet.'",
-              "opportunity": "[Assumption] Ensure the existing empty-state copy ('Buy or sell to see activity appear here immediately') always renders instead of a bare empty table.",
+              "pain": "[Assumption] An empty activity table with no explanatory copy can read as a loading failure rather than 'nobody has minted this yet.'",
+              "opportunity": "[Assumption] Ensure the existing empty-state copy ('Mint or redeem to see activity appear here immediately') always renders instead of a bare empty table.",
               "evidence": "",
-              "frontstage": "DTRDetail.tsx's Recent Trades table with empty-state copy: 'Buy or sell [TICKER] to see activity appear here immediately.'",
-              "backstage": "Trade list is empty because no mint/redeem has happened yet against this specific Reserve.",
+              "frontstage": "DTRDetail.tsx's Recent Trades (mint/redeem activity) table with empty-state copy: 'Mint or redeem [TICKER] to see activity appear here immediately.'",
+              "backstage": "Activity list is empty because no mint/redeem has happened yet against this specific Reserve.",
               "support": "None."
             }
           ]
@@ -1498,14 +1498,14 @@
             },
             {
               "id": "pause-mint-blocked",
-              "title": "Buy is blocked while paused",
-              "doing": "A token-holder tries to Buy into the now-paused Reserve.",
+              "title": "Mint is blocked while paused",
+              "doing": "A token-holder tries to Mint from the now-paused Reserve.",
               "thinking": "",
               "feeling": 1,
-              "pain": "[Assumption] api/devnet/swap-sign.ts currently blocks BOTH Buy and Sell on a Paused Reserve ('Reserve is not Active ... Buy/Sell unavailable'), one step stricter than the protocol's own mint-only pause design -- a real, verifiable gap between the on-chain design (Sell should remain available while Paused) and the DevNet swap adapter's current blanket status check.",
+              "pain": "[Assumption] api/devnet/swap-sign.ts currently blocks BOTH Mint and Redeem on a Paused Reserve ('Reserve is not Active ... Buy/Sell unavailable', the endpoint's error text at the time), one step stricter than the protocol's own mint-only pause design -- a real, verifiable gap between the on-chain design (Redeem should remain available while Paused) and the DevNet swap adapter's current blanket status check.",
               "opportunity": "[Assumption] Update swap-sign.ts to only block the mint leg while Paused, matching mint_reserve_tokens_in_kind's own on-chain guard exactly.",
               "evidence": "",
-              "frontstage": "Buy fails with the swap-sign endpoint's status error.",
+              "frontstage": "Mint fails with the swap-sign endpoint's status error.",
               "backstage": "mint_reserve_tokens_in_kind.rs's own guard: require!(reserve.status != Paused, ReservePaused).",
               "support": "Solana DevNet program; api/devnet/swap-sign.ts."
             }
@@ -1529,8 +1529,8 @@
             },
             {
               "id": "unpause-confirmed",
-              "title": "Confirms Buy works again",
-              "doing": "Refreshes the Reserve detail page and confirms Buy is available again.",
+              "title": "Confirms Mint works again",
+              "doing": "Refreshes the Reserve detail page and confirms Mint is available again.",
               "thinking": "[Assumption] Back to normal, and nothing about holder redemptions was ever actually at risk.",
               "feeling": 5,
               "pain": "",
@@ -1622,7 +1622,7 @@
       "actor": "devnet-operator",
       "category": "devnet-engineering",
       "scenario": "Before trusting a change to the protocol or the frontend's integration with it, the team needs real evidence -- not just a passing unit test -- that a full Reserve lifecycle actually works against the live, deployed DevNet program.",
-      "goal": "Prove, with real signatures and on-chain state changes, that create -> seed -> Buy -> Sell -> refresh all work correctly for a Reserve nobody has hand-registered anywhere.",
+      "goal": "Prove, with real signatures and on-chain state changes, that create -> seed -> Mint -> Redeem -> refresh all work correctly for a Reserve nobody has hand-registered anywhere.",
       "stages": [
         {
           "title": "Stand up fixtures",
@@ -1673,8 +1673,8 @@
             },
             {
               "id": "devnet-e2e-buy-sell",
-              "title": "Buys, sells, and re-verifies",
-              "doing": "The same script Buys, then Sells half the resulting balance, then re-fetches the Reserve to simulate a page refresh.",
+              "title": "Mints, redeems, and re-verifies",
+              "doing": "The same script Mints, then Redeems half the resulting balance, then re-fetches the Reserve to simulate a page refresh.",
               "thinking": "[Assumption] Vault balances, supply, and the holder's own balances all moved exactly as computed -- this is real evidence, not a mocked assertion.",
               "feeling": 5,
               "pain": "",

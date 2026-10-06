@@ -19,7 +19,7 @@ separated by the three canonical NN/g divider lines (line of interaction,
 line of visibility, line of internal interaction).
 
 It covers discovery/browsing, wallet connection, real on-chain Reserve
-creation (success and failure paths), minting (Buy) and redeeming (Sell)
+creation (success and failure paths), minting and redeeming
 Reserve Tokens (success, insufficient-balance, RPC/infrastructure-failure,
 and paused-Reserve paths), Portfolio/Reserve monitoring, co-manager
 management and permission scoping, pausing/unpausing, protocol/manager fee

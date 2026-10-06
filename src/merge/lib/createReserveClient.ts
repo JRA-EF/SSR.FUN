@@ -1341,7 +1341,7 @@ async function fundSeedAssetsIdempotent(
       const usdcRequiredWithBufferRaw = (scaledDeficitUsdcRaw * 102n) / 100n;
       if (usdcHeldRaw < usdcRequiredWithBufferRaw) {
         throw new Error(
-          `This wallet holds ${(Number(usdcHeldRaw) / 1e6).toFixed(2)} USDC, but the next funding swap (${asset.mint}) needs ~${(Number(usdcRequiredWithBufferRaw) / 1e6).toFixed(2)} USDC -- and later assets in this launch still need funding after it. Send this wallet more USDC, then resume: everything already funded is verified and will never be re-bought.`,
+          `This wallet holds ${(Number(usdcHeldRaw) / 1e6).toFixed(2)} USDC, but the next funding swap (${asset.mint}) needs ~${(Number(usdcRequiredWithBufferRaw) / 1e6).toFixed(2)} USDC -- and later assets in this launch still need funding after it. Send this wallet more USDC, then resume: everything already funded is verified and will never be swapped for again.`,
         );
       }
 

@@ -90,7 +90,7 @@ export function Terms() {
         minting; an ongoing fee on a Reserve's total value accrues by issuing new Reserve Tokens, which dilutes all
         holders proportionally; a redemption fee retains a portion of backing in the Reserve for remaining holders. A
         portion of fees accrues to the protocol. Solana network fees, and the costs of any asset swaps involved in a
-        purchase or sale, are yours.
+        mint or redemption, are yours.
       </p>
 
       <h2>11. Third-party services</h2>

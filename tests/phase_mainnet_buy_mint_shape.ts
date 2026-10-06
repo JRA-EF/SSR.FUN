@@ -523,7 +523,7 @@ describe("Honest post-failure state report (buildBuyStateReport) -- from freshly
     expect(report.reserveTokenMinted).to.equal(false);
     expect(report.failedStage).to.include("swapping your USDC");
     expect(report.retrySummary).to.include("SSR");
-    expect(report.retrySummary).to.include("never repurchased");
+    expect(report.retrySummary).to.include("never swapped for again");
   });
 });
 

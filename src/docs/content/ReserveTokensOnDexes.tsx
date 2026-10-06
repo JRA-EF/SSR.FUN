@@ -91,7 +91,7 @@ function HowItWorks() {
         rows={[
           [
             'On SSR.fun',
-            "Buying mints new Reserve Tokens against a deposit, and selling redeems them for a share of the reserve assets. Both happen at the Reserve's current value per token, minus the Reserve's fees.",
+            "Minting creates new Reserve Tokens against a deposit, and redeeming burns them for a share of the reserve assets. Both happen at the Reserve's current value per token, minus the Reserve's fees.",
           ],
           [
             'On an exchange',
@@ -205,7 +205,7 @@ function Lookup() {
           ['description', "The Manager's description of the Reserve."],
           ['category', 'A free-text category chosen by the Manager.'],
           ['imageUrl', 'Optional. A permanent HTTPS link to the Reserve picture.'],
-          ['buyTaxPct, sellTaxPct', 'Informational copies of the mint and redemption fee percentages. They apply on SSR.fun, not to exchange trades.'],
+          ['buyTaxPct, sellTaxPct', "The Manager's Buy Tax and Sell Tax rates for secondary-market trades of the Reserve Token. They are currently on hold and not charged anywhere, and never apply to minting or redeeming on SSR.fun."],
         ]}
       />
       <p>

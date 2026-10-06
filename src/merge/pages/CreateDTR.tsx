@@ -1363,11 +1363,11 @@ export function CreateDTR({
             protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
             assets: result.assets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
           });
-          toast({ title: "One-approval trading enabled", description: "Buys and Sells of this Reserve complete in a single wallet approval for every trader." });
+          toast({ title: "One-approval mint and redeem enabled", description: "Mints and redemptions of this Reserve complete in a single wallet approval for everyone." });
         } catch {
           toast({
-            title: "One-approval trading not enabled yet",
-            description: "Your Reserve is fully deployed. This optional setup was skipped -- it can be enabled any time from the Manage page, and the first trade that needs it will offer it again.",
+            title: "One-approval mint and redeem not enabled yet",
+            description: "Your Reserve is fully deployed. This optional setup was skipped -- it can be enabled any time from the Manage page, and the first mint or redemption that needs it will offer it again.",
           });
         }
       }
@@ -2061,7 +2061,7 @@ export function CreateDTR({
                       onValueChange={(v) => setManagerBuyTaxPct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Charged in USDC on every Buy made through SSR.fun, on top of the purchase, and split 50/50 between you and the protocol. Default is 0%.
+                      For future secondary-market Buys of your Reserve Token, split 50/50 between you and the protocol. Currently on hold: nothing is charged. Never applies to minting. Default is 0%.
                     </p>
                   </div>
 
@@ -2077,12 +2077,12 @@ export function CreateDTR({
                       onValueChange={(v) => setManagerSellTaxPct(v[0])}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Taken in USDC out of the proceeds of every Sell made through SSR.fun, and split 50/50 between you and the protocol. Default is 0%.
+                      For future secondary-market Sells of your Reserve Token, split 50/50 between you and the protocol. Currently on hold: nothing is charged. Never applies to redeeming. Default is 0%.
                     </p>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground italic">
-                  Buy Tax and Sell Tax apply to trades made through SSR.fun's own Buy and Sell (the tax is added to those transactions). They are not applied to plain wallet transfers or to trades on other venues.
+                  Buy Tax and Sell Tax are for secondary-market trades between holders, which SSR.fun does not offer yet. Your rates are saved with the Reserve, but nothing is charged while the taxes are on hold. Minting and redeeming pay only the mint fee and the redemption fee.
                 </p>
               </div>
 
@@ -2431,7 +2431,7 @@ export function CreateDTR({
                                   {isSol ? (
                                     <span className="text-muted-foreground"> ({(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL from your wallet)</span>
                                   ) : (
-                                    <span className="text-muted-foreground"> ({isUsdc ? "your USDC, deposited directly" : "bought with your USDC"})</span>
+                                    <span className="text-muted-foreground"> ({isUsdc ? "your USDC, deposited directly" : "swapped from your USDC"})</span>
                                   )}
                                 </span>
                               </div>
@@ -2447,7 +2447,7 @@ export function CreateDTR({
                                 Everything above except SOL is paid for with your USDC -- your wallet should hold about {fmtUsd(usdcToHoldUsd)} USDC.
                               </span>
                               <InfoTip label="More information about the USDC needed">
-                                Funds this Reserve's USDC holding directly and buys each other non-SOL asset for you via a real Jupiter swap. The extra {(DEFAULT_FEE_BUFFER_FRACTION * 100).toFixed(0)}% over the {fmtUsd(usdcCapitalUsd)} of assets covers swap fees and price movement, and whatever the swaps don't use stays in your wallet. This is checked before anything is created.
+                                Funds this Reserve's USDC holding directly and swaps your USDC into each other non-SOL asset for you through Jupiter. The extra {(DEFAULT_FEE_BUFFER_FRACTION * 100).toFixed(0)}% over the {fmtUsd(usdcCapitalUsd)} of assets covers swap fees and price movement, and whatever the swaps don't use stays in your wallet. This is checked before anything is created.
                               </InfoTip>
                             </p>
                           )}
@@ -2566,7 +2566,7 @@ export function CreateDTR({
                         if (IS_MAINNET) {
                           lines.push(
                             <p key="alt">
-                              {step}. Enable one-approval trading (optional one-time setup, ~0.002 SOL -- future buys and sells of this Reserve then need a single wallet approval; skipping it changes nothing else)
+                              {step}. Enable one-approval mint and redeem (optional one-time setup, ~0.002 SOL -- future mints and redemptions of this Reserve then need a single wallet approval; skipping it changes nothing else)
                             </p>,
                           );
                         }

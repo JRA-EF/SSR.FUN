@@ -18,7 +18,7 @@ Set `SSR_FEE_SETTLEMENT_KEEPER_SECRET` (base58 string or a JSON array of the key
 
 ## 3. Dry run
 
-`GET /api/mainnet/fee-settlement-cron?dryRun=true` -- no `CRON_SECRET` required, submits nothing. Reports every Reserve with a nonzero fee-vault balance or pending-settlement amount. Confirm the numbers look sane (a Reserve you know has had real Buy/mint activity should show a nonzero `feeSettlement.protocolSharesInVault`/`managerSharesInVault`) before proceeding.
+`GET /api/mainnet/fee-settlement-cron?dryRun=true` -- no `CRON_SECRET` required, submits nothing. Reports every Reserve with a nonzero fee-vault balance or pending-settlement amount. Confirm the numbers look sane (a Reserve you know has had real mint activity should show a nonzero `feeSettlement.protocolSharesInVault`/`managerSharesInVault`) before proceeding.
 
 ## 4. First real run -- ONE Reserve, manually verified
 

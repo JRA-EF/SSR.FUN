@@ -1290,11 +1290,11 @@ export function DTRDetail() {
         recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
         await refreshRealReserveNow();
         setBuyAmount("");
-        toast(transactionConfirmedToast(signature, "Buy confirmed"));
+        toast(transactionConfirmedToast(signature, "Mint confirmed"));
       } else {
         toast({
           title: "Still verifying",
-          description: `Your ${buyAsset.symbol} balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Buy.`,
+          description: `Your ${buyAsset.symbol} balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another mint.`,
         });
       }
     } catch {
@@ -1330,8 +1330,8 @@ export function DTRDetail() {
     if (!isSettlementBuySupported) {
       toast({
         variant: "destructive",
-        title: "Buy not available",
-        description: "This Reserve holds an asset outside the supported DevNet economy (devUSDC/mockX/mockY/mockZ), so Buy is unavailable for it.",
+        title: "Minting not available",
+        description: "This Reserve holds an asset outside the supported DevNet economy (devUSDC/mockX/mockY/mockZ), so minting is unavailable for it.",
       });
       return;
     }
@@ -1373,7 +1373,7 @@ export function DTRDetail() {
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
       await refreshRealReserveNow();
       setBuyAmount("");
-      toast(transactionConfirmedToast(signature, "Buy confirmed"));
+      toast(transactionConfirmedToast(signature, "Mint confirmed"));
     } catch (e) {
       if (e instanceof AmbiguousConfirmationError) {
         setBuyPhase("unresolved");
@@ -1394,7 +1394,7 @@ export function DTRDetail() {
         } else if (e instanceof ZapBuildError && e.code === "swap_authority_low_sol") {
           toast({ variant: "destructive", title: "Swap adapter temporarily low on SOL", description: e.message });
         } else if (e instanceof ZapBuildError && e.code === "conversion_unsupported") {
-          toast({ variant: "destructive", title: "Buy not available", description: e.message });
+          toast({ variant: "destructive", title: "Minting not available", description: e.message });
         } else {
           const raw = e instanceof Error ? e.message : "The DevNet swap failed.";
           // Full technical detail (server-side status text, decoded on-chain
@@ -1402,7 +1402,7 @@ export function DTRDetail() {
           // shows only the plain-language required copy, never a raw
           // instruction name or internal phase.
           console.error("Buy failed:", describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()));
-          toast({ variant: "destructive", title: "Buy Failed", description: "Your purchase could not be completed. No funds were moved." });
+          toast({ variant: "destructive", title: "Mint Failed", description: "Your mint could not be completed. No funds were moved." });
         }
       }
     } finally {
@@ -1473,7 +1473,7 @@ export function DTRDetail() {
       recordConfirmedTrade(dtr.id, "buy", spentUsdc / (dtr.nav || 1), spentUsdc);
       await refreshRealReserveNow();
       setBuyAmount("");
-      toast(transactionConfirmedToast(signature, "Buy confirmed"));
+      toast(transactionConfirmedToast(signature, "Mint confirmed"));
     } catch (e) {
       if (e instanceof AmbiguousConfirmationError) {
         setBuyPhase("unresolved");
@@ -1482,7 +1482,7 @@ export function DTRDetail() {
         await reconcileBuy(e.signature);
       } else {
         setBuyPhase("failed");
-        const raw = e instanceof Error ? e.message : "The purchase failed.";
+        const raw = e instanceof Error ? e.message : "The mint failed.";
         console.error("Buy failed:", raw);
         // onBuyClick only ever routes here for a genuinely single-asset
         // Reserve (see isMultiAssetMainnetReserve/handleBuyMultiAssetMainnet
@@ -1493,10 +1493,10 @@ export function DTRDetail() {
         const isSingleAssetGap = raw.includes("no supported way to buy into or sell from a multi-asset Reserve");
         toast({
           variant: "destructive",
-          title: "Buy Failed",
+          title: "Mint Failed",
           description: isSingleAssetGap
-            ? "This Reserve holds more than one asset and needs the multi-asset Buy path -- please reload the page and try again."
-            : `Your purchase could not be completed: ${raw} No funds were moved.`,
+            ? "This Reserve holds more than one asset and needs the multi-asset mint path -- please reload the page and try again."
+            : `Your mint could not be completed: ${raw} No funds were moved.`,
         });
       }
     } finally {
@@ -1568,13 +1568,13 @@ export function DTRDetail() {
         assetPricesUsd: dtr.onChain.assetPricesUsd ?? {},
         onProgress: (e) => {
           if (e.phase === "building") {
-            setMultiAssetBuyStep("Building every transaction of your purchase (one request)...");
+            setMultiAssetBuyStep("Building every transaction of your mint (one request)...");
             setBuyPhase("preparing");
           } else if (e.phase === "single-transaction") {
             setMultiAssetBuyStep("One transaction: your USDC is swapped, deposited, and your Reserve Tokens minted -- a single wallet approval.");
             setBuyPhase("preparing");
           } else if (e.phase === "enabling-one-approval-trading") {
-            setMultiAssetBuyStep("One-time setup: enabling one-approval trading for this Reserve (a small separate approval), then your purchase completes in a single transaction.");
+            setMultiAssetBuyStep("One-time setup: enabling one-approval minting for this Reserve (a small separate approval), then your mint completes in a single transaction.");
             setBuyPhase("awaiting-wallet");
           } else if (e.phase === "signing-batch") {
             // The wallet is about to preview each transaction on its own
@@ -1610,8 +1610,8 @@ export function DTRDetail() {
       setBuyAmount("");
       toast(
         alreadyMinted
-          ? { title: "Purchase already completed", description: "A previous attempt's mint had already landed on-chain -- your Reserve Tokens were already in your wallet, and nothing was purchased or minted twice." }
-          : transactionConfirmedToast(signature, "Buy confirmed"),
+          ? { title: "Mint already completed", description: "A previous attempt's mint had already landed on-chain -- your Reserve Tokens were already in your wallet, and nothing was minted twice." }
+          : transactionConfirmedToast(signature, "Mint confirmed"),
       );
     } catch (e) {
       setMultiAssetBuyStep(null);
@@ -1622,7 +1622,7 @@ export function DTRDetail() {
         await reconcileBuy(e.signature);
       } else {
         setBuyPhase("failed");
-        const raw = e instanceof Error ? e.message : "The purchase failed.";
+        const raw = e instanceof Error ? e.message : "The mint failed.";
         console.error("Multi-asset Buy failed:", raw);
         // The on-chain-verified state report (multiAssetBuyPlan.ts's
         // buildBuyStateReport) -- what succeeded, what is held, whether
@@ -1633,11 +1633,11 @@ export function DTRDetail() {
         // instead of guessing.
         const report = e instanceof MultiAssetBuyError ? e.report : null;
         const reportLines = report
-          ? `This purchase stopped at: ${report.failedStage}. Verified on-chain after the failure: ${report.legs.map((l) => `${l.mint.slice(0, 4)}...${l.mint.slice(-4)} -- this purchase acquired ${l.purchaseAcquiredRaw} of the ${l.requiredRaw} raw needed${l.fundedEnough ? " (fully funded)" : ""}`).join("; ")}. Reserve Tokens minted: ${report.reserveTokenMinted ? "YES -- already in your wallet" : "no"}. ${report.retrySummary}`
+          ? `This mint stopped at: ${report.failedStage}. Verified on-chain after the failure: ${report.legs.map((l) => `${l.mint.slice(0, 4)}...${l.mint.slice(-4)} -- this mint acquired ${l.purchaseAcquiredRaw} of the ${l.requiredRaw} raw needed${l.fundedEnough ? " (fully funded)" : ""}`).join("; ")}. Reserve Tokens minted: ${report.reserveTokenMinted ? "YES -- already in your wallet" : "no"}. ${report.retrySummary}`
           : "The post-failure on-chain state check itself could not complete -- verify your balances on Explorer before retrying.";
         toast({
           variant: "destructive",
-          title: "Buy Failed",
+          title: "Mint Failed",
           description: `${raw} ${reportLines}`,
         });
       }
@@ -1685,11 +1685,11 @@ export function DTRDetail() {
         await refreshRealReserveNow();
         recordConfirmedTrade(dtr.id, "sell", redeemedTokens, redeemedTokens * (dtr.nav || 1));
         setSellAmount("");
-        toast(transactionConfirmedToast(signature, "Sell confirmed"));
+        toast(transactionConfirmedToast(signature, "Redeem confirmed"));
       } else {
         toast({
           title: "Still verifying",
-          description: "Your Reserve Token balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another Sell.",
+          description: "Your Reserve Token balance hasn't changed yet -- the transaction may still be confirming, or may not have landed. Check the signature link before submitting another redemption.",
         });
       }
     } catch {
@@ -1733,7 +1733,7 @@ export function DTRDetail() {
       await refreshRealReserveNow();
       recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
       setSellAmount("");
-      toast(transactionConfirmedToast(signature, "Sell confirmed"));
+      toast(transactionConfirmedToast(signature, "Redeem confirmed"));
     } catch (e) {
       if (e instanceof AmbiguousConfirmationError) {
         setSellPhase("unresolved");
@@ -1754,7 +1754,7 @@ export function DTRDetail() {
           // Same reasoning as handleBuy's fallback above: full detail to the
           // console, only the required plain-language copy in the toast.
           console.error("Sell failed:", describeUnknownSignerMessage(raw, knownAccountsForErrorMessages()));
-          toast({ variant: "destructive", title: "Sell Failed", description: "Your redemption could not be completed. No funds were moved." });
+          toast({ variant: "destructive", title: "Redeem Failed", description: "Your redemption could not be completed. No funds were moved." });
         }
       }
     } finally {
@@ -1832,7 +1832,7 @@ export function DTRDetail() {
         await refreshRealReserveNow();
         recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
         setSellAmount("");
-        toast(transactionConfirmedToast(signature, "Sell confirmed"));
+        toast(transactionConfirmedToast(signature, "Redeem confirmed"));
       } else {
         const result = await executeMultiAssetSellMainnet({
           connection,
@@ -1846,13 +1846,13 @@ export function DTRDetail() {
           reserveTokensToRedeem,
           onProgress: (e) => {
             if (e.phase === "building") {
-              setMultiAssetSellStep("Building every transaction of your sale (one request)...");
+              setMultiAssetSellStep("Building every transaction of your redemption (one request)...");
               setSellPhase("preparing");
             } else if (e.phase === "confirming") {
               setMultiAssetSellStep(`Confirming ${e.what} on Solana Mainnet (${e.signature.slice(0, 8)}...)...`);
               setSellPhase("confirming");
             } else if (e.phase === "single-transaction") {
-              setMultiAssetSellStep("One transaction: your Reserve Tokens are redeemed and every asset sold into USDC -- a single wallet approval.");
+              setMultiAssetSellStep("One transaction: your Reserve Tokens are redeemed and every asset swapped into USDC -- a single wallet approval.");
               setSellPhase("preparing");
             } else if (e.phase === "signing-batch") {
               setMultiAssetSellStep(describeBatchSellWalletPrompt({ swaps: e.swaps, total: e.total, setup: e.setup, ticker: dtr.ticker }));
@@ -1861,7 +1861,7 @@ export function DTRDetail() {
               setMultiAssetSellStep("Redeeming your Reserve Tokens for the Reserve's assets...");
               setSellPhase("preparing");
             } else if (e.phase === "swapping") {
-              setMultiAssetSellStep(`Selling Reserve asset ${e.index + 1} of ${e.total} into USDC...`);
+              setMultiAssetSellStep(`Swapping Reserve asset ${e.index + 1} of ${e.total} into USDC...`);
               setSellPhase("awaiting-wallet");
             } else if (e.phase === "paying-tax") {
               setMultiAssetSellStep("Paying the Manager's Sell tax out of your USDC proceeds (last step)...");
@@ -1878,7 +1878,7 @@ export function DTRDetail() {
         recordConfirmedTrade(dtr.id, "sell", numSellAmount, usdcReceived);
         setSellAmount("");
         toast({
-          title: "Sell confirmed",
+          title: "Redeem confirmed",
           description: `You received ${usdcReceived.toFixed(2)} USDC (verified from your wallet's real balance). Signature: ${result.signature}`,
         });
       }
@@ -1899,9 +1899,9 @@ export function DTRDetail() {
         const isSingleAssetGap = raw.includes("no supported way to buy into or sell from a multi-asset Reserve");
         toast({
           variant: "destructive",
-          title: "Sell Failed",
+          title: "Redeem Failed",
           description: isSingleAssetGap
-            ? "This Reserve holds more than one asset -- there is no supported way to sell/redeem from a multi-asset Reserve on Mainnet yet. No funds were moved."
+            ? "This Reserve holds more than one asset -- there is no supported way to redeem from a multi-asset Reserve on Mainnet yet. No funds were moved."
             : `Your redemption could not be completed: ${raw} No funds were moved.`,
         });
       }
@@ -2097,7 +2097,7 @@ export function DTRDetail() {
             <Card className="relative z-10 bg-card border-card-border hover:shadow-md transition-shadow duration-300">
               <CardHeader className="flex flex-col gap-3 pb-2 max-sm:p-4 max-sm:gap-2 max-sm:pb-1">
                 {/* Reserve identity lives in the chart card (top-left) now that
-                    the chart leads the page, in line with the Buy/Sell panel. */}
+                    the chart leads the page, in line with the Mint/Redeem panel. */}
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5">
                   <div className="flex flex-col gap-1 min-w-0">
                     <div className="flex items-center gap-2.5">
@@ -2230,7 +2230,7 @@ export function DTRDetail() {
                   <>
                     {designDemo ? (
                       <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
-                        Design preview — synthetic data, not recorded trades.
+                        Design preview — synthetic data, not recorded transactions.
                       </p>
                     ) : lineSeries.isFallback ? (
                       <p className="absolute top-1 sm:top-2 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/70 z-10">
@@ -2405,7 +2405,7 @@ export function DTRDetail() {
                 <div className="md:pr-6">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
                     Market Cap
-                    <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price. Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every Buy/Sell executes at NAV.</InfoTip>
+                    <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price. Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every mint and redemption executes at NAV.</InfoTip>
                   </div>
                   <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-lg'}`}>{formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true })}</p>
                 </div>
@@ -2421,7 +2421,7 @@ export function DTRDetail() {
                 <div className="md:px-6">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
                     All-Time Volume
-                    <InfoTip label="More information about All-Time Volume">Sum of every confirmed Buy and Sell for this Reserve since it launched{IS_MAINNET ? ", valued in USD at the time each trade was recorded." : ", valued at fixed DevNet test prices."}</InfoTip>
+                    <InfoTip label="More information about All-Time Volume">Sum of every confirmed mint and redemption for this Reserve since it launched{IS_MAINNET ? ", valued in USD at the time each transaction was recorded." : ", valued at fixed DevNet test prices."}</InfoTip>
                   </div>
                   <p className="text-lg font-merge-mono font-semibold">
                     {isOnChain ? (
@@ -2528,7 +2528,7 @@ export function DTRDetail() {
           )}
           {isWindingDown && (
             <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn, #d9a13c)" }}>
-              New purchases are disabled. Existing holders can continue to redeem their Reserve Tokens -- your full proportional share,
+              New mints are disabled. Existing holders can continue to redeem their Reserve Tokens -- your full proportional share,
               at any time before this Reserve closes; there is no deadline forced by this UI.
             </div>
           )}
@@ -2798,10 +2798,10 @@ export function DTRDetail() {
               <Tabs value={isWindingDown ? "sell" : tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
                 <CardHeader className="pb-4">
                   <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="buy" disabled={isWindingDown} className="buy-tab font-bold data-[state=active]:text-primary disabled:opacity-40 disabled:cursor-not-allowed" title={isWindingDown ? "This Reserve is winding down -- new Buys are disabled." : undefined}>
-                      Buy
+                    <TabsTrigger value="buy" disabled={isWindingDown} className="buy-tab font-bold data-[state=active]:text-primary disabled:opacity-40 disabled:cursor-not-allowed" title={isWindingDown ? "This Reserve is winding down -- new mints are disabled." : undefined}>
+                      Mint
                     </TabsTrigger>
-                    <TabsTrigger value="sell" className="font-bold data-[state=active]:text-destructive">Sell</TabsTrigger>
+                    <TabsTrigger value="sell" className="font-bold data-[state=active]:text-destructive">Redeem</TabsTrigger>
                   </TabsList>
                 </CardHeader>
                 
@@ -2875,7 +2875,7 @@ export function DTRDetail() {
                             <InfoTip label="More information about the deposit asset">
                               {IS_MAINNET
                                 ? isUsdcFundedBuyMainnetReserve
-                                  ? `Your USDC input funds this Reserve's ${dtr.onChain?.assets.length === 1 ? "underlying asset" : `${dtr.onChain?.assets.length ?? "several"} underlying assets`} for you (via a real Jupiter swap for any part that isn't already USDC or SOL you hold), then mints your Reserve Tokens in one final step. ${dtr.onChain?.assets.length === 1 ? "Two wallet approvals are expected -- one for the swap, one for the mint." : "Several wallet approvals are expected."} You never need to buy the underlying asset${dtr.onChain?.assets.length === 1 ? "" : "s"} yourself.`
+                                  ? `Your USDC input funds this Reserve's ${dtr.onChain?.assets.length === 1 ? "underlying asset" : `${dtr.onChain?.assets.length ?? "several"} underlying assets`} for you (via a real Jupiter swap for any part that isn't already USDC or SOL you hold), then mints your Reserve Tokens in one final step. ${dtr.onChain?.assets.length === 1 ? "Two wallet approvals are expected -- one for the swap, one for the mint." : "Several wallet approvals are expected."} You never need to acquire the underlying asset${dtr.onChain?.assets.length === 1 ? "" : "s"} yourself.`
                                   : "USDC is this Reserve's sole asset -- your entire input is deposited directly into its vault. No conversion or swap is involved."
                                 : `devUSDC ("SSR Test USD") is the DevNet settlement asset -- 1 devUSDC = $1 by design, no price feed involved.${
                                     isPureSettlementReserve
@@ -2890,20 +2890,6 @@ export function DTRDetail() {
                           <span className="text-muted-foreground">Mint Fee</span>
                           <span className="font-merge-mono">{dtr.feeConfig.mintFeePct.toFixed(2)}%</span>
                         </div>
-                        {IS_MAINNET && dtr.feeConfig.managerBuyTaxPct > 0 && (
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground flex items-center gap-1">
-                              Buy Tax
-                              <InfoTip label="More information about the Buy tax">
-                                Set by this Reserve's Manager ({dtr.feeConfig.managerBuyTaxPct.toFixed(2)}%). Charged in {SETTLEMENT_SYMBOL} on top of your purchase, in the
-                                same transaction as the mint, and split 50/50 between the Manager and the SSR.fun protocol. Applies to Buys made through SSR.fun.
-                              </InfoTip>
-                            </span>
-                            <span className="font-merge-mono text-destructive">
-                              {dtr.feeConfig.managerBuyTaxPct.toFixed(2)}%{numBuyAmount > 0 ? ` (~${((numBuyAmount * dtr.feeConfig.managerBuyTaxPct) / 100).toFixed(2)} ${SETTLEMENT_SYMBOL})` : ""}
-                            </span>
-                          </div>
-                        )}
                         <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
                           <span>Est. You Receive</span>
                           {/* A numeric estimate reads as data (mono, primary); the
@@ -2926,11 +2912,11 @@ export function DTRDetail() {
                       // page should never actually be reachable for one. Kept as an explicit,
                       // honest state rather than assumed unreachable.
                       <div className="p-4 bg-muted/20 rounded-lg space-y-3 border border-destructive/30 mt-6">
-                        <p className="text-sm font-semibold text-destructive">Buy not available for this Reserve</p>
+                        <p className="text-sm font-semibold text-destructive">Minting not available for this Reserve</p>
                         <p className="text-xs text-muted-foreground">
                           {IS_MAINNET
-                            ? "This Reserve holds an asset outside SSR.fun's currently supported Mainnet assets (USDC), so no genuine Buy path exists for it."
-                            : "This Reserve holds an asset outside SSR.fun's currently supported DevNet test assets (devUSDC, mockX, mockY, mockZ), so no genuine Buy path exists for it."}
+                            ? "This Reserve holds an asset outside SSR.fun's currently supported Mainnet assets (USDC), so no genuine mint path exists for it."
+                            : "This Reserve holds an asset outside SSR.fun's currently supported DevNet test assets (devUSDC, mockX, mockY, mockZ), so no genuine mint path exists for it."}
                         </p>
                         <div className="pt-2 border-t border-border/50 space-y-1.5">
                           <p className="text-xs font-semibold text-muted-foreground">This Reserve's actual composition</p>
@@ -2957,8 +2943,8 @@ export function DTRDetail() {
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground flex items-center gap-1">
-                          Trading Fee
-                          <InfoTip label="More information about the trading fee">SSR.FUN protocol fee (0.10%)</InfoTip>
+                          Protocol Fee
+                          <InfoTip label="More information about the protocol fee">SSR.FUN protocol fee (0.10%)</InfoTip>
                         </span>
                         <span className="font-merge-mono text-destructive">-{formatTokenAmount(buyQuote.fee)} {dtr.ticker}</span>
                       </div>
@@ -2970,7 +2956,7 @@ export function DTRDetail() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Price Impact
-                            <InfoTip label="More information about price impact">Buys push this Reserve's price up against its liquidity depth -- larger orders move it more.</InfoTip>
+                            <InfoTip label="More information about price impact">Mints push this Reserve's price up against its liquidity depth -- larger orders move it more.</InfoTip>
                           </span>
                           <span className="font-merge-mono text-positive">+{buyQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(buyQuote.newPrice)}</span>
                         </div>
@@ -2980,7 +2966,7 @@ export function DTRDetail() {
 
                     {buyPendingSignature && (
                       <div className="rounded-lg border border-dashed p-3 text-sm space-y-2" style={{ borderColor: "var(--warn, #d9a13c)" }}>
-                        <p>{CLUSTER_LABEL} RPC is temporarily busy -- your Buy transaction is still being verified. No new transaction has been submitted for it.</p>
+                        <p>{CLUSTER_LABEL} RPC is temporarily busy -- your mint transaction is still being verified. No new transaction has been submitted for it.</p>
                         <a href={explorerUrl("tx", buyPendingSignature)} target="_blank" rel="noreferrer" className="underline">
                           View signature on Solana Explorer ({CLUSTER_LABEL}) &rarr;
                         </a>
@@ -3020,15 +3006,15 @@ export function DTRDetail() {
                           {txPhaseShortLabel(buyPhase)}
                         </div>
                       ) : !wallet.connected ? (
-                        "Connect Wallet to Trade"
+                        "Connect Wallet to Mint"
                       ) : isOnChain && !isSettlementBuySupported ? (
-                        "Buy Not Yet Supported"
+                        "Minting Not Yet Supported"
                       ) : isOnChain && numBuyAmount > 0 && estReserveTokensOut === null ? (
                         "Quote Unavailable"
                       ) : buyInsufficientBalance ? (
                         `Insufficient ${buyAssetForDisplay.symbol} Balance`
                       ) : (
-                        `Buy ${dtr.ticker}`
+                        `Mint ${dtr.ticker}`
                       )}
                     </Button>
                     {txPhaseShortLabel(buyPhase) ? (
@@ -3105,7 +3091,7 @@ export function DTRDetail() {
                             Canonical redemption
                             <InfoTip label="More information about canonical redemption">
                               Proportional, on-chain redemption into this Reserve's actual underlying asset(s) -- computed live from real vault balances and supply, not a synthetic price.
-                              {IS_MAINNET && !isPureSettlementReserve ? ` Every redeemed asset is then sold into ${SETTLEMENT_SYMBOL} in the same purchase, so what you receive is ${SETTLEMENT_SYMBOL}.` : ""}
+                              {IS_MAINNET && !isPureSettlementReserve ? ` Every redeemed asset is then swapped into ${SETTLEMENT_SYMBOL} in the same redemption, so what you receive is ${SETTLEMENT_SYMBOL}.` : ""}
                             </InfoTip>
                           </span>
                         </div>
@@ -3137,30 +3123,16 @@ export function DTRDetail() {
                                 <span className="flex items-center gap-1">
                                   Est. You Receive
                                   <InfoTip label={`More information about ${SETTLEMENT_SYMBOL} settlement`}>
-                                    The redeemed assets above are sold into {SETTLEMENT_SYMBOL} at live market prices as part of the same sale. The estimate uses the
+                                    The redeemed assets above are swapped into {SETTLEMENT_SYMBOL} at live market prices as part of the same redemption. The estimate uses the
                                     Reserve's current value; the exact amount depends on live routing and is verified from your wallet's real balance.
                                   </InfoTip>
                                 </span>
                                 <span className="font-merge-mono text-foreground">
-                                  ~{(estSettlementOut * (1 - dtr.feeConfig.managerSellTaxPct / 100)).toFixed(2)} {SETTLEMENT_SYMBOL}
+                                  ~{estSettlementOut.toFixed(2)} {SETTLEMENT_SYMBOL}
                                 </span>
                               </div>
-                              {dtr.feeConfig.managerSellTaxPct > 0 && (
-                                <div className="flex justify-between text-xs text-muted-foreground">
-                                  <span className="flex items-center gap-1">
-                                    Sell Tax
-                                    <InfoTip label="More information about the Sell tax">
-                                      Set by this Reserve's Manager ({dtr.feeConfig.managerSellTaxPct.toFixed(2)}%). Taken out of your {SETTLEMENT_SYMBOL} proceeds
-                                      once every swap has landed, and split 50/50 between the Manager and the SSR.fun protocol. Applies to Sells made through SSR.fun.
-                                    </InfoTip>
-                                  </span>
-                                  <span className="font-merge-mono text-destructive">
-                                    -{dtr.feeConfig.managerSellTaxPct.toFixed(2)}% (~{((estSettlementOut * dtr.feeConfig.managerSellTaxPct) / 100).toFixed(2)} {SETTLEMENT_SYMBOL})
-                                  </span>
-                                </div>
-                              )}
                               <p className="text-[11px] text-muted-foreground/80">
-                                You receive {SETTLEMENT_SYMBOL} -- your Reserve Tokens are redeemed and every asset is sold into {SETTLEMENT_SYMBOL} in the same sale.
+                                You receive {SETTLEMENT_SYMBOL} -- your Reserve Tokens are redeemed and every asset is swapped into {SETTLEMENT_SYMBOL} in the same redemption.
                               </p>
                             </div>
                           ) : null
@@ -3192,8 +3164,8 @@ export function DTRDetail() {
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground flex items-center gap-1">
-                          Trading Fee
-                          <InfoTip label="More information about the trading fee">SSR.FUN protocol fee (0.10%)</InfoTip>
+                          Protocol Fee
+                          <InfoTip label="More information about the protocol fee">SSR.FUN protocol fee (0.10%)</InfoTip>
                         </span>
                         <span className="font-merge-mono text-destructive">-{formatUsdc(sellQuote.fee)}</span>
                       </div>
@@ -3205,7 +3177,7 @@ export function DTRDetail() {
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground flex items-center gap-1">
                             Price Impact
-                            <InfoTip label="More information about price impact">Sells push this Reserve's price down against its liquidity depth -- larger orders move it more.</InfoTip>
+                            <InfoTip label="More information about price impact">Redemptions push this Reserve's price down against its liquidity depth -- larger orders move it more.</InfoTip>
                           </span>
                           <span className="font-merge-mono text-destructive">{sellQuote.priceImpactPct.toFixed(2)}% &rarr; {formatUsdc(sellQuote.newPrice)}</span>
                         </div>
@@ -3215,7 +3187,7 @@ export function DTRDetail() {
 
                     {sellPendingSignature && (
                       <div className="rounded-lg border border-dashed p-3 text-sm space-y-2" style={{ borderColor: "var(--warn, #d9a13c)" }}>
-                        <p>{CLUSTER_LABEL} RPC is temporarily busy -- your Sell transaction is still being verified. No new transaction has been submitted for it.</p>
+                        <p>{CLUSTER_LABEL} RPC is temporarily busy -- your redemption transaction is still being verified. No new transaction has been submitted for it.</p>
                         <a href={explorerUrl("tx", sellPendingSignature)} target="_blank" rel="noreferrer" className="underline">
                           View signature on Solana Explorer ({CLUSTER_LABEL}) &rarr;
                         </a>
@@ -3249,13 +3221,13 @@ export function DTRDetail() {
                           {txPhaseShortLabel(sellPhase)}
                         </div>
                       ) : !wallet.connected ? (
-                        "Connect Wallet to Trade"
+                        "Connect Wallet to Redeem"
                       ) : isOnChain && !isSettlementSellSupported ? (
-                        "Sell Not Yet Supported"
+                        "Redeeming Not Yet Supported"
                       ) : numSellAmount > (holding?.tokenBalance || 0) ? (
                         "Insufficient Balance"
                       ) : (
-                        `Sell ${dtr.ticker}`
+                        `Redeem ${dtr.ticker}`
                       )}
                     </Button>
                     {txPhaseShortLabel(sellPhase) ? (
@@ -3421,7 +3393,7 @@ export function DTRDetail() {
         </div>
       </div>
 
-      {/* Mobile sticky Buy/Sell: on small screens the trade panel sits far
+      {/* Mobile sticky Mint/Redeem: on small screens the trade panel sits far
           down the page, so a floating pill bar keeps the primary actions
           reachable; tapping one jumps to the panel on the right tab. Hidden
           on lg+ where the sticky trade rail is always in view. */}
@@ -3438,7 +3410,7 @@ export function DTRDetail() {
             document.getElementById("section-trade")?.scrollIntoView({ behavior: "smooth", block: "start" });
           }}
         >
-          Buy
+          Mint
         </button>
         <button
           type="button"
@@ -3448,7 +3420,7 @@ export function DTRDetail() {
             document.getElementById("section-trade")?.scrollIntoView({ behavior: "smooth", block: "start" });
           }}
         >
-          Sell
+          Redeem
         </button>
       </div>
 
@@ -3464,13 +3436,13 @@ export function DTRDetail() {
               <CardTitle className="text-base font-merge-display flex items-center gap-2">
                 <Activity className="w-4 h-4 text-primary" /> Recent Trades
               </CardTitle>
-              <CardDescription>Real buys and sells from this session -- nothing here is invented history.</CardDescription>
+              <CardDescription>Real mints and redemptions from this session -- nothing here is invented history.</CardDescription>
             </CardHeader>
             <CardContent>
               {recentTrades.length === 0 ? (
                 <div className="py-10 text-center">
-                  <p className="text-sm text-muted-foreground">No trades yet this session.</p>
-                  <p className="text-xs text-muted-foreground/70 mt-1">Buy or sell {dtr.ticker} to see activity appear here immediately.</p>
+                  <p className="text-sm text-muted-foreground">No mints or redemptions yet this session.</p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">Mint or redeem {dtr.ticker} to see activity appear here immediately.</p>
                 </div>
               ) : (
                 <>
@@ -3486,7 +3458,7 @@ export function DTRDetail() {
                       <div key={trade.id} className="grid grid-cols-5 gap-2 text-xs font-merge-mono py-2 items-center">
                         <span className="text-muted-foreground">{format(new Date(trade.t), "HH:mm:ss")}</span>
                         <span className={trade.side === "buy" ? "text-positive font-semibold" : "text-destructive font-semibold"}>
-                          {trade.side === "buy" ? "Buy" : "Sell"}
+                          {trade.side === "buy" ? "Mint" : "Redeem"}
                         </span>
                         <span className="text-right">{formatUsdc(trade.price)}</span>
                         <span className="text-right text-muted-foreground">{formatTokenAmount(trade.tokenAmount)}</span>

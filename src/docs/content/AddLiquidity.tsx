@@ -18,7 +18,7 @@ function BeforeYouStart() {
           explorer.
         </li>
         <li>
-          <strong>Reserve Tokens</strong> in your wallet. Buy them on the Reserve page on SSR.fun.
+          <strong>Reserve Tokens</strong> in your wallet. Mint them on the Reserve page on SSR.fun.
         </li>
         <li>
           <strong>The quote asset</strong> you want to pair with, and a little SOL for network fees and account rent.

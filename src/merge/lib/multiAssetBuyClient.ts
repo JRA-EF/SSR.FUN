@@ -212,7 +212,7 @@ export async function requestBuyBuild(body: BuildBuyRequest, fetchImpl: typeof f
   const res = await fetchImpl("/api/mainnet/build-buy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
   const json = (await res.json().catch(() => null)) as (BuildBuyResponse & { error?: string }) | null;
   if (!res.ok || !json || !Array.isArray(json.transactions)) {
-    throw new Error((json && typeof json.error === "string" && json.error) || `Could not build this purchase (HTTP ${res.status}).`);
+    throw new Error((json && typeof json.error === "string" && json.error) || `Could not build this mint (HTTP ${res.status}).`);
   }
   return json;
 }
@@ -311,7 +311,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const parsedTx = await withRateLimitRetry(() => params.connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }), 3, 750);
       if (!parsedTx?.meta) {
         throw new MultiAssetBuyError(
-          `A previous swap for this purchase confirmed on-chain but its delivered amount could not be verified yet (signature ${signature}). Nothing was submitted -- try again in a moment; the confirmed swap will be counted, not repeated.`,
+          `A previous swap for this mint confirmed on-chain but its delivered amount could not be verified yet (signature ${signature}). Nothing was submitted -- try again in a moment; the confirmed swap will be counted, not repeated.`,
           null,
         );
       }
@@ -332,7 +332,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     Object.fromEntries(params.assets.map((a) => [a.mint, acquiredRawOf(a.mint).toString()]).filter(([, v]) => v !== "0"));
   const readLegBalances = async () => Promise.all(params.assets.map((a) => fetchTokenBalanceRaw(params.connection, new PublicKey(a.mint), owner, a.tokenProgram).then(BigInt)));
 
-  let currentStage = "building this purchase on the server (nothing submitted yet)";
+  let currentStage = "building this mint on the server (nothing submitted yet)";
   let requiredAmountsRaw: bigint[] = [];
   const buildFailureReport = async (): Promise<BuyStateReport> => {
     const freshHeld = await readLegBalances().catch(() => params.assets.map(() => 0n));
@@ -354,7 +354,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // DEC-0200: the purchase was planned against `owner`; refuse to sign with
     // a different account, and verify afterwards that this account really
     // signed (catches another extension answering the request).
-    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "purchase" });
+    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "mint" });
     params.onProgress?.({ phase: "awaiting-wallet" });
     const out: VersionedTransaction[] = [];
     if (canSignAll) {
@@ -363,7 +363,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
       for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
     }
-    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this purchase`);
+    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this mint`);
     return out;
   };
   const throwOutcome = (outcome: ConfirmationOutcome, signature: string, what: string, atomicNote: string) => {
@@ -422,7 +422,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
         setup: build.transactions.filter((t) => t.kind === "alt-create" || t.kind === "alt-extend").length,
         total: build.transactions.length,
       });
-    currentStage = build.mode === "single" ? "the single combined purchase transaction (swap, deposit, and mint in one atomic step)" : "signing every transaction of this purchase";
+    currentStage = build.mode === "single" ? "the single combined mint transaction (swap, deposit, and mint in one atomic step)" : "signing every transaction of this mint";
     const signed = await signMany(build.transactions.map(decode));
     const signedOf = (i: number) => signed[i];
 
@@ -432,12 +432,12 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // ---------------------------------------------------------------------
     const altIdx = build.transactions.map((t, i) => (t.kind === "alt-create" || t.kind === "alt-extend" ? i : -1)).filter((i) => i >= 0);
     if (altIdx.length > 0) {
-      currentStage = "enabling one-approval trading for this Reserve (a one-time setup)";
+      currentStage = "enabling one-approval mint and redeem for this Reserve (a one-time setup)";
       params.onProgress?.({ phase: "enabling-one-approval-trading" });
       for (const i of altIdx) {
         const t = build.transactions[i];
-        const { signature, outcome } = await submit(signedOf(i), t.lastValidBlockHeight, t.kind === "alt-create" ? "the trading table creation" : "the trading table extension");
-        throwOutcome(outcome, signature, "The trading-table setup", "");
+        const { signature, outcome } = await submit(signedOf(i), t.lastValidBlockHeight, t.kind === "alt-create" ? "the lookup table creation" : "the lookup table extension");
+        throwOutcome(outcome, signature, "The lookup-table setup", "");
       }
       if (build.altToRegister) {
         await waitForLookupTable(params.connection, new PublicKey(build.altToRegister));
@@ -450,13 +450,13 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // ---------------------------------------------------------------------
     const singleIdx = build.transactions.findIndex((t) => t.kind === "single");
     if (build.mode === "single" && singleIdx >= 0) {
-      currentStage = "the single combined purchase transaction (swap, deposit, and mint in one atomic step)";
+      currentStage = "the single combined mint transaction (swap, deposit, and mint in one atomic step)";
       const t = build.transactions[singleIdx];
-      const { signature, outcome } = await submit(signedOf(singleIdx), t.lastValidBlockHeight, "your purchase transaction", (sig) => {
+      const { signature, outcome } = await submit(signedOf(singleIdx), t.lastValidBlockHeight, "your mint transaction", (sig) => {
         pending!.lastMintSignature = sig;
         savePendingBuy(pending!);
       });
-      throwOutcome(outcome, signature, "The purchase transaction", " The purchase was ONE atomic transaction, so nothing was swapped, deposited, or minted -- only the network fee was spent.");
+      throwOutcome(outcome, signature, "The mint transaction", " The mint was ONE atomic transaction, so nothing was swapped, deposited, or minted -- only the network fee was spent.");
       return await verifyDelivery(signature, rtBalanceNow);
     }
 
@@ -530,7 +530,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const mint = params.assets[i].mint;
       const countable = mint === MAINNET_USDC_MINT ? freshHeld[i] : countableAcquiredRaw({ walletHeldRaw: freshHeld[i], purchaseAcquiredRaw: acquiredRawOf(mint) });
       if (countable < (requiredAmountsRaw[i] ?? 0n)) {
-        throw new Error(`Reserve asset ${mint} is still short after funding: this purchase has acquired ${countable.toString()} raw of the ${requiredAmountsRaw[i].toString()} raw required. Nothing further was submitted -- retrying funds only this remaining shortfall.`);
+        throw new Error(`Reserve asset ${mint} is still short after funding: this mint has acquired ${countable.toString()} raw of the ${requiredAmountsRaw[i].toString()} raw required. Nothing further was submitted -- retrying funds only this remaining shortfall.`);
       }
     }
 

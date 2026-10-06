@@ -58,7 +58,7 @@ export function ReserveCard({
   topAssets,
   metrics,
   liquidityBadge,
-  ctaLabel = 'Trade',
+  ctaLabel = 'Mint',
   renderCta,
 }: ReserveCardProps) {
   const up = changePct >= 0
