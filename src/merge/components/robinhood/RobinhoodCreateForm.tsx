@@ -260,7 +260,7 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
       if (assets.length === 0) return { plan: null, error: null };
       const seed = parseUsdgAmount(initialSeedUsdg || "0", cashDecimals);
       const planAssets: PlannedAsset[] = assets.map((a) => ({ address: a.address, symbol: a.symbol, decimals: a.decimals, weight: a.weight, pool: a.pool }));
-      return { plan: planLaunch(planAssets, seed, cash.address, cashDecimals), error: null };
+      return { plan: planLaunch(planAssets, seed, cash.address, cashDecimals, cash.symbol), error: null };
     } catch (e) {
       return { plan: null, error: e instanceof Error ? e.message : String(e) };
     }
@@ -1109,7 +1109,7 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
                     const gasWei = gasPriceWei === null ? null : gas * gasPriceWei;
                     const gasEth = gasWei === null ? null : Number(gasWei) / 1e18;
                     const gasUsd = gasEth === null || ethUsd === null ? null : gasEth * ethUsd;
-                    const steps = launchSteps(plan);
+                    const steps = launchSteps(plan, dexName);
                     return (
                       <>
                         <p className="text-xs font-semibold text-foreground">Goes into your Reserve (its actual holdings)</p>

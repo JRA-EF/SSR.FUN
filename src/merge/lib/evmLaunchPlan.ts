@@ -55,6 +55,8 @@ export interface LaunchPlan {
   seedUsdgRaw: bigint;
   /** Decimals of THIS chain's dollar, so everything downstream formats and sizes against the right unit. */
   usdDecimals: number;
+  /** This chain's dollar as users see it ("USDG" on Robinhood, "USDT" on BNB). */
+  usdSymbol: string;
   /** Raw USDG that goes through the router (the sum of the swap legs). */
   swapUsdgRaw: bigint;
   /** Raw USDG deposited directly (the cash leg: an explicit USDG weight plus any unallocated remainder). */
@@ -93,7 +95,7 @@ export function isUsdg(address: string, usdg: Address): boolean {
  * than 100%: the rest stays as USDG in the reserve, as on Solana's
  * "Unallocated USDC Reserve". More than 100% is refused.
  */
-export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Address, usdDecimals: number): LaunchPlan {
+export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Address, usdDecimals: number, usdSymbol: string): LaunchPlan {
   if (seedUsdgRaw <= 0n) throw new Error("Enter an initial amount greater than zero.");
   if (!Number.isInteger(usdDecimals) || usdDecimals < 0 || usdDecimals > SHARE_DECIMALS) {
     throw new Error(`This chain's dollar reports ${usdDecimals} decimals, which the share maths cannot express.`);
@@ -106,7 +108,7 @@ export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Ad
     const k = a.address.toLowerCase();
     if (seen.has(k)) throw new Error(`${a.symbol} is listed twice.`);
     seen.add(k);
-    if (!isUsdg(a.address, usdg) && !a.pool) throw new Error(`${a.symbol} has no Uniswap pool to buy it through.`);
+    if (!isUsdg(a.address, usdg) && !a.pool) throw new Error(`${a.symbol} has no Uniswap pool to buy it through.`); // message pinned by tests
   }
   let allocated = 0n;
   const legs: LaunchLeg[] = [];
@@ -134,7 +136,7 @@ export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Ad
       cash.bps = 10_000 - (total - cash.bps);
     } else {
       legs.push({
-        asset: { address: usdg, symbol: "USDG", decimals: usdDecimals, weight: (10_000 - total) / 10_000, pool: null },
+        asset: { address: usdg, symbol: usdSymbol, decimals: usdDecimals, weight: (10_000 - total) / 10_000, pool: null },
         bps: 10_000 - total,
         usdgRaw: remainder,
         kind: "usdg",
@@ -143,7 +145,7 @@ export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Ad
   }
   if (legs.length === 0) throw new Error("Add at least one asset.");
   // One share per dollar, scaled from the dollar's own decimals to the share's 18.
-  return { legs, seedUsdgRaw, usdDecimals, swapUsdgRaw, directUsdgRaw, initialShares: seedUsdgRaw * 10n ** BigInt(SHARE_DECIMALS - usdDecimals) };
+  return { legs, seedUsdgRaw, usdDecimals, usdSymbol, swapUsdgRaw, directUsdgRaw, initialShares: seedUsdgRaw * 10n ** BigInt(SHARE_DECIMALS - usdDecimals) };
 }
 
 /** 1.25 (%) -> 0.0125e18. Fees are entered to two decimals of a percent. */
@@ -261,12 +263,12 @@ export function estimateLaunchGas(legCount: number, swapCount: number): bigint {
 }
 
 /** Wallet prompts the launch will ask for, in order, so Review can list them like the Solana wizard does. */
-export function launchSteps(plan: LaunchPlan): string[] {
+export function launchSteps(plan: LaunchPlan, dexName = "Uniswap"): string[] {
   const swaps = plan.legs.filter((l) => l.kind === "swap");
   const steps: string[] = [];
   if (swaps.length > 0) {
-    steps.push(`Approve ${fmtUsdg(plan.swapUsdgRaw, plan.usdDecimals)} USDG for the Uniswap router`);
-    for (const s of swaps) steps.push(`Swap ${fmtUsdg(s.usdgRaw, plan.usdDecimals)} USDG for ${s.asset.symbol} (skipped if your wallet already holds enough)`);
+    steps.push(`Approve ${fmtUsdg(plan.swapUsdgRaw, plan.usdDecimals)} ${plan.usdSymbol} for the ${dexName} router`);
+    for (const s of swaps) steps.push(`Swap ${fmtUsdg(s.usdgRaw, plan.usdDecimals)} ${plan.usdSymbol} for ${s.asset.symbol} (skipped if your wallet already holds enough)`);
   }
   for (const l of plan.legs) steps.push(`Approve ${l.asset.symbol} for the SSR factory`);
   steps.push("Deploy the reserve (moves the assets in and mints your Reserve Tokens)");

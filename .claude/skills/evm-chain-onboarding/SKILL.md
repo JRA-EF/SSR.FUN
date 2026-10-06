@@ -51,6 +51,22 @@ which is how we chose.
 A read that FAILS is reported as `UNREADABLE`, not as absent, and lands in the
 problem list. That distinction matters — see the traps.
 
+## Step 1b — the starter asset list (no catalogue needed)
+
+A chain without a discovery catalogue launches with a verified list. Add
+`assetCandidates` and `minDepthUsd` to the candidates file, then:
+
+```bash
+npx tsx scripts/evm-chain-assets.mts scripts/evm-chains/<chain>.json
+```
+
+A human proposes, the chain verifies: code, `symbol()`, `decimals()`, and the
+dollar value of quote asset sitting in each token's deepest pool. Anything
+short of the floor is refused and listed. The output is a `starterAssets` block,
+each entry carrying the pool it is bought through and that pool's role
+(`"usd"` or `"native"`). On BNB at a $100k floor: 10 accepted, 11 refused —
+and DOGE turned out to be 8 decimals there.
+
 ## Step 2 — wire the ChainConfig
 
 Paste the block into `CHAINS` in `src/merge/lib/evmChain.ts`. Nothing else in
@@ -88,8 +104,41 @@ Ten checks must pass. The one that matters most is **"EVERY leg prices"**:
 `dex`/`quotes` are wrong and a reserve there would report $0 while holding real
 assets.
 
+Then prove the Launch button itself — the form's own `planLaunch →
+quoteLaunch → executeLaunch` against the chain's real config and starter list:
+
+```bash
+CHAIN=<key> DEPLOYER=... FEE_REGISTRY=... DEPLOYER_BLOCK=<fork block + 1> \
+  npx tsx scripts/verify_evm_launch_fork.mts
+```
+
+It buys a mixed basket (one dollar-quoted asset, one two-hop native-quoted
+asset, and cash), deploys, and checks shares are 1:1 with the dollar, AUM is
+within 3% of the seed, the cash leg holds real dollars, and no progress line
+names another chain's token.
+
 Also run `registerVersion` on the new chain — it is free, and the fork run
 proved it works (`getLatestVersion()` returns `"6.0.0"`).
+
+## Step 4 — go live
+
+```bash
+scripts/go-live-evm-chain.sh <chain> --rehearse   # real keys, on a fork
+scripts/go-live-evm-chain.sh <chain>              # mainnet; spends real gas
+```
+
+Preflights the chain id and both keys' gas, deploys with the deployer key,
+sends `registerVersion` from the owner key, verifies the version and that admin
+is the owner, and prints the six config lines to paste. It does not flip
+`live` or ship the frontend — that stays a reviewed change: set `live: true`,
+add the chain to `EVM_LAUNCH_OPTIONS` in `src/merge/lib/chainChoice.ts` (the
+registry test keeps them in step), and set its keyed `<CHAIN>_RPC_URL` on Vercel.
+
+**The deployer's nonce decides the addresses.** The deployer key has never
+transacted outside Robinhood, so on a fresh chain its nonce is 0 and the stack
+lands at the same five addresses as Robinhood mainnet — the BNB rehearsal
+confirmed it. Fund the deployer by sending TO it (that does not move its
+nonce), and send nothing FROM it on the new chain before go-live.
 
 ## Traps, each one paid for
 
@@ -112,6 +161,22 @@ worked was `https://bsc-dataseed1.defibit.io` with `anvil --no-storage-caching`.
 Base's `mainnet.base.org` throttles bursts of `eth_call`. Use a keyed provider
 for real work.
 
+**Public RPCs cap `eth_getLogs`, and reserve discovery needs it.** Measured
+2026-10-06: BNB's publicnode accepts 5,000 blocks and every other public BSC
+endpoint refuses getLogs outright; Base's public RPC caps at 500. Set
+`logChunk` on the ChainConfig; discovery is chunked to it. Production wants a
+keyed endpoint behind the proxy (`?chain=<key>`, env `<CHAIN>_RPC_URL`).
+
+**viem caches the block number for ~4s.** Chunked discovery once read a stale
+head and missed a reserve created moments earlier — the BNB fork run found 0
+of 1. Discovery reads the head with `cacheTime: 0` and its last chunk reads to
+`latest`.
+
+**No hardcoded token, DEX or chain names in the launch path.** The form's copy
+takes its dollar, DEX, chain and gas token from the config; `planLaunch` names
+the cash leg after the chain's dollar. A registry test fails if "Uniswap",
+"in USDG" or "paid in ETH" reappears in the form.
+
 **Fork log queries must start at or after the fork block.** Pass
 `DEPLOYER_BLOCK=<fork block + 1>`. A lower value makes `getLogs` reach upstream
 for pre-fork blocks and hit rate limits.
@@ -132,13 +197,12 @@ no value, and a wrong one is replaced by deploying another. The product gap is
 separate, and as of 2026-10-05 still open:
 
 - `CHAINS` is keyed `"testnet" | "mainnet"` (Robinhood's environments), not by chain
-- `const cfg = ROBINHOOD` sits at module scope in `RobinhoodCreateForm.tsx` and
-  `RobinhoodReserveDetail.tsx` — **until this goes, the bundle can only serve one chain**
-- reserve ids are `rh-<address>`; routes are `/api/robinhood/*`
-- the catalogue tables key on address with no `chain_id`, so the same address on
-  two chains collides
-- the swap quoter and router are still unexercised: `createReserve` pulls the
-  basket from the caller, so no fork run has ever bought anything
+- the Robinhood catalogue tables key on address with no `chain_id`; harmless
+  while only Robinhood has a catalogue, but a second catalogued chain needs it
+- routes still live under `/api/robinhood/*` (the proxy serves every chain
+  via `?chain=`); a rename is cosmetic
+- (resolved 2026-10-06: the swap path, chunked discovery, chain-aware form,
+  directory and portfolio are all done and fork-proven on BNB)
 
 Governance (a `MockRoleRegistry` with a single-EOA admin) is a recorded decision,
 not an oversight — see `docs/project/MULTICHAIN_RESERVES.md`.
@@ -149,6 +213,9 @@ not an oversight — see `docs/project/MULTICHAIN_RESERVES.md`.
 |---|---|
 | `scripts/evm-chain-probe.mts` | Step 1: discovery against the live chain |
 | `scripts/evm-chains/*.json` | Candidate addresses per chain |
-| `scripts/verify_evm_chain_fork.mts` | Step 3: ten checks on a fork |
+| `scripts/evm-chain-assets.mts` | Step 1b: verified starter asset list |
+| `scripts/verify_evm_chain_fork.mts` | Step 3: pricing, swaps, create, discover on a fork |
+| `scripts/verify_evm_launch_fork.mts` | Step 3: the Launch button end to end on a fork |
+| `scripts/go-live-evm-chain.sh` | Step 4: deploy + registerVersion, with `--rehearse` |
 | `src/merge/lib/evmChain.ts` | The only place a chain's wiring may be written |
 | `docs/project/MULTICHAIN_RESERVES.md` | The plan, with the fork evidence |
