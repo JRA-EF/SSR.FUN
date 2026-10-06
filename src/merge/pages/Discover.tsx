@@ -17,10 +17,12 @@ import { ReserveCard } from "../../components/ReserveCard";
 import { avatarStyle } from "../../lib/avatarStyle";
 import { useRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
 import { robinhoodEntry, solanaEntry, type DirectoryEntry } from "@/lib/directoryEntry";
+import { launchOptions } from "@/lib/chainChoice";
 import { EVM_ENABLED } from "@/lib/evmFeature";
 
 type SortKey = "aumDesc" | "changeDesc" | "changeAsc" | "priceDesc" | "priceAsc" | "nameAsc";
-export type ChainFilter = "all" | "solana" | "robinhood";
+/** "all", "solana", or an EVM ChainConfig.key. */
+export type ChainFilter = string;
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
@@ -109,7 +111,7 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
       (e.name.toLowerCase().includes(q) ||
         e.ticker.toLowerCase().includes(q) ||
         (e.category ?? "").toLowerCase().includes(q) ||
-        (e.chain === "robinhood" && "robinhood".includes(q))),
+        (e.chain !== "solana" && e.chain.toLowerCase().includes(q))),
   );
 
   const visible = sortEntries(filtered, sortBy);
@@ -157,8 +159,9 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
               aria-label="Filter by chain"
             >
               <option value="all">All chains</option>
-              <option value="solana">Solana</option>
-              <option value="robinhood">Robinhood Chain</option>
+              {launchOptions(true).map((o) => (
+                <option key={o.v} value={o.v}>{o.label}</option>
+              ))}
             </select>
           )}
           <select

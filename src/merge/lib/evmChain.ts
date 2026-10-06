@@ -33,6 +33,8 @@ export interface AssetRef {
  * tiers travel with the deployment rather than being a module constant.
  */
 export interface DexConfig {
+  /** Shown to users ("bought on PancakeSwap"). */
+  name: string;
   factory: Address;
   quoter: Address;
   router: Address;
@@ -43,6 +45,20 @@ export interface QuoteRef {
   address: Address;
   symbol: string;
   decimals: number;
+}
+
+/**
+ * An asset a chain offers WITHOUT a discovery catalogue: proposed by a human,
+ * verified live by scripts/evm-chain-assets.mts (code, symbol, decimals, and
+ * a minimum of quote-asset depth in its deepest pool), and carrying the pool
+ * the launch flow buys it through. `quote` is a ROLE -- "usd" when the pool is
+ * against the chain's dollar, "native" when against its wrapped native.
+ */
+export interface StarterAsset {
+  address: Address;
+  symbol: string;
+  decimals: number;
+  pool: { address: Address; fee: number; quote: "usd" | "native" };
 }
 
 /** The dollar leg and the native wrapper a chain prices through (USDG/WETH here, USDC/WETH on Base). */
@@ -82,6 +98,14 @@ export interface ChainConfig {
   deployer: Address;
   /** Block the factory was created in -- where reserve discovery starts reading SSRDeployed logs. */
   deployerBlock: bigint;
+  /**
+   * The widest eth_getLogs range this chain's read endpoint accepts, or unset
+   * for no cap. Measured 2026-10-06: BNB's publicnode accepts 5,000 blocks and
+   * every other public BSC endpoint refuses getLogs outright; Base's public RPC
+   * caps at 500. Discovery is chunked to this, so a capped endpoint degrades to
+   * more calls instead of an empty directory.
+   */
+  logChunk?: bigint;
   versionRegistry: Address;
   feeRegistry: Address;
   roleRegistry: Address;
@@ -101,6 +125,12 @@ export interface ChainConfig {
   dex?: DexConfig;
   /** The two assets every price routes through: the dollar, and the native wrapper. */
   quotes?: ChainQuotes;
+  /**
+   * For a chain with no discovery catalogue: the verified basket list the
+   * launch form offers. Robinhood has a catalogue (api/robinhood/asset-catalogue)
+   * and leaves this unset.
+   */
+  starterAssets?: StarterAsset[];
   /** True when the instance and its assets are test fixtures, not real value. */
   isMock: boolean;
   faucetUrl?: string;
@@ -129,6 +159,7 @@ const mainnetChain = defineChain({
 
 /** Uniswap v3 on Robinhood Chain mainnet (Uniswap sdk-core, ROBINHOOD_ADDRESSES). */
 const ROBINHOOD_DEX: DexConfig = {
+  name: "Uniswap",
   factory: "0x1f7d7550b1b028f7571e69a784071f0205fd2efa",
   quoter: "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7",
   router: "0xcaf681a66d020601342297493863e78c959e5cb2",
@@ -148,14 +179,18 @@ const baseChain = defineChain({
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
   blockExplorers: { default: { name: "Basescan", url: "https://basescan.org" } },
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
 const bnbChain = defineChain({
   id: 56,
   name: "BNB Smart Chain",
   nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
-  rpcUrls: { default: { http: ["https://bsc-dataseed1.defibit.io"] } },
+  // publicnode, not defibit: defibit serves state but refuses eth_getLogs, which
+  // reserve discovery cannot do without. Production wants a keyed endpoint.
+  rpcUrls: { default: { http: ["https://bsc-rpc.publicnode.com"] } },
   blockExplorers: { default: { name: "BscScan", url: "https://bscscan.com" } },
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
 export const CHAINS: Record<ChainKey, ChainConfig> = {
@@ -232,6 +267,8 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     idPrefix: "base",
     live: false,
     chain: baseChain,
+    logChunk: 500n,
+    readProxyPath: "/api/robinhood/rpc-proxy?chain=base",
     explorer: "https://basescan.org",
     ssr: null,
     deployer: ZERO,
@@ -242,6 +279,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     fillerRegistry: ZERO,
     assets: [],
     dex: {
+      name: "Uniswap",
       factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
       quoter: "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
       router: "0x2626664c2603336E57B271c5C0b26F421741e481",
@@ -259,6 +297,8 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     idPrefix: "bnb",
     live: false,
     chain: bnbChain,
+    logChunk: 5_000n,
+    readProxyPath: "/api/robinhood/rpc-proxy?chain=bnb",
     explorer: "https://bscscan.com",
     ssr: null,
     deployer: ZERO,
@@ -272,6 +312,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     // calls (so no adapter), its USDT/WBNB pool is the deeper market, and its
     // fee tiers differ -- 2500 where Uniswap has 3000.
     dex: {
+      name: "PancakeSwap",
       factory: "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
       quoter: "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997",
       router: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
@@ -282,6 +323,23 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       usd: { address: "0x55d398326f99059fF775485246999027B3197955", symbol: "USDT", decimals: 18 },
       native: { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", symbol: "WBNB", decimals: 18 },
     },
+    // Verified live 2026-10-06 by scripts/evm-chain-assets.mts: each has
+    // >= $100,000 of quote asset in its deepest PancakeSwap v3 pool. Refused
+    // at that floor: TRX, DOT, LTC, UNI, FDUSD, AVAX, XVS, FIL, SHIB, BCH, ATOM.
+    // Note DOGE is 8 decimals here and USDC is 18 -- never assume.
+    starterAssets: [
+      { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", symbol: "WBNB", decimals: 18, pool: { address: "0x172fcD41E0913e95784454622d1c3724f546f849", fee: 100, quote: "usd" } },
+      { address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", symbol: "USDC", decimals: 18, pool: { address: "0x92b7807bF19b7DDdf89b706143896d05228f3121", fee: 100, quote: "usd" } },
+      { address: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", symbol: "BTCB", decimals: 18, pool: { address: "0x6bbc40579ad1BBD243895cA0ACB086BB6300d636", fee: 500, quote: "native" } },
+      { address: "0x2170Ed0880ac9A755fd29B2688956BD959F933F8", symbol: "ETH", decimals: 18, pool: { address: "0xD0e226f674bBf064f54aB47F42473fF80DB98CBA", fee: 500, quote: "native" } },
+      { address: "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82", symbol: "Cake", decimals: 18, pool: { address: "0x7f51c8AaA6B0599aBd16674e2b17FEc7a9f674A1", fee: 2500, quote: "usd" } },
+      { address: "0x570A5D26f7765Ecb712C0924E4De545B89fD43dF", symbol: "SOL", decimals: 18, pool: { address: "0xbFFEc96e8f3b5058B1817c14E4380758Fada01EF", fee: 500, quote: "native" } },
+      { address: "0xF8A0BF9cF54Bb92F17374d9e9A321E6a111a51bD", symbol: "LINK", decimals: 18, pool: { address: "0x0E1893BEEb4d0913d26B9614B18Aea29c56d94b9", fee: 2500, quote: "native" } },
+      { address: "0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE", symbol: "XRP", decimals: 18, pool: { address: "0x71f5a8F7d448E59B1ede00A19fE59e05d125E742", fee: 2500, quote: "usd" } },
+      { address: "0x3EE2200Efb3400fAbB9AacF31297cBdD1d435D47", symbol: "ADA", decimals: 18, pool: { address: "0x673516E510d702Ab5F2bBf0c6B545111a85f7ea7", fee: 2500, quote: "native" } },
+      { address: "0xbA2aE424d960c26247Dd6c32edC70B295c744C43", symbol: "DOGE", decimals: 8, pool: { address: "0xce6160bB594fC055c943F59De92ceE30b8c6B32c", fee: 2500, quote: "native" } },
+      { address: "0x4B0F1812e5Df2A09796481Ff14017e6005508003", symbol: "TWT", decimals: 18, pool: { address: "0x8cCB4544b3030dACF3d4D71C658f04e8688e25b1", fee: 2500, quote: "native" } },
+    ],
     isMock: false,
     notice: "BNB Smart Chain is wired and fork-verified but has no deployed SSR stack yet.",
   },

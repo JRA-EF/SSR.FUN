@@ -245,6 +245,11 @@ export interface BasketRow {
 
 export interface ReserveSnapshot {
   address: Address;
+  /** Which chain this reserve lives on -- the directory and portfolio span several. */
+  chainKey: string;
+  /** Its reserve-id prefix ("rh", "bnb"), so links route back to the right chain. */
+  idPrefix: string;
+  chainName: string;
   name: string;
   symbol: string;
   decimals: number;
@@ -315,6 +320,9 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig, ssr: Addre
   const supply = Number(formatUnits(totalSupply, Number(decimals)));
   return {
     address: ssr,
+    chainKey: cfg.key,
+    idPrefix: cfg.idPrefix,
+    chainName: cfg.chain.name,
     name,
     symbol,
     decimals: Number(decimals),
@@ -334,9 +342,36 @@ export async function loadReserve(pc: PublicClient, cfg: ChainConfig, ssr: Addre
 const SSR_DEPLOYED = parseAbiItem("event SSRDeployed(address indexed folioOwner, address indexed folio, address folioAdmin)");
 
 /** Every reserve ever created through this chain's factory, oldest first, straight from its logs. */
+/**
+ * Every reserve the chain's factory has deployed, from its own SSRDeployed
+ * logs. Chunked to `cfg.logChunk` when the chain's endpoint caps getLogs:
+ * an uncapped single call against BNB's or Base's public RPC is refused, and
+ * the directory would show nothing rather than an error a user can act on.
+ */
 export async function listReserveAddresses(pc: PublicClient, cfg: ChainConfig): Promise<Address[]> {
-  const logs = await pc.getLogs({ address: cfg.deployer, event: SSR_DEPLOYED, fromBlock: cfg.deployerBlock, toBlock: "latest" });
-  return logs.map((l) => l.args.folio).filter((a): a is Address => !!a);
+  if (!cfg.logChunk) {
+    const logs = await pc.getLogs({ address: cfg.deployer, event: SSR_DEPLOYED, fromBlock: cfg.deployerBlock, toBlock: "latest" });
+    return logs.map((l) => l.args.folio).filter((a): a is Address => !!a);
+  }
+  // cacheTime 0: viem otherwise reuses a block number up to ~4s old, so a
+  // reserve created moments ago could fall after the last chunk and simply
+  // not appear -- caught by the BNB fork run, where it found 0 of 1.
+  const head = await pc.getBlockNumber({ cacheTime: 0 });
+  const spans: [bigint, bigint | "latest"][] = [];
+  for (let from = cfg.deployerBlock; from <= head; from += cfg.logChunk) {
+    const to = from + cfg.logChunk - 1n;
+    // The final span reads to "latest", covering anything mined after `head`.
+    spans.push([from, to >= head ? "latest" : to]);
+  }
+  // A few at a time: public endpoints throttle a burst as readily as a range.
+  const out: Address[] = [];
+  for (let i = 0; i < spans.length; i += 4) {
+    const batch = await Promise.all(
+      spans.slice(i, i + 4).map(([fromBlock, toBlock]) => pc.getLogs({ address: cfg.deployer, event: SSR_DEPLOYED, fromBlock, toBlock })),
+    );
+    for (const logs of batch) for (const l of logs) if (l.args.folio) out.push(l.args.folio);
+  }
+  return out;
 }
 
 /** Mirrors SSRLib.computeMintFees so a quote matches what will execute. */

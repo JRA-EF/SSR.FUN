@@ -10,21 +10,14 @@ import { lazy, Suspense } from "react";
 import { usePath, navigate } from "../../lib/router";
 import { CreateDTR } from "./CreateDTR";
 import { EVM_ENABLED } from "@/lib/evmFeature";
-import { chainFromPath, type ChainChoice } from "@/lib/chainChoice";
+import { chainFromPath, launchOptions, pathForChain, type ChainChoice } from "@/lib/chainChoice";
 
 export type { ChainChoice };
 
 // viem is only needed on the Robinhood branch; keep it out of the main bundle.
 const RobinhoodCreateForm = lazy(() => import("@/components/robinhood/RobinhoodCreateForm").then((m) => ({ default: m.RobinhoodCreateForm })));
 
-const CHAINS: { v: ChainChoice; label: string; blurb: string }[] = [
-  { v: "solana", label: "Solana", blurb: "Settles in USDC. Buy and sell in one click; the Reserve swaps into its basket for you." },
-  {
-    v: "robinhood",
-    label: "Robinhood Chain",
-    blurb: "Holds tokenized equities (NVDA, SPY, AMZN) and USDG. You seed the basket from your own wallet; buys and sells are in kind.",
-  },
-];
+const CHAINS = launchOptions(EVM_ENABLED);
 
 /**
  * An equal choice between the chains, as a segmented control.
@@ -84,7 +77,7 @@ function ChainChoiceBlock({ chain, onChange }: { chain: ChainChoice; onChange: (
 
 export function CreateReserve() {
   const chain = chainFromPath(usePath(), EVM_ENABLED);
-  const onChange = (c: ChainChoice) => navigate(c === "robinhood" ? "/create?chain=robinhood" : "/create");
+  const onChange = (c: ChainChoice) => navigate(pathForChain(c));
   // The chooser is handed DOWN into each chain's wizard, which renders it as
   // the first field of its Identity step and nowhere else. With one chain
   // there is no choice to present, so nothing is passed at all.
@@ -96,7 +89,7 @@ export function CreateReserve() {
         <CreateDTR chainPicker={picker} />
       ) : (
         <Suspense fallback={<p className="container mx-auto px-4 py-12 text-muted-foreground">Loading…</p>}>
-          <RobinhoodCreateForm chainPicker={picker} />
+          <RobinhoodCreateForm chainPicker={picker} chainKey={chain} />
         </Suspense>
       )}
     </div>

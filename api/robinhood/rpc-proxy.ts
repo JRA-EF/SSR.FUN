@@ -36,6 +36,7 @@ export interface ApiRequest {
   method?: string;
   headers: Record<string, string | string[] | undefined>;
   body?: unknown;
+  query?: Record<string, string | string[] | undefined>;
 }
 
 export interface ApiResponse {
@@ -130,9 +131,37 @@ function parseBody(req: ApiRequest): unknown {
   return req.body;
 }
 
-export function upstreamUrl(): string {
-  const url = process.env.ROBINHOOD_RPC_URL?.trim();
-  return url && /^https:\/\//.test(url) ? url : PUBLIC_FALLBACK_RPC_URL;
+/**
+ * One upstream per EVM chain. The browser picks with `?chain=<key>`; no query
+ * means Robinhood, so every request this proxy served before is unchanged.
+ * Each chain's keyed URL is its own server-only env var, and each chain has
+ * its own rate budget, so a busy chain cannot starve another.
+ *
+ * `fallback` is that chain's public endpoint, used when the env var is unset
+ * and as the target for calls the keyed plan refuses as "archive". Measured
+ * 2026-10-06: BNB's publicnode serves eth_getLogs up to 5,000 blocks (every
+ * other public BSC endpoint refuses it), Base's public RPC up to 500.
+ */
+export const UPSTREAMS: Record<string, { env: string; fallback: string }> = {
+  robinhood: { env: "ROBINHOOD_RPC_URL", fallback: PUBLIC_FALLBACK_RPC_URL },
+  bnb: { env: "BNB_RPC_URL", fallback: "https://bsc-rpc.publicnode.com" },
+  base: { env: "BASE_RPC_URL", fallback: "https://mainnet.base.org" },
+};
+
+/** The chain a request names, or null for one this proxy does not serve. Absent means Robinhood. */
+export function chainOf(req: Pick<ApiRequest, "query">): string | null {
+  const raw = req.query?.chain;
+  const key = (Array.isArray(raw) ? raw[0] : raw)?.trim() || "robinhood";
+  return UPSTREAMS[key] ? key : null;
+}
+
+export function fallbackUrl(chain = "robinhood"): string {
+  return UPSTREAMS[chain].fallback;
+}
+
+export function upstreamUrl(chain = "robinhood"): string {
+  const url = process.env[UPSTREAMS[chain].env]?.trim();
+  return url && /^https:\/\//.test(url) ? url : UPSTREAMS[chain].fallback;
 }
 
 /** The provider's "your plan can't serve this" answer, as opposed to a real call error. */
@@ -141,7 +170,7 @@ export function isPlanRefusal(r: unknown): boolean {
   return !!e && (e.code === -32002 || /archive|not available on your current plan/i.test(e.message ?? ""));
 }
 
-async function forward(payload: unknown, url = upstreamUrl()): Promise<{ status: number; body: unknown }> {
+async function forward(payload: unknown, url: string): Promise<{ status: number; body: unknown }> {
   let last: { status: number; body: unknown } = { status: 502, body: { error: "Robinhood RPC unreachable." } };
   for (let attempt = 0; attempt <= UPSTREAM_RETRY_DELAYS_MS.length; attempt++) {
     try {
@@ -167,6 +196,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
+  const chain = chainOf(req);
+  if (!chain) {
+    res.status(400).json({ error: `Unknown chain. Use one of: ${Object.keys(UPSTREAMS).join(", ")}.` });
+    return;
+  }
   const rawBody = parseBody(req);
   const isBatch = Array.isArray(rawBody);
   const items: unknown[] = isBatch ? rawBody : [rawBody];
@@ -183,7 +217,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Spend the budget BEFORE anything goes upstream: one unit per call.
   const ip = clientIp(req);
   const cost = items.length;
-  if (!takeLocal(`ip:${ip}`, cost, PER_IP_CALLS_PER_MIN, BUDGET_WINDOW_MS)) {
+  if (!takeLocal(`${chain}:ip:${ip}`, cost, PER_IP_CALLS_PER_MIN, BUDGET_WINDOW_MS)) {
     res.status(429).json(err(null, -32005, "Too many Robinhood RPC calls from this client. Try again in a minute."));
     return;
   }
@@ -198,8 +232,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const open = { allowed: true, durable: false, count: 0 };
   const [perIp, global] = sql
     ? await Promise.all([
-        checkDurableRateWindow(sql, `robinhood-rpc:ip:${ip}`, BUDGET_WINDOW_MS, PER_IP_CALLS_PER_MIN, Date.now(), cost),
-        checkDurableRateWindow(sql, "robinhood-rpc:global", BUDGET_WINDOW_MS, GLOBAL_CALLS_PER_MIN, Date.now(), cost),
+        checkDurableRateWindow(sql, chain === "robinhood" ? `robinhood-rpc:ip:${ip}` : `evm-rpc:${chain}:ip:${ip}`, BUDGET_WINDOW_MS, PER_IP_CALLS_PER_MIN, Date.now(), cost),
+        checkDurableRateWindow(sql, chain === "robinhood" ? "robinhood-rpc:global" : `evm-rpc:${chain}:global`, BUDGET_WINDOW_MS, GLOBAL_CALLS_PER_MIN, Date.now(), cost),
       ])
     : [open, open];
   if (!perIp.allowed || !global.allowed) {
@@ -218,7 +252,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   let forwarded: unknown[] = [];
   if (toForward.length > 0) {
-    const up = await forward(toForward.map((f) => f.call));
+    const up = await forward(toForward.map((f) => f.call), upstreamUrl(chain));
     if (!Array.isArray(up.body)) {
       if (!isBatch && rejected.size === 0) {
         res.status(up.status).json(up.body);
@@ -232,8 +266,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
       // Re-send plan-refused calls to the public RPC, once, and splice the answers back in.
       const refusedAt = forwarded.map((r, k) => (isPlanRefusal(r) ? k : -1)).filter((k) => k >= 0);
-      if (refusedAt.length > 0 && upstreamUrl() !== PUBLIC_FALLBACK_RPC_URL) {
-        const again = await forward(refusedAt.map((k) => toForward[k].call), PUBLIC_FALLBACK_RPC_URL);
+      if (refusedAt.length > 0 && upstreamUrl(chain) !== fallbackUrl(chain)) {
+        const again = await forward(refusedAt.map((k) => toForward[k].call), fallbackUrl(chain));
         if (Array.isArray(again.body)) {
           const againById = new Map((again.body as { id?: unknown }[]).map((r) => [JSON.stringify(r?.id ?? null), r]));
           refusedAt.forEach((k) => {

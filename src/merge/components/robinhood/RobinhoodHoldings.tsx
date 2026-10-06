@@ -6,14 +6,17 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ROBINHOOD } from "@/lib/evmChain";
-import { describeEvmError, fmtUnits, publicClientFor, rhReserveId, SSR_ABI } from "@/lib/evmReserve";
+import { chainByKey, ROBINHOOD } from "@/lib/evmChain";
+import { describeEvmError, fmtUnits, publicClientFor, SSR_ABI } from "@/lib/evmReserve";
+import { evmReserveId } from "@/lib/evmReserveId";
 import { formatUsdc } from "@/lib/calculations";
 import { useRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
 import { connectEvmWallet, useEvmWallet } from "./useEvmWallet";
 
 interface Holding {
   address: `0x${string}`;
+  idPrefix: string;
+  chainName: string;
   name: string;
   symbol: string;
   shares: bigint;
@@ -35,14 +38,23 @@ export function RobinhoodHoldings() {
     }
     (async () => {
       try {
-        const pc = publicClientFor(ROBINHOOD);
+        // An EVM address is the same on every chain, so one wallet's balance
+        // is read on EACH reserve's own chain -- never on Robinhood by default.
+        const clients = new Map<string, ReturnType<typeof publicClientFor>>();
+        const clientFor = (key: string) => {
+          if (!clients.has(key)) clients.set(key, publicClientFor(chainByKey(key) ?? ROBINHOOD));
+          return clients.get(key)!;
+        };
         const rows = await Promise.all(
           reserves.map(async (r): Promise<Holding> => {
+            const pc = clientFor(r.chainKey);
             const shares = await pc.readContract({ address: r.address, abi: SSR_ABI, functionName: "balanceOf", args: [account] });
             const supply = Number(fmtUnits(r.totalSupply, r.decimals, 18));
             const held = Number(fmtUnits(shares, r.decimals, 18));
             return {
               address: r.address,
+              idPrefix: r.idPrefix,
+              chainName: r.chainName,
               name: r.name,
               symbol: r.symbol,
               shares,
@@ -68,7 +80,7 @@ export function RobinhoodHoldings() {
     return (
       <Card className="border-dashed border-border/60 bg-transparent">
         <CardContent className="py-10 flex flex-col items-center justify-center text-center gap-3">
-          <p className="text-sm text-muted-foreground">Connect an EVM wallet to see your Robinhood Chain reserves.</p>
+          <p className="text-sm text-muted-foreground">Connect an EVM wallet to see your EVM reserves.</p>
           <Button variant="outline" size="sm" onClick={() => void connectEvmWallet().catch((e) => setError(describeEvmError(e)))}>
             Connect EVM wallet
           </Button>
@@ -80,12 +92,12 @@ export function RobinhoodHoldings() {
 
   if (error) return <Card className="bg-card/40 border-border/50"><CardContent className="py-8 text-sm text-destructive">{error}</CardContent></Card>;
   if (status === "loading" && holdings === null)
-    return <Card className="bg-card/40 border-border/50"><CardContent className="py-8 text-sm text-muted-foreground">Reading Robinhood Chain…</CardContent></Card>;
+    return <Card className="bg-card/40 border-border/50"><CardContent className="py-8 text-sm text-muted-foreground">Reading your EVM reserves…</CardContent></Card>;
   if (holdings !== null && holdings.length === 0)
     return (
       <Card className="border-dashed border-border/60 bg-transparent">
         <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          You don&rsquo;t hold any Robinhood Chain reserve yet. <Link href="/discover" className="text-primary underline">Browse the directory</Link>.
+          You don&rsquo;t hold any EVM reserve yet. <Link href="/discover" className="text-primary underline">Browse the directory</Link>.
         </CardContent>
       </Card>
     );
@@ -105,7 +117,7 @@ export function RobinhoodHoldings() {
           {(holdings ?? []).map((h) => (
             <TableRow key={h.address} className="border-border/50">
               <TableCell className="py-4">
-                <Link href={`/dtr/${rhReserveId(h.address)}`} className="font-semibold hover:text-primary">
+                <Link href={`/dtr/${evmReserveId(h.idPrefix, h.address)}`} className="font-semibold hover:text-primary">
                   {h.name}
                 </Link>
                 <span className="ml-2 text-xs text-muted-foreground font-merge-mono">{h.symbol}</span>

@@ -36,10 +36,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ERC20_ABI, FEE_REGISTRY_ABI, LIMITS, ROBINHOOD, SAFE_REBALANCE_DEFAULTS, USDG, WETH, type ChainConfig } from "@/lib/evmChain";
+import { ERC20_ABI, FEE_REGISTRY_ABI, LIMITS, ROBINHOOD, SAFE_REBALANCE_DEFAULTS, USDG, WETH, chainByKey, type ChainConfig } from "@/lib/evmChain";
 import { describeEvmError, fmtUnits, publicClientFor, rhReserveId } from "@/lib/evmReserve";
 import { invalidateRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
-import { useRobinhoodAssetCatalogue, type RobinhoodAsset } from "@/hooks/useRobinhoodAssetCatalogue";
+import { type RobinhoodAsset } from "@/hooks/useRobinhoodAssetCatalogue";
+import { useChainAssets } from "./useChainAssets";
 import { RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY, type FeeRecipient } from "@/lib/types";
 import { TICKER_MAX_LENGTH, formatUsdc } from "@/lib/calculations";
 import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
@@ -79,8 +80,6 @@ const ISSUER_FILTER_OPTIONS: { value: IssuerFilter; label: string }[] = [
   { value: "other", label: "Other Robinhood Chain tokens" },
 ];
 
-/** The cash leg is a constant the form knows even when the catalogue is unavailable. */
-const USDG_ASSET: RobinhoodAsset = { address: USDG, symbol: "USDG", name: "Global Dollar", decimals: 6, issuer: null, pool: null, depthUsd: null, priceUsd: 1 };
 
 function matchesSearch(a: RobinhoodAsset, q: string): boolean {
   const s = q.trim().toLowerCase();
@@ -103,13 +102,29 @@ function normalizeFeaturedVideoUrl(input: string): string {
 
 const usd = (n: number | null, digits = 2) => (n === null ? "USD unavailable" : `$${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`);
 
-export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainPicker?: ReactNode; chain?: ChainConfig } = {}) {
+export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPicker?: ReactNode; chain?: ChainConfig; chainKey?: string } = {}) {
   // The chain is a PROP, not a module constant. While it was the latter the
   // bundle could only ever address one chain, whatever the config said.
-  const cfg = chain;
+  // A chain object wins; else the key from the URL (the Launch page is
+  // viem-free, so it can only hand us a key); else Robinhood.
+  const cfg = chain ?? (chainKey ? chainByKey(chainKey) : null) ?? ROBINHOOD;
   /** This chain's dollar precision -- 6 on Robinhood, 18 on BNB. Never assume. */
   const cashDecimals = cfg.quotes?.usd.decimals ?? 6;
   const pc = useMemo(() => publicClientFor(cfg), [cfg]);
+  // The chain's dollar and wrapped native. On Robinhood these are USDG/WETH;
+  // on BNB they are USDT (18 decimals) and WBNB. Never named in this file.
+  const cash = cfg.quotes?.usd ?? { address: USDG, symbol: "USDG", decimals: 6 };
+  const nativeAddr = cfg.quotes?.native.address ?? WETH;
+  // What the copy calls things on this chain.
+  const chainName = cfg.chain.name;
+  // Every live chain has a DEX (the registry test enforces it); this fallback is unreachable copy, deliberately unbranded.
+  const dexName = cfg.dex?.name ?? "the exchange";
+  const gas = cfg.chain.nativeCurrency.symbol;
+  /** The cash leg is known even when the asset list is unavailable. */
+  const cashAsset: RobinhoodAsset = useMemo(
+    () => ({ address: cash.address, symbol: cash.symbol, name: cash.symbol === "USDG" ? "Global Dollar" : cash.symbol, decimals: cash.decimals, issuer: null, pool: null, depthUsd: null, priceUsd: 1 }),
+    [cash.address, cash.symbol, cash.decimals],
+  );
   const { wallet, account } = useEvmWallet();
 
   // ---- Identity (step 1): the same fields, in the same order, as CreateDTR.
@@ -127,7 +142,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
   const [headerImageError, setHeaderImageError] = useState<string | null>(null);
 
   // ---- Composition (step 2)
-  const catalogue = useRobinhoodAssetCatalogue(true);
+  const catalogue = useChainAssets(cfg, pc);
   const [assets, setAssets] = useState<BasketAsset[]>([]);
   const [assetSearch, setAssetSearch] = useState("");
   const [issuerFilter, setIssuerFilter] = useState<IssuerFilter>("all");
@@ -184,9 +199,9 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
 
   // ---- basket helpers (the Solana wizard's, verbatim in behaviour)
   const selectable: RobinhoodAsset[] = useMemo(() => {
-    const fromCatalogue = catalogue.tokens.filter((t) => t.address.toLowerCase() !== USDG.toLowerCase());
-    return [USDG_ASSET, ...fromCatalogue];
-  }, [catalogue.tokens]);
+    const fromCatalogue = catalogue.tokens.filter((t) => t.address.toLowerCase() !== cash.address.toLowerCase());
+    return [cashAsset, ...fromCatalogue];
+  }, [catalogue.tokens, cash.address, cashAsset]);
   const atAssetLimit = assets.length >= RH_MAX_ASSETS_PER_RESERVE;
   const addAsset = (a: RobinhoodAsset) => {
     if (assets.length >= RH_MAX_ASSETS_PER_RESERVE) return;
@@ -205,10 +220,10 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
   const unallocatedWeight = Math.max(0, 1 - totalWeight);
   const feeRecipientTotalPct = feeRecipients.reduce((s, r) => s + r.pct, 0);
   const priceOf = (address: Address): number | null => {
-    if (address.toLowerCase() === USDG.toLowerCase()) return 1;
+    if (address.toLowerCase() === cash.address.toLowerCase()) return 1;
     return assets.find((a) => a.address.toLowerCase() === address.toLowerCase())?.priceUsd ?? catalogue.tokens.find((t) => t.address.toLowerCase() === address.toLowerCase())?.priceUsd ?? null;
   };
-  const ethUsd = catalogue.tokens.find((t) => t.address.toLowerCase() === WETH.toLowerCase())?.priceUsd ?? null;
+  const ethUsd = catalogue.tokens.find((t) => t.address.toLowerCase() === nativeAddr.toLowerCase())?.priceUsd ?? null;
 
   const addFeeRecipient = () => {
     setFeeRecipientAddError(null);
@@ -245,7 +260,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
       if (assets.length === 0) return { plan: null, error: null };
       const seed = parseUsdgAmount(initialSeedUsdg || "0", cashDecimals);
       const planAssets: PlannedAsset[] = assets.map((a) => ({ address: a.address, symbol: a.symbol, decimals: a.decimals, weight: a.weight, pool: a.pool }));
-      return { plan: planLaunch(planAssets, seed, USDG, cashDecimals), error: null };
+      return { plan: planLaunch(planAssets, seed, cash.address, cashDecimals), error: null };
     } catch (e) {
       return { plan: null, error: e instanceof Error ? e.message : String(e) };
     }
@@ -264,7 +279,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
       if (totalWeight > 1.0001) return "Total weight exceeds 100%. Please adjust allocations.";
     }
     if (atStep === 3) {
-      if (!initialSeedUsdg || parseFloat(initialSeedUsdg) <= 0) return "Enter the initial amount in USDG.";
+      if (!initialSeedUsdg || parseFloat(initialSeedUsdg) <= 0) return `Enter the initial amount in ${cash.symbol}.`;
       if (feeRecipientTotalPct > 100) return "Recipient percentages exceed 100% of the Manager's fee share.";
       try {
         const mintFee = percentToD18(mintFeePct);
@@ -310,7 +325,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
       return;
     }
     let cancelled = false;
-    Promise.all([pc.readContract({ address: USDG, abi: ERC20_ABI, functionName: "balanceOf", args: [account] }), pc.getBalance({ address: account })])
+    Promise.all([pc.readContract({ address: cash.address, abi: ERC20_ABI, functionName: "balanceOf", args: [account] }), pc.getBalance({ address: account })])
       .then(([u, e]) => {
         if (!cancelled) {
           setWalletUsdg(u);
@@ -422,7 +437,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
       const coManagers = coManagersForChain(account, additionalManagers);
 
       // Fresh quotes at the moment of launch, never the ones shown a minute ago.
-      setStatus({ text: "Quoting the basket on Uniswap...", kind: "busy" });
+      setStatus({ text: `Quoting the basket on ${dexName}...`, kind: "busy" });
       const freshQuotes = await quoteLaunch(pc, cfg, plan, priceOf);
 
       // The profile is stored BEFORE the wallet opens, so a store problem is
@@ -456,7 +471,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
   const seedUsd = parseFloat(initialSeedUsdg) || 0;
 
   return (
-    <LaunchShell subtitle="Launch a new Reserve on SSR.FUN, live on Robinhood Chain." step={step}>
+    <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on ${chainName}.`} step={step}>
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>
@@ -474,7 +489,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                   {account ? short(account) : "Connect EVM wallet"}
                 </Button>
                 <span className="text-sm text-muted-foreground">
-                  {account ? "Connected to Robinhood Chain" : "You can fill this in first and connect before launching."}
+                  {account ? `Connected to ${chainName}` : "You can fill this in first and connect before launching."}
                 </span>
               </div>
 
@@ -641,9 +656,9 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Asset Selection */}
                 <div className="space-y-4">
-                  {catalogue.status === "loading" && <p className="text-xs text-muted-foreground">Loading the Robinhood Chain asset list...</p>}
+                  {catalogue.status === "loading" && <p className="text-xs text-muted-foreground">Loading the {chainName} asset list...</p>}
                   {catalogue.status === "unavailable" && (
-                    <p className="text-xs text-muted-foreground">Showing USDG only -- the Robinhood Chain asset list is temporarily unavailable.</p>
+                    <p className="text-xs text-muted-foreground">Showing {cash.symbol} only -- the {chainName} asset list is temporarily unavailable.</p>
                   )}
                   <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -669,7 +684,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                       </select>
                     </div>
                     {catalogue.status === "ready" && (
-                      <span className="text-xs text-muted-foreground">{selectable.length.toLocaleString()} assets, found on Uniswap and refreshed daily</span>
+                      <span className="text-xs text-muted-foreground">{selectable.length.toLocaleString()} assets, found on {dexName} and refreshed daily</span>
                     )}
                   </div>
                   <div className="border border-border rounded-lg max-h-[300px] overflow-y-auto p-2 bg-muted/20 space-y-1">
@@ -702,7 +717,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                             )}
                             <div className="text-xs text-muted-foreground font-merge-mono">
                               {asset.address.slice(0, 6)}...{asset.address.slice(-4)}
-                              {asset.priceUsd !== null && asset.symbol !== "USDG" && <span className="ml-2">{usd(asset.priceUsd, asset.priceUsd < 1 ? 6 : 2)}</span>}
+                              {asset.priceUsd !== null && asset.address.toLowerCase() !== cash.address.toLowerCase() && <span className="ml-2">{usd(asset.priceUsd, asset.priceUsd < 1 ? 6 : 2)}</span>}
                               {asset.depthUsd !== null && <span className="ml-2">· pool {usd(asset.depthUsd, 0)}</span>}
                             </div>
                           </div>
@@ -730,7 +745,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                           <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" title="Give every selected asset an equal share of 100%" onClick={() => applyWeights(splitEvenly(assets.length))}>
                             Split evenly
                           </Button>
-                          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" title="Set every asset to 0% and leave the basket in USDG" onClick={() => applyWeights(clearAll(assets.length))}>
+                          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" title={`Set every asset to 0% and leave the basket in ${cash.symbol}`} onClick={() => applyWeights(clearAll(assets.length))}>
                             Clear
                           </Button>
                         </div>
@@ -743,7 +758,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                     <div className="flex justify-between items-center p-3 rounded-lg border border-dashed border-border/80 text-sm">
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-3 rounded-full bg-muted-foreground/30"></div>
-                        <span className="text-muted-foreground italic">Unallocated USDG Reserve</span>
+                        <span className="text-muted-foreground italic">Unallocated {cash.symbol} Reserve</span>
                       </div>
                       <span className="font-merge-mono text-muted-foreground">{(unallocatedWeight * 100).toFixed(1)}%</span>
                     </div>
@@ -821,9 +836,9 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                 <h3 className="font-semibold text-lg pb-2">Initial Liquidity</h3>
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="rh-seed" className="flex items-center gap-2">
-                    Initial Reserve Value (USDG)
+                    Initial Reserve Value ({cash.symbol})
                     <InfoTip label="More information about the initial Reserve value">
-                      The USDG to seed the reserve with, from this wallet. Each non-cash asset is bought with it on Uniswap at launch; the unallocated rest stays in the reserve as USDG. You receive one Reserve Token per USDG put in -- after that, tokens are minted and redeemed against the reserve&rsquo;s NAV.
+                      The {cash.symbol} to seed the reserve with, from this wallet. Each non-cash asset is bought with it on {dexName} at launch; the unallocated rest stays in the reserve as {cash.symbol}. You receive one Reserve Token per {cash.symbol} put in -- after that, tokens are minted and redeemed against the reserve&rsquo;s NAV.
                     </InfoTip>
                   </Label>
                   <div className="relative">
@@ -831,10 +846,10 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                     <Input id="rh-seed" type="number" placeholder="e.g. 10.00" className="font-merge-mono pl-6" value={initialSeedUsdg} onChange={(e) => setInitialSeedUsdg(e.target.value)} />
                   </div>
                   <p className="text-xs text-muted-foreground flex justify-between">
-                    <span>Funded directly in USDG from this wallet.</span>
+                    <span>Funded directly in {cash.symbol} from this wallet.</span>
                     {walletUsdg !== null && (
                       <span>
-                        Wallet Balance: <span className="font-merge-mono">{fmtUsdg(walletUsdg, cashDecimals)} USDG</span>
+                        Wallet Balance: <span className="font-merge-mono">{fmtUsdg(walletUsdg, cashDecimals)} {cash.symbol}</span>
                       </span>
                     )}
                   </p>
@@ -872,7 +887,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground italic">
-                  Buy Tax and Sell Tax are a Solana-only rule: on Robinhood Chain every buy and sell is an in-kind mint or redeem against the contract, so there is nothing for a tax to attach to.
+                  Buy Tax and Sell Tax are a Solana-only rule: on {chainName} every buy and sell is an in-kind mint or redeem against the contract, so there is nothing for a tax to attach to.
                 </p>
               </div>
 
@@ -992,9 +1007,9 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
             <CardHeader>
               <CardTitle className="text-2xl font-merge-display flex items-center gap-2">
                 Review & Deploy
-                <Badge className="font-merge-mono">Robinhood Chain</Badge>
+                <Badge className="font-merge-mono">{chainName}</Badge>
               </CardTitle>
-              <CardDescription>This will submit real transactions to the SSR factory on Robinhood Chain: your USDG buys the basket on Uniswap, then the reserve is deployed holding it.</CardDescription>
+              <CardDescription>This will submit real transactions to the SSR factory on {chainName}: your {cash.symbol} buys the basket on {dexName}, then the reserve is deployed holding it.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-8">
               <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -1035,8 +1050,8 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                     <div className="rounded-2xl border border-border/60 overflow-hidden">
                       {(() => {
                         const rows: Array<{ label: ReactNode; value: ReactNode; sub?: boolean }> = [
-                          { label: "Initial Reserve Value", value: <span className="font-merge-mono font-medium">{formatUsdc(seedUsd)} <span className="text-muted-foreground font-sans">in USDG (see Wallet Cost Summary below)</span></span> },
-                          { label: "Reserve Tokens minted to you", value: <span className="font-merge-mono font-medium">{seedUsd.toLocaleString(undefined, { maximumFractionDigits: 6 })} {symbol || "Reserve"} <span className="text-muted-foreground font-sans">(1 per USDG; no fee at creation)</span></span> },
+                          { label: "Initial Reserve Value", value: <span className="font-merge-mono font-medium">{formatUsdc(seedUsd)} <span className="text-muted-foreground font-sans">in {cash.symbol} (see Wallet Cost Summary below)</span></span> },
+                          { label: "Reserve Tokens minted to you", value: <span className="font-merge-mono font-medium">{seedUsd.toLocaleString(undefined, { maximumFractionDigits: 6 })} {symbol || "Reserve"} <span className="text-muted-foreground font-sans">(1 per {cash.symbol}; no fee at creation)</span></span> },
                           { label: "Mint Fee (configured)", value: <span className="font-merge-mono font-medium">{mintFeePct.toFixed(2)}%</span> },
                           { sub: true, label: "↳ Protocol / Manager (effective)", value: <span className="font-merge-mono text-muted-foreground">{d18ToPercent(mintSplit.protocolD18).toFixed(2)}% / {d18ToPercent(mintSplit.managerD18).toFixed(2)}%</span> },
                           { label: "TVL Fee (configured, annualized)", value: <span className="font-merge-mono font-medium">{tvlFeePct.toFixed(2)}%</span> },
@@ -1080,14 +1095,14 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                   <h3 className="font-semibold flex items-center gap-2">
                     Wallet Cost Summary
                     <InfoTip label="More information about the wallet cost summary">
-                      Everything this wallet will be asked to spend, shown before your wallet does: each asset going into your Reserve is bought with your USDG on Uniswap (the USDG holding is deposited directly), and gas is paid in ETH. Totals are across every transaction below -- your wallet shows one prompt per transaction, so any single prompt will show less than the total.
+                      Everything this wallet will be asked to spend, shown before your wallet does: each asset going into your Reserve is bought with your {cash.symbol} on {dexName} (the {cash.symbol} holding is deposited directly), and gas is paid in {gas}. Totals are across every transaction below -- your wallet shows one prompt per transaction, so any single prompt will show less than the total.
                     </InfoTip>
                   </h3>
                 </div>
                 <div className="p-4 space-y-3">
                   {planned.error && <p className="text-sm text-destructive">{planned.error}</p>}
                   {quoteError && <p className="text-sm text-destructive">{quoteError}</p>}
-                  {!planned.error && !quoteError && !quotes && <p className="text-sm text-muted-foreground">Quoting the basket on Uniswap...</p>}
+                  {!planned.error && !quoteError && !quotes && <p className="text-sm text-muted-foreground">Quoting the basket on {dexName}...</p>}
                   {plan && quotes && (() => {
                     const swapCount = plan.legs.filter((l) => l.kind === "swap").length;
                     const gas = estimateLaunchGas(plan.legs.length, swapCount);
@@ -1105,31 +1120,31 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                               {usd(Number(q.leg.usdgRaw) / 1e6)}
                               <span className="text-muted-foreground">
                                 {q.leg.kind === "usdg"
-                                  ? " (your USDG, deposited directly)"
-                                  : ` (≈ ${fmtUnits(q.quotedOut, q.leg.asset.decimals, 6)} ${q.leg.asset.symbol}, bought with your USDG${q.impactBps > 0 ? `, ~${(q.impactBps / 100).toFixed(2)}% price impact` : ""})`}
+                                  ? ` (your ${cash.symbol}, deposited directly)`
+                                  : ` (≈ ${fmtUnits(q.quotedOut, q.leg.asset.decimals, 6)} ${q.leg.asset.symbol}, bought with your ${cash.symbol}${q.impactBps > 0 ? `, ~${(q.impactBps / 100).toFixed(2)}% price impact` : ""})`}
                               </span>
                             </span>
                           </div>
                         ))}
                         <div className="flex justify-between text-sm font-semibold">
                           <span>Reserve assets subtotal</span>
-                          <span className="font-merge-mono">{fmtUsdg(plan.seedUsdgRaw, cashDecimals)} USDG</span>
+                          <span className="font-merge-mono">{fmtUsdg(plan.seedUsdgRaw, cashDecimals)} {cash.symbol}</span>
                         </div>
                         {walletUsdg !== null && (
                           <p className={`text-xs ${walletUsdg < plan.seedUsdgRaw ? "text-destructive" : "text-muted-foreground"}`}>
-                            This wallet holds {fmtUsdg(walletUsdg, cashDecimals)} USDG{walletUsdg < plan.seedUsdgRaw ? ` -- it needs ${fmtUsdg(plan.seedUsdgRaw, cashDecimals)} USDG. Add USDG or lower the initial amount.` : "."}
+                            This wallet holds {fmtUsdg(walletUsdg, cashDecimals)} {cash.symbol}{walletUsdg < plan.seedUsdgRaw ? ` -- it needs ${fmtUsdg(plan.seedUsdgRaw, cashDecimals)} ${cash.symbol}. Add ${cash.symbol} or lower the initial amount.` : "."}
                           </p>
                         )}
-                        <p className="pt-3 border-t border-border/50 text-xs font-semibold text-foreground">Fees &amp; overhead (paid in ETH)</p>
+                        <p className="pt-3 border-t border-border/50 text-xs font-semibold text-foreground">Fees &amp; overhead (paid in {gas})</p>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Estimated gas ({steps.length} transactions)</span>
                           <span className="font-merge-mono">
-                            {gasEth === null ? "estimate unavailable" : `${gasEth.toFixed(6)} ETH`}
+                            {gasEth === null ? "estimate unavailable" : `${gasEth.toFixed(6)} ${gas}`}
                             {gasUsd !== null && <span className="text-muted-foreground"> (≈ {usd(gasUsd)})</span>}
                           </span>
                         </div>
                         {walletEth !== null && gasWei !== null && walletEth < gasWei && (
-                          <p className="text-xs text-destructive">This wallet holds {fmtUnits(walletEth, 18, 6)} ETH, under the estimated gas. Add ETH on Robinhood Chain first.</p>
+                          <p className="text-xs text-destructive">This wallet holds {fmtUnits(walletEth, 18, 6)} {gas}, under the estimated gas. Add {gas} on {chainName} first.</p>
                         )}
                         <div className="pt-3 border-t border-border/50 space-y-1.5">
                           <div className="flex justify-between text-sm font-semibold">
@@ -1143,8 +1158,8 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                             <p key={i}>{i + 1}. {s}</p>
                           ))}
                           <p className="pt-1">
-                            Expected result: you&rsquo;ll spend the USDG and ETH above and receive{" "}
-                            <span className="font-merge-mono text-foreground">{seedUsd.toLocaleString(undefined, { maximumFractionDigits: 6 })} {symbol || "Reserve"}</span> tokens -- one per USDG, with no fee on the initial seed. Each swap accepts at most 1% less than quoted; a thin pool is refused before anything is sent.
+                            Expected result: you&rsquo;ll spend the {cash.symbol} and {gas} above and receive{" "}
+                            <span className="font-merge-mono text-foreground">{seedUsd.toLocaleString(undefined, { maximumFractionDigits: 6 })} {symbol || "Reserve"}</span> tokens -- one per {cash.symbol}, with no fee on the initial seed. Each swap accepts at most 1% less than quoted; a thin pool is refused before anything is sent.
                           </p>
                         </div>
                       </>
@@ -1167,7 +1182,7 @@ export function RobinhoodCreateForm({ chainPicker, chain = ROBINHOOD }: { chainP
                   ))}
                   {unallocatedWeight > 0 && (
                     <div className="flex justify-between items-center p-2 rounded border border-dashed border-border/80 text-sm">
-                      <span className="text-muted-foreground italic">Unallocated USDG Reserve</span>
+                      <span className="text-muted-foreground italic">Unallocated {cash.symbol} Reserve</span>
                       <span className="font-merge-mono text-muted-foreground">{(unallocatedWeight * 100).toFixed(1)}%</span>
                     </div>
                   )}

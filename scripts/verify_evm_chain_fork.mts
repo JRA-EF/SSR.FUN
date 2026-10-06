@@ -20,7 +20,8 @@
 // test account 0, worthless anywhere else.
 import { createPublicClient, createWalletClient, http, defineChain, parseAbi, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { createReserve, loadReserve, listReserveAddresses, usdPrice } from "../src/merge/lib/evmReserve";
+import { approveIfNeeded, createReserve, loadReserve, listReserveAddresses, usdPrice } from "../src/merge/lib/evmReserve";
+import { bestNativeHopFee, quoteExactUsdgIn, routeFor, swapExactUsdgIn } from "../src/merge/lib/evmSwap";
 import type { ChainConfig } from "../src/merge/lib/evmChain";
 
 const ANVIL_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -38,6 +39,10 @@ interface Preset {
   whale: Address;
   seedUsd: bigint;
   seedWrapped: bigint;
+  /** The chain's getLogs cap, so discovery runs the chunked path it will run in production. */
+  logChunk: bigint;
+  /** A token whose deepest pool is against the WRAPPED native, to exercise the two-hop path. */
+  hopToken: { address: Address; symbol: string; decimals: number; fee: number };
 }
 
 const PRESETS: Record<string, Preset> = {
@@ -55,6 +60,8 @@ const PRESETS: Record<string, Preset> = {
     whale: "0xd0b53D9277642d899DF5C87A3966A349A798F224",
     seedUsd: 1_000_000_000n,                 // 1,000 USDC at 6dp
     seedWrapped: 250_000_000_000_000_000n,   // 0.25 WETH
+    logChunk: 500n,
+    hopToken: { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8, fee: 500 },
   },
   bnb: {
     id: 56, name: "BNB Smart Chain", rpc: "http://127.0.0.1:8547",
@@ -77,6 +84,8 @@ const PRESETS: Record<string, Preset> = {
     whale: "0x172fcD41E0913e95784454622d1c3724f546f849",
     seedUsd: 1_000n * 10n ** 18n,            // 1,000 USDT at 18dp
     seedWrapped: 10n ** 18n,                 // 1 WBNB
+    logChunk: 5_000n,
+    hopToken: { address: "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82", symbol: "CAKE", decimals: 18, fee: 2500 },
   },
 };
 
@@ -100,12 +109,14 @@ const BASE: ChainConfig = {
   ssr: null,
   deployer: (process.env.DEPLOYER ?? "") as Address,
   deployerBlock: BigInt(process.env.DEPLOYER_BLOCK ?? "0"),
+  // Small on purpose, so even a short fork run spans several chunks.
+  logChunk: process.env.LOG_CHUNK ? BigInt(process.env.LOG_CHUNK) : 2n,
   versionRegistry: "0x0000000000000000000000000000000000000000",
   feeRegistry: (process.env.FEE_REGISTRY ?? "0x0000000000000000000000000000000000000000") as Address,
   roleRegistry: "0x0000000000000000000000000000000000000000",
   fillerRegistry: "0x0000000000000000000000000000000000000000",
   assets: [P.usd, P.wrapped],
-  dex: P.dex,
+  dex: { name: P.name, ...P.dex },
   quotes: { usd: P.usd, native: P.wrapped },
   isMock: false,
   notice: `${P.name} fork, local only.`,
@@ -133,7 +144,7 @@ const raw = (method: string, params: unknown[]) =>
 await raw("anvil_impersonateAccount", [WHALE]);
 await raw("anvil_setBalance", [WHALE, "0xDE0B6B3A7640000"]);
 const erc20 = parseAbi(["function transfer(address,uint256) returns (bool)", "function deposit() payable"]);
-await wallet.writeContract({ address: USDC, abi: erc20, functionName: "transfer", args: [account.address, P.seedUsd * 2n], account: WHALE as never });
+await wallet.writeContract({ address: USDC, abi: erc20, functionName: "transfer", args: [account.address, P.seedUsd * 3n], account: WHALE as never });
 await wallet.writeContract({ address: WETH, abi: erc20, functionName: "deposit", value: 10n ** 18n });
 
 // 1. Pricing on a non-Robinhood chain -- the defect this file guards.
@@ -144,6 +155,30 @@ check((await usdPrice(pc, BASE, USDC, P.usd.decimals)) === 1, "the chain's own d
 // 2. A chain with no DEX configured must say so, not read someone else's.
 const noDex = { ...BASE, dex: undefined, quotes: undefined } as ChainConfig;
 check((await usdPrice(pc, noDex, WETH, 18)) === null, "a chain with no DEX prices null instead of guessing", await usdPrice(pc, noDex, WETH, 18));
+
+// 2b. The swap path -- the launch flow's BUY, through the chain's own router.
+//     createReserve pulls the basket from the caller, so without this no run
+//     ever exercised the quoter/router: the one path that sends money.
+const balOf = (t: Address) => pc.readContract({ address: t, abi: parseAbi(["function balanceOf(address) view returns (uint256)"]), functionName: "balanceOf", args: [account.address] });
+const spend = P.seedUsd / 10n; // a tenth of the seed per swap
+const directFee = await bestNativeHopFee(pc, BASE);
+const direct = await routeFor(pc, BASE, WETH, { fee: directFee, quote: "USDG" });
+const directQuote = await quoteExactUsdgIn(pc, BASE, direct, spend);
+check(directQuote > 0n, `the quoter prices ${P.usd.symbol} -> ${P.wrapped.symbol} (fee ${directFee})`, directQuote);
+await approveIfNeeded(pc, wallet, BASE, account.address, USDC, BASE.dex!.router, spend * 2n);
+const w0 = await balOf(WETH);
+await swapExactUsdgIn(pc, wallet, BASE, account.address, direct, spend, (directQuote * 99n) / 100n);
+const gotDirect = (await balOf(WETH)) - w0;
+check(gotDirect >= (directQuote * 99n) / 100n, `a direct swap through the router lands at least 99% of the quote`, `${gotDirect} vs quote ${directQuote}`);
+
+const hop = await routeFor(pc, BASE, P.hopToken.address, { fee: P.hopToken.fee, quote: "WETH" });
+const hopQuote = await quoteExactUsdgIn(pc, BASE, hop, spend);
+check(hopQuote > 0n, `the quoter prices the two-hop path ${P.usd.symbol} -> ${P.wrapped.symbol} -> ${P.hopToken.symbol}`, hopQuote);
+const h0 = await balOf(P.hopToken.address);
+await swapExactUsdgIn(pc, wallet, BASE, account.address, hop, spend, (hopQuote * 99n) / 100n);
+const gotHop = (await balOf(P.hopToken.address)) - h0;
+check(gotHop >= (hopQuote * 99n) / 100n, `a two-hop swap through the router lands at least 99% of the quote`, `${gotHop} vs quote ${hopQuote}`);
+console.log(`  bought ${Number(gotDirect) / 10 ** P.wrapped.decimals} ${P.wrapped.symbol} and ${Number(gotHop) / 10 ** P.hopToken.decimals} ${P.hopToken.symbol}`);
 
 // 3. The app's own launch path, unmodified.
 const { reserve } = await createReserve(pc, wallet, BASE, account.address, {

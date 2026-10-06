@@ -6,6 +6,8 @@ import { expect } from "chai";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHAINS, LIVE_EVM_CHAINS, chainByKey, chainByIdPrefix } from "../src/merge/lib/evmChain";
+import { EVM_LAUNCH_OPTIONS, chainFromPath, launchOptions, pathForChain } from "../src/merge/lib/chainChoice";
+import { UPSTREAMS, chainOf, upstreamUrl } from "../api/robinhood/rpc-proxy";
 import { EVM_ID_PREFIXES, evmReserveId, parseEvmReserveId, rhReserveId, rhAddressFromId } from "../src/merge/lib/evmReserveId";
 
 const ADDR = "0xADEd2d2967AC92EE8FB52612D3436511F302Fe2f";
@@ -95,9 +97,94 @@ describe("no chain's wiring may live outside the registry", () => {
 
   it("the components take their chain as a prop, never as a module constant", () => {
     for (const f of ["src/merge/components/robinhood/RobinhoodCreateForm.tsx", "src/merge/components/robinhood/RobinhoodReserveDetail.tsx"]) {
-      const src = read(f);
-      expect(src, `${f} must not fix a chain at module scope`).to.not.match(/^const cfg = ROBINHOOD;/m);
-      expect(src, `${f} must accept a chain prop`).to.include("chain = ROBINHOOD");
+      expect(read(f), `${f} must not fix a chain at module scope`).to.not.match(/^const cfg = ROBINHOOD;/m);
+    }
+    expect(read("src/merge/components/robinhood/RobinhoodReserveDetail.tsx")).to.include("chain = ROBINHOOD");
+    expect(read("src/merge/components/robinhood/RobinhoodCreateForm.tsx"), "the launch page can only hand over a key").to.include("chainByKey(chainKey)");
+  });
+
+  it("the launch form never names the dollar, the DEX, the chain or the gas token", () => {
+    const form = read("src/merge/components/robinhood/RobinhoodCreateForm.tsx");
+    // Strip comments; what is left is code and copy a user can see.
+    const code = form.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    for (const word of ["Uniswap", "Robinhood Chain asset list", "paid in ETH", "in USDG"]) {
+      expect(code, `"${word}" is hardcoded -- on BNB it would be wrong`).to.not.include(word);
+    }
+  });
+});
+
+describe("the launch chooser stays in step with the registry", () => {
+  it("offers exactly the LIVE EVM chains -- flipping `live` without listing it (or vice versa) fails here", () => {
+    expect(EVM_LAUNCH_OPTIONS.map((o) => o.v).sort()).to.deep.equal(LIVE_EVM_CHAINS.map((c) => c.key).sort());
+  });
+
+  it("an unoffered chain in the URL falls back to Solana instead of rendering an unshipped form", () => {
+    expect(chainFromPath("/create?chain=robinhood", true)).to.equal("robinhood");
+    expect(chainFromPath("/create?chain=bnb", true), "bnb is not live").to.equal("solana");
+    expect(chainFromPath("/create?chain=robinhood", false)).to.equal("solana");
+    expect(launchOptions(false).map((o) => o.v)).to.deep.equal(["solana"]);
+    expect(pathForChain("solana")).to.equal("/create");
+    expect(pathForChain("bnb")).to.equal("/create?chain=bnb");
+  });
+});
+
+describe("starter assets (chains with no discovery catalogue)", () => {
+  const all = Object.values(CHAINS).filter((c) => c.starterAssets);
+
+  it("BNB carries a verified list, including the 8-decimal DOGE the probe found", () => {
+    const bnb = CHAINS.bnb.starterAssets!;
+    expect(bnb.length).to.be.greaterThan(5);
+    expect(bnb.find((a) => a.symbol === "DOGE")?.decimals).to.equal(8);
+    expect(bnb.find((a) => a.symbol === "USDC")?.decimals, "BNB's USDC is 18").to.equal(18);
+  });
+
+  it("every starter asset routes through a pool on one of ITS chain's fee tiers, quoted against a role", () => {
+    for (const c of all) for (const a of c.starterAssets!) {
+      expect(c.dex!.fees, `${c.key}:${a.symbol} fee ${a.pool.fee}`).to.include(a.pool.fee);
+      expect(["usd", "native"]).to.include(a.pool.quote);
+      expect(a.address).to.match(/^0x[0-9a-fA-F]{40}$/);
+      expect(a.pool.address).to.match(/^0x[0-9a-fA-F]{40}$/);
+    }
+  });
+
+  it("no asset is listed twice, and the dollar is never offered as a basket asset", () => {
+    for (const c of all) {
+      const addrs = c.starterAssets!.map((a) => a.address.toLowerCase());
+      expect(new Set(addrs).size, c.key).to.equal(addrs.length);
+      expect(addrs, `${c.key} lists its own dollar`).to.not.include(c.quotes!.usd.address.toLowerCase());
+    }
+  });
+});
+
+describe("the read proxy serves each chain from its own upstream", () => {
+  it("no chain parameter means Robinhood, so every existing request is unchanged", () => {
+    expect(chainOf({ query: {} })).to.equal("robinhood");
+    expect(chainOf({})).to.equal("robinhood");
+  });
+
+  it("a known chain selects its upstream; an unknown one is refused, never defaulted", () => {
+    expect(chainOf({ query: { chain: "bnb" } })).to.equal("bnb");
+    expect(chainOf({ query: { chain: "solana" } })).to.equal(null);
+    expect(chainOf({ query: { chain: "../../etc" } })).to.equal(null);
+  });
+
+  it("each chain's keyed URL comes from its OWN env var, falling back to its own public endpoint", () => {
+    const saved = process.env.BNB_RPC_URL;
+    delete process.env.BNB_RPC_URL;
+    expect(upstreamUrl("bnb")).to.equal(UPSTREAMS.bnb.fallback);
+    process.env.BNB_RPC_URL = "https://bsc.example/key";
+    expect(upstreamUrl("bnb")).to.equal("https://bsc.example/key");
+    expect(upstreamUrl("robinhood"), "setting BNB's key must not leak into Robinhood").to.not.equal("https://bsc.example/key");
+    process.env.BNB_RPC_URL = "http://insecure";
+    expect(upstreamUrl("bnb"), "non-https is refused").to.equal(UPSTREAMS.bnb.fallback);
+    if (saved === undefined) delete process.env.BNB_RPC_URL; else process.env.BNB_RPC_URL = saved;
+  });
+
+  it("every chain whose config reads through the proxy has an upstream there", () => {
+    for (const c of Object.values(CHAINS)) {
+      if (!c.readProxyPath) continue;
+      const q = new URLSearchParams(c.readProxyPath.split("?")[1] ?? "").get("chain") ?? "robinhood";
+      expect(UPSTREAMS[q], `${c.key} reads via ?chain=${q}`).to.not.equal(undefined);
     }
   });
 });

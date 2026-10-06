@@ -10,9 +10,10 @@ import type { DTR } from "./types";
 import { buildReserveCardProps, type ReserveCardStats } from "./reserveCardProps";
 import { normalizeReserveCategory } from "./types";
 import { formatUsdc } from "./calculations";
-import { rhReserveId } from "./evmReserveId";
+import { evmReserveId } from "./evmReserveId";
 
-export type EntryChain = "solana" | "robinhood";
+/** "solana", or an EVM ChainConfig.key ("robinhood", "bnb", ...). */
+export type EntryChain = string;
 
 export interface DirectoryEntry {
   key: string;
@@ -61,23 +62,23 @@ export function robinhoodEntry(r: ReserveSnapshot): DirectoryEntry {
   const meta = r.meta;
   const category = normalizeReserveCategory(meta?.category);
   return {
-    key: `rh:${r.address}`,
-    chain: "robinhood",
+    key: `${r.idPrefix}:${r.address}`,
+    chain: r.chainKey,
     name: r.name,
     ticker: r.symbol,
     category,
     aum: aum ?? 0,
     price: price ?? 0,
     change24h: 0,
-    href: `/dtr/${rhReserveId(r.address)}`,
+    href: `/dtr/${evmReserveId(r.idPrefix, r.address)}`,
     card: {
       name: r.name,
       ticker: r.symbol,
-      description: meta?.description.trim() || `A basket of ${byValue.map((b) => b.symbol).join(", ")} held on Robinhood Chain.`,
+      description: meta?.description.trim() || `A basket of ${byValue.map((b) => b.symbol).join(", ")} held on ${r.chainName}.`,
       avatarLabel: r.symbol.slice(0, 2),
       avatarImageUrl: meta?.imageUrl,
-      categoryLabel: meta?.category.trim() ? category : "Robinhood Chain",
-      sourceBadge: { label: "Live on Robinhood Chain", tone: "onchain" },
+      categoryLabel: meta?.category.trim() ? category : r.chainName,
+      sourceBadge: { label: `Live on ${r.chainName}`, tone: "onchain" },
       priceFormatted: price === null ? "Price unavailable" : formatUsdc(price),
       changePct: 0,
       changeFormatted: "—",

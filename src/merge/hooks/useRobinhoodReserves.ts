@@ -41,13 +41,33 @@ async function load() {
   set({ status: state.reserves.length ? state.status : "loading" });
   inflight = (async () => {
     try {
-      const [{ ROBINHOOD }, evm] = await Promise.all([import("@/lib/evmChain"), import("@/lib/evmReserve")]);
-      const pc = evm.publicClientFor(ROBINHOOD);
-      const addresses = await evm.listReserveAddresses(pc, ROBINHOOD);
-      // One bad reserve (a token with a broken symbol(), say) must not blank
-      // the whole directory, so each loads independently.
-      const loaded = await Promise.all(addresses.map((a) => evm.loadReserve(pc, ROBINHOOD, a).catch(() => null)));
-      set({ status: "ready", reserves: loaded.filter((r): r is ReserveSnapshot => r !== null), error: null, fetchedAt: Date.now() });
+      const [{ LIVE_EVM_CHAINS }, evm] = await Promise.all([import("@/lib/evmChain"), import("@/lib/evmReserve")]);
+      // Every LIVE EVM chain, in parallel. One chain whose RPC is down must not
+      // blank the others, so each chain -- and each reserve within it -- loads
+      // independently; a failed chain contributes nothing rather than an error.
+      const perChain = await Promise.all(
+        LIVE_EVM_CHAINS.map(async (cfg) => {
+          try {
+            const pc = evm.publicClientFor(cfg);
+            const addresses = await evm.listReserveAddresses(pc, cfg);
+            const loaded = await Promise.all(addresses.map((a) => evm.loadReserve(pc, cfg, a).catch(() => null)));
+            return { ok: true as const, reserves: loaded.filter((r): r is ReserveSnapshot => r !== null) };
+          } catch (e) {
+            const err = e as { shortMessage?: string; message?: string };
+            return { ok: false as const, reserves: [] as ReserveSnapshot[], error: `${cfg.chain.name}: ${err?.shortMessage ?? err?.message ?? String(e)}` };
+          }
+        }),
+      );
+      const failures = perChain.filter((c) => !c.ok);
+      // Every chain failing is an error; some failing is a partial result,
+      // reported but still shown.
+      if (failures.length === perChain.length && perChain.length > 0) throw new Error(failures.map((f) => ("error" in f ? f.error : "")).join("; "));
+      set({
+        status: "ready",
+        reserves: perChain.flatMap((c) => c.reserves),
+        error: failures.length ? failures.map((f) => ("error" in f ? f.error : "")).join("; ") : null,
+        fetchedAt: Date.now(),
+      });
     } catch (e) {
       const err = e as { shortMessage?: string; message?: string };
       set({ status: "error", error: err?.shortMessage ?? err?.message ?? String(e) });

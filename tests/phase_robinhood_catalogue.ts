@@ -129,10 +129,15 @@ describe("wiring", () => {
 
   it("the Launch form composes from the live catalogue, with sliders, and never asks for a share count", () => {
     const form = read("src/merge/components/robinhood/RobinhoodCreateForm.tsx");
-    expect(form).to.include("useRobinhoodAssetCatalogue(");
+    // The asset list comes from the CHAIN: Robinhood's live catalogue, or a
+    // verified starter list on a chain without one (BNB, Base). The hook that
+    // decides still calls the Robinhood catalogue for Robinhood.
+    expect(form).to.include("useChainAssets(cfg, pc)");
+    expect(read("src/merge/components/robinhood/useChainAssets.ts")).to.include("useRobinhoodAssetCatalogue(");
     expect(form).to.include("<Slider");
-    expect(form).to.include("Unallocated USDG Reserve");
-    expect(form).to.include("Initial Reserve Value (USDG)");
+    // The dollar is named by the chain ("USDG" on Robinhood, "USDT" on BNB).
+    expect(form).to.include("Unallocated {cash.symbol} Reserve");
+    expect(form).to.include("Initial Reserve Value ({cash.symbol})");
     expect(form).to.not.include("Initial shares");
     expect(form).to.not.include("initialShares:");
     expect(form).to.not.include("<datalist");
