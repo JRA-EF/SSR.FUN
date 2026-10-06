@@ -425,6 +425,14 @@ export function quoteRedeemProceeds(pc: PublicClient, ssr: Address, shares: bigi
  *   4. tells the user, when the wallet still refuses something that
  *      simulates clean, that it is the wallet and not the chain.
  */
+/*
+ * Every write below is simulated first and then sent with the simulation's
+ * request -- whose `account` is a bare address. Passed through as-is it
+ * overrides the wallet client's own account, so a LOCAL account (a script, a
+ * server signer) stops signing locally and the node is asked to sign instead:
+ * "tx from field is set", caught rehearsing the BNB live test. A browser
+ * wallet is unaffected either way. So each write prefers the wallet's account.
+ */
 export async function approveIfNeeded(
   pc: PublicClient,
   wallet: WalletClient,
@@ -434,7 +442,7 @@ export async function approveIfNeeded(
   spender: Address,
   needed: bigint,
   onProgress?: (msg: string) => void,
-  label = "the asset",
+  label = "asset",
 ) {
   if (needed === 0n) return;
   const allowance = await pc.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [account, spender] });
@@ -446,11 +454,11 @@ export async function approveIfNeeded(
     const gas = await pc.estimateContractGas(call);
     let hash: `0x${string}`;
     try {
-      hash = await wallet.writeContract({ ...request, gas: (gas * 130n) / 100n });
+      hash = await wallet.writeContract({ ...request, account: wallet.account ?? request.account, gas: (gas * 130n) / 100n });
     } catch (e) {
       if (isUserRejection(e)) throw e;
       throw new Error(
-        `Your wallet could not send the ${label} approval (it said: ${describeEvmError(e)}). The same approval simulates fine on Robinhood Chain, so the wallet failed to build or broadcast it -- try again, switch the wallet to Robinhood Chain and retry, or launch with MetaMask or Rabby.`,
+        `Your wallet could not send the ${label} approval (it said: ${describeEvmError(e)}). The same approval simulates fine on ${cfg.chain.name}, so the wallet failed to build or broadcast it -- try again, switch the wallet to ${cfg.chain.name} and retry, or launch with MetaMask or Rabby.`,
       );
     }
     await pc.waitForTransactionReceipt({ hash });
@@ -559,10 +567,10 @@ export async function createReserve(
   const gas = await pc.estimateContractGas(call);
   let hash: `0x${string}`;
   try {
-    hash = await wallet.writeContract({ ...request, gas: (gas * 125n) / 100n });
+    hash = await wallet.writeContract({ ...request, account: wallet.account ?? request.account, gas: (gas * 125n) / 100n });
   } catch (e) {
     if (isUserRejection(e)) throw e;
-    throw new Error(`Your wallet could not send the deployment (it said: ${describeEvmError(e)}). It simulates fine on Robinhood Chain; try again or launch with MetaMask or Rabby.`);
+    throw new Error(`Your wallet could not send the deployment (it said: ${describeEvmError(e)}). It simulates fine on ${cfg.chain.name}; try again or launch with MetaMask or Rabby.`);
   }
   await pc.waitForTransactionReceipt({ hash });
   return { hash, reserve: result[0] };

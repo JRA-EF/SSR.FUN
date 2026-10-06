@@ -136,12 +136,12 @@ export async function swapExactUsdgIn(
     } as const;
     const { request } = await pc.simulateContract(call);
     const gas = await pc.estimateContractGas(call);
-    hash = await wallet.writeContract({ ...request, gas: (gas * 125n) / 100n });
+    hash = await wallet.writeContract({ ...request, account: wallet.account ?? request.account, gas: (gas * 125n) / 100n });
   } else {
     const call = { ...base, functionName: "exactInput", args: [{ path: encodeSwapPath(cfg, route), recipient: account, amountIn: amountInUsdg, amountOutMinimum: minOut }] } as const;
     const { request } = await pc.simulateContract(call);
     const gas = await pc.estimateContractGas(call);
-    hash = await wallet.writeContract({ ...request, gas: (gas * 125n) / 100n });
+    hash = await wallet.writeContract({ ...request, account: wallet.account ?? request.account, gas: (gas * 125n) / 100n });
   }
   await pc.waitForTransactionReceipt({ hash });
   return hash;

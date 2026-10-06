@@ -186,9 +186,12 @@ const bnbChain = defineChain({
   id: 56,
   name: "BNB Smart Chain",
   nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
-  // publicnode, not defibit: defibit serves state but refuses eth_getLogs, which
-  // reserve discovery cannot do without. Production wants a keyed endpoint.
-  rpcUrls: { default: { http: ["https://bsc-rpc.publicnode.com"] } },
+  // Handed to WALLETS (wallet_addEthereumChain), which send and then poll for
+  // the receipt. publicnode refuses receipts ("archive"), so a wallet given it
+  // would never see its own transaction confirm; BNB Chain's official endpoint
+  // serves receipts and sends. The APP reads through the proxy, which routes
+  // eth_getLogs to publicnode separately (api/robinhood/rpc-proxy.ts).
+  rpcUrls: { default: { http: ["https://bsc-dataseed.bnbchain.org"] } },
   blockExplorers: { default: { name: "BscScan", url: "https://bscscan.com" } },
   contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });

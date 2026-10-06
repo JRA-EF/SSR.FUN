@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHAINS, LIVE_EVM_CHAINS, chainByKey, chainByIdPrefix } from "../src/merge/lib/evmChain";
 import { EVM_LAUNCH_OPTIONS, chainFromPath, launchOptions, pathForChain } from "../src/merge/lib/chainChoice";
-import { UPSTREAMS, chainOf, upstreamUrl } from "../api/robinhood/rpc-proxy";
+import { UPSTREAMS, chainOf, publicUrlFor, upstreamUrl, urlFor } from "../api/robinhood/rpc-proxy";
 import { EVM_ID_PREFIXES, evmReserveId, parseEvmReserveId, rhReserveId, rhAddressFromId } from "../src/merge/lib/evmReserveId";
 
 const ADDR = "0xADEd2d2967AC92EE8FB52612D3436511F302Fe2f";
@@ -189,5 +189,39 @@ describe("the read proxy serves each chain from its own upstream", () => {
       const q = new URLSearchParams(c.readProxyPath.split("?")[1] ?? "").get("chain") ?? "robinhood";
       expect(UPSTREAMS[q], `${c.key} reads via ?chain=${q}`).to.not.equal(undefined);
     }
+  });
+});
+
+describe("the read proxy routes each method to an endpoint that serves it", () => {
+  // Measured live 2026-10-06: on BNB only publicnode answers eth_getLogs, and
+  // publicnode refuses even a fresh receipt as "archive". A proxy pinned to
+  // one endpoint would either break discovery or break every write's
+  // confirmation. The live BNB test stopped on exactly the second one.
+  it("BNB: logs go to the logs endpoint, receipts and everything else do not", () => {
+    const saved = process.env.BNB_RPC_URL;
+    delete process.env.BNB_RPC_URL;
+    expect(urlFor("bnb", "eth_getLogs")).to.equal(UPSTREAMS.bnb.logsUrl);
+    expect(urlFor("bnb", "eth_getTransactionReceipt")).to.equal(UPSTREAMS.bnb.fallback);
+    expect(urlFor("bnb", "eth_call")).to.equal(UPSTREAMS.bnb.fallback);
+    expect(UPSTREAMS.bnb.logsUrl).to.not.equal(UPSTREAMS.bnb.fallback);
+    if (saved !== undefined) process.env.BNB_RPC_URL = saved;
+  });
+
+  it("a keyed URL takes every method, and a refused call retries on the right public endpoint", () => {
+    const saved = process.env.BNB_RPC_URL;
+    process.env.BNB_RPC_URL = "https://bsc.example/key";
+    expect(urlFor("bnb", "eth_getLogs")).to.equal("https://bsc.example/key");
+    expect(urlFor("bnb", "eth_getTransactionReceipt")).to.equal("https://bsc.example/key");
+    expect(publicUrlFor("bnb", "eth_getLogs")).to.equal(UPSTREAMS.bnb.logsUrl);
+    expect(publicUrlFor("bnb", "eth_getTransactionReceipt")).to.equal(UPSTREAMS.bnb.fallback);
+    if (saved === undefined) delete process.env.BNB_RPC_URL; else process.env.BNB_RPC_URL = saved;
+  });
+
+  it("a chain without a separate logs endpoint sends everything to one place, as before", () => {
+    expect(urlFor("robinhood", "eth_getLogs")).to.equal(urlFor("robinhood", "eth_call"));
+  });
+
+  it("wallets are never handed publicnode for BNB -- it cannot show them a receipt", () => {
+    expect(CHAINS.bnb.chain.rpcUrls.default.http[0]).to.not.include("publicnode");
   });
 });

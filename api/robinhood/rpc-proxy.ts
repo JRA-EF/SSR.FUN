@@ -142,9 +142,15 @@ function parseBody(req: ApiRequest): unknown {
  * 2026-10-06: BNB's publicnode serves eth_getLogs up to 5,000 blocks (every
  * other public BSC endpoint refuses it), Base's public RPC up to 500.
  */
-export const UPSTREAMS: Record<string, { env: string; fallback: string }> = {
+export const UPSTREAMS: Record<string, { env: string; fallback: string; logsUrl?: string }> = {
   robinhood: { env: "ROBINHOOD_RPC_URL", fallback: PUBLIC_FALLBACK_RPC_URL },
-  bnb: { env: "BNB_RPC_URL", fallback: "https://bsc-rpc.publicnode.com" },
+  // No single free BNB endpoint serves both (measured 2026-10-06, live): only
+  // publicnode answers eth_getLogs, and publicnode refuses even a fresh
+  // transaction's receipt as an "archive request". defibit serves receipts,
+  // state and sends, but refuses getLogs. So without a keyed URL, logs go to
+  // publicnode and everything else to defibit -- otherwise every BNB write
+  // would land and then fail to confirm in the UI.
+  bnb: { env: "BNB_RPC_URL", fallback: "https://bsc-dataseed1.defibit.io", logsUrl: "https://bsc-rpc.publicnode.com" },
   base: { env: "BASE_RPC_URL", fallback: "https://mainnet.base.org" },
 };
 
@@ -162,6 +168,18 @@ export function fallbackUrl(chain = "robinhood"): string {
 export function upstreamUrl(chain = "robinhood"): string {
   const url = process.env[UPSTREAMS[chain].env]?.trim();
   return url && /^https:\/\//.test(url) ? url : UPSTREAMS[chain].fallback;
+}
+
+/** The PUBLIC endpoint for one method on a chain: its logs endpoint for eth_getLogs when it has one. */
+export function publicUrlFor(chain: string, method: unknown): string {
+  const u = UPSTREAMS[chain];
+  return method === "eth_getLogs" && u.logsUrl ? u.logsUrl : u.fallback;
+}
+
+/** Where one call goes: the chain's keyed URL when set, else the right public endpoint for its method. */
+export function urlFor(chain: string, method: unknown): string {
+  const keyed = upstreamUrl(chain);
+  return keyed !== UPSTREAMS[chain].fallback ? keyed : publicUrlFor(chain, method);
 }
 
 /** The provider's "your plan can't serve this" answer, as opposed to a real call error. */
@@ -250,32 +268,49 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     else toForward.push({ idx, call: item });
   });
 
-  let forwarded: unknown[] = [];
+  let forwarded: unknown[] = new Array(toForward.length);
   if (toForward.length > 0) {
-    const up = await forward(toForward.map((f) => f.call), upstreamUrl(chain));
-    if (!Array.isArray(up.body)) {
-      if (!isBatch && rejected.size === 0) {
-        res.status(up.status).json(up.body);
-        return;
+    const idOf = (k: number) => JSON.stringify((toForward[k].call as JsonRpcRequest).id ?? null);
+    const methodOf = (k: number) => (toForward[k].call as JsonRpcRequest).method;
+    // Group calls by destination: on a chain with a separate logs endpoint a
+    // single batch can need two upstreams. Robinhood (one upstream) sends one
+    // batch exactly as before.
+    const groups = new Map<string, number[]>();
+    toForward.forEach((_, k) => {
+      const url = urlFor(chain, methodOf(k));
+      groups.set(url, [...(groups.get(url) ?? []), k]);
+    });
+    for (const [url, ks] of groups) {
+      const up = await forward(ks.map((k) => toForward[k].call), url);
+      if (!Array.isArray(up.body)) {
+        if (!isBatch && rejected.size === 0 && toForward.length === 1) {
+          res.status(up.status).json(up.body);
+          return;
+        }
+        ks.forEach((k) => (forwarded[k] = err((toForward[k].call as JsonRpcRequest).id, -32603, "Upstream error.")));
+        continue;
       }
-      forwarded = toForward.map((f) => err((f.call as JsonRpcRequest).id, -32603, "Upstream error."));
-    } else {
       // Upstream batch replies are not guaranteed to be in request order: match by id.
       const byId = new Map((up.body as { id?: unknown }[]).map((r) => [JSON.stringify(r?.id ?? null), r]));
-      forwarded = toForward.map((f) => byId.get(JSON.stringify((f.call as JsonRpcRequest).id ?? null)) ?? err((f.call as JsonRpcRequest).id, -32603, "Missing upstream response."));
+      ks.forEach((k) => (forwarded[k] = byId.get(idOf(k)) ?? err((toForward[k].call as JsonRpcRequest).id, -32603, "Missing upstream response.")));
+    }
 
-      // Re-send plan-refused calls to the public RPC, once, and splice the answers back in.
-      const refusedAt = forwarded.map((r, k) => (isPlanRefusal(r) ? k : -1)).filter((k) => k >= 0);
-      if (refusedAt.length > 0 && upstreamUrl(chain) !== fallbackUrl(chain)) {
-        const again = await forward(refusedAt.map((k) => toForward[k].call), fallbackUrl(chain));
-        if (Array.isArray(again.body)) {
-          const againById = new Map((again.body as { id?: unknown }[]).map((r) => [JSON.stringify(r?.id ?? null), r]));
-          refusedAt.forEach((k) => {
-            const hit = againById.get(JSON.stringify((toForward[k].call as JsonRpcRequest).id ?? null));
-            if (hit) forwarded[k] = hit;
-          });
-        }
-      }
+    // Re-send calls a KEYED plan refused to the public endpoint for their
+    // method, once, and splice the answers back in.
+    const refusedAt = forwarded.map((r, k) => (isPlanRefusal(r) && urlFor(chain, methodOf(k)) !== publicUrlFor(chain, methodOf(k)) ? k : -1)).filter((k) => k >= 0);
+    const retryGroups = new Map<string, number[]>();
+    refusedAt.forEach((k) => {
+      const url = publicUrlFor(chain, methodOf(k));
+      retryGroups.set(url, [...(retryGroups.get(url) ?? []), k]);
+    });
+    for (const [url, ks] of retryGroups) {
+      const again = await forward(ks.map((k) => toForward[k].call), url);
+      if (!Array.isArray(again.body)) continue;
+      const againById = new Map((again.body as { id?: unknown }[]).map((r) => [JSON.stringify(r?.id ?? null), r]));
+      ks.forEach((k) => {
+        const hit = againById.get(idOf(k));
+        if (hit) forwarded[k] = hit;
+      });
     }
   }
 
