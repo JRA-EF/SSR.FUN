@@ -85,16 +85,16 @@ describe("DEC-0226 wallet-prompt copy for multi-transaction Buy/Sell", () => {
 
   it("names the one-time trading setup when the batch carries it, so the wallet's count adds up", () => {
     const s = describeBatchBuyWalletPrompt({ swaps: 2, setup: 2, total: 5, ticker: "ECHO" });
-    expect(s).to.contain("approve 5 transactions at once: a one-time trading setup for this Reserve (2 transactions), 2 swaps of your USDC");
+    expect(s).to.contain("approve 5 transactions at once: a one-time setup for this Reserve (2 transactions), 2 swaps of your USDC");
     const sell = describeBatchSellWalletPrompt({ swaps: 1, setup: 1, total: 3, ticker: "ECHO" });
-    expect(sell).to.contain("approve 3 transactions at once: a one-time trading setup for this Reserve (1 transaction), then the redemption of your ECHO");
-    expect(describeBatchBuyWalletPrompt({ swaps: 1, setup: 0, total: 2, ticker: "X" })).to.not.contain("trading setup");
+    expect(sell).to.contain("approve 3 transactions at once: a one-time setup for this Reserve (1 transaction), then the redemption of your ECHO");
+    expect(describeBatchBuyWalletPrompt({ swaps: 1, setup: 0, total: 2, ticker: "X" })).to.not.contain("one-time setup");
   });
 
   it("describes a Sell as redemption first, then sales into USDC", () => {
     const s = describeBatchSellWalletPrompt({ swaps: 2, total: 3, ticker: "DELTA" });
     expect(s).to.contain("approve 3 transactions at once");
-    expect(s).to.contain("redemption of your DELTA into the Reserve's assets, then 2 sales of those assets into USDC");
+    expect(s).to.contain("redemption of your DELTA into the Reserve's assets, then 2 swaps of those assets into USDC");
     expect(s).to.contain("you hold USDC");
   });
 

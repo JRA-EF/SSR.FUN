@@ -19,7 +19,7 @@ function Overview() {
         rows={[
           ['Reserve', 'The whole product: a basket of Solana assets plus its settings (targets, fees, manager).'],
           ['reserve assets', 'The individual tokens held inside a Reserve, for example SOL, USDC, or any Jupiter-tradable asset.'],
-          ['Reserve Token', 'The token you hold when you buy into a Reserve. One Reserve, one Reserve Token mint.'],
+          ['Reserve Token', 'The token you hold when you mint into a Reserve. One Reserve, one Reserve Token mint.'],
           ['Manager', 'The wallet that launched the Reserve and controls its settings within the rules the protocol enforces.'],
           ['Co-Manager', 'A wallet the Manager has granted specific, revocable permissions on that Reserve.'],
         ]}
@@ -41,11 +41,11 @@ function ReserveTokens() {
       </p>
       <ul>
         <li>
-          <strong>Buying</strong> deposits assets into the Reserve and mints new Reserve Tokens to you at the Reserve's
+          <strong>Minting</strong> deposits assets into the Reserve and creates new Reserve Tokens to you at the Reserve's
           current value per token, minus the mint fee.
         </li>
         <li>
-          <strong>Selling</strong> (redeeming) burns your Reserve Tokens and returns your proportional share of the
+          <strong>Redeeming</strong> burns your Reserve Tokens and returns your proportional share of the
           reserve assets, minus the redemption fee.
         </li>
         <li>
@@ -68,17 +68,17 @@ function BuyingSelling() {
   return (
     <>
       <p>
-        Open a Reserve from <a href="/#/discover">Discover Reserves</a>, connect your wallet, and use the Buy and Sell
+        Open a Reserve from <a href="/#/discover">Discover Reserves</a>, connect your wallet, and use the Mint and Redeem
         panel on the Reserve page. The page shows the Reserve's fees and an estimate of what you will receive before
         you approve anything in your wallet.
       </p>
       <ul>
         <li>
-          <strong>Buy.</strong> You pay in the Reserve's settlement asset (USDC on Mainnet). SSR.fun swaps it into the
+          <strong>Mint.</strong> You pay in the Reserve's settlement asset (USDC on Mainnet). SSR.fun swaps it into the
           reserve assets the Reserve targets, deposits them, and mints your Reserve Tokens in the same flow.
         </li>
         <li>
-          <strong>Sell.</strong> Your Reserve Tokens are burned and your share of the reserve assets is swapped back into
+          <strong>Redeem.</strong> Your Reserve Tokens are burned and your share of the reserve assets is swapped back into
           the settlement asset and sent to your wallet.
         </li>
         <li>
@@ -123,7 +123,7 @@ export function GettingStarted() {
       tabs={[
         { id: 'overview', label: 'Overview', content: <Overview /> },
         { id: 'reserve-tokens', label: 'Reserve Tokens', content: <ReserveTokens /> },
-        { id: 'buy-sell', label: 'Buying and selling', content: <BuyingSelling /> },
+        { id: 'buy-sell', label: 'Minting and redeeming', content: <BuyingSelling /> },
         { id: 'launch', label: 'Launching a Reserve', content: <Launching /> },
       ]}
     />

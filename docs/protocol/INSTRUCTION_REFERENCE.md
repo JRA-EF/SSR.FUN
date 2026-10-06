@@ -10,7 +10,7 @@
   remove_reserve_asset, initiate_wind_down, close_reserve -- Phase F/G and
   DEC-0033), and corrected several "Frontend use" lines that had drifted
   stale (mint/redeem were described as "not yet built" -- they are the live
-  Buy/Sell tabs; pause/unpause were described as "not yet built" -- they
+  Mint/Redeem tabs, then labelled Buy/Sell; pause/unpause were described as "not yet built" -- they
   WERE built and have since been deliberately removed again, DEC-0086;
   record_rebalance's described UI step does not actually exist in the
   current frontend). See docs/protocol/DEVNET_INSTRUCTION_AUDIT_2026-08-13.md
@@ -76,7 +76,7 @@
 - **Token movement:** required amount per asset transferred depositor → vault (ceil-rounded on pre-transaction ratio); `net_shares_out` (= requested − effective total fee) minted to depositor.
 - **Event:** `ReserveTokensMinted`, plus `FeesAccrued` (TVL piggyback, if any elapsed) and `ManagerFeeShareAccrued` (if migrated and manager total > 0).
 - **Errors:** `ProtocolPaused`, `UnexpectedReserveStatus`, `ZeroValue`, `ZeroSupply`, `SlippageMaxInputExceeded`, `ZeroAmountAfterFeesOrRounding`, `SlippageMinOutputNotMet`, `RemainingAccountsMismatch`, `ManagerFeeRecipientsMismatch`, `InvalidFeeRecipientCount`.
-- **Frontend use:** the Reserve-detail page's "Buy" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described.
+- **Frontend use:** the Reserve-detail page's "Mint" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described.
 
 ## `redeem_reserve_tokens_in_kind`
 - **Signer:** `redeemer` (any holder -- permissionless; deliberately has no `ProtocolConfig` account at all, see DEC-0016).
@@ -87,7 +87,7 @@
 - **Token movement:** full `reserve_tokens_to_redeem` burned from redeemer; proportional entitlement (computed on the *net*, post-redemption-fee portion) transferred vault → redeemer per asset. The fee portion's backing assets are deliberately left in the vaults (accretion to remaining holders, not a mint to any fee recipient).
 - **Event:** `ReserveTokensRedeemed`.
 - **Errors:** `UnexpectedReserveStatus`, `ZeroValue`, `RedemptionExceedsEntitlement`, `ZeroSupply`, `ZeroAmountAfterFeesOrRounding`, `SlippageMinOutputNotMet`, `RemainingAccountsMismatch`.
-- **Frontend use:** the Reserve-detail page's "Sell" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described. Also the canonical "redeem via SDK with no website" path for the frontend-independence test requirement.
+- **Frontend use:** the Reserve-detail page's "Redeem" tab (`src/merge/pages/DTRDetail.tsx`, via `zapInstructions.ts`) -- live and wired, not the "not yet built" placeholder this line previously described. Also the canonical "redeem via SDK with no website" path for the frontend-independence test requirement.
 
 ## `update_targets`
 - **Signer:** manager, or co-manager with `UPDATE_TARGETS`.
@@ -161,7 +161,7 @@
 - **Args:** none.
 - **Validation:** none beyond arithmetic overflow checks; no-ops (returns `Ok(())` early) if less than one full day has elapsed since the last checkpoint.
 - **DEC-0094 fee formula (TVL fee), computed fresh every call:** `protocol_bps = max(50, annual_tvl_fee_bps / 2)`, `manager_bps = max(annual_tvl_fee_bps - protocol_bps, 0)` -- same formula/floor as the mint fee, applied to the TVL fee independently.
-- **DEC-0094 cadence:** this core logic now lives in `checkpoint_tvl_fee` (shared), also called automatically from `mint_reserve_tokens_in_kind`/`redeem_reserve_tokens_in_kind` so a normal Buy/Sell checkpoints TVL fees for free -- this standalone instruction is now primarily the permissionless fallback for a dormant Reserve, triggered weekly by `api/devnet/accrue-fees-cron.ts` (Vercel Cron) with a ~25-day staleness threshold, well inside the 30-day requirement.
+- **DEC-0094 cadence:** this core logic now lives in `checkpoint_tvl_fee` (shared), also called automatically from `mint_reserve_tokens_in_kind`/`redeem_reserve_tokens_in_kind` so a normal mint or redemption checkpoints TVL fees for free -- this standalone instruction is now primarily the permissionless fallback for a dormant Reserve, triggered weekly by `api/devnet/accrue-fees-cron.ts` (Vercel Cron) with a ~25-day staleness threshold, well inside the 30-day requirement.
 - **State transition:** `FeeConfig.pending_protocol_fee_shares` increases; the manager's share is credited via `common::credit_manager_fee_shares` (per-recipient if migrated, else the legacy aggregate) -- see `mint_reserve_tokens_in_kind` above. `last_fee_accrual_ts` advances by whole elapsed days.
 - **Token movement:** none (accounting only).
 - **Event:** `FeesAccrued`, plus `ManagerFeeShareAccrued` if migrated and manager total > 0.
@@ -272,7 +272,7 @@
 - **Signer:** `manager` (root-only, no co-manager path; `reserve` is read-only here, `has_one = manager` enforces it).
 - **Accounts:** `reserve` (read, `has_one = manager`), `reserve_asset` (read), `asset_mint`, `vault` (mut), `manager_token_account` (mut), `manager`, `token_program` (Interface, SPL Token or Token-2022).
 - **Args:** `amount: u64`.
-- **Validation:** `Reserve.status == Active`; `amount > 0`; the target vault's balance must be exactly zero (a one-time bootstrap, not a general top-up -- see the module doc comment: `mint_reserve_tokens_in_kind`'s deposit math is purely balance-ratio-based, so a vault stuck at 0 could never be funded through ordinary Buy activity).
+- **Validation:** `Reserve.status == Active`; `amount > 0`; the target vault's balance must be exactly zero (a one-time bootstrap, not a general top-up -- see the module doc comment: `mint_reserve_tokens_in_kind`'s deposit math is purely balance-ratio-based, so a vault stuck at 0 could never be funded through ordinary mint activity).
 - **State transition:** none beyond the transfer (additive-only -- no Reserve Token minted; a pure backing increase that benefits every existing holder and dilutes nobody).
 - **Token movement:** `amount` transferred manager → vault (CPI, manager's own signature).
 - **Event:** `ReserveAssetFunded`.

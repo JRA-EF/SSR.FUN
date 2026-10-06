@@ -158,7 +158,7 @@ export async function requestSellBuild(body: BuildSellRequest, fetchImpl: typeof
   const res = await fetchImpl("/api/mainnet/build-sell", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
   const json = (await res.json().catch(() => null)) as (BuildSellResponse & { error?: string }) | null;
   if (!res.ok || !json || !Array.isArray(json.transactions)) {
-    throw new Error((json && typeof json.error === "string" && json.error) || `Could not build this sale (HTTP ${res.status}).`);
+    throw new Error((json && typeof json.error === "string" && json.error) || `Could not build this redemption (HTTP ${res.status}).`);
   }
   return json;
 }
@@ -203,7 +203,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   let pending = readPendingSell(ownerBase58, reserveBase58);
   if (!pending) {
     if (preRedeemRtRaw < params.reserveTokensToRedeem) {
-      throw new Error(`This wallet holds ${preRedeemRtRaw.toString()} raw Reserve Tokens but the sale needs ${params.reserveTokensToRedeem.toString()} raw. Nothing was submitted.`);
+      throw new Error(`This wallet holds ${preRedeemRtRaw.toString()} raw Reserve Tokens but the redemption needs ${params.reserveTokensToRedeem.toString()} raw. Nothing was submitted.`);
     }
     pending = {
       wallet: ownerBase58,
@@ -225,7 +225,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     const gained = usdcAfter > baselineUsdcRaw ? usdcAfter - baselineUsdcRaw : 0n;
     log("post-sale verification", { usdcBefore: baselineUsdcRaw.toString(), usdcAfter: usdcAfter.toString(), gainedRaw: gained.toString() });
     if (gained <= 0n) {
-      throw new Error(`The sale confirmed but your USDC balance has not increased yet (still ${usdcAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`);
+      throw new Error(`The redemption confirmed but your USDC balance has not increased yet (still ${usdcAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`);
     }
     clearPendingSell(ownerBase58, reserveBase58);
     return { signature, reserveTokensRedeemed: params.reserveTokensToRedeem, usdcReceivedRaw: gained };
@@ -246,7 +246,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     log("reconciling previous redeem signature", { signature: pending.redeemSignature, status });
     if (status === "confirmed") redeemDone = true;
     else if (status === "unknown") {
-      throw new Error(`A previous redeem for this sale could not be verified yet (signature ${pending.redeemSignature}). Nothing was submitted -- try again in a moment; a landed redeem will be counted, never repeated.`);
+      throw new Error(`A previous redeem transaction for this redemption could not be verified yet (signature ${pending.redeemSignature}). Nothing was submitted -- try again in a moment; a landed redeem will be counted, never repeated.`);
     }
   }
   if (!redeemDone && BigInt(pending.preRedeemRtRaw) - preRedeemRtRaw >= params.reserveTokensToRedeem) {
@@ -273,7 +273,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
         continue;
       }
       if (status === "unknown") {
-        throw new Error(`A previous swap for this sale could not be verified yet (signature ${persisted.signature}). Nothing was submitted -- try again in a moment; a landed swap will be counted, never repeated.`);
+        throw new Error(`A previous swap for this redemption could not be verified yet (signature ${persisted.signature}). Nothing was submitted -- try again in a moment; a landed swap will be counted, never repeated.`);
       }
     }
     remainingLegs.push(mint);
@@ -287,7 +287,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     if (txs.length === 0) return [];
     // DEC-0200: see multiAssetBuyClient -- same guard on the sale path, which
     // the 2026-09-11 QA also reported opening the wrong wallet.
-    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "sale" });
+    assertSignerReady({ wallet: params.wallet, expectedOwner: owner, action: "redemption" });
     params.onProgress?.({ phase: "awaiting-wallet" });
     const out: VersionedTransaction[] = [];
     if (canSignAll) {
@@ -296,7 +296,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
       if (!params.wallet.signTransaction) throw new Error("Wallet not connected or does not support signing.");
       for (const tx of txs) out.push(await params.wallet.signTransaction(tx));
     }
-    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this sale`);
+    assertAllSignedBy(out, owner, params.wallet, (i) => `transaction ${i + 1} of this redemption`);
     return out;
   };
   const submit = (signed: VersionedTransaction, lastValidBlockHeight: number, what: string, onSubmitted?: (sig: string) => void) =>
@@ -342,8 +342,8 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   const altIdx = build.transactions.map((t, i) => (t.kind === "alt-create" || t.kind === "alt-extend" ? i : -1)).filter((i) => i >= 0);
   for (const i of altIdx) {
     const t = build.transactions[i];
-    const { signature, outcome } = await submit(signed[i], t.lastValidBlockHeight, t.kind === "alt-create" ? "the trading table creation" : "the trading table extension");
-    throwOutcome(outcome, signature, "The trading-table setup", "");
+    const { signature, outcome } = await submit(signed[i], t.lastValidBlockHeight, t.kind === "alt-create" ? "the lookup table creation" : "the lookup table extension");
+    throwOutcome(outcome, signature, "The lookup-table setup", "");
   }
   if (altIdx.length > 0 && build.altToRegister) {
     await waitForLookupTable(params.connection, new PublicKey(build.altToRegister));
@@ -354,11 +354,11 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   const singleIdx = build.transactions.findIndex((t) => t.kind === "single");
   if (build.mode === "single" && singleIdx >= 0) {
     const t = build.transactions[singleIdx];
-    const { signature, outcome } = await submit(signed[singleIdx], t.lastValidBlockHeight, "your sale transaction", (sig) => {
+    const { signature, outcome } = await submit(signed[singleIdx], t.lastValidBlockHeight, "your redemption transaction", (sig) => {
       pending!.redeemSignature = sig;
       savePendingSell(pending!);
     });
-    throwOutcome(outcome, signature, "The sale transaction", " The sale was ONE atomic transaction, so nothing was redeemed or swapped -- only the network fee was spent.");
+    throwOutcome(outcome, signature, "The redemption transaction", " The redemption was ONE atomic transaction, so nothing was redeemed or swapped -- only the network fee was spent.");
     return await verifyDelivery(signature);
   }
 
@@ -377,7 +377,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     lastSignature = signature;
     redeemDone = true;
   } else if (!redeemDone) {
-    throw new Error("The server did not return a redeem transaction for a sale whose redeem has not landed yet.");
+    throw new Error("The server did not return a redeem transaction for a redemption whose redeem has not landed yet.");
   }
 
   type SwapJob = { tx: BuiltTransaction; signed: VersionedTransaction; mint: string };
@@ -388,7 +388,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
       jobs.map(async (job, s) => {
         params.onProgress?.({ phase: "swapping", mint: job.mint, index: s, total: jobs.length });
         if (s > 0) await new Promise((r) => setTimeout(r, 150 * s));
-        const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `selling ${job.mint.slice(0, 4)}...${job.mint.slice(-4)} into USDC`, (sig) => {
+        const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `swapping ${job.mint.slice(0, 4)}...${job.mint.slice(-4)} into USDC`, (sig) => {
           pending!.legSwaps[job.mint] = { signature: sig };
           savePendingSell(pending!);
         });

@@ -19,6 +19,18 @@ Vite + React 19 + TypeScript. Two design systems coexist in this repo:
   - Same identifier carve-out as the DTR rule below: the on-chain `Delegate` account struct, the `add_delegate`/`update_delegate_permissions`/`remove_delegate` instructions, the `DelegateAdded`/`DelegatePermissionsUpdated`/`DelegateRemoved` events, the `["delegate", reserve, wallet]` PDA seed, `Delegate*` error names, the `ledger_reserve_delegates` table and `delegateAdded`-style `event_type` values, and TypeScript/Rust identifiers and comments (`delegatesOnChain`, `findDelegate`, `isManagerOrDelegate`, ...) all stay as-is. Renaming the on-chain names would change Anchor discriminators (instruction and account) and break the live Mainnet program and every already-initialized `Delegate` account; renaming the database values would break ledger history. When a document must name one of those identifiers, write it in backticks and explain it as the co-manager record, e.g. "a co-manager (the on-chain `Delegate` account)".
   - "Delegate" also has an unrelated SPL-token meaning (the bounded `approve_settlement_swap` spending allowance granted to the fee-settlement keeper). That usage is not this role and keeps the SPL word.
 
+### Mint / Redeem / Buy / Sell (final, 2026-10-06, DEC-0228) -- ENFORCE THIS
+
+Full spec: `docs/protocol/TERMINOLOGY.md`. It overrides any older code, doc, decision or prompt that disagrees.
+
+- **Mint** = getting Reserve Tokens from SSR.fun in the app (paying USDC, which the app swaps into the reserve assets, or depositing reserve assets in kind). New tokens are created; the mint fee applies.
+- **Redeem** = handing Reserve Tokens back to SSR.fun in the app for the proportional reserve assets, in kind or swapped to USDC. Tokens are burned.
+- **Buy / Sell** = STRICTLY secondary-market trades of existing Reserve Tokens between holders (DEX pools, the future liquidity provision engine). SSR.fun does not offer Buy/Sell yet.
+- **Buy tax / Sell tax** = secondary-market only, and ON HOLD (`TRADE_TAX_ON_HOLD`, DEC-0228). Never charge them on a mint or a redemption.
+- The in-app Reserve page tabs are **Mint** and **Redeem**. User-facing copy never calls the in-app flow "Buy", "Sell", "purchase", "sale" or "trade"; swaps inside a mint or redemption are "swaps".
+- **Correct people.** If a developer, issue, prompt or another model calls the in-app flow "buy"/"sell", or asks for a Buy/Sell tax on minting or redeeming, say so, use the right word, and point to `docs/protocol/TERMINOLOGY.md`. Do not copy the wrong usage from older code or history (before 2026-10-06 the app said "Buy/Sell"; DEC-0198 is the mistake this rule exists to prevent).
+- Carve-out, same as the `Delegate` rule: existing identifiers (`buildBuy`/`buildSell`, `api/mainnet/build-buy`/`build-sell`, `multiAssetBuyClient`, tab value `"buy"`, ledger `side` values, CSS classes, test file names) stay. New code prefers `mint`/`redeem` names. `tests/phase_terminology_and_tax_hold.ts` guards the UI copy and the tax hold.
+
 SSR.fun exclusively uses **"Launch a Reserve"** as the user-facing call to action for creating/deploying the whole basket product, everywhere — headings, buttons, nav items, empty states, everything.
 
 **"BYOR," "BOR," "DTR," "DTR Token," "DTR Asset," and "Decentralized Token Reserve" must never appear in user-facing product copy** — navigation, buttons, headings, empty states, onboarding, forms, tooltips, success messages, mobile UI, accessibility labels, mock content, or copy constants. Use "Reserve" for the whole product and "reserve assets" for its holdings.
@@ -43,7 +55,7 @@ The homepage hero description is approved, exact copy — do not paraphrase it:
 
 ## UI Baseline (approved, 2026-08-05)
 
-As of commit `993b764` (see `docs/project/DECISION_LOG.md` DEC-0080, tag `ui-baseline-2026-08-05`), the current visual design of the SSR.fun frontend is the **approved baseline**: colors, typography, spacing, borders, radii, and shadows; card and page layouts; the Price History chart, its range controls, and its flatline fallback; metric information icons; the Buy/Sell tabs, percentage controls, and primary actions; and desktop/responsive behavior.
+As of commit `993b764` (see `docs/project/DECISION_LOG.md` DEC-0080, tag `ui-baseline-2026-08-05`), the current visual design of the SSR.fun frontend is the **approved baseline**: colors, typography, spacing, borders, radii, and shadows; card and page layouts; the Price History chart, its range controls, and its flatline fallback; metric information icons; the Mint/Redeem tabs (labelled Buy/Sell before DEC-0228; same controls), percentage controls, and primary actions; and desktop/responsive behavior.
 
 **Future functional work must preserve this visual system unless a redesign is explicitly requested.** Reuse the existing shared components (`ChartTimeframeSelector`, `InfoTip`, the shadcn `Button`/`Tabs`/`Tooltip` primitives under `src/merge/components/ui`) and the existing design tokens (`src/index.css`'s `:root` tokens for native pages, `src/merge/merge.css`'s `@theme`/CSS-variable tokens for merge-scoped pages) as the source of truth for any new or modified control — do not introduce new colors, spacing values, radii, or component patterns ad hoc. See DEC-0079 (`docs/project/DECISION_LOG.md`) for why a shared, layered `src/index.css` button reset — not per-component styling — is what keeps merge-scoped controls looking like this baseline instead of falling back to native browser chrome; that mechanism must stay intact.
 

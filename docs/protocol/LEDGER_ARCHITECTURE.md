@@ -139,8 +139,8 @@ specifically; see section 11's gap list).
 | `reserveCreated` | A Reserve account initialized | -- |
 | `reserveAssetInitialized` | A Reserve Asset registered at creation | -- |
 | `reserveSeeded` | Initial mint (creator's first deposit) | `mintVolume` |
-| `reserveTokensMinted` | A Buy (mint) | `mintVolume` |
-| `reserveTokensRedeemed` | A Sell (redemption) | `redeemVolume` |
+| `reserveTokensMinted` | A mint | `mintVolume` |
+| `reserveTokensRedeemed` | A redemption | `redeemVolume` |
 | `protocolMintFeeTransferred` | Instant Protocol fee transfer (post-DEC-0101 path) | `protocolFee` |
 | `tvlFeeSettled` | Weekly TVL fee settlement (two-sided: protocol + manager) | `protocolFee` + `managerFee` |
 | `managerFeeRecipientsConfigured` | Fee-routing change | -- |

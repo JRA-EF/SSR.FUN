@@ -3,10 +3,12 @@
   file's original pre-Gate-10 plan (see git history for the prior version),
   which assumed the existing AMM Buy/Sell UI would stay untouched and a
   brand-new proportional mint/redeem UI would be built separately. The
-  mission's actual Gate 10 instructions redefined Buy/Sell as a SOL zap
-  reusing the EXISTING Buy/Sell tab, which is what was built. Everything
-  below reflects what is actually implemented and verified against live
-  DevNet, not a plan.
+  mission's actual Gate 10 instructions redefined that tab (then labelled
+  Buy/Sell) as a SOL zap into the proportional mint/redeem, reusing the
+  EXISTING tab, which is what was built. Everything below reflects what is
+  actually implemented and verified against live DevNet, not a plan.
+  Terminology (docs/protocol/TERMINOLOGY.md, DEC-0228): the in-app flow is
+  Mint/Redeem; Buy/Sell means secondary-market trades only.
 -->
 
 # Frontend Integration (Gate 10-11)
@@ -17,13 +19,13 @@
 
 - **Reserve inception:** `USDC → Jupiter swaps → all required Reserve
   Assets → seed Reserve → mint Reserve Tokens`.
-- **Buying an existing Reserve:** `USDC → Jupiter swaps → Reserve Assets →
+- **Minting an existing Reserve's tokens:** `USDC → Jupiter swaps → Reserve Assets →
   deposit assets → mint Reserve Tokens` -- for EVERY Reserve, including one
   composed 100% of a single non-USDC asset (a pure-USDC Reserve deposits
   USDC directly, no swap).
 
 The user must never need to acquire constituent assets manually during a
-normal launch or purchase. A resume MAY count constituent assets already in
+normal launch or mint. A resume MAY count constituent assets already in
 the wallet from previously confirmed swaps toward the requirement, but it
 must only obtain genuine remaining deficits and must never repeat
 successful work.
@@ -63,7 +65,7 @@ checked USDC sufficiency anywhere.
 The existing SSR.fun frontend (native + merge design systems, unchanged
 visually) is now wired to the real, deployed SSR Protocol program on Solana
 DevNet (`2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW`). Wallet connection,
-Reserve data, Buy/Sell, and Reserve creation all execute real DevNet
+Reserve data, Mint/Redeem, and Reserve creation all execute real DevNet
 transactions when acting on a chain-backed Reserve; the pre-existing
 fully-simulated Reserves (`blue`, `meme`, `sdefi`, `infra`, `gaming`) and
 their AMM economy are untouched and keep working exactly as before -- the
@@ -75,8 +77,8 @@ Rather than a global mock/DevNet mode flag, each `DTR` in `useAppStore`
 either has an `onChain: OnChainReserveMeta` field (`src/merge/lib/types.ts`)
 or doesn't:
 
-- **Present** -- this Reserve is a real, deployed SSR Protocol account. Buy,
-  Sell, and all displayed Reserve/vault/supply data are real and
+- **Present** -- this Reserve is a real, deployed SSR Protocol account. Mint,
+  Redeem, and all displayed Reserve/vault/supply data are real and
   chain-sourced (`src/merge/lib/onChainReserve.ts`, `RealReserveSync.tsx`).
 - **Absent** -- this Reserve is the pre-existing pure simulation; nothing
   about it changed.
@@ -109,7 +111,7 @@ from already-known mint addresses -- **never `getProgramAccounts`**, which is
 confirmed blocked (403) on the public DevNet RPC (see DEVNET_RUNBOOK.md).
 `RealReserveSync.tsx` polls this for every chain-backed DTR plus the
 connected wallet's real Reserve Token balance (`fetchTokenBalanceRaw`) every
-15s, and immediately after any confirmed Buy/Sell/Create.
+15s, and immediately after any confirmed Mint/Redeem/Create.
 
 ## Canonical discovery (Phase A, 2026-07-29)
 
@@ -196,7 +198,7 @@ which Phase A's mandate explicitly rules out; `ManageDTR.tsx`'s Co-Managers
 tab is read-only for `dtr.onChain` Reserves with an explanatory notice
 pointing at the deferred Phase F work, rather than silently no-oping.
 
-**The Sell tab's estimate for a real Reserve no longer shows a blended
+**The Redeem tab's estimate for a real Reserve no longer shows a blended
 synthetic SOL headline.** The canonical, primary figure is now the real
 proportional in-kind redemption amount, computed from live vault
 balances/supply via `packages/sdk/src/calculations.ts`'s
@@ -265,19 +267,19 @@ an actual rendered browser DOM (no browser-automation tool available in
 this environment, same pre-existing limitation as the rest of this
 document's "no real Phantom click-through yet" note).
 
-## Buy/Sell zap architecture
+## Mint/Redeem zap architecture
 
-**Buy = SOL zap into proportional protocol mint. Sell = proportional protocol
+**Mint = SOL zap into proportional protocol mint. Redeem = proportional protocol
 redeem followed by a zap into SOL.** Both are single atomic, two-signer
 transactions (`packages/sdk/src/zapInstructions.ts`):
 
-- **Buy**: idempotent-create the depositor's ATAs → `SystemProgram.transfer`
+- **Mint**: idempotent-create the depositor's ATAs → `SystemProgram.transfer`
   user→swap-authority (SOL in) → SPL `mintTo` per asset leg
   (authority=swap-authority, destination=user's own ATA) →
   `mint_reserve_tokens_in_kind` (signer=user). If any instruction fails,
   nothing executes -- the user is never left holding an unintended
   intermediate basket.
-- **Sell**: `redeem_reserve_tokens_in_kind` (signer=user, assets land in the
+- **Redeem**: `redeem_reserve_tokens_in_kind` (signer=user, assets land in the
   user's own ATAs) → idempotent-create swap-authority's ATAs → SPL `transfer`
   per asset leg user→swap-authority → `SystemProgram.transfer`
   swap-authority→user (SOL out).
@@ -307,16 +309,16 @@ mints + wrapped SOL) -- never the Reserve address itself. Any Reserve created
 through the real Create Reserve flow (below) whose assets are all supported
 works immediately, with no code change, redeploy, or manual registration.
 
-**Wrapped SOL (DEC-0030):** since the swap authority can't "mint" SOL, Buy's
+**Wrapped SOL (DEC-0030):** since the swap authority can't "mint" SOL, the mint's
 per-asset loop special-cases the wrapped-SOL mint
 (`packages/sdk/src/zapPricing.ts`'s `WRAPPED_SOL_MINT`): the swap authority
 wraps its own real SOL (idempotent-create its WSOL ATA, `SystemProgram.transfer`
 into it, `syncNative`) and transfers the wrapped amount to the user like any
-other SPL leg. Sell's per-asset loop, symmetrically, `closeAccount`s the swap
+other SPL leg. The redemption's per-asset loop, symmetrically, `closeAccount`s the swap
 authority's WSOL ATA right after receiving the user's WSOL leg, unwrapping it
 back to real lamports before the final SOL-out transfer.
 
-`DTRDetail.tsx`'s existing Buy/Sell tab is reused as-is: for a chain-backed
+`DTRDetail.tsx`'s existing trade tab (now the Mint/Redeem tab) is reused as-is: for a chain-backed
 Reserve, the "USDC" unit/label swaps to "SOL" and the quote box shows the
 fixed DevNet test price instead of the AMM curve's price-impact figures;
 every other element (tabs, quick-fill buttons, disabled/insufficient-balance
@@ -328,7 +330,7 @@ The deployed protocol has no oracle or bonding curve -- it only tracks raw
 per-asset backing. `SOL_TEST_PRICE_USD = 20` and each fixture asset =
 `$1.00` are **fixed, DevNet-only constants**, not live market data, used
 solely so the existing dollar-denominated UI has something coherent to show.
-The Buy/Sell tab labels this explicitly ("SOL Price (DevNet test)" with a
+The Mint/Redeem tab labels this explicitly ("SOL Price (DevNet test)" with a
 tooltip). Never presented as a real price anywhere.
 
 ## Create Reserve flow
@@ -399,13 +401,13 @@ Reserve) is a natural follow-up, not built here.
 `Portfolio.tsx` has a "Get DevNet Test Assets" button (calls
 `api/devnet/mint-test-assets` directly, no transaction/signature needed from
 the user) so a connected wallet can acquire the 3 fixture test assets to
-experiment with Sell without having Bought first, or to self-seed a newly
+experiment with redeeming without having minted first, or to self-seed a newly
 created Reserve.
 
 ## Explorer integration
 
 `src/merge/lib/solana-config.ts`'s `explorerUrl(kind, value)` always tags
-the DevNet cluster. Used in: Buy/Sell/Create success toasts (transaction
+the DevNet cluster. Used in: Mint/Redeem/Create success toasts (transaction
 signatures) and a small "View on Solana Explorer" link row on `DTRDetail.tsx`
 (Reserve account, Reserve Token mint, each asset's vault) for chain-backed
 Reserves.
@@ -419,7 +421,7 @@ automation tool was available in the environment this was built in -- see
 PROJECT_STATUS.md for what remains manually/browser-verified):
 
 - `verify_reads.ts` -- real reads for both fixture Reserves.
-- `verify_zap.ts` -- a full Buy then Sell round-trip: vault balances and
+- `verify_zap.ts` -- a full mint then redeem round-trip: vault balances and
   Reserve Token supply increase/decrease exactly as expected, SOL moves
   both directions with the swap authority's balance delta matching the
   exact expected spread.
@@ -434,14 +436,14 @@ PROJECT_STATUS.md for what remains manually/browser-verified):
 - `verify_dynamic_reserve.ts` (DEC-0029, 2026-07-28 corrective pass) -- calls
   the rewritten `swap-sign.ts` handler in-process against the real
   frontend-created Reserve `Hj8uifcUHAmTpwySQJgfo4F6B8Y68X2b48BmTKv89xSX`,
-  confirming it builds a valid Buy transaction and correctly rejects an
+  confirming it builds a valid mint transaction and correctly rejects an
   unrelated/unregistered mint with a specific error.
 - `verify_e2e_fresh_reserve.ts` (DEC-0032, 2026-07-28 corrective pass) -- the
   most thorough of these: drives the **actual browser client code**
   (`createReserveClient.ts`, `zapClient.ts`, not a reimplementation) from a
   Node script, with a throwaway keypair as the connected wallet and the real
   `api/devnet/*.ts` handlers invoked in-process. Creates a fresh 2-asset
-  (fixture mint + wrapped SOL) Reserve, seeds it, Buys, Sells half the
+  (fixture mint + wrapped SOL) Reserve, seeds it, mints, redeems half the
   resulting balance, and re-fetches the Reserve (simulating a page refresh)
   -- all with real signatures, confirming vault balances, Reserve Token
   supply, and the creator's SOL/Reserve-Token balances move exactly as
@@ -471,7 +473,7 @@ DevNet program upgrade once the deployer wallet was funded, then called once
 to set `default_protocol_fee_destination` to
 `EME96L9JK7VQvMg76txApB8Kb9npdyUfFcpQKDqYupmq`. Fee routing was verified with
 a real `collect_fees` call against a Reserve with pending fee shares (accrued
-by DEC-0032's Buy): the treasury's Reserve Token balance went from 0 (no ATA)
+by DEC-0032's mint): the treasury's Reserve Token balance went from 0 (no ATA)
 to 200 raw units, and the Reserve's manager received their 800-unit share --
 exact evidence, signatures, and before/after balances are in
 `docs/project/DECISION_LOG.md` (DEC-0035) and `DEVNET_RUNBOOK.md`.

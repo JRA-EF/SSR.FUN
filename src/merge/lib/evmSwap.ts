@@ -85,7 +85,7 @@ export async function quoteExactUsdgIn(pc: PublicClient, route: SwapRoute, amoun
     const { result } = await pc.simulateContract({ address: UNISWAP_V3_QUOTER_V2, abi: QUOTER_V2_ABI, functionName: "quoteExactInput", args: [encodeSwapPath(route), amountInUsdg] });
     return result[0];
   } catch (e) {
-    throw new Error(`Uniswap could not quote this buy (${describeEvmError(e)}). The pool may have no liquidity in range right now.`);
+    throw new Error(`Uniswap could not quote this swap (${describeEvmError(e)}). The pool may have no liquidity in range right now.`);
   }
 }
 

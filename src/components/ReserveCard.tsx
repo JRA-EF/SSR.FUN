@@ -55,7 +55,7 @@ export function ReserveCard({
   sparklineValueFmt,
   topAssets,
   metrics,
-  ctaLabel = 'Trade',
+  ctaLabel = 'Mint',
   renderCta,
 }: ReserveCardProps) {
   const up = changePct >= 0

@@ -32,8 +32,8 @@ export function Disclosures() {
       <p>
         Reserve Tokens and the reserve assets behind them can lose value quickly and completely. Nothing on this site
         is a guarantee of value, performance, liquidity, or availability. You should not commit funds you cannot
-        afford to lose. There is currently no secondary market for Reserve Tokens on this interface: purchases and
-        sales execute against the protocol at values derived from the Reserve's own holdings.
+        afford to lose. There is currently no secondary market for Reserve Tokens on this interface: mints and
+        redemptions execute against the protocol at values derived from the Reserve's own holdings.
       </p>
 
       <h2>4. Blockchain and wallet risks</h2>
@@ -46,8 +46,8 @@ export function Disclosures() {
 
       <h2>5. Liquidity, slippage, and swaps</h2>
       <p>
-        Buying and selling Reserve Tokens can involve swapping assets through third-party liquidity. Swap prices move
-        between quote and execution (slippage), and thin liquidity can make buying or selling costly or temporarily
+        Minting and redeeming Reserve Tokens can involve swapping assets through third-party liquidity. Swap prices move
+        between quote and execution (slippage), and thin liquidity can make minting or redeeming costly or temporarily
         impracticable. A Reserve's assets may become illiquid, frozen, restricted, depegged, or turn out to be
         malicious, which can impair minting, redemption, or valuation. It may not always be possible to mint or redeem
         on the terms you expect, or at all.

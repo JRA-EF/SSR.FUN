@@ -547,7 +547,7 @@ export function Portfolio() {
                         <TableCell className="text-right">
                           <div className="flex justify-end">
                             <Button asChild size="sm" variant="secondary" className="font-semibold trade-pill">
-                              <Link href={`/dtr/${dtr.id}`}>Trade</Link>
+                              <Link href={`/dtr/${dtr.id}`}>Mint / Redeem</Link>
                             </Button>
                           </div>
                         </TableCell>
@@ -582,7 +582,7 @@ export function Portfolio() {
         <Card className="bg-card/40 border-border/50">
           {recentActivity.length === 0 ? (
             <CardContent className="py-10 text-center text-muted-foreground text-sm">
-              No trades yet this session. Buy or sell a Reserve Token to see activity here.
+              No mints or redemptions yet this session. Mint or redeem a Reserve Token to see activity here.
             </CardContent>
           ) : (
             <div className="divide-y divide-border/50">
@@ -590,7 +590,7 @@ export function Portfolio() {
                 <div key={trade.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
                   <div className="flex items-center gap-3 min-w-0">
                     <span className={`text-xs font-semibold font-merge-mono px-2 py-1 rounded ${trade.side === "buy" ? "bg-positive/15 text-positive" : "bg-destructive/15 text-destructive"}`}>
-                      {trade.side === "buy" ? "BUY" : "SELL"}
+                      {trade.side === "buy" ? "MINT" : "REDEEM"}
                     </span>
                     <div className="min-w-0">
                       <p className="font-medium truncate">{trade.dtr.name} <span className="text-muted-foreground font-merge-mono text-xs">{trade.dtr.ticker}</span></p>

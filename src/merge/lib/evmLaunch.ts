@@ -36,7 +36,7 @@ export async function quoteLaunch(pc: PublicClient, plan: LaunchPlan, priceUsd: 
       out.push({ leg, route: null, quotedOut: leg.usdgRaw, minOut: leg.usdgRaw, impactBps: 0 });
       continue;
     }
-    if (!leg.asset.pool) throw new Error(`${leg.asset.symbol} has no Uniswap pool to buy it through.`);
+    if (!leg.asset.pool) throw new Error(`${leg.asset.symbol} has no Uniswap pool to swap USDG into it.`);
     const route = await routeFor(pc, leg.asset.address, leg.asset.pool);
     const quotedOut = await quoteExactUsdgIn(pc, route, leg.usdgRaw);
     if (quotedOut <= 0n) throw new Error(`Uniswap returned nothing for ${leg.asset.symbol}; the pool has no liquidity in range.`);
@@ -49,7 +49,7 @@ export async function quoteLaunch(pc: PublicClient, plan: LaunchPlan, priceUsd: 
     }
     if (impactBps > LAUNCH_MAX_PRICE_IMPACT_BPS) {
       throw new Error(
-        `Not enough liquidity for ${leg.asset.symbol}: buying ${fmtUsdg(leg.usdgRaw)} USDG of it would move the price about ${(impactBps / 100).toFixed(1)}%. Lower its weight or the initial amount.`,
+        `Not enough liquidity for ${leg.asset.symbol}: swapping ${fmtUsdg(leg.usdgRaw)} USDG into it would move the price about ${(impactBps / 100).toFixed(1)}%. Lower its weight or the initial amount.`,
       );
     }
     out.push({ leg, route, quotedOut, minOut: minOutAfterSlippage(quotedOut), impactBps });
@@ -99,7 +99,7 @@ export async function executeLaunch(
     const routerSpend = pending.reduce((s, q) => s + q.leg.usdgRaw, 0n);
     await approveIfNeeded(pc, wallet, cfg, account, USDG, UNISWAP_V3_SWAP_ROUTER_02, routerSpend, onProgress, "USDG");
     for (const q of pending) {
-      onProgress(`Buying ${q.leg.asset.symbol} with ${fmtUsdg(q.leg.usdgRaw)} USDG...`);
+      onProgress(`Swapping ${fmtUsdg(q.leg.usdgRaw)} USDG into ${q.leg.asset.symbol}...`);
       const before = await erc20Balance(pc, q.leg.asset.address, account);
       await swapExactUsdgIn(pc, wallet, cfg, account, q.route!, q.leg.usdgRaw, q.minOut);
       const after = await erc20Balance(pc, q.leg.asset.address, account);
