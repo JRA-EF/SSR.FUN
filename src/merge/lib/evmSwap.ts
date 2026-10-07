@@ -143,7 +143,14 @@ export async function swapExactUsdgIn(
     const gas = await pc.estimateContractGas(call);
     hash = await wallet.writeContract({ ...request, account: wallet.account ?? request.account, gas: (gas * 125n) / 100n });
   }
-  await pc.waitForTransactionReceipt({ hash });
+  // A mined swap can still have REVERTED. viem's receipt wait does not throw on
+  // that, and this used to return the hash regardless -- caught on Base
+  // mainnet, where a swap reverted on-chain (nonce 14, 0x84af98cf...) and the
+  // caller carried on as if it had paid out.
+  const receipt = await pc.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") {
+    throw new Error(`The swap was mined but reverted on-chain (${hash}). Nothing was received; check the token's allowance and try again.`);
+  }
   return hash;
 }
 

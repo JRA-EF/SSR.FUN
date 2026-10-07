@@ -30,6 +30,8 @@ import {
   quoteRedeemProceeds,
   SSR_ABI,
   type ReserveSnapshot,
+  readSettled,
+  sendChecked,
 } from "@/lib/evmReserve";
 import { connectEvmWallet, useEvmWallet } from "./useEvmWallet";
 
@@ -187,9 +189,10 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
       }
       setMintStatus({ text: "Minting...", kind: "busy" });
       const before = await pc.readContract({ address, abi: SSR_ABI, functionName: "balanceOf", args: [account] });
-      const hash = await wallet.writeContract({ address, abi: SSR_ABI, functionName: "mint", args: [q.s, account, 0n], chain: cfg.chain, account });
-      await pc.waitForTransactionReceipt({ hash });
-      const after = await pc.readContract({ address, abi: SSR_ABI, functionName: "balanceOf", args: [account] });
+      const hash = await sendChecked(pc, wallet, { address, abi: SSR_ABI, functionName: "mint", args: [q.s, account, 0n], chain: cfg.chain, account }, "mint");
+      // Read the new balance once a backend has caught up with the receipt --
+      // a stale read reported "Received 0 shares" for a mint that paid out.
+      const after = await readSettled(() => pc.readContract({ address, abi: SSR_ABI, functionName: "balanceOf", args: [account] }) as Promise<bigint>, (v) => v > before);
       await refresh();
       await refreshBalances();
       setMintStatus({ text: `Received ${fmtUnits(after - before, dec, 6)} shares.`, kind: "ok" });
@@ -208,15 +211,15 @@ export function RobinhoodReserveDetail({ address, chain = ROBINHOOD }: { address
       // contract's own order -- so it is read fresh rather than assumed.
       const [assets, amounts] = await quoteRedeemProceeds(pc, address, s);
       setRedeemStatus({ text: "Redeeming...", kind: "busy" });
-      const hash = await wallet.writeContract({
-        address,
-        abi: SSR_ABI,
-        functionName: "redeem",
-        args: [s, account, [...assets], assets.map(() => 0n)],
-        chain: cfg.chain,
-        account,
-      });
-      await pc.waitForTransactionReceipt({ hash });
+      // Minimums at 99% of the fresh quote: redemption is pro-rata in kind, so
+      // anything lower means the basket changed underneath (a rebalance between
+      // quote and send) -- revert rather than silently pay out less.
+      const hash = await sendChecked(
+        pc,
+        wallet,
+        { address, abi: SSR_ABI, functionName: "redeem", args: [s, account, [...assets], amounts.map((a) => (a * 99n) / 100n)], chain: cfg.chain, account },
+        "redemption",
+      );
       const got = describe(assets, amounts).join(" + ");
       await refresh();
       await refreshBalances();

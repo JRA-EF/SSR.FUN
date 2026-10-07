@@ -171,8 +171,6 @@ const ROBINHOOD_QUOTES: ChainQuotes = {
   native: { address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", symbol: "WETH", decimals: 18 },
 };
 
-const ZERO: Address = "0x0000000000000000000000000000000000000000";
-
 const baseChain = defineChain({
   id: 8453,
   name: "Base",
@@ -268,19 +266,23 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
   base: {
     key: "base",
     idPrefix: "base",
-    live: false,
+    live: true,
     chain: baseChain,
     // Logs go to publicnode via the proxy, which accepts 2,000 blocks.
     logChunk: 2_000n,
     readProxyPath: "/api/robinhood/rpc-proxy?chain=base",
     explorer: "https://basescan.org",
     ssr: null,
-    deployer: ZERO,
-    deployerBlock: 0n,
-    versionRegistry: ZERO,
-    feeRegistry: ZERO,
-    roleRegistry: ZERO,
-    fillerRegistry: ZERO,
+    // Deployed 2026-10-07 by scripts/go-live-evm-chain.sh at block 52,278,846;
+    // registerVersion -> "6.0.0", admin = the owner key 0x8b41e427..., DAO fee
+    // rule 50% with a 0.5% floor. Same addresses as Robinhood and BNB: the
+    // deployer had never transacted on Base.
+    deployer: "0x81dd183c53C95F251869520d8DB10B0A4a4F8858",
+    deployerBlock: 52278846n,
+    versionRegistry: "0x835dd7fF172874749855aae0174c6ecAA82Ef1e6",
+    feeRegistry: "0x03079d5f8d3B6d27827315205D1328b193c48d31",
+    roleRegistry: "0x3a96Fd76dAB64be73404BF59587beF21773Dcd94",
+    fillerRegistry: "0x95CB8550056680a004019fD45db4347A622C2CFc",
     assets: [],
     dex: {
       name: "Uniswap",
@@ -311,7 +313,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       { address: "0xc3De830EA07524a0761646a6a4e4be0e114a3C83", symbol: "UNI", decimals: 18, pool: { address: "0xAb365f161Dd501473a1ff0D2ef0dCE94E7398839", fee: 10000, quote: "native" } },
     ],
     isMock: false,
-    notice: "Base is wired and fork-verified but has no deployed SSR stack yet.",
+    notice: "Live on Base. Reserves hold real ERC-20 assets, swapped into on Uniswap; minting moves real assets in and redeeming returns them.",
   },
   bnb: {
     key: "bnb",

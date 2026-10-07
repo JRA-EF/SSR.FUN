@@ -110,7 +110,7 @@ export async function executeLaunch(
       onProgress(`Swapping ${fmtUsdg(q.leg.usdgRaw, plan.usdDecimals)} ${cash.symbol} into ${q.leg.asset.symbol}...`);
       const before = await erc20Balance(pc, q.leg.asset.address, account);
       await swapExactUsdgIn(pc, wallet, cfg, account, q.route!, q.leg.usdgRaw, q.minOut);
-      const after = await erc20Balance(pc, q.leg.asset.address, account);
+      const after = await balanceAbove(pc, q.leg.asset.address, account, before);
       const got = after - before;
       if (got <= 0n) throw new Error(`The ${q.leg.asset.symbol} swap confirmed but the wallet balance did not rise; stopping before anything is deployed.`);
       acquired.set(q.leg.asset.address.toLowerCase(), got);
@@ -142,4 +142,22 @@ export async function executeLaunch(
     },
     onProgress,
   );
+}
+
+/**
+ * The balance once a FRESH read shows it above `floor`, or the last read after
+ * ~15s. Public RPCs are load-balanced: right after a swap's receipt, the next
+ * read can land on a backend a block behind and still show the old balance.
+ * Read once, that aborted a live Base launch with "the swap confirmed but the
+ * wallet balance did not rise" after the swap had in fact paid out. Bounded,
+ * so a genuinely failed swap still stops the launch.
+ */
+async function balanceAbove(pc: PublicClient, token: Address, owner: Address, floor: bigint): Promise<bigint> {
+  let last = floor;
+  for (let i = 0; i < 15; i++) {
+    last = await erc20Balance(pc, token, owner);
+    if (last > floor) return last;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return last;
 }

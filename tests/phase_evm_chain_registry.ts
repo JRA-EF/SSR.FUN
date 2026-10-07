@@ -37,10 +37,11 @@ describe("the EVM chain registry", () => {
     for (const cfg of LIVE_EVM_CHAINS) {
       expect(cfg.deployer, `${cfg.key} is live but has no factory`).to.not.equal("0x0000000000000000000000000000000000000000");
     }
-    // Base is verified reference wiring, deliberately not offered. BNB went
-    // live 2026-10-06 with a deployed, registered stack.
-    expect(CHAINS.base.live).to.equal(false);
+    // BNB went live 2026-10-06 and Base 2026-10-07, each with a deployed,
+    // registered stack at the same five addresses as Robinhood.
+    expect(CHAINS.base.live).to.equal(true);
     expect(CHAINS.bnb.live).to.equal(true);
+    expect(CHAINS.base.deployer).to.equal(CHAINS.bnb.deployer);
     expect(CHAINS.bnb.deployer).to.equal("0x81dd183c53C95F251869520d8DB10B0A4a4F8858");
   });
 
@@ -53,6 +54,7 @@ describe("the EVM chain registry", () => {
 
   it("the reference chains carry real, probe-verified wiring", () => {
     expect(CHAINS.base.quotes?.usd.decimals, "Base USDC is 6").to.equal(6);
+    expect(CHAINS.base.starterAssets?.find((a) => a.symbol === "cbBTC")?.decimals, "cbBTC is 8").to.equal(8);
     expect(CHAINS.bnb.quotes?.usd.decimals, "BNB's USDT is 18, not 6 -- the defect that motivated this").to.equal(18);
     expect(CHAINS.bnb.dex?.fees, "PancakeSwap's tiers differ from Uniswap's").to.include(2500);
     expect(CHAINS.base.dex?.fees).to.include(3000);
@@ -123,7 +125,8 @@ describe("the launch chooser stays in step with the registry", () => {
   it("an unoffered chain in the URL falls back to Solana instead of rendering an unshipped form", () => {
     expect(chainFromPath("/create?chain=robinhood", true)).to.equal("robinhood");
     expect(chainFromPath("/create?chain=bnb", true), "bnb is live").to.equal("bnb");
-    expect(chainFromPath("/create?chain=base", true), "base is not live").to.equal("solana");
+    expect(chainFromPath("/create?chain=base", true), "base is live").to.equal("base");
+    expect(chainFromPath("/create?chain=robinhood-testnet", true), "the testnet is not offered").to.equal("solana");
     expect(chainFromPath("/create?chain=robinhood", false)).to.equal("solana");
     expect(launchOptions(false).map((o) => o.v)).to.deep.equal(["solana"]);
     expect(pathForChain("solana")).to.equal("/create");

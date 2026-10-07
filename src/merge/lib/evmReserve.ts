@@ -433,6 +433,39 @@ export function quoteRedeemProceeds(pc: PublicClient, ssr: Address, shares: bigi
  * "tx from field is set", caught rehearsing the BNB live test. A browser
  * wallet is unaffected either way. So each write prefers the wallet's account.
  */
+/**
+ * Sends a contract write the way every SSR write should go out: simulated
+ * first (a revert is reported with its reason and costs nothing), gas
+ * estimated WITH HEADROOM, signed by the wallet's own account, and the
+ * receipt's status checked. A bare estimate has no margin: a Base mainnet
+ * redeem used 160,031 of a 162,042 limit and reverted out of gas, while the
+ * identical call succeeds at the block before and after. A mined-but-reverted
+ * transaction is an error, never a success.
+ */
+export async function sendChecked(
+  pc: PublicClient,
+  wallet: WalletClient,
+  call: { address: Address; abi: readonly unknown[]; functionName: string; args: readonly unknown[]; account: Address; chain: ChainConfig["chain"] },
+  what: string,
+): Promise<`0x${string}`> {
+  const { request } = await pc.simulateContract(call as never);
+  const gas = await pc.estimateContractGas(call as never);
+  const hash = await wallet.writeContract({ ...(request as object), account: wallet.account ?? call.account, gas: (gas * 130n) / 100n } as never);
+  const receipt = await pc.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new Error(`The ${what} was mined but reverted on-chain (${hash}). Nothing changed.`);
+  return hash;
+}
+
+/** Re-reads until `ok` holds, bounded (~15s): load-balanced RPCs can answer from a backend a block behind a receipt. */
+export async function readSettled<T>(read: () => Promise<T>, ok: (v: T) => boolean): Promise<T> {
+  let v = await read();
+  for (let i = 0; i < 15 && !ok(v); i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    v = await read();
+  }
+  return v;
+}
+
 export async function approveIfNeeded(
   pc: PublicClient,
   wallet: WalletClient,
@@ -446,6 +479,12 @@ export async function approveIfNeeded(
 ) {
   if (needed === 0n) return;
   const allowance = await pc.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [account, spender] });
+  // NOTE: this skip trusts one read. On a load-balanced public RPC that read
+  // can be a block stale and still show an allowance a swap just spent --
+  // which is how a Base mainnet top-up skipped its approval and reverted.
+  // The app's flows approve once and then spend, so they are not exposed;
+  // a caller that approves and spends repeatedly in quick succession should
+  // approve explicitly rather than rely on this check.
   if (allowance >= needed) return;
   onProgress?.(`Approving ${label}...`);
   const send = async (amount: bigint) => {
@@ -461,7 +500,8 @@ export async function approveIfNeeded(
         `Your wallet could not send the ${label} approval (it said: ${describeEvmError(e)}). The same approval simulates fine on ${cfg.chain.name}, so the wallet failed to build or broadcast it -- try again, switch the wallet to ${cfg.chain.name} and retry, or launch with MetaMask or Rabby.`,
       );
     }
-    await pc.waitForTransactionReceipt({ hash });
+    const receipt = await pc.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error(`The ${label} approval was mined but reverted on-chain (${hash}).`);
   };
   try {
     await send(needed);
@@ -471,9 +511,28 @@ export async function approveIfNeeded(
       onProgress?.(`Resetting the ${label} allowance first...`);
       await send(0n);
       await send(needed);
+      await allowanceVisible(pc, account, token, spender, needed);
       return;
     }
     throw e;
+  }
+  await allowanceVisible(pc, account, token, spender, needed);
+}
+
+/**
+ * Waits until a FRESH read shows the allowance. Public RPCs are load-balanced:
+ * the receipt can come from one backend while the very next call -- the
+ * swap's gas estimate -- lands on another a block behind, which still sees
+ * no allowance and reverts with "STF". Caught on Base mainnet: the approval
+ * had landed (allowance 0.012 WETH on every node moments later) and the swap
+ * still failed. Bounded: after ~15s it proceeds and lets the caller's own
+ * simulation decide, rather than hanging the launch.
+ */
+async function allowanceVisible(pc: PublicClient, owner: Address, token: Address, spender: Address, needed: bigint): Promise<void> {
+  for (let i = 0; i < 15; i++) {
+    const a = (await pc.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [owner, spender] }).catch(() => 0n)) as bigint;
+    if (a >= needed) return;
+    await new Promise((r) => setTimeout(r, 1000));
   }
 }
 
@@ -572,7 +631,19 @@ export async function createReserve(
     if (isUserRejection(e)) throw e;
     throw new Error(`Your wallet could not send the deployment (it said: ${describeEvmError(e)}). It simulates fine on ${cfg.chain.name}; try again or launch with MetaMask or Rabby.`);
   }
-  await pc.waitForTransactionReceipt({ hash });
+  const deployed = await pc.waitForTransactionReceipt({ hash });
+  // A reverted deploy would otherwise hand back the SIMULATED address of a
+  // reserve that does not exist.
+  if (deployed.status !== "success") throw new Error(`The reserve deployment was mined but reverted on-chain (${hash}). Nothing was created.`);
+  // The app opens the new reserve's page next. On a load-balanced RPC that
+  // first read can land on a backend a block behind, where the contract does
+  // not exist yet ("name returned no data" -- caught on Base mainnet). Wait,
+  // bounded, until its code is visible.
+  for (let i = 0; i < 15; i++) {
+    const code = await pc.getCode({ address: result[0] }).catch(() => undefined);
+    if (code && code !== "0x") break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
   return { hash, reserve: result[0] };
 }
 

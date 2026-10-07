@@ -38,6 +38,11 @@ export const EVM_LAUNCH_OPTIONS: ChainOption[] = [
     label: "BNB Chain",
     blurb: "Holds BTCB, ETH, CAKE, SOL and other major BEP-20 assets, swapped into from USDT on PancakeSwap. Mints and redemptions are in kind.",
   },
+  {
+    v: "base",
+    label: "Base",
+    blurb: "Holds cbBTC, WETH, AERO, VIRTUAL and other Base assets, swapped into from USDC on Uniswap. Mints and redemptions are in kind.",
+  },
 ];
 
 export function launchOptions(evmEnabled: boolean): ChainOption[] {
