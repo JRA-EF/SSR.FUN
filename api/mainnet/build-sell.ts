@@ -4,10 +4,7 @@
 // and submits; src/merge/lib/multiAssetSellClient.ts is the only caller.
 //
 // Body: { reserve, wallet, reserveTokensToRedeem, slippageBps?, assetMints?,
-//         legsOnly?, redeemDone?, taxOnly?, taxBaseUsdcRaw? }
-//   taxOnly=true + taxBaseUsdcRaw: rebuild ONLY the Sell-tax transaction
-//   (DEC-0198) on the base the original build reported (its blockhash
-//   expired after the swaps landed); rate + destinations re-read live.
+//         legsOnly?, redeemDone? }
 // 200:  BuildSellResult; 4xx/5xx: { error, ...extra }
 import { Connection, PublicKey } from "@solana/web3.js";
 import { buildReadOnlyProgram } from "@ssr/sdk";
@@ -50,8 +47,6 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
   const assetMintsRaw = Array.isArray(body.assetMints) ? (body.assetMints as unknown[]) : null;
   const legsOnlyRaw = Array.isArray(body.legsOnly) ? (body.legsOnly as unknown[]) : null;
   const redeemDone = body.redeemDone === true;
-  const taxOnly = body.taxOnly === true;
-  const taxBaseRaw = typeof body.taxBaseUsdcRaw === "string" ? body.taxBaseUsdcRaw : "";
 
   if (!BASE58_RE.test(reserve) || !BASE58_RE.test(wallet)) {
     res.status(400).json({ error: "reserve and wallet must be valid base58 addresses." });
@@ -80,17 +75,6 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
     res.status(400).json({ error: "legsOnly must be valid base58 mint addresses." });
     return;
   }
-  let taxOnlyInput: { baseUsdcRaw: bigint } | null = null;
-  if (taxOnly) {
-    try {
-      const base = BigInt(taxBaseRaw);
-      if (base <= 0n || base > U64_MAX) throw new Error("range");
-      taxOnlyInput = { baseUsdcRaw: base };
-    } catch {
-      res.status(400).json({ error: "taxOnly needs a positive taxBaseUsdcRaw." });
-      return;
-    }
-  }
   const apiKey = process.env.JUPITER_API_KEY;
   if (!apiKey) {
     res.status(500).json({ error: "Jupiter swap is not configured on this deployment." });
@@ -110,8 +94,8 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
         jupiterBuildTransaction: buildJupiterSwapTransactionWithRetry,
         jupiterBuildInstructions: buildJupiterSwapInstructionsWithRetry,
         lookupReserveAlt,
-        // DEC-0229: there is no manager Buy/Sell tax. The builder gets no tax
-        // lookup, so a redemption never pays one; legacy metadata sellTaxPct is ignored.
+        // DEC-0229: the manager tax is gone; the builder has no tax option, so
+        // a redemption never pays one (legacy metadata sellTaxPct is ignored).
         simulate: async (tx) => {
           const sim = await connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true });
           return { err: sim.value.err, logs: sim.value.logs ?? null };
@@ -125,7 +109,6 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
         assetMints: assetMintsRaw ? (assetMintsRaw as string[]).map((m) => new PublicKey(m)) : null,
         legsOnly: legsOnlyRaw ? (legsOnlyRaw as string[]) : null,
         redeemDone,
-        taxOnly: taxOnlyInput,
       },
     );
     res.status(200).json(serializeBuildResult(result));

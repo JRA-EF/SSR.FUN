@@ -16,7 +16,6 @@
 import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
-import { TRADE_TAX_ON_HOLD } from "../lib/mainnet/tradeTaxHold";
 import { computeMetadataId, validateReserveMetadataPayload } from "../lib/reserve-metadata/payload";
 import {
   RESERVE_TOKEN_TRANSFER_FEE_BPS,
@@ -45,8 +44,6 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   { file: "src/docs/content/AddLiquidity.tsx", contains: "Holders who buy it there", why: "secondary market (PumpSwap)" },
   { file: "src/docs/content/ReserveTokensOnDexes.tsx", contains: "bought on an exchange", why: "secondary market (DEX)" },
   { file: "src/pages/legal/Privacy.tsx", contains: "do not sell your information", why: "privacy wording, unrelated to Reserve Tokens" },
-  { file: "src/merge/lib/multiAssetSellClient.ts", contains: "% Sell tax`", why: "label of the parked tax transaction (never built while TRADE_TAX_ON_HOLD)" },
-  { file: "src/merge/pages/DTRDetail.tsx", contains: "Paying the Manager's Sell tax", why: "progress text of the parked tax step (never emitted while TRADE_TAX_ON_HOLD)" },
 ];
 
 /** Every line under src/ that uses buy/sell/purchase in user-visible text (string literals, JSX text). */
@@ -112,17 +109,35 @@ describe("DEC-0228 terminology: the in-app flow is Mint / Redeem, never Buy / Se
 });
 
 describe("DEC-0229: the manager Buy/Sell tax is gone; never charged on a mint or a redemption", () => {
-  it("the server-side tax path stays on hold", () => {
-    expect(TRADE_TAX_ON_HOLD).to.equal(true);
+  it("the server-side tax modules no longer exist", () => {
+    for (const f of ["lib/mainnet/tradeTax.ts", "lib/mainnet/tradeTaxHold.ts"]) {
+      expect(fs.existsSync(path.join(ROOT, f)), `${f} must stay deleted`).to.equal(false);
+    }
   });
 
-  for (const endpoint of ["api/mainnet/build-buy.ts", "api/mainnet/build-sell.ts"]) {
-    it(`${endpoint} gives the builder no tax lookup at all`, () => {
-      const src = read(endpoint);
-      expect(src).to.not.include("lookupTradeTax");
-      expect(src).to.not.include("resolveReserveTradeTax");
+  // No tax option, tax plan, tax-only rebuild or "tax" transaction kind
+  // anywhere along the mint / redeem build path, server or client.
+  const TAX_PATH_TOKENS = ["tradeTax", "TradeTax", "lookupTradeTax", "resolveReserveTradeTax", "taxOnly", "taxBaseUsdcRaw", "TaxBaseUsdcRaw", "paying-tax", '"tax"', "Sell tax", "Buy tax"];
+  for (const file of [
+    "api/mainnet/build-buy.ts",
+    "api/mainnet/build-sell.ts",
+    "lib/mainnet/buildBuy.ts",
+    "lib/mainnet/buildSell.ts",
+    "lib/mainnet/buildCommon.ts",
+    "src/merge/lib/multiAssetBuyClient.ts",
+    "src/merge/lib/multiAssetSellClient.ts",
+  ]) {
+    it(`${file} has no Buy/Sell tax option, field, step or transaction kind`, () => {
+      const src = read(file);
+      for (const t of TAX_PATH_TOKENS) expect(src, `${file} still mentions ${t}`).to.not.include(t);
     });
   }
+
+  it("the Reserve page has no tax progress step", () => {
+    const page = read("src/merge/pages/DTRDetail.tsx");
+    expect(page).to.not.include("paying-tax");
+    expect(page).to.not.match(/Sell tax|Buy tax/);
+  });
 
   const TAX_TOKENS = ["managerBuyTaxPct", "managerSellTaxPct", "buyTaxPct", "sellTaxPct", "Buy Tax", "Sell Tax", "setManagerBuyTax", "setManagerSellTax"];
   for (const file of [

@@ -49,8 +49,10 @@ other recipient, which is how the protocol share lands in the Treasury vault
 ## Buy/Sell tax: on hold (DEC-0228), then removed (DEC-0229)
 
 DEC-0229 removed the Buy/Sell tax entirely (Create Reserve sliders, metadata
-fields for new payloads, the build-buy/build-sell lookups) and replaced it with
-the protocol transfer fee in the table above. The history below is kept for
+fields for new payloads, the build-buy/build-sell lookups, and then the tax
+code itself: `lib/mainnet/tradeTax.ts`, `lib/mainnet/tradeTaxHold.ts`, the
+builders' tax options and `tax` transaction kind, and the client's tax step)
+and replaced it with the protocol transfer fee in the table above. The history below is kept for
 context.
 
 
@@ -58,23 +60,22 @@ From 2026-09-10 (DEC-0198) to 2026-10-06 the app charged the Buy tax inside
 its in-app mint transaction and the Sell tax inside its redemption, because
 the app then labelled those flows "Buy" and "Sell". That double-charged
 minters (mint fee plus Buy tax) and contradicted the rule, which puts the tax
-on secondary markets. DEC-0228 stopped it: `TRADE_TAX_ON_HOLD`
-(`lib/mainnet/tradeTaxHold.ts`)
-keeps `api/mainnet/build-buy.ts` / `build-sell.ts` from resolving any rate, so
-the mint builder (`buildBuy`) and the redeem builder (`buildSell`) add no
-tax, and the Reserve page's Mint and Redeem panels no longer show a tax row. The Create Reserve sliders still record
+on secondary markets. DEC-0228 stopped it: a `TRADE_TAX_ON_HOLD`
+flag kept `api/mainnet/build-buy.ts` / `build-sell.ts` from resolving any rate, so
+the mint builder (`buildBuy`) and the redeem builder (`buildSell`) added no
+tax, and the Reserve page's Mint and Redeem panels stopped showing a tax row. The Create Reserve sliders still record
 `buyTaxPct` / `sellTaxPct` in the metadata for later.
 
 The tax returns only with the liquidity provision engine, on secondary
 Buy/Sell trades, by a new decision. Open question carried over from DEC-0221:
 whether the Manager's half should follow the on-chain ManagerFeeRecipients
-split (the parked code pays the primary fee destination only).
+split (the removed code paid the primary fee destination only).
 
-### Parked implementation (DEC-0198, reference only, not active)
+### Removed implementation (DEC-0198, history only)
 
-The mechanics below describe the code in `lib/mainnet/tradeTax.ts`. They are
-kept for the liquidity provision engine to reuse; where they say "Buy"/"Sell"
-they mean the in-app mint and redemption it was wrongly attached to.
+The mechanics below describe the code that lived in `lib/mainnet/tradeTax.ts`
+until it was deleted after DEC-0229 (it is in git history). Where they say
+"Buy"/"Sell" they mean the in-app mint and redemption it was wrongly attached to.
 
 
 - Rate source: the Reserve's `metadata_uri` JSON (`buyTaxPct` / `sellTaxPct`,

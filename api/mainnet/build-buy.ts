@@ -128,8 +128,8 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
         jupiterBuildTransaction: buildJupiterSwapTransactionWithRetry,
         jupiterBuildInstructions: buildJupiterSwapInstructionsWithRetry,
         lookupReserveAlt,
-        // DEC-0229: there is no manager Buy/Sell tax. The builder gets no tax
-        // lookup, so a mint never pays one; legacy metadata buyTaxPct is ignored.
+        // DEC-0229: the manager tax is gone; the builder has no tax option, so
+        // a mint never pays one (legacy metadata buyTaxPct is ignored).
         simulate: async (tx) => {
           const sim = await connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true });
           return { err: sim.value.err, logs: sim.value.logs ?? null };

@@ -1856,9 +1856,6 @@ export function DTRDetail() {
             } else if (e.phase === "swapping") {
               setMultiAssetSellStep(`Swapping Reserve asset ${e.index + 1} of ${e.total} into USDC...`);
               setSellPhase("awaiting-wallet");
-            } else if (e.phase === "paying-tax") {
-              setMultiAssetSellStep("Paying the Manager's Sell tax out of your USDC proceeds (last step)...");
-              setSellPhase("confirming");
             } else {
               setSellPhase("awaiting-wallet");
             }
