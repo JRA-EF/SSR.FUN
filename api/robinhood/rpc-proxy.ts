@@ -155,6 +155,8 @@ export const UPSTREAMS: Record<string, { env: string; fallback: string; logsUrl?
   // 2,000 blocks but refuses receipts and older state; mainnet.base.org serves
   // receipts and archive state but caps getLogs below 500 blocks.
   base: { env: "BASE_RPC_URL", fallback: "https://mainnet.base.org", logsUrl: "https://base-rpc.publicnode.com" },
+  // Ethereum's publicnode serves receipts and getLogs (<= 10,000 blocks) alike.
+  ethereum: { env: "ETHEREUM_RPC_URL", fallback: "https://ethereum-rpc.publicnode.com" },
 };
 
 /** The chain a request names, or null for one this proxy does not serve. Absent means Robinhood. */

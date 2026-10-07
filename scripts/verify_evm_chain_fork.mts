@@ -87,6 +87,24 @@ const PRESETS: Record<string, Preset> = {
     logChunk: 5_000n,
     hopToken: { address: "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82", symbol: "CAKE", decimals: 18, fee: 2500 },
   },
+  ethereum: {
+    id: 1, name: "Ethereum", rpc: "http://127.0.0.1:8548",
+    native: { symbol: "ETH", decimals: 18 },
+    usd: { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", decimals: 6 },
+    wrapped: { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol: "WETH", decimals: 18 },
+    dex: {
+      factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+      quoter: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+      router: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+      fees: [100, 500, 3000, 10000],
+    },
+    whale: "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640", // the USDC/WETH 0.05% pool
+    seedUsd: 1_000_000_000n,
+    seedWrapped: 250_000_000_000_000_000n,
+    logChunk: 10_000n,
+    // USDT as the two-hop leg on purpose: its approve() returns no data.
+    hopToken: { address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT", decimals: 6, fee: 3000 },
+  },
 };
 
 const P = PRESETS[process.env.CHAIN ?? "base"];

@@ -71,7 +71,7 @@ export interface ChainQuotes {
  * One key per CHAIN. This used to be `"testnet" | "mainnet"` -- Robinhood's two
  * environments -- which made a second chain inexpressible.
  */
-export type ChainKey = "robinhood" | "robinhood-testnet" | "base" | "bnb";
+export type ChainKey = "robinhood" | "robinhood-testnet" | "base" | "bnb" | "ethereum";
 
 export interface ChainConfig {
   key: ChainKey;
@@ -191,6 +191,17 @@ const bnbChain = defineChain({
   // eth_getLogs to publicnode separately (api/robinhood/rpc-proxy.ts).
   rpcUrls: { default: { http: ["https://bsc-dataseed.bnbchain.org"] } },
   blockExplorers: { default: { name: "BscScan", url: "https://bscscan.com" } },
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
+});
+
+const ethereumChain = defineChain({
+  id: 1,
+  name: "Ethereum",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  // Handed to wallets: publicnode serves receipts AND getLogs on Ethereum
+  // (measured 2026-10-07), unlike its BNB and Base endpoints.
+  rpcUrls: { default: { http: ["https://ethereum-rpc.publicnode.com"] } },
+  blockExplorers: { default: { name: "Etherscan", url: "https://etherscan.io" } },
   contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
@@ -370,6 +381,59 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     isMock: false,
     notice: "Live on BNB Smart Chain. Reserves hold real BEP-20 assets, swapped into on PancakeSwap; minting moves real assets in and redeeming returns them.",
   },
+  ethereum: {
+    key: "ethereum",
+    idPrefix: "eth",
+    live: false,
+    chain: ethereumChain,
+    // publicnode serves getLogs up to 10,000 blocks on Ethereum.
+    logChunk: 10_000n,
+    readProxyPath: "/api/robinhood/rpc-proxy?chain=ethereum",
+    explorer: "https://etherscan.io",
+    ssr: null,
+    deployer: "0x0000000000000000000000000000000000000000",
+    deployerBlock: 0n,
+    versionRegistry: "0x0000000000000000000000000000000000000000",
+    feeRegistry: "0x0000000000000000000000000000000000000000",
+    roleRegistry: "0x0000000000000000000000000000000000000000",
+    fillerRegistry: "0x0000000000000000000000000000000000000000",
+    assets: [],
+    dex: {
+      name: "Uniswap",
+      factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+      quoter: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+      router: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+      fees: [100, 500, 3000, 10000],
+    },
+    quotes: {
+      usd: { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", decimals: 6 },
+      native: { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol: "WETH", decimals: 18 },
+    },
+    // Verified live 2026-10-07 by scripts/evm-chain-assets.mts at a $250,000
+    // floor (higher than BNB/Base: this is Ethereum). Refused at that floor:
+    // LDO, RNDR, CRV, PEPE, SHIB, MORPHO, ARB. EXCLUDED: MKR, whose symbol() is
+    // a bytes32, not a string -- the app reads symbols as strings, so a reserve
+    // holding it would not load (MKR is migrating to SKY, which is listed).
+    // USDT is listed: its approve() returns no data, which the app's approve
+    // ABI now tolerates. WBTC and cbBTC are 8 decimals; USDT is 6.
+    starterAssets: [
+      { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol: "WETH", decimals: 18, pool: { address: "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8", fee: 3000, quote: "usd" } },
+      { address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT", decimals: 6, pool: { address: "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36", fee: 3000, quote: "native" } },
+      { address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", symbol: "WBTC", decimals: 8, pool: { address: "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD", fee: 3000, quote: "native" } },
+      { address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", symbol: "AAVE", decimals: 18, pool: { address: "0x5aB53EE1d50eeF2C1DD3d5402789cd27bB52c1bB", fee: 3000, quote: "native" } },
+      { address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", symbol: "LINK", decimals: 18, pool: { address: "0xa6Cc3C2531FdaA6Ae1A3CA84c2855806728693e8", fee: 3000, quote: "native" } },
+      { address: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0", symbol: "wstETH", decimals: 18, pool: { address: "0x109830a1AAaD605BbF02a9dFA7B0B92EC2FB7dAa", fee: 100, quote: "native" } },
+      { address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", symbol: "UNI", decimals: 18, pool: { address: "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801", fee: 3000, quote: "native" } },
+      { address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", symbol: "DAI", decimals: 18, pool: { address: "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8", fee: 3000, quote: "native" } },
+      { address: "0x57e114B691Db790C35207b2e685D4A43181e6061", symbol: "ENA", decimals: 18, pool: { address: "0xc3Db44ADC1fCdFd5671f555236eae49f4A8EEa18", fee: 3000, quote: "native" } },
+      { address: "0x56072C95FAA701256059aa122697B133aDEd9279", symbol: "SKY", decimals: 18, pool: { address: "0x764510aB1d39CF300e7abe8F5B8977D18F290628", fee: 3000, quote: "native" } },
+      { address: "0xfAbA6f8e4a5E8Ab82F62fe7C39859FA577269BE3", symbol: "ONDO", decimals: 18, pool: { address: "0x7b1E5D984A43eE732de195628d20d05CFaBc3cC7", fee: 3000, quote: "native" } },
+      { address: "0x45804880De22913dAFE09f4980848ECE6EcbAf78", symbol: "PAXG", decimals: 18, pool: { address: "0x5aE13BAAEF0620FdaE1D355495Dc51a17adb4082", fee: 500, quote: "usd" } },
+      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8, pool: { address: "0x15aA01580ae866f9FF4DBe45E06e307941d90C7b", fee: 3000, quote: "native" } },
+    ],
+    isMock: false,
+    notice: "Ethereum is wired and fork-verified but has no deployed SSR stack yet.",
+  },
 };
 
 /** The chains a creator may actually choose, in display order. */
@@ -524,7 +588,12 @@ export const ERC20_ABI = [
     type: "function",
     name: "approve",
     inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
-    outputs: [{ type: "bool" }],
+    // Deliberately no outputs. USDT on Ethereum returns NO data from approve()
+    // (read live 2026-10-07: return data "0x"), and a declared bool makes the
+    // simulation fail decoding an empty result -- so any basket holding USDT
+    // could never be approved. Nothing here reads the bool; a failed approval
+    // still reverts and is caught by the receipt check.
+    outputs: [],
     stateMutability: "nonpayable",
   },
   { type: "function", name: "mint", inputs: [{ name: "account", type: "address" }, { name: "amount", type: "uint256" }], outputs: [], stateMutability: "nonpayable" },

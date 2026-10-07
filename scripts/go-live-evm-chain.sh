@@ -36,7 +36,7 @@ if [ "$MODE" = "--rehearse" ]; then
   for _ in $(seq 1 30); do cast chain-id --rpc-url http://127.0.0.1:$PORT >/dev/null 2>&1 && break; sleep 1; done
   RPC="http://127.0.0.1:$PORT"
   # Fund the real addresses ON THE FORK only, as a real deploy would need.
-  for a in "$DEPLOYER_ADDR" "$OWNER_ADDR"; do cast rpc anvil_setBalance "$a" 0x16345785D8A0000 --rpc-url "$RPC" >/dev/null; done
+  for a in "$DEPLOYER_ADDR" "$OWNER_ADDR"; do cast rpc anvil_setBalance "$a" 0xDE0B6B3A7640000 --rpc-url "$RPC" >/dev/null; done
 elif [ -n "$MODE" ]; then
   echo "unknown mode $MODE"; exit 1
 fi
@@ -45,7 +45,17 @@ GOT_ID="$(cast chain-id --rpc-url "$RPC")"
 [ "$GOT_ID" = "$WANT_ID" ] || { echo "RPC is chain $GOT_ID, expected $WANT_ID -- refusing"; exit 1; }
 
 echo "chain $GOT_ID   deployer $DEPLOYER_ADDR   owner $OWNER_ADDR"
-for pair in "deployer:$DEPLOYER_ADDR:0.003" "owner:$OWNER_ADDR:0.0005"; do
+# Gas needs from the LIVE gas price, not a constant. A fixed floor tuned on
+# BNB/Base (0.003) would let an Ethereum deploy -- ~14.3M gas, ~0.014 ETH at
+# 1 gwei -- start underfunded and die part-way: some contracts deployed, the
+# deployer's nonce moved, the identical-address property gone, money spent.
+# Deploy measured at 14,283,119 gas; budgeted at 16M x 2 for a price rise
+# during the run. registerVersion is ~50k gas.
+GAS_PRICE="$(cast gas-price --rpc-url "$RPC")"
+NEED_DEPLOY="$(python3 -c "print(f'{$GAS_PRICE * 16_000_000 * 2 / 1e18:.6f}')")"
+NEED_OWNER="$(python3 -c "print(f'{max($GAS_PRICE * 100_000 * 2 / 1e18, 0.00001):.6f}')")"
+echo "  gas price $(python3 -c "print(f'{$GAS_PRICE/1e9:.4f}')") gwei -> deployer needs $NEED_DEPLOY, owner needs $NEED_OWNER"
+for pair in "deployer:$DEPLOYER_ADDR:$NEED_DEPLOY" "owner:$OWNER_ADDR:$NEED_OWNER"; do
   IFS=: read -r name addr need <<<"$pair"
   bal="$(cast balance "$addr" --rpc-url "$RPC" --ether)"
   python3 -c "import sys; sys.exit(0 if float('$bal') >= $need else 1)" \

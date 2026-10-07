@@ -14,6 +14,7 @@ export const EVM_ID_PREFIXES: Record<string, string> = {
   rht: "robinhood-testnet",
   base: "base",
   bnb: "bnb",
+  eth: "ethereum",
 };
 
 /** Robinhood's prefix, kept named because it is the one already in the wild. */

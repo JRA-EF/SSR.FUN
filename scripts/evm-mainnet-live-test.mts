@@ -50,7 +50,7 @@ const pc = createPublicClient({ chain, transport });
 // which stopped the live Base run at its first approval. Sends belong on one
 // node anyway: nonce, fees and broadcast should all come from the same view.
 const wallet = createWalletClient({ account, chain, transport: http(RPC) });
-const ERC20 = parseAbi(["function balanceOf(address) view returns (uint256)", "function approve(address,uint256) returns (bool)", "function deposit() payable"]);
+const ERC20 = parseAbi(["function balanceOf(address) view returns (uint256)", "function approve(address,uint256)", "function deposit() payable"]);
 const SSR = parseAbi([
   "function mint(uint256 shares, address receiver, uint256 minSharesOut) returns (address[], uint256[])",
   "function redeem(uint256 shares, address receiver, address[] assets, uint256[] minAmountsOut) returns (uint256[])",
