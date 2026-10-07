@@ -58,7 +58,10 @@ function Raydium() {
       <Steps>
         {[
           <>Open Raydium, connect the wallet that holds your Reserve Tokens, and go to Liquidity, then Create Pool.</>,
-          <>Choose the standard constant-product pool type unless you specifically want a concentrated pool.</>,
+          <>
+            Choose the Standard (CPMM) constant-product pool type unless you specifically want a concentrated (CLMM)
+            pool. Both handle Token-2022 Reserve Tokens and their transfer fee.
+          </>,
           <>
             For the base token, paste the Reserve Token mint address and confirm it matches the Reserve page, then
             accept the import.
@@ -91,8 +94,10 @@ function PumpSwap() {
   return (
     <>
       <p>
-        PumpSwap is the exchange operated by pump.fun. Any SPL token can be pooled there, not only tokens launched on
-        pump.fun. The steps follow the current interface and may differ slightly as it changes.
+        PumpSwap is the exchange operated by pump.fun, and it pools tokens that were not launched on pump.fun too.
+        Reserve Tokens on the classic SPL Token standard pool there directly. Token-2022 Reserve Tokens, which carry
+        the transfer fee, are pooled on a Raydium Standard (CPMM) pool. The steps follow the current interface and may
+        differ slightly as it changes.
       </p>
       <Steps>
         {[
