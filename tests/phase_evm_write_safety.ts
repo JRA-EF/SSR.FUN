@@ -66,6 +66,14 @@ describe("every money-path write checks its receipt", () => {
     expect(reserve, "deploy").to.match(/deployment was mined but reverted/);
   });
 
+  it("every receipt wait is patient enough for an L1 block -- viem's default gave up on a mined Ethereum approval", () => {
+    for (const f of ["src/merge/lib/evmSwap.ts", "src/merge/lib/evmReserve.ts"]) {
+      const waits = read(f).match(/waitForTransactionReceipt\(\{[^}]*\}/g) ?? [];
+      expect(waits.length, f).to.be.greaterThan(0);
+      for (const w of waits) expect(w, `${f}: ${w}`).to.include("timeout: RECEIPT_TIMEOUT_MS");
+    }
+  });
+
   it("the Reserve page mints and redeems through sendChecked, with redeem minimums", () => {
     const page = read("src/merge/components/robinhood/RobinhoodReserveDetail.tsx");
     expect(page).to.match(/sendChecked\([\s\S]*?"mint"/);

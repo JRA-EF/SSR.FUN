@@ -384,19 +384,23 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
   ethereum: {
     key: "ethereum",
     idPrefix: "eth",
-    live: false,
+    live: true,
     chain: ethereumChain,
     // publicnode serves getLogs up to 10,000 blocks on Ethereum.
     logChunk: 10_000n,
     readProxyPath: "/api/robinhood/rpc-proxy?chain=ethereum",
     explorer: "https://etherscan.io",
     ssr: null,
-    deployer: "0x0000000000000000000000000000000000000000",
-    deployerBlock: 0n,
-    versionRegistry: "0x0000000000000000000000000000000000000000",
-    feeRegistry: "0x0000000000000000000000000000000000000000",
-    roleRegistry: "0x0000000000000000000000000000000000000000",
-    fillerRegistry: "0x0000000000000000000000000000000000000000",
+    // Deployed 2026-10-07 by scripts/go-live-evm-chain.sh at block 26,141,572
+    // for 0.0326 ETH; registerVersion -> "6.0.0", admin = the owner key
+    // 0x8b41e427..., DAO fee rule 50% with a 0.5% floor. Same addresses as
+    // Robinhood, BNB and Base.
+    deployer: "0x81dd183c53C95F251869520d8DB10B0A4a4F8858",
+    deployerBlock: 26141572n,
+    versionRegistry: "0x835dd7fF172874749855aae0174c6ecAA82Ef1e6",
+    feeRegistry: "0x03079d5f8d3B6d27827315205D1328b193c48d31",
+    roleRegistry: "0x3a96Fd76dAB64be73404BF59587beF21773Dcd94",
+    fillerRegistry: "0x95CB8550056680a004019fD45db4347A622C2CFc",
     assets: [],
     dex: {
       name: "Uniswap",
@@ -432,7 +436,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8, pool: { address: "0x15aA01580ae866f9FF4DBe45E06e307941d90C7b", fee: 3000, quote: "native" } },
     ],
     isMock: false,
-    notice: "Ethereum is wired and fork-verified but has no deployed SSR stack yet.",
+    notice: "Live on Ethereum. Reserves hold real ERC-20 assets, swapped into on Uniswap; minting moves real assets in and redeeming returns them. Gas on Ethereum is far higher than on Base or BNB.",
   },
 };
 

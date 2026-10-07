@@ -58,7 +58,7 @@ describe("the EVM surface is off unless the build asks for it", () => {
     // ...and still works normally once the surface is enabled.
     expect(chainFromPath("/create?chain=robinhood", true)).to.equal("robinhood");
     expect(chainFromPath("/create", true)).to.equal("solana");
-    expect(chainFromPath("/create?chain=ethereum", true)).to.equal("solana");
+    expect(chainFromPath("/create?chain=arbitrum", true), "an unwired chain falls back").to.equal("solana");
   });
 
   it("is hidden, not deleted -- the EVM modules are still present and buildable", () => {

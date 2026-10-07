@@ -39,6 +39,7 @@ it). Do this before anything else; on both BNB and Base it decided the design.
 |---|---|---|
 | BNB | publicnode only, ≤ 5,000 blocks | defibit, bnbchain.org, drpc, 1rpc — **not** publicnode |
 | Base | publicnode ≤ 2,000 blocks | mainnet.base.org, developer-access-mainnet.base.org — **not** publicnode |
+| Ethereum | publicnode ≤ 10,000 blocks | publicnode — one endpoint serves both |
 
 No free endpoint does both on either chain, so the proxy routes per method
 (`UPSTREAMS[chain].logsUrl`), wallets are handed an endpoint that serves
@@ -212,6 +213,28 @@ address; `loadReserve` then fails inside `getFeeDetails` with "returned no
 data", which reads like a code bug and is not one. The script now refuses to
 start without it.
 
+**A zero tip from a free endpoint.** On Ethereum, publicnode answers both
+`eth_maxPriorityFeePerGas` and `eth_fillTransaction` with a 0 tip, and viem
+signs with it. An approval then sat unincluded past viem's receipt timeout and
+the run reported failure for a transaction that later succeeded. The live-test
+signer refuses `eth_fillTransaction` (so viem fills locally) and floors the tip
+(`TIP_GWEI`, default 0.1). Every receipt wait in the app uses
+`RECEIPT_TIMEOUT_MS` (5 min). Browser wallets set their own fees, so users are
+not exposed; local signers are.
+
+**Stablecoins can be native-quoted.** Ethereum's USDT pool on the starter list
+is USDT/WETH, so "the first native-quoted asset" was a dollar. The live test
+skips `usd*`/`dai` when picking its two-hop leg.
+
+**Some ERC-20s break the ABI.** USDT's `approve` returns nothing, so the shared
+approve ABI declares no outputs. MKR's `symbol()` is `bytes32`, so it is left
+off the starter list.
+
+**L1 gas is not L2 gas.** The go-live preflight sizes its need from the live
+gas price (`gasPrice × 16M × 2` for the deployer), never a fixed amount. The
+Ethereum stack cost 0.0326 ETH at ~2.3 gwei. One launch plus mint and redeem
+cost ~0.011 ETH at ~4.6 gwei.
+
 **PancakeSwap needs no adapter.** It is a Uniswap v3 fork and answers the same
 `getPool`/`slot0`/`liquidity` calls. Only its fee tiers differ (2500, not 3000),
 and those travel with `dex.fees`.
@@ -227,6 +250,8 @@ separate, and as of 2026-10-05 still open:
   while only Robinhood has a catalogue, but a second catalogued chain needs it
 - routes still live under `/api/robinhood/*` (the proxy serves every chain
   via `?chain=`); a rename is cosmetic
+- (2026-10-07: live on Robinhood, BNB, Base and Ethereum at identical
+  addresses, each with a real-money launch → mint → redeem run)
 - (resolved 2026-10-06: the swap path, chunked discovery, chain-aware form,
   directory and portfolio are all done and fork-proven on BNB)
 

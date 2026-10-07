@@ -11,7 +11,7 @@
 // Uses the OWNER key (~/.config/evm/ssr-evm-owner.json), never printed.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { createPublicClient, createWalletClient, fallback, formatEther, http, parseAbi, parseEther, type Address } from "viem";
+import { createPublicClient, createWalletClient, custom, fallback, toHex, formatEther, http, parseAbi, parseEther, parseGwei, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { CHAINS, type ChainConfig } from "../src/merge/lib/evmChain";
 import { executeLaunch, quoteLaunch } from "../src/merge/lib/evmLaunch";
@@ -33,6 +33,8 @@ if (!cfg?.live) throw new Error(`${key} is not a live chain`);
 const DEFAULT_RPCS: Record<string, string> = {
   bnb: "https://bsc-dataseed1.defibit.io,https://bsc-rpc.publicnode.com",
   base: "https://developer-access-mainnet.base.org,https://base-rpc.publicnode.com",
+  // publicnode serves receipts AND getLogs on Ethereum (measured 2026-10-07).
+  ethereum: "https://ethereum-rpc.publicnode.com",
 };
 const RPCS = (process.env.RPC ?? DEFAULT_RPCS[process.env.CHAIN ?? "bnb"]).split(",");
 const RPC = RPCS[0];
@@ -40,6 +42,25 @@ const CAP = parseEther(process.env.CAP ?? "0.074");
 const owner = JSON.parse(readFileSync(`${homedir()}/.config/evm/ssr-evm-owner.json`, "utf8"))[0];
 const account = privateKeyToAccount(owner.private_key);
 const chain = { ...cfg.chain, rpcUrls: { default: { http: [RPC] } } };
+// publicnode answers eth_maxPriorityFeePerGas -- and eth_fillTransaction --
+// with a ZERO tip on Ethereum, so an approval sat unincluded past the receipt
+// timeout (2026-10-07). The signer's transport refuses eth_fillTransaction (viem
+// then fills locally) and floors the tip. A browser wallet sets its own fees.
+const TIP_FLOOR = parseGwei(process.env.TIP_GWEI ?? "0.1");
+const signerTransport = (url: string) => {
+  const upstream = http(url);
+  return custom({
+    async request({ method, params }: { method: string; params?: unknown }) {
+      const up = upstream({ chain, retryCount: 2 });
+      if (method === "eth_fillTransaction") throw Object.assign(new Error("method not supported"), { code: -32601 });
+      if (method === "eth_maxPriorityFeePerGas") {
+        const quoted = BigInt((await up.request({ method, params } as never)) as string);
+        return toHex(quoted > TIP_FLOOR ? quoted : TIP_FLOOR);
+      }
+      return up.request({ method, params } as never);
+    },
+  });
+};
 // DEPLOYER_BLOCK only for a fork rehearsal, where pre-fork logs are unavailable.
 const live: ChainConfig = { ...cfg, chain, readProxyPath: undefined, deployerBlock: process.env.DEPLOYER_BLOCK ? BigInt(process.env.DEPLOYER_BLOCK) : cfg.deployerBlock };
 const transport = RPCS.length > 1 ? fallback(RPCS.map((u) => http(u))) : http(RPC);
@@ -49,7 +70,7 @@ const pc = createPublicClient({ chain, transport });
 // then forwarded to a second that answered "Missing or invalid parameters" --
 // which stopped the live Base run at its first approval. Sends belong on one
 // node anyway: nonce, fees and broadcast should all come from the same view.
-const wallet = createWalletClient({ account, chain, transport: http(RPC) });
+const wallet = createWalletClient({ account, chain, transport: signerTransport(RPC) });
 const ERC20 = parseAbi(["function balanceOf(address) view returns (uint256)", "function approve(address,uint256)", "function deposit() payable"]);
 const SSR = parseAbi([
   "function mint(uint256 shares, address receiver, uint256 minSharesOut) returns (address[], uint256[])",
@@ -134,7 +155,9 @@ const sa = live.starterAssets!;
 const isQuote = (a: { address: string }) => [q.usd.address, q.native.address].some((x) => x.toLowerCase() === a.address.toLowerCase());
 // One two-hop (native-quoted) leg and one direct (dollar-quoted) leg, from
 // this chain's own verified list. Names kept generic: "btc" is the two-hop leg.
-const btc = sa.find((a) => a.pool.quote === "native" && !isQuote(a))!;
+// Stablecoins are skipped: on Ethereum USDT is WETH-quoted, and a dollar
+// routed through ETH and back proves the two-hop path less than WBTC does.
+const btc = sa.find((a) => a.pool.quote === "native" && !isQuote(a) && !/^(usd|dai)/i.test(a.symbol))!;
 const cake = sa.find((a) => a.pool.quote === "usd" && !isQuote(a) && !/^usd/i.test(a.symbol))!;
 const ROLE = { usd: "USDG", native: "WETH" } as const;
 const pa = (a: typeof btc, w: number): PlannedAsset => ({ address: a.address, symbol: a.symbol, decimals: a.decimals, weight: w, pool: { ...a.pool, quote: ROLE[a.pool.quote] } });

@@ -43,6 +43,11 @@ export const EVM_LAUNCH_OPTIONS: ChainOption[] = [
     label: "Base",
     blurb: "Holds cbBTC, WETH, AERO, VIRTUAL and other Base assets, swapped into from USDC on Uniswap. Mints and redemptions are in kind.",
   },
+  {
+    v: "ethereum",
+    label: "Ethereum",
+    blurb: "Holds WBTC, wstETH, LINK, AAVE, PAXG and other Ethereum assets, swapped into from USDC on Uniswap. Gas is far higher than on Base or BNB.",
+  },
 ];
 
 export function launchOptions(evmEnabled: boolean): ChainOption[] {

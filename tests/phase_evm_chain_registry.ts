@@ -42,6 +42,11 @@ describe("the EVM chain registry", () => {
     expect(CHAINS.base.live).to.equal(true);
     expect(CHAINS.bnb.live).to.equal(true);
     expect(CHAINS.base.deployer).to.equal(CHAINS.bnb.deployer);
+    // Ethereum went live 2026-10-07, at the same addresses.
+    expect(CHAINS.ethereum.live).to.equal(true);
+    expect(CHAINS.ethereum.deployer).to.equal(CHAINS.bnb.deployer);
+    expect(CHAINS.ethereum.starterAssets?.some((a) => a.symbol === "MKR"), "MKR's bytes32 symbol cannot be read as a string").to.equal(false);
+    expect(CHAINS.ethereum.starterAssets?.find((a) => a.symbol === "USDT")?.decimals, "USDT is 6").to.equal(6);
     expect(CHAINS.bnb.deployer).to.equal("0x81dd183c53C95F251869520d8DB10B0A4a4F8858");
   });
 
@@ -126,6 +131,7 @@ describe("the launch chooser stays in step with the registry", () => {
     expect(chainFromPath("/create?chain=robinhood", true)).to.equal("robinhood");
     expect(chainFromPath("/create?chain=bnb", true), "bnb is live").to.equal("bnb");
     expect(chainFromPath("/create?chain=base", true), "base is live").to.equal("base");
+    expect(chainFromPath("/create?chain=ethereum", true), "ethereum is live").to.equal("ethereum");
     expect(chainFromPath("/create?chain=robinhood-testnet", true), "the testnet is not offered").to.equal("solana");
     expect(chainFromPath("/create?chain=robinhood", false)).to.equal("solana");
     expect(launchOptions(false).map((o) => o.v)).to.deep.equal(["solana"]);

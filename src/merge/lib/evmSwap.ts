@@ -11,7 +11,7 @@
 // output (src/merge/lib/evmLaunchPlan.ts's slippage rule).
 import { encodePacked, parseAbi, zeroAddress, type Address, type PublicClient, type WalletClient } from "viem";
 import { ERC20_ABI, type ChainConfig, type ChainQuotes, type DexConfig } from "./evmChain";
-import { describeEvmError } from "./evmReserve";
+import { describeEvmError, RECEIPT_TIMEOUT_MS } from "./evmReserve";
 
 /**
  * Every address here now comes from the ChainConfig. A chain without a DEX
@@ -147,7 +147,7 @@ export async function swapExactUsdgIn(
   // that, and this used to return the hash regardless -- caught on Base
   // mainnet, where a swap reverted on-chain (nonce 14, 0x84af98cf...) and the
   // caller carried on as if it had paid out.
-  const receipt = await pc.waitForTransactionReceipt({ hash });
+  const receipt = await pc.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
   if (receipt.status !== "success") {
     throw new Error(`The swap was mined but reverted on-chain (${hash}). Nothing was received; check the token's allowance and try again.`);
   }

@@ -158,6 +158,14 @@ export function fmtUnits(v: bigint, decimals: number, maxFrac = 6): string {
 }
 
 /** Percent from a D18 fraction, e.g. 0.01e18 -> "1%". */
+/**
+ * How long a write waits for its receipt. viem's default gave up on a mined
+ * Ethereum approval (2026-10-07, 0xe7bc3efe...) and reported a failure for a
+ * transaction that succeeded; an L1 block can take several slots to include
+ * a low-tip send.
+ */
+export const RECEIPT_TIMEOUT_MS = 300_000;
+
 export const pctFromD18 = (v: bigint, frac = 4) => `${fmtUnits(v * 100n, 18, frac)}%`;
 
 export function parsePercentToD18(raw: string, field: string): bigint {
@@ -451,7 +459,7 @@ export async function sendChecked(
   const { request } = await pc.simulateContract(call as never);
   const gas = await pc.estimateContractGas(call as never);
   const hash = await wallet.writeContract({ ...(request as object), account: wallet.account ?? call.account, gas: (gas * 130n) / 100n } as never);
-  const receipt = await pc.waitForTransactionReceipt({ hash });
+  const receipt = await pc.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
   if (receipt.status !== "success") throw new Error(`The ${what} was mined but reverted on-chain (${hash}). Nothing changed.`);
   return hash;
 }
@@ -500,7 +508,7 @@ export async function approveIfNeeded(
         `Your wallet could not send the ${label} approval (it said: ${describeEvmError(e)}). The same approval simulates fine on ${cfg.chain.name}, so the wallet failed to build or broadcast it -- try again, switch the wallet to ${cfg.chain.name} and retry, or launch with MetaMask or Rabby.`,
       );
     }
-    const receipt = await pc.waitForTransactionReceipt({ hash });
+    const receipt = await pc.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
     if (receipt.status !== "success") throw new Error(`The ${label} approval was mined but reverted on-chain (${hash}).`);
   };
   try {
@@ -631,7 +639,7 @@ export async function createReserve(
     if (isUserRejection(e)) throw e;
     throw new Error(`Your wallet could not send the deployment (it said: ${describeEvmError(e)}). It simulates fine on ${cfg.chain.name}; try again or launch with MetaMask or Rabby.`);
   }
-  const deployed = await pc.waitForTransactionReceipt({ hash });
+  const deployed = await pc.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
   // A reverted deploy would otherwise hand back the SIMULATED address of a
   // reserve that does not exist.
   if (deployed.status !== "success") throw new Error(`The reserve deployment was mined but reverted on-chain (${hash}). Nothing was created.`);
