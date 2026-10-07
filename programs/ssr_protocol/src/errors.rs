@@ -184,4 +184,12 @@ pub enum SsrError {
     // --- Metaplex token metadata (2026-09-11, DEC-0200) ---
     #[msg("Token name, symbol, or URI is empty or exceeds the Metaplex on-chain limit (32/10/200 bytes).")]
     TokenMetadataFieldTooLong,
+
+    // --- Token-2022 Reserve Token transfer fee (DEC-0229) ---
+    #[msg("Transfer fee exceeds the protocol ceiling for Reserve Tokens (0.25%).")]
+    TransferFeeExceedsMaximum,
+    #[msg("This Reserve Token mint carries no transfer fee (classic SPL Token Reserve).")]
+    ReserveTokenHasNoTransferFee,
+    #[msg("Transfer fees can only be paid to the Protocol treasury configured on ProtocolConfig.")]
+    TransferFeeTreasuryMismatch,
 }

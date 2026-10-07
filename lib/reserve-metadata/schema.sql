@@ -1,5 +1,5 @@
 -- Reserve Metadata Store: permanent off-chain storage for a Reserve's
--- name/ticker/description/category/buyTaxPct/sellTaxPct JSON payload, so
+-- name/ticker/description/category JSON payload, so
 -- Create Reserve can submit a short, permanent HTTPS URL on-chain
 -- (Reserve.metadata_uri) instead of embedding the JSON directly -- which
 -- routinely exceeded the on-chain MAX_METADATA_URI_LEN (200 bytes),

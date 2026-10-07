@@ -14,7 +14,6 @@ import {
   findReserve,
   findProtocolConfig,
   WRAPPED_SOL_MINT,
-  TOKEN_PROGRAM_ID,
   type ZapAssetLeg,
 } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
@@ -771,7 +770,7 @@ export function DTRDetail() {
         invalidateCached(rtKey);
         invalidateCached(settlementKey);
         const balanceRaw = await getCached(rtKey, BALANCE_CACHE_TTL_MS, () =>
-          withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner, TOKEN_PROGRAM_ID)),
+          withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner)),
         );
         syncRealHolding(dtr.id, balanceRaw, dtr.nav);
         const solLamports = await connection.getBalance(owner, "confirmed");
@@ -1667,7 +1666,7 @@ export function DTRDetail() {
     try {
       const key = tokenBalanceCacheKey(connection.rpcEndpoint, rtMint, owner.toBase58());
       invalidateCached(key);
-      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner, TOKEN_PROGRAM_ID));
+      const freshRaw = await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(rtMint), owner));
       if (reconcileByBalanceChange(sellPreRtRawRef.current, BigInt(freshRaw), "decrease")) {
         // Real redeemed amount is the observed Reserve Token balance delta --
         // the most authoritative figure available (normal confirmation was
@@ -1711,7 +1710,7 @@ export function DTRDetail() {
     useAppStore.getState().setTxInFlight(true);
     try {
       sellPreRtRawRef.current = BigInt(
-        await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), walletCtx.publicKey!, TOKEN_PROGRAM_ID)),
+        await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), walletCtx.publicKey!)),
       );
       const reserveTokensToRedeem = BigInt(Math.floor(numSellAmount * 1_000_000));
       const { signature } = await executeSellZap({
@@ -1779,7 +1778,7 @@ export function DTRDetail() {
     useAppStore.getState().setTxInFlight(true);
     try {
       sellPreRtRawRef.current = BigInt(
-        await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), walletCtx.publicKey!, TOKEN_PROGRAM_ID)),
+        await withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), walletCtx.publicKey!)),
       );
       const reserveAddress = new PublicKey(dtr.onChain.reserve);
       // Every one of this Reserve's ALREADY-KNOWN registered asset mints --

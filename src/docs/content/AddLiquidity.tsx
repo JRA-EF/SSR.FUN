@@ -1,6 +1,9 @@
 import { DocTabs } from '../components/DocTabs'
 import { Callout, Facts, Steps } from '../components/primitives'
 import { DocLink, docHref } from '../router'
+import { formatBpsAsPct, RESERVE_TOKEN_TRANSFER_FEE_BPS } from '../../merge/lib/calculations'
+
+const TRANSFER_FEE = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)
 
 function BeforeYouStart() {
   return (
@@ -121,8 +124,12 @@ function FeesAndRisks() {
       <Facts
         rows={[
           [
-            'Reserve fees do not apply to pool trades',
+            'Mint and redemption fees do not apply to pool trades',
             'The mint and redemption fees are charged only when Reserve Tokens are minted or redeemed on SSR.fun. Trading in a pool pays the pool fee instead.',
+          ],
+          [
+            'The transfer fee applies to pool activity',
+            `Token-2022 Reserve Tokens carry a ${TRANSFER_FEE} protocol transfer fee, charged by the token itself on every transfer and paid to the SSR Protocol. Depositing Reserve Tokens into a pool, withdrawing them, and every trade through the pool are transfers, so each pays it. Reserve Tokens of earlier Reserves, which use classic SPL Token mints, have no transfer fee.`,
           ],
           [
             'The ongoing fee dilutes pool holdings too',

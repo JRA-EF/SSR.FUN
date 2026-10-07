@@ -4,12 +4,12 @@
 // measurement, and compilation are all real.
 import { expect } from "chai";
 import { Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction, SystemProgram, Connection } from "@solana/web3.js";
-import { AccountLayout, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { AccountLayout, MintLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { findReserveAsset, findReserveVault } from "../packages/sdk/src/pda";
 import { computeRedemptionEntitlements } from "../packages/sdk/src/calculations";
 import { buildSellTransactions, planSellLegs, shouldAttemptSingleSell, type BuildSellDeps } from "../lib/mainnet/buildSell";
-import { BuildError } from "../lib/mainnet/buildCommon";
+import { BuildError, readReserveAndWallet } from "../lib/mainnet/buildCommon";
 import type { JupiterQuote } from "../lib/mainnet/jupiter";
 
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -44,6 +44,13 @@ function tokenAccountInfo(mint: PublicKey, owner: PublicKey, amount: bigint) {
   return { data, executable: false, lamports: 2_039_280, owner: TOKEN_PROGRAM_ID, rentEpoch: 0 };
 }
 
+/** The Reserve Token mint account (DEC-0229): readReserveAndWallet reads its owner (token program) and supply in the same batch. */
+function mintAccountInfo(supply: bigint, owner: PublicKey = TOKEN_PROGRAM_ID) {
+  const data = Buffer.alloc(MintLayout.span);
+  MintLayout.encode({ mintAuthorityOption: 1, mintAuthority: PublicKey.default, supply, decimals: 6, isInitialized: true, freezeAuthorityOption: 0, freezeAuthority: PublicKey.default }, data);
+  return { data, executable: false, lamports: 1_461_600, owner, rentEpoch: 0 };
+}
+
 function dummySwapTx(payer: PublicKey): string {
   const ix = new TransactionInstruction({ programId: SystemProgram.programId, keys: [{ pubkey: payer, isSigner: true, isWritable: true }], data: Buffer.from([1]) });
   const msg = new TransactionMessage({ payerKey: payer, recentBlockhash: "11111111111111111111111111111111", instructions: [ix] }).compileToV0Message([]);
@@ -54,6 +61,8 @@ interface World {
   legs: { mint: PublicKey; decimals: number; vaultRaw: bigint; walletRaw: bigint }[];
   supplyRaw: bigint;
   walletRtRaw: bigint;
+  /** DEC-0229: the Reserve Token mint's program; classic unless a case says otherwise. */
+  reserveTokenProgram?: PublicKey;
   redemptionFeeBps: number;
   feeDestination?: PublicKey;
 }
@@ -83,7 +92,9 @@ function makeDeps(w: World, spies: { quotes: string[]; builds: string[]; instruc
   const fakeConn = {
     getMultipleAccountsInfo: async (keys: PublicKey[]) =>
       keys.map((k) => {
-        if (getAssociatedTokenAddressSync(RESERVE_TOKEN_MINT, WALLET).equals(k)) return tokenAccountInfo(RESERVE_TOKEN_MINT, WALLET, w.walletRtRaw);
+        const rtProgram = w.reserveTokenProgram ?? TOKEN_PROGRAM_ID;
+        if (k.equals(RESERVE_TOKEN_MINT)) return mintAccountInfo(w.supplyRaw, rtProgram);
+        if (getAssociatedTokenAddressSync(RESERVE_TOKEN_MINT, WALLET, false, rtProgram).equals(k)) return { ...tokenAccountInfo(RESERVE_TOKEN_MINT, WALLET, w.walletRtRaw), owner: rtProgram };
         if (getAssociatedTokenAddressSync(new PublicKey(USDC), WALLET).equals(k)) return tokenAccountInfo(new PublicKey(USDC), WALLET, 0n);
         for (const l of w.legs) {
           if (findReserveVault(RESERVE, l.mint, PROGRAM_ID)[0].equals(k)) return tokenAccountInfo(l.mint, RESERVE, l.vaultRaw);
@@ -217,6 +228,26 @@ describe("buildSell.ts -- full build (fakes for RPC/program reads/Jupiter; real 
     const none = await buildSellTransactions({ ...deps, lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 0 }) }, input(w));
     expect(none.plan.tradeTax).to.equal(null);
     expect(none.transactions.some((t) => t.kind === "tax")).to.equal(false);
+  });
+
+  it("DEC-0229: a Token-2022 Reserve Token is read under its own program -- the wallet's Token-2022 ATA balance, the supply from the mint, and the program reported for the builders", async () => {
+    const w = world(2, { reserveTokenProgram: TOKEN_2022_PROGRAM_ID, walletRtRaw: 1_234_567n });
+    const deps = makeDeps(w, { quotes: [], builds: [], instructionBuilds: [] });
+    const read = await readReserveAndWallet(deps, RESERVE, WALLET, w.legs.map((l) => l.mint));
+    expect(read.reserveTokenProgram.equals(TOKEN_2022_PROGRAM_ID)).to.equal(true);
+    expect(read.walletReserveTokenRaw).to.equal(1_234_567n);
+    expect(read.supplyRaw).to.equal(w.supplyRaw);
+    const wc = world(2);
+    const classic = await readReserveAndWallet(makeDeps(wc, { quotes: [], builds: [], instructionBuilds: [] }), RESERVE, WALLET, wc.legs.map((l) => l.mint));
+    expect(classic.reserveTokenProgram.equals(TOKEN_PROGRAM_ID)).to.equal(true);
+    expect(classic.walletReserveTokenRaw).to.equal(2_000_000n);
+  });
+
+  it("DEC-0229: a Token-2022 Reserve's sale still builds and fits", async () => {
+    const w = world(2, { reserveTokenProgram: TOKEN_2022_PROGRAM_ID });
+    const r = await buildSellTransactions(makeDeps(w, { quotes: [], builds: [], instructionBuilds: [] }), input(w));
+    expect(r.transactions.length).to.be.greaterThan(0);
+    for (const t of r.transactions) expect(t.bytes).to.be.at.most(1232);
   });
 
   it("refuses (422) when the wallet holds fewer Reserve Tokens than the sale", async () => {

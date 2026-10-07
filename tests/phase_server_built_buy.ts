@@ -5,7 +5,7 @@
 // transaction compilation are all real.
 import { expect } from "chai";
 import { Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction, SystemProgram, Connection } from "@solana/web3.js";
-import { AccountLayout, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { AccountLayout, MintLayout, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { findReserveAsset, findReserveVault } from "../packages/sdk/src/pda";
 import {
@@ -101,6 +101,13 @@ function tokenAccountInfo(mint: PublicKey, owner: PublicKey, amount: bigint) {
   return { data, executable: false, lamports: 2_039_280, owner: TOKEN_PROGRAM_ID, rentEpoch: 0 };
 }
 
+/** The Reserve Token mint account (DEC-0229): readReserveAndWallet reads its owner (token program) and supply in the same batch. */
+function mintAccountInfo(supply: bigint, owner: PublicKey = TOKEN_PROGRAM_ID) {
+  const data = Buffer.alloc(MintLayout.span);
+  MintLayout.encode({ mintAuthorityOption: 1, mintAuthority: PublicKey.default, supply, decimals: 6, isInitialized: true, freezeAuthorityOption: 0, freezeAuthority: PublicKey.default }, data);
+  return { data, executable: false, lamports: 1_461_600, owner, rentEpoch: 0 };
+}
+
 function dummySwapTx(payer: PublicKey): string {
   const ix = new TransactionInstruction({ programId: SystemProgram.programId, keys: [{ pubkey: payer, isSigner: true, isWritable: true }], data: Buffer.from([1, 2, 3]) });
   const msg = new TransactionMessage({ payerKey: payer, recentBlockhash: "11111111111111111111111111111111", instructions: [ix] }).compileToV0Message([]);
@@ -139,6 +146,7 @@ function makeDeps(world: FakeWorld, spies: { quotes: string[]; builds: string[];
   const fakeConn = {
     getMultipleAccountsInfo: async (keys: PublicKey[]) =>
       keys.map((k) => {
+        if (k.equals(RESERVE_TOKEN_MINT)) return mintAccountInfo(world.supplyRaw);
         // The wallet's USDC ATA doubles as the USDC leg's ATA -- answer it first.
         if (getAssociatedTokenAddressSync(new PublicKey(USDC), WALLET).equals(k)) return tokenAccountInfo(new PublicKey(USDC), WALLET, world.walletUsdcRaw);
         for (const l of world.legs) {

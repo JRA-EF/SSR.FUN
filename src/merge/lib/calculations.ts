@@ -21,8 +21,28 @@ export function initialLiquidityForAum(aum: number): number {
 /** Default fee floors offered when creating a new DTR, all expressed as plain percentages (0.5 = 0.5%). */
 export const DEFAULT_MINT_FEE_PCT = 0.5;
 export const DEFAULT_TVL_FEE_PCT = 1.0; // annualized
-export const DEFAULT_MANAGER_BUY_TAX_PCT = 0;
-export const DEFAULT_MANAGER_SELL_TAX_PCT = 0;
+
+/**
+ * DEC-0229: the protocol transfer fee every NEW Solana Reserve Token carries,
+ * in basis points (15 = 0.15%). Token-2022's transfer-fee extension charges
+ * it on every transfer of the token (DEX trades, wallet sends); minting and
+ * redeeming on SSR.fun are mint/burn, not transfers, so they never pay it.
+ * 100% goes to the SSR Protocol. The single source of truth for UI and docs
+ * copy -- never hardcode the rate elsewhere. The Protocol Admin can adjust it
+ * on-chain within a hard ceiling (RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS).
+ */
+export const RESERVE_TOKEN_TRANSFER_FEE_BPS = 15;
+/** The on-chain hard ceiling for that rate (25 = 0.25%), enforced by the program. */
+export const RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS = 25;
+
+/** "0.15%"-style label for a basis-point rate, for copy. */
+export function formatBpsAsPct(bps: number): string {
+  return `${(bps / 100).toFixed(2)}%`;
+}
+
+/** The one plain-language line Create Reserve shows about that fee. */
+export const RESERVE_TOKEN_TRANSFER_FEE_NOTE =
+  `New Reserve Tokens carry a ${formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)} protocol transfer fee on transfers between wallets and trades on exchanges, paid to the SSR Protocol. Minting and redeeming on SSR.fun never pay it.`;
 
 /** Longest ticker in the seeded catalog (SSRRES) -- caps user-created tickers to a normal, real-world length. */
 export const TICKER_MAX_LENGTH = 6;
@@ -44,7 +64,6 @@ export function calcTokensReceived(
   usdcAmount: number,
   tokenPrice: number,
   liquidityUsdc: number,
-  buyTaxPct: number = 0,
 ): TradeQuote {
   if (usdcAmount <= 0 || tokenPrice <= 0 || liquidityUsdc <= 0) {
     return { grossAmount: 0, fee: 0, netAmount: 0, newPrice: tokenPrice, priceImpactPct: 0 };
@@ -54,7 +73,7 @@ export function calcTokensReceived(
   const newUsdcReserve = liquidityUsdc + usdcAmount;
   const newTokenReserve = k / newUsdcReserve;
   const grossAmount = tokenReserve - newTokenReserve;
-  const fee = grossAmount * (TRADING_FEE_RATE + buyTaxPct / 100);
+  const fee = grossAmount * TRADING_FEE_RATE;
   const netAmount = grossAmount - fee;
   const newPrice = newUsdcReserve / newTokenReserve;
   const priceImpactPct = ((newPrice - tokenPrice) / tokenPrice) * 100;
@@ -70,7 +89,6 @@ export function calcUsdcReceived(
   tokenAmount: number,
   tokenPrice: number,
   liquidityUsdc: number,
-  sellTaxPct: number = 0,
 ): TradeQuote {
   if (tokenAmount <= 0 || tokenPrice <= 0 || liquidityUsdc <= 0) {
     return { grossAmount: 0, fee: 0, netAmount: 0, newPrice: tokenPrice, priceImpactPct: 0 };
@@ -80,7 +98,7 @@ export function calcUsdcReceived(
   const newTokenReserve = tokenReserve + tokenAmount;
   const newUsdcReserve = k / newTokenReserve;
   const grossAmount = liquidityUsdc - newUsdcReserve;
-  const fee = grossAmount * (TRADING_FEE_RATE + sellTaxPct / 100);
+  const fee = grossAmount * TRADING_FEE_RATE;
   const netAmount = grossAmount - fee;
   const newPrice = newUsdcReserve / newTokenReserve;
   const priceImpactPct = ((newPrice - tokenPrice) / tokenPrice) * 100;

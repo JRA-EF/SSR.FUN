@@ -197,7 +197,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
 
   const [preSaleUsdcRaw, preRedeemRtRaw] = await Promise.all([
     fetchTokenBalanceRaw(params.connection, usdcMint, owner, TOKEN_PROGRAM_ID).then(BigInt),
-    fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner, TOKEN_PROGRAM_ID).then(BigInt),
+    fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner).then(BigInt),
   ]);
 
   let pending = readPendingSell(ownerBase58, reserveBase58);

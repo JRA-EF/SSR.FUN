@@ -1,10 +1,14 @@
-// DEC-0228 (2026-10-06): mandatory Mint / Redeem / Buy / Sell terminology and
-// the Buy/Sell tax hold. Spec: docs/protocol/TERMINOLOGY.md.
+// DEC-0228 (2026-10-06): mandatory Mint / Redeem / Buy / Sell terminology.
+// Spec: docs/protocol/TERMINOLOGY.md.
 //
 //   Mint   = getting Reserve Tokens from SSR.fun in the app.
 //   Redeem = handing them back to SSR.fun in the app.
 //   Buy / Sell = STRICTLY secondary-market trades between holders.
-//   Buy tax / Sell tax = secondary-market only, ON HOLD, never on a mint or redemption.
+//
+// DEC-0229: the manager Buy tax / Sell tax is retired, replaced by a
+// protocol-only Token-2022 transfer fee on new Reserve Tokens (never paid on
+// a mint or a redemption). The second half of this file guards that the tax
+// controls and fields are gone and the transfer-fee copy is in place.
 //
 // If this test fails because new UI copy says "Buy"/"Sell"/"purchase" for the
 // in-app flow, fix the copy, not the test. Only add an allowlist entry for text
@@ -13,6 +17,13 @@ import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
 import { TRADE_TAX_ON_HOLD } from "../lib/mainnet/tradeTaxHold";
+import { computeMetadataId, validateReserveMetadataPayload } from "../lib/reserve-metadata/payload";
+import {
+  RESERVE_TOKEN_TRANSFER_FEE_BPS,
+  RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS,
+  RESERVE_TOKEN_TRANSFER_FEE_NOTE,
+  formatBpsAsPct,
+} from "../src/merge/lib/calculations";
 
 const ROOT = path.resolve(__dirname, "..");
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -34,8 +45,6 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   { file: "src/docs/content/AddLiquidity.tsx", contains: "Holders who buy it there", why: "secondary market (PumpSwap)" },
   { file: "src/docs/content/ReserveTokensOnDexes.tsx", contains: "bought on an exchange", why: "secondary market (DEX)" },
   { file: "src/pages/legal/Privacy.tsx", contains: "do not sell your information", why: "privacy wording, unrelated to Reserve Tokens" },
-  { file: "src/merge/pages/CreateDTR.tsx", contains: "secondary-market Buys", why: "the Buy tax slider explains it is secondary-market only" },
-  { file: "src/merge/pages/CreateDTR.tsx", contains: "secondary-market Sells", why: "the Sell tax slider explains it is secondary-market only" },
   { file: "src/merge/lib/multiAssetSellClient.ts", contains: "% Sell tax`", why: "label of the parked tax transaction (never built while TRADE_TAX_ON_HOLD)" },
   { file: "src/merge/pages/DTRDetail.tsx", contains: "Paying the Manager's Sell tax", why: "progress text of the parked tax step (never emitted while TRADE_TAX_ON_HOLD)" },
 ];
@@ -58,7 +67,6 @@ function offendingLines(): string[] {
         const pre = line[m.index - 1];
         const post = line[m.index + m[0].length];
         if ((pre === '"' && post === '"') || (pre === "'" && post === "'")) continue; // value literal, e.g. tab value "buy"
-        if (/^\s*Tax/.test(line.slice(m.index + m[0].length))) continue; // "Buy Tax" / "Sell Tax" are the correct names
         const trimmed = line.trim();
         if (ALLOWED.some((a) => a.file === rel && trimmed.includes(a.contains))) break;
         hits.push(`${rel}:${i + 1}: ${trimmed.slice(0, 160)}`);
@@ -103,24 +111,86 @@ describe("DEC-0228 terminology: the in-app flow is Mint / Redeem, never Buy / Se
   });
 });
 
-describe("DEC-0228 Buy/Sell tax hold: never charged on a mint or a redemption", () => {
-  it("the hold flag is on", () => {
+describe("DEC-0229: the manager Buy/Sell tax is gone; never charged on a mint or a redemption", () => {
+  it("the server-side tax path stays on hold", () => {
     expect(TRADE_TAX_ON_HOLD).to.equal(true);
   });
 
   for (const endpoint of ["api/mainnet/build-buy.ts", "api/mainnet/build-sell.ts"]) {
-    it(`${endpoint} gives the builder no tax lookup while the hold is on`, () => {
+    it(`${endpoint} gives the builder no tax lookup at all`, () => {
       const src = read(endpoint);
-      expect(src).to.include("...(TRADE_TAX_ON_HOLD ? {} : { lookupTradeTax })");
-      // No other way of handing the builder a tax lookup.
-      expect(src).to.not.match(/^\s*lookupTradeTax,\s*$/m);
-      expect(src).to.not.match(/lookupTradeTax:\s/);
+      expect(src).to.not.include("lookupTradeTax");
+      expect(src).to.not.include("resolveReserveTradeTax");
     });
   }
 
-  it("the Reserve page's Mint and Redeem panels show no Buy/Sell tax", () => {
-    const page = read("src/merge/pages/DTRDetail.tsx");
-    expect(page).to.not.include("managerBuyTaxPct");
-    expect(page).to.not.include("managerSellTaxPct");
+  const TAX_TOKENS = ["managerBuyTaxPct", "managerSellTaxPct", "buyTaxPct", "sellTaxPct", "Buy Tax", "Sell Tax", "setManagerBuyTax", "setManagerSellTax"];
+  for (const file of [
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/pages/ManageDTR.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/components/robinhood/RobinhoodCreateForm.tsx",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/types.ts",
+    "src/docs/content/ReserveTokensOnDexes.tsx",
+  ]) {
+    it(`${file} has no Buy/Sell tax control, field or copy`, () => {
+      const src = read(file);
+      for (const t of TAX_TOKENS) expect(src, `${file} still mentions ${t}`).to.not.include(t);
+    });
+  }
+
+  it("Reserve metadata readers ignore legacy tax fields (onChainReserve never maps them)", () => {
+    const src = read("src/merge/lib/onChainReserve.ts");
+    expect(src).to.not.match(/parsedMetadata\?*\.(buy|sell)TaxPct/);
+    expect(src).to.not.include("managerBuyTaxPct");
+  });
+
+  it("a NEW metadata payload is stored without buyTaxPct/sellTaxPct", () => {
+    const p = validateReserveMetadataPayload({ name: "N", ticker: "T", description: "", category: "Other" });
+    expect(p).to.not.have.property("buyTaxPct");
+    expect(p).to.not.have.property("sellTaxPct");
+  });
+
+  it("a LEGACY payload carrying the tax fields still validates to the same bytes and id", () => {
+    const legacy = { name: "N", ticker: "T", description: "d", category: "Other", buyTaxPct: 1, sellTaxPct: 0, imageUrl: "https://ssr.fun/i.png" };
+    const p = validateReserveMetadataPayload(legacy);
+    expect(JSON.stringify(p)).to.equal(JSON.stringify(legacy));
+    expect(computeMetadataId(p)).to.equal(computeMetadataId(legacy as never));
+  });
+});
+
+describe("DEC-0229: Reserve Token transfer-fee copy", () => {
+  it("the rate lives in one constant: 15 bps at launch, 25 bps hard ceiling", () => {
+    expect(RESERVE_TOKEN_TRANSFER_FEE_BPS).to.equal(15);
+    expect(RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS).to.equal(25);
+    expect(formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)).to.equal("0.15%");
+  });
+
+  it("the Create Reserve note says what it is, where it applies, who receives it, and that mint/redeem never pay it", () => {
+    expect(RESERVE_TOKEN_TRANSFER_FEE_NOTE).to.include("0.15%");
+    expect(RESERVE_TOKEN_TRANSFER_FEE_NOTE).to.include("transfer fee");
+    expect(RESERVE_TOKEN_TRANSFER_FEE_NOTE).to.include("SSR Protocol");
+    expect(RESERVE_TOKEN_TRANSFER_FEE_NOTE).to.match(/Minting and redeeming on SSR\.fun never pay it/);
+  });
+
+  it("Create Reserve shows the note and the rate from the constant, never a hardcoded rate", () => {
+    const page = read("src/merge/pages/CreateDTR.tsx");
+    expect(page).to.include("{RESERVE_TOKEN_TRANSFER_FEE_NOTE}");
+    expect(page).to.include("formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)");
+    expect(page).to.not.match(/0\.15%|15 ?bps/);
+  });
+
+  it("the docs describe the transfer fee from the same constant", () => {
+    const dexes = read("src/docs/content/ReserveTokensOnDexes.tsx");
+    expect(dexes).to.include("RESERVE_TOKEN_TRANSFER_FEE_BPS");
+    expect(dexes).to.include("TransferFeeConfig");
+    expect(dexes).to.include("TOKEN_2022_PROGRAM");
+    expect(dexes).to.include("id: 'transfer-fee'");
+    for (const f of fs.readdirSync(path.join(ROOT, "src/docs/content"))) {
+      const src = read(`src/docs/content/${f}`);
+      expect(src, f).to.not.match(/0\.15%|0\.25%/);
+      expect(src, f).to.not.include("Not Token-2022");
+    }
   });
 });

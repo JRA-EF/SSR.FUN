@@ -199,7 +199,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
       return mints.length > 0 ? deps.fetchPrices(mints).catch(() => new Map<string, { usdPrice: number | null | undefined }>()) : null;
     })(),
   ]);
-  const { orderedAssets, reserveTokenMint, mintAuthority, protocolConfig, supplyRaw, heldByMint, walletUsdcRaw, walletReserveTokenRaw, walletSolLamports, reserveAlt } = read;
+  const { orderedAssets, reserveTokenMint, reserveTokenProgram, mintAuthority, protocolConfig, supplyRaw, heldByMint, walletUsdcRaw, walletReserveTokenRaw, walletSolLamports, reserveAlt } = read;
   // The manager's Buy tax rate (DEC-0198) -- resolved while the quotes run; a metadata failure means no tax, never a blocked purchase.
   const taxRatesPromise: Promise<ReserveTradeTaxRates> = deps.lookupTradeTax
     ? deps.lookupTradeTax(String(read.reserveAccount.metadataUri ?? "")).catch(() => ZERO_TRADE_TAX)
@@ -291,6 +291,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
     reserve: input.reserve,
     reserveTokenMint,
+    reserveTokenProgram,
     mintAuthority,
     user: wallet,
     assets: orderedAssets,

@@ -23,8 +23,8 @@ and redemptions, which DEC-0228 put on hold as a terminology mistake).
 |---|---|---|---|---|---|---|
 | Mint fee | Manager, 0-5% at Create (`FeeConfig.mint_fee_bps`) | max(0.5%, rate / 2) | rate - protocol share | Reserve Tokens into the fee vault, swapped to USDC by the keeper | every mint (in the app: the Mint tab) and every seed | program (`mint_reserve_tokens_in_kind`, `fee_math::split_configured_bps`) |
 | Annualized TVL fee | Manager, 0-10%/yr at Create (`FeeConfig.annual_tvl_fee_bps`) | max(0.5%, rate / 2) | rate - protocol share | same | accrues per full elapsed day; the keeper calls `accrue_fees` for any Reserve 1+ day since its last accrual (daily since DEC-0198, weekly before) | program (`accrue_fees`) + keeper (`api/mainnet/fee-settlement-cron.ts`) |
-| Buy tax | Manager, 0-2% at Create (metadata `buyTaxPct`) | 50% of the tax | 50% of the tax | USDC | **ON HOLD (DEC-0228).** Secondary-market Buys only, once the liquidity provision engine exists. Never on a mint. | nothing today (`TRADE_TAX_ON_HOLD` in `lib/mainnet/tradeTaxHold.ts`) |
-| Sell tax | Manager, 0-2% at Create (metadata `sellTaxPct`) | 50% of the tax | 50% of the tax | USDC | **ON HOLD (DEC-0228).** Secondary-market Sells only. Never on a redemption. | nothing today |
+| Transfer fee (DEC-0229) | Protocol Admin, per mint: 0.15% at creation, `update_transfer_fee` up to 0.25% (`MAX_RESERVE_TOKEN_TRANSFER_FEE_BPS`) | 100% | none | Reserve Tokens, withheld by Token-2022 in the receiving account, swept to the Treasury's Reserve Token account by the keeper (`collect_transfer_fees`) | every transfer of a Token-2022 Reserve Token (Reserves created after DEC-0229); never a mint or a redemption | Token-2022 program itself (`TransferFeeConfig`); authorities are the program's `transfer_fee_authority` PDA |
+| Buy tax / Sell tax | removed by DEC-0229 (replaced by the transfer fee) | -- | -- | -- | never | -- |
 | Redemption fee | constant 0 (`DEFAULT_REDEMPTION_FEE_BPS`) | -- | -- | -- | every redemption (the Redeem tab); 0 in v1, so nothing is charged | -- |
 
 ## The 0.5% floor
@@ -46,7 +46,13 @@ for anything. `ProtocolConfig.default_protocol_fee_destination` DOES matter:
 other recipient, which is how the protocol share lands in the Treasury vault
 `3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5`.
 
-## Buy/Sell tax: on hold (DEC-0228)
+## Buy/Sell tax: on hold (DEC-0228), then removed (DEC-0229)
+
+DEC-0229 removed the Buy/Sell tax entirely (Create Reserve sliders, metadata
+fields for new payloads, the build-buy/build-sell lookups) and replaced it with
+the protocol transfer fee in the table above. The history below is kept for
+context.
+
 
 From 2026-09-10 (DEC-0198) to 2026-10-06 the app charged the Buy tax inside
 its in-app mint transaction and the Sell tax inside its redemption, because
@@ -92,10 +98,9 @@ they mean the in-app mint and redemption it was wrongly attached to.
   transaction expires after the swaps landed is rebuilt once (`taxOnly` on the
   same persisted base) and re-signed. A tax that fails on-chain is logged and
   does not undo the sale.
-- Not covered: plain wallet transfers and trades on any other venue. The
-  Reserve Token is a plain SPL token (no Token-2022 transfer fee, by the
-  original design decision). A transfer-fee mint would tax every transfer at
-  one rate and only for Reserves created after a program upgrade; parked.
+- Not covered (at the time): plain wallet transfers and trades on any other
+  venue. DEC-0229 adopted the Token-2022 transfer fee for Reserves created
+  after it, which does cover them, at one rate, for new Reserves only.
 
 ## Where the USDC ends up
 

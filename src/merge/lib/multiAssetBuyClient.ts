@@ -34,7 +34,7 @@
 //    until the mint deposits them.
 import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, TOKEN_PROGRAM_ID, type ZapAssetLeg } from "@ssr/sdk";
+import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, type ZapAssetLeg } from "@ssr/sdk";
 import { partitionSwapOutcomes, JupiterSwapNotLandedError, SWAP_AUTO_RETRY_LIMIT } from "./jupiterSwapClient";
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { computeSwapShortfallPct } from "./createReserveResume";
@@ -259,7 +259,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
 
   log("buy start", { reserve: reserveBase58, depositAsset: "USDC (" + MAINNET_USDC_MINT + ")", reserveTokensRequested: params.reserveTokensRequested.toString(), legs: params.assets.map((a) => a.mint) });
 
-  const rtBalanceNow = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner, TOKEN_PROGRAM_ID));
+  const rtBalanceNow = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner));
 
   // Per-purchase persisted state: resume an interrupted purchase's baseline
   // and acquired-asset records, or start fresh.
@@ -336,7 +336,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   let requiredAmountsRaw: bigint[] = [];
   const buildFailureReport = async (): Promise<BuyStateReport> => {
     const freshHeld = await readLegBalances().catch(() => params.assets.map(() => 0n));
-    const freshRt = await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner, TOKEN_PROGRAM_ID).then(BigInt).catch(() => rtBalanceNow);
+    const freshRt = await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner).then(BigInt).catch(() => rtBalanceNow);
     return buildBuyStateReport(
       params.assets.map((a, i) => ({ mint: a.mint, symbol: a.mint.slice(0, 4) + "..." + a.mint.slice(-4), requiredRaw: requiredAmountsRaw[i] ?? 0n, walletHeldRaw: freshHeld[i], purchaseAcquiredRaw: acquiredRawOf(a.mint) })),
       preMintBaseline,
@@ -535,7 +535,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     }
 
     // DOUBLE-MINT GUARD, part 2: immediately before submitting.
-    const rtBeforeMint = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner, TOKEN_PROGRAM_ID));
+    const rtBeforeMint = BigInt(await fetchTokenBalanceRaw(params.connection, params.reserveTokenMint, owner));
     if (!shouldSubmitMint(preMintBaseline, rtBeforeMint, expectedNetRaw)) {
       log("mint landed between funding and submission (double-mint guard) -- not re-submitting");
       clearPendingBuy(ownerBase58, reserveBase58);

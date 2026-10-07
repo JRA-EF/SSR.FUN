@@ -20,6 +20,7 @@ import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { findDelegate, findProtocolConfig, findReserveAsset, findReserveVault, findVaultAuthority, findMintAuthority, findManagerFeeRecipients } from "./pda";
 import type { RecipientInput } from "./feeMath";
+import { resolveMintTokenProgram } from "./readOnly";
 
 /**
  * Points `reserve.metadata_uri` at a new off-chain metadata URL (this app's
@@ -248,8 +249,9 @@ export async function buildCollectFeesInstruction(
 ): Promise<TransactionInstruction> {
   const [protocolConfig] = findProtocolConfig(programId);
   const [mintAuthority] = findMintAuthority(reserve, programId);
-  const managerFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, managerFeeDestination);
-  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  const reserveTokenProgram = await resolveMintTokenProgram(program.provider.connection, reserveTokenMint); // DEC-0229
+  const managerFeeDestinationTokenAccount = assetAta(reserveTokenMint, managerFeeDestination, reserveTokenProgram);
+  const protocolFeeDestinationTokenAccount = assetAta(reserveTokenMint, protocolFeeDestination, reserveTokenProgram, true);
   return program.methods
     .collectFees()
     .accounts({
@@ -262,7 +264,7 @@ export async function buildCollectFeesInstruction(
       protocolFeeDestinationTokenAccount,
       protocolFeeDestination,
       payer,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -292,7 +294,8 @@ export async function buildCollectProtocolFeeInstruction(
 ): Promise<TransactionInstruction> {
   const [protocolConfig] = findProtocolConfig(programId);
   const [mintAuthority] = findMintAuthority(reserve, programId);
-  const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+  const reserveTokenProgram = await resolveMintTokenProgram(program.provider.connection, reserveTokenMint); // DEC-0229
+  const protocolFeeDestinationTokenAccount = assetAta(reserveTokenMint, protocolFeeDestination, reserveTokenProgram, true);
   return program.methods
     .collectProtocolFee()
     .accounts({
@@ -303,7 +306,7 @@ export async function buildCollectProtocolFeeInstruction(
       protocolFeeDestinationTokenAccount,
       protocolFeeDestination,
       payer,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -384,8 +387,9 @@ export async function buildCollectManagerFeeShareInstruction(
   managerFeeRecipientsExists: boolean,
 ): Promise<TransactionInstruction> {
   const [mintAuthority] = findMintAuthority(reserve, programId);
+  const reserveTokenProgram = await resolveMintTokenProgram(program.provider.connection, reserveTokenMint); // DEC-0229
   const [managerFeeRecipients] = findManagerFeeRecipients(reserve, programId);
-  const recipientTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, recipient);
+  const recipientTokenAccount = assetAta(reserveTokenMint, recipient, reserveTokenProgram);
   return program.methods
     .collectManagerFeeShare()
     .accounts({
@@ -395,7 +399,7 @@ export async function buildCollectManagerFeeShareInstruction(
       managerFeeRecipients: managerFeeRecipientsExists ? managerFeeRecipients : null,
       recipient,
       recipientTokenAccount,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     } as any)

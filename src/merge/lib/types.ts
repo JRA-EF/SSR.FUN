@@ -39,10 +39,6 @@ export interface FeeConfig {
   mintFeePct: number;
   /** Annualized TVL fee, as a percent, accrued to the DTR Manager. */
   tvlFeePct: number;
-  /** Optional additional tax set by the DTR Manager on buys, as a percent. */
-  managerBuyTaxPct: number;
-  /** Optional additional tax set by the DTR Manager on sells, as a percent. */
-  managerSellTaxPct: number;
   /** Wallet address that receives the Manager's share of Mint Fee revenue (and any fee revenue not routed to a recipient below). */
   creatorFeeDestination: string;
   /** Additional wallets that split off a percentage of total fee revenue. */
@@ -389,8 +385,6 @@ export interface CreateDTRInput {
   initialSeedUsdc: number;
   mintFeePct: number;
   tvlFeePct: number;
-  managerBuyTaxPct: number;
-  managerSellTaxPct: number;
   creatorFeeDestination: string;
   /** Additional wallets that split off a percentage of total fee revenue. */
   feeRecipients: FeeRecipient[];

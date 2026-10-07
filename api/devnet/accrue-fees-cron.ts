@@ -44,7 +44,7 @@
 // Reserve's very first `TvlAccrual`/protocol-fee-ATA, if either doesn't
 // exist yet).
 import { Connection, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
   DEVNET_FIXTURES,
   DEVUSDC_MINT,
@@ -165,6 +165,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     try {
       const reservePk = new PublicKey(r.reserve);
       const reserveTokenMintPk = new PublicKey(r.reserveTokenMint);
+      const reserveTokenProgram = r.reserveTokenProgram === "token-2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID; // DEC-0229
       const [mintAuthority] = findMintAuthority(reservePk, PROGRAM_ID);
       const [tvlAccrual] = findTvlAccrual(reservePk, PROGRAM_ID);
       // Tier B (DEC-0184 settlement pipeline): accrue_fees now routes the
@@ -175,7 +176,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       // / accrue_fees.rs and the regenerated IDL.
       const [feeSettlement] = findFeeSettlement(reservePk, PROGRAM_ID);
       const [feeVaultAuthority] = findFeeVaultAuthority(reservePk, PROGRAM_ID);
-      const feeVault = findFeeVaultAta(reservePk, reserveTokenMintPk, PROGRAM_ID);
+      const feeVault = findFeeVaultAta(reservePk, reserveTokenMintPk, PROGRAM_ID, reserveTokenProgram);
       const ix = await program.methods
         .accrueFees()
         .accounts({
@@ -188,7 +189,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           feeVault,
           feeVaultAuthority,
           payer: authority.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
+          tokenProgram: reserveTokenProgram,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
@@ -222,7 +223,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       try {
         const reservePk = new PublicKey(r.reserve);
         const reserveTokenMint = new PublicKey(r.reserveTokenMint);
-        const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination);
+        const reserveTokenProgram = r.reserveTokenProgram === "token-2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID; // DEC-0229
+        const protocolFeeDestinationTokenAccount = getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination, true, reserveTokenProgram);
         const ix = await program.methods
           .collectProtocolFee()
           .accounts({
@@ -233,7 +235,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             protocolFeeDestinationTokenAccount,
             protocolFeeDestination,
             payer: authority.publicKey,
-            tokenProgram: TOKEN_PROGRAM_ID,
+            tokenProgram: reserveTokenProgram,
             associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })

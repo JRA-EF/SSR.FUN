@@ -146,7 +146,7 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
 
   const read = await readReserveAndWallet(deps, input.reserve, wallet, input.assetMints);
   timings.readsMs = read.readsMs;
-  const { orderedAssets, reserveTokenMint, vaultAuthority, supplyRaw, heldByMint, walletUsdcRaw, walletReserveTokenRaw, walletSolLamports, reserveAlt } = read;
+  const { orderedAssets, reserveTokenMint, reserveTokenProgram, vaultAuthority, supplyRaw, heldByMint, walletUsdcRaw, walletReserveTokenRaw, walletSolLamports, reserveAlt } = read;
   const taxRatesPromise: Promise<ReserveTradeTaxRates> = deps.lookupTradeTax
     ? deps.lookupTradeTax(String(read.reserveAccount.metadataUri ?? "")).catch(() => ZERO_TRADE_TAX)
     : Promise.resolve(ZERO_TRADE_TAX);
@@ -201,6 +201,7 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
     program,
     reserve: input.reserve,
     reserveTokenMint,
+    reserveTokenProgram,
     vaultAuthority,
     user: wallet,
     assets: orderedAssets,

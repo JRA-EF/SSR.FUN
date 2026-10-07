@@ -15,7 +15,7 @@ decision log entry, issue or prompt that disagrees.
 | **Mint** | Getting Reserve Tokens from SSR.fun **in the app**: paying USDC (the app swaps it into the reserve assets, then mints) or depositing reserve assets in kind. New tokens are created. Mint fee applies. | -- |
 | **Redeem** | Handing Reserve Tokens back to SSR.fun **in the app** for the proportional reserve assets, in kind or swapped to USDC. Tokens are burned. | -- |
 | **Buy** / **Sell** | **Strictly secondary-market** trades of existing Reserve Tokens between holders: DEX pools, the future liquidity provision engine. Not offered in the app yet. | The in-app flow. |
-| **Buy tax** / **Sell tax** | Manager's tax on secondary Buy/Sell trades. **ON HOLD** (`TRADE_TAX_ON_HOLD`). | A mint or a redemption. Ever. |
+| **Buy tax** / **Sell tax** | **Removed (DEC-0229).** Replaced by the protocol **transfer fee** on Token-2022 Reserve Tokens (0.15%, ceiling 0.25%, 100% to the SSR Protocol), charged by Token-2022 on every transfer. | A mint or a redemption. Ever. |
 
 What you must do:
 
@@ -33,7 +33,8 @@ What you must do:
    `api/mainnet/build-buy`, `multiAssetBuyClient`, tab value `"buy"`, ledger
    `side` values): they are API and stored data. Prefer `mint`/`redeem` in
    new names.
-5. Do not re-enable the Buy/Sell tax. That needs a new decision in
+5. Do not reintroduce a Buy/Sell tax: DEC-0229 replaced it with the
+   protocol transfer fee. Changing that needs a new decision in
    `docs/project/DECISION_LOG.md`.
 
 `tests/phase_terminology_and_tax_hold.ts` enforces the UI copy and the tax
