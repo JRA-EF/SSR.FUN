@@ -7118,8 +7118,39 @@
     "Live, throwaway DevNet deployment CLfyp3ysqNyKaTcxBbBqFg8vdtgxAiphKSRYzqhfn5KP (closed afterwards, rent reclaimed), scripts/verify_token2022_reserve_token_live.ts ALL CHECKS PASSED: create_reserve -> Token-2022 mint, 15 bps, max fee u64::MAX, both authorities = transfer_fee_authority PDA, 6 decimals, no freeze; seed + mint_reserve_tokens_in_kind withheld nothing (SDK resolver found Token-2022 unaided); a 100,000 raw wallet transfer withheld exactly 150 raw; collect_transfer_fees to a non-treasury wallet rejected (TransferFeeTreasuryMismatch), to the treasury moved 150 raw and emptied the account and the mint (tx 2q4ggh9V...); update_transfer_fee by a stranger rejected (NotProtocolAuthority), 26 bps rejected (TransferFeeExceedsMaximum), 25 bps by the second admin scheduled from epoch 1179 at epoch 1177 (tx 2vmXPH61...); create_token_metadata via Metaplex Create V1 on the Token-2022 mint (tx 56y5nADn...); accrue_fees against the Token-2022 fee vault (tx 2WbnZS7Z...); redeem burned 594,850 raw and paid the exact entitlement, nothing withheld (tx 3tYDUdLe...). Not exercised live: findWithheldFeeAccounts (public DevNet refuses getProgramAccounts; Mainnet keeper uses Helius).",
     "First DevNet run (throwaway 9D3gK7aP..., closed) found the Metaplex CreateMetadataAccountV3 refusal for Token-2022 mints (0x99), fixed by the Create V1 path above.",
     "Offline: full phase suite 1340 passing, 4 failing -- the pre-existing set (chart range selector x2, global native-control reset x2); new tests/phase_token2022_reserve_token.ts 13 passing; phase_server_built_sell gained two Token-2022 cases. cargo test --lib 21/21 (incl. the Create V1 wire-format test). npx tsc -b clean; vite build OK.",
-    "Program binary 1,013,536 bytes (sha256 408b83da...897b) vs Mainnet programdata capacity 1,099,592 bytes: no extend needed.",
+    "Program binary (DEC-0229 alone) 1,013,536 bytes, sha256 408b83da...897b; with DEC-0230 1,018,032 bytes, sha256 139f5067...c775. Mainnet programdata capacity 1,099,592 bytes: no extend needed.",
     "IDL: create_reserve gains transfer_fee_authority and pins Token-2022; the eight Reserve Token instructions' token_program loses its fixed address (either program); update_transfer_fee and collect_transfer_fees added; errors 6063-6065 appended; no existing error renumbered."
+  ]
+}
+```
+
+## DEC-0230
+
+```json
+{
+  "id": "DEC-0230",
+  "date": "2026-10-07",
+  "title": "Port the co-manager privilege-escalation fix (9111fd0, never merged, never live) into the DEC-0229 upgrade; record that the live Mainnet program is not reproducible from main",
+  "status": "implemented on branch feat/token2022-transfer-fee (separate commit, droppable); live-verified on a throwaway DevNet deployment; NOT on Mainnet; shipping it with the DEC-0229 upgrade awaits the team's decision",
+  "decision": "Cherry-picked 9111fd0 (2026-09-02, branch hotfix/delegate-escalation-deployable) onto the DEC-0229 branch: (1) common.rs require_grantable_permissions -- a co-manager may grant only bits it holds itself (permissions_are_subset) and may never edit its own Delegate record; the root Manager is unconstrained; called from add_delegate and update_delegate_permissions after the existing permission check. (2) load_asset_legs binds each leg's caller-supplied token program to the ReserveAsset's recorded TokenProgramKind. (3) Errors appended after DEC-0229's: DelegatePermissionEscalation 6066, DelegateSelfModification 6067, messages reworded to 'co-manager' (CLAUDE.md terminology). No account-shape or instruction change.",
+  "context": "Before preparing the DEC-0229 upgrade this session checked that the upgrade would not revert anything live. Findings: (a) Mainnet programdata 2YF7aofg... was last upgraded at slot 449783545 (2026-09-23 18:24:02 UTC, Squads VaultTransactionExecute signed by the Developer wallet 52b7pBNF...), three hours after the DEC-0210 upgrade (slot 449738286) and with no decision-log entry; (b) a clean build of origin/main @ 00d059d (953,560 bytes) does not match the on-chain bytes (trims to ~955,369), though both have the same 34 instructions and error strings -- most likely main's two 2026-09-23 asset commits (14ccaae, 6973a53) built on another machine; no remote branch holds program source beyond main except old, superseded hotfix/fix branches; (c) neither the live binary nor main contains 9111fd0's error strings, i.e. the 2 September escalation fix was never merged and every later upgrade was built without it. The escalation (a restricted co-manager with only ADD_RESTRICTED_DELEGATE setting its own record to ALL_V1_FLAGS) therefore remains live. Checked separately: the missing token-program binding in load_asset_legs is NOT a custody hole -- spl-token-2022's instruction builders call check_spl_token_program_account, so a token CPI can only target SPL Token or Token-2022, and the wrong one of those refuses the vault.",
+  "rationale": "The DEC-0229 upgrade already needs a Squads execute; riding it costs nothing extra, and the fix is small, append-only and independently unit-tested (exhaustive over the v1 flag space). Kept as its own commit so the team can drop it without touching DEC-0229.",
+  "alternativesConsidered": [
+    "Ship DEC-0229 without the fix (rejected as a default: knowingly re-deploys a known escalation; still possible by dropping the commit)",
+    "Separate Squads upgrade for the fix alone (possible; doubles the buffer rent and signing round)"
+  ],
+  "impact": "Once executed: a co-manager can no longer raise its own permissions or grant beyond its own; existing co-manager records and every manager action are unaffected. Open: who ran the 2026-09-23 18:24 UTC upgrade and from which commit should be recorded; going forward every Mainnet upgrade must name its source commit and binary hash in the log.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/{common,add_delegate,update_delegate_permissions}.rs, errors.rs",
+    "packages/sdk/idl/* (two errors), tests/phase_delegate_containment.ts (new), tests/phase_reserve_deploy_resumability.ts (error range 6000-6067), scripts/verify_token2022_reserve_token_live.ts (step 9)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Throwaway DevNet deployment 8MK2VLPgnbXfkh8yHTAdrmR9tBEarhRpZ2W3svwJpH9n (closed, rent reclaimed), via Helius DevNet: every DEC-0229 check passed again (including findWithheldFeeAccounts, which public DevNet refuses), then: a co-manager raising its own permissions rejected (DelegateSelfModification), granting MANAGE_FEES it does not hold rejected (DelegatePermissionEscalation), the root manager raising the co-manager's permissions succeeded.",
+    "cargo test --lib 27/27 (6 containment tests incl. the exhaustive 1024x1024 sweep). Offline phase suite 1342 passing, 4 failing (pre-existing set).",
+    "Final binary (DEC-0229 + DEC-0230, declare_id 8hTW...): 1,018,032 bytes, sha256 139f5067a6a36905b8653100631b5fde7189c65f4620ba20c630abb655cbc775, identical across two clean builds; fits the 1,099,592-byte programdata.",
+    "solana program dump of Mainnet 8hTW... vs origin/main build: different bytes, same instruction-name set (34), neither contains 'cannot grant permissions it does not itself hold'. Upgrade history from getSignaturesForAddress(2YF7aofg...): 449783545 (52b7..., 2026-09-23 18:24 UTC), 449738286 (EME9..., DEC-0210), 446223938 / 446221193 (52b7..., 2026-09-11), and earlier."
   ]
 }
 ```

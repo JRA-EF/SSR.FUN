@@ -20,6 +20,9 @@
 //  6. create_token_metadata (Metaplex) works on the Token-2022 mint.
 //  7. accrue_fees works against the Token-2022 fee vault.
 //  8. redeem_reserve_tokens_in_kind burns with no transfer fee.
+//  9. Co-manager containment (9111fd0): a restricted co-manager holding only
+//     ADD_RESTRICTED_DELEGATE cannot raise its own permissions, nor grant
+//     another wallet more than it holds; the manager still can.
 import * as fs from "fs";
 import * as os from "os";
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -63,6 +66,8 @@ import {
   findTransferFeeAuthority,
   findTvlAccrual,
   describeOnChainError,
+  buildAddDelegateInstruction,
+  buildUpdateDelegatePermissionsInstruction,
 } from "../packages/sdk/src";
 
 const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID ?? "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -102,7 +107,7 @@ async function main() {
   const holder = Keypair.generate();
   const stranger = Keypair.generate();
   const treasury = Keypair.generate();
-  for (const [kp, sol] of [[authority, 0.05], [admin2, 0.01], [manager, 0.12], [holder, 0.06], [stranger, 0.01]] as const) await fund(connection, funder, kp.publicKey, sol);
+  for (const [kp, sol] of [[authority, 0.05], [admin2, 0.01], [manager, 0.12], [holder, 0.06], [stranger, 0.03]] as const) await fund(connection, funder, kp.publicKey, sol);
   const wallet = { publicKey: manager.publicKey, signTransaction: async (t: any) => t, signAllTransactions: async (t: any) => t };
   const program = new Program({ ...(idlJson as Idl), address: PROGRAM_ID.toBase58() } as Idl, new AnchorProvider(connection, wallet as any, { commitment: "confirmed" })) as any;
   console.log(`program=${PROGRAM_ID.toBase58()} rpc=${RPC.replace(/api-key=[^&]+/, "api-key=***")}`);
@@ -170,7 +175,10 @@ async function main() {
 
   // 4. Keeper collection to the treasury; a wrong treasury is refused.
   const found = await findWithheldFeeAccounts(connection, rtMint).catch(() => null);
-  if (found) assert(found.some((f) => f.address.equals(holderRtAta)), "scan finds the account holding withheld fees");
+  if (found) {
+    assert(found.some((f) => f.address.equals(holderRtAta) && f.withheldRaw === expectedFee), "scan finds the account holding withheld fees");
+    console.log(`  ok  findWithheldFeeAccounts found ${found.length} account(s) holding withheld fees`);
+  } else console.log("  --  findWithheldFeeAccounts skipped (this RPC refuses getProgramAccounts)");
   await expectFailure(
     "collect to a non-treasury wallet",
     (async () => send(connection, [await buildCollectTransferFeesInstruction({ program, programId: PROGRAM_ID, reserve: addresses.reserve, treasury: stranger.publicKey, payer: holder.publicKey, harvestSources: [holderRtAta] })], [holder]))(),
@@ -235,6 +243,26 @@ async function main() {
   assert(holderAfter.amount === 0n && (getTransferFeeAmount(holderAfter)?.withheldAmount ?? 0n) === 0n, "redeemed everything, nothing withheld");
   assert(assetAfter - assetBefore === redeemRes.entitlementsRaw[0], `asset paid out ${assetAfter - assetBefore}, expected ${redeemRes.entitlementsRaw[0]}`);
   console.log(`  ok  redeem_reserve_tokens_in_kind ${redeemSig}: burned ${holderNow.amount} raw, paid ${assetAfter - assetBefore} raw of the asset`);
+
+  // 9. Co-manager containment.
+  const ADD_RESTRICTED = 1 << 8;
+  const MANAGE_FEES = 1 << 4;
+  const [managerSelf] = findDelegate(addresses.reserve, manager.publicKey, PROGRAM_ID); // never exists: root-manager path
+  await send(connection, [await buildAddDelegateInstruction(program, PROGRAM_ID, addresses.reserve, manager.publicKey, managerSelf, stranger.publicKey, ADD_RESTRICTED, true)], [manager]);
+  const [strangerRecord] = findDelegate(addresses.reserve, stranger.publicKey, PROGRAM_ID);
+  await expectFailure(
+    "co-manager raising its own permissions",
+    (async () => send(connection, [await buildUpdateDelegatePermissionsInstruction(program, PROGRAM_ID, addresses.reserve, stranger.publicKey, strangerRecord, stranger.publicKey, ADD_RESTRICTED | MANAGE_FEES)], [stranger]))(),
+    /DelegateSelfModification|6067/,
+  );
+  const third = Keypair.generate().publicKey;
+  await expectFailure(
+    "co-manager granting more than it holds",
+    (async () => send(connection, [await buildAddDelegateInstruction(program, PROGRAM_ID, addresses.reserve, stranger.publicKey, strangerRecord, third, MANAGE_FEES, true)], [stranger]))(),
+    /DelegatePermissionEscalation|6066/,
+  );
+  await send(connection, [await buildUpdateDelegatePermissionsInstruction(program, PROGRAM_ID, addresses.reserve, manager.publicKey, managerSelf, stranger.publicKey, ADD_RESTRICTED | MANAGE_FEES)], [manager]);
+  console.log("  ok  the root manager can still raise a co-manager's permissions");
 
   console.log("ALL CHECKS PASSED");
 }

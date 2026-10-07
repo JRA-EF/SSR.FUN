@@ -7138,6 +7138,16 @@ export type SsrProtocol = {
       "code": 6065,
       "name": "transferFeeTreasuryMismatch",
       "msg": "Transfer fees can only be paid to the Protocol treasury configured on ProtocolConfig."
+    },
+    {
+      "code": 6066,
+      "name": "delegatePermissionEscalation",
+      "msg": "A co-manager cannot grant permissions it does not itself hold."
+    },
+    {
+      "code": 6067,
+      "name": "delegateSelfModification",
+      "msg": "A co-manager cannot change its own permissions."
     }
   ],
   "types": [

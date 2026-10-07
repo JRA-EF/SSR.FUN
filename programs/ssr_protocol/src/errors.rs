@@ -192,4 +192,14 @@ pub enum SsrError {
     ReserveTokenHasNoTransferFee,
     #[msg("Transfer fees can only be paid to the Protocol treasury configured on ProtocolConfig.")]
     TransferFeeTreasuryMismatch,
+
+    // --- Delegate privilege-escalation fix (9111fd0, 2026-09-02; ported with DEC-0229) ---
+    // Appended at the end deliberately (same append-only rule): inserting a
+    // variant anywhere earlier would renumber every subsequent error code and
+    // silently break every client that decodes them.
+    #[msg("A co-manager cannot grant permissions it does not itself hold.")]
+    DelegatePermissionEscalation,
+
+    #[msg("A co-manager cannot change its own permissions.")]
+    DelegateSelfModification,
 }
