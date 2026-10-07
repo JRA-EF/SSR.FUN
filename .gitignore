@@ -39,4 +39,18 @@ devnet-fixtures/
 # not meaningful, never intentionally created.
 api/**/package-lock.json
 .env*
+!.env.example
 docs/project/ROADMAP.built.html
+
+# Wallet / signer keys and credentials -- never commit (repo is PUBLIC).
+# Solana CLI default wallet, deployer and signer keypair files:
+**/id.json
+*deployer*.json
+*signer*.json
+*wallet*.json
+*.pem
+*.key
+*.p12
+# Google service-account JSON keys:
+*service-account*.json
+*-sa-key*.json
