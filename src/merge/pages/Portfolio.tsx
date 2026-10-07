@@ -19,7 +19,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { Wallet, PieChart, ArrowUpRight, ArrowDownRight, Search, Activity } from "lucide-react";
+import { Wallet, PieChart, ArrowUpRight, ArrowDownRight, Search, Activity, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { nextHoldingsSort, sortHoldingsRows, type HoldingsSort, type HoldingsSortKey } from "@/lib/holdingsSort";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { DevnetOnboarding } from "../components/DevnetOnboarding";
@@ -220,8 +221,53 @@ function PnlText({ value, pct, className = "", dark = false }: { value: number; 
   );
 }
 
+/**
+ * A Reserve Holdings column header that sorts the table in one click: the
+ * first click orders the column (highest first; A-Z for Asset), the next click
+ * inverts it. aria-sort tells screen readers the current order.
+ */
+function SortableHead({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = "right",
+  className = "",
+}: {
+  label: string;
+  sortKey: HoldingsSortKey;
+  sort: HoldingsSort | null;
+  onSort: (key: HoldingsSortKey) => void;
+  align?: "left" | "right";
+  className?: string;
+}) {
+  const active = sort?.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort!.dir === "asc" ? ArrowUp : ArrowDown;
+  const order = !active ? "" : sort!.dir === "asc" ? (sortKey === "asset" ? "A to Z" : "lowest first") : sortKey === "asset" ? "Z to A" : "highest first";
+  return (
+    <TableHead
+      className={`${align === "right" ? "text-right" : ""} ${className}`}
+      aria-sort={!active ? "none" : sort!.dir === "asc" ? "ascending" : "descending"}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 cursor-pointer select-none hover:text-foreground transition-colors ${align === "right" ? "flex-row-reverse" : ""} ${active ? "text-foreground" : ""}`}
+        title={active ? `Sorted ${order}. Click to reverse.` : `Sort by ${label}`}
+      >
+        <span>{label}</span>
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${active ? "opacity-100" : "opacity-40"}`} aria-hidden="true" />
+      </button>
+    </TableHead>
+  );
+}
+
 export function Portfolio() {
   const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, txInFlight, setWalletModalOpen } = useAppStore();
+  // Reserve Holdings column sort (null = the table's natural order). Declared
+  // before the not-connected early return so the hook order never changes.
+  const [holdingsSort, setHoldingsSort] = useState<HoldingsSort | null>(null);
+  const onHoldingsSort = (key: HoldingsSortKey) => setHoldingsSort((cur) => nextHoldingsSort(cur, key));
   // Distinct from "genuinely empty": a fresh mount whose first discovery
   // pass hasn't resolved yet, an in-flight Buy/Sell/deployment, or a
   // discovery pass that failed and is showing last-known state (see
@@ -440,19 +486,24 @@ export function Portfolio() {
               <Table>
                 <TableHeader className="bg-muted/30">
                   <TableRow className="border-border/50">
-                    <TableHead className="py-4">Asset</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
-                    <TableHead className="text-right">Avg Entry</TableHead>
-                    <TableHead className="text-right">Price / NAV</TableHead>
-                    <TableHead className="text-right">Cost Basis</TableHead>
-                    <TableHead className="text-right">Value</TableHead>
-                    <TableHead className="text-right">Unrealized P&L</TableHead>
+                    <SortableHead label="Asset" sortKey="asset" sort={holdingsSort} onSort={onHoldingsSort} align="left" className="py-4" />
+                    <SortableHead label="Balance" sortKey="balance" sort={holdingsSort} onSort={onHoldingsSort} />
+                    <SortableHead label="Avg Entry" sortKey="avgEntry" sort={holdingsSort} onSort={onHoldingsSort} />
+                    <SortableHead label="Price / NAV" sortKey="price" sort={holdingsSort} onSort={onHoldingsSort} />
+                    <SortableHead label="Cost Basis" sortKey="costBasis" sort={holdingsSort} onSort={onHoldingsSort} />
+                    <SortableHead label="Value" sortKey="value" sort={holdingsSort} onSort={onHoldingsSort} />
+                    <SortableHead label="Unrealized P&L" sortKey="pnl" sort={holdingsSort} onSort={onHoldingsSort} />
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {holdings.map((holding) => {
-                    const dtr = dtrs.find((d) => d.id === holding.dtrId);
+                  {sortHoldingsRows(
+                    holdings.map((h) => {
+                      const d = dtrs.find((x) => x.id === h.dtrId);
+                      return { holding: h, dtr: d, name: d?.name ?? quarantinedReserves[h.dtrId]?.name ?? "" };
+                    }),
+                    holdingsSort,
+                  ).map(({ holding, dtr }) => {
                     if (!dtr) {
                       // A real wallet-owned Reserve Token balance in a
                       // Reserve that failed the public eligibility check
