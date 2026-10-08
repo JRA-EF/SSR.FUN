@@ -7344,3 +7344,35 @@
   ]
 }
 ```
+
+
+## DEC-0231
+
+```json
+{
+  "id": "DEC-0231",
+  "date": "2026-10-08",
+  "status": "permission-verified; integration-started; not-deployed",
+  "decision": "Activate the preferred permissioned Raydium CPMM architecture after verifying the grant for SSR payer 6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS. Implement read/prepare adapter checks and fixed-treasury Collect preparation. Live pool creation awaits the signer/funding arrangement (OPEN-14), transfer-fee-aware amount handling and the required keyed basket quote verification. Live Compound remains blocked by OPEN-13.",
+  "context": "Yeh supplied the Raydium grant transaction and authorized proceeding. Finalized transaction succeeded at slot 454602528; derived Permission PDA HqMmvmtRUHup5ACL7mTf5bCj6STYB6ZUMgnd4CN8LmLB stores the approved payer. Current config 9 default creator fee share is 5%, rather than the earlier zero snapshot. DEC-0229 introduces transfer-fee Token-2022 Reserve Tokens.",
+  "rationale": "Use the now-authorized native creator-fee path while enforcing actual chain economics, immutable collection destinations and explicit signer ownership.",
+  "alternativesConsidered": [
+    "Continue CLMM fallback despite permission: unnecessary for the preferred integration.",
+    "Assume every Manager can use the payer permission: rejected; Raydium binds permission and initial asset accounts to the payer."
+  ],
+  "impact": "Read/prepare CPMM adapter and regression tests; spec and project status updated. No deployment or fund-moving transaction.",
+  "affectedAreas": [
+    "src/merge/lib/liquidity/raydiumCpmm.ts",
+    "tests/phase_raydium_cpmm.ts",
+    "docs/project/LIQUIDITY_MODULE_SPEC.md",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Grant transaction 2k2tw5MiPcxhoorb5EsL8guFkuRtqDD3ZJLqWRSFN9vKAtAepuTYYcur6WQJ98X9wdUYEhxFgqjRKXbKLfS1HpG, finalized and successful.",
+    "Permission and config accounts read at finalized slot 454640268: expected owner, authority and sizes; trade rate 2500, creator rate 7500, default share rate 50000.",
+    "Raydium cp-swap source b3187ae53a1b95a201f855a59024a12ca8f5b51a inspected without executing it."
+  ]
+}
+```
