@@ -83,7 +83,8 @@ describe("IDL -- create_token_metadata is present and consistent", () => {
     const err = idl.errors.find((e) => e.name === "TokenMetadataFieldTooLong");
     expect(err).to.not.equal(undefined);
     expect(err!.code).to.equal(6062);
-    expect(Math.max(...idl.errors.map((e) => e.code))).to.equal(6062);
+    // Later passes append after it (DEC-0229: 6063-6065); 6062 itself never moves.
+    expect(Math.max(...idl.errors.map((e) => e.code))).to.be.at.least(6062);
   });
 
   it("the camelCase TS mirror carries the same instruction (typed program.methods.createTokenMetadata resolves)", () => {

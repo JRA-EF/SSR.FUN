@@ -459,3 +459,30 @@ pub struct TokenMetadataPublished {
     pub published_by: Pubkey,
     pub ts: i64,
 }
+
+/// A Reserve Token mint's transfer fee was changed by a Protocol Admin
+/// (DEC-0229). Token-2022 applies the new rate from `effective_epoch`, two
+/// epochs after the change; until then the previous rate still applies.
+#[event]
+pub struct ReserveTokenTransferFeeUpdated {
+    pub reserve_token_mint: Pubkey,
+    pub old_transfer_fee_bps: u16,
+    pub new_transfer_fee_bps: u16,
+    pub effective_epoch: u64,
+    pub authority: Pubkey,
+    pub ts: i64,
+}
+
+/// Withheld transfer fees on a Reserve Token mint were swept to the
+/// Protocol treasury's token account (DEC-0229). `amount` is in Reserve
+/// Token base units.
+#[event]
+pub struct ReserveTokenTransferFeesCollected {
+    pub reserve_token_mint: Pubkey,
+    pub treasury: Pubkey,
+    pub treasury_token_account: Pubkey,
+    pub amount: u64,
+    pub harvested_accounts: u16,
+    pub collected_by: Pubkey,
+    pub ts: i64,
+}

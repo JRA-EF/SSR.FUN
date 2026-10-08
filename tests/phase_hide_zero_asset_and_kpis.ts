@@ -44,8 +44,6 @@ function makeDtr(id: string, assetCount: number | undefined, status = "active"):
     feeConfig: {
       mintFeePct: 0.5,
       tvlFeePct: 1,
-      managerBuyTaxPct: 0,
-      managerSellTaxPct: 0,
       creatorFeeDestination: "11111111111111111111111111111111",
       feeRecipients: [],
     },

@@ -4,15 +4,14 @@
 // Pure where possible (decideMode, hypotheticalLookupTable, fitsV0) so the
 // decisions are unit-testable without a wallet or Jupiter.
 import { AddressLookupTableAccount, AddressLookupTableProgram, Connection, PublicKey, TransactionInstruction, VersionedTransaction, type AccountInfo } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
-import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, type TokenProgramKindDecoded } from "@ssr/sdk";
+import { getAssociatedTokenAddressSync, unpackMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { assetAta, rememberMintTokenProgram, tokenAccountAmountByOwner, tokenProgramFromKind, tokenProgramFromMintOwner, type TokenProgramKindDecoded } from "@ssr/sdk";
 import {
   enumerateReserveAssetMintsOnChain,
   findProtocolConfig,
   findReserveAsset,
   findReserveVault,
   findVaultAuthority,
-  getTokenSupplyWithRetry,
   type ZapAssetLeg,
 } from "@ssr/sdk";
 import { compileSingleBuyTransaction, fetchLookupTables, SingleTxTooLargeError } from "../../src/merge/lib/singleTxBuy";
@@ -38,8 +37,7 @@ export class BuildError extends Error {
   }
 }
 
-/** "tax": the manager's Sell tax transfers, submitted by the client only after every swap of a batch-mode sale has landed (DEC-0198). */
-export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single" | "tax";
+export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single";
 
 export interface BuiltTransaction {
   kind: BuiltTxKind;
@@ -145,6 +143,8 @@ export interface ReadDeps {
 export interface ReserveReadResult {
   reserveAccount: any;
   reserveTokenMint: PublicKey;
+  /** DEC-0229: the Reserve Token mint's own program (classic before DEC-0229, Token-2022 after), read from the mint account in the same batch. */
+  reserveTokenProgram: PublicKey;
   mintAuthority: PublicKey;
   vaultAuthority: PublicKey;
   protocolConfig: PublicKey;
@@ -186,16 +186,27 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
   const walletAtasClassic = candidateMints.map((m) => assetAta(m, wallet, TOKEN_PROGRAM_ID));
   const walletAtas2022 = candidateMints.map((m) => assetAta(m, wallet, TOKEN_2022_PROGRAM_ID));
   const walletUsdcAta = getAssociatedTokenAddressSync(usdcMint, wallet);
-  const walletRtAta = getAssociatedTokenAddressSync(reserveTokenMint, wallet);
+  // DEC-0229: same trick for the Reserve Token itself -- classic for a
+  // Reserve created before DEC-0229, Token-2022 after. Both ATAs and the mint
+  // account ride in the one batch; the mint's owner picks the real ATA, and
+  // its data gives the supply (replacing a separate getTokenSupply call).
+  const walletRtAtaClassic = assetAta(reserveTokenMint, wallet, TOKEN_PROGRAM_ID);
+  const walletRtAta2022 = assetAta(reserveTokenMint, wallet, TOKEN_2022_PROGRAM_ID);
   type ReserveAssetRow = { decimals: number; orderIndex: number; tokenProgram?: TokenProgramKindDecoded } | null;
-  const [reserveAssets, vaultInfos, supply, walletInfos, walletSolLamports, reserveAlt] = await Promise.all([
+  const [reserveAssets, vaultInfos, walletInfos, walletSolLamports, reserveAlt] = await Promise.all([
     program.account.reserveAsset.fetchMultiple(reserveAssetPdas) as Promise<ReserveAssetRow[]>,
     connection.getMultipleAccountsInfo(vaultPdas),
-    getTokenSupplyWithRetry(connection, reserveTokenMint),
-    connection.getMultipleAccountsInfo([...walletAtasClassic, ...walletAtas2022, walletUsdcAta, walletRtAta]),
+    connection.getMultipleAccountsInfo([...walletAtasClassic, ...walletAtas2022, walletUsdcAta, walletRtAtaClassic, walletRtAta2022, reserveTokenMint]),
     connection.getBalance(wallet, "confirmed"),
     deps.lookupReserveAlt(reserve.toBase58()).catch(() => null),
   ]);
+  const n = candidateMints.length;
+  const mintInfo = walletInfos[n * 2 + 3];
+  if (!mintInfo) throw new BuildError(502, "Could not read this Reserve's token mint from Mainnet. Nothing was submitted.");
+  const reserveTokenProgram = tokenProgramFromMintOwner(mintInfo.owner);
+  rememberMintTokenProgram(reserveTokenMint, mintInfo.owner);
+  const reserveTokenIs2022 = reserveTokenProgram.equals(TOKEN_2022_PROGRAM_ID);
+  const supplyRaw = unpackMint(reserveTokenMint, mintInfo, reserveTokenProgram).supply;
   const assets: ZapAssetLeg[] = [];
   const orderIndexes: number[] = [];
   candidateMints.forEach((m, i) => {
@@ -232,14 +243,17 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
   return {
     reserveAccount,
     reserveTokenMint,
+    reserveTokenProgram,
     mintAuthority: PublicKey.findProgramAddressSync([Buffer.from("mint_authority"), reserve.toBuffer()], ssrProgramId)[0],
     vaultAuthority: findVaultAuthority(reserve, ssrProgramId)[0],
     protocolConfig: findProtocolConfig(ssrProgramId)[0],
     orderedAssets,
-    supplyRaw: BigInt(supply ? supply.value.amount : "0"),
+    supplyRaw,
     heldByMint,
-    walletUsdcRaw: tokenAmountFromInfo(walletUsdcAta, walletInfos[candidateMints.length * 2]),
-    walletReserveTokenRaw: tokenAmountFromInfo(walletRtAta, walletInfos[candidateMints.length * 2 + 1]),
+    walletUsdcRaw: tokenAmountFromInfo(walletUsdcAta, walletInfos[n * 2]),
+    walletReserveTokenRaw: reserveTokenIs2022
+      ? tokenAmountFromInfo(walletRtAta2022, walletInfos[n * 2 + 2])
+      : tokenAmountFromInfo(walletRtAtaClassic, walletInfos[n * 2 + 1]),
     walletSolLamports: BigInt(walletSolLamports),
     reserveAlt,
     readsMs: Date.now() - t0,
@@ -263,6 +277,7 @@ export async function planAlt(connection: Connection, wallet: PublicKey, read: R
     ssrProgramId,
     reserve,
     reserveTokenMint: read.reserveTokenMint,
+    reserveTokenProgram: read.reserveTokenProgram,
     mintAuthority: read.mintAuthority,
     vaultAuthority: read.vaultAuthority,
     protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),

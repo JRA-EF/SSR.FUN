@@ -330,4 +330,23 @@ pub mod ssr_protocol {
     pub fn close_reserve<'info>(ctx: Context<'info, CloseReserve<'info>>) -> Result<()> {
         instructions::close_reserve::handler(ctx)
     }
+
+    // --- DEC-0229: Token-2022 Reserve Token transfer fee ---
+
+    /// Changes one Reserve Token mint's transfer fee, up to the 0.25%
+    /// ceiling. Protocol Admin only; takes effect two epochs later.
+    pub fn update_transfer_fee<'info>(
+        ctx: Context<'info, UpdateTransferFee<'info>>,
+        new_transfer_fee_bps: u16,
+    ) -> Result<()> {
+        instructions::update_transfer_fee::handler(ctx, new_transfer_fee_bps)
+    }
+
+    /// Harvests and sweeps a Reserve Token mint's withheld transfer fees
+    /// to the Protocol treasury. Permissionless; the destination is fixed.
+    pub fn collect_transfer_fees<'info>(
+        ctx: Context<'info, CollectTransferFees<'info>>,
+    ) -> Result<()> {
+        instructions::collect_transfer_fees::handler(ctx)
+    }
 }

@@ -15,9 +15,9 @@
 // the table is then registered server-side (api/mainnet/reserve-alt) and
 // shared by every trader of that Reserve.
 import { AddressLookupTableProgram, ComputeBudgetProgram, Connection, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { findProtocolConfig, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta, MAINNET_USDC_MINT } from "@ssr/sdk";
+import { findProtocolConfig, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta, MAINNET_USDC_MINT, resolveMintTokenProgram } from "@ssr/sdk";
 import { confirmSignatureBounded, AmbiguousConfirmationError } from "./rpcResilience";
 
 /** Jupiter's v6 swap program -- included so its program id also compresses. */
@@ -27,6 +27,8 @@ export interface ReserveAltParams {
   ssrProgramId: PublicKey;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
+  /** DEC-0229: the Reserve Token mint's program -- its fee-vault ATA is derived under it. */
+  reserveTokenProgram: PublicKey;
   mintAuthority: PublicKey;
   vaultAuthority: PublicKey;
   /** No longer referenced by any composed trade (Tier B moved mint fees, and DEC-0173 seed/redeem fees, into the per-Reserve fee vault) -- kept on the params type so existing callers compile; ignored by buildReserveAltAddresses. */
@@ -51,7 +53,7 @@ export function buildReserveAltAddresses(params: ReserveAltParams): PublicKey[] 
   // size either way.
   const [feeSettlement] = findFeeSettlement(params.reserve, params.ssrProgramId);
   const [feeVaultAuthority] = findFeeVaultAuthority(params.reserve, params.ssrProgramId);
-  const feeVault = findFeeVaultAta(params.reserve, params.reserveTokenMint, params.ssrProgramId);
+  const feeVault = findFeeVaultAta(params.reserve, params.reserveTokenMint, params.ssrProgramId, params.reserveTokenProgram);
   const usdcMint = new PublicKey(MAINNET_USDC_MINT);
   const addresses: PublicKey[] = [
     params.ssrProgramId,
@@ -66,6 +68,8 @@ export function buildReserveAltAddresses(params: ReserveAltParams): PublicKey[] 
     feeVaultAuthority,
     usdcMint,
     TOKEN_PROGRAM_ID,
+    // Token-2022: every Token-2022 Reserve Token (DEC-0229) and asset leg names it.
+    TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID,
     SystemProgram.programId,
     ComputeBudgetProgram.programId,
@@ -144,11 +148,13 @@ export async function fetchReserveAltAddress(reserve: string): Promise<string | 
 export async function createAndRegisterReserveAlt(
   connection: Connection,
   wallet: WalletContextState,
-  params: ReserveAltParams,
+  params: Omit<ReserveAltParams, "reserveTokenProgram"> & { reserveTokenProgram?: PublicKey },
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Connect a wallet first.");
   const payer = wallet.publicKey;
-  const addresses = buildReserveAltAddresses(params);
+  // DEC-0229: read from the mint when the caller does not have it (memoised).
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(connection, params.reserveTokenMint));
+  const addresses = buildReserveAltAddresses({ ...params, reserveTokenProgram });
   const chunks = chunkAltAddresses(addresses);
   const recentSlot = await connection.getSlot("finalized");
   const [createIx, tableAddress] = AddressLookupTableProgram.createLookupTable({ authority: payer, payer, recentSlot });

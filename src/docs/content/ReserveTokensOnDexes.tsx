@@ -9,7 +9,39 @@ import {
   RESERVE_TOKEN_DECIMALS,
   SPL_TOKEN_PROGRAM,
   SSR_PROGRAM_MAINNET,
+  TOKEN_2022_PROGRAM,
 } from './addresses'
+import {
+  formatBpsAsPct,
+  RESERVE_TOKEN_TRANSFER_FEE_BPS,
+  RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS,
+} from '../../merge/lib/calculations'
+
+const TRANSFER_FEE = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)
+const TRANSFER_FEE_MAX = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS)
+
+const TRANSFER_FEE_CODE = `import { Connection, PublicKey } from '@solana/web3.js'
+import { TOKEN_2022_PROGRAM_ID, getMint, getTransferFeeConfig } from '@solana/spl-token'
+
+// The transfer fee a Reserve Token charges right now, in basis points.
+// 0 for a classic SPL Token mint, which has no transfer fee.
+export async function reserveTokenTransferFeeBps(
+  connection: Connection,
+  mint: PublicKey,
+): Promise<number> {
+  const account = await connection.getAccountInfo(mint)
+  if (!account || !account.owner.equals(TOKEN_2022_PROGRAM_ID)) return 0
+
+  const parsed = await getMint(connection, mint, 'confirmed', TOKEN_2022_PROGRAM_ID)
+  const config = getTransferFeeConfig(parsed)
+  if (!config) return 0
+
+  // A newly set rate applies from the epoch stored with it.
+  const { epoch } = await connection.getEpochInfo()
+  const current =
+    BigInt(epoch) >= config.newerTransferFee.epoch ? config.newerTransferFee : config.olderTransferFee
+  return current.transferFeeBasisPoints
+}`
 
 const LOOKUP_CODE = `import { Connection, PublicKey } from '@solana/web3.js'
 
@@ -73,8 +105,6 @@ curl "https://ssr.fun/api/mainnet/reserve-metadata?id=<id>"
   "ticker": "SSRSol",
   "description": "A basket of Solana ecosystem assets ...",
   "category": "Ecosystem",
-  "buyTaxPct": 0,
-  "sellTaxPct": 0,
   "imageUrl": "https://ssr.fun/api/mainnet/reserve-image?id=<image id>"
 }`
 
@@ -82,9 +112,11 @@ function HowItWorks() {
   return (
     <>
       <p>
-        Every Reserve issues a Reserve Token. It is a standard SPL token, the same kind as USDC or any other token in
-        your Solana wallet, so it can be held anywhere, sent to anyone, and traded or pooled on any decentralized
-        exchange.
+        Every Reserve issues a Reserve Token. It is a standard Solana token, like USDC or any other token in your
+        Solana wallet, so it can be held anywhere, sent to anyone, and traded or pooled on any decentralized exchange.
+        Reserve Tokens are Token-2022 tokens that carry a {TRANSFER_FEE} protocol transfer fee, paid to the SSR
+        Protocol on every transfer. Earlier Reserves were launched with classic SPL Token mints, which have no
+        transfer fee. See <DocLink to={docHref('reserve-tokens-on-dexes', 'transfer-fee')}>Transfer fee</DocLink>.
       </p>
       <p>There are two places a Reserve Token changes hands, and they work differently:</p>
       <Facts
@@ -95,7 +127,7 @@ function HowItWorks() {
           ],
           [
             'On an exchange',
-            'Reserve Tokens trade against a quote asset such as SOL or USDC at whatever price the pool sets. No Reserve Tokens are created or destroyed, and the Reserve’s fees do not apply. Only the exchange’s pool fee does.',
+            `Reserve Tokens trade against a quote asset such as SOL or USDC at whatever price the pool sets. No Reserve Tokens are created or destroyed, and the Reserve’s mint and redemption fees do not apply. The exchange’s pool fee applies, and so does the ${TRANSFER_FEE} transfer fee on Reserve Tokens that carry it.`,
           ],
         ]}
       />
@@ -105,7 +137,7 @@ function HowItWorks() {
         current Token Price, which is the reference for any pool.
       </p>
       <p>
-        On-chain, an exchange sees a Reserve Token exactly as it sees any other SPL token. The{' '}
+        On-chain, an exchange sees a Reserve Token exactly as it sees any other token of the same standard. The{' '}
         <DocLink to={docHref('reserve-tokens-on-dexes', 'on-chain')}>On-chain properties</DocLink> tab lists what it
         finds, and the <DocLink to={docHref('reserve-tokens-on-dexes', 'lookup')}>Identify a Reserve Token</DocLink>{' '}
         tab shows how any mint resolves to its Reserve, its name, symbol, and picture.
@@ -127,7 +159,23 @@ function OnChain() {
       </p>
       <Facts
         rows={[
-          ['Token standard', <>Classic SPL Token program (<Addr key="tp" value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />). Not Token-2022, no extensions.</>],
+          [
+            'Token standard',
+            <>
+              Token-2022 (<Addr key="t22" value={TOKEN_2022_PROGRAM} label="Token-2022 program address" />) with the
+              transfer-fee extension. Earlier Reserves use the classic SPL Token program (
+              <Addr key="tp" value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />) with no extensions. A
+              mint’s token standard is fixed when it is created.
+            </>,
+          ],
+          [
+            'Transfer fee',
+            <>
+              {TRANSFER_FEE} of every transfer, paid to the SSR Protocol, on Token-2022 Reserve Tokens. Classic SPL Token
+              Reserve Tokens have none. See{' '}
+              <DocLink key="tf" to={docHref('reserve-tokens-on-dexes', 'transfer-fee')}>Transfer fee</DocLink>.
+            </>,
+          ],
           ['Decimals', String(RESERVE_TOKEN_DECIMALS)],
           [
             'Mint address',
@@ -172,6 +220,61 @@ function OnChain() {
   )
 }
 
+function TransferFee() {
+  return (
+    <>
+      <p>
+        Reserve Tokens are Token-2022 tokens with the transfer-fee extension. The Token-2022 program charges the fee
+        itself, as part of every transfer of the token, so it works the same in every wallet, exchange, and pool.
+      </p>
+      <Facts
+        rows={[
+          ['Rate', `${TRANSFER_FEE} of the amount transferred.`],
+          [
+            'When it applies',
+            'On every transfer of the token: exchange trades in either direction, sends between wallets, deposits to an exchange, and adding liquidity to a pool.',
+          ],
+          [
+            'When it does not apply',
+            'Minting and redeeming on SSR.fun. Minting creates new Reserve Tokens and redeeming burns them; neither is a transfer, so neither pays the transfer fee. The mint fee and the redemption fee apply as usual.',
+          ],
+          [
+            'How it is charged',
+            'The recipient receives the amount sent minus the fee. The fee is withheld in the recipient’s token account by the Token-2022 program and swept to the SSR Protocol treasury automatically.',
+          ],
+          ['Who receives it', 'The SSR Protocol, in full. Reserve Managers and Co-Managers receive no share.'],
+          [
+            'Rate changes',
+            `The SSR Protocol can adjust the rate within a ceiling of ${TRANSFER_FEE_MAX} fixed in the program. A new rate takes effect about two epochs (roughly four to five days) after it is set, as the Token-2022 program defines.`,
+          ],
+        ]}
+      />
+      <h3>Earlier Reserves</h3>
+      <p>
+        Reserves launched before the transfer fee use classic SPL Token mints. Those Reserve Tokens have no transfer
+        fee, and they keep their token standard permanently: a mint’s token program is fixed when it is created.
+      </p>
+      <h3>How to tell which kind a Reserve Token is</h3>
+      <ul>
+        <li>
+          If the mint account is owned by the Token-2022 program (
+          <Addr value={TOKEN_2022_PROGRAM} label="Token-2022 program address" />) and carries the TransferFeeConfig
+          extension, the token pays the transfer fee. The extension holds the current rate in basis points.
+        </li>
+        <li>
+          If the mint account is owned by the SPL Token program (
+          <Addr value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />), the token has no transfer fee.
+        </li>
+      </ul>
+      <CodeBlock title="TypeScript: read a Reserve Token's current transfer fee" code={TRANSFER_FEE_CODE} />
+      <p>
+        Exchanges and wallets that support Token-2022 transfer fees show the amount a recipient receives after the fee.
+        Integrators quoting a trade or a transfer compute it the same way, from the rate in the mint.
+      </p>
+    </>
+  )
+}
+
 function Lookup() {
   return (
     <>
@@ -205,9 +308,13 @@ function Lookup() {
           ['description', "The Manager's description of the Reserve."],
           ['category', 'A free-text category chosen by the Manager.'],
           ['imageUrl', 'Optional. A permanent HTTPS link to the Reserve picture.'],
-          ['buyTaxPct, sellTaxPct', "The Manager's Buy Tax and Sell Tax rates for secondary-market trades of the Reserve Token. They are currently on hold and not charged anywhere, and never apply to minting or redeeming on SSR.fun."],
         ]}
       />
+      <p>
+        Some records carry further fields beyond these. Readers use the fields listed here and ignore the rest. Fees
+        are never read from the metadata record: the Reserve’s fees are in the Reserve account, and the transfer fee
+        is in the Reserve Token mint.
+      </p>
       <p>
         Byte offsets and the full account layout are in the{' '}
         <DocLink to={docHref('protocol-reference', 'read')}>Protocol reference</DocLink>.
@@ -228,7 +335,15 @@ function ForIntegrators() {
         rows={[
           ['Issuer', 'The SSR Protocol, an Anchor program on Solana Mainnet. One Reserve Token mint per Reserve.'],
           ['Program (Mainnet)', <Addr key="p" value={SSR_PROGRAM_MAINNET} label="SSR Protocol program address" />],
-          ['Token standard', <>Classic SPL Token (<Addr key="t" value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />)</>],
+          [
+            'Token standard',
+            <>
+              Token-2022 (<Addr key="t22" value={TOKEN_2022_PROGRAM} label="Token-2022 program address" />) with the
+              TransferFeeConfig extension. Earlier Reserves: classic SPL Token (
+              <Addr key="t" value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />).
+            </>,
+          ],
+          ['Transfer fee', `${TRANSFER_FEE} on every transfer of a Token-2022 Reserve Token, paid to the SSR Protocol. None on classic SPL Token Reserve Tokens. Never charged on minting or redeeming on SSR.fun.`],
           ['Decimals', String(RESERVE_TOKEN_DECIMALS)],
           ['Mint address', <>Program-derived: <code key="m">["reserve_token_mint", reserve]</code> under the program above.</>],
           ['Mint authority', <>Program-derived: <code key="a">["mint_authority", reserve]</code>. Only the program can sign for it.</>],
@@ -239,7 +354,11 @@ function ForIntegrators() {
       />
       <h3>Recognising a Reserve Token</h3>
       <ul>
-        <li>The mint account is owned by the SPL Token program and its mint authority is a PDA of the SSR Protocol program.</li>
+        <li>
+          The mint account is owned by the Token-2022 program and carries the TransferFeeConfig extension, or, for an
+          earlier Reserve, it is owned by the SPL Token program. Either way its mint authority is a PDA of the SSR
+          Protocol program.
+        </li>
         <li>
           A <code>getProgramAccounts</code> call on the program with a memcmp on the mint at offset {RESERVE_MINT_OFFSET}{' '}
           returns exactly one Reserve account.
@@ -274,6 +393,7 @@ export function ReserveTokensOnDexes() {
       tabs={[
         { id: 'overview', label: 'How it works', content: <HowItWorks /> },
         { id: 'on-chain', label: 'On-chain properties', content: <OnChain /> },
+        { id: 'transfer-fee', label: 'Transfer fee', content: <TransferFee /> },
         { id: 'lookup', label: 'Identify a Reserve Token', content: <Lookup /> },
         { id: 'integrators', label: 'For integrators', content: <ForIntegrators /> },
       ]}

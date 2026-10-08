@@ -32,3 +32,4 @@ export * from "./tokenMetadata";
 export * from "./launchpads";
 export * from "./issuers";
 export * from "./pricing";
+export * from "./transferFeeInstructions";

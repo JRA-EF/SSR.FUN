@@ -1680,7 +1680,7 @@ export function ManageDTR() {
                   <CardTitle className="text-xl font-merge-display">Fee Configuration</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm font-semibold text-muted-foreground mb-1">Mint Fee (configured)</p>
                       <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.mintFeePct)}</p>
@@ -1699,20 +1699,7 @@ export function ManageDTR() {
                         </p>
                       )}
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold text-muted-foreground mb-1">Buy Tax</p>
-                      <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.managerBuyTaxPct)}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-muted-foreground mb-1">Sell Tax</p>
-                      <p className="font-merge-mono font-medium">{formatPct(dtr.feeConfig.managerSellTaxPct)}</p>
-                    </div>
                   </div>
-                  {dtr.onChain && (dtr.feeConfig.managerBuyTaxPct > 0 || dtr.feeConfig.managerSellTaxPct > 0) && (
-                    <p className="text-xs text-muted-foreground italic -mt-2">
-                      Buy Tax and Sell Tax are the Manager's rates for secondary-market trades of this Reserve Token between holders. They are currently on hold and not charged anywhere, and never apply to mints or redemptions on SSR.fun.
-                    </p>
-                  )}
 
                   {dtr.onChain && (
                     <div className="pt-4 border-t border-border/50">

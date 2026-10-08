@@ -21,7 +21,7 @@
 //! their own asset legs.
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Burn, Mint as SplMint, Token, TokenAccount as SplTokenAccount};
+use anchor_spl::token_interface::{self, Burn, Mint as SplMint, TokenInterface, TokenAccount as SplTokenAccount};
 
 use super::common::{load_asset_legs, mul_div_floor, require_canonical_ata, transfer_out_of_vault};
 use crate::constants::{
@@ -47,7 +47,7 @@ pub struct RedeemFeeVaultShares<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: Account<'info, SplMint>,
+    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
 
     #[account(
         mut,
@@ -61,8 +61,9 @@ pub struct RedeemFeeVaultShares<'info> {
         mut,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = fee_vault_authority,
+        associated_token::token_program = token_program,
     )]
-    pub fee_vault: Account<'info, SplTokenAccount>,
+    pub fee_vault: InterfaceAccount<'info, SplTokenAccount>,
 
     /// CHECK: signer-only PDA (burn authority for the fee vault), verified
     /// purely by seeds against `fee_settlement`'s cached bump.
@@ -96,7 +97,7 @@ pub struct RedeemFeeVaultShares<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     // Remaining accounts: reserve.asset_count groups of
     // [reserve_asset, vault, settlement_staging_ata, mint, token_program]
     // in ReserveAsset.order_index order -- identical shape to every other
@@ -165,7 +166,7 @@ pub fn handler<'info>(
         burn_cpi_accounts,
         burn_signer_seeds,
     );
-    token::burn(burn_cpi_ctx, shares)?;
+    token_interface::burn(burn_cpi_ctx, shares)?;
 
     // Transfer each real vault's entitlement into its staging ATA, signed by
     // the Reserve's existing vault_authority -- identical mechanics to a

@@ -20,7 +20,7 @@ import { metadataIdFromMandate, mandateForMetadataId, parseEvmReserveMeta, ROBIN
 
 const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
 
-const BASE = { name: "Strategic Tech", ticker: "TECH", description: "Big tech, in kind.", category: "Tech", buyTaxPct: 0, sellTaxPct: 0 };
+const BASE = { name: "Strategic Tech", ticker: "TECH", description: "Big tech, in kind.", category: "Tech" };
 const IMG = "https://ssr.fun/api/robinhood/reserve-image?id=0123456789abcdef";
 
 describe("reserve metadata payload -- header image and creator links", () => {

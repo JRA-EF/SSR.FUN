@@ -1,5 +1,5 @@
 // POST /api/mainnet/reserve-metadata -- stores a Reserve's off-chain
-// name/ticker/description/category/buyTaxPct/sellTaxPct JSON payload in
+// name/ticker/description/category JSON payload in
 // Postgres and returns a short, deterministic, content-addressed id.
 // CreateDTR.tsx uploads here FIRST, then submits only
 // `${window.location.origin}/api/mainnet/reserve-metadata?id=<id>` on-chain

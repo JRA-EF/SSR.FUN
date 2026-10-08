@@ -8,6 +8,7 @@
 export const SSR_PROGRAM_MAINNET = '8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9'
 export const SSR_PROGRAM_DEVNET = '2dURvmSdHeyaFES5rxaE1zgPSHCBLW5BLNguJ2Tu1mkW'
 export const SPL_TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+export const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PCnBqCKmERiwvA'
 export const TOKEN_METADATA_PROGRAM = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 
 /** sha256("account:Reserve")[0..8] -- the Anchor discriminator of the Reserve account, base58. */

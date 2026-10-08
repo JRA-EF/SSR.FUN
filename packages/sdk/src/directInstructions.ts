@@ -30,12 +30,13 @@
 
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import {
-  TOKEN_PROGRAM_ID,
+
   ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountIdempotentInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { assetAta, resolveLegTokenProgram } from "./tokenPrograms";
+import { resolveMintTokenProgram } from "./readOnly";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
@@ -86,6 +87,8 @@ export function computeDirectReserveTokensRequested(amountIn: bigint, vaultBalan
 }
 
 export interface BuildDirectMintParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   protocolConfig: PublicKey;
   protocolFeeDestination: PublicKey;
@@ -101,6 +104,7 @@ export interface BuildDirectMintParams {
 /** Single-signer (the connected user), single-instruction (plus idempotent ATA setup) direct in-kind mint -- no swap authority, no server round-trip. */
 export async function buildDirectMintInstructions(params: BuildDirectMintParams): Promise<DirectInstructionResult> {
   const { program, protocolConfig, reserve, reserveTokenMint, mintAuthority, user } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
   const asset = requireSingleAssetReserve(params.assets);
   const mint = new PublicKey(asset.mint);
   const vaultBalance = BigInt(asset.vaultBalanceRaw);
@@ -110,8 +114,8 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
 
   const instructions: TransactionInstruction[] = [];
 
-  const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
-  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+  const depositorReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint, reserveTokenProgram));
   const legTokenProgram = resolveLegTokenProgram(asset); // DEC-0201
   const userAssetAta = assetAta(mint, user, legTokenProgram);
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint, legTokenProgram));
@@ -127,7 +131,7 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
   // interface for caller compatibility but is no longer used here.
   const [feeSettlement] = findFeeSettlement(reserve, program.programId);
   const [feeVaultAuthority] = findFeeVaultAuthority(reserve, program.programId);
-  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId);
+  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const mintIx = await program.methods
@@ -147,7 +151,7 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
       feeVault,
       feeVaultAuthority,
       tvlAccrual,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -165,6 +169,8 @@ export async function buildDirectMintInstructions(params: BuildDirectMintParams)
 }
 
 export interface BuildDirectMultiAssetMintParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   protocolConfig: PublicKey;
   protocolFeeDestination: PublicKey;
@@ -212,6 +218,7 @@ export interface BuildDirectMultiAssetMintResult extends DirectInstructionResult
  */
 export async function buildDirectMultiAssetMintInstructions(params: BuildDirectMultiAssetMintParams): Promise<BuildDirectMultiAssetMintResult> {
   const { program, protocolConfig, reserve, reserveTokenMint, mintAuthority, user, assets, reserveTokensRequested } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
   // N >= 1 (DEC-0160): the on-chain mint_reserve_tokens_in_kind has always
   // supported any leg count -- one leg is just the smallest basket, and the
   // USDC-funded buy path serves single-asset Reserves like ALPHA (100% SSR)
@@ -230,14 +237,14 @@ export async function buildDirectMultiAssetMintInstructions(params: BuildDirectM
 
   const instructions: TransactionInstruction[] = [];
 
-  const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
-  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+  const depositorReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint, reserveTokenProgram));
 
   // Tier B fee-vault accounts (see buildDirectMintInstructions above for the
   // rationale) -- replaces the old protocolFeeDestination/managerFeeRecipients trio.
   const [feeSettlement] = findFeeSettlement(reserve, program.programId);
   const [feeVaultAuthority] = findFeeVaultAuthority(reserve, program.programId);
-  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId);
+  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
@@ -277,7 +284,7 @@ export async function buildDirectMultiAssetMintInstructions(params: BuildDirectM
       feeVault,
       feeVaultAuthority,
       tvlAccrual,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -289,6 +296,8 @@ export async function buildDirectMultiAssetMintInstructions(params: BuildDirectM
 }
 
 export interface BuildDirectRedeemParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
@@ -303,6 +312,7 @@ export interface BuildDirectRedeemParams {
 /** Single-signer, single-instruction direct in-kind redeem -- the on-chain program pays the user's own asset ATA directly, no intermediary. */
 export async function buildDirectRedeemInstructions(params: BuildDirectRedeemParams): Promise<DirectInstructionResult> {
   const { program, reserve, reserveTokenMint, vaultAuthority, user } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
   const asset = requireSingleAssetReserve(params.assets);
   const mint = new PublicKey(asset.mint);
   const vaultBalance = BigInt(asset.vaultBalanceRaw);
@@ -313,11 +323,11 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
   if (netShares <= 0n) throw new Error("buildDirectRedeemInstructions: redemption fee consumes the entire redeemed amount.");
   const entitlement = (netShares * vaultBalance) / totalSupply; // mulDivFloor, matches computeRedemptionEntitlements
 
-  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const redeemerReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
   const legTokenProgram = resolveLegTokenProgram(asset); // DEC-0201
   const userAssetAta = assetAta(mint, user, legTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
-  const { mintAuthority, feeSettlement, feeVault, feeVaultAuthority } = redeemFeeVaultAccounts(program, reserve, reserveTokenMint);
+  const { mintAuthority, feeSettlement, feeVault, feeVaultAuthority } = redeemFeeVaultAccounts(program, reserve, reserveTokenMint, reserveTokenProgram);
 
   const instructions: TransactionInstruction[] = [];
   instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, userAssetAta, user, mint, legTokenProgram));
@@ -336,7 +346,7 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
       feeSettlement,
       feeVault,
       feeVaultAuthority,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -373,11 +383,11 @@ export interface BuildDirectMultiAssetRedeemResult {
  * crystallization (init_if_needed, payer = redeemer); every later call
  * finds them already created.
  */
-function redeemFeeVaultAccounts(program: Program<anchor.Idl>, reserve: PublicKey, reserveTokenMint: PublicKey) {
+function redeemFeeVaultAccounts(program: Program<anchor.Idl>, reserve: PublicKey, reserveTokenMint: PublicKey, reserveTokenProgram: PublicKey) {
   const [mintAuthority] = findMintAuthority(reserve, program.programId);
   const [feeSettlement] = findFeeSettlement(reserve, program.programId);
   const [feeVaultAuthority] = findFeeVaultAuthority(reserve, program.programId);
-  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId);
+  const feeVault = findFeeVaultAta(reserve, reserveTokenMint, program.programId, reserveTokenProgram);
   return { mintAuthority, feeSettlement, feeVault, feeVaultAuthority };
 }
 
@@ -393,6 +403,7 @@ function redeemFeeVaultAccounts(program: Program<anchor.Idl>, reserve: PublicKey
  */
 export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirectRedeemParams): Promise<BuildDirectMultiAssetRedeemResult> {
   const { program, reserve, reserveTokenMint, vaultAuthority, user, assets } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
   // N >= 1, mirroring the mint builder (DEC-0160) -- the USDC-settled sell
   // serves single-asset Reserves through this builder too.
   if (assets.length < 1) {
@@ -406,9 +417,9 @@ export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirec
     balances,
   );
 
-  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const redeemerReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
-  const { mintAuthority, feeSettlement, feeVault, feeVaultAuthority } = redeemFeeVaultAccounts(program, reserve, reserveTokenMint);
+  const { mintAuthority, feeSettlement, feeVault, feeVaultAuthority } = redeemFeeVaultAccounts(program, reserve, reserveTokenMint, reserveTokenProgram);
   const instructions: TransactionInstruction[] = [];
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (const leg of assets) {
@@ -445,7 +456,7 @@ export async function buildDirectMultiAssetRedeemInstructions(params: BuildDirec
       feeSettlement,
       feeVault,
       feeVaultAuthority,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })

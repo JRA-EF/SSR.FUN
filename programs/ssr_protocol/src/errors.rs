@@ -184,4 +184,22 @@ pub enum SsrError {
     // --- Metaplex token metadata (2026-09-11, DEC-0200) ---
     #[msg("Token name, symbol, or URI is empty or exceeds the Metaplex on-chain limit (32/10/200 bytes).")]
     TokenMetadataFieldTooLong,
+
+    // --- Token-2022 Reserve Token transfer fee (DEC-0229) ---
+    #[msg("Transfer fee exceeds the protocol ceiling for Reserve Tokens (0.25%).")]
+    TransferFeeExceedsMaximum,
+    #[msg("This Reserve Token mint carries no transfer fee (classic SPL Token Reserve).")]
+    ReserveTokenHasNoTransferFee,
+    #[msg("Transfer fees can only be paid to the Protocol treasury configured on ProtocolConfig.")]
+    TransferFeeTreasuryMismatch,
+
+    // --- Delegate privilege-escalation fix (9111fd0, 2026-09-02; ported with DEC-0229) ---
+    // Appended at the end deliberately (same append-only rule): inserting a
+    // variant anywhere earlier would renumber every subsequent error code and
+    // silently break every client that decodes them.
+    #[msg("A co-manager cannot grant permissions it does not itself hold.")]
+    DelegatePermissionEscalation,
+
+    #[msg("A co-manager cannot change its own permissions.")]
+    DelegateSelfModification,
 }

@@ -234,41 +234,8 @@ export type SsrProtocol = {
                 "path": "feeVaultAuthority"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -363,8 +330,7 @@ export type SsrProtocol = {
           "signer": true
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "tokenProgram"
         },
         {
           "name": "associatedTokenProgram",
@@ -1218,41 +1184,8 @@ export type SsrProtocol = {
                 "path": "managerFeeDestination"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -1318,41 +1251,8 @@ export type SsrProtocol = {
                 "path": "protocolFeeDestination"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -1414,8 +1314,7 @@ export type SsrProtocol = {
           "signer": true
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "tokenProgram"
         },
         {
           "name": "associatedTokenProgram",
@@ -1600,41 +1499,8 @@ export type SsrProtocol = {
                 "path": "recipient"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -1681,8 +1547,7 @@ export type SsrProtocol = {
           }
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "tokenProgram"
         },
         {
           "name": "associatedTokenProgram",
@@ -1840,41 +1705,8 @@ export type SsrProtocol = {
                 "path": "protocolFeeDestination"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -1933,8 +1765,227 @@ export type SsrProtocol = {
           "signer": true
         },
         {
+          "name": "tokenProgram"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "collectTransferFees",
+      "docs": [
+        "Harvests and sweeps a Reserve Token mint's withheld transfer fees",
+        "to the Protocol treasury. Permissionless; the destination is fixed."
+      ],
+      "discriminator": [
+        162,
+        191,
+        180,
+        85,
+        41,
+        58,
+        5,
+        185
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "transferFeeAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  102,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Protocol treasury, checked here so fees can never be redirected."
+          ]
+        },
+        {
+          "name": "treasuryTokenAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "treasury"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
           "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
           "name": "associatedTokenProgram",
@@ -2045,6 +2096,11 @@ export type SsrProtocol = {
         },
         {
           "name": "reserveTokenMint",
+          "docs": [
+            "with the transfer-fee extension (DEC-0229). Anchor's `init` cannot",
+            "add that extension, so the account is allocated by hand; its address",
+            "is still pinned by these seeds, so no other account can be passed."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -2079,13 +2135,52 @@ export type SsrProtocol = {
           }
         },
         {
+          "name": "transferFeeAuthority",
+          "docs": [
+            "Recorded on the new mint as both its transfer-fee config authority",
+            "and its withheld-fee withdraw authority, so only this program",
+            "(`update_transfer_fee`, `collect_transfer_fees`) can use either."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  102,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "manager",
           "writable": true,
           "signer": true
         },
         {
           "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
           "name": "systemProgram",
@@ -3628,41 +3723,8 @@ export type SsrProtocol = {
                 "path": "depositor"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -3763,41 +3825,8 @@ export type SsrProtocol = {
                 "path": "feeVaultAuthority"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -3918,8 +3947,7 @@ export type SsrProtocol = {
           }
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "tokenProgram"
         },
         {
           "name": "associatedTokenProgram",
@@ -4166,41 +4194,8 @@ export type SsrProtocol = {
                 "path": "feeVaultAuthority"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -4368,8 +4363,7 @@ export type SsrProtocol = {
           "signer": true
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "tokenProgram"
         }
       ],
       "args": [
@@ -4659,41 +4653,8 @@ export type SsrProtocol = {
                 "path": "feeVaultAuthority"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -4779,8 +4740,7 @@ export type SsrProtocol = {
           }
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "tokenProgram"
         },
         {
           "name": "associatedTokenProgram",
@@ -5198,41 +5158,8 @@ export type SsrProtocol = {
                 "path": "manager"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -5339,41 +5266,8 @@ export type SsrProtocol = {
                 "path": "feeVaultAuthority"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -5492,8 +5386,7 @@ export type SsrProtocol = {
           }
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "tokenProgram"
         },
         {
           "name": "associatedTokenProgram",
@@ -6125,6 +6018,166 @@ export type SsrProtocol = {
           }
         }
       ]
+    },
+    {
+      "name": "updateTransferFee",
+      "docs": [
+        "Changes one Reserve Token mint's transfer fee, up to the 0.25%",
+        "ceiling. Protocol Admin only; takes effect two epochs later."
+      ],
+      "discriminator": [
+        135,
+        106,
+        57,
+        77,
+        93,
+        247,
+        210,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "docs": [
+            "Reserve's recorded address; its extension data is parsed in the",
+            "handler, and the owner check refuses a classic mint."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "transferFeeAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  102,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Either approved Protocol Admin may sign -- see `ProtocolConfig::is_admin`."
+          ],
+          "signer": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "newTransferFeeBps",
+          "type": "u16"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -6612,6 +6665,45 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "reserveTokenMetadataSet",
+      "discriminator": [
+        180,
+        103,
+        248,
+        54,
+        162,
+        177,
+        209,
+        0
+      ]
+    },
+    {
+      "name": "reserveTokenTransferFeeUpdated",
+      "discriminator": [
+        244,
+        165,
+        106,
+        239,
+        188,
+        135,
+        96,
+        156
+      ]
+    },
+    {
+      "name": "reserveTokenTransferFeesCollected",
+      "discriminator": [
+        120,
+        22,
+        184,
+        139,
+        6,
+        109,
+        104,
+        89
+      ]
+    },
+    {
       "name": "reserveTokensMinted",
       "discriminator": [
         201,
@@ -7031,6 +7123,31 @@ export type SsrProtocol = {
       "code": 6062,
       "name": "tokenMetadataFieldTooLong",
       "msg": "Token name, symbol, or URI is empty or exceeds the Metaplex on-chain limit (32/10/200 bytes)."
+    },
+    {
+      "code": 6063,
+      "name": "transferFeeExceedsMaximum",
+      "msg": "Transfer fee exceeds the protocol ceiling for Reserve Tokens (0.25%)."
+    },
+    {
+      "code": 6064,
+      "name": "reserveTokenHasNoTransferFee",
+      "msg": "This Reserve Token mint carries no transfer fee (classic SPL Token Reserve)."
+    },
+    {
+      "code": 6065,
+      "name": "transferFeeTreasuryMismatch",
+      "msg": "Transfer fees can only be paid to the Protocol treasury configured on ProtocolConfig."
+    },
+    {
+      "code": 6066,
+      "name": "delegatePermissionEscalation",
+      "msg": "A co-manager cannot grant permissions it does not itself hold."
+    },
+    {
+      "code": 6067,
+      "name": "delegateSelfModification",
+      "msg": "A co-manager cannot change its own permissions."
     }
   ],
   "types": [
@@ -8652,6 +8769,133 @@ export type SsrProtocol = {
           },
           {
             "name": "closed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reserveTokenMetadataSet",
+      "docs": [
+        "Emitted by `set_reserve_token_metadata`: the Reserve Token mint's Metaplex",
+        "metadata account was created (`created == true`) or its name/symbol/uri",
+        "replaced."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserveTokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "metadata",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "created",
+            "type": "bool"
+          },
+          {
+            "name": "updatedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reserveTokenTransferFeeUpdated",
+      "docs": [
+        "A Reserve Token mint's transfer fee was changed by a Protocol Admin",
+        "(DEC-0229). Token-2022 applies the new rate from `effective_epoch`, two",
+        "epochs after the change; until then the previous rate still applies."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserveTokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "oldTransferFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "newTransferFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "effectiveEpoch",
+            "type": "u64"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reserveTokenTransferFeesCollected",
+      "docs": [
+        "Withheld transfer fees on a Reserve Token mint were swept to the",
+        "Protocol treasury's token account (DEC-0229). `amount` is in Reserve",
+        "Token base units."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserveTokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasuryTokenAccount",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "harvestedAccounts",
+            "type": "u16"
+          },
+          {
+            "name": "collectedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
           }
         ]
       }

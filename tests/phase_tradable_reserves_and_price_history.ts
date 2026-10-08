@@ -90,8 +90,6 @@ function makeDtr(id: string, mints: string[], assetCountOverride?: number): DTR 
     feeConfig: {
       mintFeePct: 0.5,
       tvlFeePct: 1,
-      managerBuyTaxPct: 0,
-      managerSellTaxPct: 0,
       creatorFeeDestination: "11111111111111111111111111111111",
       feeRecipients: [],
     },

@@ -204,7 +204,7 @@ function makeDtr(id: string, reserve: string, nav: number, priceHistory: PricePo
     dtrAddress: reserve,
     managerAddress: "11111111111111111111111111111111",
     delegates: [],
-    feeConfig: { mintFeePct: 0.5, tvlFeePct: 1, managerBuyTaxPct: 0, managerSellTaxPct: 0, creatorFeeDestination: "11111111111111111111111111111111", feeRecipients: [] },
+    feeConfig: { mintFeePct: 0.5, tvlFeePct: 1, creatorFeeDestination: "11111111111111111111111111111111", feeRecipients: [] },
     tokenPrice: nav,
     nav,
     aum: 0,

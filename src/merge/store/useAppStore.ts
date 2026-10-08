@@ -558,7 +558,7 @@ export const useAppStore = create<AppState>()(
       },
       // Backfill fields added after a user's simulation state was already
       // persisted to localStorage -- e.g. DTRs created before the logo-art
-      // pool, the AMM liquidity economy, the buy/sell tax split, the
+      // pool, the AMM liquidity economy, the retired Buy/Sell tax fields, the
       // percent-based fee settings, or the flat price-history + trade-log
       // shape existed. Without this, "historic" self-created DTRs would keep
       // showing letter-initial avatars, NaN pricing, stale bps-shaped fee
@@ -570,8 +570,12 @@ export const useAppStore = create<AppState>()(
             const legacyFee = d.feeConfig as unknown as {
               mintFeeBps?: number;
               tvlFeeBps?: number;
-              managerTaxBps?: number;
             };
+            // DEC-0229: drop the retired manager Buy/Sell tax fields an older
+            // persisted copy may still carry.
+            const feeConfig = { ...d.feeConfig } as DTR["feeConfig"] & { managerBuyTaxPct?: number; managerSellTaxPct?: number };
+            delete feeConfig.managerBuyTaxPct;
+            delete feeConfig.managerSellTaxPct;
             return {
               ...d,
               logoSeed: d.logoSeed ?? d.id,
@@ -582,11 +586,9 @@ export const useAppStore = create<AppState>()(
                 ? (d as unknown as { trades: Trade[] }).trades
                 : [],
               feeConfig: {
-                ...d.feeConfig,
+                ...feeConfig,
                 mintFeePct: d.feeConfig.mintFeePct ?? (legacyFee.mintFeeBps ?? 50) / 100,
                 tvlFeePct: d.feeConfig.tvlFeePct ?? (legacyFee.tvlFeeBps ?? 100) / 100,
-                managerBuyTaxPct: d.feeConfig.managerBuyTaxPct ?? (legacyFee.managerTaxBps ?? 0) / 100,
-                managerSellTaxPct: d.feeConfig.managerSellTaxPct ?? (legacyFee.managerTaxBps ?? 0) / 100,
               },
             };
           });
