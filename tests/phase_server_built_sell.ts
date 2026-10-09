@@ -4,12 +4,12 @@
 // measurement, and compilation are all real.
 import { expect } from "chai";
 import { Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction, SystemProgram, Connection } from "@solana/web3.js";
-import { AccountLayout, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { AccountLayout, MintLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { findReserveAsset, findReserveVault } from "../packages/sdk/src/pda";
 import { computeRedemptionEntitlements } from "../packages/sdk/src/calculations";
 import { buildSellTransactions, planSellLegs, shouldAttemptSingleSell, type BuildSellDeps } from "../lib/mainnet/buildSell";
-import { BuildError } from "../lib/mainnet/buildCommon";
+import { BuildError, readReserveAndWallet } from "../lib/mainnet/buildCommon";
 import type { JupiterQuote } from "../lib/mainnet/jupiter";
 
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -44,6 +44,13 @@ function tokenAccountInfo(mint: PublicKey, owner: PublicKey, amount: bigint) {
   return { data, executable: false, lamports: 2_039_280, owner: TOKEN_PROGRAM_ID, rentEpoch: 0 };
 }
 
+/** The Reserve Token mint account (DEC-0229): readReserveAndWallet reads its owner (token program) and supply in the same batch. */
+function mintAccountInfo(supply: bigint, owner: PublicKey = TOKEN_PROGRAM_ID) {
+  const data = Buffer.alloc(MintLayout.span);
+  MintLayout.encode({ mintAuthorityOption: 1, mintAuthority: PublicKey.default, supply, decimals: 6, isInitialized: true, freezeAuthorityOption: 0, freezeAuthority: PublicKey.default }, data);
+  return { data, executable: false, lamports: 1_461_600, owner, rentEpoch: 0 };
+}
+
 function dummySwapTx(payer: PublicKey): string {
   const ix = new TransactionInstruction({ programId: SystemProgram.programId, keys: [{ pubkey: payer, isSigner: true, isWritable: true }], data: Buffer.from([1]) });
   const msg = new TransactionMessage({ payerKey: payer, recentBlockhash: "11111111111111111111111111111111", instructions: [ix] }).compileToV0Message([]);
@@ -54,8 +61,9 @@ interface World {
   legs: { mint: PublicKey; decimals: number; vaultRaw: bigint; walletRaw: bigint }[];
   supplyRaw: bigint;
   walletRtRaw: bigint;
+  /** DEC-0229: the Reserve Token mint's program; classic unless a case says otherwise. */
+  reserveTokenProgram?: PublicKey;
   redemptionFeeBps: number;
-  feeDestination?: PublicKey;
 }
 
 function world(legCount: number, overrides: Partial<World> = {}): World {
@@ -70,7 +78,7 @@ function makeDeps(w: World, spies: { quotes: string[]; builds: string[]; instruc
     programId: PROGRAM_ID,
     methods: real.methods,
     account: {
-      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: w.legs.length, metadataUri: "https://ssr.fun/api/mainnet/reserve-metadata?id=0123456789abcdef", feeConfig: { mintFeeBps: 100, redemptionFeeBps: w.redemptionFeeBps, feeDestination: w.feeDestination } }) },
+      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: w.legs.length, metadataUri: "https://ssr.fun/api/mainnet/reserve-metadata?id=0123456789abcdef", feeConfig: { mintFeeBps: 100, redemptionFeeBps: w.redemptionFeeBps } }) },
       reserveAsset: {
         fetchMultiple: async (pdas: PublicKey[]) =>
           pdas.map((pda) => {
@@ -83,7 +91,9 @@ function makeDeps(w: World, spies: { quotes: string[]; builds: string[]; instruc
   const fakeConn = {
     getMultipleAccountsInfo: async (keys: PublicKey[]) =>
       keys.map((k) => {
-        if (getAssociatedTokenAddressSync(RESERVE_TOKEN_MINT, WALLET).equals(k)) return tokenAccountInfo(RESERVE_TOKEN_MINT, WALLET, w.walletRtRaw);
+        const rtProgram = w.reserveTokenProgram ?? TOKEN_PROGRAM_ID;
+        if (k.equals(RESERVE_TOKEN_MINT)) return mintAccountInfo(w.supplyRaw, rtProgram);
+        if (getAssociatedTokenAddressSync(RESERVE_TOKEN_MINT, WALLET, false, rtProgram).equals(k)) return { ...tokenAccountInfo(RESERVE_TOKEN_MINT, WALLET, w.walletRtRaw), owner: rtProgram };
         if (getAssociatedTokenAddressSync(new PublicKey(USDC), WALLET).equals(k)) return tokenAccountInfo(new PublicKey(USDC), WALLET, 0n);
         for (const l of w.legs) {
           if (findReserveVault(RESERVE, l.mint, PROGRAM_ID)[0].equals(k)) return tokenAccountInfo(l.mint, RESERVE, l.vaultRaw);
@@ -127,7 +137,6 @@ const input = (w: World, extra: Partial<Parameters<typeof buildSellTransactions>
   assetMints: w.legs.map((l) => l.mint),
   legsOnly: null,
   redeemDone: false,
-  taxOnly: null,
   ...extra,
 });
 
@@ -181,42 +190,24 @@ describe("buildSell.ts -- full build (fakes for RPC/program reads/Jupiter; real 
     expect(r2.transactions.map((t) => t.mint)).to.deep.equal([w.legs[2].mint.toBase58()]);
   });
 
-  it("Sell tax (DEC-0198): batch mode appends ONE 'tax' transaction last, on the swaps' minimum out + the USDC entitlement; single mode folds the transfers in; legsOnly carries none; taxOnly rebuilds just the tax on the given base", async () => {
-    const manager = Keypair.generate().publicKey;
-    const w = world(10, { feeDestination: manager });
-    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
-    const deps: BuildSellDeps = { ...makeDeps(w, spies), lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 1 }) };
-    const r = await buildSellTransactions(deps, input(w));
-    expect(r.mode).to.equal("batch");
-    expect(r.transactions[r.transactions.length - 1].kind).to.equal("tax");
-    expect(r.transactions.filter((t) => t.kind === "tax")).to.have.length(1);
-    const swaps = r.plan.legs.filter((l) => l.action === "swap").length;
-    const usdcEntitlement = BigInt(r.plan.entitlementsRaw[0]);
-    const expectedBase = BigInt(swaps) * ((12_345n * (10_000n - 150n)) / 10_000n) + usdcEntitlement;
-    expect(BigInt(r.plan.tradeTax!.baseUsdcRaw)).to.equal(expectedBase);
-    expect(BigInt(r.plan.tradeTax!.taxUsdcRaw)).to.equal(expectedBase / 100n);
-    const taxTx = VersionedTransaction.deserialize(Buffer.from(r.transactions[r.transactions.length - 1].base64, "base64"));
-    expect(taxTx.message.compiledInstructions).to.have.length(2 + 4); // budget x2 + [ATA, transfer] x2
-    // single mode: transfers folded into the one transaction, no separate tax tx.
-    const small = world(2, { feeDestination: manager });
-    const single = await buildSellTransactions({ ...makeDeps(small, spies), lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 1 }) }, input(small));
-    expect(single.mode).to.equal("single");
-    expect(single.transactions.some((t) => t.kind === "tax")).to.equal(false);
-    expect(single.plan.tradeTax).to.not.equal(null);
-    // legsOnly: no tax.
-    const legs = await buildSellTransactions(deps, input(w, { redeemDone: true, legsOnly: [w.legs[1].mint.toBase58()] }));
-    expect(legs.plan.tradeTax).to.equal(null);
-    expect(legs.transactions.some((t) => t.kind === "tax")).to.equal(false);
-    // taxOnly: exactly one tax transaction on the persisted base, no quotes.
-    const before = spies.quotes.length;
-    const only = await buildSellTransactions(deps, input(w, { redeemDone: true, taxOnly: { baseUsdcRaw: 5_000_000n } }));
-    expect(spies.quotes.length).to.equal(before);
-    expect(only.transactions.map((t) => t.kind)).to.deep.equal(["tax"]);
-    expect(only.plan.tradeTax!.taxUsdcRaw).to.equal("50000");
-    // Rate 0 -> nothing.
-    const none = await buildSellTransactions({ ...deps, lookupTradeTax: async () => ({ buyTaxPct: 0, sellTaxPct: 0 }) }, input(w));
-    expect(none.plan.tradeTax).to.equal(null);
-    expect(none.transactions.some((t) => t.kind === "tax")).to.equal(false);
+  it("DEC-0229: a Token-2022 Reserve Token is read under its own program -- the wallet's Token-2022 ATA balance, the supply from the mint, and the program reported for the builders", async () => {
+    const w = world(2, { reserveTokenProgram: TOKEN_2022_PROGRAM_ID, walletRtRaw: 1_234_567n });
+    const deps = makeDeps(w, { quotes: [], builds: [], instructionBuilds: [] });
+    const read = await readReserveAndWallet(deps, RESERVE, WALLET, w.legs.map((l) => l.mint));
+    expect(read.reserveTokenProgram.equals(TOKEN_2022_PROGRAM_ID)).to.equal(true);
+    expect(read.walletReserveTokenRaw).to.equal(1_234_567n);
+    expect(read.supplyRaw).to.equal(w.supplyRaw);
+    const wc = world(2);
+    const classic = await readReserveAndWallet(makeDeps(wc, { quotes: [], builds: [], instructionBuilds: [] }), RESERVE, WALLET, wc.legs.map((l) => l.mint));
+    expect(classic.reserveTokenProgram.equals(TOKEN_PROGRAM_ID)).to.equal(true);
+    expect(classic.walletReserveTokenRaw).to.equal(2_000_000n);
+  });
+
+  it("DEC-0229: a Token-2022 Reserve's sale still builds and fits", async () => {
+    const w = world(2, { reserveTokenProgram: TOKEN_2022_PROGRAM_ID });
+    const r = await buildSellTransactions(makeDeps(w, { quotes: [], builds: [], instructionBuilds: [] }), input(w));
+    expect(r.transactions.length).to.be.greaterThan(0);
+    for (const t of r.transactions) expect(t.bytes).to.be.at.most(1232);
   });
 
   it("refuses (422) when the wallet holds fewer Reserve Tokens than the sale", async () => {

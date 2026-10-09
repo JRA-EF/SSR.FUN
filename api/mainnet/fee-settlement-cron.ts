@@ -37,6 +37,17 @@
 //      program accrues on full elapsed days, so daily calls charge the fee
 //      daily (JRA's fee spec, 2026-09-10; was weekly before DEC-0198).
 //
+//   C. RESERVE TOKEN TRANSFER FEES (DEC-0229): every Reserve Token mint
+//      created from DEC-0229 on is Token-2022 with a protocol transfer fee,
+//      withheld by Token-2022 in each RECEIVING token account. Once a day
+//      (TRANSFER_FEE_COLLECT_UTC_HOUR, or ?collectTransferFees=1), for each
+//      such mint: one getProgramAccounts scan finds the accounts holding
+//      withheld fees, and collect_transfer_fees harvests them (in chunks)
+//      and sweeps the mint's withheld total to the Treasury's Reserve Token
+//      account. Permissionless and destination-fixed on-chain, so it needs
+//      no keeper role; the keeper only pays fees and the first-use ATA rent.
+//      Classic (pre-DEC-0229) Reserves have no fee and are skipped.
+//
 // Scheduled in vercel.json, allowlisted in middleware.ts CRON_PATHS. Same
 // CRON_SECRET / `?dryRun=true` conventions as every other cron here. Time
 // budgeted (api/mainnet/* maxDuration is 60s): settlement first, accruals with
@@ -47,12 +58,12 @@
 // The keeper wallet is a dedicated secret (SSR_FEE_SETTLEMENT_KEEPER_SECRET,
 // JSON array or base64). Its SOL only pays transaction fees + first-use rent.
 import { ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction, sendAndConfirmTransaction, type AddressLookupTableAccount, type TransactionInstruction } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 // DEC-0201: a Reserve may hold Token-2022 assets, whose ATAs derive under a
 // different program. Deriving them classically would point the keeper at
 // accounts that can never hold the asset, so every ASSET-side address here
-// goes through the asset's own program. USDC and the Reserve Token stay
-// classic and keep using the plain helper.
+// goes through the asset's own program. USDC is always classic; the
+// Reserve Token is classic before DEC-0229 and Token-2022 after (DEC-0229).
 import { assetAta, resolveLegTokenProgram } from "@ssr/sdk";
 import {
   discoverAllReserves,
@@ -73,6 +84,10 @@ import {
   buildRedeemFeeVaultSharesInstruction,
   buildApproveSettlementSwapInstruction,
   buildDistributeFeeUsdcInstruction,
+  buildCollectTransferFeesInstruction,
+  findWithheldFeeAccounts,
+  fetchReserveTokenTransferFee,
+  MAX_HARVEST_SOURCES_PER_TX,
 } from "@ssr/sdk";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { resolveRpcUrl } from "./_lib/rpc";
@@ -92,6 +107,8 @@ const TREASURY = new PublicKey(MAINNET_TREASURY_VAULT);
 // each Reserve needs several sequential confirmations, ~20-60s).
 const BUDGET_MS = 270_000;
 const ACCRUE_MIN_ELAPSED_S = 24 * 60 * 60;
+/** Job C runs on the hourly cron's run in this UTC hour only (one scan per fee-carrying mint per day). */
+const TRANSFER_FEE_COLLECT_UTC_HOUR = 0;
 const MAX_KNOWN_MINTS = 2000;
 
 /** Per-route runtime config (Vercel reads this export): settlement needs several sequential confirmations per Reserve, ~20-60s each Reserve. */
@@ -200,6 +217,16 @@ interface AccrualResult {
   error?: string;
 }
 
+interface TransferFeeCollectResult {
+  reserveId: string;
+  reserve: string;
+  harvestedAccounts: number;
+  /** Withheld fees found (accounts + mint) before collecting, raw Reserve Token units. */
+  withheldRaw: string;
+  signatures: string[];
+  error?: string;
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== "GET" && req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -207,6 +234,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const dryRun = req.query?.dryRun === "true" || req.query?.dryRun === "1";
+  const forceTransferFees = req.query?.collectTransferFees === "true" || req.query?.collectTransferFees === "1";
 
   if (!dryRun) {
     const expected = process.env.CRON_SECRET;
@@ -310,6 +338,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         reserveId: r.reserveId,
         reserve: r.reserve,
         reserveTokenMint: r.reserveTokenMint,
+        reserveTokenProgram: r.reserveTokenProgram,
         status: r.status,
         reserveTokenSupplyRaw: r.reserveTokenSupplyRaw,
         accumulatorInitialized: lastSettled !== null,
@@ -319,6 +348,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     })
     // DEC-0221: a due-but-unbillable Reserve (no supply) would be a paid no-op every hour, forever.
     .filter((r) => r.due && isAccrualWorthSending(r));
+
+  // --- Job C candidates (DEC-0229): Token-2022 Reserve Tokens carry the transfer fee. ---
+  const transferFeeReserves = reserves.filter((r) => r.reserveTokenProgram === "token-2022");
+  const transferFeeDue = forceTransferFees || new Date(startedAt).getUTCHours() === TRANSFER_FEE_COLLECT_UTC_HOUR;
 
   const status = {
     keeperWallet: keeper ? keeper.publicKey.toBase58() : null,
@@ -336,6 +369,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     totalReserves: reserves.length,
     reservesWithSomethingToSettle: candidates.length,
     accrualsDue: accrueDue.length,
+    transferFeeReserves: transferFeeReserves.length,
+    transferFeeCollectionDue: transferFeeDue,
   };
 
   if (dryRun) {
@@ -344,6 +379,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       ...status,
       candidates: candidates.map((c) => ({ reserve: c.reserve, assetsResolved: c.assetsResolved, feeSettlement: c.feeSettlement, staged: c.staged })),
       accrueDue,
+      transferFeeReserves: transferFeeReserves.map((r) => ({ reserveId: r.reserveId, reserve: r.reserve, reserveTokenMint: r.reserveTokenMint })),
     });
     return;
   }
@@ -392,6 +428,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             programId: PROGRAM_ID,
             reserve: reservePk,
             reserveTokenMint: read.reserveTokenMint,
+            reserveTokenProgram: read.reserveTokenProgram,
             vaultAuthority: read.vaultAuthority,
             payer: keeper.publicKey,
             assets: legs,
@@ -540,6 +577,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     try {
       const reservePk = new PublicKey(r.reserve);
       const reserveTokenMintPk = new PublicKey(r.reserveTokenMint);
+      // DEC-0229: classic for pre-DEC-0229 Reserves, Token-2022 after (from discovery's mint read).
+      const reserveTokenProgram = r.reserveTokenProgram === "token-2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
       const ix = await program.methods
         .accrueFees()
         .accounts({
@@ -549,10 +588,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           mintAuthority: findMintAuthority(reservePk, PROGRAM_ID)[0],
           tvlAccrual: findTvlAccrual(reservePk, PROGRAM_ID)[0],
           feeSettlement: findFeeSettlement(reservePk, PROGRAM_ID)[0],
-          feeVault: findFeeVaultAta(reservePk, reserveTokenMintPk, PROGRAM_ID),
+          feeVault: findFeeVaultAta(reservePk, reserveTokenMintPk, PROGRAM_ID, reserveTokenProgram),
           feeVaultAuthority: findFeeVaultAuthority(reservePk, PROGRAM_ID)[0],
           payer: keeper.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
+          tokenProgram: reserveTokenProgram,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
@@ -570,12 +609,57 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Job C (DEC-0229): sweep Token-2022 Reserve Token transfer fees to the
+  // Treasury, once a day, with whatever budget is left.
+  // ---------------------------------------------------------------------
+  const transferFeeResults: TransferFeeCollectResult[] = [];
+  const transferFeeSkippedForBudget: string[] = [];
+  if (transferFeeDue) {
+    for (const r of transferFeeReserves) {
+      if (Date.now() > deadline) {
+        transferFeeSkippedForBudget.push(r.reserve);
+        continue;
+      }
+      const reservePk = new PublicKey(r.reserve);
+      const mintPk = new PublicKey(r.reserveTokenMint);
+      const result: TransferFeeCollectResult = { reserveId: r.reserveId, reserve: r.reserve, harvestedAccounts: 0, withheldRaw: "0", signatures: [] };
+      try {
+        const sources = await findWithheldFeeAccounts(connection, mintPk);
+        const onMint = (await fetchReserveTokenTransferFee(connection, mintPk))?.withheldOnMintRaw ?? 0n;
+        const total = sources.reduce((sum, s) => sum + s.withheldRaw, onMint);
+        result.withheldRaw = total.toString();
+        if (total === 0n) {
+          transferFeeResults.push(result);
+          continue;
+        }
+        // Each chunk harvests up to MAX_HARVEST_SOURCES_PER_TX accounts and sweeps
+        // the mint; an empty source list still sweeps what is already on the mint.
+        const chunks: PublicKey[][] = [];
+        for (let i = 0; i < sources.length; i += MAX_HARVEST_SOURCES_PER_TX) chunks.push(sources.slice(i, i + MAX_HARVEST_SOURCES_PER_TX).map((s) => s.address));
+        if (chunks.length === 0) chunks.push([]);
+        for (const chunk of chunks) {
+          if (Date.now() > deadline) break;
+          const ix = await buildCollectTransferFeesInstruction({ program: readOnly as never, programId: PROGRAM_ID, reserve: reservePk, treasury: protocolFeeDestination, payer: keeper.publicKey, harvestSources: chunk });
+          const tx = new Transaction().add(ix);
+          tx.feePayer = keeper.publicKey;
+          result.signatures.push(await sendAndConfirmTransaction(connection, tx, [keeper], { commitment: "confirmed" }));
+          result.harvestedAccounts += chunk.length;
+        }
+      } catch (e) {
+        result.error = e instanceof Error ? e.message : String(e);
+      }
+      transferFeeResults.push(result);
+    }
+  }
+
   res.status(200).json({
     dryRun: false,
     ...status,
     elapsedMs: Date.now() - startedAt,
     settlement: { reservesProcessed: results.length, results, skippedForBudget },
     accrual: { processed: accruals.length, results: accruals, skippedForBudget: accrualsSkippedForBudget },
+    transferFees: { ran: transferFeeDue, results: transferFeeResults, skippedForBudget: transferFeeSkippedForBudget },
   });
 }
 

@@ -22,6 +22,7 @@ import {
   findManagerFeeRecipients,
 } from "./pda";
 import type { ZapAssetLeg } from "./zapInstructions";
+import { resolveMintTokenProgram } from "./readOnly";
 
 export async function buildSetFeeSettlementKeeperInstruction(
   program: Program<anchor.Idl>,
@@ -38,6 +39,8 @@ export async function buildSetFeeSettlementKeeperInstruction(
 }
 
 export interface BuildRedeemFeeVaultSharesParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   programId: PublicKey;
   reserve: PublicKey;
@@ -61,10 +64,11 @@ export interface BuildRedeemFeeVaultSharesParams {
  */
 export async function buildRedeemFeeVaultSharesInstruction(params: BuildRedeemFeeVaultSharesParams): Promise<TransactionInstruction> {
   const { program, programId, reserve, reserveTokenMint, vaultAuthority, payer, assets, shares } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
   const [feeSettlement] = findFeeSettlement(reserve, programId);
   const [feeVaultAuthority] = findFeeVaultAuthority(reserve, programId);
   const [settlementAuthority] = findSettlementAuthority(reserve, programId);
-  const feeVault = getAssociatedTokenAddressSync(reserveTokenMint, feeVaultAuthority, true);
+  const feeVault = assetAta(reserveTokenMint, feeVaultAuthority, reserveTokenProgram, true);
 
   const remainingAccounts = assets.flatMap((asset) => {
     const mint = new PublicKey(asset.mint);
@@ -93,7 +97,7 @@ export async function buildRedeemFeeVaultSharesInstruction(params: BuildRedeemFe
       settlementAuthority,
       vaultAuthority,
       payer,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
     })
     .remainingAccounts(remainingAccounts)
     .instruction();
@@ -205,7 +209,7 @@ export async function buildDistributeFeeUsdcInstruction(params: BuildDistributeF
       // into multi-recipient routing.
       managerFeeRecipients: usesMultiRecipient ? managerFeeRecipients : programId,
       payer,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID, // USDC is always classic SPL Token
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })

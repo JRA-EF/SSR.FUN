@@ -378,6 +378,17 @@ export async function resolveMintTokenProgram(connection: Connection, mint: Publ
   return program;
 }
 
+/**
+ * Seeds the cache from an account read the caller already made (discovery's
+ * batched mint read, a getMint), so the resolver never spends its own RPC
+ * read on that mint. DEC-0229: Reserve Token mints are now either program --
+ * classic for Reserves created before DEC-0229, Token-2022 after -- so every
+ * Reserve Token ATA, balance read and instruction resolves it through here.
+ */
+export function rememberMintTokenProgram(mint: PublicKey | string, owner: PublicKey | string): void {
+  MINT_TOKEN_PROGRAM_CACHE.set(typeof mint === "string" ? mint : mint.toBase58(), tokenProgramFromMintOwner(owner));
+}
+
 /** Test seam: forgets every remembered mint -> program pair. */
 export function clearMintTokenProgramCache(): void {
   MINT_TOKEN_PROGRAM_CACHE.clear();
@@ -447,22 +458,19 @@ export function collectHolderOwners(accounts: ParsedTokenAccountLike[]): Set<str
 }
 
 /**
- * Real distinct owner set for a Reserve Token mint. The Reserve Token mint
- * itself is always classic SPL Token, never Token-2022 (seed_reserve/
- * create_reserve always build it via the anchor_spl::token::Token program,
- * fixed at 6 decimals, no freeze authority -- see DEC-0011 and
- * docs/protocol/ACCOUNT_MODEL.md) -- only a Reserve's underlying Reserve
- * Assets can ever be Token-2022, so a single TOKEN_PROGRAM_ID scan here is
- * complete, not a simplification that misses accounts. Requires a provider
- * with getProgramAccounts support (Helius; NOT the public DevNet endpoint,
- * which 403s this call).
+ * Real distinct owner set for a Reserve Token mint. The scan runs under the
+ * mint's own token program (DEC-0229): classic SPL Token for Reserves
+ * created before DEC-0229, Token-2022 after. A Token-2022 holder account
+ * carries the transfer-fee extension and is larger than 165 bytes, so that
+ * scan filters on the mint alone (offset 0 of every token account under
+ * either program). Requires a provider with getProgramAccounts support
+ * (Helius; NOT the public DevNet endpoint, which 403s this call).
  */
 export async function fetchReserveTokenHolderOwners(connection: Connection, mint: PublicKey): Promise<Set<string>> {
-  const accounts = await withRateLimitRetryGeneric(() =>
-    connection.getParsedProgramAccounts(TOKEN_PROGRAM_ID, {
-      filters: [{ dataSize: 165 }, { memcmp: { offset: 0, bytes: mint.toBase58() } }],
-    }),
-  );
+  const program = await resolveMintTokenProgram(connection, mint);
+  const mintFilter = { memcmp: { offset: 0, bytes: mint.toBase58() } };
+  const filters = program.equals(TOKEN_PROGRAM_ID) ? [{ dataSize: 165 }, mintFilter] : [mintFilter];
+  const accounts = await withRateLimitRetryGeneric(() => connection.getParsedProgramAccounts(program, { filters }));
   return collectHolderOwners(accounts.map(({ account }) => account.data as unknown as ParsedTokenAccountLike));
 }
 

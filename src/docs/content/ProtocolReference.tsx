@@ -10,7 +10,16 @@ import {
   SPL_TOKEN_PROGRAM,
   SSR_PROGRAM_DEVNET,
   SSR_PROGRAM_MAINNET,
+  TOKEN_2022_PROGRAM,
 } from './addresses'
+import {
+  formatBpsAsPct,
+  RESERVE_TOKEN_TRANSFER_FEE_BPS,
+  RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS,
+} from '../../merge/lib/calculations'
+
+const TRANSFER_FEE = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)
+const TRANSFER_FEE_MAX = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS)
 
 const DERIVE_CODE = `import { PublicKey } from '@solana/web3.js'
 
@@ -85,12 +94,14 @@ function Addresses() {
           ['SSR Protocol, Mainnet', <Addr key="c86" value={SSR_PROGRAM_MAINNET} label="Mainnet program address" />],
           ['SSR Protocol, DevNet', <Addr key="c87" value={SSR_PROGRAM_DEVNET} label="DevNet program address" />],
           ['SPL Token program', <Addr key="c88" value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />],
+          ['Token-2022 program', <Addr key="c89" value={TOKEN_2022_PROGRAM} label="Token-2022 program address" />],
         ]}
       />
       <Facts
         caption="Reserve Token mint facts"
         rows={[
-          ['Token standard', 'Classic SPL Token. Not Token-2022, no extensions.'],
+          ['Token standard', 'Token-2022 with the transfer-fee extension (TransferFeeConfig). Earlier Reserves: classic SPL Token, no extensions.'],
+          ['Transfer fee', `${TRANSFER_FEE} of every transfer on Token-2022 Reserve Tokens, paid to the SSR Protocol. None on classic SPL Token Reserve Tokens.`],
           ['Decimals', String(RESERVE_TOKEN_DECIMALS)],
           ['Mint authority', 'The Reserve’s mint-authority PDA (below). Program-controlled.'],
           ['Freeze authority', 'None.'],
@@ -201,7 +212,18 @@ function Fees() {
       <p>
         A portion of each fee goes to the protocol and the remainder to the Manager, split by a formula the program
         applies uniformly to every Reserve. The Reserve page on SSR.fun shows the configured fees before any
-        transaction. Fees never apply to transfers or to trades on an exchange.
+        transaction. These three fees never apply to transfers or to trades on an exchange.
+      </p>
+      <h3>Transfer fee</h3>
+      <p>
+        Separately from the Reserve’s own fees, Token-2022 Reserve Tokens carry a protocol transfer fee of{' '}
+        {TRANSFER_FEE}, set in the mint’s TransferFeeConfig extension and charged by the Token-2022 program on every
+        transfer, including exchange trades and sends between wallets. Minting and redeeming on SSR.fun are not
+        transfers and never pay it. The fee goes to the SSR Protocol in full; Managers receive no share. The SSR
+        Protocol can adjust the rate within a ceiling of {TRANSFER_FEE_MAX} fixed in the program, and a new rate takes
+        effect about two epochs after it is set. Reserve Tokens of earlier Reserves, which use classic SPL Token
+        mints, have no transfer fee. See{' '}
+        <DocLink to={docHref('reserve-tokens-on-dexes', 'transfer-fee')}>Transfer fee</DocLink>.
       </p>
     </>
   )

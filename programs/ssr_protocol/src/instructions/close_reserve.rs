@@ -16,7 +16,7 @@
 //! leg needed) since this only reads and then closes each account.
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::Mint as SplMint;
+use anchor_spl::token_interface::Mint as SplMint;
 use anchor_spl::token_interface::{self, TokenAccount, TokenInterface};
 
 use crate::constants::{
@@ -43,7 +43,7 @@ pub struct CloseReserve<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: Account<'info, SplMint>,
+    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(

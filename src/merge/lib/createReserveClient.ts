@@ -39,7 +39,7 @@ import {
   type TransactionInstruction,
 } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { assetAta, resolveLegTokenProgram, tokenProgramFromMintOwner, TOKEN_PROGRAM_ID, assessMintAccount, describeIncompatibleAsset } from "@ssr/sdk";
+import { assetAta, resolveLegTokenProgram, resolveMintTokenProgram, tokenProgramFromMintOwner, TOKEN_PROGRAM_ID, assessMintAccount, describeIncompatibleAsset } from "@ssr/sdk";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import {
   buildReadOnlyProgram,
@@ -287,8 +287,6 @@ export interface ReserveMetadataInput {
   ticker: string;
   description: string;
   category: string;
-  buyTaxPct: number;
-  sellTaxPct: number;
   /** Optional HTTPS URL of the Reserve's profile picture (the reserve-image store's permanent URL -- see reserveImageClient.ts). Omit entirely when the Reserve has none; the server also drops an empty value, keeping pre-existing payloads' content-addressed ids unchanged. */
   imageUrl?: string;
   /** Optional HTTPS URL of the wide header banner (same store). Same omit-when-absent rule. */
@@ -303,8 +301,8 @@ export interface ReserveMetadataInput {
 export type MetadataStoreCluster = "devnet" | "mainnet" | "robinhood";
 
 /**
- * Uploads a Reserve's off-chain metadata (name/ticker/description/category/
- * buyTaxPct/sellTaxPct) to this app's own permanent store
+ * Uploads a Reserve's off-chain metadata (name/ticker/description/category,
+ * plus optional image/creator links) to this app's own permanent store
  * (api/devnet/reserve-metadata.ts or api/mainnet/reserve-metadata.ts,
  * selected by `cluster` -- see those files' headers: same generic,
  * cluster-agnostic backend, kept as two separate routes so a Mainnet
@@ -314,7 +312,7 @@ export type MetadataStoreCluster = "devnet" | "mainnet" | "robinhood";
  * NEVER the JSON payload itself. This is the fix for the confirmed root
  * cause of SsrError::MetadataUriTooLong: the previous flow built
  * `data:application/json,${encodeURIComponent(JSON.stringify({ name,
- * ticker, description, category, buyTaxPct, sellTaxPct }))}` and submitted
+ * ticker, description, category, ... }))}` and submitted
  * THAT directly on-chain -- routinely 300-600+ bytes for any real
  * name/description, against a 200-byte on-chain limit. See
  * packages/sdk/src/metadataUri.ts's header for the full writeup.
@@ -1885,6 +1883,9 @@ export async function resumeReserveDeploymentOnChain(params: {
     mintAuthority: findMintAuthority(reserveAddress, programId)[0],
     vaultAuthority: findVaultAuthority(reserveAddress, programId)[0],
     protocolConfig: findProtocolConfig(programId)[0],
+    // DEC-0229: a Reserve started before DEC-0229 and resumed now still has
+    // its classic mint, so read the program the mint really has.
+    reserveTokenProgram: await resolveMintTokenProgram(connection, new PublicKey(onChain!.reserveTokenMint)),
   };
   const assetAddresses: ReserveAssetAddresses[] = pending.assets.map((a) =>
     deriveReserveAssetAddresses(reserveAddress, new PublicKey(a.mint), programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),

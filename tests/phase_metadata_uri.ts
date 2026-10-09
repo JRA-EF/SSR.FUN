@@ -166,33 +166,34 @@ describe("lib/reserve-metadata/payload.ts -- validateReserveMetadataPayload", ()
     expect(() => validateReserveMetadataPayload("a string")).to.throw(/JSON object/);
   });
 
-  it("defaults description/category/buyTaxPct/sellTaxPct honestly (never fabricated) when absent", () => {
+  it("defaults description/category honestly (never fabricated) when absent, and never writes the retired tax fields for a new payload (DEC-0229)", () => {
     const p = validateReserveMetadataPayload({ name: "X", ticker: "X" });
     expect(p.description).to.equal("");
     expect(p.category).to.equal("");
-    expect(p.buyTaxPct).to.equal(0);
-    expect(p.sellTaxPct).to.equal(0);
+    expect(p).to.not.have.property("buyTaxPct");
+    expect(p).to.not.have.property("sellTaxPct");
+    expect(JSON.stringify(p)).to.equal('{"name":"X","ticker":"X","description":"","category":""}');
   });
 
-  it("ignores a non-finite buyTaxPct/sellTaxPct rather than storing garbage", () => {
+  it("legacy payload (DEC-0229): ignores a non-finite buyTaxPct/sellTaxPct rather than storing garbage", () => {
     const p = validateReserveMetadataPayload({ name: "X", ticker: "X", buyTaxPct: Infinity, sellTaxPct: NaN });
     expect(p.buyTaxPct).to.equal(0);
     expect(p.sellTaxPct).to.equal(0);
   });
 
-  it("accepts buyTaxPct/sellTaxPct anywhere within the valid 0-100 range", () => {
+  it("legacy payload (DEC-0229): accepts buyTaxPct/sellTaxPct anywhere within the valid 0-100 range", () => {
     const p = validateReserveMetadataPayload({ name: "X", ticker: "X", buyTaxPct: 0, sellTaxPct: 100 });
     expect(p.buyTaxPct).to.equal(0);
     expect(p.sellTaxPct).to.equal(100);
   });
 
-  it("normalizes an out-of-range (negative or >100) buyTaxPct/sellTaxPct to 0 rather than persisting it -- regression for the confirmed unbounded-tax-rate report", () => {
+  it("legacy payload (DEC-0229): normalizes an out-of-range (negative or >100) buyTaxPct/sellTaxPct to 0 rather than persisting it -- regression for the confirmed unbounded-tax-rate report", () => {
     const p = validateReserveMetadataPayload({ name: "X", ticker: "X", buyTaxPct: -25, sellTaxPct: 500 });
     expect(p.buyTaxPct).to.equal(0);
     expect(p.sellTaxPct).to.equal(0);
   });
 
-  it("normalizes a non-numeric buyTaxPct/sellTaxPct (string/boolean) to 0, same as an absent field", () => {
+  it("legacy payload (DEC-0229): normalizes a non-numeric buyTaxPct/sellTaxPct (string/boolean) to 0, same as an absent field", () => {
     const p = validateReserveMetadataPayload({ name: "X", ticker: "X", buyTaxPct: "abc", sellTaxPct: false });
     expect(p.buyTaxPct).to.equal(0);
     expect(p.sellTaxPct).to.equal(0);

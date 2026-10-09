@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Burn, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
+use anchor_spl::token_interface::{self, Burn, Mint as SplMint, MintTo, TokenInterface, TokenAccount as SplTokenAccount};
 
 use super::accrue_fees::checkpoint_tvl_accrual;
 use super::common::{
@@ -38,7 +38,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: Account<'info, SplMint>,
+    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -52,7 +52,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         constraint = redeemer_reserve_token_account.mint == reserve.reserve_token_mint @ SsrError::ReserveAssetMismatch,
         constraint = redeemer_reserve_token_account.owner == redeemer.key() @ SsrError::NotReserveManager,
     )]
-    pub redeemer_reserve_token_account: Account<'info, SplTokenAccount>,
+    pub redeemer_reserve_token_account: InterfaceAccount<'info, SplTokenAccount>,
 
     #[account(mut)]
     pub redeemer: Signer<'info>,
@@ -114,8 +114,9 @@ pub struct RedeemReserveTokensInKind<'info> {
         payer = redeemer,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = fee_vault_authority,
+        associated_token::token_program = token_program,
     )]
-    pub fee_vault: Account<'info, SplTokenAccount>,
+    pub fee_vault: InterfaceAccount<'info, SplTokenAccount>,
 
     /// CHECK: signer-only PDA (only the fee vault's ATA *owner* -- the mint
     /// authority for the fee-share mint is `mint_authority` above), verified
@@ -126,7 +127,7 @@ pub struct RedeemReserveTokensInKind<'info> {
     )]
     pub fee_vault_authority: UncheckedAccount<'info>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
     // Remaining accounts: reserve.asset_count groups of
@@ -226,7 +227,7 @@ pub fn handler<'info>(
         authority: ctx.accounts.redeemer.to_account_info(),
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
-    token::burn(cpi_ctx, reserve_tokens_to_redeem)?;
+    token_interface::burn(cpi_ctx, reserve_tokens_to_redeem)?;
 
     // DEC-0173: crystallize the redemption fee into the fee vault.
     // split_redemption_bps is attribution-only -- the charged total remains
@@ -255,7 +256,7 @@ pub fn handler<'info>(
             vault_cpi_accounts,
             signer_seeds,
         );
-        token::mint_to(vault_cpi_ctx, redemption_fee_shares)?;
+        token_interface::mint_to(vault_cpi_ctx, redemption_fee_shares)?;
 
         let fee_settlement = &mut ctx.accounts.fee_settlement;
         init_fee_settlement_if_needed(

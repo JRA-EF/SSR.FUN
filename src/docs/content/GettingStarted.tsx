@@ -1,6 +1,9 @@
 import { DocTabs } from '../components/DocTabs'
 import { Callout, Facts } from '../components/primitives'
 import { DocLink, docHref } from '../router'
+import { formatBpsAsPct, RESERVE_TOKEN_TRANSFER_FEE_BPS } from '../../merge/lib/calculations'
+
+const TRANSFER_FEE = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)
 
 function Overview() {
   return (
@@ -36,8 +39,8 @@ function ReserveTokens() {
   return (
     <>
       <p>
-        A Reserve Token is a regular SPL token, the same standard as USDC or any other token in your Solana wallet. It
-        has 6 decimals and no fixed supply:
+        A Reserve Token is a regular Solana token that sits in your wallet like USDC or any other token. It has 6
+        decimals and no fixed supply:
       </p>
       <ul>
         <li>
@@ -51,6 +54,12 @@ function ReserveTokens() {
         <li>
           <strong>The ongoing fee</strong> is paid by issuing a small number of new Reserve Tokens to the Manager and the
           protocol over time, which dilutes every holder proportionally.
+        </li>
+        <li>
+          <strong>The transfer fee</strong> of {TRANSFER_FEE} is charged by the token itself whenever a Reserve Token
+          moves between wallets, including trades on an exchange, and goes to the SSR Protocol. Minting and redeeming
+          on SSR.fun never pay it. Reserve Tokens of earlier Reserves, launched as classic SPL Tokens, have no
+          transfer fee.
         </li>
       </ul>
       <p>

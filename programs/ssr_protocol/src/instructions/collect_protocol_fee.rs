@@ -18,7 +18,7 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
+use anchor_spl::token_interface::{self, Mint as SplMint, MintTo, TokenInterface, TokenAccount as SplTokenAccount};
 
 use crate::constants::{MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED};
 use crate::errors::SsrError;
@@ -43,7 +43,7 @@ pub struct CollectProtocolFee<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: Account<'info, SplMint>,
+    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -57,8 +57,9 @@ pub struct CollectProtocolFee<'info> {
         payer = payer,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = protocol_fee_destination,
+        associated_token::token_program = token_program,
     )]
-    pub protocol_fee_destination_token_account: Account<'info, SplTokenAccount>,
+    pub protocol_fee_destination_token_account: InterfaceAccount<'info, SplTokenAccount>,
     /// CHECK: only used as the associated-token-account authority above;
     /// must equal `protocol_config.default_protocol_fee_destination`,
     /// checked in the handler.
@@ -67,7 +68,7 @@ pub struct CollectProtocolFee<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -101,7 +102,7 @@ pub fn handler<'info>(ctx: Context<'info, CollectProtocolFee<'info>>) -> Result<
     };
     let cpi_ctx =
         CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
-    token::mint_to(cpi_ctx, amount)?;
+    token_interface::mint_to(cpi_ctx, amount)?;
 
     emit!(ProtocolFeeCollected {
         reserve: reserve_key,

@@ -20,6 +20,7 @@
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_one_approval_buy.ts
 import { expect } from "chai";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
+import { TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import {
   chunkAltAddresses,
   buildReserveAltAddresses,
@@ -58,21 +59,22 @@ describe("reserveAltClient.ts -- chunkAltAddresses (table creation for any Reser
     expect(chunks.flat().map((a) => a.toBase58())).to.deep.equal(addresses.map((a) => a.toBase58()));
   });
 
-  it("the 12-asset product-standard table (16 fixed + 36 per-asset = 52 addresses; DEC-0173 swapped the 2 treasury-destination entries for the 3 fee-vault accounts) needs exactly one follow-up extend", () => {
+  it("the 12-asset product-standard table (17 fixed + 36 per-asset = 53 addresses; DEC-0173 swapped the 2 treasury-destination entries for the 3 fee-vault accounts, DEC-0229 added the Token-2022 program) needs exactly one follow-up extend", () => {
     const params = {
       ssrProgramId: key(),
       reserve: key(),
       reserveTokenMint: key(),
+      reserveTokenProgram: TOKEN_2022_PROGRAM_ID,
       mintAuthority: key(),
       vaultAuthority: key(),
       protocolFeeDestination: key(),
       assets: Array.from({ length: 12 }, () => ({ mint: key().toBase58(), reserveAsset: key().toBase58(), vault: key().toBase58() })),
     };
     const addresses = buildReserveAltAddresses(params);
-    expect(addresses.length).to.equal(52);
+    expect(addresses.length).to.equal(53);
     const chunks = chunkAltAddresses(addresses);
     expect(chunks.length).to.equal(2);
-    expect(chunks.flat().length).to.equal(52);
+    expect(chunks.flat().length).to.equal(53);
   });
 });
 

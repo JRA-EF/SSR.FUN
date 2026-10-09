@@ -85,10 +85,24 @@ export function findSettlementKeeperConfig(programId: PublicKey): [PublicKey, nu
   return PublicKey.findProgramAddressSync([SETTLEMENT_KEEPER_CONFIG_SEED], programId);
 }
 
-/** Canonical ATA for the fee vault (Reserve Token, owned by `findFeeVaultAuthority`). */
-export function findFeeVaultAta(reserve: PublicKey, reserveTokenMint: PublicKey, programId: PublicKey): PublicKey {
+/**
+ * Canonical ATA for the fee vault (Reserve Token, owned by `findFeeVaultAuthority`).
+ *
+ * `reserveTokenProgram` is required, not defaulted (DEC-0229): Reserves
+ * created before DEC-0229 have classic SPL Token mints, later ones are
+ * Token-2022, and the two derive different ATA addresses. Resolve it with
+ * `resolveMintTokenProgram` (memoised) or take it from discovery.
+ */
+export function findFeeVaultAta(reserve: PublicKey, reserveTokenMint: PublicKey, programId: PublicKey, reserveTokenProgram: PublicKey): PublicKey {
   const [feeVaultAuthority] = findFeeVaultAuthority(reserve, programId);
-  return getAssociatedTokenAddressSync(reserveTokenMint, feeVaultAuthority, true);
+  return getAssociatedTokenAddressSync(reserveTokenMint, feeVaultAuthority, true, reserveTokenProgram);
+}
+
+/** DEC-0229: protocol-wide signer holding both Token-2022 transfer-fee authorities on every fee-carrying Reserve Token mint. */
+export const TRANSFER_FEE_AUTHORITY_SEED = Buffer.from("transfer_fee_authority");
+
+export function findTransferFeeAuthority(programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([TRANSFER_FEE_AUTHORITY_SEED], programId);
 }
 
 /** Canonical settlement staging ATA for one asset mint (owned by `findSettlementAuthority`). */
@@ -127,6 +141,7 @@ export function resolveProtocolFeeDestinationTokenAccount(
   otherWallet: PublicKey,
   reserveTokenMint: PublicKey,
   programId: PublicKey,
+  reserveTokenProgram: PublicKey,
 ): PublicKey {
   if (protocolFeeDestination.equals(otherWallet)) return programId;
   // allowOwnerOffCurve=true: the protocol-fee destination is explicitly
@@ -135,5 +150,5 @@ export function resolveProtocolFeeDestinationTokenAccount(
   // throws TokenOwnerOffCurveError by default, which would otherwise make
   // every mint/seed call fail the moment the configured protocol-fee
   // destination is a PDA instead of an ordinary wallet.
-  return getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination, true);
+  return getAssociatedTokenAddressSync(reserveTokenMint, protocolFeeDestination, true, reserveTokenProgram);
 }

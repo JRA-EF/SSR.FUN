@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
+use anchor_spl::token_interface::{self, Mint as SplMint, MintTo, TokenInterface, TokenAccount as SplTokenAccount};
 
 use super::accrue_fees::checkpoint_tvl_accrual;
 use super::common::{load_asset_legs, mul_div_ceil, transfer_into_vault, init_fee_settlement_if_needed};
@@ -32,7 +32,7 @@ pub struct MintReserveTokensInKind<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: Account<'info, SplMint>,
+    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -46,8 +46,9 @@ pub struct MintReserveTokensInKind<'info> {
         payer = depositor,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = depositor,
+        associated_token::token_program = token_program,
     )]
-    pub depositor_reserve_token_account: Account<'info, SplTokenAccount>,
+    pub depositor_reserve_token_account: InterfaceAccount<'info, SplTokenAccount>,
 
     #[account(mut)]
     pub depositor: Signer<'info>,
@@ -73,8 +74,9 @@ pub struct MintReserveTokensInKind<'info> {
         payer = depositor,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = fee_vault_authority,
+        associated_token::token_program = token_program,
     )]
-    pub fee_vault: Account<'info, SplTokenAccount>,
+    pub fee_vault: InterfaceAccount<'info, SplTokenAccount>,
 
     /// CHECK: signer-only PDA (mint authority is `mint_authority` above,
     /// same as every other mint destination in this instruction -- this
@@ -99,7 +101,7 @@ pub struct MintReserveTokensInKind<'info> {
     )]
     pub tvl_accrual: Account<'info, TvlAccrual>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
     // Remaining accounts: reserve.asset_count groups of
@@ -244,7 +246,7 @@ pub fn handler<'info>(
         cpi_accounts,
         signer_seeds,
     );
-    token::mint_to(cpi_ctx, net_shares_out)?;
+    token_interface::mint_to(cpi_ctx, net_shares_out)?;
 
     // USDC fee-settlement pipeline (2026-08-21 pass): BOTH shares crystallize
     // together into the shared fee vault, in the SAME single CPI -- no more
@@ -262,7 +264,7 @@ pub fn handler<'info>(
             vault_cpi_accounts,
             signer_seeds,
         );
-        token::mint_to(vault_cpi_ctx, mint_fee_shares)?;
+        token_interface::mint_to(vault_cpi_ctx, mint_fee_shares)?;
 
         init_fee_settlement_if_needed(
             &mut ctx.accounts.fee_settlement,

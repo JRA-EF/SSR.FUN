@@ -74,8 +74,8 @@ function getHeader(req: ApiRequest, name: string): string | undefined {
 // /api/mainnet/reserve-metadata?id=<16hex> endpoint. resolveReserveMetadata
 // would fetch that over HTTP -- but a server-side fetch has no site-gate
 // cookie and gets a 401, so every name came back null. The stored payload IS
-// already exactly ParsedReserveMetadata ({name,ticker,description,category,
-// buyTaxPct,sellTaxPct,imageUrl?}), so read it straight from the store,
+// already ParsedReserveMetadata ({name,ticker,description,category,
+// imageUrl?}; legacy rows also carry ignored tax fields), so read it straight from the store,
 // bypassing the HTTP round-trip and the gate entirely.
 const META_ID_RE = /[?&]id=([0-9a-f]{16})\b/i;
 async function resolveMetadata(metadataUri: string): Promise<ParsedReserveMetadata | null> {

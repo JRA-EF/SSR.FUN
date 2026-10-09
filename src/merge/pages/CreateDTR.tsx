@@ -62,7 +62,7 @@ import { Slider } from "@/components/ui/slider";
 import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Rocket } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { InfoTip } from "@/components/InfoTip";
-import { formatUsdc, TICKER_MAX_LENGTH } from "@/lib/calculations";
+import { formatBpsAsPct, formatUsdc, RESERVE_TOKEN_TRANSFER_FEE_BPS, RESERVE_TOKEN_TRANSFER_FEE_NOTE, TICKER_MAX_LENGTH } from "@/lib/calculations";
 import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR, RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY } from "@/lib/types";
 
 // Real, genuinely supported DevNet assets -- the real devUSDC settlement
@@ -279,8 +279,6 @@ export function CreateDTR({
       feeConfig: {
         mintFeePct: 0,
         tvlFeePct: 0,
-        managerBuyTaxPct: 0,
-        managerSellTaxPct: 0,
         creatorFeeDestination: walletCtx.publicKey.toBase58(),
         feeRecipients: [],
       },
@@ -447,8 +445,6 @@ export function CreateDTR({
   const [initialSeedUsdc, setInitialSeedUsdc] = useState("");
   const [mintFeePct, setMintFeePct] = useState(0.5);
   const [tvlFeePct, setTvlFeePct] = useState(1);
-  const [managerBuyTaxPct, setManagerBuyTaxPct] = useState(0);
-  const [managerSellTaxPct, setManagerSellTaxPct] = useState(0);
   const [feeDestination, setFeeDestination] = useState(wallet.address || "");
   // wallet.address can still be empty at this component's first render (the
   // wallet adapter often resolves the public key asynchronously after
@@ -564,7 +560,7 @@ export function CreateDTR({
   }, [realDeploymentCandidate, totalWeightForCost, initialSeedUsdc, assets, connection, REAL_ASSET_BY_SYMBOL, solPriceUsd]);
 
   // Uploads this Reserve's off-chain metadata (name/ticker/description/
-  // category/buyTaxPct/sellTaxPct, plus the Step-1 profile picture's
+  // category, plus the Step-1 profile picture's
   // permanent URL when one was picked) and resolves the resulting permanent URL
   // BEFORE the user ever reaches Launch -- Review below displays it, and
   // Launch is disabled until it's ready, so an oversized/failed URI is
@@ -601,8 +597,6 @@ export function CreateDTR({
             ticker,
             description,
             category,
-            buyTaxPct: managerBuyTaxPct,
-            sellTaxPct: managerSellTaxPct,
             ...(imageUrl ? { imageUrl } : {}),
           },
           cluster,
@@ -626,7 +620,7 @@ export function CreateDTR({
       cancelled = true;
       clearTimeout(debounceHandle);
     };
-  }, [realDeploymentCandidate, name, ticker, description, category, managerBuyTaxPct, managerSellTaxPct, profileImageDataUrl]);
+  }, [realDeploymentCandidate, name, ticker, description, category, profileImageDataUrl]);
 
   // Recovers from a page reload (or a return visit, hours or days later --
   // see PendingReserveDeploy's no-expiry note) that happened mid-deployment:
@@ -1301,11 +1295,6 @@ export function CreateDTR({
         feeConfig: {
           mintFeePct,
           tvlFeePct,
-          // Forward-looking secondary-market configuration -- stored on-chain
-          // in metadataUri, not enforced by mint/redeem (see the Fee
-          // Configuration step's copy).
-          managerBuyTaxPct,
-          managerSellTaxPct,
           creatorFeeDestination: feeDestinationKey.toBase58(),
           // Safe to store here (not []): this write only runs after
           // createReserveOnChain resolved successfully, which means
@@ -2004,7 +1993,7 @@ export function CreateDTR({
                   split the configured fee 50/50.
                 </p>
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-3">
                     <Label className="flex justify-between">
                       <span>Mint Fee</span>
@@ -2048,41 +2037,9 @@ export function CreateDTR({
                       );
                     })()}
                   </div>
-
-                  <div className="space-y-3">
-                    <Label className="flex justify-between">
-                      <span>Buy Tax</span>
-                      <span className="font-merge-mono text-primary">{managerBuyTaxPct.toFixed(2)}%</span>
-                    </Label>
-                    <Slider
-                      value={[managerBuyTaxPct]}
-                      max={2}
-                      step={0.05}
-                      onValueChange={(v) => setManagerBuyTaxPct(v[0])}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      For future secondary-market Buys of your Reserve Token, split 50/50 between you and the protocol. Currently on hold: nothing is charged. Never applies to minting. Default is 0%.
-                    </p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <Label className="flex justify-between">
-                      <span>Sell Tax</span>
-                      <span className="font-merge-mono text-primary">{managerSellTaxPct.toFixed(2)}%</span>
-                    </Label>
-                    <Slider
-                      value={[managerSellTaxPct]}
-                      max={2}
-                      step={0.05}
-                      onValueChange={(v) => setManagerSellTaxPct(v[0])}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      For future secondary-market Sells of your Reserve Token, split 50/50 between you and the protocol. Currently on hold: nothing is charged. Never applies to redeeming. Default is 0%.
-                    </p>
-                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground italic">
-                  Buy Tax and Sell Tax are for secondary-market trades between holders, which SSR.fun does not offer yet. Your rates are saved with the Reserve, but nothing is charged while the taxes are on hold. Minting and redeeming pay only the mint fee and the redemption fee.
+                  {RESERVE_TOKEN_TRANSFER_FEE_NOTE}
                 </p>
               </div>
 
@@ -2290,8 +2247,15 @@ export function CreateDTR({
                             value: <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>,
                           });
                         }
-                        rows.push({ label: "Buy Tax (future secondary market)", value: <span className="font-merge-mono font-medium">{managerBuyTaxPct.toFixed(2)}%</span> });
-                        rows.push({ label: "Sell Tax (future secondary market)", value: <span className="font-merge-mono font-medium">{managerSellTaxPct.toFixed(2)}%</span> });
+                        rows.push({
+                          label: (
+                            <span className="inline-flex items-center gap-1.5">
+                              Transfer Fee (protocol)
+                              <InfoTip label="More information about the Reserve Token transfer fee">{RESERVE_TOKEN_TRANSFER_FEE_NOTE}</InfoTip>
+                            </span>
+                          ),
+                          value: <span className="font-merge-mono font-medium">{formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)}</span>,
+                        });
                         return rows.map((row, i) => (
                           <div
                             key={i}

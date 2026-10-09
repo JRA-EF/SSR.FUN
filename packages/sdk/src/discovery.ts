@@ -33,11 +33,11 @@
 // under-resolution honestly (see `resolvedAssetCount`/`assetCount` below).
 import { Connection, PublicKey } from "@solana/web3.js";
 import { unpackMint } from "@solana/spl-token";
-import { buildReadOnlyProgram } from "./readOnly";
+import { buildReadOnlyProgram, rememberMintTokenProgram } from "./readOnly";
 import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault, findSettlementKeeperConfig } from "./pda";
 import { withRateLimitRetry } from "./rpcResilience";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
-import { tokenProgramFromKind, unpackTokenAccountByOwner, type TokenProgramKindDecoded } from "./tokenPrograms";
+import { tokenProgramFromKind, tokenProgramFromMintOwner, tokenProgramName, unpackTokenAccountByOwner, type TokenProgramKindDecoded, type TokenProgramName } from "./tokenPrograms";
 
 /**
  * Solana's `getMultipleAccounts` accepts up to ~100 pubkeys per call --
@@ -120,6 +120,8 @@ export interface DiscoveredReserve {
   reserve: string;
   manager: string;
   reserveTokenMint: string;
+  /** DEC-0229: the Reserve Token mint's own program -- "spl-token" for Reserves created before DEC-0229, "token-2022" (carrying the protocol transfer fee) after. */
+  reserveTokenProgram: TokenProgramName;
   /** "active" | "paused" | "created" | "assetsInitializing" -- mirrors ReserveStatus. */
   status: string;
   /** Verified on-chain count of registered assets -- may exceed `assets.length`, see `resolvedAssetCount`. */
@@ -294,13 +296,22 @@ export async function discoverAllReserves(
   // (decoding the raw Mint layout ourselves, since there's no batched
   // get-token-supply RPC method) and retried per chunk, same as passes 1-2.
   const supplyByMint = new Map<string, string>();
+  const programByMint = new Map<string, TokenProgramName>();
   for (const batch of chunkArray(resolvedReserves, MAX_ACCOUNTS_PER_BATCH)) {
     const mints = batch.map((c) => reserveAccountByAddress.get(c.address.toBase58())!.reserveTokenMint);
     try {
       const infos = await withRateLimitRetry(() => connection.getMultipleAccountsInfo(mints));
       infos.forEach((info, i) => {
         try {
-          supplyByMint.set(mints[i].toBase58(), unpackMint(mints[i], info).supply.toString());
+          // DEC-0229: decode under the mint's own program (a Token-2022 Reserve
+          // Token throws under the classic default) and remember it, so every
+          // later ATA, balance read and instruction for this mint costs no read.
+          const program = tokenProgramFromMintOwner(info?.owner);
+          supplyByMint.set(mints[i].toBase58(), unpackMint(mints[i], info, program).supply.toString());
+          if (info) {
+            rememberMintTokenProgram(mints[i], info.owner);
+            programByMint.set(mints[i].toBase58(), tokenProgramName(program));
+          }
         } catch (e) {
           issues.push({ reserveId: batch[i].id.toString(), scope: "supply", detail: mints[i].toBase58(), message: e instanceof Error ? e.message : String(e) });
         }
@@ -337,6 +348,7 @@ export async function discoverAllReserves(
       reserve: reserveAddress.toBase58(),
       manager: reserveAccount.manager.toBase58(),
       reserveTokenMint: reserveAccount.reserveTokenMint.toBase58(),
+      reserveTokenProgram: programByMint.get(reserveAccount.reserveTokenMint.toBase58()) ?? "spl-token",
       status: Object.keys(reserveAccount.status as object)[0],
       assetCount: reserveAccount.assetCount,
       resolvedAssetCount: assets.length,

@@ -8,10 +8,12 @@
 //
 // Field limits mirror Metaplex's own (name 32, symbol 10, uri 200 BYTES);
 // the program re-checks them and fails with a named SsrError first.
-import { Connection, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY, SYSVAR_RENT_PUBKEY, TransactionInstruction } from "@solana/web3.js";
+import { TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { findMintAuthority, findReserveTokenMint } from "./pda";
+import { resolveMintTokenProgram } from "./readOnly";
 
 export const TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
@@ -142,7 +144,11 @@ export async function buildCreateTokenMetadataInstruction(
   const [reserveTokenMint] = findReserveTokenMint(reserve, programId);
   const [mintAuthority] = findMintAuthority(reserve, programId);
   const [metadata] = findTokenMetadata(reserveTokenMint);
-  return program.methods
+  // DEC-0229: a Token-2022 Reserve Token is published through Metaplex's
+  // Create (V1), which needs the instructions sysvar and the token program
+  // (remaining accounts) and the mint writable. Classic mints are unchanged.
+  const isToken2022 = (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint)).equals(TOKEN_2022_PROGRAM_ID);
+  const ix = await program.methods
     .createTokenMetadata(name, symbol, uri)
     .accounts({
       reserve,
@@ -155,7 +161,17 @@ export async function buildCreateTokenMetadataInstruction(
       systemProgram: SystemProgram.programId,
       rent: SYSVAR_RENT_PUBKEY,
     } as any)
+    .remainingAccounts(
+      isToken2022
+        ? [
+            { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isWritable: false, isSigner: false },
+            { pubkey: TOKEN_2022_PROGRAM_ID, isWritable: false, isSigner: false },
+          ]
+        : [],
+    )
     .instruction();
+  if (isToken2022) for (const k of ix.keys) if (k.pubkey.equals(reserveTokenMint)) k.isWritable = true;
+  return ix;
 }
 
 /**

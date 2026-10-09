@@ -118,3 +118,23 @@ pub const MAX_FEE_RECIPIENTS: u8 = 10;
 /// section 8).
 pub const SECONDS_PER_DAY: i64 = 86_400;
 pub const SECONDS_PER_YEAR: u128 = 365 * 86_400;
+
+/// PDA seed for the single, protocol-wide signer that holds BOTH Token-2022
+/// transfer-fee authorities (rate config and withheld-fee withdrawal) on
+/// every Reserve Token mint created after DEC-0229. No per-Reserve
+/// component: one authority across all mints is what lets a rate change be
+/// sent to every mint as one batch, and it never holds data.
+pub const TRANSFER_FEE_AUTHORITY_SEED: &[u8] = b"transfer_fee_authority";
+
+/// Transfer fee written onto every new Reserve Token mint at creation
+/// (DEC-0229): 0.15%. Charged by the Token-2022 program itself on every
+/// transfer of the token, on every venue; mint and burn are not transfers,
+/// so minting and redeeming through the protocol never pay it.
+pub const RESERVE_TOKEN_TRANSFER_FEE_LAUNCH_BPS: u16 = 15;
+
+/// Highest transfer fee `update_transfer_fee` may set (DEC-0229): 0.25%.
+pub const MAX_RESERVE_TOKEN_TRANSFER_FEE_BPS: u16 = 25;
+
+/// Per-transfer fee cap written alongside the rate. `u64::MAX` means no
+/// practical cap: the fee is always the plain percentage of the amount.
+pub const RESERVE_TOKEN_TRANSFER_FEE_MAX_FEE: u64 = u64::MAX;

@@ -42,6 +42,8 @@ import type { Program } from "@anchor-lang/core";
 import { computeMintRequirements, computeRedemptionEntitlements, mulDivCeil, type AssetBalance } from "./calculations";
 import { solLamportsToUsd, SOL_TEST_PRICE_USD, WRAPPED_SOL_MINT } from "./zapPricing";
 import { findTvlAccrual, findMintAuthority, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta, resolveProtocolFeeDestinationTokenAccount } from "./pda";
+import { assetAta } from "./tokenPrograms";
+import { resolveMintTokenProgram } from "./readOnly";
 
 function isWrappedSol(mint: PublicKey): boolean {
   return mint.equals(WRAPPED_SOL_MINT);
@@ -63,6 +65,8 @@ export interface ZapAssetLeg {
 }
 
 export interface BuildBuyZapParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   protocolConfig: PublicKey;
   /**
@@ -114,6 +118,7 @@ export function solToReserveTokensRequested(
 
 export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promise<BuildZapResult> {
   const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
 
   const reserveTokensRequested = solToReserveTokensRequested(params.solLamports, reserveTokenSupplyRaw, assets, params.assetTestPricesUsd);
 
@@ -124,14 +129,14 @@ export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promis
 
   const instructions: TransactionInstruction[] = [];
 
-  const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
-  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+  const depositorReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint, reserveTokenProgram));
   // Consolidation (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
   // when the Protocol fee-destination wallet IS this buyer's own, pass the
   // Option<Account> "None" sentinel instead of a second mutable account that
   // would resolve to the exact same ATA as depositorReserveTokenAta above --
   // see resolveProtocolFeeDestinationTokenAccount's doc comment (pda.ts).
-  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId);
+  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
@@ -183,7 +188,7 @@ export async function buildBuyZapInstructions(params: BuildBuyZapParams): Promis
       protocolFeeDestinationTokenAccount,
       protocolFeeDestination,
       tvlAccrual,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -215,6 +220,8 @@ export function devUsdcToReserveTokensRequested(
 }
 
 export interface BuildBuyZapDevUsdcParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   protocolConfig: PublicKey;
   /** See BuildBuyZapParams.protocolFeeDestination -- same instant mint-fee transfer, same source. */
@@ -257,6 +264,7 @@ export interface BuildBuyZapDevUsdcResult extends BuildZapResult {
  */
 export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcParams): Promise<BuildBuyZapDevUsdcResult> {
   const { program, protocolConfig, protocolFeeDestination, reserve, reserveTokenMint, mintAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw, devUsdcMint } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
 
   const reserveTokensRequested = devUsdcToReserveTokensRequested(
     params.devUsdcAmountRaw,
@@ -274,14 +282,14 @@ export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcP
   const instructions: TransactionInstruction[] = [];
   const legSources: { mint: string; source: "user-devusdc-balance" | "devnet-test-asset-faucet" }[] = [];
 
-  const depositorReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
-  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint));
+  const depositorReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
+  instructions.push(createAssociatedTokenAccountIdempotentInstruction(user, depositorReserveTokenAta, user, reserveTokenMint, reserveTokenProgram));
   // Consolidation (2026-08-17 corrective pass, see docs/project/DECISION_LOG.md):
   // when the Protocol fee-destination wallet IS this buyer's own, pass the
   // Option<Account> "None" sentinel instead of a second mutable account that
   // would resolve to the exact same ATA as depositorReserveTokenAta above --
   // see resolveProtocolFeeDestinationTokenAccount's doc comment (pda.ts).
-  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId);
+  const protocolFeeDestinationTokenAccount = resolveProtocolFeeDestinationTokenAccount(protocolFeeDestination, user, reserveTokenMint, program.programId, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
@@ -336,7 +344,7 @@ export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcP
       protocolFeeDestinationTokenAccount,
       protocolFeeDestination,
       tvlAccrual,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -348,6 +356,8 @@ export async function buildBuyZapInstructionsDevUsdc(params: BuildBuyZapDevUsdcP
 }
 
 export interface BuildSellZapParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
@@ -363,11 +373,12 @@ export interface BuildSellZapParams {
 
 export async function buildSellZapInstructions(params: BuildSellZapParams): Promise<BuildZapResult & { solLamportsOut: bigint }> {
   const { program, reserve, reserveTokenMint, vaultAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
 
   const balances: AssetBalance[] = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
   const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
 
-  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const redeemerReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
@@ -405,9 +416,9 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
       // like every other builder in this SDK.
       mintAuthority: findMintAuthority(reserve, program.programId)[0],
       feeSettlement: findFeeSettlement(reserve, program.programId)[0],
-      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId),
+      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId, reserveTokenProgram),
       feeVaultAuthority: findFeeVaultAuthority(reserve, program.programId)[0],
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -444,6 +455,8 @@ export async function buildSellZapInstructions(params: BuildSellZapParams): Prom
 }
 
 export interface BuildSellZapDevUsdcParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
@@ -482,11 +495,12 @@ export async function buildSellZapInstructionsDevUsdc(
   params: BuildSellZapDevUsdcParams,
 ): Promise<{ instructions: TransactionInstruction[]; assetAmountsRaw: bigint[]; devUsdcOutRaw: bigint }> {
   const { program, reserve, reserveTokenMint, vaultAuthority, user, swapAuthority, assets, reserveTokenSupplyRaw, devUsdcMint, devUsdcDecimals } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
 
   const balances: AssetBalance[] = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
   const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
 
-  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const redeemerReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
 
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
@@ -525,9 +539,9 @@ export async function buildSellZapInstructionsDevUsdc(
       // like every other builder in this SDK.
       mintAuthority: findMintAuthority(reserve, program.programId)[0],
       feeSettlement: findFeeSettlement(reserve, program.programId)[0],
-      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId),
+      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId, reserveTokenProgram),
       feeVaultAuthority: findFeeVaultAuthority(reserve, program.programId)[0],
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -567,6 +581,8 @@ export async function buildSellZapInstructionsDevUsdc(
 }
 
 export interface BuildRedeemToDevUsdcParams {
+  /** DEC-0229: the Reserve Token mint's program (classic for pre-DEC-0229 Reserves, Token-2022 after). Resolved from the mint (memoised) when omitted. */
+  reserveTokenProgram?: PublicKey;
   program: Program<anchor.Idl>;
   reserve: PublicKey;
   reserveTokenMint: PublicKey;
@@ -596,11 +612,12 @@ export async function buildRedeemToDevUsdcInstructions(
   params: BuildRedeemToDevUsdcParams,
 ): Promise<{ instructions: TransactionInstruction[]; devUsdcOutRaw: bigint }> {
   const { program, reserve, reserveTokenMint, vaultAuthority, user, assets, reserveTokenSupplyRaw } = params;
+  const reserveTokenProgram = params.reserveTokenProgram ?? (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint));
 
   const balances: AssetBalance[] = assets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) }));
   const entitlements = computeRedemptionEntitlements(params.reserveTokensToRedeem, params.redemptionFeeBps, BigInt(reserveTokenSupplyRaw), balances);
 
-  const redeemerReserveTokenAta = getAssociatedTokenAddressSync(reserveTokenMint, user);
+  const redeemerReserveTokenAta = assetAta(reserveTokenMint, user, reserveTokenProgram);
   const [tvlAccrual] = findTvlAccrual(reserve, program.programId);
   const remainingAccounts: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] = [];
   for (const leg of assets) {
@@ -633,9 +650,9 @@ export async function buildRedeemToDevUsdcInstructions(
       // like every other builder in this SDK.
       mintAuthority: findMintAuthority(reserve, program.programId)[0],
       feeSettlement: findFeeSettlement(reserve, program.programId)[0],
-      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId),
+      feeVault: findFeeVaultAta(reserve, reserveTokenMint, program.programId, reserveTokenProgram),
       feeVaultAuthority: findFeeVaultAuthority(reserve, program.programId)[0],
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })

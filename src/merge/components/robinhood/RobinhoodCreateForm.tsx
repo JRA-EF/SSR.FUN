@@ -360,10 +360,6 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
       ticker: symbol.trim(),
       description,
       category,
-      // Manager buy/sell taxes are a Solana-side rule the EVM contracts do
-      // not implement; stored as 0 so the payload shape stays shared.
-      buyTaxPct: 0,
-      sellTaxPct: 0,
       ...(imageUrl ? { imageUrl } : {}),
       ...(headerImageUrl ? { headerImageUrl } : {}),
       ...(channelUrl ? { youtubeChannelUrl: channelUrl } : {}),
@@ -886,9 +882,6 @@ export function RobinhoodCreateForm({ chainPicker, chain, chainKey }: { chainPic
                     </p>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground italic">
-                  There is no Buy Tax or Sell Tax here: on {chainName} every mint and redemption is in kind against the contract. Buy Tax and Sell Tax apply only to secondary-market trades between holders, and are currently on hold.
-                </p>
               </div>
 
               <div className="space-y-4">

@@ -237,7 +237,7 @@ describe("src/merge/lib/createReserveClient.ts -- uploadReserveMetadata is clust
       requestedUrl = String(url);
       return { ok: true, json: async () => ({ id: "abc123" }) } as Response;
     }) as typeof fetch;
-    const uri = await uploadReserveMetadata("https://example.test", { name: "N", ticker: "T", description: "", category: "Other", buyTaxPct: 0, sellTaxPct: 0 });
+    const uri = await uploadReserveMetadata("https://example.test", { name: "N", ticker: "T", description: "", category: "Other" });
     expect(requestedUrl).to.equal("https://example.test/api/devnet/reserve-metadata");
     expect(uri).to.equal("https://example.test/api/devnet/reserve-metadata?id=abc123");
   });
@@ -248,7 +248,7 @@ describe("src/merge/lib/createReserveClient.ts -- uploadReserveMetadata is clust
       requestedUrl = String(url);
       return { ok: true, json: async () => ({ id: "xyz789" }) } as Response;
     }) as typeof fetch;
-    const uri = await uploadReserveMetadata("https://strategic-super-reserve.fun", { name: "N", ticker: "T", description: "", category: "Other", buyTaxPct: 0, sellTaxPct: 0 }, "mainnet");
+    const uri = await uploadReserveMetadata("https://strategic-super-reserve.fun", { name: "N", ticker: "T", description: "", category: "Other" }, "mainnet");
     expect(requestedUrl).to.equal("https://strategic-super-reserve.fun/api/mainnet/reserve-metadata");
     expect(uri).to.equal("https://strategic-super-reserve.fun/api/mainnet/reserve-metadata?id=xyz789");
     expect(uri).to.not.include("/api/devnet/");

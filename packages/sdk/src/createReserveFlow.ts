@@ -9,11 +9,11 @@
 // holding minted test assets without immediately seeding a Reserve with them).
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { assetAta, resolveLegTokenProgram, TOKEN_PROGRAM_ID as SPL_TOKEN_PROGRAM_ID } from "./tokenPrograms";
+import { assetAta, resolveLegTokenProgram, TOKEN_2022_PROGRAM_ID } from "./tokenPrograms";
 import * as anchor from "@anchor-lang/core";
 import { BN } from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
-import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "./pda";
+import { findReserve, findReserveTokenMint, findMintAuthority, findVaultAuthority, findReserveAsset, findReserveVault, findProtocolConfig, findManagerFeeRecipients, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta, findTransferFeeAuthority } from "./pda";
 import type { RecipientInput } from "./feeMath";
 
 export interface NewReserveAddresses {
@@ -23,6 +23,13 @@ export interface NewReserveAddresses {
   mintAuthority: PublicKey;
   vaultAuthority: PublicKey;
   protocolConfig: PublicKey;
+  /**
+   * DEC-0229: the Reserve Token mint's program. Every Reserve created from
+   * DEC-0229 on is Token-2022 (with the protocol transfer fee); a Reserve
+   * created earlier and resumed mid-creation keeps its classic SPL Token
+   * mint, so a resume must pass the program the mint actually has.
+   */
+  reserveTokenProgram: PublicKey;
 }
 
 /** Reads the live reserve_count and derives every address the new Reserve will have -- call this immediately before building the createReserve instruction. */
@@ -34,7 +41,7 @@ export async function deriveNewReserveAddresses(program: Program<anchor.Idl>, pr
   const [reserveTokenMint] = findReserveTokenMint(reserve, programId);
   const [mintAuthority] = findMintAuthority(reserve, programId);
   const [vaultAuthority] = findVaultAuthority(reserve, programId);
-  return { reserveId, reserve, reserveTokenMint, mintAuthority, vaultAuthority, protocolConfig };
+  return { reserveId, reserve, reserveTokenMint, mintAuthority, vaultAuthority, protocolConfig, reserveTokenProgram: TOKEN_2022_PROGRAM_ID };
 }
 
 /**
@@ -68,11 +75,13 @@ export async function buildCreateReserveInstruction(
       reserve: addresses.reserve,
       mintAuthority: addresses.mintAuthority,
       reserveTokenMint: addresses.reserveTokenMint,
+      // DEC-0229: the program creates every new Reserve Token mint as
+      // Token-2022 with the protocol transfer fee; this PDA holds both fee
+      // authorities. Not chosen by the caller -- create_reserve pins
+      // Token-2022 and both addresses by seeds.
+      transferFeeAuthority: findTransferFeeAuthority(program.programId)[0],
       manager,
-      // The RESERVE TOKEN mint itself is always classic SPL Token -- it is
-      // created by this program, not chosen by anyone (DEC-0201 changes only
-      // the ASSET side, see buildInitializeReserveAssetInstruction below).
-      tokenProgram: SPL_TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     } as any)
     .instruction();
@@ -170,7 +179,7 @@ export async function buildSeedReserveInstruction(
   seedAmounts: bigint[],
   initialReserveTokens: bigint,
 ): Promise<TransactionInstruction> {
-  const managerReserveTokenAta = getAssociatedTokenAddressSync(addresses.reserveTokenMint, manager);
+  const managerReserveTokenAta = assetAta(addresses.reserveTokenMint, manager, addresses.reserveTokenProgram);
   // DEC-0173: the initial seed mint is fee-charged like any other mint, and
   // -- exactly like mint_reserve_tokens_in_kind since Tier B (DEC-0184) --
   // BOTH the Protocol and Manager shares of that fee now crystallize into
@@ -187,7 +196,7 @@ export async function buildSeedReserveInstruction(
   // this Reserve's very first crystallization -- which the seed always is.
   const [feeSettlement] = findFeeSettlement(addresses.reserve, program.programId);
   const [feeVaultAuthority] = findFeeVaultAuthority(addresses.reserve, program.programId);
-  const feeVault = findFeeVaultAta(addresses.reserve, addresses.reserveTokenMint, program.programId);
+  const feeVault = findFeeVaultAta(addresses.reserve, addresses.reserveTokenMint, program.programId, addresses.reserveTokenProgram);
 
   // Time-weighted average TVL accumulator (see docs/project/DECISION_LOG.md):
   // the initial seed mint checkpoints it too, same as every other mint.
@@ -222,7 +231,7 @@ export async function buildSeedReserveInstruction(
       feeVault,
       feeVaultAuthority,
       tvlAccrual,
-      tokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: addresses.reserveTokenProgram,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     } as any)

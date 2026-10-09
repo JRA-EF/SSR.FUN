@@ -11,8 +11,15 @@ export interface ReserveMetadataPayload {
   ticker: string;
   description: string;
   category: string;
-  buyTaxPct: number;
-  sellTaxPct: number;
+  /**
+   * LEGACY (retired by DEC-0229). Reserves no longer carry a manager Buy/Sell
+   * tax and the app never writes these for a new payload. They survive only
+   * so a legacy payload that already carries them re-validates to the exact
+   * same bytes, and therefore the same content-addressed id. No reader uses them.
+   */
+  buyTaxPct?: number;
+  /** LEGACY (retired by DEC-0229); see buyTaxPct. */
+  sellTaxPct?: number;
   /**
    * Optional HTTPS URL of the Reserve's profile picture (this app's own
    * content-addressed /api/<cluster>/reserve-image?id=... store, or any
@@ -76,14 +83,12 @@ export function toWalletFacingMetadata(payload: ReserveMetadataPayload): WalletF
  */
 export const MAX_PAYLOAD_JSON_BYTES = 4_000;
 
-/** Tax percentages are stored and later consumed as literal percentages (0-100) by downstream fee math -- a value outside this range (e.g. -25 or 500) is never economically meaningful, so it's treated the same as a non-finite value below: normalized to 0 rather than persisted as garbage. */
-const MAX_TAX_PCT = 100;
-
 /** Generous cap on the stored profile-picture URL. This app's own content-addressed image store produces ~85-byte URLs; the bound exists (like MAX_PAYLOAD_JSON_BYTES) to reject a pathological/abusive value on this public endpoint, not as a realistic ceiling. */
 export const MAX_IMAGE_URL_BYTES = 500;
 
-function isValidTaxPct(v: unknown): v is number {
-  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_TAX_PCT;
+/** Legacy tax fields were normalized to a 0-100 percentage (anything else became 0); kept identical so legacy payloads hash the same. */
+function isLegacyTaxPct(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100;
 }
 
 /**
@@ -107,9 +112,16 @@ export function validateReserveMetadataPayload(body: unknown): ReserveMetadataPa
     ticker,
     description: typeof p.description === "string" ? p.description : "",
     category: typeof p.category === "string" ? p.category : "",
-    buyTaxPct: isValidTaxPct(p.buyTaxPct) ? p.buyTaxPct : 0,
-    sellTaxPct: isValidTaxPct(p.sellTaxPct) ? p.sellTaxPct : 0,
   };
+  // DEC-0229: Reserves carry no manager Buy/Sell tax, and new payloads from
+  // this app never include buyTaxPct/sellTaxPct. A LEGACY payload that does
+  // carry them keeps them, normalized exactly as before and in the same key
+  // position, so its JSON bytes -- and its content-addressed id -- never
+  // change. Every reader ignores the values.
+  if ("buyTaxPct" in p || "sellTaxPct" in p) {
+    payload.buyTaxPct = isLegacyTaxPct(p.buyTaxPct) ? p.buyTaxPct : 0;
+    payload.sellTaxPct = isLegacyTaxPct(p.sellTaxPct) ? p.sellTaxPct : 0;
+  }
 
   // Assigned AFTER the fixed fields above so it always serializes last --
   // key order is what keeps computeMetadataId deterministic across callers.

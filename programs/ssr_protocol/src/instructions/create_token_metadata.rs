@@ -29,7 +29,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_lang::solana_program::program::invoke_signed;
-use anchor_spl::token::Mint;
+use anchor_spl::token_interface::Mint;
 
 use super::common::require_reserve_permission;
 use crate::constants::{MINT_AUTHORITY_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED};
@@ -85,6 +85,110 @@ fn encode_create_metadata_v3(name: &str, symbol: &str, uri: &str, is_mutable: bo
     data
 }
 
+/// Metaplex `Create` instruction discriminator (the V1 create that supports
+/// Token-2022 mints).
+const CREATE_IX: u8 = 42;
+/// Metaplex `TokenStandard::Fungible` (enum index 2).
+const TOKEN_STANDARD_FUNGIBLE: u8 = 2;
+/// The instructions sysvar Metaplex Create reads.
+const SYSVAR_INSTRUCTIONS_ID: Pubkey = Pubkey::from_str_const("Sysvar1nstructions1111111111111111111111111");
+
+/// Borsh-encodes Metaplex's `Create` instruction data with `CreateArgs::V1`
+/// for an already-initialised fungible mint (DEC-0229, Token-2022 Reserve
+/// Tokens). Same reasoning as `encode_create_metadata_v3` for writing it
+/// out by hand. Layout, in order:
+///   u8  discriminator (42)
+///   u8  CreateArgs::V1 (0)
+///   str name, str symbol, str uri
+///   u16 seller_fee_basis_points
+///   u8  creators = None
+///   u8  primary_sale_happened = false
+///   u8  is_mutable
+///   u8  token_standard = Fungible (2)
+///   u8  collection = None, u8 uses = None, u8 collection_details = None
+///   u8  rule_set = None
+///   u8  decimals = None (the mint already exists; Metaplex reads it)
+///   u8  print_supply = None
+fn encode_create_v1_fungible(name: &str, symbol: &str, uri: &str, is_mutable: bool) -> Vec<u8> {
+    fn push_str(buf: &mut Vec<u8>, s: &str) {
+        buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        buf.extend_from_slice(s.as_bytes());
+    }
+    let mut data = Vec::with_capacity(64 + name.len() + symbol.len() + uri.len());
+    data.push(CREATE_IX);
+    data.push(0); // CreateArgs::V1
+    push_str(&mut data, name);
+    push_str(&mut data, symbol);
+    push_str(&mut data, uri);
+    data.extend_from_slice(&0u16.to_le_bytes()); // seller_fee_basis_points
+    data.push(0); // creators: None
+    data.push(0); // primary_sale_happened: false
+    data.push(u8::from(is_mutable));
+    data.push(TOKEN_STANDARD_FUNGIBLE);
+    data.push(0); // collection: None
+    data.push(0); // uses: None
+    data.push(0); // collection_details: None
+    data.push(0); // rule_set: None
+    data.push(0); // decimals: None
+    data.push(0); // print_supply: None
+    data
+}
+
+/// Metaplex `Create` (V1) CPI for a Token-2022 Reserve Token mint. Account
+/// order is Metaplex's: metadata, master_edition (none: the Metaplex program
+/// id stands in), mint, authority (mint authority, signer), payer (signer),
+/// update authority (same PDA, signer), system program, instructions
+/// sysvar, SPL token program. The last two arrive as remaining accounts,
+/// each pinned by address here.
+fn create_metadata_v1_token_2022<'info>(
+    ctx: &Context<'info, CreateTokenMetadata<'info>>,
+    name: &str,
+    symbol: &str,
+    uri: &str,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let [sysvar_instructions, token_program] = ctx.remaining_accounts else {
+        return Err(error!(SsrError::RemainingAccountsMismatch));
+    };
+    require_keys_eq!(
+        sysvar_instructions.key(),
+        SYSVAR_INSTRUCTIONS_ID,
+        SsrError::RemainingAccountsMismatch
+    );
+    require_keys_eq!(token_program.key(), anchor_spl::token_2022::ID, SsrError::UnsupportedTokenProgram);
+
+    let ix = Instruction {
+        program_id: METAPLEX_TOKEN_METADATA_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(ctx.accounts.metadata.key(), false),
+            AccountMeta::new_readonly(METAPLEX_TOKEN_METADATA_PROGRAM_ID, false),
+            AccountMeta::new(ctx.accounts.reserve_token_mint.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.mint_authority.key(), true),
+            AccountMeta::new(ctx.accounts.payer.key(), true),
+            AccountMeta::new_readonly(ctx.accounts.mint_authority.key(), true),
+            AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
+            AccountMeta::new_readonly(sysvar_instructions.key(), false),
+            AccountMeta::new_readonly(token_program.key(), false),
+        ],
+        data: encode_create_v1_fungible(name, symbol, uri, true),
+    };
+    invoke_signed(
+        &ix,
+        &[
+            ctx.accounts.metadata.to_account_info(),
+            ctx.accounts.metadata_program.to_account_info(),
+            ctx.accounts.reserve_token_mint.to_account_info(),
+            ctx.accounts.mint_authority.to_account_info(),
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            sysvar_instructions.clone(),
+            token_program.clone(),
+        ],
+        signer_seeds,
+    )?;
+    Ok(())
+}
+
 /// Metaplex's own limits for the on-chain Metadata account's inline fields.
 /// Checked here so an over-long value fails with a named SSR error before the
 /// CPI, rather than as an opaque Metaplex failure.
@@ -105,7 +209,7 @@ pub struct CreateTokenMetadata<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: Account<'info, Mint>,
+    pub reserve_token_mint: InterfaceAccount<'info, Mint>,
 
     /// CHECK: signer-only PDA, verified by seeds against the Reserve's cached
     /// bump. This is the mint authority Metaplex requires as a signer, and the
@@ -182,6 +286,28 @@ pub fn handler<'info>(
     ];
     let signer_seeds = &[mint_authority_seeds];
 
+    // DEC-0229: a Token-2022 Reserve Token (every Reserve created from
+    // DEC-0229 on) cannot use CreateMetadataAccountV3 -- Metaplex refuses it
+    // there ("Instruction not supported", 0x99, verified on DevNet
+    // 2026-10-07). Those mints go through Metaplex's `Create` (V1) instead,
+    // which needs the instructions sysvar and the mint's token program; the
+    // caller passes both as remaining accounts so the account list of this
+    // instruction (and every existing classic-Reserve caller) is unchanged.
+    if *ctx.accounts.reserve_token_mint.to_account_info().owner == anchor_spl::token_2022::ID {
+        create_metadata_v1_token_2022(&ctx, &name, &symbol, &uri, signer_seeds)?;
+        emit!(TokenMetadataPublished {
+            reserve: reserve_key,
+            reserve_token_mint: ctx.accounts.reserve_token_mint.key(),
+            metadata: ctx.accounts.metadata.key(),
+            name,
+            symbol,
+            uri,
+            published_by: ctx.accounts.payer.key(),
+            ts: Clock::get()?.unix_timestamp,
+        });
+        return Ok(());
+    }
+
     // is_mutable: a manager can already rename or re-picture a Reserve
     // off-chain (update_metadata), so the on-chain record must be able to
     // follow rather than being frozen at creation.
@@ -252,6 +378,25 @@ mod tests {
         expected.extend_from_slice(b"https://x");
         expected.extend_from_slice(&0u16.to_le_bytes());
         expected.extend_from_slice(&[0, 0, 0, 1, 0]);
+        assert_eq!(data, expected);
+    }
+
+    /// DEC-0229: pins the Metaplex Create (V1) wire format used for
+    /// Token-2022 Reserve Tokens.
+    #[test]
+    fn encodes_create_v1_fungible_exactly() {
+        let data = encode_create_v1_fungible("Strategic Solana Reserve", "SOLSSR", "https://x", true);
+        let mut expected = vec![42u8, 0];
+        expected.extend_from_slice(&24u32.to_le_bytes());
+        expected.extend_from_slice(b"Strategic Solana Reserve");
+        expected.extend_from_slice(&6u32.to_le_bytes());
+        expected.extend_from_slice(b"SOLSSR");
+        expected.extend_from_slice(&9u32.to_le_bytes());
+        expected.extend_from_slice(b"https://x");
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        // creators, primary_sale_happened, is_mutable, token_standard,
+        // collection, uses, collection_details, rule_set, decimals, print_supply
+        expected.extend_from_slice(&[0, 0, 1, 2, 0, 0, 0, 0, 0, 0]);
         assert_eq!(data, expected);
     }
 

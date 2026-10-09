@@ -42,7 +42,7 @@ function baseDtr(overrides: Partial<DTR> = {}): DTR {
     dtrAddress: "Reserve1111111111111111111111111111111111",
     managerAddress: "Manager111111111111111111111111111111111111",
     delegates: [],
-    feeConfig: { mintFeePct: 0, tvlFeePct: 0, managerBuyTaxPct: 0, managerSellTaxPct: 0, creatorFeeDestination: "Manager111111111111111111111111111111111111", feeRecipients: [] },
+    feeConfig: { mintFeePct: 0, tvlFeePct: 0, creatorFeeDestination: "Manager111111111111111111111111111111111111", feeRecipients: [] },
     tokenPrice: 1,
     nav: 1,
     aum: 100,

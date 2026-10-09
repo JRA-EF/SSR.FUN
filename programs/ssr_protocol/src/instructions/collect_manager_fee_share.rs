@@ -19,7 +19,7 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Mint as SplMint, MintTo, Token, TokenAccount as SplTokenAccount};
+use anchor_spl::token_interface::{self, Mint as SplMint, MintTo, TokenInterface, TokenAccount as SplTokenAccount};
 
 use crate::constants::{MANAGER_FEE_RECIPIENTS_SEED, MINT_AUTHORITY_SEED, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED};
 use crate::errors::SsrError;
@@ -41,7 +41,7 @@ pub struct CollectManagerFeeShare<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: Account<'info, SplMint>,
+    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -75,10 +75,11 @@ pub struct CollectManagerFeeShare<'info> {
         payer = recipient,
         associated_token::mint = reserve_token_mint,
         associated_token::authority = recipient,
+        associated_token::token_program = token_program,
     )]
-    pub recipient_token_account: Account<'info, SplTokenAccount>,
+    pub recipient_token_account: InterfaceAccount<'info, SplTokenAccount>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -134,7 +135,7 @@ pub fn handler<'info>(ctx: Context<'info, CollectManagerFeeShare<'info>>) -> Res
     };
     let cpi_ctx =
         CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
-    token::mint_to(cpi_ctx, amount)?;
+    token_interface::mint_to(cpi_ctx, amount)?;
 
     emit!(ManagerFeeShareCollected {
         reserve: reserve_key,
