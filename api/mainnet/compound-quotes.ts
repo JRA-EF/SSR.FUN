@@ -36,8 +36,8 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
   try {
     const snapshot=await readCompoundSnapshot({connection,program:buildReadOnlyProgram(connection) as any,programId:PROGRAM_ID},input);
     const mints=snapshot.assets.map(a=>a.mint).filter(m=>m!==LIQUIDITY_USDC.toBase58());
-    // A missing Jupiter key/pricing service disables only the mint route.
-    const prices=process.env.JUPITER_API_KEY?await fetchJupiterPrices(mints).catch(()=>new Map()):new Map();
+    // Use the official endpoint with an optional configured key. Service failures disable only mint.
+    const prices=await fetchJupiterPrices(mints).catch(()=>new Map());
     const plans:Record<string,unknown>={};
     const comparison=await compareLiveCompound(snapshot,{jupiterApiKey:process.env.JUPITER_API_KEY??'',prices,recordPlan:(id,plan)=>{plans[id]=plan;}});
     const acquisitionPlans=Object.fromEntries(comparison.quotes.map(q=>[q.planFingerprint,plans[q.planFingerprint]]));

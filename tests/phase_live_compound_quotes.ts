@@ -65,7 +65,7 @@ describe('Live Compound quote providers (offline RPC/Jupiter fixtures)',()=>{
   it('keeps pool quotes available when prices, API access or exact-output basket routes are unavailable',async()=>{
     const s=snapshot(),d=deps(s,{prices:new Map(),jupiterApiKey:''});
     const comparison=await compareCompoundRoutes(s.context,createLiveCompoundProviders(s,d),()=>NOW);
-    expect(comparison.quotes.map(q=>q.route)).deep.eq(['pool']);expect(comparison.unavailable.mint).contain('Jupiter');
+    expect(comparison.quotes.map(q=>q.route)).deep.eq(['pool']);expect(comparison.unavailable.mint).contain('valuation');
   });
   it('does not replace unsupported ExactOut routes with a fabricated mint quote',async()=>{
     const s=snapshot();await rejects(()=>createLiveCompoundProviders(s,deps(s,{quote:async()=>({kind:'specific-error',message:'ExactOut unsupported'})})).mint(),'ExactOut unsupported');

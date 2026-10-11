@@ -33,7 +33,7 @@ async function fixture(){
   // Accrued fees must be excluded from usable liquidity.
   p.data.writeBigUInt64LE(100n,341);p.data.writeBigUInt64LE(200n,357);p.data.writeBigUInt64LE(300n,397);set(pool,p);
   const config=native('AmmConfig',236);config.data.writeUInt16LE(9,10);for(const [offset,value] of [[12,2500n],[20,120000n],[28,40000n],[108,7500n],[116,50000n]] as const)config.data.writeBigUInt64LE(value,offset);set(SSR_CPMM_CONFIG,config);
-  set(rt,mintInfo(TOKEN_2022_PROGRAM_ID));set(lp,mintInfo(TOKEN_PROGRAM_ID));set(asset,mintInfo(TOKEN_PROGRAM_ID));
+  set(rt,mintInfo(TOKEN_2022_PROGRAM_ID));set(lp,mintInfo(TOKEN_PROGRAM_ID,999_999_900n));set(asset,mintInfo(TOKEN_PROGRAM_ID));
   set(v0,tokenInfo(m0,authority,1_000_000_000n,m0.equals(rt)?TOKEN_2022_PROGRAM_ID:TOKEN_PROGRAM_ID));
   set(v1,tokenInfo(m1,authority,1_000_000_000n,m1.equals(rt)?TOKEN_2022_PROGRAM_ID:TOKEN_PROGRAM_ID));
   set(vault,tokenInfo(asset,findVaultAuthority(reserve,id)[0],1_000_000_000n));
@@ -54,6 +54,11 @@ describe('Compound contextual account snapshot',()=>{
     const clock=f.map.get(SYSVAR_CLOCK_PUBKEY.toBase58())!.data;clock.writeBigUInt64LE(1001n,0);clock.writeBigInt64LE(1800000001n,32);expect((await f.run()).context.stateFingerprint).eq(hash);
     clock.writeBigUInt64LE(101n,16);expect((await f.run()).context.stateFingerprint).not.eq(hash);clock.writeBigUInt64LE(100n,16);
     f.map.get(f.vault.toBase58())!.data.writeBigUInt64LE(2_000_000_000n,64);expect((await f.run()).context.stateFingerprint).not.eq(hash);
+  });
+  it('uses internal LP supply including withheld initial liquidity and rejects impossible minted supply',async()=>{
+    const f=await fixture();expect((await f.run()).lpSupply).eq(1_000_000_000n);
+    f.map.get(f.lp.toBase58())!.data.writeBigUInt64LE(1_000_000_001n,36);
+    await fails(f.run,'LP supply mismatch');
   });
   it('rejects missing revenue registration rather than inventing tax/treasury defaults',async()=>{const f=await fixture();f.map.delete(findLiquidityRevenue(f.reserve,id).toBase58());await fails(f.run,'owner mismatch');});
   it('rejects account substitution, disabled pools, unsupported retention and insufficient treasury funds',async()=>{

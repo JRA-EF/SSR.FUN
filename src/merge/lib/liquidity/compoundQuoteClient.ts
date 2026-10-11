@@ -42,3 +42,19 @@ export async function fetchLiveCompoundQuotes(request:LiveCompoundRequest,signal
   if(!response.ok)throw new Error(typeof wire?.error==='string'?wire.error:'Compound quotes are unavailable');
   return decodeLiveCompoundResponse(wire,request);
 }
+
+export interface LiveCompoundBundle {comparison:CompoundComparison;acquisitionPlans:Record<string,unknown>;}
+/** Preserve the reviewed provider plan for exact-route preparation. */
+export async function fetchLiveCompoundBundle(request:LiveCompoundRequest,signal?:AbortSignal):Promise<LiveCompoundBundle> {
+  const response=await fetch('/api/mainnet/compound-quotes',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(request,(_key,v)=>typeof v==='bigint'?v.toString():v),signal,cache:'no-store'});
+  const wire=await response.json();
+  if(!response.ok)throw new Error(typeof wire?.error==='string'?wire.error:'Compound quotes are unavailable');
+  const comparison=decodeLiveCompoundResponse(wire,request);
+  const acquisitionPlans=Object.fromEntries(comparison.quotes.map(q=>{
+    const plan=wire.acquisitionPlans?.[q.planFingerprint];
+    if(!plan||typeof plan!=='object')throw new Error('Compound acquisition plan is missing');
+    return [q.planFingerprint,plan];
+  }));
+  return {comparison,acquisitionPlans};
+}

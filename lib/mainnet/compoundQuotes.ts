@@ -37,6 +37,7 @@ export function transferGross(net: bigint, fee: TransferFee | null): bigint {
 }
 export interface CompoundAsset {
   mint: string; decimals: number; balance: bigint; transferFee: TransferFee|null;
+  tokenProgram?: string; reserveAsset?:string; vault?:string;
 }
 export interface CompoundSnapshot {
   context: CompoundContext;
@@ -49,6 +50,9 @@ export interface CompoundSnapshot {
   mintAllowed: boolean;
   /** Explicit pre-execution allowances, not claimed actual costs. */
   accountRentRaw: bigint;
+  treasury?:string; protocolTreasury?:string; reserveDecimals?:number; lpDecimals?:number;
+  treasuryUsdcRaw?:bigint; treasuryReserveRaw?:bigint; treasuryLpRaw?:bigint;
+  poolAccounts?: {pool:PublicKey;mint0:PublicKey;mint1:PublicKey;vault0:PublicKey;vault1:PublicKey;program0:PublicKey;program1:PublicKey};
 }
 export interface CompoundQuoteInput {
   reserve: PublicKey; pool: PublicKey; creator: PublicKey;
@@ -73,7 +77,7 @@ export async function readCompoundSnapshot(deps: CompoundReadDeps, input: Compou
   const rows=await connection.getProgramAccounts(programId,{commitment:'confirmed',filters:[
     {dataSize:111},{memcmp:{offset:8,bytes:input.reserve.toBase58()}}]});
   check(rows.length>0&&rows.length<=12,'Reserve basket registrations unavailable');
-  const registrations=rows.map(row=>({key:row.pubkey,data:program.coder.accounts.decode('reserveAsset',row.account.data)}));
+  const registrations=rows.map(row=>({key:row.pubkey,data:program.coder.accounts.decode('reserveAsset',row.account.data)})).sort((a,b)=>a.data.orderIndex-b.data.orderIndex);
   const revenue=findLiquidityRevenue(input.reserve,programId);
   const initialPool=decodePool(await connection.getAccountInfo(input.pool,'confirmed'),mint,revenue);
   const canonical=PublicKey.findProgramAddressSync([Buffer.from('pool'),SSR_CPMM_CONFIG.toBuffer(),initialPool.mint0.toBuffer(),initialPool.mint1.toBuffer()],RAYDIUM_CPMM)[0];
@@ -120,9 +124,10 @@ export async function readCompoundSnapshot(deps: CompoundReadDeps, input: Compou
     check(a.amount>fees,'Pool has no usable liquidity'); return a.amount-fees;
   });
   const lpMint=unpackMint(lp,own(6,TOKEN_PROGRAM_ID),TOKEN_PROGRAM_ID), lpSupply=poolData.readBigUInt64LE(333);
-  check(lpSupply>0n&&lpMint.supply===lpSupply,'Pool LP supply mismatch');
+  check(lpSupply>0n&&lpMint.supply<=lpSupply,'Pool LP supply mismatch');
   const funds=unpackAccount(treasuryUsdc,own(10,TOKEN_PROGRAM_ID),TOKEN_PROGRAM_ID);
   check(funds.owner.equals(treasury)&&funds.mint.equals(LIQUIDITY_USDC)&&!funds.isFrozen&&funds.amount>=input.budgetUsdcRaw,'Creator treasury has insufficient settled earnings');
+  check(input.lpDestination.equals(getAssociatedTokenAddressSync(lp,treasury,true)),'LP destination must be the fixed treasury associated account');
   if(infos[12]) { const dest=unpackAccount(input.lpDestination,own(12,TOKEN_PROGRAM_ID),TOKEN_PROGRAM_ID);check(dest.owner.equals(treasury)&&dest.mint.equals(lp)&&!dest.isFrozen,'LP destination must belong to the fixed creator treasury'); }
   else check(input.lpDestination.equals(getAssociatedTokenAddressSync(lp,treasury,true)),'Missing LP destination must be the creator treasury account');
   let rent=0n;
@@ -142,10 +147,10 @@ export async function readCompoundSnapshot(deps: CompoundReadDeps, input: Compou
     const hook=getTransferHook(assetMint);
     check(!hook||hook.programId.equals(PublicKey.default),'Active basket transfer hooks are unsupported');
     const vault=findReserveVault(input.reserve,assets[i],programId)[0];
-    check(new PublicKey(row.vault).equals(vault)&&row.enabled&&row.decimals===assetMint.decimals,'Invalid basket registration');
+    check(new PublicKey(row.vault).equals(vault)&&row.enabled&&row.orderIndex===i&&row.decimals===assetMint.decimals,'Invalid basket registration');
     const account=unpackAccount(vault,own(14+2*n+i,assetInfo.owner),assetInfo.owner);
     check(account.mint.equals(assets[i])&&account.owner.equals(findVaultAuthority(input.reserve,programId)[0])&&account.isInitialized&&!account.isFrozen&&account.amount>0n,'Invalid basket balance');
-    return {mint:assets[i].toBase58(),decimals:assetMint.decimals,balance:account.amount,transferFee:fee};
+    return {mint:assets[i].toBase58(),decimals:assetMint.decimals,balance:account.amount,transferFee:fee,tokenProgram:assetInfo.owner.toBase58(),reserveAsset:r.key.toBase58(),vault:vault.toBase58()};
   });
   check(new Set(registrations.map((_,i)=>program.coder.accounts.decode('reserveAsset',infos[14+i]!.data).orderIndex)).size===assets.length,'Duplicate basket order');
   check(infos[2]!.data.readBigUInt64LE(20)+infos[2]!.data.readBigUInt64LE(28)<=D,'Invalid pool fee split');
@@ -153,7 +158,10 @@ export async function readCompoundSnapshot(deps: CompoundReadDeps, input: Compou
     stateFingerprint:digest(keys.map((key,i)=>[key.toBase58(),infos[i]?.owner.toBase58()??null,i===9?epoch.toString():infos[i]?.data.toString('base64')??null])),slippageBps:input.slippageBps,lpDestination:input.lpDestination.toBase58(),lockPolicyId:input.lockPolicyId};
   validateCompoundContext(context);
   return {context,readAtMs,epoch,usdc:balances[usdc0?0:1],tokens:balances[usdc0?1:0],lpSupply,reserveSupply:rt.supply,mintFeeBps:computeTransactionFeeSplit(BigInt(reserve.feeConfig.mintFeeBps)).effectiveTotalBps,
-    buyTaxBps:router.buyTaxBps,protocolRate:infos[2]!.data.readBigUInt64LE(20),fundRate:infos[2]!.data.readBigUInt64LE(28),reserveTransferFee:feeFor(rt),assets:basket,mintAllowed:!!reserve.status.active,accountRentRaw:rent};
+    buyTaxBps:router.buyTaxBps,protocolRate:infos[2]!.data.readBigUInt64LE(20),fundRate:infos[2]!.data.readBigUInt64LE(28),reserveTransferFee:feeFor(rt),assets:basket,mintAllowed:!!reserve.status.active,accountRentRaw:rent,
+    treasury:treasury.toBase58(),protocolTreasury:new PublicKey(protocol.defaultProtocolFeeDestination).toBase58(),reserveDecimals:rt.decimals,lpDecimals:lpMint.decimals,
+    treasuryUsdcRaw:funds.amount,treasuryReserveRaw:infos[11]?unpackAccount(treasuryRt,infos[11],TOKEN_2022_PROGRAM_ID).amount:0n,
+    treasuryLpRaw:infos[12]?unpackAccount(input.lpDestination,infos[12],TOKEN_PROGRAM_ID).amount:0n,poolAccounts:{pool:input.pool,...pool}};
 }
 
 /** Raydium uses a special ceiling: a sub-unit deposit rounds to ZERO and fails. */
@@ -198,6 +206,9 @@ function usdValue(amount:bigint,decimals:number,price:number):bigint {
   const digits=BigInt(whole+fraction)*amount;
   return exponent>=0?digits*10n**BigInt(exponent):digits/10n**BigInt(-exponent);
 }
+export function compoundPlanFingerprint(context:CompoundContext,route:CompoundRoute,plan:unknown,network:bigint,rent:bigint):string {
+  return digest([context,route,plan,network,rent]);
+}
 function finish(s:CompoundSnapshot,route:CompoundRoute,acquisition:bigint,acquired:bigint,a:ReturnType<typeof allocation>,costs:CompoundCost[],plan:unknown,now:()=>number,recordPlan?:CompoundProviderDeps['recordPlan']):CompoundQuote {
   check(now()-s.readAtMs<25_000,'Live snapshot expired; refresh both routes');
   // Bounded multi-step planning allowance. Exact fees/rent await construction
@@ -206,7 +217,7 @@ function finish(s:CompoundSnapshot,route:CompoundRoute,acquisition:bigint,acquir
   const network=BigInt(legs+2)*2_000_000n;
   const rent=s.accountRentRaw+BigInt(legs)*10_000_000n;
   costs.push({kind:'networkFee',unit:'SOL',amountRaw:network},{kind:'accountRent',unit:'SOL',amountRaw:rent});
-  const planFingerprint=digest([s.context,route,plan,network,rent]);
+  const planFingerprint=compoundPlanFingerprint(s.context,route,plan,network,rent);
   recordPlan?.(planFingerprint,plan);
   return {id:planFingerprint,route,context:s.context,quotedAtMs:s.readAtMs,expiresAtMs:s.readAtMs+25_000,planFingerprint,
     acquisitionUsdcRaw:acquisition,depositUsdcRaw:a.dollars,leftoverUsdcRaw:s.context.budgetUsdcRaw-acquisition-a.dollars,
@@ -240,7 +251,6 @@ export function createLiveCompoundProviders(s:CompoundSnapshot,deps:CompoundProv
   const mint=async ():Promise<CompoundQuote>=>{
     check(s.mintAllowed,'Primary mint is unavailable for this Reserve');
     check(s.assets.every(a=>!a.transferFee||a.transferFee.transferFeeBasisPoints===0),'Fee-on-transfer reserve assets are unsupported for primary mint');
-    check(deps.jupiterApiKey||s.assets.every(a=>a.mint===LIQUIDITY_USDC.toBase58()),'Jupiter is not configured for basket quotes');
     check(s.mintFeeBps<10_000n,'Mint fee consumes the output');
     check(s.assets.every(a=>a.mint===LIQUIDITY_USDC.toBase58()||((deps.prices.get(a.mint)?.blockId??-1)>=s.context.snapshotSlot-150&&deps.prices.get(a.mint)?.decimals===a.decimals)),'Basket valuation is stale or has different decimals');
     const prices=s.assets.map(a=>a.mint===LIQUIDITY_USDC.toBase58()?1:deps.prices.get(a.mint)?.usdPrice);
@@ -267,7 +277,7 @@ export function createLiveCompoundProviders(s:CompoundSnapshot,deps:CompoundProv
         check(q.inputMint===LIQUIDITY_USDC.toBase58()&&q.outputMint===asset.mint&&q.swapMode==='ExactOut'&&q.slippageBps===s.context.slippageBps&&raw(q.outAmount)===required,'Jupiter returned a different basket route');
         check(typeof q.contextSlot==='number'&&q.contextSlot>=s.context.snapshotSlot-150,'Jupiter quote is stale');
         const expected=raw(q.inAmount),maximum=raw(q.otherAmountThreshold);
-        check(expected>0n&&maximum>=expected&&maximum<=ceil(expected*BigInt(10_000+s.context.slippageBps),10_000n)+1n,'Invalid Jupiter input cap');
+        check(expected>0n&&maximum>=ceil(expected*BigInt(10_000+s.context.slippageBps),10_000n)&&maximum<=ceil(expected*BigInt(10_000+s.context.slippageBps),10_000n)+1n,'Invalid Jupiter input cap');
         const impact=Number(q.priceImpactPct);check(Number.isFinite(impact)&&Math.abs(impact)<=0.15,'Basket price impact is too high or unavailable');
         check(Array.isArray(q.routePlan)&&q.routePlan.length>0,'Jupiter execution plan unavailable');
         check(q.routePlan.every((hop:any)=>hop?.swapInfo?.ammKey!==s.context.pool),'Basket acquisition must not change the canonical pool');

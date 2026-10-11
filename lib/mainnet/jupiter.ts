@@ -134,7 +134,7 @@ export async function fetchJupiterQuoteWithRetry(p: JupiterQuoteParams): Promise
   return withJupiterRetry<JupiterQuote>(async () => {
     try {
       const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${p.inputMint}&outputMint=${p.outputMint}&amount=${p.amount.toString()}&slippageBps=${p.slippageBps}&swapMode=${p.swapMode ?? 'ExactIn'}${p.maxAccounts !== null ? `&maxAccounts=${p.maxAccounts}` : ""}${excludedDexesParam()}`;
-      const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": p.apiKey } });
+      const quoteRes = await fetch(quoteUrl, { headers: p.apiKey ? { "x-api-key": p.apiKey } : {} });
       if (!quoteRes.ok) {
         // Read the RAW text once (never .json() directly) so a genuinely
         // non-JSON response is still visible in server logs.
@@ -234,6 +234,9 @@ export interface JupiterBuildParams {
   apiKey: string;
   /** Optional: deliver the swap OUTPUT into this existing token account instead of the user's ATA (Jupiter `destinationTokenAccount`). Used by the fee-settlement keeper to land USDC directly in a Reserve's settlement staging ATA. */
   destinationTokenAccount?: string;
+  /** Compound must preserve its reviewed input caps. Existing callers retain their default. */
+  dynamicSlippage?: boolean;
+  useSharedAccounts?: boolean;
 }
 
 /**
@@ -256,12 +259,13 @@ async function attemptBuild(p: JupiterBuildParams, mode: "transaction" | "instru
   try {
     const swapRes = await fetch(mode === "instructions" ? JUPITER_SWAP_INSTRUCTIONS_URL : JUPITER_SWAP_URL, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": p.apiKey },
+      headers: { "content-type": "application/json", ...(p.apiKey ? { "x-api-key": p.apiKey } : {}) },
       body: JSON.stringify({
         quoteResponse: p.quote,
         userPublicKey: p.userPublicKey,
         dynamicComputeUnitLimit: true,
-        dynamicSlippage: true,
+        dynamicSlippage: p.dynamicSlippage ?? true,
+        ...(p.useSharedAccounts === undefined ? {} : {useSharedAccounts:p.useSharedAccounts}),
         wrapAndUnwrapSol: false,
         ...(p.destinationTokenAccount ? { destinationTokenAccount: p.destinationTokenAccount } : {}),
       }),

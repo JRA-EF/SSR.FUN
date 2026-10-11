@@ -104,9 +104,9 @@ pub struct DistributeLiquidityRevenue<'info> {
     pub revenue: Account<'info, LiquidityRevenue>,
     #[account(mut, constraint = staging.owner == revenue.key() && staging.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
     pub staging: Account<'info, TokenAccount>,
-    #[account(mut, constraint = protocol_destination.owner == protocol_config.default_protocol_fee_destination && protocol_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
+    #[account(mut, dup, constraint = protocol_destination.owner == protocol_config.default_protocol_fee_destination && protocol_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
     pub protocol_destination: Account<'info, TokenAccount>,
-    #[account(mut, constraint = creator_destination.owner == revenue.treasury && creator_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
+    #[account(mut, dup, constraint = creator_destination.owner == revenue.treasury && creator_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
     pub creator_destination: Account<'info, TokenAccount>,
     /// CHECK: config validated before distribution. Changes fail closed.
     #[account(address = AMM_CONFIG)] pub amm_config: UncheckedAccount<'info>,
@@ -144,6 +144,10 @@ pub fn distribute(ctx: Context<DistributeLiquidityRevenue>) -> Result<()> {
 
 #[derive(Accounts)]
 pub struct SwapWithProjectTax<'info> {
+    // Fixed recipient accounts may coincide with the user's USDC ATA when
+    // the creator compounds. SPL Token owns these accounts; Anchor does not
+    // serialize cached balances back over CPI updates. `dup` preserves that
+    // valid self-recipient case while retaining fixed-owner/mint constraints.
     pub user: Signer<'info>,
     #[account(seeds = [PROTOCOL_CONFIG_SEED], bump = protocol_config.bump)]
     pub protocol_config: Account<'info, ProtocolConfig>,
@@ -151,9 +155,9 @@ pub struct SwapWithProjectTax<'info> {
     pub revenue: Account<'info, LiquidityRevenue>,
     #[account(mut, constraint = user_usdc.owner == user.key() && user_usdc.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
     pub user_usdc: Account<'info, TokenAccount>,
-    #[account(mut, constraint = protocol_destination.owner == protocol_config.default_protocol_fee_destination && protocol_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
+    #[account(mut, dup, constraint = protocol_destination.owner == protocol_config.default_protocol_fee_destination && protocol_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
     pub protocol_destination: Account<'info, TokenAccount>,
-    #[account(mut, constraint = creator_destination.owner == revenue.treasury && creator_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
+    #[account(mut, dup, constraint = creator_destination.owner == revenue.treasury && creator_destination.mint == USDC @ SsrError::LiquidityRevenueValidationFailed)]
     pub creator_destination: Account<'info, TokenAccount>,
     /// CHECK: address pins CPI to Raydium.
     #[account(address = RAYDIUM, executable)] pub raydium_program: UncheckedAccount<'info>,
@@ -164,7 +168,7 @@ pub fn tax_split(amount: u64, bps: u16) -> Result<(u64,u64)> {
     require!(bps<=200, SsrError::LiquidityRevenueValidationFailed);
     let total = u64::try_from((amount as u128 * bps as u128 + 9999)/10000).map_err(|_| error!(SsrError::MathOverflow))?;
     // Protocol receives rounding remainder; zero tax yields zero shares.
-    let creator = total * 3 / 4;
+    let creator = ((total as u128) * 3 / 4) as u64;
     Ok((total-creator, creator))
 }
 pub fn taxed_swap<'info>(ctx: Context<'info, SwapWithProjectTax<'info>>, buy: bool, amount_in: u64, minimum_net_out: u64) -> Result<()> {
@@ -224,6 +228,10 @@ mod tests {
     #[test] fn optional_tax_conserves_and_zero_is_zero() {
         assert_eq!(tax_split(1_000_000,200).unwrap(),(5000,15000));
         assert_eq!(tax_split(1_000_000,0).unwrap(),(0,0));
+        let (p,c)=tax_split(u64::MAX,200).unwrap();
+        let total=((u64::MAX as u128)*200+9999)/10000;
+        assert_eq!((p as u128)+(c as u128),total);
+        assert_eq!(c as u128,total*3/4);
         for n in 0..1000 {let(p,c)=tax_split(n,100).unwrap();assert_eq!(p+c,(n+99)/100);}
     }
     #[test] fn pool_identity_pair_and_fee_side_are_enforced() {

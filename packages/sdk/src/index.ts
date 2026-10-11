@@ -37,3 +37,5 @@ export * from "./transferFeeInstructions";
 export * from "./liquidityRevenue";
 
 export * from "./compoundRoutes";
+
+export * from "./raydiumCpmmInstructions";

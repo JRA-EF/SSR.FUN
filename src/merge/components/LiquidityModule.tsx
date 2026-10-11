@@ -10,15 +10,18 @@
  *  - LiquidityFirstMintIntro: the split-layout prompt shown on the Reserve
  *    page right after the root Manager's own first mint.
  *
- * Everything here renders DESIGN-PREVIEW state (see
+ * Local examples render DESIGN-PREVIEW state (see
  * src/merge/lib/liquidityPreview.ts and docs/project/LIQUIDITY_MODULE_SPEC.md)
- * and says so on-screen: no funds move, no pool is created on any chain, and
+ * and say so on-screen. Mainnet Reserves use LiveLiquiditySection for real
+ * quote/simulation review. No funds move, no pool is created on any chain, and
  * nothing is ever presented as a confirmed transaction. Chain-aware DEX rule:
  * all DEX naming comes from dexInfoFor(reserveChain(dtr)) -- Raydium for a
  * Solana Reserve, Uniswap for a Robinhood Reserve -- never hardcoded.
  */
 
 import { useState } from "react";
+import { LiveLiquiditySection } from "./LiveLiquiditySection";
+import { IS_MAINNET } from "@/lib/solana-config";
 import { CompoundRouteReview } from "./CompoundRouteReview";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
@@ -351,6 +354,7 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
   const [poolAddressCopied, setPoolAddressCopied] = useState(false);
 
   if (dtr.managerAddress !== wallet.address) return null;
+  if (IS_MAINNET && dtr.onChain && reserveChain(dtr) === "solana") return <LiveLiquiditySection dtr={dtr} />;
 
   const chain = reserveChain(dtr);
   const dex = dexInfoFor(chain);
