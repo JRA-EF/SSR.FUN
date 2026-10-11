@@ -1,6 +1,6 @@
 /** Raydium cp-swap b3187ae53a1b95a201f855a59024a12ca8f5b51a.
  * Read/prepare only: this adapter never signs or submits transactions.
- * Compound deliberately has no builder until OPEN-13 is resolved.
+ * Compound acquisition policy is resolved by DEC-0233; live execution is not implemented.
  */
 import { PublicKey, SystemProgram, TransactionInstruction, type AccountInfo, type Connection } from "@solana/web3.js";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
@@ -92,7 +92,7 @@ export class RaydiumPermissionedCpmmAdapter {
     const shareRate = effectiveCreatorShare(override, treasury, fees.creatorFeeShareRate);
     return { primitive: this.primitive, payer: SSR_POOL_PAYER, permission: permissionAddress(), ...fees, shareRate,
       netCreatorFeeRate: Number(fees.creatorFeeRate) * (1 - Number(shareRate) / Number(DENOMINATOR)),
-      compoundAvailable: false as const, compoundBlocker: "OPEN-13" as const };
+      compoundAvailable: false as const, compoundBlocker: "LIVE_COMPOUND_EXECUTOR" as const };
   }
   /** Any payer can collect; destination comes from verified PoolState, never from the caller's wallet. */
   async prepareCollect(input: { payer: PublicKey; pool: PublicKey; reserveMint: PublicKey; treasury: PublicKey }) {
@@ -147,7 +147,7 @@ export async function prepareRevenuePool(input: {
     meta(new PublicKey('DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8'),true),meta(pda(Buffer.from('observation'),pool.toBuffer()),true),meta(permissionAddress()),meta(TOKEN_PROGRAM_ID),meta(program0),meta(program1),meta(ASSOCIATED_TOKEN_PROGRAM_ID),meta(SystemProgram.programId)]});
   const configure=buildConfigureLiquidityRevenue({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)});
   return {instructions:[initialize,configure],pool,revenue,lpMint:lp,initialLpOwner:input.payer,
-    requiresSigners:[input.payer,input.manager],compoundAvailable:false as const,blockers:['OPEN-13','OPEN-14'] as const};
+    requiresSigners:[input.payer,input.manager],compoundAvailable:false as const,blockers:['LIVE_COMPOUND_EXECUTOR','OPEN-14'] as const};
 }
 
 /** Atomic native collection + fixed distribution. Even an external direct

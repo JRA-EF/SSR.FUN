@@ -50,7 +50,7 @@ describe('Raydium permissioned CPMM adapter',()=>{
     expect(result.instruction.keys[9].pubkey.equals(getAssociatedTokenAddressSync(LIQUIDITY_USDC,treasury,true,TOKEN_PROGRAM_ID))).eq(true);
     expect(result.instruction.keys.length).eq(16);
     expect([...result.instruction.data]).deep.eq([...createHash('sha256').update('global:collect_creator_fee_permissionless').digest().subarray(0,8)]);
-    expect((await adapter.readReadiness(treasury)).compoundBlocker).eq('OPEN-13');
+    expect((await adapter.readReadiness(treasury)).compoundBlocker).eq('LIVE_COMPOUND_EXECUTOR');
   });
 });
 

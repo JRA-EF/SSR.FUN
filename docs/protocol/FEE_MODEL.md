@@ -27,7 +27,7 @@ A new on-chain swap wrapper invokes Raydium atomically. Buy tax is charged on gr
 
 ## Deployment and remaining gates
 
-No liquidity transactions are signed/submitted by the preparation adapter. New program instructions and the mint/redemption floor require coordinated program upgrade, SDK/IDL and frontend release. Pool creation requires the approved payer to hold both initial asset accounts and initially gives it LP tokens: OPEN-14 still requires a funding/signing/final-LP-ownership decision. Timed/permanent lock workflows and real-basket arbitrage verification remain pending. OPEN-13 still forbids live Compound until Reserve Token sourcing is chosen. No liquidity implementation is enabled in the public UI by this branch.
+No liquidity transactions are signed/submitted by the preparation adapter. New program instructions and the mint/redemption floor require coordinated program upgrade, SDK/IDL and frontend release. Pool creation requires the approved payer to hold both initial asset accounts and initially gives it LP tokens: OPEN-14 still requires a funding/signing/final-LP-ownership decision. Timed/permanent lock workflows and real-basket arbitrage verification remain pending. OPEN-13's sourcing choice is resolved by DEC-0233: fresh mint-versus-pool comparison and explicit creator route approval. Live quote providers, treasury-authorized execution, simulation and lock integration remain pending. No liquidity implementation is enabled in the public UI by this branch.
 
 ## `ProtocolConfig.default_protocol_fee_bps` is inert
 

@@ -35,3 +35,5 @@ export * from "./pricing";
 export * from "./transferFeeInstructions";
 
 export * from "./liquidityRevenue";
+
+export * from "./compoundRoutes";

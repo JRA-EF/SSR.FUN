@@ -19,6 +19,7 @@
  */
 
 import { useState } from "react";
+import { CompoundRouteReview } from "./CompoundRouteReview";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +38,6 @@ import {
   RECOMMENDED_LIQUIDITY_USD,
   accruedFeesUsd,
   dexInfoFor,
-  hasValidNav,
   isDeepLiquidity,
   liquidityBadgeKind,
   lockRemainingDays,
@@ -345,7 +345,7 @@ export function LiquidityPanel({ dtr, onDone }: { dtr: DTR; onDone?: () => void 
 
 /** The Manager Dashboard's Liquidity tab. Root Manager only -- the caller gates, and this double-checks. */
 export function LiquiditySection({ dtr }: { dtr: DTR }) {
-  const { wallet, liquidityPreviews, lockLiquidityPreview, collectLiquidityPreviewFees, compoundLiquidityPreviewFees } = useAppStore();
+  const { wallet, liquidityPreviews, lockLiquidityPreview, collectLiquidityPreviewFees } = useAppStore();
   const { toast } = useToast();
   const [addOpen, setAddOpen] = useState(false);
   const [poolAddressCopied, setPoolAddressCopied] = useState(false);
@@ -393,16 +393,8 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
     });
   };
 
-  // Compound prices the fees into the position at the Reserve's real NAV; without one it stays unavailable (no $1 guess).
-  const canCompound = hasValidNav(dtr.nav) && fees >= 0.01;
-  const compound = () => {
-    if (!canCompound) return;
-    compoundLiquidityPreviewFees(dtr.id, fees, dtr.nav);
-    toast({
-      title: "Fees compounded in this preview",
-      description: `${formatUsdc(fees)} added back to the pool as balanced liquidity. In this design preview no funds actually move.`,
-    });
-  };
+  // DEC-0233: no preview action may imply that an unquoted acquisition route ran.
+  // The review panel remains unavailable until live quote providers are connected.
 
   const copyPoolAddress = () => {
     navigator.clipboard
@@ -434,6 +426,8 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
         </a>
       </div>
 
+      <CompoundRouteReview comparison={null} connectedCreator={wallet.address ?? null} reserveSymbol={dtr.ticker} reserveDecimals={6} lpDecimals={9} />
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6 space-y-1">
@@ -452,13 +446,13 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
               <Button size="sm" disabled={fees < 0.01} onClick={collect}>
                 <Coins className="w-3.5 h-3.5 mr-1.5" /> Collect
               </Button>
-              <Button size="sm" variant="outline" disabled={!canCompound} onClick={compound} title={hasValidNav(dtr.nav) ? undefined : "Compound needs a current token value"}>
+              <Button size="sm" variant="outline" disabled title="Compound needs fresh route quotes and your approval">
                 <Droplets className="w-3.5 h-3.5 mr-1.5" /> Compound
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
               Creator DEX earnings accrue in USDC after SSR’s pool share. Collect sends them to your fixed creator treasury.
-              Compound is a preview only; live support awaits the Reserve Token funding decision.
+              Compound is a preview only. Live support will compare minting with a pool route before your approval.
             </p>
           </CardContent>
         </Card>

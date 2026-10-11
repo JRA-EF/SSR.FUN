@@ -1,4 +1,4 @@
-/** Secondary-market fee policy. No signing or submission; Compound has no builder (OPEN-13). */
+/** Secondary-market fee policy. No signing or submission; Compound policy: DEC-0233; live spending is not enabled. */
 import { PublicKey, TransactionInstruction, SystemProgram, type AccountMeta } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 export const LIQUIDITY_REVENUE_SEED = 'liquidity_revenue';
