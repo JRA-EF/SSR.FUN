@@ -57,7 +57,7 @@ pub struct ConfigureLiquidityRevenue<'info> {
 
 fn key(data: &[u8], offset: usize) -> Pubkey { Pubkey::new_from_array(data[offset..offset+32].try_into().unwrap()) }
 fn u64_at(data: &[u8], offset: usize) -> u64 { u64::from_le_bytes(data[offset..offset+8].try_into().unwrap()) }
-fn validate_pool(pool: &AccountInfo, reserve_mint: Pubkey, revenue: Pubkey) -> Result<()> {
+pub(crate) fn validate_pool(pool: &AccountInfo, reserve_mint: Pubkey, revenue: Pubkey) -> Result<()> {
     require_keys_eq!(*pool.owner, RAYDIUM, SsrError::LiquidityRevenueValidationFailed);
     let d = pool.try_borrow_data()?;
     require!(d.len() == 637 && d[..8] == [247,237,227,245,215,195,222,70], SsrError::LiquidityRevenueValidationFailed);
@@ -260,4 +260,45 @@ mod tests {
         assert!(retained_rate(&AccountInfo::new(&AMM_CONFIG,false,false,&mut lamports,&mut d,&RAYDIUM,false),&o,revenue).is_err());
     }
 
+}
+
+/// Last step of atomic creation: every initially minted LP token belongs to
+/// the fixed creator treasury, never the permissioned intermediary payer.
+#[derive(Accounts)]
+pub struct FinalizeLiquidityPool<'info>{
+ #[account(seeds=[RESERVE_SEED,reserve.reserve_id.to_le_bytes().as_ref()],bump=reserve.bump)] pub reserve:Box<Account<'info,Reserve>>,
+ #[account(seeds=[ROUTER_SEED,reserve.key().as_ref()],bump=revenue.bump,constraint=revenue.pool==pool.key())] pub revenue:Box<Account<'info,LiquidityRevenue>>,
+ /// CHECK: native pool identity is validated in the handler.
+ pub pool:UncheckedAccount<'info>,
+ pub lp_mint:Box<Account<'info,token::Mint>>,
+ #[account(constraint=destination.owner==revenue.treasury,constraint=destination.mint==lp_mint.key())] pub destination:Box<Account<'info,TokenAccount>>,
+ #[account(constraint=payer_lp.owner==pubkey!("6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS"),constraint=payer_lp.mint==lp_mint.key())] pub payer_lp:Box<Account<'info,TokenAccount>>,
+}
+pub fn finalize_pool(ctx:Context<FinalizeLiquidityPool>)->Result<()>{
+ validate_pool(&ctx.accounts.pool,ctx.accounts.reserve.reserve_token_mint,ctx.accounts.revenue.key())?;
+ let expected=Pubkey::find_program_address(&[b"pool_lp_mint",ctx.accounts.pool.key().as_ref()],&RAYDIUM).0;
+ require_keys_eq!(ctx.accounts.lp_mint.key(),expected,SsrError::LiquidityRevenueValidationFailed);
+ require!(ctx.accounts.lp_mint.supply>0&&ctx.accounts.destination.amount==ctx.accounts.lp_mint.supply,SsrError::LiquidityRevenueValidationFailed);
+ require!(ctx.accounts.destination.key()==ctx.accounts.payer_lp.key()||ctx.accounts.payer_lp.amount==0,SsrError::LiquidityRevenueValidationFailed);
+ Ok(())
+}
+
+/// Atomic precondition for SSR's native CPMM additions. A stale browser review
+/// cannot bypass a newly paused protocol or a changed Reserve manager.
+#[derive(Accounts)]
+pub struct AuthorizeLiquidityAddition<'info> {
+    #[account(seeds=[PROTOCOL_CONFIG_SEED], bump=protocol_config.bump)]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    #[account(seeds=[RESERVE_SEED,reserve.reserve_id.to_le_bytes().as_ref()], bump=reserve.bump,
+        constraint=reserve.manager==manager.key() @ SsrError::LiquidityRevenueValidationFailed)]
+    pub reserve: Account<'info, Reserve>,
+    #[account(seeds=[ROUTER_SEED,reserve.key().as_ref()], bump=revenue.bump,
+        constraint=revenue.reserve==reserve.key() && revenue.treasury==owner.key() @ SsrError::LiquidityRevenueValidationFailed)]
+    pub revenue: Account<'info, LiquidityRevenue>,
+    pub manager: Signer<'info>,
+    pub owner: Signer<'info>,
+}
+pub fn authorize_addition(ctx: Context<AuthorizeLiquidityAddition>) -> Result<()> {
+    require!(!ctx.accounts.protocol_config.paused, SsrError::ProtocolPaused);
+    Ok(())
 }

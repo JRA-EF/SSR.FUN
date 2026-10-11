@@ -43,6 +43,7 @@ export interface CompoundSnapshot {
   context: CompoundContext;
   readAtMs: number;
   epoch: bigint;
+  chainTime?:bigint;
   usdc: bigint; tokens: bigint; lpSupply: bigint; reserveSupply: bigint;
   mintFeeBps: bigint; buyTaxBps: number; protocolRate: bigint; fundRate: bigint;
   reserveTransferFee: TransferFee|null;
@@ -157,7 +158,7 @@ export async function readCompoundSnapshot(deps: CompoundReadDeps, input: Compou
   const context:CompoundContext={creator:input.creator.toBase58(),reserve:input.reserve.toBase58(),pool:input.pool.toBase58(),reserveMint:mint.toBase58(),lpMint:lp.toBase58(),budgetUsdcRaw:input.budgetUsdcRaw,snapshotSlot:batch.context.slot,
     stateFingerprint:digest(keys.map((key,i)=>[key.toBase58(),infos[i]?.owner.toBase58()??null,i===9?epoch.toString():infos[i]?.data.toString('base64')??null])),slippageBps:input.slippageBps,lpDestination:input.lpDestination.toBase58(),lockPolicyId:input.lockPolicyId};
   validateCompoundContext(context);
-  return {context,readAtMs,epoch,usdc:balances[usdc0?0:1],tokens:balances[usdc0?1:0],lpSupply,reserveSupply:rt.supply,mintFeeBps:computeTransactionFeeSplit(BigInt(reserve.feeConfig.mintFeeBps)).effectiveTotalBps,
+  return {context,readAtMs,epoch,chainTime:time,usdc:balances[usdc0?0:1],tokens:balances[usdc0?1:0],lpSupply,reserveSupply:rt.supply,mintFeeBps:computeTransactionFeeSplit(BigInt(reserve.feeConfig.mintFeeBps)).effectiveTotalBps,
     buyTaxBps:router.buyTaxBps,protocolRate:infos[2]!.data.readBigUInt64LE(20),fundRate:infos[2]!.data.readBigUInt64LE(28),reserveTransferFee:feeFor(rt),assets:basket,mintAllowed:!!reserve.status.active,accountRentRaw:rent,
     treasury:treasury.toBase58(),protocolTreasury:new PublicKey(protocol.defaultProtocolFeeDestination).toBase58(),reserveDecimals:rt.decimals,lpDecimals:lpMint.decimals,
     treasuryUsdcRaw:funds.amount,treasuryReserveRaw:infos[11]?unpackAccount(treasuryRt,infos[11],TOKEN_2022_PROGRAM_ID).amount:0n,
@@ -215,7 +216,8 @@ function finish(s:CompoundSnapshot,route:CompoundRoute,acquisition:bigint,acquir
   // and simulation; these are never presented as already measured costs.
   const legs=route==='mint'?s.assets.filter(a=>a.mint!==LIQUIDITY_USDC.toBase58()).length:1;
   const network=BigInt(legs+2)*2_000_000n;
-  const rent=s.accountRentRaw+BigInt(legs)*10_000_000n;
+  const lockAllowance=s.context.lockPolicyId==='unlocked'?0n:s.context.lockPolicyId==='permanent'?30_000_000n:10_000_000n;
+  const rent=s.accountRentRaw+BigInt(legs)*10_000_000n+lockAllowance;
   costs.push({kind:'networkFee',unit:'SOL',amountRaw:network},{kind:'accountRent',unit:'SOL',amountRaw:rent});
   const planFingerprint=compoundPlanFingerprint(s.context,route,plan,network,rent);
   recordPlan?.(planFingerprint,plan);

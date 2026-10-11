@@ -1,0 +1,100 @@
+{
+  "observedOn": "2026-10-11",
+  "mainnetWrites": false,
+  "deployment": {
+    "program": "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9",
+    "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+    "programData": "2YF7aofgPbNj96pJJh1uzLtCk4H2fUq1FVLxFf9TAwow",
+    "deployedSlot": "454528266",
+    "upgradeAuthority": "HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW",
+    "programDataBytes": 1099637,
+    "artifactSha256": "56a758a3e76938751568a6d1775e64623f35b9617f936553cbe1b3284a71201e",
+    "artifactBytes": 1486840,
+    "requiredProgramDataBytes": 1486885,
+    "minimumExtensionBytes": 387248,
+    "additionalProgramRentLamports": 1967219840,
+    "temporaryBufferRentLamports": 7553985400,
+    "networkFeesExcluded": true,
+    "mainnetWrites": false
+  },
+  "localRuntime": {
+    "localOnly": true,
+    "program": "8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9",
+    "reserve": "9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i",
+    "checks": [
+      "initialize protocol",
+      "create Token-2022 Reserve",
+      "15bps transfer fee",
+      "register backing asset",
+      "seed with 50bps floor",
+      "mint with 50bps floor",
+      "redeem with 50bps floor",
+      "atomic approved-payer funding and initial LP return simulation",
+      "NAV-priced creation including both transfer fees",
+      "native Raydium permissioned pool (local fixture permission)",
+      "fixed creator revenue router",
+      "initial LP return finalizer",
+      "stranded LP ownership rejected",
+      "timed LP custody",
+      "early withdrawal rejected",
+      "shortening rejected",
+      "extend lock",
+      "native permanent CPI with PDA Fee Key mint",
+      "native Fee Key at creator treasury",
+      "permanent-lock vault substitution rejected",
+      "permanent principal cannot withdraw",
+      "expired tranche withdrawal",
+      "noncanonical escrow substitution rejected",
+      "withdrawal redirection rejected",
+      "double withdrawal rejected",
+      "native taxed buy with treasury self-recipient",
+      "permissionless native Collect and fixed distribution",
+      "staging-only Collect after external harvest",
+      "lifecycle snapshot and simulated addition",
+      "on-chain pause after preparation rejects addition",
+      "simulated LP withdrawal remains available during pause",
+      "atomic addition into a timed tranche",
+      "resumable simulated address-table setup",
+      "atomic addition into a native permanent lock",
+      "approved pool-route Compound into timed custody",
+      "approved primary-mint Compound into a native permanent lock"
+    ],
+    "slot": 108
+  },
+  "localMultiasset": {
+    "localOnly": true,
+    "results": [
+      {
+        "assets": 5,
+        "reserve": "3uxU5UEdVXmYpeeGSUiKrCj1agJ2thMUmTYacKNJTmXi",
+        "checks": [
+          "seed",
+          "mint 50bps floor",
+          "redeem 50bps floor",
+          "all backing legs funded and returned"
+        ],
+        "slot": 381
+      },
+      {
+        "assets": 10,
+        "reserve": "ApEnZVgfBCffM8s5J3zwseW2WUsahfhUzTnAQDkv3XtE",
+        "checks": [
+          "seed",
+          "mint 50bps floor",
+          "redeem 50bps floor",
+          "all backing legs funded and returned"
+        ],
+        "slot": 462
+      }
+    ]
+  },
+  "verification": {
+    "phasePassing": 1419,
+    "knownChartFailures": 4,
+    "rustPassing": 33,
+    "appBuild": "pass",
+    "mainnetApiTypecheck": "pass",
+    "sbfStackDiagnostics": 0,
+    "warning": "Installed SBF syscall manifest is empty; undefined-syscall diagnostic remains. Actual local execution passed."
+  }
+}

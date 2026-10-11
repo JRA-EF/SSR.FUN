@@ -3,7 +3,7 @@
  * Compound acquisition policy is resolved by DEC-0233; live execution is not implemented.
  */
 import { PublicKey, SystemProgram, TransactionInstruction, type AccountInfo, type Connection } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, unpackAccount } from "@solana/spl-token";
 
 export const RAYDIUM_CPMM = new PublicKey("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
 export const SSR_POOL_PAYER = new PublicKey("6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS");
@@ -95,10 +95,10 @@ export class RaydiumPermissionedCpmmAdapter {
       compoundAvailable: false as const, compoundBlocker: "LIVE_COMPOUND_EXECUTOR" as const };
   }
   /** Any payer can collect; destination comes from verified PoolState, never from the caller's wallet. */
-  async prepareCollect(input: { payer: PublicKey; pool: PublicKey; reserveMint: PublicKey; treasury: PublicKey }) {
+  async prepareCollect(input: { payer: PublicKey; pool: PublicKey; reserveMint: PublicKey; treasury: PublicKey; allowEmpty?: boolean }) {
     const pool = decodePool(await this.connection.getAccountInfo(input.pool, "finalized"), input.reserveMint, input.treasury);
     const readiness = await this.readReadiness(pool.creator);
-    if (pool.accruedUsdc === 0n) throw new Error("No creator DEX earnings to collect");
+    if (pool.accruedUsdc === 0n && !input.allowEmpty) throw new Error("No creator DEX earnings to collect");
     const authority = pda(Buffer.from("vault_and_lp_mint_auth_seed"));
     const meta = (pubkey: PublicKey, isWritable = false, isSigner = false) => ({ pubkey, isWritable, isSigner });
     const instruction = new TransactionInstruction({ programId: RAYDIUM_CPMM,
@@ -160,9 +160,14 @@ export async function prepareRevenueCollect(input: {
 }) {
  const revenue=findLiquidityRevenue(input.reserve,input.programId);
  const adapter=new RaydiumPermissionedCpmmAdapter(input.connection);
- const collected=await adapter.prepareCollect({payer:input.payer,pool:input.pool,reserveMint:input.reserveMint,treasury:revenue});
+ const collected=await adapter.prepareCollect({payer:input.payer,pool:input.pool,reserveMint:input.reserveMint,treasury:revenue,allowEmpty:true});
  const ata=(owner:PublicKey)=>getAssociatedTokenAddressSync(LIQUIDITY_USDC,owner,true);
+ const stagedInfo=await input.connection.getAccountInfo(ata(revenue),'finalized');
+ let staged=0n;
+ if(stagedInfo){const account=unpackAccount(ata(revenue),stagedInfo,TOKEN_PROGRAM_ID);if(!account.owner.equals(revenue)||!account.mint.equals(LIQUIDITY_USDC)||account.isFrozen)throw new Error('Invalid creator revenue staging account');staged=account.amount;}
+ if(staged+collected.netUsdcRaw===0n)throw new Error('No creator DEX earnings to collect');
  const instructions=[input.protocolTreasury,input.creatorTreasury].map(owner=>createAssociatedTokenAccountIdempotentInstruction(input.payer,ata(owner),owner,LIQUIDITY_USDC));
- instructions.push(collected.instruction,buildDistributeLiquidityRevenue({...input,staging:ata(revenue),protocolDestination:ata(input.protocolTreasury),creatorDestination:ata(input.creatorTreasury),ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)}));
- return {instructions,revenue,grossUsdcRaw:collected.grossUsdcRaw,netUsdcRaw:collected.netUsdcRaw};
+ if(collected.grossUsdcRaw>0n)instructions.push(collected.instruction);
+ instructions.push(buildDistributeLiquidityRevenue({...input,staging:ata(revenue),protocolDestination:ata(input.protocolTreasury),creatorDestination:ata(input.creatorTreasury),ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)}));
+ return {instructions,revenue,grossUsdcRaw:collected.grossUsdcRaw,netUsdcRaw:collected.netUsdcRaw+staged};
 }

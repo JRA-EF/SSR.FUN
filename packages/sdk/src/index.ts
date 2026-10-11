@@ -39,3 +39,4 @@ export * from "./liquidityRevenue";
 export * from "./compoundRoutes";
 
 export * from "./raydiumCpmmInstructions";
+export * from "./liquidityLocks";

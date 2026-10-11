@@ -16,18 +16,18 @@ use crate::state::{AmmConfig, Pool};
 #[derive(Accounts)]
 pub struct Swap<'info> {
     #[account(seeds = [AMM_CONFIG_SEED], bump = amm_config.bump)]
-    pub amm_config: Account<'info, AmmConfig>,
+    pub amm_config: Box<Account<'info, AmmConfig>>,
 
     #[account(
         seeds = [AMM_POOL_SEED, mint_a.key().as_ref(), mint_b.key().as_ref()],
         bump = pool.bump,
     )]
-    pub pool: Account<'info, Pool>,
+    pub pool: Box<Account<'info, Pool>>,
 
     #[account(address = pool.mint_a @ AmmError::MintMismatch)]
-    pub mint_a: InterfaceAccount<'info, Mint>,
+    pub mint_a: Box<InterfaceAccount<'info, Mint>>,
     #[account(address = pool.mint_b @ AmmError::MintMismatch)]
-    pub mint_b: InterfaceAccount<'info, Mint>,
+    pub mint_b: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         mut,
@@ -35,7 +35,7 @@ pub struct Swap<'info> {
         bump,
         address = pool.vault_a @ AmmError::InvalidVault,
     )]
-    pub vault_a: InterfaceAccount<'info, TokenAccount>,
+    pub vault_a: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         mut,
@@ -43,7 +43,7 @@ pub struct Swap<'info> {
         bump,
         address = pool.vault_b @ AmmError::InvalidVault,
     )]
-    pub vault_b: InterfaceAccount<'info, TokenAccount>,
+    pub vault_b: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -53,10 +53,10 @@ pub struct Swap<'info> {
     pub vault_authority: UncheckedAccount<'info>,
 
     #[account(mut, token::mint = mint_a, token::authority = trader)]
-    pub trader_token_a: InterfaceAccount<'info, TokenAccount>,
+    pub trader_token_a: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, token::mint = mint_b, token::authority = trader)]
-    pub trader_token_b: InterfaceAccount<'info, TokenAccount>,
+    pub trader_token_b: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub trader: Signer<'info>,
 

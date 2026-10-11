@@ -1,3 +1,4 @@
+import {throwLiquidityResponse,savedLiquidityTables} from './liquiditySetupClient';
 import {PublicKey,VersionedTransaction} from '@solana/web3.js';
 import {getAssociatedTokenAddressSync} from '@solana/spl-token';
 import {assertCompoundApproval,type CompoundQuote,type CompoundApproval} from '@ssr/sdk';
@@ -26,8 +27,8 @@ export async function validatePreparedCompound(wire:PreparedLiquidity,q:Compound
 export async function prepareSelectedCompound(q:CompoundQuote,approval:CompoundApproval,acquisitionPlan:unknown,treasury:string,signal?:AbortSignal) {
   assertCompoundApproval(q,approval,q.context,q.context.creator);
   const response=await fetch('/api/mainnet/prepare-compound',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',signal,
-    body:JSON.stringify({quote:q,approval,acquisitionPlan},(_key,v)=>typeof v==='bigint'?v.toString():v)});
+    body:JSON.stringify({quote:q,approval,acquisitionPlan,lookupTables:savedLiquidityTables(q.context.reserve)},(_key,v)=>typeof v==='bigint'?v.toString():v)});
   const wire=await response.json();
-  if(!response.ok)throw new Error(typeof wire?.error==='string'?wire.error:'Could not prepare the selected route');
+  if(!response.ok)throwLiquidityResponse(wire,'Could not prepare the selected route');
   return validatePreparedCompound(wire,q,treasury);
 }

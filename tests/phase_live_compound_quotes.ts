@@ -104,6 +104,6 @@ describe('Live Compound quote providers (offline RPC/Jupiter fixtures)',()=>{
   it('accepts only bounded read-only requests with supported lock policy',()=>{
     const body={reserve:token,pool:token,creator:token,lpDestination:token,budgetUsdcRaw:'1000000',slippageBps:100,lockPolicyId:'unlocked'};
     expect(parseCompoundQuoteRequest(body).budgetUsdcRaw).eq(1_000_000n);
-    for(const changed of [{budgetUsdcRaw:'-1'},{budgetUsdcRaw:'18446744073709551616'},{slippageBps:501},{lockPolicyId:'permanent'},{pool:'invalid'}])expect(()=>parseCompoundQuoteRequest({...body,...changed})).throws();
+    for(const changed of [{budgetUsdcRaw:'-1'},{budgetUsdcRaw:'18446744073709551616'},{slippageBps:501},{lockPolicyId:'partial-60-percent'},{pool:'invalid'}])expect(()=>parseCompoundQuoteRequest({...body,...changed})).throws();
   });
 });

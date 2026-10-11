@@ -4,7 +4,7 @@ import { validateCompoundContext, validateCompoundQuote,
   type CompoundComparison, type CompoundQuote, type CompoundContext } from '@ssr/sdk';
 export interface LiveCompoundRequest {
   reserve:string;pool:string;creator:string;lpDestination:string;
-  budgetUsdcRaw:bigint;slippageBps:number;lockPolicyId:'unlocked';
+  budgetUsdcRaw:bigint;slippageBps:number;lockPolicyId:'unlocked'|'1-month'|'3-month'|'6-month'|'12-month'|'permanent';
 }
 const AMOUNTS=['acquisitionUsdcRaw','depositUsdcRaw','leftoverUsdcRaw','acquiredReserveRaw',
   'depositReserveGrossRaw','depositReserveNetRaw','leftoverReserveRaw','expectedLpRaw',

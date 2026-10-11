@@ -1,3 +1,4 @@
+import {LiquidityLookupRequired} from '../../lib/mainnet/liquidityLookup';
 /** Build + simulate an unsigned atomic transaction. No server signing/submission. */
 import {Connection,PublicKey} from '@solana/web3.js';
 import {buildReadOnlyProgram,assertCompoundApproval} from '@ssr/sdk';
@@ -12,7 +13,7 @@ export function parsePrepareCompound(body:any,now=Date.now()):CompoundPlanInput 
   if(JSON.stringify(body).length>250_000)throw new Error('Compound plan is too large');
   if(!body?.quote?.context||!body.approval||!body.acquisitionPlan)throw new Error('A selected route and creator approval are required');
   const parsed=parseCompoundQuoteRequest(body.quote.context);
-  const request={...parsed,reserve:parsed.reserve.toBase58(),pool:parsed.pool.toBase58(),creator:parsed.creator.toBase58(),lpDestination:parsed.lpDestination.toBase58(),lockPolicyId:'unlocked' as const};
+  const request={...parsed,reserve:parsed.reserve.toBase58(),pool:parsed.pool.toBase58(),creator:parsed.creator.toBase58(),lpDestination:parsed.lpDestination.toBase58()};
   const comparison=decodeLiveCompoundResponse({executionReady:false,comparison:{context:body.quote.context,quotes:[body.quote],recommended:null}},request,now);
   const quote=comparison.quotes[0];
   assertCompoundApproval(quote,body.approval,comparison.context,request.creator,now);
@@ -24,7 +25,8 @@ export function parsePrepareCompound(body:any,now=Date.now()):CompoundPlanInput 
     if(typeof raw!=='string'||!/^\d{1,20}$/.test(raw)||BigInt(raw)>0xffffffffffffffffn)throw new Error('Invalid acquisition plan');
     acquisitionPlan[field]=BigInt(raw);
   }
-  return {quote,approval:body.approval,acquisitionPlan};
+  const lookupTables=body.lookupTables??[];if(!Array.isArray(lookupTables)||lookupTables.length>4)throw new Error('Invalid lookup tables');
+  return {quote,approval:body.approval,acquisitionPlan,lookupTables:lookupTables.map((k:any)=>new PublicKey(k))};
 }
 export default async function handler(req:ApiRequest,res:ApiResponse & {setHeader?(name:string,value:string):void}) {
   res.setHeader?.('Cache-Control','no-store');
@@ -41,5 +43,5 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
       // Deliberately not env-toggleable before the program/runtime release gate.
       executionEnabled:false},input);
     res.status(200).json(prepared);
-  }catch(e){res.status(422).json({error:redactRpcSecrets(e instanceof Error?e.message:String(e)),executionEnabled:false});}
+  }catch(e){if(e instanceof LiquidityLookupRequired){res.status(422).json({error:e.message,code:e.code,addresses:e.addresses,executionEnabled:false});return;}res.status(422).json({error:redactRpcSecrets(e instanceof Error?e.message:String(e)),executionEnabled:false});}
 }

@@ -17,10 +17,8 @@ export function parseCompoundQuoteRequest(body:Record<string,unknown>) {
   const budgetUsdcRaw=BigInt(body.budgetUsdcRaw);
   if(budgetUsdcRaw<=0n||budgetUsdcRaw>0xffffffffffffffffn)throw new Error('Invalid earnings budget');
   if(!Number.isInteger(body.slippageBps)||Number(body.slippageBps)<1||Number(body.slippageBps)>500)throw new Error('Slippage must be between 1 and 500 basis points');
-  // Locks require the future executor. Do not imply unsupported lock terms can
-  // already be enforced by a quoted plan.
-  if(body.lockPolicyId!=='unlocked')throw new Error('Locked Compound quotes await lock implementation');
-  return {reserve:address('reserve'),pool:address('pool'),creator:address('creator'),lpDestination:address('lpDestination'),budgetUsdcRaw,slippageBps:Number(body.slippageBps),lockPolicyId:'unlocked'};
+  if(!['unlocked','1-month','3-month','6-month','12-month','permanent'].includes(String(body.lockPolicyId)))throw new Error('Invalid Compound lock term');
+  return {reserve:address('reserve'),pool:address('pool'),creator:address('creator'),lpDestination:address('lpDestination'),budgetUsdcRaw,slippageBps:Number(body.slippageBps),lockPolicyId:body.lockPolicyId as 'unlocked'|'1-month'|'3-month'|'6-month'|'12-month'|'permanent'};
 }
 export default async function handler(req:ApiRequest,res:ApiResponse & {setHeader?(name:string,value:string):void}) {
   res.setHeader?.('Cache-Control','no-store');
