@@ -76,14 +76,14 @@ describe("Genuine Buy math: devUsdcToReserveTokensRequested (no synthetic conver
 });
 
 describe("Genuine Sell math: computeRedemptionEntitlements returns real devUSDC for a pure-devUSDC Reserve", () => {
-  it("redeeming a known fraction of supply returns the exact proportional devUSDC entitlement, no fee", () => {
+  it("redeeming a known fraction of supply returns proportional backing after the mandatory redemption minimum", () => {
     const supply = 1_000_000_000n; // 1000 Reserve Tokens
     const vaultBalance = 1_000_000_000n; // 1000 devUSDC backing it 1:1
     const toRedeem = 250_000_000n; // 250 Reserve Tokens = 25% of supply
     const entitlements = computeRedemptionEntitlements(toRedeem, 0n, supply, [{ mint: DEVUSDC_MINT, vaultBalance }]);
     expect(entitlements).to.have.length(1);
     expect(entitlements[0].mint).to.equal(DEVUSDC_MINT);
-    expect(entitlements[0].entitlement).to.equal(250_000_000n); // 25% of the vault, genuinely devUSDC
+    expect(entitlements[0].entitlement).to.equal(248_750_000n); // DEC-0232: 0.5% redemption minimum, even at configured zero
   });
 
   it("applies the redemption fee honestly -- never silently absorbed or inflated", () => {

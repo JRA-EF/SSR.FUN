@@ -33,3 +33,10 @@ export * from "./launchpads";
 export * from "./issuers";
 export * from "./pricing";
 export * from "./transferFeeInstructions";
+
+export * from "./liquidityRevenue";
+
+export * from "./compoundRoutes";
+
+export * from "./raydiumCpmmInstructions";
+export * from "./liquidityLocks";

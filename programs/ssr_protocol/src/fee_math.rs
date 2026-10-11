@@ -1,6 +1,6 @@
 //! SSR.fun Protocol/Manager fee-split math (DEC-0094). Shared by
 //! `mint_reserve_tokens_in_kind.rs` and `accrue_fees.rs` -- both apply this
-//! same three-step chain independently to the Mint fee and the Annualized
+//! fee chain; mint/redemption use split_transaction_bps, while the Annualized
 //! TVL fee:
 //!
 //! 1. [`split_configured_bps`] -- derive `(protocol_bps, manager_bps)` from
@@ -9,7 +9,7 @@
 //!    floored at `protocol_min_bps` (`protocol_bps + manager_bps` can then
 //!    exceed `configured_bps` when it's below the floor). A manager who
 //!    genuinely configures 0% pays no floor at all -- `configured_bps == 0`
-//!    always yields `(0, 0)`, a real zero-fee mint/TVL-accrual. There is no
+//!    always yields `(0, 0)` for TVL accrual only. There is no
 //!    forced minimum fee; the floor only governs how a NONZERO fee splits.
 //! 2. [`split_total_fee`] -- given the total fee shares already computed
 //!    from the effective total bps, split into `(protocol_total,
@@ -62,7 +62,7 @@ pub fn split_configured_bps(configured_bps: u16, protocol_min_bps: u16) -> (u16,
 /// `configured_bps` was genuinely 0 (see `split_configured_bps`'s zero-fee
 /// case) -- handled explicitly below (both shares 0, no division at all)
 /// rather than relying on `mul_div_floor`'s zero-divisor guard, since that
-/// guard would otherwise turn a legitimate 0%-fee mint/accrual into a
+/// guard would otherwise turn a legitimate 0%-fee TVL accrual into a
 /// spurious `DivisionByZero` failure.
 pub fn split_total_fee(
     total_fee_shares: u64,
@@ -133,22 +133,15 @@ pub fn apportion_to_recipients(
     Ok(increments)
 }
 
-/// DEC-0173 (USDC on mint and redeem): Protocol/Manager attribution of the
-/// redemption fee. UNLIKE [`split_configured_bps`], this NEVER raises the
-/// total above `configured_bps` -- the deployed program has always charged
-/// redeemers exactly `redemption_fee_bps`, and routing that fee to the fee
-/// vault (instead of the old burn-for-holders mechanic) must not change
-/// what a redeemer pays. The Protocol's share follows the same convention
-/// as the mint fee (floored at `protocol_min_bps`, half-split above it) but
-/// capped at the configured total; the Manager gets the remainder.
-/// `protocol_bps + manager_bps == configured_bps` always.
+/// Mint/redemption floor applies even when the creator configures zero.
+/// The annual TVL fee deliberately continues using split_configured_bps.
+pub fn split_transaction_bps(configured_bps: u16, protocol_min_bps: u16) -> (u16, u16) {
+    let protocol_bps = protocol_min_bps.max(configured_bps / 2);
+    (protocol_bps, configured_bps.saturating_sub(protocol_bps))
+}
+
 pub fn split_redemption_bps(configured_bps: u16, protocol_min_bps: u16) -> (u16, u16) {
-    if configured_bps == 0 {
-        return (0, 0);
-    }
-    let (protocol_uncapped, _) = split_configured_bps(configured_bps, protocol_min_bps);
-    let protocol_bps = protocol_uncapped.min(configured_bps);
-    (protocol_bps, configured_bps - protocol_bps)
+    split_transaction_bps(configured_bps, protocol_min_bps)
 }
 
 /// USDC fee-settlement pipeline (2026-08-21 pass): splits `amount` between
@@ -201,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn table_from_task_mint_and_tvl() {
+    fn annual_tvl_configured_split_retains_zero_exemption() {
         // (configured_bps, expected_protocol_bps, expected_manager_bps). A
         // genuine 0% configuration yields a genuine 0% effective fee -- no
         // forced minimum -- while any NONZERO configuration still floors
@@ -283,16 +276,15 @@ mod tests {
         }
     }
 
-    // --- DEC-0173: split_redemption_bps (attribution only, total never raised) ---
+    // DEC-0232: redemption and mint share the unconditional minimum.
 
     #[test]
-    fn split_redemption_bps_never_exceeds_configured_total() {
-        // (configured, expected_protocol, expected_manager) -- the sum is
-        // ALWAYS exactly the configured bps, unlike split_configured_bps.
+    fn split_redemption_bps_enforces_transaction_minimum() {
+        // Effective total includes the minimum, including configured zero.
         let cases = [
-            (0u16, 0u16, 0u16),
-            (10, 10, 0),   // below the floor: protocol takes it all, total unchanged
-            (30, 30, 0),
+            (0u16, 50u16, 0u16),
+            (10, 50, 0),   // below the floor: effective total is 50
+            (30, 50, 0),
             (50, 50, 0),
             (95, 50, 45),
             (100, 50, 50),
@@ -305,17 +297,18 @@ mod tests {
             assert_eq!(manager_bps, expected_manager, "configured={configured}");
             assert_eq!(
                 protocol_bps + manager_bps,
-                configured,
-                "total must equal configured exactly -- configured={configured}"
+                configured.max(50),
+                "total must include minimum -- configured={configured}"
             );
         }
     }
 
     #[test]
-    fn split_redemption_bps_sweep_total_always_exact() {
+    fn transaction_fee_sweep_includes_minimum_and_matches_redemption() {
         for configured in 0u16..=1_000 {
             let (p, m) = split_redemption_bps(configured, 50);
-            assert_eq!(p + m, configured, "configured={configured}");
+            assert_eq!((p,m), split_transaction_bps(configured,50));
+            assert_eq!(p + m, configured.max(50), "configured={configured}");
         }
     }
 

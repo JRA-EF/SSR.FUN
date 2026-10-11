@@ -10,7 +10,7 @@ import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
 import { findReserveAsset, findReserveVault, findManagerFeeRecipients, findFeeSettlement } from "./pda";
-import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
+import { computeTransactionFeeSplit, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
 import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, tokenProgramFromMintOwner, type TokenProgramKindDecoded } from "./tokenPrograms";
 
 /**
@@ -197,7 +197,7 @@ export async function fetchReserveOnChain(
 
   const supply = await getTokenSupplyWithRetry(connection, reserveAccount.reserveTokenMint);
 
-  const mintSplit = computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS);
+  const mintSplit = computeTransactionFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS);
   const tvlSplit = computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
 
   return {
@@ -207,7 +207,7 @@ export async function fetchReserveOnChain(
     status: Object.keys(reserveAccount.status as object)[0],
     assetCount: reserveAccount.assetCount,
     totalTargetWeightBps: reserveAccount.totalTargetWeightBps,
-    redemptionFeeBps: reserveAccount.feeConfig.redemptionFeeBps,
+    redemptionFeeBps: Number(computeTransactionFeeSplit(BigInt(reserveAccount.feeConfig.redemptionFeeBps)).effectiveTotalBps),
     mintFeeBps: reserveAccount.feeConfig.mintFeeBps,
     tvlFeeBps: reserveAccount.feeConfig.annualTvlFeeBps,
     feeDestination: reserveAccount.feeConfig.feeDestination.toBase58(),

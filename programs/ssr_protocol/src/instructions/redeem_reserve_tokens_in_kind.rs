@@ -30,7 +30,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         seeds = [RESERVE_SEED, reserve.reserve_id.to_le_bytes().as_ref()],
         bump = reserve.bump,
     )]
-    pub reserve: Account<'info, Reserve>,
+    pub reserve: Box<Account<'info, Reserve>>,
 
     #[account(
         mut,
@@ -38,7 +38,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
+    pub reserve_token_mint: Box<InterfaceAccount<'info, SplMint>>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -52,7 +52,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         constraint = redeemer_reserve_token_account.mint == reserve.reserve_token_mint @ SsrError::ReserveAssetMismatch,
         constraint = redeemer_reserve_token_account.owner == redeemer.key() @ SsrError::NotReserveManager,
     )]
-    pub redeemer_reserve_token_account: InterfaceAccount<'info, SplTokenAccount>,
+    pub redeemer_reserve_token_account: Box<InterfaceAccount<'info, SplTokenAccount>>,
 
     #[account(mut)]
     pub redeemer: Signer<'info>,
@@ -69,7 +69,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
         bump = manager_fee_recipients.bump,
     )]
-    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
+    pub manager_fee_recipients: Option<Box<Account<'info, ManagerFeeRecipients>>>,
 
     /// Time-weighted average TVL accumulator (2026-08-14 pass) -- checkpointed
     /// here for free, never settled here. See
@@ -81,7 +81,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         seeds = [TVL_ACCRUAL_SEED, reserve.key().as_ref()],
         bump,
     )]
-    pub tvl_accrual: Account<'info, TvlAccrual>,
+    pub tvl_accrual: Box<Account<'info, TvlAccrual>>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached
     /// bump -- DEC-0173: needed here for the first time, to mint the
@@ -107,7 +107,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         seeds = [FEE_SETTLEMENT_SEED, reserve.key().as_ref()],
         bump,
     )]
-    pub fee_settlement: Account<'info, FeeSettlement>,
+    pub fee_settlement: Box<Account<'info, FeeSettlement>>,
 
     #[account(
         init_if_needed,
@@ -116,7 +116,7 @@ pub struct RedeemReserveTokensInKind<'info> {
         associated_token::authority = fee_vault_authority,
         associated_token::token_program = token_program,
     )]
-    pub fee_vault: InterfaceAccount<'info, SplTokenAccount>,
+    pub fee_vault: Box<InterfaceAccount<'info, SplTokenAccount>>,
 
     /// CHECK: signer-only PDA (only the fee vault's ATA *owner* -- the mint
     /// authority for the fee-share mint is `mint_authority` above), verified
@@ -169,9 +169,11 @@ pub fn handler<'info>(
     )?;
 
     let fee_config = ctx.accounts.reserve.fee_config;
+    let (protocol_bps, manager_bps) =
+        split_redemption_bps(fee_config.redemption_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
     let redemption_fee_shares = mul_div_ceil(
         reserve_tokens_to_redeem,
-        fee_config.redemption_fee_bps as u64,
+        (protocol_bps as u64) + (manager_bps as u64),
         BPS_DENOMINATOR as u64,
     )?;
     let net_shares_for_entitlement = reserve_tokens_to_redeem
@@ -229,13 +231,8 @@ pub fn handler<'info>(
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     token_interface::burn(cpi_ctx, reserve_tokens_to_redeem)?;
 
-    // DEC-0173: crystallize the redemption fee into the fee vault.
-    // split_redemption_bps is attribution-only -- the charged total remains
-    // exactly `redemption_fee_bps`, never raised by any floor (unlike the
-    // mint fee's split_configured_bps).
+    // Crystallize the effective redemption fee, including the SSR minimum.
     if redemption_fee_shares > 0 {
-        let (protocol_bps, manager_bps) =
-            split_redemption_bps(fee_config.redemption_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
         let (protocol_fee_shares, manager_fee_shares) =
             split_total_fee(redemption_fee_shares, protocol_bps, manager_bps)?;
 

@@ -11,20 +11,20 @@ use crate::constants::{
 };
 use crate::errors::SsrError;
 use crate::events::{FeeVaultCredited, ManagerFeeAccrualSource, ReserveTokensMinted};
-use crate::fee_math::{split_configured_bps, split_total_fee};
+use crate::fee_math::{split_transaction_bps, split_total_fee};
 use crate::state::{FeeSettlement, ProtocolConfig, Reserve, ReserveStatus, TvlAccrual};
 
 #[derive(Accounts)]
 pub struct MintReserveTokensInKind<'info> {
     #[account(seeds = [PROTOCOL_CONFIG_SEED], bump = protocol_config.bump)]
-    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub protocol_config: Box<Account<'info, ProtocolConfig>>,
 
     #[account(
         mut,
         seeds = [RESERVE_SEED, reserve.reserve_id.to_le_bytes().as_ref()],
         bump = reserve.bump,
     )]
-    pub reserve: Account<'info, Reserve>,
+    pub reserve: Box<Account<'info, Reserve>>,
 
     #[account(
         mut,
@@ -32,7 +32,7 @@ pub struct MintReserveTokensInKind<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
+    pub reserve_token_mint: Box<InterfaceAccount<'info, SplMint>>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -48,7 +48,7 @@ pub struct MintReserveTokensInKind<'info> {
         associated_token::authority = depositor,
         associated_token::token_program = token_program,
     )]
-    pub depositor_reserve_token_account: InterfaceAccount<'info, SplTokenAccount>,
+    pub depositor_reserve_token_account: Box<InterfaceAccount<'info, SplTokenAccount>>,
 
     #[account(mut)]
     pub depositor: Signer<'info>,
@@ -67,7 +67,7 @@ pub struct MintReserveTokensInKind<'info> {
         seeds = [FEE_SETTLEMENT_SEED, reserve.key().as_ref()],
         bump,
     )]
-    pub fee_settlement: Account<'info, FeeSettlement>,
+    pub fee_settlement: Box<Account<'info, FeeSettlement>>,
 
     #[account(
         init_if_needed,
@@ -76,7 +76,7 @@ pub struct MintReserveTokensInKind<'info> {
         associated_token::authority = fee_vault_authority,
         associated_token::token_program = token_program,
     )]
-    pub fee_vault: InterfaceAccount<'info, SplTokenAccount>,
+    pub fee_vault: Box<InterfaceAccount<'info, SplTokenAccount>>,
 
     /// CHECK: signer-only PDA (mint authority is `mint_authority` above,
     /// same as every other mint destination in this instruction -- this
@@ -99,7 +99,7 @@ pub struct MintReserveTokensInKind<'info> {
         seeds = [TVL_ACCRUAL_SEED, reserve.key().as_ref()],
         bump,
     )]
-    pub tvl_accrual: Account<'info, TvlAccrual>,
+    pub tvl_accrual: Box<Account<'info, TvlAccrual>>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -186,10 +186,10 @@ pub fn handler<'info>(
     // DEC-0094: `mint_fee_bps` is the configured (manager-set) gross rate;
     // the EFFECTIVE total actually charged is derived fresh here via the
     // SSR.fun fee formula, and can exceed `mint_fee_bps` when it's below
-    // the Protocol's 0.5% floor -- see fee_math::split_configured_bps.
+    // the Protocol's 0.5% floor -- see fee_math::split_transaction_bps.
     let configured_mint_fee_bps = ctx.accounts.reserve.fee_config.mint_fee_bps;
     let (protocol_bps, manager_bps) =
-        split_configured_bps(configured_mint_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
+        split_transaction_bps(configured_mint_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
     let effective_total_bps = (protocol_bps as u64)
         .checked_add(manager_bps as u64)
         .ok_or(error!(SsrError::MathOverflow))?;

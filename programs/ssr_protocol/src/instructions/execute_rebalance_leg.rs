@@ -89,7 +89,7 @@ pub struct ExecuteRebalanceLeg<'info> {
         bump,
         constraint = reserve_asset_sell.reserve == reserve.key() @ SsrError::ReserveAssetMismatch,
     )]
-    pub reserve_asset_sell: Account<'info, ReserveAsset>,
+    pub reserve_asset_sell: Box<Account<'info, ReserveAsset>>,
 
     #[account(
         mut,
@@ -97,9 +97,9 @@ pub struct ExecuteRebalanceLeg<'info> {
         bump,
         address = reserve_asset_sell.vault @ SsrError::InvalidReserveVault,
     )]
-    pub reserve_vault_sell: InterfaceAccount<'info, TokenAccount>,
+    pub reserve_vault_sell: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    pub mint_sell: InterfaceAccount<'info, Mint>,
+    pub mint_sell: Box<InterfaceAccount<'info, Mint>>,
 
     // --- Buy leg: this Reserve's own registered asset being increased ---
     #[account(
@@ -107,7 +107,7 @@ pub struct ExecuteRebalanceLeg<'info> {
         bump,
         constraint = reserve_asset_buy.reserve == reserve.key() @ SsrError::ReserveAssetMismatch,
     )]
-    pub reserve_asset_buy: Account<'info, ReserveAsset>,
+    pub reserve_asset_buy: Box<Account<'info, ReserveAsset>>,
 
     #[account(
         mut,
@@ -115,9 +115,9 @@ pub struct ExecuteRebalanceLeg<'info> {
         bump,
         address = reserve_asset_buy.vault @ SsrError::InvalidReserveVault,
     )]
-    pub reserve_vault_buy: InterfaceAccount<'info, TokenAccount>,
+    pub reserve_vault_buy: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    pub mint_buy: InterfaceAccount<'info, Mint>,
+    pub mint_buy: Box<InterfaceAccount<'info, Mint>>,
 
     /// CHECK: this Reserve's own vault-authority PDA, verified purely by
     /// seeds against the cached bump -- becomes the CPI's signing "trader"
@@ -131,13 +131,13 @@ pub struct ExecuteRebalanceLeg<'info> {
 
     // --- ssr_devnet_amm CPI target -- see DEC-0051 and this pass's DECISION_LOG entry ---
     pub amm_program: Program<'info, SsrDevnetAmm>,
-    pub amm_config: Account<'info, AmmConfig>,
+    pub amm_config: Box<Account<'info, AmmConfig>>,
     #[account(mut)]
-    pub amm_pool: Account<'info, AmmPool>,
+    pub amm_pool: Box<Account<'info, AmmPool>>,
     #[account(mut)]
-    pub amm_vault_a: InterfaceAccount<'info, TokenAccount>,
+    pub amm_vault_a: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut)]
-    pub amm_vault_b: InterfaceAccount<'info, TokenAccount>,
+    pub amm_vault_b: Box<InterfaceAccount<'info, TokenAccount>>,
     /// CHECK: ssr_devnet_amm's OWN vault-authority PDA (derived under ITS
     /// program ID, not ours) -- validated by that program's own `Swap`
     /// account constraints when the CPI executes, and signed internally by

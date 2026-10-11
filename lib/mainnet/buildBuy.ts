@@ -34,6 +34,7 @@
 import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import {
   buildDirectMultiAssetMintInstructions,
+  computeTransactionFeeSplit,
   computeEffectiveFeeSplit,
   computeMintRequirements,
   computeNetMintOutput,
@@ -181,7 +182,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   // Exact per-leg deposit requirements (same integer math the program enforces).
   const requirements = computeMintRequirements(input.reserveTokensRequested, supplyRaw, orderedAssets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) })));
   const requiredAmountsRaw = requirements.map((r) => r.requiredAmount);
-  const mintSplit = computeEffectiveFeeSplit(BigInt(read.reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS);
+  const mintSplit = computeTransactionFeeSplit(BigInt(read.reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS);
   const { netOut: expectedNetRaw } = computeNetMintOutput(input.reserveTokensRequested, mintSplit.effectiveTotalBps);
 
   // Funding plan + feasibility (pure, shared with the old client path).

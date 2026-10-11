@@ -61,7 +61,7 @@ import {
   buildSetReserveTokenMetadataInstruction,
   tokenMetadataUriFromReserveMetadataUri,
   tokenMetadataOriginFor,
-  computeEffectiveFeeSplit,
+  computeTransactionFeeSplit,
   validateSeedPlan,
   MIN_SEED_AMOUNT_PER_ASSET,
   DEVNET_FIXTURES,
@@ -276,7 +276,7 @@ export function estimateNetSeedReserveTokens(grossSeedTokens: number, mintFeePct
   // matches what the chain will actually do.
   const RESERVE_TOKEN_RAW_PER_UNIT = 1_000_000n;
   const grossRaw = BigInt(Math.round(grossSeedTokens * Number(RESERVE_TOKEN_RAW_PER_UNIT)));
-  const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+  const split = computeTransactionFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
   const feeRaw = (grossRaw * split.effectiveTotalBps + 9_999n) / 10_000n; // ceiling division, matching mul_div_ceil
   const netRaw = grossRaw - feeRaw;
   return Number(netRaw) / Number(RESERVE_TOKEN_RAW_PER_UNIT);
@@ -1523,6 +1523,7 @@ export async function createReserveOnChain(params: {
    */
   tokenMetadata?: { name: string; symbol: string };
   mintFeeBps: number;
+  redemptionFeeBps?: number;
   tvlFeeBps: number;
   feeDestination: PublicKey;
   /**
@@ -1610,7 +1611,7 @@ export async function createReserveOnChain(params: {
     const createIx = await buildCreateReserveInstruction(program, addresses, wallet.publicKey, {
       metadataUri: params.metadataUri,
       mintFeeBps: params.mintFeeBps,
-      redemptionFeeBps: 0,
+      redemptionFeeBps: params.redemptionFeeBps ?? 0,
       tvlFeeBps: params.tvlFeeBps,
       feeDestination: params.feeDestination,
     });

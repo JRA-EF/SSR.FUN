@@ -1,0 +1,369 @@
+{
+  "observedAt": "2026-10-11T22:24:36.799Z",
+  "readOnly": true,
+  "credentialConfigured": false,
+  "raydium": {
+    "slot": 455814752,
+    "permissionVerified": true,
+    "config9": {
+      "tradeFeeRate": "2500",
+      "creatorFeeRate": "7500",
+      "creatorFeeShareRate": "50000",
+      "createPoolLamports": "150000000"
+    }
+  },
+  "reserves": [
+    {
+      "reserve": "uA3sYDWvyPwkEmWGZmKgcRVGLPSRq6FbjnJrrHcWD7z",
+      "mint": "4N5L6knQK9q6mzyisQ89ppybDyzyDCPs7L2gaySLv8cc",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "3hqWjK33oJtJeHrXm6ujzBvStYacHLb173MMz9YPeWGU",
+      "mint": "2HvGHWwEdAZxZELTenkBB6LUmRDvfHppdj4t7FEPSS5X",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "3uxU5UEdVXmYpeeGSUiKrCj1agJ2thMUmTYacKNJTmXi",
+      "mint": "6QBUGSPRg25Pm2zcFHL5jqvEbAAgDo2moAJLjG1NSPQ1",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "48tSqBH1uGhnG9UvAG4eZFd3LQnzjSHwu5xP4NhbpWit",
+      "mint": "Bu2JrZa2FCjjdLgfQo1azKCdGGAKYSoMtgvDSitxpzby",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "4A7LsJk6cvtmDCudHwU3ypktKffLF9CpDXN3GtWT6QEb",
+      "mint": "8nNaQoXtJuwf3htqAfxZbw3kJ2Q78FBW5oqYi8irFipK",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "52eHitfwh7sPNnF9Ft8YHBd4EqY6TkjygVfCEhVdxw9y",
+      "mint": "7qqCK6XMRaFTraGqqL7rm1XqwR6P8vohLJpVFMvKXDiS",
+      "assetCount": 4,
+      "token2022": false
+    },
+    {
+      "reserve": "5TwkGaCtZCspGEN2yzRM3mxkzGvb1dnkFEHrkn8FVbwE",
+      "mint": "2mRo662oMw2SYahg3N472cHqV5qTaERT8kfEHVQetXwh",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "5gu7oQR5A7BTveCGSH75omxk5PJAhyEsoQhPJiPADmKT",
+      "mint": "DiGuxHQLDoo1GCjZVanRVXnNy4z7H7QrFFSSoe4atUgv",
+      "assetCount": 5,
+      "token2022": false
+    },
+    {
+      "reserve": "64LhgCSdBHKtxEwk45ocVMFphyARQ7nvXia7u8uAncQg",
+      "mint": "4c5YgTxLermz17oAhrBwand5XLygHRBTXpqxEu4Sv3RE",
+      "assetCount": 2,
+      "token2022": false
+    },
+    {
+      "reserve": "6FN24ZMVZw8fAiQhvtdRCAMdLPbieXHjBx4Trw9NnYiQ",
+      "mint": "AJrbtrsEnaPChEWtV5JMccrpPMzrvFkDkXxnY5wzoCBW",
+      "assetCount": 6,
+      "token2022": false
+    },
+    {
+      "reserve": "794wCBpAkc4Lfaoc9A1AhV4bRjhhWAqgJhstKBT6VHiX",
+      "mint": "BEv1dVrp2GGcCUAutqh1z6ndx3VKWXBi8ciq3GKXPApk",
+      "assetCount": 4,
+      "token2022": false
+    },
+    {
+      "reserve": "7SLEGoVAn57tGvKTjK38JwrsEVgAUGFEabVtDpHCU3yJ",
+      "mint": "Cp9o9RX7TXaYww5wc5Kb2ZDxBZSJRstWmNVmLfG9V7eV",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "8FY9CxSi3iRBtGadpkN6GvupWWLXa1mWwsCHZ3JvXvkZ",
+      "mint": "AzLNYdQGGEF9CfPxVmBf3fa5MSEYo8TvjxJASPYwz4SU",
+      "assetCount": 6,
+      "token2022": false
+    },
+    {
+      "reserve": "8VpY6apPNUGnTSBwJEisvWargCFhNPzdtTR6Qkwor1bE",
+      "mint": "ChmdapQjmVD6xZvGPUZb2GPgRpStQYYxY11DLbtUv6fx",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "8dCAnNb9Z1D8kgoqJ2QJ7duYa5tAXTuKVCAWyipAnzSh",
+      "mint": "DFUuPkeRL9RpAWP6Q6pczRonDsywuWGha8b5avGTNkmN",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "8kbv2DUHaGh2URHAQs9jDg4HtyLXSwr9vPeVdRRNU4vf",
+      "mint": "GnjsBGjnmJ6Zfe7hSZTwPiXWTvoX61LLx6zTyvNozZuY",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i",
+      "mint": "H1pBENeKt92iVTviuS2ztnaTDi5icGcA2F5ny8BUxKjT",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "9oBkwdrTZbuiCcUnJbPSeNMyAfj5DKqY2EHa9HKfE1pK",
+      "mint": "7QvWcUo6tyC2JZpx1TtFnLWAbnF7qLbjLHdiwrmRSHjT",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "9rHRibviKgUmPCz4KbEW9f1fD8UzNYJdk4WG2wf9vZSS",
+      "mint": "4AEXvfxxeSVbaZovK9xTaYyCF3TCVgmRiPWheLW6GYUS",
+      "assetCount": 4,
+      "token2022": false
+    },
+    {
+      "reserve": "AQ6bRL2XtZXWo33DAs58pzTjNC9rBndXJyGrzBN1AFeF",
+      "mint": "9x5etV3WM3fDWej5phmyABENKnZfSinVVCCpL22bxDdB",
+      "assetCount": 2,
+      "token2022": false
+    },
+    {
+      "reserve": "ASVrqwHuTzxBBJvjKyjmpP5Vi87evcsZcBjm4E3KzeEc",
+      "mint": "CcFQ9o8BYRgLwCz2Jygtn5Sku2MrqnfZyYvDzMhiixoK",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "AfYMC4Ppzy1gJxVkESVB8VKYCw7jdPB8wRpsmWgNZRir",
+      "mint": "8tdDTiNijCoW3vnhAmXrsbW8J3fkjXppLAmC5F8ADGfb",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "ApEnZVgfBCffM8s5J3zwseW2WUsahfhUzTnAQDkv3XtE",
+      "mint": "5YUVK8MKtGXGAaFvDE2zRFv2RCrDC1jGF637Kq1EZhFR",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "BQitgmge3vYNwgEsAWG8bFGLycx5vLu2zuDdyMqEXSQB",
+      "mint": "3JHZJCwNEG3S1ekTUhRU2tRjeh8KKVaMemEjWKvSvZvc",
+      "assetCount": 8,
+      "token2022": false
+    },
+    {
+      "reserve": "C6xZ6bPFqYknZawZexW1kBfAehL5qCXQJHmFkBNQWedP",
+      "mint": "AypyRkHVNBF37xvZvnS51P7j3FtUYjEDnEmLbMbH6wMC",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "CYhMBkELRiBdr8gPa76jdnanZxyLdAkukxm9FqEYHrgL",
+      "mint": "5ovikjFV3QEcSz9vus8kaoVAD8Fr8dZRFrJ3Fz6Fy3U3",
+      "assetCount": 3,
+      "token2022": false
+    },
+    {
+      "reserve": "D6juoQKwdBXiPSvanUB5SviMR318MawWpMKvpagiWBJF",
+      "mint": "2DfinCQ7MFNDLH3ddBqQv3rZG8w2YFyDBhVoPpmyZfvB",
+      "assetCount": 3,
+      "token2022": false
+    },
+    {
+      "reserve": "DU7PFe6XggRTsTRZtfEgq96tggQyk5nSNWFVSwrSfpps",
+      "mint": "EDBSB31WRR2kNTVtPEtsEY2tPBA3GXu9xUVjHeLNd9HR",
+      "assetCount": 4,
+      "token2022": false
+    },
+    {
+      "reserve": "DYp3fCanmDtQstcgvu92nsgeHqaezLbmYAHct5spB3Zs",
+      "mint": "7ExAJXaTQZAdTibvqLG3ch9H2U6RpgbKWNGnTXA2r1wF",
+      "assetCount": 1,
+      "token2022": false
+    },
+    {
+      "reserve": "EK5WwpsRuWPCAhV4Rd4s5SRuE6Gnbc8SA94oUjZbHfVb",
+      "mint": "J4XbyjS6iPHRQ8oPAAAc2GhmP3549ga9gZiu8MR5iimq",
+      "assetCount": 2,
+      "token2022": false
+    },
+    {
+      "reserve": "EQ5HNT9hAnYFfXARRJeKrNahMLaag5tepXV1uoK6CqoM",
+      "mint": "4W27DvndHGCMfwgvagiJs2n9YVPzJbXa4Furtd1JjMsZ",
+      "assetCount": 10,
+      "token2022": false
+    },
+    {
+      "reserve": "FDAiACnLAeDs11Dkv8QgQWFz9uYDwzCVQDBZtHc7q3o3",
+      "mint": "6SmTdchJVceZbgCGQsrhjUmDWK8DKhFCDtmM5yS4TQw6",
+      "assetCount": 3,
+      "token2022": false
+    },
+    {
+      "reserve": "GH3oPXD1uzE5hbQsXTEQkBgd3Ja7E87T3Ln2fLoer7aD",
+      "mint": "B14udrPAkZQg6URZ54djeWVcRXhMfEDDFXRd2NYaX27u",
+      "assetCount": 5,
+      "token2022": false
+    },
+    {
+      "reserve": "GxMTKJ1uyBb7RdEPMrW6bcnfVqYTB5SFzRsbWUoc24Gr",
+      "mint": "ETN32cKpUzmxPCmTijFHo7BureWuUEsFyay9arZg1s4z",
+      "assetCount": 4,
+      "token2022": false
+    },
+    {
+      "reserve": "H7NDKmf9pKow6v7eQfBchxRtPb8thP1STsRARGPWwo73",
+      "mint": "CWZnYir5afTaQRuATZYZUsPqQUSSTkmGRSo8CAu7qZ2T",
+      "assetCount": 2,
+      "token2022": false
+    },
+    {
+      "reserve": "HMHUP6e1iY83UJp1CN9gCMh4JXgQF2y3RSZUgfHw36jk",
+      "mint": "9ndfzaE5zZ9Uz222oW4Fm73CJ6cq8JxDzZ5qg1KTbZEw",
+      "assetCount": 4,
+      "token2022": false
+    },
+    {
+      "reserve": "HYK2pVFZ752MHyzXCCjvJgf2JDUeSfgJTrvy9oR7wJ6C",
+      "mint": "CPK3JWJJQo4xTa6K9t4ZriWASgY7m1CVHMiVjwbcF3yt",
+      "assetCount": 3,
+      "token2022": false
+    },
+    {
+      "reserve": "HdGh2ctoAuAXvajhntUALcc3Lb9RBeJTEc1uYe3h4Xwu",
+      "mint": "ELMqdm5a53WoA9FZKZccBX56YrXavPkAJ8PMWk37W2Gz",
+      "assetCount": 1,
+      "token2022": false
+    }
+  ],
+  "jupiter": {
+    "available": true,
+    "swapMode": "ExactOut",
+    "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "outputMint": "So11111111111111111111111111111111111111112",
+    "inAmount": "111072",
+    "outAmount": "1000000",
+    "maximumInput": "111628",
+    "contextSlot": 455814754
+  },
+  "basketChecks": [
+    {
+      "assetCount": 1,
+      "notionalUsdc": 1000,
+      "compositionSource": "9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i",
+      "newTokenEndToEndTest": false,
+      "legs": [
+        {
+          "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "targetRaw": "1000000000",
+          "mintFunding": {
+            "available": true,
+            "inAmount": "1000000000",
+            "outAmount": "1000000000",
+            "otherAmountThreshold": "1000000000"
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "1000000000",
+            "outAmount": "1000000000",
+            "otherAmountThreshold": "1000000000"
+          }
+        }
+      ]
+    },
+    {
+      "assetCount": 5,
+      "notionalUsdc": 1000,
+      "compositionSource": "GH3oPXD1uzE5hbQsXTEQkBgd3Ja7E87T3Ln2fLoer7aD",
+      "newTokenEndToEndTest": false,
+      "legs": [
+        {
+          "mint": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+          "targetRaw": "104200887",
+          "mintFunding": {
+            "available": false,
+            "status": 400
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "104200887",
+            "outAmount": "241032004",
+            "otherAmountThreshold": "239826844",
+            "slot": 455814779
+          }
+        },
+        {
+          "mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+          "targetRaw": "18604467",
+          "mintFunding": {
+            "available": false,
+            "status": 429
+          },
+          "redemptionExecution": {
+            "available": false,
+            "status": 429
+          }
+        },
+        {
+          "mint": "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx",
+          "targetRaw": "1206219660705",
+          "mintFunding": {
+            "available": false,
+            "status": 429
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "1206219660705",
+            "outAmount": "176260161",
+            "otherAmountThreshold": "175378861",
+            "slot": 455814801
+          }
+        },
+        {
+          "mint": "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8",
+          "targetRaw": "74020302",
+          "mintFunding": {
+            "available": false,
+            "status": 400
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "74020302",
+            "outAmount": "121537882",
+            "otherAmountThreshold": "120930193",
+            "slot": 455814813
+          }
+        },
+        {
+          "mint": "So11111111111111111111111111111111111111112",
+          "targetRaw": "2055090379",
+          "mintFunding": {
+            "available": true,
+            "inAmount": "228335695",
+            "outAmount": "2055090379",
+            "otherAmountThreshold": "229477374",
+            "slot": 455814819
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "2055090379",
+            "outAmount": "228310590",
+            "otherAmountThreshold": "227169038",
+            "slot": 455814824
+          }
+        }
+      ]
+    },
+    {
+      "assetCount": 10,
+      "available": false,
+      "priceStatus": 429
+    }
+  ]
+}

@@ -74,9 +74,8 @@ export interface RedemptionEntitlement {
  * pre-fee), given CURRENT supply/balances. Mirrors
  * `redeem_reserve_tokens_in_kind`'s floor-rounded
  * `mul_div_floor(netShares, vaultBalance, totalSupply)`, where `netShares`
- * excludes the redemption fee portion (which stays in the vaults as
- * accretion to remaining holders -- see the comment in
- * redeem_reserve_tokens_in_kind.rs).
+ * excludes the effective redemption fee (including the mandatory SSR
+ * minimum). Fee shares are crystallized in the fee vault for settlement.
  */
 export function computeRedemptionEntitlements(
   reserveTokensToRedeem: bigint,
@@ -85,7 +84,7 @@ export function computeRedemptionEntitlements(
   assetBalances: AssetBalance[],
 ): RedemptionEntitlement[] {
   if (totalSupply <= 0n) throw new Error("computeRedemptionEntitlements: zero supply");
-  const feeShares = mulDivCeil(reserveTokensToRedeem, redemptionFeeBps, BPS_DENOMINATOR);
+  const feeShares = mulDivCeil(reserveTokensToRedeem, redemptionFeeBps > 50n ? redemptionFeeBps : 50n, BPS_DENOMINATOR);
   const netShares = reserveTokensToRedeem - feeShares;
   if (netShares <= 0n) throw new Error("computeRedemptionEntitlements: fee consumes the entire redeemed amount");
   return assetBalances.map((a) => ({

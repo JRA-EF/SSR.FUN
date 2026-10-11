@@ -349,4 +349,25 @@ pub mod ssr_protocol {
     ) -> Result<()> {
         instructions::collect_transfer_fees::handler(ctx)
     }
+    pub fn configure_liquidity_revenue(ctx: Context<ConfigureLiquidityRevenue>, buy_tax_bps: u16, sell_tax_bps: u16) -> Result<()> {
+        instructions::liquidity_revenue::configure(ctx, buy_tax_bps, sell_tax_bps)
+    }
+    pub fn distribute_liquidity_revenue(ctx: Context<DistributeLiquidityRevenue>) -> Result<()> {
+        instructions::liquidity_revenue::distribute(ctx)
+    }
+    pub fn swap_with_project_tax<'info>(ctx: Context<'info, SwapWithProjectTax<'info>>, buy: bool, amount_in: u64, minimum_net_out: u64) -> Result<()> {
+        instructions::liquidity_revenue::taxed_swap(ctx, buy, amount_in, minimum_net_out)
+    }
+
+    pub fn lock_liquidity_tranche(ctx:Context<LockLiquidityTranche>,nonce:u64,amount:u64,unlock_ts:i64)->Result<()>{instructions::liquidity_lock::deposit(ctx,nonce,amount,unlock_ts)}
+    pub fn extend_liquidity_tranche(ctx:Context<ExtendLiquidityTranche>,unlock_ts:i64)->Result<()>{instructions::liquidity_lock::extend(ctx,unlock_ts)}
+    pub fn withdraw_liquidity_tranche(ctx:Context<WithdrawLiquidityTranche>)->Result<()>{instructions::liquidity_lock::withdraw(ctx)}
+    pub fn make_liquidity_tranche_permanent<'info>(ctx:Context<'info,MakeLiquidityTranchePermanent<'info>>)->Result<()>{instructions::liquidity_lock::permanent(ctx)}
+
+    pub fn authorize_liquidity_addition(ctx: Context<AuthorizeLiquidityAddition>) -> Result<()> {
+        instructions::liquidity_revenue::authorize_addition(ctx)
+    }
+
+    pub fn finalize_liquidity_pool(ctx:Context<FinalizeLiquidityPool>)->Result<()>{instructions::liquidity_revenue::finalize_pool(ctx)}
+
 }
