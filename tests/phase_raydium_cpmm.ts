@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import { createHash } from 'node:crypto';
 import { PublicKey, type AccountInfo } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { RAYDIUM_CPMM, SSR_POOL_PAYER, SSR_CPMM_CONFIG, LIQUIDITY_USDC, permissionAddress, verifyPermission, decodeConfig, effectiveCreatorShare, netCreatorEarnings, decodePool, RaydiumPermissionedCpmmAdapter } from '../src/merge/lib/liquidity/raydiumCpmm';
+import { RAYDIUM_CPMM, SSR_POOL_PAYER, SSR_CPMM_CONFIG, LIQUIDITY_USDC, permissionAddress, verifyPermission, decodeConfig, effectiveCreatorShare, netCreatorEarnings, decodePool, RaydiumPermissionedCpmmAdapter, prepareRevenuePool } from '../src/merge/lib/liquidity/raydiumCpmm';
 function account(kind: string, size: number): AccountInfo<Buffer> {
   const data = Buffer.alloc(size);
   createHash('sha256').update('account:' + kind).digest().copy(data,0,0,8);
@@ -52,4 +52,25 @@ describe('Raydium permissioned CPMM adapter',()=>{
     expect([...result.instruction.data]).deep.eq([...createHash('sha256').update('global:collect_creator_fee_permissionless').digest().subarray(0,8)]);
     expect((await adapter.readReadiness(treasury)).compoundBlocker).eq('OPEN-13');
   });
+});
+
+
+describe('Revenue-routed pool creation preparation',()=>{
+ it('atomically initializes the pool with the router as creator and then registers its fixed split',async()=>{
+  const programId=new PublicKey('8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9');
+  const connection={getMultipleAccountsInfo:async()=>[permission(),config(),null],getAccountInfo:async(key:PublicKey)=>key.equals(reserve)?{...account('Mint',82),owner:TOKEN_2022_PROGRAM_ID}:null};
+  const built=await prepareRevenuePool({connection:connection as any,programId,reserve:treasury,reserveMint:reserve,manager:treasury,payer:SSR_POOL_PAYER,protocolConfig:treasury,reserveAmountRaw:100n,usdcAmountRaw:200n,openTime:0n,buyTaxBps:0,sellTaxBps:200});
+  expect(built.instructions).length(2);
+  expect(built.instructions[0].keys[1].pubkey.equals(built.revenue)).eq(true);
+  expect(built.instructions[1].programId.equals(programId)).eq(true);
+  expect(built.instructions[0].keys[0].pubkey.equals(SSR_POOL_PAYER)).eq(true);
+  expect(built.initialLpOwner.equals(SSR_POOL_PAYER)).eq(true);
+  expect(built.instructions[0].data[32]).eq(Buffer.compare(LIQUIDITY_USDC.toBuffer(),reserve.toBuffer())<0?1:2);
+ });
+ it('rejects creation by an unapproved payer before requesting funding',async()=>{
+  let reads=0;
+  const connection={getMultipleAccountsInfo:async()=>{reads++;return[];},getAccountInfo:async()=>null};
+  try {await prepareRevenuePool({connection:connection as any,programId:treasury,reserve:treasury,reserveMint:reserve,manager:treasury,payer:treasury,protocolConfig:treasury,reserveAmountRaw:100n,usdcAmountRaw:200n,openTime:0n,buyTaxBps:0,sellTaxBps:0});expect.fail('must reject');}catch(e){expect(String(e)).include('approved payer');}
+  expect(reads).eq(0);
+ });
 });

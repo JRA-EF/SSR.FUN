@@ -349,4 +349,14 @@ pub mod ssr_protocol {
     ) -> Result<()> {
         instructions::collect_transfer_fees::handler(ctx)
     }
+    pub fn configure_liquidity_revenue(ctx: Context<ConfigureLiquidityRevenue>, buy_tax_bps: u16, sell_tax_bps: u16) -> Result<()> {
+        instructions::liquidity_revenue::configure(ctx, buy_tax_bps, sell_tax_bps)
+    }
+    pub fn distribute_liquidity_revenue(ctx: Context<DistributeLiquidityRevenue>) -> Result<()> {
+        instructions::liquidity_revenue::distribute(ctx)
+    }
+    pub fn swap_with_project_tax<'info>(ctx: Context<'info, SwapWithProjectTax<'info>>, buy: bool, amount_in: u64, minimum_net_out: u64) -> Result<()> {
+        instructions::liquidity_revenue::taxed_swap(ctx, buy, amount_in, minimum_net_out)
+    }
+
 }

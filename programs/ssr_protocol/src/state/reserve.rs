@@ -39,11 +39,11 @@ pub enum ReserveStatus {
     Closed,
 }
 
-/// All fee values here are explicit DevNet placeholders, not final economics.
-/// See DEC-0013. `mint_fee_bps`/`annual_tvl_fee_bps` are each the
+/// Configured creator fee rates; effective charges are computed on-chain. `mint_fee_bps`/`annual_tvl_fee_bps` are each the
 /// "configured" (manager-set) gross rate -- the actual EFFECTIVE rate
 /// charged, and its Protocol/Manager split, is derived fresh at every
-/// mint/accrual by `fee_math::split_configured_bps` (DEC-0094), never a
+/// mint/redeem by `fee_math::split_transaction_bps` (DEC-0232), or TVL
+/// accrual by `split_configured_bps`, never a
 /// value stored or chosen here.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
 pub struct FeeConfig {
@@ -56,7 +56,7 @@ pub struct FeeConfig {
     /// control flow and NOT caller-configurable (pre-DEC-0094 Reserves may
     /// still carry their original create-time value here until their next
     /// mint recomputes it). The real, current split for any Reserve is
-    /// always `fee_math::split_configured_bps(mint_fee_bps, ..)`, evaluated
+    /// always `fee_math::split_transaction_bps(mint_fee_bps, ..)`, evaluated
     /// live, not this field.
     pub manager_fee_share_bps: u16,
     /// DEC-0094: same repurposing as `manager_fee_share_bps` above, but for

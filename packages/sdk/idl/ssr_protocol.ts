@@ -1999,6 +1999,135 @@ export type SsrProtocol = {
       "args": []
     },
     {
+      "name": "configureLiquidityRevenue",
+      "discriminator": [
+        218,
+        58,
+        113,
+        200,
+        121,
+        81,
+        159,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "manager",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "ammConfig",
+          "address": "LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC"
+        },
+        {
+          "name": "creatorFeeShare"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "buyTaxBps",
+          "type": "u16"
+        },
+        {
+          "name": "sellTaxBps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "createReserve",
       "discriminator": [
         26,
@@ -2764,6 +2893,107 @@ export type SsrProtocol = {
         {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "distributeLiquidityRevenue",
+      "discriminator": [
+        16,
+        135,
+        176,
+        113,
+        20,
+        129,
+        246,
+        198
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue.reserve",
+                "account": "liquidityRevenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staging",
+          "writable": true
+        },
+        {
+          "name": "protocolDestination",
+          "writable": true
+        },
+        {
+          "name": "creatorDestination",
+          "writable": true
+        },
+        {
+          "name": "ammConfig",
+          "address": "LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC"
+        },
+        {
+          "name": "creatorFeeShare"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": []
@@ -5561,6 +5791,120 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "swapWithProjectTax",
+      "discriminator": [
+        250,
+        157,
+        51,
+        80,
+        53,
+        172,
+        78,
+        30
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue.reserve",
+                "account": "liquidityRevenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "userUsdc",
+          "writable": true
+        },
+        {
+          "name": "protocolDestination",
+          "writable": true
+        },
+        {
+          "name": "creatorDestination",
+          "writable": true
+        },
+        {
+          "name": "raydiumProgram",
+          "address": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "buy",
+          "type": "bool"
+        },
+        {
+          "name": "amountIn",
+          "type": "u64"
+        },
+        {
+          "name": "minimumNetOut",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "transferReserveManager",
       "discriminator": [
         17,
@@ -6208,6 +6552,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "liquidityRevenue",
+      "discriminator": [
+        18,
+        153,
+        113,
+        253,
+        31,
+        161,
+        41,
+        64
+      ]
+    },
+    {
       "name": "managerFeeRecipients",
       "discriminator": [
         243,
@@ -6405,6 +6762,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "liquidityRevenueDistributed",
+      "discriminator": [
+        201,
+        160,
+        236,
+        103,
+        196,
+        41,
+        249,
+        166
+      ]
+    },
+    {
       "name": "managerFeeRecipientsConfigured",
       "discriminator": [
         140,
@@ -6454,6 +6824,19 @@ export type SsrProtocol = {
         90,
         189,
         44
+      ]
+    },
+    {
+      "name": "projectTaxCharged",
+      "discriminator": [
+        158,
+        115,
+        212,
+        6,
+        47,
+        23,
+        95,
+        182
       ]
     },
     {
@@ -7148,6 +7531,21 @@ export type SsrProtocol = {
       "code": 6067,
       "name": "delegateSelfModification",
       "msg": "A co-manager cannot change its own permissions."
+    },
+    {
+      "code": 6068,
+      "name": "liquidityRevenueValidationFailed",
+      "msg": "Liquidity revenue accounts, token pair, authority or fee configuration do not match the registered policy."
+    },
+    {
+      "code": 6069,
+      "name": "liquidityRevenueEconomicsChanged",
+      "msg": "Raydium fee retention changed; reconcile pending creator fees before resuming distribution."
+    },
+    {
+      "code": 6070,
+      "name": "liquiditySwapMinimumNotMet",
+      "msg": "The secondary swap would deliver less than your minimum after all fees and project tax."
     }
   ],
   "types": [
@@ -7313,11 +7711,11 @@ export type SsrProtocol = {
     {
       "name": "feeConfig",
       "docs": [
-        "All fee values here are explicit DevNet placeholders, not final economics.",
-        "See DEC-0013. `mint_fee_bps`/`annual_tvl_fee_bps` are each the",
+        "Configured creator fee rates; effective charges are computed on-chain. `mint_fee_bps`/`annual_tvl_fee_bps` are each the",
         "\"configured\" (manager-set) gross rate -- the actual EFFECTIVE rate",
         "charged, and its Protocol/Manager split, is derived fresh at every",
-        "mint/accrual by `fee_math::split_configured_bps` (DEC-0094), never a",
+        "mint/redeem by `fee_math::split_transaction_bps` (DEC-0232), or TVL",
+        "accrual by `split_configured_bps`, never a",
         "value stored or chosen here."
       ],
       "type": {
@@ -7344,7 +7742,7 @@ export type SsrProtocol = {
               "control flow and NOT caller-configurable (pre-DEC-0094 Reserves may",
               "still carry their original create-time value here until their next",
               "mint recomputes it). The real, current split for any Reserve is",
-              "always `fee_math::split_configured_bps(mint_fee_bps, ..)`, evaluated",
+              "always `fee_math::split_transaction_bps(mint_fee_bps, ..)`, evaluated",
               "live, not this field."
             ],
             "type": "u16"
@@ -7753,6 +8151,73 @@ export type SsrProtocol = {
       }
     },
     {
+      "name": "liquidityRevenue",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyTaxBps",
+            "type": "u16"
+          },
+          {
+            "name": "sellTaxBps",
+            "type": "u16"
+          },
+          {
+            "name": "retainedRate",
+            "type": "u64"
+          },
+          {
+            "name": "remainder",
+            "docs": [
+              "Carry prevents splitting collections from evading SSR's share."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "liquidityRevenueDistributed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocolUsdc",
+            "type": "u64"
+          },
+          {
+            "name": "creatorUsdc",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "managerFeeAccrualSource",
       "type": {
         "kind": "enum",
@@ -8020,6 +8485,42 @@ export type SsrProtocol = {
           {
             "name": "createdAt",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "projectTaxCharged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "buy",
+            "type": "bool"
+          },
+          {
+            "name": "protocolUsdc",
+            "type": "u64"
+          },
+          {
+            "name": "creatorUsdc",
+            "type": "u64"
+          },
+          {
+            "name": "netOutput",
+            "type": "u64"
           }
         ]
       }

@@ -13,7 +13,7 @@ use crate::constants::{
 };
 use crate::errors::SsrError;
 use crate::events::{FeeVaultCredited, ManagerFeeAccrualSource, ReserveSeeded};
-use crate::fee_math::{split_configured_bps, split_total_fee};
+use crate::fee_math::{split_transaction_bps, split_total_fee};
 use crate::state::{FeeSettlement, ProtocolConfig, Reserve, ReserveStatus, TvlAccrual};
 
 #[derive(Accounts)]
@@ -177,7 +177,7 @@ pub fn handler<'info>(
     // receives the NET amount after the fee, never the full gross figure.
     let configured_mint_fee_bps = ctx.accounts.reserve.fee_config.mint_fee_bps;
     let (protocol_bps, manager_bps) =
-        split_configured_bps(configured_mint_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
+        split_transaction_bps(configured_mint_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
     let effective_total_bps = (protocol_bps as u64)
         .checked_add(manager_bps as u64)
         .ok_or(error!(SsrError::MathOverflow))?;

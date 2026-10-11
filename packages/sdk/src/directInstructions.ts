@@ -318,7 +318,7 @@ export async function buildDirectRedeemInstructions(params: BuildDirectRedeemPar
   const vaultBalance = BigInt(asset.vaultBalanceRaw);
   const totalSupply = BigInt(params.reserveTokenSupplyRaw);
 
-  const feeShares = (params.reserveTokensToRedeem * params.redemptionFeeBps + 9_999n) / 10_000n; // mulDivCeil, protocol-favoring, matches computeRedemptionEntitlements
+  const feeShares = (params.reserveTokensToRedeem * (params.redemptionFeeBps > 50n ? params.redemptionFeeBps : 50n) + 9_999n) / 10_000n; // mulDivCeil, protocol-favoring, matches computeRedemptionEntitlements
   const netShares = params.reserveTokensToRedeem - feeShares;
   if (netShares <= 0n) throw new Error("buildDirectRedeemInstructions: redemption fee consumes the entire redeemed amount.");
   const entitlement = (netShares * vaultBalance) / totalSupply; // mulDivFloor, matches computeRedemptionEntitlements

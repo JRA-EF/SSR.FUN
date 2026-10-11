@@ -169,9 +169,11 @@ pub fn handler<'info>(
     )?;
 
     let fee_config = ctx.accounts.reserve.fee_config;
+    let (protocol_bps, manager_bps) =
+        split_redemption_bps(fee_config.redemption_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
     let redemption_fee_shares = mul_div_ceil(
         reserve_tokens_to_redeem,
-        fee_config.redemption_fee_bps as u64,
+        (protocol_bps as u64) + (manager_bps as u64),
         BPS_DENOMINATOR as u64,
     )?;
     let net_shares_for_entitlement = reserve_tokens_to_redeem
@@ -229,13 +231,8 @@ pub fn handler<'info>(
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     token_interface::burn(cpi_ctx, reserve_tokens_to_redeem)?;
 
-    // DEC-0173: crystallize the redemption fee into the fee vault.
-    // split_redemption_bps is attribution-only -- the charged total remains
-    // exactly `redemption_fee_bps`, never raised by any floor (unlike the
-    // mint fee's split_configured_bps).
+    // Crystallize the effective redemption fee, including the SSR minimum.
     if redemption_fee_shares > 0 {
-        let (protocol_bps, manager_bps) =
-            split_redemption_bps(fee_config.redemption_fee_bps, PROTOCOL_MIN_MINT_FEE_BPS);
         let (protocol_fee_shares, manager_fee_shares) =
             split_total_fee(redemption_fee_shares, protocol_bps, manager_bps)?;
 

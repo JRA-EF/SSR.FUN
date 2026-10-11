@@ -29,9 +29,9 @@ export interface EffectiveFeeSplit {
  * floored at `protocolMinBps` (the effective total can then exceed
  * `configuredBps` when it's below the floor). A manager who genuinely
  * configures 0% pays no floor at all -- `configuredBps === 0n` always
- * yields `{protocolBps: 0n, managerBps: 0n}`, a real zero-fee mint/TVL
- * accrual. There is no forced minimum fee; the floor only governs how a
- * NONZERO fee splits.
+ * yields `{protocolBps: 0n, managerBps: 0n}` for annual TVL accrual.
+ * Mint, seed and redemption MUST use computeTransactionFeeSplit instead
+ * (DEC-0232), which applies the minimum even when configured zero.
  *
  * Floor division for the "50% of configured" half -- matches every example
  * in the task's own table exactly (all even bps values); for an odd
@@ -43,6 +43,16 @@ export function computeEffectiveFeeSplit(configuredBps: bigint, protocolMinBps: 
   if (configuredBps === 0n) return { protocolBps: 0n, managerBps: 0n, effectiveTotalBps: 0n };
   const half = configuredBps / 2n;
   const protocolBps = protocolMinBps > half ? protocolMinBps : half;
+  const managerBps = configuredBps > protocolBps ? configuredBps - protocolBps : 0n;
+  return { protocolBps, managerBps, effectiveTotalBps: protocolBps + managerBps };
+}
+
+/** Mint and redemption always include SSR's 0.5% minimum, including configured zero. */
+export function computeTransactionFeeSplit(configuredBps: bigint, protocolMinBps = PROTOCOL_MIN_MINT_FEE_BPS): EffectiveFeeSplit {
+  if (configuredBps < 0n || configuredBps > 10_000n || protocolMinBps < 0n || protocolMinBps > 10_000n) {
+    throw new Error("Invalid transaction fee basis points");
+  }
+  const protocolBps = configuredBps / 2n > protocolMinBps ? configuredBps / 2n : protocolMinBps;
   const managerBps = configuredBps > protocolBps ? configuredBps - protocolBps : 0n;
   return { protocolBps, managerBps, effectiveTotalBps: protocolBps + managerBps };
 }

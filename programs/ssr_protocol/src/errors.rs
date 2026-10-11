@@ -202,4 +202,12 @@ pub enum SsrError {
 
     #[msg("A co-manager cannot change its own permissions.")]
     DelegateSelfModification,
+    // DEC-0232: append only, preserving every deployed error number.
+    #[msg("Liquidity revenue accounts, token pair, authority or fee configuration do not match the registered policy.")]
+    LiquidityRevenueValidationFailed,
+    #[msg("Raydium fee retention changed; reconcile pending creator fees before resuming distribution.")]
+    LiquidityRevenueEconomicsChanged,
+    #[msg("The secondary swap would deliver less than your minimum after all fees and project tax.")]
+    LiquiditySwapMinimumNotMet,
+
 }

@@ -3,12 +3,14 @@
  * Compound deliberately has no builder until OPEN-13 is resolved.
  */
 import { PublicKey, SystemProgram, TransactionInstruction, type AccountInfo, type Connection } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 
 export const RAYDIUM_CPMM = new PublicKey("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
 export const SSR_POOL_PAYER = new PublicKey("6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS");
 export const SSR_CPMM_CONFIG = new PublicKey("LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC");
 export const LIQUIDITY_USDC = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+import { findLiquidityRevenue, buildConfigureLiquidityRevenue, buildDistributeLiquidityRevenue } from "@ssr/sdk";
+
 const DENOMINATOR = 1_000_000n;
 const DISCRIMINATORS = {
   Permission: [224,83,28,79,10,253,161,28],
@@ -49,7 +51,7 @@ export function decodeConfig(account: AccountInfo<Buffer> | null) {
   return { tradeFeeRate, creatorFeeRate, creatorFeeShareRate: rate(b.readBigUInt64LE(116)), createPoolLamports: b.readBigUInt64LE(36) };
 }
 export function effectiveCreatorShare(account: AccountInfo<Buffer> | null, creator: PublicKey, fallback: bigint): bigint {
-  if (!account || account.data.length === 0 || !account.owner.equals(RAYDIUM_CPMM)) return rate(fallback);
+  if (!account || account.data.length === 0) return rate(fallback);
   const b = checked(account, "CreatorFeeShare", 145);
   if (!new PublicKey(b.subarray(9,41)).equals(creator) || !new PublicKey(b.subarray(41,73)).equals(SSR_CPMM_CONFIG)) {
     throw new Error("Raydium creator fee override does not match the treasury/config");
@@ -110,4 +112,57 @@ export class RaydiumPermissionedCpmmAdapter {
     return { instruction, treasury: pool.creator, grossUsdcRaw: pool.accruedUsdc,
       netUsdcRaw: netCreatorEarnings(pool.accruedUsdc, readiness.shareRate) };
   }
+}
+
+/** Creates a pool whose native creator fees are controlled by SSR's on-chain router.
+ * Requires the approved payer to hold both initial assets. No funding/custody is assumed (OPEN-14).
+ * Amounts are gross transfers; caller must price net Reserve deposits after Token-2022 fees.
+ */
+export async function prepareRevenuePool(input: {
+  connection: Pick<Connection,'getMultipleAccountsInfo'|'getAccountInfo'>;
+  programId: PublicKey; reserve: PublicKey; reserveMint: PublicKey; manager: PublicKey;
+  payer: PublicKey; protocolConfig: PublicKey; reserveAmountRaw: bigint; usdcAmountRaw: bigint;
+  openTime: bigint; buyTaxBps: number; sellTaxBps: number;
+}) {
+  if(!input.payer.equals(SSR_POOL_PAYER)) throw new Error('Pool creation requires the Raydium-approved payer (OPEN-14)');
+  if(input.reserveAmountRaw<=0n||input.usdcAmountRaw<=0n||input.openTime<0n)throw new Error('Invalid initial liquidity');
+  const revenue=findLiquidityRevenue(input.reserve,input.programId);
+  const adapter=new RaydiumPermissionedCpmmAdapter(input.connection);
+  await adapter.readReadiness(revenue);
+  const mintAccount=await input.connection.getAccountInfo(input.reserveMint,'finalized');
+  if(!mintAccount?.owner.equals(TOKEN_2022_PROGRAM_ID))throw new Error('New Reserve Token pools require Token-2022');
+  const usdc0=Buffer.compare(LIQUIDITY_USDC.toBuffer(),input.reserveMint.toBuffer())<0;
+  const mint0=usdc0?LIQUIDITY_USDC:input.reserveMint,mint1=usdc0?input.reserveMint:LIQUIDITY_USDC;
+  const program0=usdc0?TOKEN_PROGRAM_ID:TOKEN_2022_PROGRAM_ID,program1=usdc0?TOKEN_2022_PROGRAM_ID:TOKEN_PROGRAM_ID;
+  const pool=pda(Buffer.from('pool'),SSR_CPMM_CONFIG.toBuffer(),mint0.toBuffer(),mint1.toBuffer());
+  if(await input.connection.getAccountInfo(pool,'finalized'))throw new Error('Canonical pool already exists; review its creator before proceeding');
+  const lp=pda(Buffer.from('pool_lp_mint'),pool.toBuffer());
+  const meta=(pubkey:PublicKey,isWritable=false,isSigner=false)=>({pubkey,isWritable,isSigner});
+  const encode=(value:bigint)=>{const b=Buffer.alloc(8);b.writeBigUInt64LE(value);return b;};
+  const initialize=new TransactionInstruction({programId:RAYDIUM_CPMM,data:Buffer.concat([
+    Buffer.from([63,55,254,65,49,178,89,121]),encode(usdc0?input.usdcAmountRaw:input.reserveAmountRaw),encode(usdc0?input.reserveAmountRaw:input.usdcAmountRaw),encode(input.openTime),Buffer.from([usdc0?1:2]),
+  ]),keys:[meta(input.payer,true,true),meta(revenue),meta(SSR_CPMM_CONFIG),meta(pda(Buffer.from('vault_and_lp_mint_auth_seed'))),meta(pool,true),meta(mint0),meta(mint1),meta(lp,true),
+    meta(getAssociatedTokenAddressSync(mint0,input.payer,false,program0),true),meta(getAssociatedTokenAddressSync(mint1,input.payer,false,program1),true),meta(getAssociatedTokenAddressSync(lp,input.payer),true),
+    meta(pda(Buffer.from('pool_vault'),pool.toBuffer(),mint0.toBuffer()),true),meta(pda(Buffer.from('pool_vault'),pool.toBuffer(),mint1.toBuffer()),true),
+    meta(new PublicKey('DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8'),true),meta(pda(Buffer.from('observation'),pool.toBuffer()),true),meta(permissionAddress()),meta(TOKEN_PROGRAM_ID),meta(program0),meta(program1),meta(ASSOCIATED_TOKEN_PROGRAM_ID),meta(SystemProgram.programId)]});
+  const configure=buildConfigureLiquidityRevenue({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)});
+  return {instructions:[initialize,configure],pool,revenue,lpMint:lp,initialLpOwner:input.payer,
+    requiresSigners:[input.payer,input.manager],compoundAvailable:false as const,blockers:['OPEN-13','OPEN-14'] as const};
+}
+
+/** Atomic native collection + fixed distribution. Even an external direct
+ * Raydium collection can only fund the router; distribution cannot be redirected.
+ */
+export async function prepareRevenueCollect(input: {
+ connection:Pick<Connection,'getMultipleAccountsInfo'|'getAccountInfo'>;
+ programId:PublicKey;reserve:PublicKey;reserveMint:PublicKey;pool:PublicKey;payer:PublicKey;
+ protocolConfig:PublicKey;protocolTreasury:PublicKey;creatorTreasury:PublicKey;
+}) {
+ const revenue=findLiquidityRevenue(input.reserve,input.programId);
+ const adapter=new RaydiumPermissionedCpmmAdapter(input.connection);
+ const collected=await adapter.prepareCollect({payer:input.payer,pool:input.pool,reserveMint:input.reserveMint,treasury:revenue});
+ const ata=(owner:PublicKey)=>getAssociatedTokenAddressSync(LIQUIDITY_USDC,owner,true);
+ const instructions=[input.protocolTreasury,input.creatorTreasury].map(owner=>createAssociatedTokenAccountIdempotentInstruction(input.payer,ata(owner),owner,LIQUIDITY_USDC));
+ instructions.push(collected.instruction,buildDistributeLiquidityRevenue({...input,staging:ata(revenue),protocolDestination:ata(input.protocolTreasury),creatorDestination:ata(input.creatorTreasury),ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)}));
+ return {instructions,revenue,grossUsdcRaw:collected.grossUsdcRaw,netUsdcRaw:collected.netUsdcRaw};
 }

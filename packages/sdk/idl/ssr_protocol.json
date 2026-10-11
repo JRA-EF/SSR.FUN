@@ -1993,6 +1993,135 @@
       "args": []
     },
     {
+      "name": "configure_liquidity_revenue",
+      "discriminator": [
+        218,
+        58,
+        113,
+        200,
+        121,
+        81,
+        159,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "manager",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "protocol_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "amm_config",
+          "address": "LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC"
+        },
+        {
+          "name": "creator_fee_share"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "buy_tax_bps",
+          "type": "u16"
+        },
+        {
+          "name": "sell_tax_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "create_reserve",
       "discriminator": [
         26,
@@ -2758,6 +2887,107 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "distribute_liquidity_revenue",
+      "discriminator": [
+        16,
+        135,
+        176,
+        113,
+        20,
+        129,
+        246,
+        198
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue.reserve",
+                "account": "LiquidityRevenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staging",
+          "writable": true
+        },
+        {
+          "name": "protocol_destination",
+          "writable": true
+        },
+        {
+          "name": "creator_destination",
+          "writable": true
+        },
+        {
+          "name": "amm_config",
+          "address": "LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC"
+        },
+        {
+          "name": "creator_fee_share"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": []
@@ -5555,6 +5785,120 @@
       ]
     },
     {
+      "name": "swap_with_project_tax",
+      "discriminator": [
+        250,
+        157,
+        51,
+        80,
+        53,
+        172,
+        78,
+        30
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "protocol_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue.reserve",
+                "account": "LiquidityRevenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_usdc",
+          "writable": true
+        },
+        {
+          "name": "protocol_destination",
+          "writable": true
+        },
+        {
+          "name": "creator_destination",
+          "writable": true
+        },
+        {
+          "name": "raydium_program",
+          "address": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "buy",
+          "type": "bool"
+        },
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "minimum_net_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "transfer_reserve_manager",
       "discriminator": [
         17,
@@ -6202,6 +6546,19 @@
       ]
     },
     {
+      "name": "LiquidityRevenue",
+      "discriminator": [
+        18,
+        153,
+        113,
+        253,
+        31,
+        161,
+        41,
+        64
+      ]
+    },
+    {
       "name": "ManagerFeeRecipients",
       "discriminator": [
         243,
@@ -6399,6 +6756,19 @@
       ]
     },
     {
+      "name": "LiquidityRevenueDistributed",
+      "discriminator": [
+        201,
+        160,
+        236,
+        103,
+        196,
+        41,
+        249,
+        166
+      ]
+    },
+    {
       "name": "ManagerFeeRecipientsConfigured",
       "discriminator": [
         140,
@@ -6448,6 +6818,19 @@
         90,
         189,
         44
+      ]
+    },
+    {
+      "name": "ProjectTaxCharged",
+      "discriminator": [
+        158,
+        115,
+        212,
+        6,
+        47,
+        23,
+        95,
+        182
       ]
     },
     {
@@ -7142,6 +7525,21 @@
       "code": 6067,
       "name": "DelegateSelfModification",
       "msg": "A co-manager cannot change its own permissions."
+    },
+    {
+      "code": 6068,
+      "name": "LiquidityRevenueValidationFailed",
+      "msg": "Liquidity revenue accounts, token pair, authority or fee configuration do not match the registered policy."
+    },
+    {
+      "code": 6069,
+      "name": "LiquidityRevenueEconomicsChanged",
+      "msg": "Raydium fee retention changed; reconcile pending creator fees before resuming distribution."
+    },
+    {
+      "code": 6070,
+      "name": "LiquiditySwapMinimumNotMet",
+      "msg": "The secondary swap would deliver less than your minimum after all fees and project tax."
     }
   ],
   "types": [
@@ -7307,11 +7705,11 @@
     {
       "name": "FeeConfig",
       "docs": [
-        "All fee values here are explicit DevNet placeholders, not final economics.",
-        "See DEC-0013. `mint_fee_bps`/`annual_tvl_fee_bps` are each the",
+        "Configured creator fee rates; effective charges are computed on-chain. `mint_fee_bps`/`annual_tvl_fee_bps` are each the",
         "\"configured\" (manager-set) gross rate -- the actual EFFECTIVE rate",
         "charged, and its Protocol/Manager split, is derived fresh at every",
-        "mint/accrual by `fee_math::split_configured_bps` (DEC-0094), never a",
+        "mint/redeem by `fee_math::split_transaction_bps` (DEC-0232), or TVL",
+        "accrual by `split_configured_bps`, never a",
         "value stored or chosen here."
       ],
       "type": {
@@ -7338,7 +7736,7 @@
               "control flow and NOT caller-configurable (pre-DEC-0094 Reserves may",
               "still carry their original create-time value here until their next",
               "mint recomputes it). The real, current split for any Reserve is",
-              "always `fee_math::split_configured_bps(mint_fee_bps, ..)`, evaluated",
+              "always `fee_math::split_transaction_bps(mint_fee_bps, ..)`, evaluated",
               "live, not this field."
             ],
             "type": "u16"
@@ -7747,6 +8145,73 @@
       }
     },
     {
+      "name": "LiquidityRevenue",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "buy_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "sell_tax_bps",
+            "type": "u16"
+          },
+          {
+            "name": "retained_rate",
+            "type": "u64"
+          },
+          {
+            "name": "remainder",
+            "docs": [
+              "Carry prevents splitting collections from evading SSR's share."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LiquidityRevenueDistributed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "creator_usdc",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "ManagerFeeAccrualSource",
       "type": {
         "kind": "enum",
@@ -8014,6 +8479,42 @@
           {
             "name": "created_at",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProjectTaxCharged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "buy",
+            "type": "bool"
+          },
+          {
+            "name": "protocol_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "creator_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "net_output",
+            "type": "u64"
           }
         ]
       }

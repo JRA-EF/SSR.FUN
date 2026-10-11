@@ -44,9 +44,12 @@ const SIZES_USD = [1_000, 5_000, 20_000];
 
 // ssr_protocol defaults (programs/ssr_protocol/src/constants.rs).
 const MINT_FEE = 0.005; // DEFAULT_MINT_FEE_BPS 50 (also the protocol minimum)
-const REDEMPTION_FEE = 0; // DEFAULT_REDEMPTION_FEE_BPS 0
-// Candidate DEX fee tiers (Raydium CLMM AmmConfig indexes 1, 16, 17, 3).
-const DEX_FEES = [0.0025, 0.006, 0.008, 0.01];
+const REDEMPTION_FEE = 0.005; // DEC-0232: effective minimum, including configured zero
+// Preferred permissioned CPMM all-in native fee and committed CLMM fallback.
+const DEX_FEES = [{name: "permissioned CPMM", rate: 0.01}, {name: "fallback CLMM", rate: 0.008}];
+const TRANSFER_FEE = 0.0015; // one Reserve Token transfer per arbitrage direction
+const PROJECT_BUY_TAX = 0; // SSR interface only; external arbitrage can bypass it
+const PROJECT_SELL_TAX = 0;
 const LP_SHARE_OF_FEE = 0.84; // 12% protocol + 4% fund on every Raydium CLMM tier
 
 const apiKey = process.env.JUPITER_API_KEY;
@@ -115,7 +118,7 @@ async function basketCosts(names: string[], sizeUsd: number): Promise<LegCosts> 
 
 async function main() {
   console.log(`NAV-arbitrage band model -- live Jupiter quotes via ${host} at ${new Date().toISOString()}`);
-  console.log(`mint fee ${(MINT_FEE * 100).toFixed(2)}%, redemption fee ${(REDEMPTION_FEE * 100).toFixed(2)}% (ssr_protocol defaults)\n`);
+  console.log(`mint fee ${(MINT_FEE * 100).toFixed(2)}%, redemption fee ${(REDEMPTION_FEE * 100).toFixed(2)}% (effective minimums; configured zero included), transfer fee ${(TRANSFER_FEE * 100).toFixed(2)}%\n`);
   for (const [label, names] of Object.entries(BASKETS)) {
     for (const size of SIZES_USD) {
       const { buy, sell, legsLost } = await basketCosts(names, size);
@@ -124,16 +127,16 @@ async function main() {
         `${label} basket, $${size.toLocaleString()}: USDC->basket ${(buy * 100).toFixed(3)}%, basket->USDC ${(sell * 100).toFixed(3)}% (vs. Jupiter mid)${lost}`,
       );
       for (const f of DEX_FEES) {
-        const premium = f + MINT_FEE + buy;
-        const discount = f + REDEMPTION_FEE + sell;
+        const premium = f.rate + MINT_FEE + TRANSFER_FEE + PROJECT_SELL_TAX + buy;
+        const discount = f.rate + REDEMPTION_FEE + TRANSFER_FEE + PROJECT_BUY_TAX + sell;
         console.log(
-          `    DEX ${(f * 100).toFixed(2)}%: band -${(discount * 100).toFixed(2)}% / +${(premium * 100).toFixed(2)}% (width ${((discount + premium) * 100).toFixed(2)}%), LP take at 100% ownership ${(f * LP_SHARE_OF_FEE * 100).toFixed(3)}% of volume`,
+          `    ${f.name} ${(f.rate * 100).toFixed(2)}%: band -${(discount * 100).toFixed(2)}% / +${(premium * 100).toFixed(2)}% (width ${((discount + premium) * 100).toFixed(2)}%), ${f.name === "fallback CLMM" ? `LP earnings at 100% active ownership ${(f.rate * LP_SHARE_OF_FEE * 100).toFixed(3)}%` : "native creator bucket 0.75%; SSR 0.05% equivalent carved from bucket"}`,
         );
       }
     }
   }
   console.log(
-    "\nThe DEX side's own price impact is not in these numbers: it scales with trade size over pool depth (on a full-range pool, roughly 1% of pool TVL can be traded per 1% of mispricing beyond the band), so it limits how much an arbitrageur can do, not whether the first dollar pays.",
+    "\nThese are first-order additive estimates, not executable-profit guarantees. Transaction costs, cross-terms and failed quote legs need separate treatment.\nThe DEX side's own price impact is not in these numbers: it scales with trade size over pool depth (on a full-range pool, roughly 1% of pool TVL can be traded per 1% of mispricing beyond the band), so it limits how much an arbitrageur can do, not whether the first dollar pays.",
   );
 }
 

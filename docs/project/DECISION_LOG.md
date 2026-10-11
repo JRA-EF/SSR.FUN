@@ -7376,3 +7376,16 @@
   ]
 }
 ```
+
+## DEC-0232 — Yeh's revenue model: transaction minimums, native pool share and optional secondary tax (2026-10-11)
+
+Yeh explicitly authorized implementation in this chat. Supersedes DEC-0095's zero exemption for minting only, the zero/no-floor redemption economics, and DEC-0229's removal of optional secondary-market tax. Annual TVL zero exemption and Token-2022 protocol transfer fee remain unchanged. Legacy Reserve Tokens are excluded from product modeling, not migrated.
+
+- Mint (including seed) and Redeem: SSR receives `max(50 bps, configured / 2)` even when configured zero; creator receives nonnegative remainder. A configured 2% gives SSR 1%. Existing integer-bps half-split/rounding convention retained.
+- Every SSR-created canonical pool: SSR's 0.05% equivalent comes from the existing 0.75% native creator bucket, not an additional Raydium swap fee. The native creator is a fixed per-Reserve revenue PDA. Permissionless native collection pays that PDA only; permissionless distribution pays the existing ProtocolConfig treasury and fixed creator treasury, never caller-selected owners.
+- At config 9's observed 5% Raydium retention, net native fees are 0.7125%; SSR receives 4/57 of net, equivalent to 0.05% of the native fee base, leaving creator 0.6625%. Wallet turnover and native output/input fee bases differ; integer rounding means these are rate equivalents, not an exact promise for every USDC trade. Carry prevents avoiding SSR's share through fragmented distribution. Config/override retention changes fail closed; migration/reconciliation deliberately not invented.
+- Optional project tax: 0-2% per side in the separate SSR secondary swap path, 25% SSR / 75% creator. Buy basis is gross USDC input; Sell basis is actual USDC output. Atomic native Raydium CPI plus USDC tax transfers; minimum output checked on final user balance delta after tax and token transfer fee. No mint/redemption tax path or legacy metadata tax fields restored. Direct external swaps bypass optional project tax, but not token-level transfer fees or fixed native creator routing for SSR-created pools.
+- Existing protocol transfer fee remains 0.15% of Reserve Token transfers (ceiling 0.25%), 100% SSR, accrued in Reserve Tokens. Do not describe it as automatic USDC cash revenue.
+- Pool-creation and Collect transaction preparation added; approved payer funding, signing and initial LP ownership explicitly exposed. No wallet custody assumed. OPEN-14 blocks enabling creation. OPEN-13 still blocks live Compound. Timed/permanent lock integration and representative real-basket quote verification remain pending.
+
+Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, signing, pool creation, Raydium outreach, or merge to design/staging/main. Existing account layouts preserved; revenue PDA and instructions are additive. Program upgrade, generated IDL/SDK and frontend must ship together. Verification and build limitations recorded in the dated Collaboration Alignment entry.

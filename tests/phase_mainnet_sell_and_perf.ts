@@ -170,7 +170,7 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
     expect(instructions).to.have.length(2); // 1 ATA create + the redeem
     const redeemIx = instructions[instructions.length - 1];
     expect(redeemIx.keys.length).to.equal(14 + 1 * 5); // 14 fixed (DEC-0173 shape) + one 5-account leg
-    expect(entitlementsRaw).to.deep.equal([1_500_000_000n]); // floor(1M x 30B / 20M)
+    expect(entitlementsRaw).to.deep.equal([1_492_500_000n]); // DEC-0232: floor(995k net shares x 30B / 20M)
   });
 
   it("still refuses an empty asset list (an unresolved Reserve shape is never redeemable)", async () => {

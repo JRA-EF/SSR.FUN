@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeTransactionFeeSplit, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, type RecipientInput } from "@ssr/sdk";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
@@ -444,6 +444,7 @@ export function CreateDTR({
   
   const [initialSeedUsdc, setInitialSeedUsdc] = useState("");
   const [mintFeePct, setMintFeePct] = useState(0.5);
+  const [redemptionFeePct, setRedemptionFeePct] = useState(0);
   const [tvlFeePct, setTvlFeePct] = useState(1);
   const [feeDestination, setFeeDestination] = useState(wallet.address || "");
   // wallet.address can still be empty at this component's first render (the
@@ -1193,6 +1194,7 @@ export function CreateDTR({
         // the program on this cluster has the instruction (TOKEN_METADATA_LIVE).
         tokenMetadata: TOKEN_METADATA_LIVE ? { name: fitTokenMetadataName(name), symbol: fitTokenMetadataSymbol(ticker) } : undefined,
         mintFeeBps: Math.round(mintFeePct * 100),
+        redemptionFeeBps: Math.round(redemptionFeePct * 100),
         tvlFeeBps: Math.round(tvlFeePct * 100),
         feeDestination: feeDestinationKey,
         feeRecipients: recipientsForChain,
@@ -1988,9 +1990,8 @@ export function CreateDTR({
               <div className="space-y-6">
                 <h3 className="font-semibold text-lg pb-2">Fee Configuration</h3>
                 <p className="text-xs text-muted-foreground -mt-4">
-                  Setting the Mint Fee or TVL Fee to 0% means neither the Protocol nor the Manager collects anything -- there is no forced minimum fee.
-                  For any fee you set above 0%, SSR.fun always keeps at least 0.5% for the protocol; above that 0.5% floor, the Protocol and Manager
-                  split the configured fee 50/50.
+                  Mint and Redeem each pay SSR the greater of 0.5% or half the configured fee, including when configured at 0%.
+                  The Manager receives the remainder. A 0% annualized TVL fee remains free.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2007,12 +2008,25 @@ export function CreateDTR({
                     />
                     <p className="text-xs text-muted-foreground">Charged on new issuance. Protocol default is 0.50%.</p>
                     {realDeploymentCandidate && (() => {
-                      const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                      const split = computeTransactionFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
                       return (
                         <p className="text-xs font-merge-mono text-muted-foreground">
                           Effective: {(Number(split.protocolBps) / 100).toFixed(2)}% Protocol + {(Number(split.managerBps) / 100).toFixed(2)}% Manager = {(Number(split.effectiveTotalBps) / 100).toFixed(2)}% total
                         </p>
                       );
+                    })()}
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label className="flex justify-between">
+                      <span>Redeem Fee</span>
+                      <span className="font-merge-mono text-primary">{redemptionFeePct.toFixed(2)}%</span>
+                    </Label>
+                    <Slider value={[redemptionFeePct]} max={5} step={0.05} onValueChange={(v) => setRedemptionFeePct(v[0])} />
+                    <p className="text-xs text-muted-foreground">SSR receives at least 0.50%, including when configured at 0%.</p>
+                    {(() => {
+                      const split = computeTransactionFeeSplit(BigInt(Math.round(redemptionFeePct * 100)));
+                      return <p className="text-xs font-merge-mono text-muted-foreground">Effective: {(Number(split.protocolBps) / 100).toFixed(2)}% Protocol + {(Number(split.managerBps) / 100).toFixed(2)}% Manager = {(Number(split.effectiveTotalBps) / 100).toFixed(2)}% total</p>;
                     })()}
                   </div>
 
@@ -2231,12 +2245,17 @@ export function CreateDTR({
                         });
                         rows.push({ label: "Mint Fee (configured)", value: <span className="font-merge-mono font-medium">{mintFeePct.toFixed(2)}%</span> });
                         if (realDeploymentCandidate) {
-                          const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                          const split = computeTransactionFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
                           rows.push({
                             sub: true,
                             label: "↳ Protocol / Manager (effective)",
                             value: <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span>,
                           });
+                        }
+                        rows.push({ label: "Redeem Fee (configured)", value: <span className="font-merge-mono font-medium">{redemptionFeePct.toFixed(2)}%</span> });
+                        {
+                          const split = computeTransactionFeeSplit(BigInt(Math.round(redemptionFeePct * 100)));
+                          rows.push({ sub: true, label: "↳ Protocol / Manager (effective)", value: <span className="font-merge-mono text-muted-foreground">{(Number(split.protocolBps) / 100).toFixed(2)}% / {(Number(split.managerBps) / 100).toFixed(2)}%</span> });
                         }
                         rows.push({ label: "TVL Fee (configured, annualized)", value: <span className="font-merge-mono font-medium">{tvlFeePct.toFixed(2)}%</span> });
                         if (realDeploymentCandidate) {
@@ -2444,7 +2463,7 @@ export function CreateDTR({
                             // are 1 per USD at inception, so the fee's USD value is
                             // the seed total x the effective rate.
                             const grossSeedTokens = Math.max(1, Math.floor(seedTotalUsdUi));
-                            const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                            const split = computeTransactionFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
                             const effectivePct = Number(split.effectiveTotalBps) / 100;
                             const feeTokens = grossSeedTokens - estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
                             const feeUsd = seedTotalUsdUi * (effectivePct / 100);
@@ -2546,7 +2565,7 @@ export function CreateDTR({
                       })()}
                       {(() => {
                         const grossSeedTokens = Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10));
-                        const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
+                        const split = computeTransactionFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
                         const netSeedTokens = estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
                         // On Mainnet, any non-SOL asset is paid for in USDC (directly
                         // for the USDC holding, via Jupiter swaps for the rest) -- say

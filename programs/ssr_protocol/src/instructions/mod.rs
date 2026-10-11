@@ -97,3 +97,6 @@ pub use update_metadata::*;
 pub use update_protocol_config::*;
 pub use update_targets::*;
 pub use update_transfer_fee::*;
+
+pub mod liquidity_revenue;
+pub use liquidity_revenue::*;

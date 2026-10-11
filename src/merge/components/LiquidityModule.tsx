@@ -446,7 +446,7 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
         </Card>
         <Card>
           <CardContent className="pt-6 space-y-1">
-            <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Fees earned</p>
+            <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Creator DEX earnings</p>
             <p className="font-merge-mono text-2xl">{formatUsdc(fees)}</p>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <Button size="sm" disabled={fees < 0.01} onClick={collect}>
@@ -457,8 +457,8 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Fees accrue in USDC. Collect sends them to your creator treasury, never to your connected wallet; Compound adds them
-              back into the pool.
+              Creator DEX earnings accrue in USDC after SSR’s pool share. Collect sends them to your fixed creator treasury.
+              Compound is a preview only; live support awaits the Reserve Token funding decision.
             </p>
           </CardContent>
         </Card>

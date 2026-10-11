@@ -36,7 +36,7 @@ import { unpackMint } from "@solana/spl-token";
 import { buildReadOnlyProgram, rememberMintTokenProgram } from "./readOnly";
 import { findDelegate, findProtocolConfig, findReserve, findReserveAsset, findReserveVault, findSettlementKeeperConfig } from "./pda";
 import { withRateLimitRetry } from "./rpcResilience";
-import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
+import { computeTransactionFeeSplit, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
 import { tokenProgramFromKind, tokenProgramFromMintOwner, tokenProgramName, unpackTokenAccountByOwner, type TokenProgramKindDecoded, type TokenProgramName } from "./tokenPrograms";
 
 /**
@@ -354,7 +354,7 @@ export async function discoverAllReserves(
       resolvedAssetCount: assets.length,
       totalTargetWeightBps: reserveAccount.totalTargetWeightBps,
       mintFeeBps: reserveAccount.feeConfig.mintFeeBps,
-      redemptionFeeBps: reserveAccount.feeConfig.redemptionFeeBps,
+      redemptionFeeBps: Number(computeTransactionFeeSplit(BigInt(reserveAccount.feeConfig.redemptionFeeBps)).effectiveTotalBps),
       annualTvlFeeBps: reserveAccount.feeConfig.annualTvlFeeBps,
       managerFeeShareBps: reserveAccount.feeConfig.managerFeeShareBps,
       protocolFeeShareBps: reserveAccount.feeConfig.protocolFeeShareBps,
@@ -362,9 +362,9 @@ export async function discoverAllReserves(
       pendingManagerFeeShares: reserveAccount.feeConfig.pendingManagerFeeShares.toString(),
       pendingProtocolFeeShares: reserveAccount.feeConfig.pendingProtocolFeeShares.toString(),
       lastFeeAccrualTs: reserveAccount.feeConfig.lastFeeAccrualTs.toString(),
-      effectiveMintFeeProtocolBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).protocolBps),
-      effectiveMintFeeManagerBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).managerBps),
-      effectiveMintFeeTotalBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).effectiveTotalBps),
+      effectiveMintFeeProtocolBps: Number(computeTransactionFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).protocolBps),
+      effectiveMintFeeManagerBps: Number(computeTransactionFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).managerBps),
+      effectiveMintFeeTotalBps: Number(computeTransactionFeeSplit(BigInt(reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS).effectiveTotalBps),
       effectiveTvlFeeProtocolBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS).protocolBps),
       effectiveTvlFeeManagerBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS).managerBps),
       effectiveTvlFeeTotalBps: Number(computeEffectiveFeeSplit(BigInt(reserveAccount.feeConfig.annualTvlFeeBps), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS).effectiveTotalBps),
