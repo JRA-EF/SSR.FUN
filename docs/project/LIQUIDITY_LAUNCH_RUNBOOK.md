@@ -43,3 +43,11 @@ Raydium SDK ABI inspected at revision `e2e8bcd865189c994682a9477ec8eaf1e2da8aaf`
 ## Evidence and known limits
 
 [evidence/2026-10-11-liquidity-runtime.json](evidence/2026-10-11-liquidity-runtime.json) contains local checks and public deployment/rent metadata. App build/API typecheck passed; Rust 33/33; phase suite 1419 passing with four pre-existing chart/native-reset failures. Local native execution covers both Compound routes, fixed fee destinations, timed and native permanent locks, substitution attacks, pause-after-simulation, and five-/ten-asset primary flows. No actual browser-wallet/Mainnet lifecycle execution is claimed. Timed lock guarantees remain subject to SSR upgrade governance.
+
+### Refreshed read-only and deployment observations
+
+At 2026-10-11T22:24:36Z, permission/config 9 verified again at slot 455814752. There were 38 existing Reserves and zero eligible Token-2022 Reserves. Anonymous Jupiter SOL ExactOut worked; five-asset checks returned a mix of quotes, unsupported ExactOut HTTP 400 and rate-limit HTTP 429; ten-asset price retrieval returned HTTP 429. See evidence/2026-10-11-liquidity-readonly-refresh.json. Do not treat the partial basket report as a successful arbitrage-cost model.
+
+The design preview account rejects production's frequent cron schedules. Preview packaging omits `crons` only in an isolated deployment copy; repository production scheduling remains unchanged. Remote build reported existing `api/feedback/board.ts` unknown-value typing diagnostics and 31 dependency advisories (1 critical, 24 high, 5 moderate, 1 low). The critical shell-quote advisory is inherited through react-native/react-devtools in the mobile wallet dependency tree; no direct application imports were found. This is partial triage, not proof of unreachability or remediation. No dependency versions were changed; do not run a blind breaking audit upgrade. Track general dependency remediation separately before public launch.
+
+Preview attempt `dpl_BdzFahQtCXnueLevreMG5wqsTJQT` completed its build but failed output deployment: Hobby permits at most 12 serverless functions. There is no successful preview deployment. Use an already-authorized deployment destination with sufficient function capacity, or resolve hosting capacity explicitly; do not silently omit application endpoints.
