@@ -6,9 +6,9 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 const LABELS: Record<CompoundCostKind,string> = {
-  mintFee:'Mint fee', basketExecution:'Basket execution', poolTradeFee:'Pool trading fee',
-  projectTax:'Project tax', transferFee:'Token transfer fees', priceImpact:'Price impact',
-  networkFee:'Network fees', accountRent:'Account setup',
+  mintFee:'Mint fee', basketExecution:'Basket slippage allowance', poolTradeFee:'Pool trading fee',
+  projectTax:'Project tax', transferFee:'Token transfer fees', priceImpact:'Execution price impact / premium',
+  networkFee:'Network allowance', accountRent:'Account setup allowance',
 };
 function units(raw: bigint, decimals: number): string {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return 'Unavailable';
@@ -75,7 +75,7 @@ export function CompoundRouteReview({comparison,connectedCreator,reserveSymbol,r
                   <div><dt>Maximum additional network and account budget</dt><dd className="font-merge-mono">{units(quote.maximumSolCostRaw,9)} SOL</dd></div>
                 </dl>
                 <ul className="text-xs text-muted-foreground space-y-1">{quote.costs.map((cost,i) => <li key={i}>{LABELS[cost.kind]}: {units(cost.amountRaw,cost.unit === 'USDC' ? 6 : cost.unit === 'SOL' ? 9 : reserveDecimals)} {cost.unit === 'ReserveToken' ? reserveSymbol : cost.unit}</li>)}</ul>
-                <p className="text-xs text-muted-foreground">These costs are already reflected in the quote. SOL costs are separate from your USDC earnings.</p>
+                <p className="text-xs text-muted-foreground">USDC and token costs are already reflected in the quote. Mint execution premium includes venue fees. SOL amounts are planning allowances; exact costs must be checked before spending.</p>
                 {!approval && <p className="text-xs text-muted-foreground">Refresh an expired quote, or connect the creator wallet to select this route.</p>}
                 <Button aria-label={route === 'mint' ? 'Select mint route' : 'Select pool route'} aria-pressed={selectionValid && selected?.route === route} variant={selectionValid && selected?.route === route ? 'default' : 'outline'} size="sm" disabled={!approval} onClick={() => {setSelected(approval);setError(null);}}>Select this route</Button>
               </>}

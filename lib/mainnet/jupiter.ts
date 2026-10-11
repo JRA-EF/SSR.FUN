@@ -108,6 +108,8 @@ export interface JupiterQuoteParams {
   /** Jupiter route account budget (DEC-0161) -- omitted upstream when null. */
   maxAccounts: number | null;
   apiKey: string;
+  /** Compound funds exact proportional basket requirements, never a guessed basket. */
+  swapMode?: "ExactIn" | "ExactOut";
 }
 
 /**
@@ -131,7 +133,7 @@ export function excludedDexesParam(): string {
 export async function fetchJupiterQuoteWithRetry(p: JupiterQuoteParams): Promise<JupiterCallResult<JupiterQuote>> {
   return withJupiterRetry<JupiterQuote>(async () => {
     try {
-      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${p.inputMint}&outputMint=${p.outputMint}&amount=${p.amount.toString()}&slippageBps=${p.slippageBps}&swapMode=ExactIn${p.maxAccounts !== null ? `&maxAccounts=${p.maxAccounts}` : ""}${excludedDexesParam()}`;
+      const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${p.inputMint}&outputMint=${p.outputMint}&amount=${p.amount.toString()}&slippageBps=${p.slippageBps}&swapMode=${p.swapMode ?? 'ExactIn'}${p.maxAccounts !== null ? `&maxAccounts=${p.maxAccounts}` : ""}${excludedDexesParam()}`;
       const quoteRes = await fetch(quoteUrl, { headers: { "x-api-key": p.apiKey } });
       if (!quoteRes.ok) {
         // Read the RAW text once (never .json() directly) so a genuinely
