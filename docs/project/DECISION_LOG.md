@@ -7440,3 +7440,12 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
 - **Release:** current upgrade authority is Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW. A funded upload signer and authorized Squads upgrade execution are unavailable in this session. Program storage needs extension; exact artifact/rent snapshot is in the launch runbook/evidence. No Mainnet funds moved. Source release gates stay false until deployment and verification. Production frontend must ship from main.
 - **Verification:** production app build and API typecheck pass; Rust 33/33; phase suite 1419 passing with four pre-existing chart/reset failures. Actual local validator executes SSR plus public Raydium CPMM/native-lock/Metaplex binaries, including both Compound routes, fee routing, pause-after-simulation rejection and lock attacks. Five- and ten-asset seed/mint/redeem pass locally. SBF stack diagnostics eliminated; empty installed syscall manifest still causes a tooling warning, so no warning-free build claim.
 - **Supersedes/supersededBy:** advances DEC-0235's source/runtime/signing/lock blockers; does not supersede economics or claim production release. See LIQUIDITY_LAUNCH_RUNBOOK.md and evidence/2026-10-11-liquidity-runtime.json.
+
+## DEC-0237 — Use existing SSR hosting for disabled liquidity preview (2026-10-12)
+
+- **Status:** preview deployed and smoke checked; production activation pending.
+- **Decision:** use existing `ssr14/ssr-fun` preview environment for the full design stack, keeping execution disabled and production unchanged.
+- **Context/evidence:** current login exposes the SSR team and its production project. Full preview dpl_TF86u5YuR1V7iDS176esAVf7mfr5 from 0caca75 is READY. Deployed release endpoint is false; four preparation endpoints reject empty requests with 400; homepage renders.
+- **Rationale/alternatives:** resolves the separate design Hobby account limit without purchasing a plan, deleting endpoints, changing production schedules or promoting unverified source.
+- **Impact/affected areas:** deployment handoff, runbook, project status and evidence only; no functional source or environment changes. Program/IDL upgrade, legitimate signer access, eligible Mainnet pool and full Jupiter/browser verification remain necessary.
+- **Supersedes/supersededBy:** corrects DEC-0236 follow-up's unresolved hosting-access prerequisite; preserves economics and all live-execution gates. Does not claim Mainnet launch or production frontend delivery.
