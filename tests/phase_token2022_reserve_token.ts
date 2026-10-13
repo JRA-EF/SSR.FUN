@@ -98,6 +98,21 @@ describe("DEC-0229 Token-2022 Reserve Token -- addresses and builders", () => {
     expect(p.equals(TOKEN_2022_PROGRAM_ID)).to.equal(true);
   });
 
+  it("a mint that does not exist yet resolves to Token-2022 and is not remembered", async () => {
+    let reads = 0;
+    const conn = { getAccountInfo: async () => (reads++, null) } as unknown as Connection;
+    expect((await resolveMintTokenProgram(conn, mint)).equals(TOKEN_2022_PROGRAM_ID)).to.equal(true);
+    await resolveMintTokenProgram(conn, mint);
+    expect(reads).to.equal(2);
+  });
+
+  it("a failed mint read throws instead of guessing classic", async () => {
+    const conn = { getAccountInfo: async () => { throw new Error("429"); } } as unknown as Connection;
+    let threw = false;
+    await resolveMintTokenProgram(conn, mint).catch(() => (threw = true));
+    expect(threw).to.equal(true);
+  });
+
   it("create_reserve is built against Token-2022 with the transfer-fee authority PDA", async () => {
     const addresses = { reserveId: 0n, reserve, reserveTokenMint: mint, mintAuthority: findMintAuthority(reserve, PROGRAM_ID)[0], vaultAuthority: findVaultAuthority(reserve, PROGRAM_ID)[0], protocolConfig: findProtocolConfig(PROGRAM_ID)[0], reserveTokenProgram: TOKEN_2022_PROGRAM_ID };
     const built = await buildCreateReserveInstruction(program, addresses, user, { metadataUri: "https://x", mintFeeBps: 50, redemptionFeeBps: 0, tvlFeeBps: 100, feeDestination: user });
@@ -173,6 +188,7 @@ describe("DEC-0229 Token-2022 Reserve Token -- addresses and builders", () => {
 });
 
 describe("DEC-0229 Token-2022 Reserve Token -- metadata in the Launch batch", () => {
+  afterEach(() => clearMintTokenProgramCache());
   const reserve = key();
   const [mint] = findReserveTokenMint(reserve, PROGRAM_ID);
   const user = key();

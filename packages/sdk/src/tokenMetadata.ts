@@ -13,6 +13,7 @@ import { TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 import type { Program } from "@anchor-lang/core";
 import { findMintAuthority, findReserveTokenMint } from "./pda";
+import { resolveMintTokenProgram } from "./readOnly";
 
 export const TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
@@ -146,12 +147,9 @@ export async function buildCreateTokenMetadataInstruction(
   // DEC-0229: a Token-2022 Reserve Token is published through Metaplex's
   // Create (V1), which needs the instructions sysvar and the token program
   // (remaining accounts) and the mint writable. Classic mints are unchanged.
-  // The Launch flow bundles this right after create_reserve, so the mint does
-  // not exist yet when it is built -- and create_reserve only makes Token-2022
-  // mints since DEC-0229. A missing mint is therefore Token-2022 (the shared
-  // resolver's classic fallback left out both accounts: 6015 on every launch).
-  const mintInfo = await program.provider.connection.getAccountInfo(reserveTokenMint);
-  const isToken2022 = !mintInfo || mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID);
+  // In the Launch batch the mint does not exist yet; the resolver reads that
+  // as Token-2022 (see resolveMintTokenProgram).
+  const isToken2022 = (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint)).equals(TOKEN_2022_PROGRAM_ID);
   const ix = await program.methods
     .createTokenMetadata(name, symbol, uri)
     .accounts({

@@ -16,7 +16,7 @@ import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { buildDirectMultiAssetMintInstructions } from "../packages/sdk/src/directInstructions";
 import { findProtocolConfig, findTvlAccrual, findFeeSettlement, findFeeVaultAuthority, findFeeVaultAta } from "../packages/sdk/src/pda";
@@ -164,6 +164,7 @@ describe("Deployed-binary account-shape pinning (the DEC-0154 root cause, made i
     const USER = new PublicKey("6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen");
     const TREASURY = new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5");
     const { instructions } = await buildDirectMultiAssetMintInstructions({
+      reserveTokenProgram: TOKEN_PROGRAM_ID, // a classic (pre-DEC-0229) Reserve: the shape pinned here
       program,
       protocolConfig: findProtocolConfig(program.programId)[0],
       protocolFeeDestination: TREASURY,
@@ -202,6 +203,7 @@ describe("Deployed-binary account-shape pinning (the DEC-0154 root cause, made i
     const program = buildReadOnlyProgram(connection);
     const USER = new PublicKey("6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen");
     const { instructions, requiredAmountsRaw } = await buildDirectMultiAssetMintInstructions({
+      reserveTokenProgram: TOKEN_PROGRAM_ID, // a classic (pre-DEC-0229) Reserve: the shape pinned here
       program,
       protocolConfig: findProtocolConfig(program.programId)[0],
       protocolFeeDestination: new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5"),
@@ -227,6 +229,7 @@ describe("Deployed-binary account-shape pinning (the DEC-0154 root cause, made i
     const program = buildReadOnlyProgram(connection);
     try {
       await buildDirectMultiAssetMintInstructions({
+        reserveTokenProgram: TOKEN_PROGRAM_ID, // a classic (pre-DEC-0229) Reserve: the shape pinned here
         program,
         protocolConfig: findProtocolConfig(program.programId)[0],
         protocolFeeDestination: new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5"),
