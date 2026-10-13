@@ -62,12 +62,12 @@ describe("DEC-0227 wallet balance read derives the ATA under the mint's own toke
     expect(reads).to.deep.equal([getAssociatedTokenAddressSync(mint2022, owner, false, TOKEN_2022_PROGRAM_ID).toBase58()]);
   });
 
-  it("falls back to classic SPL Token when the mint account itself cannot be read", async () => {
+  it("a mint that does not exist reads 0 under Token-2022 (every new Reserve Token mint) -- never a guessed classic ATA", async () => {
     const unknownMint = Keypair.generate().publicKey;
     const reads: string[] = [];
     const raw = await fetchTokenBalanceRaw(fakeConnection(new Map(), reads), unknownMint, owner);
     expect(raw).to.equal("0");
-    expect(reads).to.deep.equal([unknownMint.toBase58(), getAssociatedTokenAddressSync(unknownMint, owner).toBase58()]);
+    expect(reads).to.deep.equal([unknownMint.toBase58(), getAssociatedTokenAddressSync(unknownMint, owner, false, TOKEN_2022_PROGRAM_ID).toBase58()]);
   });
 });
 

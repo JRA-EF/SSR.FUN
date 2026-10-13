@@ -20,7 +20,7 @@
 //   npx ts-mocha -p ./tests/tsconfig.json -t 30000 tests/phase_one_approval_buy.ts
 import { expect } from "chai";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
-import { TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   chunkAltAddresses,
   buildReserveAltAddresses,
@@ -113,6 +113,7 @@ describe("directInstructions.ts -- minReserveTokensOut wired to the on-chain min
     const connection = new Connection("http://localhost:9999"); // never contacted -- .instruction() builds offline
     const program = buildReadOnlyProgram(connection);
     const { instructions } = await buildDirectMultiAssetMintInstructions({
+      reserveTokenProgram: TOKEN_PROGRAM_ID, // a classic (pre-DEC-0229) Reserve: the shape pinned here
       program,
       protocolConfig: findProtocolConfig(program.programId)[0],
       protocolFeeDestination: new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5"),

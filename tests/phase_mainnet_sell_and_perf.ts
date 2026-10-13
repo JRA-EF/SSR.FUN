@@ -14,7 +14,7 @@
 // was priced).
 import { expect } from "chai";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { buildDirectMultiAssetRedeemInstructions } from "../packages/sdk/src/directInstructions";
 import { computeRedemptionEntitlements } from "../packages/sdk/src/calculations";
@@ -117,6 +117,7 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
       { mint: SSR, decimals: 6, reserveAsset: "5wfs7tUrkvVzUPKst5mk7pHpMvvoZaskpkKSwk2huAfo", vault: "34hNxsxqBWH9czMKpng6zqcsmpg8SA4NeznenyF7VqH8", vaultBalanceRaw: "16187960040" },
     ];
     const { instructions, entitlementsRaw } = await buildDirectMultiAssetRedeemInstructions({
+      reserveTokenProgram: TOKEN_PROGRAM_ID, // a classic (pre-DEC-0229) Reserve: the shape pinned here
       program,
       reserve: RESERVE,
       reserveTokenMint: RT_MINT,
@@ -157,6 +158,7 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
     const connection = new Connection("http://localhost:9999");
     const program = buildReadOnlyProgram(connection);
     const { instructions, entitlementsRaw } = await buildDirectMultiAssetRedeemInstructions({
+      reserveTokenProgram: TOKEN_PROGRAM_ID, // a classic (pre-DEC-0229) Reserve: the shape pinned here
       program,
       reserve: OWNER,
       reserveTokenMint: OWNER,
@@ -178,6 +180,7 @@ describe("Multi-asset in-kind redeem builder (buildDirectMultiAssetRedeemInstruc
     const program = buildReadOnlyProgram(connection);
     try {
       await buildDirectMultiAssetRedeemInstructions({
+        reserveTokenProgram: TOKEN_PROGRAM_ID, // a classic (pre-DEC-0229) Reserve: the shape pinned here
         program,
         reserve: OWNER,
         reserveTokenMint: OWNER,
