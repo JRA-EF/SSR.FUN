@@ -168,7 +168,7 @@ export async function ingestProgramEvents(
         let eventIndex = 0;
         for (const { event, instructionIndex, innerInstructionIndex, instructionName } of parseLogsWithInstructionContext(logs, programId.toBase58(), program.coder.events)) {
           const ctx = extractReserveContext(event.data);
-          const isReserveTokenAmount = true; // every ssr_protocol event's primary amount is a Reserve Token amount (RESERVE_TOKEN_DECIMALS), never a raw asset-mint amount -- reserveAssetFunded is the one exception, handled inside decodeEvent.ts's fieldExtraction layer, not here
+          const isReserveTokenAmount = true; // every ssr_protocol event's primary amount is a Reserve Token amount (RESERVE_TOKEN_DECIMALS), never a raw asset-mint amount -- reserveAssetFunded and DEC-0238's USDC-denominated mintFeePaidUsdc are the exceptions, both handled inside decodeEvent.ts (which overrides decimals for USDC kinds), not here
           const record = buildLedgerEventRecord(
             event,
             { ...txContext, instructionIndex, innerInstructionIndex, instructionName, eventIndex },

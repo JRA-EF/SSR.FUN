@@ -12,7 +12,7 @@
 // Pure and directly unit-testable: takes already-fetched/parsed inputs,
 // touches no network or database itself. The network-touching walk that
 // PRODUCES these inputs lives in lib/ledger/ingest.ts.
-import { summarizeActivityEvent, type ActivityAmountKind } from "@ssr/sdk";
+import { summarizeActivityEvent, USDC_DENOMINATED_AMOUNT_KINDS, type ActivityAmountKind } from "@ssr/sdk";
 import { buildEventId } from "./eventId";
 import { normalizeRawAmount, computeUsdValuation, classifyActorRole, type UsdPriceSource, type ActorRole } from "./amounts";
 import { extractLedgerFields } from "./fieldExtraction";
@@ -20,6 +20,9 @@ import type { LedgerEventCsvRow } from "./csv";
 
 /** Ledger-only amount kinds not part of the shared SDK's ActivityAmountKind (see fieldExtraction.ts's comment on why this enrichment is ledger-local). */
 export type LedgerAmountKind = ActivityAmountKind | "assetFunding";
+
+/** USDC's mint decimals -- fixed for the real USDC mint (EPjF...Dt1v) and every USDC-denominated amount kind (DEC-0238). */
+const USDC_DECIMALS = 6;
 
 export interface DecodedAnchorEvent {
   name: string;
@@ -145,11 +148,17 @@ export function buildLedgerEventRecord(
   // caller-supplied Reserve Token decimals -- an honest gap, not a wrong
   // number (see amounts.ts's normalizeRawAmount: null decimals -> null
   // normalized, never a fabricated 0).
+  //
+  // DEC-0238: mintFeePaidUsdc's amount is USDC (protocolFeeUsdc kind), not a
+  // Reserve Token amount -- so it takes USDC's fixed 6 decimals instead of
+  // the caller's Reserve Token decimals, and an exact $1 unit price instead
+  // of the caller's Reserve Token pricing (a USDC amount needs no oracle).
   const amountRaw = decoded.amountRaw ?? extraction.extraAmountRaw ?? null;
   const amountKind: LedgerAmountKind | null = decoded.amountRaw ? (decoded.amountKind ?? null) : extraction.extraAmountKind;
-  const decimals = decoded.amountRaw ? (opts.decimals ?? null) : null;
+  const isUsdcAmount = amountKind !== null && (USDC_DENOMINATED_AMOUNT_KINDS as readonly string[]).includes(amountKind);
+  const decimals = decoded.amountRaw ? (isUsdcAmount ? USDC_DECIMALS : (opts.decimals ?? null)) : null;
   const amountNormalized = normalizeRawAmount(amountRaw, decimals);
-  const usdPricing = opts.usdPricing ?? { unitPriceUsd: null, source: "unavailable" as UsdPriceSource };
+  const usdPricing: UsdPricing = isUsdcAmount ? { unitPriceUsd: 1, source: "usdc-par" } : (opts.usdPricing ?? { unitPriceUsd: null, source: "unavailable" as UsdPriceSource });
   const usdValuation = computeUsdValuation(amountNormalized, usdPricing.unitPriceUsd, usdPricing.source);
 
   const actorRole = classifyActorRole(decoded.actor, opts.actorRoleContext ?? {});

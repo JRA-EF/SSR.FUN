@@ -9,7 +9,7 @@
 // here, same rationale as db.ts/indexer.ts not being unit-tested: no live
 // DB in this offline suite.
 import { expect } from "chai";
-import { summarizeActivityEvent, valueActivityEventUsd } from "../packages/sdk/src/activityLog";
+import { summarizeActivityEvent, valueActivityEventUsd, USDC_DENOMINATED_AMOUNT_KINDS } from "../packages/sdk/src/activityLog";
 import { monthKey, dayKey, sumBigStrings, bucketReservesCreatedByMonth, computeMonthlyAvgAssets, csvField, csvRow } from "../lib/reserve-activity/kpis";
 import { ACTIVITY_CLUSTERS, MAINNET_PROGRAM_ID, clustersForFilter, parseClusterFilter, computeReserveValuations } from "../lib/reserve-activity/clusters";
 
@@ -306,5 +306,55 @@ describe("clusters.ts computeReserveValuations (DEC-0176)", () => {
     expect(computeReserveValuations([zeroSupply], priced).get("R1")?.navUsdPerRtRawUnit).to.equal(null);
     expect(computeReserveValuations([underResolved], priced).get("R1")?.navUsdPerRtRawUnit).to.equal(null);
     expect(computeReserveValuations([baseReserve], new Map()).get("R1")?.navUsdPerRtRawUnit).to.equal(null);
+  });
+});
+
+describe("DEC-0238 mintFeePaidUsdc -- the mint fee paid in USDC, as KPI fee revenue", () => {
+  const pkField = (addr: string) => ({ toBase58: () => addr });
+  // Synthetic decoded event, camelCased the way Anchor's EventParser hands it over.
+  const event = {
+    reserve: pkField("Reserve1"),
+    payer: pkField("Minter1"),
+    isSeed: false,
+    reserveTokensOut: { toString: () => "1000000" },
+    usdcFee: { toString: () => "250000" },
+    protocolUsdc: { toString: () => "100000" },
+    managerUsdc: { toString: () => "150000" },
+    protocolDestination: pkField("Treasury1"),
+    managerRecipients: [pkField("Mgr1"), pkField("Mgr2")],
+    managerAmounts: [{ toString: () => "100000" }, { toString: () => "50000" }],
+    feeQuoteSigner: pkField("Quote1"),
+    ts: { toNumber: () => 1790000000 },
+  };
+  const valuation = { pricing: {}, navUsdPerRtRawUnit: null };
+
+  it("summarizes with the payer as actor and the fee in dollars", () => {
+    const decoded = summarizeActivityEvent("mintFeePaidUsdc", event);
+    expect(decoded?.actor).to.equal("Minter1");
+    expect(decoded?.summary).to.equal("Minter1 paid a $0.25 mint fee in USDC: $0.10 to the Protocol treasury, $0.15 across 2 Manager fee recipient(s)");
+    expect(summarizeActivityEvent("mintFeePaidUsdc", { ...event, isSeed: true })?.summary).to.contain("$0.25 seed fee");
+  });
+
+  it("tags its amounts with USDC-only kinds, never protocolFee/managerFee (whose raw sums are Reserve Token units)", () => {
+    const decoded = summarizeActivityEvent("mintFeePaidUsdc", event);
+    expect(decoded?.amountRaw).to.equal("100000");
+    expect(decoded?.amountKind).to.equal("protocolFeeUsdc");
+    expect(decoded?.amountRaw2).to.equal("150000");
+    expect(decoded?.amountKind2).to.equal("managerFeeUsdc");
+    expect(USDC_DENOMINATED_AMOUNT_KINDS).to.deep.equal(["protocolFeeUsdc", "managerFeeUsdc"]);
+    expect(USDC_DENOMINATED_AMOUNT_KINDS).to.not.include("protocolFee");
+    expect(USDC_DENOMINATED_AMOUNT_KINDS).to.not.include("managerFee");
+  });
+
+  it("values exactly in USD (USDC / 1e6) with no NAV or asset pricing needed, protocol + manager = usdcFee", () => {
+    const usd = valueActivityEventUsd("mintFeePaidUsdc", event, valuation);
+    expect(usd).to.deep.equal({ amountUsd: 0.1, amountUsd2: 0.15 });
+    expect((usd.amountUsd ?? 0) + (usd.amountUsd2 ?? 0)).to.be.closeTo(Number(event.usdcFee.toString()) / 1e6, 1e-12);
+  });
+
+  it("no double count: the paired reserveTokensMinted reports a zero fee, so mint volume is just the tokens out", () => {
+    const minted = summarizeActivityEvent("reserveTokensMinted", { depositor: pkField("Minter1"), reserveTokensOut: "1000000", mintFeeReserveTokens: "0" });
+    expect(minted?.amountRaw).to.equal("1000000");
+    expect(minted?.amountKind).to.equal("mintVolume");
   });
 });

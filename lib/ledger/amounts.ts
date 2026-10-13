@@ -23,6 +23,8 @@ export type UsdPriceSource =
   | "pyth"
   /** Design-time assumption that a Reserve Token trades at its own NAV, itself derived from underlying composition -- an approximation, not a market quote. */
   | "reserve-token-nav-approximation"
+  /** The amount is itself USDC (DEC-0238's mint fee paid in USDC), valued at exactly $1 per USDC -- a unit identity, not a market quote. */
+  | "usdc-par"
   /** No price could be determined -- usd_value_at_event is left null, never fabricated as 0 or an invented number. */
   | "unavailable";
 

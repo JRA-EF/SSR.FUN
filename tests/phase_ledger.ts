@@ -164,6 +164,37 @@ describe("lib/ledger/decodeEvent.ts -- transaction-level enrichment", () => {
     expect(record?.amount_decimals).to.equal(6);
   });
 
+  it("DEC-0238 mintFeePaidUsdc: a USDC amount gets USDC's 6 decimals and an exact $1 price, regardless of the caller's Reserve Token decimals/pricing", () => {
+    const record = buildLedgerEventRecord(
+      {
+        name: "mintFeePaidUsdc",
+        data: {
+          payer: { toBase58: () => "Minter1" },
+          isSeed: true,
+          usdcFee: "2500000",
+          protocolUsdc: "1000000",
+          managerUsdc: "1500000",
+          protocolDestination: { toBase58: () => "Treasury1" },
+          managerRecipients: [{ toBase58: () => "Mgr1" }],
+          managerAmounts: ["1500000"],
+        },
+      },
+      { ...baseTx, instructionIndex: 0, eventIndex: 0 },
+      { decimals: 9, usdPricing: { unitPriceUsd: 3, source: "reserve-token-nav-approximation" } },
+    );
+    expect(record?.actor_wallet).to.equal("Minter1");
+    expect(record?.amount_raw).to.equal("1000000");
+    expect(record?.amount_kind).to.equal("protocolFeeUsdc");
+    expect(record?.amount_decimals).to.equal(6);
+    expect(record?.amount_normalized).to.equal(1);
+    expect(record?.usd_price_at_event).to.equal(1);
+    expect(record?.usd_price_source).to.equal("usdc-par");
+    expect(record?.usd_value_at_event).to.equal(1);
+    expect(record?.protocol_revenue_raw).to.equal("1000000");
+    expect(record?.manager_revenue_raw).to.equal("1500000");
+    expect(record?.summary).to.contain("$2.50 seed fee in USDC");
+  });
+
   it("ledgerEventRecordToCsvRow maps every declared CSV column to a defined key (no silently-missing column)", () => {
     const record = buildLedgerEventRecord({ name: "reserveCreated", data: { manager: { toBase58: () => "Manager1" } } }, baseTx);
     const row = ledgerEventRecordToCsvRow(record!);
@@ -379,6 +410,24 @@ describe("lib/ledger/fieldExtraction.ts -- source/destination/vault/fee columns"
     expect(r.feeAmountRaw).to.equal("42");
     expect(r.feeDestination).to.equal("Recipient1");
     expect(r.managerRevenueRaw).to.equal(null);
+  });
+
+  it("DEC-0238 mintFeePaidUsdc: payer is the source, the treasury leg is the fee destination, both USDC revenue splits recorded", () => {
+    const r = extractLedgerFields("mintFeePaidUsdc", {
+      payer: pkField("Minter1"),
+      usdcFee: "250000",
+      protocolUsdc: "100000",
+      managerUsdc: "150000",
+      protocolDestination: pkField("Treasury1"),
+      managerRecipients: [pkField("Mgr1")],
+      managerAmounts: ["150000"],
+    });
+    expect(r.sourceAccount).to.equal("Minter1");
+    expect(r.destinationAccount).to.equal("Treasury1");
+    expect(r.feeAmountRaw).to.equal("100000");
+    expect(r.feeDestination).to.equal("Treasury1");
+    expect(r.protocolRevenueRaw).to.equal("100000");
+    expect(r.managerRevenueRaw).to.equal("150000");
   });
 
   it("an event type with no special-cased fields returns every field null, never a guessed value", () => {

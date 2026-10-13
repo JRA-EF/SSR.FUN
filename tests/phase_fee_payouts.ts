@@ -90,3 +90,53 @@ describe("DEC-0206 aggregateFeePayouts -- indexed rows -> per-wallet USDC totals
     expect(aggregateFeePayouts([])).to.deep.equal({ byRecipient: [], pendingHeal: 0 });
   });
 });
+
+describe("DEC-0238 mintFeePaidUsdc -- USDC paid at mint time counts as payouts to the treasury and each Manager recipient", () => {
+  const T = "TreasuryWa11et111111111111111111111111111111";
+  const mintFeeEvent = {
+    reserve: new PublicKey(A),
+    payer: new PublicKey(B),
+    isSeed: false,
+    reserveTokensOut: "1000000",
+    usdcFee: { toString: () => "250000" },
+    protocolUsdc: { toString: () => "100000" },
+    managerUsdc: { toString: () => "150000" },
+    protocolDestination: { toBase58: () => T },
+    managerRecipients: [new PublicKey(A), new PublicKey(B)],
+    managerAmounts: [{ toString: () => "100000" }, { toString: () => "50000" }],
+    feeQuoteSigner: new PublicKey(A),
+    ts: 1790000000,
+  };
+
+  it("extracts the protocol leg first, then each Manager leg, exact raw USDC", () => {
+    expect(extractFeePayouts("mintFeePaidUsdc", mintFeeEvent)).to.deep.equal([
+      { wallet: T, usdcRaw: "100000" },
+      { wallet: A, usdcRaw: "100000" },
+      { wallet: B, usdcRaw: "50000" },
+    ]);
+  });
+
+  it("skips zero-amount legs (no USDC moved for them)", () => {
+    const payouts = extractFeePayouts("mintFeePaidUsdc", { ...mintFeeEvent, protocolUsdc: "0", managerAmounts: ["0", "7"] });
+    expect(payouts).to.deep.equal([{ wallet: B, usdcRaw: "7" }]);
+  });
+
+  it("feeUsdcDistributed keeps its DEC-0206 shape (Manager legs only, protocol leg not added)", () => {
+    const payouts = extractFeePayouts("feeUsdcDistributed", { protocolUsdc: "5", protocolDestination: T, managerRecipients: [A], managerAmounts: ["5"] });
+    expect(payouts).to.deep.equal([{ wallet: A, usdcRaw: "5" }]);
+  });
+
+  it("folds together with keeper payouts into one per-wallet USDC total (the Manage page's USDC received)", () => {
+    const rows = [
+      { signature: "keeper1", event_index: 0, ts: 100, payouts: [{ wallet: A, usdcRaw: "50200" }] },
+      { signature: "mint1", event_index: 0, ts: 200, payouts: extractFeePayouts("mintFeePaidUsdc", mintFeeEvent)! },
+    ];
+    const { byRecipient, pendingHeal } = aggregateFeePayouts(rows);
+    expect(pendingHeal).to.equal(0);
+    expect(byRecipient).to.deep.equal([
+      { wallet: A, usdcRaw: "150200", payoutCount: 2, lastTs: 200, lastSignature: "mint1" },
+      { wallet: T, usdcRaw: "100000", payoutCount: 1, lastTs: 200, lastSignature: "mint1" },
+      { wallet: B, usdcRaw: "50000", payoutCount: 1, lastTs: 200, lastSignature: "mint1" },
+    ]);
+  });
+});

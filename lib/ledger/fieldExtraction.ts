@@ -95,6 +95,26 @@ export function extractLedgerFields(eventName: string, data: Record<string, unkn
         protocolRevenueRaw: addBig(data.protocolShares),
         managerRevenueRaw: addBig(data.managerShares),
       };
+    case "mintFeePaidUsdc":
+      // DEC-0238: the mint/seed fee paid in USDC by the minter, transferred
+      // inside the mint instruction to the Protocol treasury and the Manager
+      // fee recipients (no fee shares, no fee vault). Unlike every case
+      // above, the fee/revenue amounts here are USDC base units (6
+      // decimals), not Reserve Token units -- the row's amount_kind
+      // ('protocolFeeUsdc', set by decodeEvent.ts from activityLog.ts) and
+      // amount_decimals (6) say so. Like tvlFeeSettled, feeAmountRaw/
+      // feeDestination/destinationAccount describe the treasury transfer
+      // only (the Manager legs go to several wallets -- no single
+      // destination), while both revenue splits are still recorded.
+      return {
+        ...EMPTY,
+        sourceAccount: pk(data.payer),
+        destinationAccount: pk(data.protocolDestination),
+        feeAmountRaw: addBig(data.protocolUsdc),
+        feeDestination: pk(data.protocolDestination),
+        protocolRevenueRaw: addBig(data.protocolUsdc),
+        managerRevenueRaw: addBig(data.managerUsdc),
+      };
     case "feesAccrued":
       // Legacy path: accrual only, nothing transferred yet -- no destination/feeAmountRaw.
       return {

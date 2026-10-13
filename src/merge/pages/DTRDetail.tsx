@@ -2878,7 +2878,7 @@ export function DTRDetail() {
                             Mint Fee
                             {IS_MAINNET && (
                               <InfoTip label="More information about the mint fee">
-                                {`Paid in USDC from your wallet in the same transaction as the mint, on top of the amount you enter: the Protocol's share goes to the SSR Treasury and the Manager's share to this Reserve's fee recipients. You receive every Reserve Token your amount buys. The exact fee is set from the deposit's value at current prices when you approve.`}
+                                {`Paid in USDC from your wallet in the same transaction as the mint, on top of the amount you enter: the Protocol's share goes to the SSR Treasury and the Manager's share to this Reserve's fee recipients. You receive every Reserve Token your amount mints. The exact fee is set from the deposit's value at current prices when you approve.`}
                               </InfoTip>
                             )}
                           </span>

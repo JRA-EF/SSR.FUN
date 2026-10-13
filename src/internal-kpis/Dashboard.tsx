@@ -255,11 +255,11 @@ export function KpiDashboard() {
           </div>
           <div className="dash-metric-tile">
             <span className="dash-metric-value dash-mono">{formatUsd(kpis.totals.totalManagerFeeUsd)}</span>
-            <span className="dash-metric-label dash-muted dash-small">Manager fee revenue accrued</span>
+            <span className="dash-metric-label dash-muted dash-small">Manager fee revenue</span>
           </div>
         </div>
         <p className="dash-muted dash-small" style={{ marginTop: 8 }}>
-          Fee and volume figures are in USDC, valued when each event was indexed. Exact Reserve Token unit amounts are in the CSV export.
+          Fee and volume figures are in USDC, valued when each event was indexed. Fee revenue includes mint fees paid in USDC at mint time. Exact Reserve Token and USDC amounts are in the CSV export.
         </p>
       </div>
 

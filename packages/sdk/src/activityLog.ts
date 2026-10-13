@@ -18,8 +18,18 @@ import { withRateLimitRetryGeneric, valueAssetLegsUsd, type AssetPricing } from 
  * for the legacy pre-DEC-0094 path, directly transferred) -- never double
  * counted against "managerFeeClaimed", which is a claims-ACTIVITY metric
  * (an already-accrued balance moving into a wallet), not new revenue.
+ *
+ * "protocolFeeUsdc"/"managerFeeUsdc" (DEC-0238) are the same fee revenue
+ * when it was paid in USDC at mint time (mintFeePaidUsdc) instead of as
+ * fee shares. Their amountRaw is USDC base units (6 decimals), NOT Reserve
+ * Token units, so they are separate kinds: a raw sum over "protocolFee"
+ * must never mix the two units. Their USD value is exact (USDC = $1) and
+ * kpis.ts folds it into the same fee-revenue USD totals.
  */
-export type ActivityAmountKind = "mintVolume" | "redeemVolume" | "protocolFee" | "managerFee" | "managerFeeClaimed";
+export type ActivityAmountKind = "mintVolume" | "redeemVolume" | "protocolFee" | "managerFee" | "managerFeeClaimed" | "protocolFeeUsdc" | "managerFeeUsdc";
+
+/** The amount kinds whose raw amounts are USDC base units (6 decimals) rather than Reserve Token units (DEC-0238). */
+export const USDC_DENOMINATED_AMOUNT_KINDS: readonly ActivityAmountKind[] = ["protocolFeeUsdc", "managerFeeUsdc"];
 
 export interface ActivityLogEntry {
   signature: string;
@@ -50,22 +60,28 @@ export interface ActivityLogEntry {
   amountUsd?: number;
   amountUsd2?: number;
   /**
-   * DEC-0206: for a `feeUsdcDistributed` event only, the exact USDC (raw,
+   * DEC-0206: for a `feeUsdcDistributed` event, the exact USDC (raw,
    * 6 decimals) the settlement keeper delivered to EACH Manager fee
    * recipient in this one transaction -- read straight from the event's own
    * managerRecipients/managerAmounts (zero-amount recipients are never
-   * emitted on-chain, so every entry here is a real transfer). Undefined for
+   * emitted on-chain, so every entry here is a real transfer). DEC-0238:
+   * for a `mintFeePaidUsdc` event, the USDC the minter paid at mint time to
+   * the Protocol treasury and to each Manager fee recipient. Undefined for
    * every other event kind. Persisted as jsonb by lib/reserve-activity so
    * the Manage page can show a recipient's USDC total without walking RPC.
    */
   payouts?: FeePayout[];
 }
 
-/** One recipient's USDC delivery inside a feeUsdcDistributed event (DEC-0206). Raw base units (6 decimals) as a decimal string. */
+/** One recipient's USDC delivery inside a feeUsdcDistributed (DEC-0206) or mintFeePaidUsdc (DEC-0238) event. Raw base units (6 decimals) as a decimal string. */
 export interface FeePayout {
   wallet: string;
   usdcRaw: string;
 }
+
+/** Event kinds that carry per-recipient USDC payouts (see extractFeePayouts). */
+export const FEE_PAYOUT_EVENT_KINDS = ["feeUsdcDistributed", "mintFeePaidUsdc"] as const;
+export type FeePayoutEventKind = (typeof FEE_PAYOUT_EVENT_KINDS)[number];
 
 /**
  * Pure (DEC-0206): the per-recipient USDC deliveries carried by ONE decoded
@@ -73,34 +89,46 @@ export interface FeePayout {
  * are stringified raw u64s (BN-safe), wallets base58. A malformed pair of
  * arrays (lengths differ) yields only the overlapping prefix -- never a
  * fabricated amount for a recipient the event did not actually pay.
+ *
+ * DEC-0238: a mintFeePaidUsdc event also pays the Protocol treasury in the
+ * same instruction, so its protocolDestination/protocolUsdc leg comes first,
+ * then the Manager legs. Zero-amount legs are skipped for that event (no
+ * USDC moved for them), so every entry is still a real transfer.
  */
 export function extractFeePayouts(name: string, data: Record<string, unknown>): FeePayout[] | undefined {
-  if (name !== "feeUsdcDistributed") return undefined;
+  if (name !== "feeUsdcDistributed" && name !== "mintFeePaidUsdc") return undefined;
+  const toWallet = (w: unknown): string => (w && typeof (w as { toBase58?: () => string }).toBase58 === "function" ? (w as { toBase58(): string }).toBase58() : String(w));
+  const isMintFee = name === "mintFeePaidUsdc";
   const wallets = Array.isArray(data.managerRecipients) ? (data.managerRecipients as unknown[]) : [];
   const amounts = Array.isArray(data.managerAmounts) ? (data.managerAmounts as unknown[]) : [];
   const n = Math.min(wallets.length, amounts.length);
   const out: FeePayout[] = [];
+  if (isMintFee && data.protocolDestination != null) {
+    const protocolRaw = String(data.protocolUsdc ?? 0);
+    if (protocolRaw !== "0") out.push({ wallet: toWallet(data.protocolDestination), usdcRaw: protocolRaw });
+  }
   for (let i = 0; i < n; i++) {
-    const w = wallets[i];
-    const wallet = w && typeof (w as { toBase58?: () => string }).toBase58 === "function" ? (w as { toBase58(): string }).toBase58() : String(w);
-    out.push({ wallet, usdcRaw: String(amounts[i] ?? 0) });
+    const usdcRaw = String(amounts[i] ?? 0);
+    if (isMintFee && usdcRaw === "0") continue;
+    out.push({ wallet: toWallet(wallets[i]), usdcRaw });
   }
   return out;
 }
 
 /**
  * DEC-0206 backfill helper: re-decodes one already-indexed transaction's
- * logs and returns the payouts of the `eventIndex`-th feeUsdcDistributed
- * event in it (same per-kind ordinal fetchReserveActivityLog assigns), or
- * null when the logs carry no such event. Lets lib/reserve-activity fill the
- * `payouts` column for rows indexed before the column existed without
- * re-walking the Reserve's whole history.
+ * logs and returns the payouts of the `eventIndex`-th `kind` event in it
+ * (same per-kind ordinal fetchReserveActivityLog assigns; `kind` defaults to
+ * feeUsdcDistributed, DEC-0238 adds mintFeePaidUsdc), or null when the logs
+ * carry no such event. Lets lib/reserve-activity fill the `payouts` column
+ * for rows indexed before the column existed without re-walking the
+ * Reserve's whole history.
  */
-export function extractFeePayoutsFromLogs(program: Program<SsrProtocol>, logs: string[], eventIndex: number): FeePayout[] | null {
+export function extractFeePayoutsFromLogs(program: Program<SsrProtocol>, logs: string[], eventIndex: number, kind: FeePayoutEventKind = "feeUsdcDistributed"): FeePayout[] | null {
   const eventParser = new EventParser(program.programId, program.coder);
   let ordinal = 0;
   for (const event of eventParser.parseLogs(logs)) {
-    if (event.name !== "feeUsdcDistributed") continue;
+    if (event.name !== kind) continue;
     if (ordinal === eventIndex) return extractFeePayouts(event.name, event.data as Record<string, unknown>) ?? [];
     ordinal++;
   }
@@ -156,6 +184,11 @@ export function valueActivityEventUsd(name: string, data: Record<string, unknown
       return { amountUsd: shares(data.protocolShares), amountUsd2: shares(data.managerShares) };
     case "feeUsdcDistributed":
       // USDC amounts are exact by definition (6 decimals) -- no NAV needed.
+      return { amountUsd: Number(String(data.protocolUsdc ?? 0)) / 1e6, amountUsd2: Number(String(data.managerUsdc ?? 0)) / 1e6 };
+    case "mintFeePaidUsdc":
+      // DEC-0238: the mint fee itself, paid in USDC -- exact, no NAV needed.
+      // Split protocol/manager to line up with summarizeActivityEvent's
+      // protocolFeeUsdc/managerFeeUsdc amounts (the two sum to usdcFee).
       return { amountUsd: Number(String(data.protocolUsdc ?? 0)) / 1e6, amountUsd2: Number(String(data.managerUsdc ?? 0)) / 1e6 };
     default:
       return {};
@@ -362,6 +395,21 @@ export function summarizeActivityEvent(
       return {
         actor: pk(data.distributedBy),
         summary: `Fee settlement paid out in USDC: ${formatUsdcRaw(data.protocolUsdc)} to the Protocol treasury, ${formatUsdcRaw(data.managerUsdc)} across ${Array.isArray(data.managerRecipients) ? (data.managerRecipients as unknown[]).length : 0} Manager fee recipient(s)`,
+      };
+    case "mintFeePaidUsdc":
+      // DEC-0238: the mint/seed fee paid in USDC by the minter straight to
+      // the Protocol treasury and the Manager fee recipients. No fee shares
+      // exist on this path (the paired reserveTokensMinted/reserveSeeded
+      // reports mintFeeReserveTokens 0), so unlike feeUsdcDistributed this
+      // IS new fee revenue and is tagged -- with USDC-denominated kinds, so
+      // its 6-decimal raw amounts never land in the Reserve Token fee sums.
+      return {
+        actor: pk(data.payer),
+        summary: `${pk(data.payer)} paid a ${formatUsdcRaw(data.usdcFee)} ${data.isSeed ? "seed" : "mint"} fee in USDC: ${formatUsdcRaw(data.protocolUsdc)} to the Protocol treasury, ${formatUsdcRaw(data.managerUsdc)} across ${Array.isArray(data.managerRecipients) ? (data.managerRecipients as unknown[]).length : 0} Manager fee recipient(s)`,
+        amountRaw: addBig(data.protocolUsdc),
+        amountKind: "protocolFeeUsdc",
+        amountRaw2: addBig(data.managerUsdc),
+        amountKind2: "managerFeeUsdc",
       };
     case "feeSettlementKeeperSet":
       return { actor: pk(data.authority), summary: `Fee-settlement keeper changed: ${pk(data.oldKeeper)} -> ${pk(data.newKeeper)}` };

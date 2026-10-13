@@ -104,3 +104,15 @@ alter table reserve_activity_log add column if not exists payouts jsonb;
 
 create index if not exists reserve_activity_log_fee_payouts_idx
   on reserve_activity_log (reserve, cluster) where kind = 'feeUsdcDistributed';
+
+-- DEC-0238: a mintFeePaidUsdc row (the mint/seed fee paid in USDC at mint
+-- time, straight to the Protocol treasury and the Manager fee recipients)
+-- stores its legs in the same `payouts` column, and feePayouts.ts now reads
+-- both kinds together. This index's predicate matches that query's literal
+-- `kind in (...)` list so the planner can use it. Its amount_kind /
+-- amount_kind_2 are 'protocolFeeUsdc' / 'managerFeeUsdc': USDC base units
+-- (6 decimals), kept apart from the Reserve Token 'protocolFee' /
+-- 'managerFee' raw sums (see activityLog.ts's ActivityAmountKind). The
+-- older index above stays for any caller still filtering on the one kind.
+create index if not exists reserve_activity_log_usdc_fee_payouts_idx
+  on reserve_activity_log (reserve, cluster) where kind in ('feeUsdcDistributed', 'mintFeePaidUsdc');

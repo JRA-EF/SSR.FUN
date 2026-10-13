@@ -8,6 +8,15 @@
 // event's managerRecipients/managerAmounts pair, which the activity index
 // now persists as `reserve_activity_log.payouts` (schema.sql).
 //
+// DEC-0238 adds a second source: on the USDC-fee mint/seed path the minter
+// pays the mint fee in USDC straight to the Protocol treasury and each
+// Manager fee recipient inside the mint instruction, recorded by a
+// mintFeePaidUsdc event whose legs are persisted in the same `payouts`
+// column. Both kinds are folded together below, so a recipient's total is
+// everything it received in USDC, at mint time or from the keeper. The two
+// never overlap: mint-time USDC fees mint no fee shares, so nothing reaches
+// the fee vault for the keeper to pay out again.
+//
 // Two pieces here:
 //  - healMissingFeePayouts: fills `payouts` for feeUsdcDistributed rows that
 //    were indexed before the column existed, by re-decoding each row's own
@@ -19,7 +28,7 @@
 //    `pendingHeal` tells the UI when the number is still provisional
 //    because some rows have not been healed yet.
 import type { Connection } from "@solana/web3.js";
-import { extractFeePayoutsFromLogs, fetchReserveActivityLog, withRateLimitRetryGeneric, type FeePayout } from "@ssr/sdk";
+import { extractFeePayoutsFromLogs, fetchReserveActivityLog, withRateLimitRetryGeneric, type FeePayout, type FeePayoutEventKind } from "@ssr/sdk";
 import { getSql } from "./db";
 import type { ActivityCluster } from "./clusters";
 
@@ -40,7 +49,7 @@ export interface FeePayoutRecipientTotal {
 
 export interface FeePayoutTotals {
   byRecipient: FeePayoutRecipientTotal[];
-  /** feeUsdcDistributed rows for this Reserve whose per-recipient breakdown is not yet stored (indexed before DEC-0206 and not healed yet) -- totals above are provisional while this is > 0. */
+  /** Fee-payout rows (feeUsdcDistributed/mintFeePaidUsdc) for this Reserve whose per-recipient breakdown is not yet stored (indexed before DEC-0206 and not healed yet) -- totals above are provisional while this is > 0. */
   pendingHeal: number;
   /** True once the activity index holds this Reserve's complete history (reserve_activity_cursor.backfill_complete) -- until then, older payouts may still be missing. */
   backfillComplete: boolean;
@@ -54,7 +63,7 @@ export interface PayoutRow {
 }
 
 /**
- * Pure: folds indexed feeUsdcDistributed rows into per-wallet totals (any
+ * Pure: folds indexed feeUsdcDistributed/mintFeePaidUsdc rows into per-wallet totals (any
  * row order -- the fold is order-independent; `lastTs` is the max). Rows
  * whose `payouts` is null are counted in `pendingHeal` instead of being
  * guessed at. Exported for the offline test suite.
@@ -91,30 +100,32 @@ export function aggregateFeePayouts(rows: PayoutRow[]): { byRecipient: FeePayout
 }
 
 /**
- * Fills `payouts` for up to HEAL_MAX_ROWS_PER_CALL feeUsdcDistributed rows
- * of this Reserve that still lack it. Returns how many rows were healed;
- * never throws (an RPC failure simply leaves the remaining rows for later).
+ * Fills `payouts` for up to HEAL_MAX_ROWS_PER_CALL fee-payout rows
+ * (feeUsdcDistributed or mintFeePaidUsdc) of this Reserve that still lack
+ * it. Returns how many rows were healed; never throws (an RPC failure simply
+ * leaves the remaining rows for later). The literal `kind in (...)` list
+ * matches schema.sql's partial index predicate, so keep the two in step.
  */
 export async function healMissingFeePayouts(connection: Connection, program: ReserveActivityProgram, reserve: string, cluster: ActivityCluster): Promise<{ healed: number; error: string | null }> {
   const sql = getSql();
   let healed = 0;
   try {
     const rows = (await sql`
-      select signature, event_index
+      select signature, kind, event_index
       from reserve_activity_log
-      where reserve = ${reserve} and cluster = ${cluster} and kind = 'feeUsdcDistributed' and payouts is null
+      where reserve = ${reserve} and cluster = ${cluster} and kind in ('feeUsdcDistributed', 'mintFeePaidUsdc') and payouts is null
       order by ts desc
       limit ${HEAL_MAX_ROWS_PER_CALL}
-    `) as { signature: string; event_index: number }[];
+    `) as { signature: string; kind: FeePayoutEventKind; event_index: number }[];
     for (const row of rows) {
       const tx = await withRateLimitRetryGeneric(() => connection.getTransaction(row.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
       const logs = tx?.meta?.logMessages;
       if (!logs) continue;
-      const payouts = extractFeePayoutsFromLogs(program, logs, row.event_index);
+      const payouts = extractFeePayoutsFromLogs(program, logs, row.event_index, row.kind);
       if (payouts === null) continue;
       await sql`
         update reserve_activity_log set payouts = ${JSON.stringify(payouts)}::jsonb
-        where reserve = ${reserve} and cluster = ${cluster} and signature = ${row.signature} and kind = 'feeUsdcDistributed' and event_index = ${row.event_index} and payouts is null
+        where reserve = ${reserve} and cluster = ${cluster} and signature = ${row.signature} and kind = ${row.kind} and event_index = ${row.event_index} and payouts is null
       `;
       healed++;
     }
@@ -124,14 +135,14 @@ export async function healMissingFeePayouts(connection: Connection, program: Res
   }
 }
 
-/** Reads every indexed feeUsdcDistributed row for this Reserve and folds it with aggregateFeePayouts. */
+/** Reads every indexed fee-payout row (keeper feeUsdcDistributed + mint-time mintFeePaidUsdc) for this Reserve and folds it with aggregateFeePayouts. */
 export async function readFeePayoutTotals(reserve: string, cluster: ActivityCluster): Promise<FeePayoutTotals> {
   const sql = getSql();
   const [rows, cursorRows] = await Promise.all([
     sql`
       select signature, event_index, ts, payouts
       from reserve_activity_log
-      where reserve = ${reserve} and cluster = ${cluster} and kind = 'feeUsdcDistributed'
+      where reserve = ${reserve} and cluster = ${cluster} and kind in ('feeUsdcDistributed', 'mintFeePaidUsdc')
       order by ts desc
     `,
     sql`select backfill_complete from reserve_activity_cursor where reserve = ${reserve} and cluster = ${cluster}`,

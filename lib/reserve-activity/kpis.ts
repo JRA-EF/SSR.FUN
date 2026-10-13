@@ -99,9 +99,19 @@ export interface ProtocolKpiTotals {
   totalProtocolFeeRaw: string;
   totalManagerFeeRaw: string;
   totalManagerFeeClaimedRaw: string;
+  /**
+   * DEC-0238: fee revenue paid in USDC at mint time (mintFeePaidUsdc's
+   * protocolFeeUsdc/managerFeeUsdc kinds), raw USDC base units (6 decimals).
+   * Kept apart from the Reserve Token Raw totals above -- the two units are
+   * never summed together. Their USD value IS included in
+   * totalProtocolFeeUsd/totalManagerFeeUsd below.
+   */
+  totalProtocolFeeUsdcRaw: string;
+  totalManagerFeeUsdcRaw: string;
   /** USD sums of the rows' frozen at-indexing valuations (DEC-0176). A row indexed without a valuation contributes 0 here while still counting in the Raw totals. */
   totalMintVolumeUsd: number;
   totalRedeemVolumeUsd: number;
+  /** Fee revenue in USD from BOTH fee paths: share-denominated fees (valued at indexing) plus USDC mint fees (exact). No double count -- a USDC mint fee mints no fee shares. */
   totalProtocolFeeUsd: number;
   totalManagerFeeUsd: number;
   totalManagerFeeClaimedUsd: number;
@@ -113,7 +123,8 @@ export interface ProtocolKpis {
   lifecycleCounts: { status: string; count: number }[];
   reservesCreatedByMonth: ReservesCreatedByMonth[];
   dailyVolume: { day: string; mintVolumeRaw: string; redeemVolumeRaw: string; mintVolumeUsd: number; redeemVolumeUsd: number }[];
-  monthlyFees: { month: string; protocolFeeRaw: string; managerFeeRaw: string; protocolFeeUsd: number; managerFeeUsd: number }[];
+  /** protocolFeeRaw/managerFeeRaw are Reserve Token units, *UsdcRaw are USDC base units (DEC-0238); the Usd columns combine both fee paths. */
+  monthlyFees: { month: string; protocolFeeRaw: string; managerFeeRaw: string; protocolFeeUsdcRaw: string; managerFeeUsdcRaw: string; protocolFeeUsd: number; managerFeeUsd: number }[];
   monthlyAvgAssetsPerReserve: MonthlyAvgAssets[];
   topReservesByVolume: { reserve: string; totalVolumeRaw: string; totalVolumeUsd: number }[];
   eventKindCounts: { kind: string; count: number }[];
@@ -157,18 +168,22 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
       where amount_kind in ('mintVolume', 'redeemVolume') and cluster = any(${clusters})
       group by 1 order by 1
     `,
+    // DEC-0238: raw sums stay per unit (Reserve Token kinds vs USDC kinds);
+    // the USD sums fold both fee paths into one revenue figure.
     sql`
       with amounts as (
-        select ts, amount_kind as k, amount_raw::numeric as v, amount_usd as u from reserve_activity_log where amount_kind in ('protocolFee', 'managerFee') and cluster = any(${clusters})
+        select ts, amount_kind as k, amount_raw::numeric as v, amount_usd as u from reserve_activity_log where amount_kind in ('protocolFee', 'managerFee', 'protocolFeeUsdc', 'managerFeeUsdc') and cluster = any(${clusters})
         union all
-        select ts, amount_kind_2 as k, amount_raw_2::numeric as v, amount_usd_2 as u from reserve_activity_log where amount_kind_2 in ('protocolFee', 'managerFee') and cluster = any(${clusters})
+        select ts, amount_kind_2 as k, amount_raw_2::numeric as v, amount_usd_2 as u from reserve_activity_log where amount_kind_2 in ('protocolFee', 'managerFee', 'protocolFeeUsdc', 'managerFeeUsdc') and cluster = any(${clusters})
       )
       select
         to_char(to_timestamp(ts), 'YYYY-MM') as month,
         coalesce(sum(v) filter (where k = 'protocolFee'), 0)::text as protocol_fee,
         coalesce(sum(v) filter (where k = 'managerFee'), 0)::text as manager_fee,
-        coalesce(sum(u) filter (where k = 'protocolFee'), 0)::float8 as protocol_fee_usd,
-        coalesce(sum(u) filter (where k = 'managerFee'), 0)::float8 as manager_fee_usd
+        coalesce(sum(v) filter (where k = 'protocolFeeUsdc'), 0)::text as protocol_fee_usdc,
+        coalesce(sum(v) filter (where k = 'managerFeeUsdc'), 0)::text as manager_fee_usdc,
+        coalesce(sum(u) filter (where k in ('protocolFee', 'protocolFeeUsdc')), 0)::float8 as protocol_fee_usd,
+        coalesce(sum(u) filter (where k in ('managerFee', 'managerFeeUsdc')), 0)::float8 as manager_fee_usd
       from amounts
       group by 1 order by 1
     `,
@@ -198,10 +213,12 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
         coalesce(sum(v) filter (where k = 'protocolFee'), 0)::text as protocol_fee,
         coalesce(sum(v) filter (where k = 'managerFee'), 0)::text as manager_fee,
         coalesce(sum(v) filter (where k = 'managerFeeClaimed'), 0)::text as manager_fee_claimed,
+        coalesce(sum(v) filter (where k = 'protocolFeeUsdc'), 0)::text as protocol_fee_usdc,
+        coalesce(sum(v) filter (where k = 'managerFeeUsdc'), 0)::text as manager_fee_usdc,
         coalesce(sum(u) filter (where k = 'mintVolume'), 0)::float8 as mint_volume_usd,
         coalesce(sum(u) filter (where k = 'redeemVolume'), 0)::float8 as redeem_volume_usd,
-        coalesce(sum(u) filter (where k = 'protocolFee'), 0)::float8 as protocol_fee_usd,
-        coalesce(sum(u) filter (where k = 'managerFee'), 0)::float8 as manager_fee_usd,
+        coalesce(sum(u) filter (where k in ('protocolFee', 'protocolFeeUsdc')), 0)::float8 as protocol_fee_usd,
+        coalesce(sum(u) filter (where k in ('managerFee', 'managerFeeUsdc')), 0)::float8 as manager_fee_usd,
         coalesce(sum(u) filter (where k = 'managerFeeClaimed'), 0)::float8 as manager_fee_claimed_usd
       from amounts
     `
@@ -211,6 +228,8 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
     protocol_fee: string;
     manager_fee: string;
     manager_fee_claimed: string;
+    protocol_fee_usdc: string;
+    manager_fee_usdc: string;
     mint_volume_usd: number;
     redeem_volume_usd: number;
     protocol_fee_usd: number;
@@ -232,6 +251,8 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
       totalProtocolFeeRaw: totalsRow?.protocol_fee ?? "0",
       totalManagerFeeRaw: totalsRow?.manager_fee ?? "0",
       totalManagerFeeClaimedRaw: totalsRow?.manager_fee_claimed ?? "0",
+      totalProtocolFeeUsdcRaw: totalsRow?.protocol_fee_usdc ?? "0",
+      totalManagerFeeUsdcRaw: totalsRow?.manager_fee_usdc ?? "0",
       totalMintVolumeUsd: totalsRow?.mint_volume_usd ?? 0,
       totalRedeemVolumeUsd: totalsRow?.redeem_volume_usd ?? 0,
       totalProtocolFeeUsd: totalsRow?.protocol_fee_usd ?? 0,
@@ -247,10 +268,12 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
       mintVolumeUsd: r.mint_volume_usd,
       redeemVolumeUsd: r.redeem_volume_usd,
     })),
-    monthlyFees: (monthlyFeeRows as { month: string; protocol_fee: string; manager_fee: string; protocol_fee_usd: number; manager_fee_usd: number }[]).map((r) => ({
+    monthlyFees: (monthlyFeeRows as { month: string; protocol_fee: string; manager_fee: string; protocol_fee_usdc: string; manager_fee_usdc: string; protocol_fee_usd: number; manager_fee_usd: number }[]).map((r) => ({
       month: r.month,
       protocolFeeRaw: r.protocol_fee,
       managerFeeRaw: r.manager_fee,
+      protocolFeeUsdcRaw: r.protocol_fee_usdc,
+      managerFeeUsdcRaw: r.manager_fee_usdc,
       protocolFeeUsd: r.protocol_fee_usd,
       managerFeeUsd: r.manager_fee_usd,
     })),
