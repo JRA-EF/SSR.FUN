@@ -1,4 +1,4 @@
-//! USDC mint fee paid at mint/seed time (DEC-0235): the shared fee leg of
+//! USDC mint fee paid at mint/seed time (DEC-0238): the shared fee leg of
 //! `mint_reserve_tokens_in_kind_usdc_fee` and `seed_reserve_usdc_fee`.
 //!
 //! The Creator's directive: the mint fee at creation and at every mint is
@@ -48,6 +48,22 @@ pub fn require_fee_quote_signer(
     );
     require_keys_eq!(signer.key(), keeper_config.keeper, SsrError::NotFeeQuoteSigner);
     Ok(())
+}
+
+/// The Reserve's `ManagerFeeRecipients`, if it has opted in. `info` is always
+/// the seeds-checked PDA, so an uninitialized account genuinely means "no
+/// recipients configured" and the caller cannot pick the legacy route for a
+/// Reserve that has recipients.
+pub fn load_manager_fee_recipients(
+    info: &AccountInfo,
+    program_id: &Pubkey,
+) -> Result<Option<Box<ManagerFeeRecipients>>> {
+    if info.owner != program_id || info.data_is_empty() {
+        return Ok(None);
+    }
+    let data = info.try_borrow_data()?;
+    let recipients = ManagerFeeRecipients::try_deserialize(&mut &data[..])?;
+    Ok(Some(Box::new(recipients)))
 }
 
 /// Moves `usdc_fee` from `payer_usdc` (owned by `payer`) to the Protocol

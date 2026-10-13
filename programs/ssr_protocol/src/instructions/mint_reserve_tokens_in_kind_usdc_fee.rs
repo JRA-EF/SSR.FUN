@@ -1,5 +1,5 @@
 //! In-kind mint with the mint fee paid in USDC in the same instruction
-//! (DEC-0235). Identical to `mint_reserve_tokens_in_kind` except for the fee:
+//! (DEC-0238). Identical to `mint_reserve_tokens_in_kind` except for the fee:
 //! the depositor receives the FULL `reserve_tokens_requested` (no fee shares
 //! are minted, so no fee vault is touched), and `usdc_fee` moves from the
 //! depositor's USDC account to the Protocol treasury and the Manager fee
@@ -13,7 +13,7 @@ use anchor_spl::token_interface::{self, Mint as SplMint, MintTo, TokenInterface,
 
 use super::accrue_fees::checkpoint_tvl_accrual;
 use super::common::{load_asset_legs, mul_div_ceil, transfer_into_vault};
-use super::usdc_mint_fee::{pay_usdc_mint_fee, require_fee_quote_signer};
+use super::usdc_mint_fee::{load_manager_fee_recipients, pay_usdc_mint_fee, require_fee_quote_signer};
 use crate::constants::{
     MANAGER_FEE_RECIPIENTS_SEED, MINT_AUTHORITY_SEED, PROTOCOL_CONFIG_SEED,
     PROTOCOL_MIN_MINT_FEE_BPS, RESERVE_SEED, RESERVE_TOKEN_MINT_SEED,
@@ -23,21 +23,21 @@ use crate::errors::SsrError;
 use crate::events::{MintFeePaidUsdc, ReserveTokensMinted};
 use crate::fee_math::split_configured_bps;
 use crate::state::{
-    ManagerFeeRecipients, ProtocolConfig, Reserve, ReserveStatus, SettlementKeeperConfig,
+    ProtocolConfig, Reserve, ReserveStatus, SettlementKeeperConfig,
     TvlAccrual,
 };
 
 #[derive(Accounts)]
 pub struct MintReserveTokensInKindUsdcFee<'info> {
     #[account(seeds = [PROTOCOL_CONFIG_SEED], bump = protocol_config.bump)]
-    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub protocol_config: Box<Account<'info, ProtocolConfig>>,
 
     #[account(
         mut,
         seeds = [RESERVE_SEED, reserve.reserve_id.to_le_bytes().as_ref()],
         bump = reserve.bump,
     )]
-    pub reserve: Account<'info, Reserve>,
+    pub reserve: Box<Account<'info, Reserve>>,
 
     #[account(
         mut,
@@ -45,7 +45,7 @@ pub struct MintReserveTokensInKindUsdcFee<'info> {
         bump,
         address = reserve.reserve_token_mint,
     )]
-    pub reserve_token_mint: InterfaceAccount<'info, SplMint>,
+    pub reserve_token_mint: Box<InterfaceAccount<'info, SplMint>>,
 
     /// CHECK: signer-only PDA, verified purely by seeds against the cached bump.
     #[account(
@@ -61,7 +61,7 @@ pub struct MintReserveTokensInKindUsdcFee<'info> {
         associated_token::authority = depositor,
         associated_token::token_program = token_program,
     )]
-    pub depositor_reserve_token_account: InterfaceAccount<'info, SplTokenAccount>,
+    pub depositor_reserve_token_account: Box<InterfaceAccount<'info, SplTokenAccount>>,
 
     #[account(mut)]
     pub depositor: Signer<'info>,
@@ -73,10 +73,10 @@ pub struct MintReserveTokensInKindUsdcFee<'info> {
         seeds = [TVL_ACCRUAL_SEED, reserve.key().as_ref()],
         bump,
     )]
-    pub tvl_accrual: Account<'info, TvlAccrual>,
+    pub tvl_accrual: Box<Account<'info, TvlAccrual>>,
 
     #[account(seeds = [SETTLEMENT_KEEPER_CONFIG_SEED], bump = settlement_keeper_config.bump)]
-    pub settlement_keeper_config: Account<'info, SettlementKeeperConfig>,
+    pub settlement_keeper_config: Box<Account<'info, SettlementKeeperConfig>>,
 
     /// SSR's fee quote signer (the configured keeper). Its signature binds
     /// `usdc_fee` and the rest of this transaction.
@@ -85,7 +85,7 @@ pub struct MintReserveTokensInKindUsdcFee<'info> {
     /// Real Circle USDC on Mainnet (classic SPL Token). Not hardcoded
     /// on-chain, same as `distribute_fee_usdc`; the fee quote signer only
     /// co-signs transactions that pass the genuine USDC mint.
-    pub usdc_mint: Account<'info, ClassicMint>,
+    pub usdc_mint: Box<Account<'info, ClassicMint>>,
 
     #[account(
         mut,
@@ -93,7 +93,7 @@ pub struct MintReserveTokensInKindUsdcFee<'info> {
         token::authority = depositor,
         token::token_program = usdc_token_program,
     )]
-    pub depositor_usdc_account: Account<'info, ClassicTokenAccount>,
+    pub depositor_usdc_account: Box<Account<'info, ClassicTokenAccount>>,
 
     #[account(
         mut,
@@ -101,20 +101,19 @@ pub struct MintReserveTokensInKindUsdcFee<'info> {
         associated_token::authority = protocol_fee_destination,
         associated_token::token_program = usdc_token_program,
     )]
-    pub protocol_usdc_destination: Account<'info, ClassicTokenAccount>,
+    pub protocol_usdc_destination: Box<Account<'info, ClassicTokenAccount>>,
 
     /// CHECK: only the ATA authority above; must be the Protocol treasury
     /// configured on ProtocolConfig.
     #[account(address = protocol_config.default_protocol_fee_destination @ SsrError::InvalidFeeShareSplit)]
     pub protocol_fee_destination: UncheckedAccount<'info>,
 
-    /// Optional (pass the program id as None) -- same convention as
-    /// `distribute_fee_usdc`.
-    #[account(
-        seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
-        bump = manager_fee_recipients.bump,
-    )]
-    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
+    /// CHECK: always this Reserve's ManagerFeeRecipients PDA (seeds checked).
+    /// Uninitialized means the Reserve has not opted into multi-recipient
+    /// routing, so the manager half goes to the legacy `fee_destination`. The
+    /// program decides that from the account itself, never from the caller.
+    #[account(seeds = [MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()], bump)]
+    pub manager_fee_recipients: UncheckedAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub usdc_token_program: Program<'info, Token>,
@@ -126,7 +125,7 @@ pub struct MintReserveTokensInKindUsdcFee<'info> {
     //      in ReserveAsset.order_index order (see common.rs::load_asset_legs);
     //   2. then the Manager's USDC destination ATAs: one per active
     //      ManagerFeeRecipients slot in slot order, or exactly one (the legacy
-    //      fee_destination's USDC ATA) when manager_fee_recipients is None.
+    //      fee_destination's USDC ATA) when that PDA is uninitialized.
 }
 
 pub fn handler<'info>(
@@ -214,6 +213,10 @@ pub fn handler<'info>(
         reserve.fee_config.protocol_fee_share_bps = protocol_bps;
     }
 
+    let recipients = load_manager_fee_recipients(
+        &ctx.accounts.manager_fee_recipients.to_account_info(),
+        ctx.program_id,
+    )?;
     let paid = pay_usdc_mint_fee(
         usdc_fee,
         protocol_bps,
@@ -223,7 +226,7 @@ pub fn handler<'info>(
         &ctx.accounts.usdc_mint.key(),
         &ctx.accounts.protocol_usdc_destination.to_account_info(),
         &ctx.accounts.usdc_token_program.key(),
-        ctx.accounts.manager_fee_recipients.as_deref(),
+        recipients.as_deref(),
         &reserve_key,
         &ctx.accounts.reserve.fee_config.fee_destination,
         manager_usdc_accounts,

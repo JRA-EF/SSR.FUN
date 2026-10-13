@@ -28,6 +28,10 @@ const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const WALLET = Keypair.generate().publicKey;
 const RESERVE = Keypair.generate().publicKey;
 const RESERVE_TOKEN_MINT = Keypair.generate().publicKey;
+// DEC-0238: the fee quote signer (the settlement keeper) and the fee routing.
+const FEE_SIGNER = Keypair.generate();
+const MANAGER_FEE_DESTINATION = Keypair.generate().publicKey;
+const TREASURY = new PublicKey("3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5");
 
 describe("buildBuy.ts -- pure decisions", () => {
   it("attempts the one-transaction composition only for small compositions and never for a legs-only / mint-only rebuild", () => {
@@ -131,7 +135,8 @@ function makeDeps(world: FakeWorld, spies: { quotes: string[]; builds: string[];
     programId: PROGRAM_ID,
     methods: real.methods,
     account: {
-      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: world.legs.length, metadataUri: "https://ssr.fun/api/mainnet/reserve-metadata?id=0123456789abcdef", feeConfig: { mintFeeBps: world.mintFeeBps } }) },
+      reserve: { fetchNullable: async () => ({ reserveTokenMint: RESERVE_TOKEN_MINT, assetCount: world.legs.length, metadataUri: "https://ssr.fun/api/mainnet/reserve-metadata?id=0123456789abcdef", feeConfig: { mintFeeBps: world.mintFeeBps, feeDestination: MANAGER_FEE_DESTINATION } }) },
+      managerFeeRecipients: { fetchNullable: async () => null },
       reserveAsset: {
         fetchMultiple: async (pdas: PublicKey[]) =>
           pdas.map((pda) => {
@@ -147,6 +152,9 @@ function makeDeps(world: FakeWorld, spies: { quotes: string[]; builds: string[];
         if (k.equals(RESERVE_TOKEN_MINT)) return mintAccountInfo(world.supplyRaw);
         // The wallet's USDC ATA doubles as the USDC leg's ATA -- answer it first.
         if (getAssociatedTokenAddressSync(new PublicKey(USDC), WALLET).equals(k)) return tokenAccountInfo(new PublicKey(USDC), WALLET, world.walletUsdcRaw);
+        // The fee destinations' USDC accounts already exist (no ATA creates needed).
+        if (getAssociatedTokenAddressSync(new PublicKey(USDC), TREASURY, true).equals(k)) return tokenAccountInfo(new PublicKey(USDC), TREASURY, 0n);
+        if (getAssociatedTokenAddressSync(new PublicKey(USDC), MANAGER_FEE_DESTINATION, true).equals(k)) return tokenAccountInfo(new PublicKey(USDC), MANAGER_FEE_DESTINATION, 0n);
         for (const l of world.legs) {
           if (findReserveVault(RESERVE, l.mint, PROGRAM_ID)[0].equals(k)) return tokenAccountInfo(l.mint, RESERVE, l.vaultRaw);
           if (getAssociatedTokenAddressSync(l.mint, WALLET).equals(k)) return l.walletRaw > 0n ? tokenAccountInfo(l.mint, WALLET, l.walletRaw) : null;
@@ -187,6 +195,7 @@ function makeDeps(world: FakeWorld, spies: { quotes: string[]; builds: string[];
       };
     },
     lookupReserveAlt: async () => world.reserveAlt,
+    feeQuoteSigner: FEE_SIGNER,
   };
 }
 
@@ -338,4 +347,87 @@ describe("buildBuy.ts -- full build (fakes for RPC/program reads/Jupiter; real b
     expect(tx.message.staticAccountKeys[first.programIdIndex].toBase58()).to.equal(budgetProgram);
     void MINT_TX_COMPUTE_UNIT_LIMIT;
   });
+
+  // --- DEC-0238: the mint fee is paid in USDC inside the mint ---------------
+
+  it("DEC-0238: the mint instruction is mint_reserve_tokens_in_kind_usdc_fee, the fee is 1% of the deposit's value, the minter receives every requested token", async () => {
+    const w = world(2);
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    const r = await buildBuyTransactions(makeDeps(w, spies), baseInput(w));
+    // 1_000_000 of 10_000_000 supply: 100_000 raw USDC ($0.10) + 500_000 raw of a $0.50 asset ($0.25) = $0.35; 1% = 3_500 raw.
+    expect(r.plan.depositValueUsdcRaw).to.equal("350000");
+    expect(r.plan.usdcMintFeeRaw).to.equal("3500");
+    expect(r.plan.expectedNetReserveTokensRaw).to.equal("1000000");
+    const { createHash } = await import("crypto");
+    const disc = createHash("sha256").update("global:mint_reserve_tokens_in_kind_usdc_fee").digest().subarray(0, 8);
+    const tx = VersionedTransaction.deserialize(Buffer.from(r.transactions[r.transactions.length - 1].base64, "base64"));
+    const keys = tx.message.staticAccountKeys;
+    const programIdx = keys.findIndex((k) => k.equals(PROGRAM_ID));
+    const ssrIxs = tx.message.compiledInstructions.filter((ix) => ix.programIdIndex === programIdx);
+    expect(ssrIxs).to.have.length(1);
+    expect(Buffer.from(ssrIxs[0].data.subarray(0, 8)).equals(disc)).to.equal(true);
+  });
+
+  it("DEC-0238: the mint transaction carries the fee quote signer's valid signature, the wallet pays the fee and has not signed yet", async () => {
+    for (const legCount of [2, 10]) {
+      const w = world(legCount);
+      const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+      const r = await buildBuyTransactions(makeDeps(w, spies), baseInput(w));
+      const last = r.transactions[r.transactions.length - 1];
+      expect(["mint", "single"]).to.include(last.kind);
+      const tx = VersionedTransaction.deserialize(Buffer.from(last.base64, "base64"));
+      const signers = tx.message.staticAccountKeys.slice(0, tx.message.header.numRequiredSignatures);
+      expect(signers[0].equals(WALLET)).to.equal(true); // the wallet is the fee payer
+      const feeIdx = signers.findIndex((k) => k.equals(FEE_SIGNER.publicKey));
+      expect(feeIdx).to.be.greaterThan(0);
+      const { ed25519 } = await import("@noble/curves/ed25519");
+      expect(ed25519.verify(tx.signatures[feeIdx], tx.message.serialize(), FEE_SIGNER.publicKey.toBytes())).to.equal(true);
+      expect(tx.signatures[0].every((b) => b === 0)).to.equal(true); // the wallet signs later
+      // Swap transactions are never co-signed.
+      for (const t of r.transactions.filter((x) => x.kind === "swap")) {
+        const sw = VersionedTransaction.deserialize(Buffer.from(t.base64, "base64"));
+        expect(sw.message.staticAccountKeys.some((k) => k.equals(FEE_SIGNER.publicKey))).to.equal(false);
+      }
+    }
+  });
+
+  it("DEC-0238: the feasibility check counts the USDC mint fee", async () => {
+    // Enough for the swaps and the USDC leg but not the fee: $0.35 deposit needs 0.355 with the 2% swap budget, plus the 0.0035 fee.
+    const w = world(2, { walletUsdcRaw: 356_000n });
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    try {
+      await buildBuyTransactions(makeDeps(w, spies), baseInput(w));
+      expect.fail("expected BuildBuyError");
+    } catch (e) {
+      expect((e as BuildBuyError).status).to.equal(422);
+      expect((e as BuildBuyError).message).to.include("USDC short");
+    }
+  });
+
+  it("DEC-0238: without the fee quote signer the build refuses (503) instead of falling back to a Reserve-Token fee", async () => {
+    const w = world(2);
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    try {
+      await buildBuyTransactions({ ...makeDeps(w, spies), feeQuoteSigner: null }, baseInput(w));
+      expect.fail("expected BuildBuyError");
+    } catch (e) {
+      expect((e as BuildBuyError).status).to.equal(503);
+    }
+    expect(spies.quotes).to.have.length(0);
+  });
+
+  it("DEC-0238: a deposit leg with no price refuses the build rather than guessing the fee", async () => {
+    const w = world(3);
+    w.legs[1].walletRaw = 10_000_000n; // already funded, so no swap needs its price...
+    w.legs[1].price = Number.NaN; // ...but the fee still does.
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    try {
+      await buildBuyTransactions(makeDeps(w, spies), { ...baseInput(w), acquiredRawByMint: { [w.legs[1].mint.toBase58()]: 10_000_000n } });
+      expect.fail("expected BuildBuyError");
+    } catch (e) {
+      expect((e as BuildBuyError).status).to.equal(422);
+      expect((e as BuildBuyError).message).to.include("no current price");
+    }
+  });
+
 });

@@ -86,8 +86,8 @@ export function Terms() {
       <h2>10. Fees</h2>
       <p>
         Each Reserve's fees are configured by its manager within protocol-enforced bounds and are shown in the
-        Interface before you approve a transaction. A mint fee reduces the number of Reserve Tokens you receive when
-        minting; an ongoing fee on a Reserve's total value accrues by issuing new Reserve Tokens, which dilutes all
+        Interface before you approve a transaction. A mint fee is paid in USDC when minting, in addition to the amount
+        deposited, and goes to the Protocol and the Reserve's manager; an ongoing fee on a Reserve's total value accrues by issuing new Reserve Tokens, which dilutes all
         holders proportionally; a redemption fee retains a portion of backing in the Reserve for remaining holders. A
         portion of fees accrues to the protocol. Solana network fees, and the costs of any asset swaps involved in a
         mint or redemption, are yours.

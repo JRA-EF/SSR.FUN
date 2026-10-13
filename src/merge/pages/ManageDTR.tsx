@@ -1704,9 +1704,9 @@ export function ManageDTR() {
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground mb-3">
-                        Manager fees are paid in {SETTLEMENT_SYMBOL}. Every creation, mint and TVL fee is set aside in this Reserve's fee vault, and the hourly
-                        fee-settlement service converts it to {SETTLEMENT_SYMBOL} and pays each recipient's share straight into that wallet's {SETTLEMENT_SYMBOL} account --
-                        there is nothing to claim. The mint fee's Manager share is {dtr.onChain?.effectiveMintFeeManagerBps != null ? `${(dtr.onChain.effectiveMintFeeManagerBps / 100).toFixed(2)}%` : "its configured share"} of each mint,
+                        Manager fees are paid in {SETTLEMENT_SYMBOL}, straight into each recipient's {SETTLEMENT_SYMBOL} account -- there is nothing to claim. The
+                        creation and mint fee is paid in {SETTLEMENT_SYMBOL} by the minter in the same transaction as the mint. The TVL fee (and any fee recorded as
+                        Reserve Tokens) is set aside in this Reserve's fee vault, and the hourly fee-settlement service converts it to {SETTLEMENT_SYMBOL} and pays it out. The mint fee's Manager share is {dtr.onChain?.effectiveMintFeeManagerBps != null ? `${(dtr.onChain.effectiveMintFeeManagerBps / 100).toFixed(2)}%` : "its configured share"} of each mint,
                         split between the recipients below by their percentages.
                         {feeRecipientsData && (
                           <>

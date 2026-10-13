@@ -8,9 +8,13 @@
 // every leg's quote, every leg's build, every RPC batch), against Jupiter
 // directly with the server key instead of N rate-limited proxy round trips.
 //
-// The server signs NOTHING. It returns base64 transactions for the caller's
-// own wallet; a caller who never gets a wallet signature never moves anything
-// (same invariant as api/mainnet/jupiter-swap.ts / rpc-proxy.ts).
+// The server moves nothing on its own. It returns base64 transactions for the
+// caller's own wallet; a caller who never gets a wallet signature never moves
+// anything (same invariant as api/mainnet/jupiter-swap.ts / rpc-proxy.ts).
+// The one signature the server adds (DEC-0238) is the fee quote signer's on
+// the mint (or single) transaction it built itself: it fixes the USDC mint
+// fee that transaction pays to the Treasury and the Manager. The signer is
+// never the fee payer and is named only by the mint instruction.
 //
 // Modes:
 //   "single" -- ONE atomic v0 transaction [compute budget, ATA creates, each
@@ -31,15 +35,9 @@
 //   would-be table by its real address; the client submits the table
 //   transactions first, waits for activation, registers the table, and only
 //   then broadcasts the rest.
-import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
-import {
-  buildDirectMultiAssetMintInstructions,
-  computeEffectiveFeeSplit,
-  computeMintRequirements,
-  computeNetMintOutput,
-  describeOnChainError,
-  PROTOCOL_MIN_MINT_FEE_BPS,
-} from "@ssr/sdk";
+import { AddressLookupTableAccount, ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
+import { buildMintWithUsdcFeeInstructions, computeMintRequirements, describeOnChainError } from "@ssr/sdk";
+import { coSignFee, missingFeeDestinationAtaInstructions, quoteUsdcMintFee, resolveUsdcFeeRouting } from "./usdcMintFee";
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
 import { assembleSingleBuyInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
@@ -90,6 +88,10 @@ export interface BuildBuyResult {
   plan: {
     legs: BuildBuyPlanLeg[];
     expectedNetReserveTokensRaw: string;
+    /** DEC-0238: the mint fee, paid in USDC inside the mint transaction. */
+    usdcMintFeeRaw: string;
+    /** USD value of the deposit the fee was computed on, at SSR prices. */
+    depositValueUsdcRaw: string;
     requiredAmountsRaw: string[];
     usdcNeededRaw: string;
     feasibility: BuyFeasibility;
@@ -130,6 +132,8 @@ export interface BuildBuyDeps extends ReadDeps {
   jupiterBuildInstructions(p: { quote: JupiterQuote; userPublicKey: string; apiKey: string }): Promise<JupiterCallResult<JupiterSwapInstructionsPayload>>;
   /** Read-only simulation of the single transaction before it is handed out (skipped when absent, e.g. offline tests). */
   simulate?: (tx: VersionedTransaction) => Promise<{ err: unknown; logs: string[] | null }>;
+  /** DEC-0238: SSR's fee quote signer (the settlement keeper). Co-signs the mint so its fee is paid in USDC. */
+  feeQuoteSigner: Keypair | null;
 }
 
 // --- Pure decision helpers ---------------------------------------------------
@@ -181,8 +185,12 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   // Exact per-leg deposit requirements (same integer math the program enforces).
   const requirements = computeMintRequirements(input.reserveTokensRequested, supplyRaw, orderedAssets.map((a) => ({ mint: a.mint, vaultBalance: BigInt(a.vaultBalanceRaw) })));
   const requiredAmountsRaw = requirements.map((r) => r.requiredAmount);
-  const mintSplit = computeEffectiveFeeSplit(BigInt(read.reserveAccount.feeConfig.mintFeeBps), PROTOCOL_MIN_MINT_FEE_BPS);
-  const { netOut: expectedNetRaw } = computeNetMintOutput(input.reserveTokensRequested, mintSplit.effectiveTotalBps);
+  // DEC-0238: the mint fee is paid in USDC inside the mint, so the minter
+  // receives every requested Reserve Token.
+  const expectedNetRaw = input.reserveTokensRequested;
+  if (!deps.feeQuoteSigner) {
+    throw new BuildError(503, "Minting is temporarily unavailable: the USDC mint-fee signer is not configured on this deployment. Nothing was submitted.");
+  }
 
   // Funding plan + feasibility (pure, shared with the old client path).
   const legInputs = applyClientAcquired(
@@ -202,7 +210,17 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   } catch (e) {
     throw new BuildError(422, e instanceof Error ? e.message : String(e));
   }
-  const feasibility = assessBuyFeasibility({ plan, walletUsdcRaw, walletSolLamports });
+  // DEC-0238: the USDC mint fee on the deposit's value, plus the Reserve's fee routing.
+  const [{ depositValueUsdcRaw, usdcFeeRaw }, feeRouting] = await Promise.all([
+    Promise.resolve().then(() =>
+      quoteUsdcMintFee({
+        legs: orderedAssets.map((a, i) => ({ mint: a.mint, decimals: a.decimals, amountRaw: requiredAmountsRaw[i], priceUsd: legInputs[i].priceUsd })),
+        mintFeeBps: Number(read.reserveAccount.feeConfig.mintFeeBps),
+      }),
+    ),
+    resolveUsdcFeeRouting(program, ssrProgramId, input.reserve, read.reserveAccount),
+  ]);
+  const feasibility = assessBuyFeasibility({ plan, walletUsdcRaw, walletSolLamports, usdcMintFeeRaw: usdcFeeRaw });
   if (!feasibility.feasible && !input.mintOnly) {
     throw new BuildError(422, `This purchase can't start yet: ${feasibility.reasons.join("; ")}. Nothing was submitted.`, { feasibility: serializeBuildResult(feasibility) });
   }
@@ -231,21 +249,27 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
 
   // The mint prelude (ATA creates + mint) -- built once, used by either mode.
   const tBuild = Date.now();
-  const { instructions: mintPrelude } = await buildDirectMultiAssetMintInstructions({
-    program,
-    protocolConfig,
-    protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
-    reserve: input.reserve,
-    reserveTokenMint,
-    reserveTokenProgram,
-    mintAuthority,
-    user: wallet,
-    assets: orderedAssets,
-    reserveTokenSupplyRaw: supplyRaw.toString(),
-    reserveTokensRequested: input.reserveTokensRequested,
-    slippageBps: input.slippageBps / 10_000,
-    minReserveTokensOut: expectedNetRaw,
-  });
+  const feeQuoteSigner = deps.feeQuoteSigner;
+  const [{ instructions: mintPrelude }, feeAtaIxs] = await Promise.all([
+    buildMintWithUsdcFeeInstructions({
+      program,
+      protocolConfig,
+      reserve: input.reserve,
+      reserveTokenMint,
+      reserveTokenProgram,
+      mintAuthority,
+      user: wallet,
+      assets: orderedAssets,
+      reserveTokenSupplyRaw: supplyRaw.toString(),
+      reserveTokensRequested: input.reserveTokensRequested,
+      slippageBps: input.slippageBps / 10_000,
+      usdcFeeRaw,
+      usdcMint: new PublicKey(MAINNET_USDC_MINT),
+      feeQuoteSigner: feeQuoteSigner.publicKey,
+      routing: feeRouting,
+    }),
+    missingFeeDestinationAtaInstructions(connection, wallet, feeRouting),
+  ]);
   const mintIx = mintPrelude[mintPrelude.length - 1];
   const ataIxs = mintPrelude.slice(0, -1);
   const wrapIxs = wrapActions.flatMap((a) => buildWrapRecoveredSolInstructions(wallet, a.lamports));
@@ -264,7 +288,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
       }),
     );
     const instructions = assembleSingleBuyInstructions({
-      ataCreateInstructions: ataIxs,
+      ataCreateInstructions: [...ataIxs, ...feeAtaIxs],
       swapSets: sets.map((s) => ({ setupInstructions: s.setupInstructions, swapInstruction: s.swapInstruction, addressLookupTableAddresses: s.addressLookupTableAddresses })),
       wrapInstructions: wrapIxs,
       mintInstruction: mintIx,
@@ -276,8 +300,9 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     ComputeBudgetProgram.setComputeUnitLimit({ units: MINT_TX_COMPUTE_UNIT_LIMIT }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }),
   ];
-  const mintFull = [...mintBudgetIxs, ...ataIxs, ...wrapIxs, mintIx];
-  const mintLean = [...mintBudgetIxs, ...wrapIxs, mintIx];
+  const mintFull = [...mintBudgetIxs, ...ataIxs, ...feeAtaIxs, ...wrapIxs, mintIx];
+  // Fee-destination ATA creates stay in the lean set: the fee transfer fails without them.
+  const mintLean = [...mintBudgetIxs, ...feeAtaIxs, ...wrapIxs, mintIx];
   const wouldBe = alt.wouldBeTable;
 
   const decision = decideMode({
@@ -308,7 +333,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
         throw new BuildError(422, `${describeOnChainError(new Error(`Transaction failed on-chain (${JSON.stringify(sim.err)}).`))} This was caught by a read-only simulation BEFORE anything was signed or submitted -- nothing moved and no fee was paid.`, { logs: sim.logs ?? [] });
       }
     }
-    transactions.push({ kind: "single", ...toBase64(tx), lastValidBlockHeight });
+    transactions.push({ kind: "single", ...toBase64(coSignFee(tx, feeQuoteSigner)), lastValidBlockHeight });
   } else {
     // Batch: every swap's transaction built in parallel, re-stamped with the shared blockhash.
     const swapTxs = await Promise.all(
@@ -324,7 +349,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     if (!input.legsOnly) {
       const mintIxs = fitsV0(wallet, mintFull, reserveTables) ? mintFull : mintLean;
       const mintTx = compileV0(wallet, blockhash, mintIxs, reserveTables);
-      transactions.push({ kind: "mint", ...toBase64(mintTx), lastValidBlockHeight });
+      transactions.push({ kind: "mint", ...toBase64(coSignFee(mintTx, feeQuoteSigner)), lastValidBlockHeight });
     }
   }
   timings.buildMs = Date.now() - tBuild;
@@ -351,6 +376,8 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
         };
       }),
       expectedNetReserveTokensRaw: expectedNetRaw.toString(),
+      usdcMintFeeRaw: usdcFeeRaw.toString(),
+      depositValueUsdcRaw: depositValueUsdcRaw.toString(),
       requiredAmountsRaw: requiredAmountsRaw.map((r) => r.toString()),
       usdcNeededRaw: feasibility.requiredUsdcRaw.toString(),
       feasibility,

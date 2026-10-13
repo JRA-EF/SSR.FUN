@@ -34,3 +34,4 @@ export * from "./launchpads";
 export * from "./issuers";
 export * from "./pricing";
 export * from "./transferFeeInstructions";
+export * from "./usdcMintFee";

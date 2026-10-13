@@ -1152,6 +1152,8 @@ export function DTRDetail() {
    * means a genuine "Quote unavailable" (not yet seeded, or no deposit
    * asset resolved) -- never silently shown as 0.
    */
+  // DEC-0238: the effective mint-fee rate (configured, with the Protocol's 0.5% floor), shown as the USDC fee.
+  const mintFeeEffectivePct = Number(dtr.onChain?.effectiveMintFeeTotalBps ?? Math.round(dtr.feeConfig.mintFeePct * 100)) / 100;
   const estReserveTokensOutReal: number | null = (() => {
     if (numBuyAmount <= 0) return 0; // Nothing typed yet -- a neutral "0," never the alarming "Quote unavailable."
     if (!isOnChain || !dtr.onChain) return isOnChain ? null : 0;
@@ -1162,10 +1164,14 @@ export function DTRDetail() {
     // -- plus any multi-asset Reserve) takes numBuyAmount as a USD amount,
     // so the quote is NAV-based, mirroring exactly what
     // handleBuyMultiAssetMainnet actually submits (usdToReserveTokensRequested).
-    if (dtr.onChain.assets.length > 1 || (IS_MAINNET && dtr.onChain.assets[0] && dtr.onChain.assets[0].mint !== MAINNET_USDC_MINT)) {
+    // DEC-0238: every Mainnet mint goes through the server-built path and pays
+    // its mint fee in USDC on top of the amount, so the minter receives every
+    // requested Reserve Token.
+    if (IS_MAINNET || dtr.onChain.assets.length > 1) {
       if (!(dtr.nav > 0)) return null;
       try {
         const gross = usdToReserveTokensRequested(numBuyAmount, dtr.nav, RESERVE_TOKEN_DECIMALS);
+        if (IS_MAINNET) return Number(gross) / 10 ** RESERVE_TOKEN_DECIMALS;
         const feeBps = BigInt(dtr.onChain.effectiveMintFeeTotalBps ?? dtr.onChain.mintFeeBps ?? 0);
         const { netOut } = computeNetMintOutput(gross, feeBps);
         return Number(netOut) / 10 ** RESERVE_TOKEN_DECIMALS;
@@ -1944,8 +1950,10 @@ export function DTRDetail() {
   // offering the full balance as "Max" would leave nothing to pay the fee
   // with and the transaction would fail outright.
   const SOL_FEE_RESERVE = 0.01;
-  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(isBuyAssetWrappedSol ? settlementBalanceHuman - SOL_FEE_RESERVE : settlementBalanceHuman) : 0;
-  const buyInsufficientBalance = isOnChain && numBuyAmount > settlementBalanceHuman;
+  // DEC-0238: on Mainnet the USDC mint fee comes on top of the amount, so "Max" leaves room for it.
+  const buyFeeFactor = IS_MAINNET && isOnChain ? 1 + mintFeeEffectivePct / 100 : 1;
+  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(isBuyAssetWrappedSol ? settlementBalanceHuman - SOL_FEE_RESERVE : settlementBalanceHuman) / buyFeeFactor : 0;
+  const buyInsufficientBalance = isOnChain && numBuyAmount * buyFeeFactor > settlementBalanceHuman;
   // True when EVERY one of this Reserve's registered assets is the
   // settlement asset itself -- the only composition where Buy/Sell involve
   // no swap-authority conversion at all: mint_reserve_tokens_in_kind's own
@@ -1979,8 +1987,9 @@ export function DTRDetail() {
   // swap inside the flow, never demanded from the buyer's own holdings.
   // Confirmed live gap this closes: ALPHA (100% SSR) previously demanded the
   // buyer already hold SSR itself.
-  const isUsdcFundedBuyMainnetReserve =
-    IS_MAINNET && isOnChain && !!dtr.onChain && dtr.onChain.assets.length > 0 && !(dtr.onChain.assets.length === 1 && dtr.onChain.assets[0].mint === MAINNET_USDC_MINT);
+  // DEC-0238: every Mainnet Reserve, a pure-USDC one included, mints through the
+  // server-built path, which is the only one that pays the mint fee in USDC.
+  const isUsdcFundedBuyMainnetReserve = IS_MAINNET && isOnChain && !!dtr.onChain && dtr.onChain.assets.length > 0;
   const onBuyClick = isOnChain ? (IS_MAINNET ? (isUsdcFundedBuyMainnetReserve ? handleBuyMultiAssetMainnet : handleBuyMainnet) : handleBuy) : handleBuyUnavailable;
   // True for ANY Reserve composed entirely of site-wide supported assets
   // (see packages/sdk/src/tradableAssets.ts, the same eligibility check that
@@ -2865,9 +2874,26 @@ export function DTRDetail() {
                           <span className="font-merge-mono">{SETTLEMENT_SYMBOL}</span>
                         </div>
                         <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Mint Fee</span>
-                          <span className="font-merge-mono">{dtr.feeConfig.mintFeePct.toFixed(2)}%</span>
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            Mint Fee
+                            {IS_MAINNET && (
+                              <InfoTip label="More information about the mint fee">
+                                {`Paid in USDC from your wallet in the same transaction as the mint, on top of the amount you enter: the Protocol's share goes to the SSR Treasury and the Manager's share to this Reserve's fee recipients. You receive every Reserve Token your amount buys. The exact fee is set from the deposit's value at current prices when you approve.`}
+                              </InfoTip>
+                            )}
+                          </span>
+                          <span className="font-merge-mono">
+                            {IS_MAINNET && dtr.onChain
+                              ? `${mintFeeEffectivePct.toFixed(2)}%${numBuyAmount > 0 ? ` · ~$${(numBuyAmount * (mintFeeEffectivePct / 100)).toFixed(2)} USDC` : ""}`
+                              : `${dtr.feeConfig.mintFeePct.toFixed(2)}%`}
+                          </span>
                         </div>
+                        {IS_MAINNET && dtr.onChain && numBuyAmount > 0 && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Total USDC (amount + mint fee)</span>
+                            <span className="font-merge-mono">~${(numBuyAmount * (1 + mintFeeEffectivePct / 100)).toFixed(2)}</span>
+                          </div>
+                        )}
                         <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
                           <span>Est. You Receive</span>
                           {/* A numeric estimate reads as data (mono, primary); the

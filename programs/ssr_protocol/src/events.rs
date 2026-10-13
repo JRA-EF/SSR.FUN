@@ -489,7 +489,7 @@ pub struct ReserveTokenTransferFeesCollected {
 
 /// The mint fee of one mint or initial seed, paid in USDC from the minter's
 /// own USDC account to the Protocol treasury and the Reserve's Manager fee
-/// recipient(s) inside the same instruction (DEC-0235). No fee shares are
+/// recipient(s) inside the same instruction (DEC-0238). No fee shares are
 /// minted on this path; `usdc_fee` was co-signed by `fee_quote_signer`.
 #[event]
 pub struct MintFeePaidUsdc {

@@ -203,7 +203,7 @@ pub enum SsrError {
     #[msg("A co-manager cannot change its own permissions.")]
     DelegateSelfModification,
 
-    // --- USDC mint fee paid at mint/seed time (DEC-0235), appended ---
+    // --- USDC mint fee paid at mint/seed time (DEC-0238), appended ---
     #[msg("The USDC mint fee must be co-signed by the configured fee quote signer.")]
     NotFeeQuoteSigner,
     #[msg("This Reserve charges a mint fee, so the USDC mint fee must be greater than zero.")]

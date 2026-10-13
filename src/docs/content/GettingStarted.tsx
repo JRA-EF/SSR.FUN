@@ -45,7 +45,7 @@ function ReserveTokens() {
       <ul>
         <li>
           <strong>Minting</strong> deposits assets into the Reserve and creates new Reserve Tokens to you at the Reserve's
-          current value per token, minus the mint fee.
+          current value per token. The mint fee is paid separately in USDC in the same transaction.
         </li>
         <li>
           <strong>Redeeming</strong> burns your Reserve Tokens and returns your proportional share of the

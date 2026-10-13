@@ -177,6 +177,8 @@ export interface BuyFeasibilityParams {
   walletSolLamports: bigint;
   /** Estimated lamports needed for network fees + any rent this buy may pay (ATAs, priority fees) -- a small fixed floor, NOT purchase capital. */
   estimatedFeeLamports?: bigint;
+  /** DEC-0238: the USDC mint fee, paid from the same wallet inside the mint transaction. */
+  usdcMintFeeRaw?: bigint;
 }
 
 export interface BuyFeasibility {
@@ -205,7 +207,7 @@ export function assessBuyFeasibility(params: BuyFeasibilityParams): BuyFeasibili
   // the purchase's own USDC-funded wrapped SOL being restored, but it still
   // has to be present in the native balance to wrap.
   const fee = (params.estimatedFeeLamports ?? DEFAULT_BUY_FEE_LAMPORTS) + params.plan.totalWrapLamports;
-  const requiredUsdcRaw = params.plan.totalSwapUsdcRaw + params.plan.usdcLegRequiredRaw;
+  const requiredUsdcRaw = params.plan.totalSwapUsdcRaw + params.plan.usdcLegRequiredRaw + (params.usdcMintFeeRaw ?? 0n);
   const missingUsdcRaw = requiredUsdcRaw > params.walletUsdcRaw ? requiredUsdcRaw - params.walletUsdcRaw : 0n;
   const missingSolLamports = fee > params.walletSolLamports ? fee - params.walletSolLamports : 0n;
   const reasons: string[] = [];

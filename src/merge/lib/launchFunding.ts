@@ -141,6 +141,8 @@ export interface PerAssetFeasibility {
 export interface LaunchFeasibilityParams {
   assets: LaunchAssetPlan[];
   seedTotalUsd: number;
+  /** DEC-0238: the seed's mint fee in USD, paid from the same USDC inside the seed transaction (Mainnet). */
+  mintFeeUsd?: number;
   /** The wallet's real, current raw USDC balance (6 decimals). */
   walletUsdcRaw: bigint;
   /**
@@ -239,12 +241,13 @@ export function assessLaunchFeasibility(params: LaunchFeasibilityParams): Launch
     perAsset.push({ mint: a.mint, kind: a.kind, allocatedUsd, remainingUsdcUsd, ok, reason });
   }
 
-  const requiredUsdcUi = requiredUsdc * (1 + buffer);
+  const mintFeeUsd = Math.max(0, params.mintFeeUsd ?? 0);
+  const requiredUsdcUi = requiredUsdc * (1 + buffer) + mintFeeUsd;
   const heldUsdcUi = Number(params.walletUsdcRaw) / 1e6;
   const missingUsdcUi = Math.max(0, requiredUsdcUi - heldUsdcUi);
   if (missingUsdcUi > 0) {
     reasons.push(
-      `this wallet holds ${heldUsdcUi.toFixed(2)} USDC but the launch needs about ${requiredUsdcUi.toFixed(2)} USDC including a ${(buffer * 100).toFixed(0)}% fee and slippage buffer, so it is ${missingUsdcUi.toFixed(2)} USDC short`,
+      `this wallet holds ${heldUsdcUi.toFixed(2)} USDC but the launch needs about ${requiredUsdcUi.toFixed(2)} USDC including a ${(buffer * 100).toFixed(0)}% swap fee and slippage buffer${mintFeeUsd > 0 ? ` and the ${mintFeeUsd.toFixed(2)} USDC mint fee` : ""}, so it is ${missingUsdcUi.toFixed(2)} USDC short`,
     );
   }
 

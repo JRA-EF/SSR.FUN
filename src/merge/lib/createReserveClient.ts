@@ -36,6 +36,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
   AddressLookupTableProgram,
+  type AddressLookupTableAccount,
   type TransactionInstruction,
 } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
@@ -639,25 +640,8 @@ export async function fetchPriorityFeeMicroLamports(connection: Connection): Pro
  */
 export const PRIORITY_FEE_IX_RESERVED_BYTES = 64;
 
-/**
- * Explicit compute-unit limit for a seed_reserve transaction of `assetCount`
- * assets. THE DEC-0166 ROOT-CAUSE FIX: seed_reserve was always submitted
- * without a setComputeUnitLimit instruction, so it ran under the runtime's
- * default ~200k budget -- measured real consumption is CU(n) ~= 53k + 16.7k*n
- * (CHARLI 4-asset seed: 119,408 CU; DELTA 10-asset seed, simulation-proven:
- * 219,754 CU), meaning a 10-asset seed can NEVER fit the default and died
- * deterministically at "exceeded CUs meter". This budgets ~2x the measured
- * model (headroom for init_if_needed ATA-creation variance, ~13.5k each),
- * capped at Solana's 1.4M per-transaction maximum. At the program's own
- * 12-asset validation cap this is 580k -- comfortably under the cap, which
- * is what makes 10-asset Reserves supportable with NO program change.
- * Priority-fee cost scales with the requested limit (price x limit), so this
- * stays deliberately proportional rather than a flat 1.4M.
- */
-export function seedComputeUnitLimit(assetCount: number): number {
-  const count = Math.max(1, Math.ceil(assetCount));
-  return Math.min(1_400_000, 100_000 + 40_000 * count);
-}
+export { seedComputeUnitLimit } from "./seedBudget";
+import { seedComputeUnitLimit } from "./seedBudget";
 
 /**
  * The maximum assets one Reserve may hold -- the product standard as of
@@ -863,6 +847,68 @@ async function signSubmitConfirmVersioned(
 }
 
 /**
+ * Creates an Address Lookup Table holding `lookupAddresses` (the connected
+ * wallet pays and is its authority), extends it in chunks, and waits until
+ * it is active. Shared by signAndSendPossiblyOverLimit and the server-built
+ * USDC-fee seed (seedWithUsdcMintFee).
+ */
+async function createWarmLookupTable(
+  connection: Connection,
+  wallet: WalletContextState,
+  lookupAddresses: PublicKey[],
+  clusterLabel: string,
+  onWaiting?: () => void,
+): Promise<{ lookupTableAddress: PublicKey; lookupTableAccount: AddressLookupTableAccount }> {
+  if (!wallet.publicKey) throw new Error("Connect a wallet first.");
+  const feePayer = wallet.publicKey;
+  const recentSlot = await connection.getSlot("finalized");
+  const [createIx, lookupTableAddress] = AddressLookupTableProgram.createLookupTable({ authority: feePayer, payer: feePayer, recentSlot });
+  await signAndSend(connection, wallet, [createIx], clusterLabel);
+
+  // extendLookupTable's own transaction has the same size ceiling as any
+  // other -- chunk conservatively (20 addresses/call fits comfortably; this
+  // app's own instructions need at most a few dozen accounts total, so this
+  // is at most 1-2 extend calls in practice).
+  const EXTEND_CHUNK = 20;
+  for (let i = 0; i < lookupAddresses.length; i += EXTEND_CHUNK) {
+    const chunk = lookupAddresses.slice(i, i + EXTEND_CHUNK);
+    const extendIx = AddressLookupTableProgram.extendLookupTable({ lookupTable: lookupTableAddress, authority: feePayer, payer: feePayer, addresses: chunk });
+    await signAndSend(connection, wallet, [extendIx], clusterLabel);
+  }
+
+  onWaiting?.();
+  // A lookup table only becomes usable once the CURRENT slot has genuinely
+  // advanced past the slot it was derived from -- confirming the create/
+  // extend transactions above already guarantees real time has passed, but
+  // poll explicitly (bounded, ~15s) rather than assume, since this is a real
+  // on-chain precondition (using it too early fails outright).
+  const deadline = Date.now() + 15_000;
+  let lookupTableAccount = null;
+  while (Date.now() < deadline) {
+    const currentSlot = await connection.getSlot("confirmed");
+    if (currentSlot > recentSlot) {
+      const resp = await connection.getAddressLookupTable(lookupTableAddress);
+      if (resp.value && resp.value.isActive()) {
+        lookupTableAccount = resp.value;
+        break;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!lookupTableAccount) {
+    // The table itself was already created/extended on-chain above (real,
+    // confirmed transactions) -- only the warm-up wait timed out, which is
+    // extremely unlikely given confirming those transactions already took
+    // real time. Retrying re-derives a NEW table rather than reusing this
+    // one (its address isn't persisted anywhere) -- a small amount of
+    // abandoned rent, not a fund-safety issue; nothing from this attempt is
+    // lost or duplicated.
+    throw new Error("The address lookup table needed to submit this transaction did not become active in time. Please try again.");
+  }
+  return { lookupTableAddress, lookupTableAccount };
+}
+
+/**
  * Sends a SINGLE instruction that must stay atomic (never split across
  * transactions -- e.g. seed_reserve, which deposits every asset and mints
  * the initial Reserve Tokens in one on-chain call) even when it alone
@@ -913,50 +959,7 @@ async function signAndSendPossiblyOverLimit(
   // per-asset account groups.
   const lookupAddresses = Array.from(new Set(ix.keys.filter((k) => !k.isSigner).map((k) => k.pubkey.toBase58()))).map((s) => new PublicKey(s));
 
-  const recentSlot = await connection.getSlot("finalized");
-  const [createIx, lookupTableAddress] = AddressLookupTableProgram.createLookupTable({ authority: feePayer, payer: feePayer, recentSlot });
-  await signAndSend(connection, wallet, [createIx], clusterLabel);
-
-  // extendLookupTable's own transaction has the same size ceiling as any
-  // other -- chunk conservatively (20 addresses/call fits comfortably; this
-  // app's own instructions need at most a few dozen accounts total, so this
-  // is at most 1-2 extend calls in practice).
-  const EXTEND_CHUNK = 20;
-  for (let i = 0; i < lookupAddresses.length; i += EXTEND_CHUNK) {
-    const chunk = lookupAddresses.slice(i, i + EXTEND_CHUNK);
-    const extendIx = AddressLookupTableProgram.extendLookupTable({ lookupTable: lookupTableAddress, authority: feePayer, payer: feePayer, addresses: chunk });
-    await signAndSend(connection, wallet, [extendIx], clusterLabel);
-  }
-
-  onProgress?.("waiting-for-lookup-table");
-  // A lookup table only becomes usable once the CURRENT slot has genuinely
-  // advanced past the slot it was derived from -- confirming the create/
-  // extend transactions above already guarantees real time has passed, but
-  // poll explicitly (bounded, ~15s) rather than assume, since this is a real
-  // on-chain precondition (using it too early fails outright).
-  const deadline = Date.now() + 15_000;
-  let lookupTableAccount = null;
-  while (Date.now() < deadline) {
-    const currentSlot = await connection.getSlot("confirmed");
-    if (currentSlot > recentSlot) {
-      const resp = await connection.getAddressLookupTable(lookupTableAddress);
-      if (resp.value && resp.value.isActive()) {
-        lookupTableAccount = resp.value;
-        break;
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  if (!lookupTableAccount) {
-    // The table itself was already created/extended on-chain above (real,
-    // confirmed transactions) -- only the warm-up wait timed out, which is
-    // extremely unlikely given confirming those transactions already took
-    // real time. Retrying re-derives a NEW table rather than reusing this
-    // one (its address isn't persisted anywhere) -- a small amount of
-    // abandoned rent, not a fund-safety issue; nothing from this attempt is
-    // lost or duplicated.
-    throw new Error("The address lookup table needed to submit this transaction did not become active in time. Please try again.");
-  }
+  const { lookupTableAccount } = await createWarmLookupTable(connection, wallet, lookupAddresses, clusterLabel, () => onProgress?.("waiting-for-lookup-table"));
 
   onProgress?.("submitting");
   const microLamports = await fetchPriorityFeeMicroLamports(connection);
@@ -975,6 +978,57 @@ async function signAndSendPossiblyOverLimit(
   }).compileToV0Message([lookupTableAccount]);
   const versionedTx = new VersionedTransaction(message);
   return signSubmitConfirmVersioned(connection, wallet, versionedTx, lastValidBlockHeight, clusterLabel);
+}
+
+// --- DEC-0238: the Mainnet seed with the mint fee paid in USDC -------------
+
+export type BuildSeedResponse =
+  | { status: "ready"; transactionBase64: string; lastValidBlockHeight: number; usdcMintFeeRaw: string; seedValueUsdcRaw: string; initialReserveTokens: string }
+  | { status: "needsLookupTable"; addresses: string[]; usdcMintFeeRaw: string; seedValueUsdcRaw: string };
+
+export async function requestSeedBuild(
+  body: { reserve: string; manager: string; assetMints: string[]; seedAmountsRaw: string[]; initialReserveTokens: string; lookupTable: string | null },
+  fetchImpl: typeof fetch = fetch,
+): Promise<BuildSeedResponse> {
+  const res = await fetchImpl("/api/mainnet/build-seed", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
+  const json = (await res.json().catch(() => null)) as (BuildSeedResponse & { error?: string }) | null;
+  if (!res.ok || !json || (json.status !== "ready" && json.status !== "needsLookupTable")) {
+    throw new Error((json && typeof json.error === "string" && json.error) || `Could not prepare the seed transaction (HTTP ${res.status}).`);
+  }
+  return json;
+}
+
+/**
+ * Seeds a new Mainnet Reserve with seed_reserve_usdc_fee: SSR's server builds
+ * the transaction, prices the seed and co-signs the USDC mint fee (it goes to
+ * the Protocol Treasury and the Manager in the same transaction); the
+ * creator's wallet then signs and submits it. A seed too large for one
+ * transaction first gets a lookup table, exactly like the share-fee path.
+ */
+async function seedWithUsdcMintFee(
+  connection: Connection,
+  wallet: WalletContextState,
+  params: { reserve: PublicKey; assetMints: PublicKey[]; seedAmounts: bigint[]; initialReserveTokens: bigint },
+  clusterLabel: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  if (!wallet.publicKey) throw new Error("Connect a wallet first.");
+  const body = {
+    reserve: params.reserve.toBase58(),
+    manager: wallet.publicKey.toBase58(),
+    assetMints: params.assetMints.map((m) => m.toBase58()),
+    seedAmountsRaw: params.seedAmounts.map((a) => a.toString()),
+    initialReserveTokens: params.initialReserveTokens.toString(),
+    lookupTable: null as string | null,
+  };
+  let built = await requestSeedBuild(body, fetchImpl);
+  if (built.status === "needsLookupTable") {
+    const { lookupTableAddress } = await createWarmLookupTable(connection, wallet, built.addresses.map((a) => new PublicKey(a)), clusterLabel);
+    built = await requestSeedBuild({ ...body, lookupTable: lookupTableAddress.toBase58() }, fetchImpl);
+    if (built.status !== "ready") throw new Error("The seed transaction still does not fit after creating a lookup table. Nothing was submitted.");
+  }
+  const tx = VersionedTransaction.deserialize(Buffer.from(built.transactionBase64, "base64"));
+  return signSubmitConfirmVersioned(connection, wallet, tx, built.lastValidBlockHeight, clusterLabel);
 }
 
 /**
@@ -1563,6 +1617,8 @@ export async function createReserveOnChain(params: {
   solPriceUsd?: number;
   /** See signAndSend's header -- shown in an AmbiguousConfirmationError if RPC confirmation times out. Defaults to "DevNet" so every pre-existing caller/test is unaffected; CreateDTR.tsx passes its own real CLUSTER_LABEL. */
   clusterLabel?: string;
+  /** DEC-0238: seed through the server with the mint fee paid in USDC (Mainnet). */
+  usdcMintFee?: boolean;
   /** Per-asset funding progress -- see FundSeedAssetsOptions (launchFunding.ts's state machine, DEC-0151). */
   onAssetProgress?: (event: AssetFundingProgressEvent) => void;
   /** Persist per-asset funding state on every transition (see savePendingAssetFunding) so progress survives refresh/reconnect. */
@@ -1733,8 +1789,12 @@ export async function createReserveOnChain(params: {
     // know which asset is which.
     assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
     validateSeedPlan(finalSeedAmounts, initialReserveTokens);
-    const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-    seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel, seedComputeUnitLimit(params.assets.length));
+    if (params.usdcMintFee) {
+      seedSig = await seedWithUsdcMintFee(connection, wallet, { reserve: addresses.reserve, assetMints: assetAddresses.map((a) => a.mint), seedAmounts: finalSeedAmounts, initialReserveTokens }, clusterLabel);
+    } else {
+      const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
+      seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel, seedComputeUnitLimit(params.assets.length));
+    }
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses, e);
   }
@@ -1845,6 +1905,8 @@ export async function resumeReserveDeploymentOnChain(params: {
   solPriceUsd?: number;
   /** Same meaning as createReserveOnChain's own `clusterLabel`. */
   clusterLabel?: string;
+  /** DEC-0238: seed through the server with the mint fee paid in USDC (Mainnet). */
+  usdcMintFee?: boolean;
   /** Same meaning as createReserveOnChain's own `onAssetProgress`. */
   onAssetProgress?: (event: AssetFundingProgressEvent) => void;
 }): Promise<CreateReserveResult> {
@@ -2003,8 +2065,12 @@ export async function resumeReserveDeploymentOnChain(params: {
       const initialReserveTokens = BigInt(Math.max(1, Math.floor(pending.seedTotalUsd)) * 1_000_000);
       assertSeedAmountsMeetMinimum(pending.assets, finalSeedAmounts);
       validateSeedPlan(finalSeedAmounts, initialReserveTokens);
-      const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
-      seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel, seedComputeUnitLimit(pending.assets.length));
+      if (params.usdcMintFee) {
+        seedSig = await seedWithUsdcMintFee(connection, wallet, { reserve: addresses.reserve, assetMints: assetAddresses.map((a) => a.mint), seedAmounts: finalSeedAmounts, initialReserveTokens }, clusterLabel);
+      } else {
+        const seedIx = await buildSeedReserveInstruction(program, addresses, assetAddresses, wallet.publicKey, finalSeedAmounts, initialReserveTokens);
+        seedSig = await signAndSendPossiblyOverLimit(connection, wallet, seedIx, undefined, clusterLabel, seedComputeUnitLimit(pending.assets.length));
+      }
     } catch (e) {
       throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses, e);
     }

@@ -711,6 +711,7 @@ export function CreateDTR({
         // error rather than silently wrapping the wrong amount of real SOL.
         solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
         clusterLabel: CLUSTER_LABEL,
+        usdcMintFee: IS_MAINNET,
       });
       await finalizeResumedReserve(result, pendingAtStart);
     } catch (e) {
@@ -1171,7 +1172,9 @@ export function CreateDTR({
             seedWeightFraction: a.seedWeightFraction,
             kind: a.mint === MAINNET_USDC_MINT ? ("usdc" as const) : a.mint === WRAPPED_SOL_MINT.toBase58() ? ("wrapped-sol" as const) : ("swap" as const),
           }));
-          const feasibility = assessLaunchFeasibility({ assets: plan, seedTotalUsd, walletUsdcRaw });
+          // DEC-0238: the seed's mint fee is paid from the same USDC.
+          const mintFeeUsd = seedTotalUsd * (Number(computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS).effectiveTotalBps) / 10_000);
+          const feasibility = assessLaunchFeasibility({ assets: plan, seedTotalUsd, walletUsdcRaw, mintFeeUsd });
           if (!feasibility.feasible) {
             // Lead with the fix, then at most three examples -- a 10-asset
             // composition used to render ten near-identical lines and bury
@@ -1217,6 +1220,7 @@ export function CreateDTR({
         // error rather than silently wrapping the wrong amount of real SOL.
         solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
         clusterLabel: CLUSTER_LABEL,
+        usdcMintFee: IS_MAINNET,
         onProgress: setCreateStep,
         onAssetProgress: setFundingProgress,
         // Persist per-asset funding progress on every transition so a
@@ -2353,7 +2357,12 @@ export function CreateDTR({
                       // exactly (assessLaunchFeasibility) -- the wallet-should-
                       // hold figure shown here is the same number the preflight
                       // enforces at submit.
-                      const usdcToHoldUsd = usdcCapitalUsd * (1 + DEFAULT_FEE_BUFFER_FRACTION);
+                      // DEC-0238: on Mainnet the seed's mint fee is paid in USDC
+                      // inside the seed transaction (to the SSR Treasury and the
+                      // Manager), so the wallet needs it on top of the assets.
+                      const seedFeePct = Number(computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS).effectiveTotalBps) / 100;
+                      const seedMintFeeUsd = IS_MAINNET ? seedTotalUsdUi * (seedFeePct / 100) : 0;
+                      const usdcToHoldUsd = usdcCapitalUsd * (1 + DEFAULT_FEE_BUFFER_FRACTION) + seedMintFeeUsd;
                       const overheadLamports = costEstimate.totalRentLamports + costEstimate.networkFeeLamportsEstimate;
                       const solToUsd = (lamports: bigint): number | null =>
                         IS_MAINNET ? (solPriceUsd !== null ? (Number(lamports) / 1e9) * solPriceUsd : null) : (Number(lamports) / 1e9) * SOL_TEST_PRICE_USD;
@@ -2423,13 +2432,26 @@ export function CreateDTR({
                             <span>Reserve assets subtotal</span>
                             <span className="font-merge-mono">${seedTotalUsdUi.toFixed(2)}</span>
                           </div>
-                          {usdcCapitalUsd > 0 && (
+
+                          <p className="pt-3 border-t border-border/50 text-xs font-semibold text-foreground">Mint fee (paid in USDC)</p>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              Mint Fee on the initial seed ({seedFeePct.toFixed(2)}%)
+                              <InfoTip label="More information about the mint fee charged at creation">
+                                Seeding the Reserve is a mint like any other, so the {seedFeePct.toFixed(2)}% Protocol + Manager Mint Fee (your configured {mintFeePct.toFixed(2)}%, floored at the protocol minimum) applies to it. It is paid from your USDC in the same transaction as the seed: the Protocol's share goes to the SSR Treasury and the Manager's share to the Manager fee recipients. You receive every Reserve Token the seed mints. The amount is set from the seed's value at current prices when you approve, so it can differ by a few cents. The TVL Fee ({tvlFeePct.toFixed(2)}%) applies to holding activity over time, not at creation.
+                              </InfoTip>
+                            </span>
+                            <span className="font-merge-mono">
+                              {fmtUsd(seedMintFeeUsd)} <span className="text-muted-foreground">USDC to the SSR Treasury + Manager</span>
+                            </span>
+                          </div>
+                          {usdcToHoldUsd > 0 && (
                             <p className="text-xs text-muted-foreground flex items-start gap-1">
                               <span>
                                 Everything above except SOL is paid for with your USDC -- your wallet should hold about {fmtUsd(usdcToHoldUsd)} USDC.
                               </span>
                               <InfoTip label="More information about the USDC needed">
-                                Funds this Reserve's USDC holding directly and swaps your USDC into each other non-SOL asset for you through Jupiter. The extra {(DEFAULT_FEE_BUFFER_FRACTION * 100).toFixed(0)}% over the {fmtUsd(usdcCapitalUsd)} of assets covers swap fees and price movement, and whatever the swaps don't use stays in your wallet. This is checked before anything is created.
+                                Funds this Reserve's USDC holding directly, swaps your USDC into each other non-SOL asset for you through Jupiter, and pays the {fmtUsd(seedMintFeeUsd)} mint fee. The extra {(DEFAULT_FEE_BUFFER_FRACTION * 100).toFixed(0)}% over the {fmtUsd(usdcCapitalUsd)} of assets covers swap fees and price movement, and whatever the swaps don't use stays in your wallet. This is checked before anything is created.
                               </InfoTip>
                             </p>
                           )}
@@ -2452,46 +2474,17 @@ export function CreateDTR({
                               <span className="text-muted-foreground"> (&asymp; {fmtUsd(solToUsd(costEstimate.networkFeeLamportsEstimate))})</span>
                             </span>
                           </div>
-                          {(() => {
-                            // The initial seed IS a mint, so the Protocol + Manager
-                            // mint fee applies to it (the on-chain program takes it
-                            // in Reserve Tokens: you receive gross minus fee). This
-                            // row used to claim "No fee is charged at creation" and
-                            // show $0.00 -- contradicting the Expected-result note
-                            // below and the tester's live experience. Seed tokens
-                            // are 1 per USD at inception, so the fee's USD value is
-                            // the seed total x the effective rate.
-                            const grossSeedTokens = Math.max(1, Math.floor(seedTotalUsdUi));
-                            const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
-                            const effectivePct = Number(split.effectiveTotalBps) / 100;
-                            const feeTokens = grossSeedTokens - estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
-                            const feeUsd = seedTotalUsdUi * (effectivePct / 100);
-                            return (
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground flex items-center gap-1">
-                                  Mint Fee on the initial seed ({effectivePct.toFixed(2)}%)
-                                  <InfoTip label="More information about the mint fee charged at creation">
-                                    Seeding the Reserve is a mint like any other, so the {effectivePct.toFixed(2)}% Protocol + Manager Mint Fee (your configured {mintFeePct.toFixed(2)}%, floored at the protocol minimum) applies to it. The program takes it in Reserve Tokens, not USDC: you receive ~{feeTokens.toLocaleString(undefined, { maximumFractionDigits: 6 })} fewer {ticker || "Reserve"} tokens than the {grossSeedTokens.toLocaleString()} gross. The TVL Fee ({tvlFeePct.toFixed(2)}%) applies to holding activity over time, not at creation.
-                                  </InfoTip>
-                                </span>
-                                <span className="font-merge-mono">
-                                  ~{feeTokens.toLocaleString(undefined, { maximumFractionDigits: 6 })} {ticker || "Reserve"}
-                                  <span className="text-muted-foreground"> (&asymp; ${feeUsd.toFixed(2)}, taken in Reserve Tokens)</span>
-                                </span>
-                              </div>
-                            );
-                          })()}
 
                           <div className="pt-3 border-t border-border/50 space-y-1.5">
                             <div className="flex justify-between text-sm font-semibold">
                               <span>Total (USD)</span>
                               <span className="font-merge-mono text-primary">
-                                {overheadUsd === null ? `$${seedTotalUsdUi.toFixed(2)} + SOL overhead (USD unavailable)` : `≈ $${(seedTotalUsdUi + overheadUsd).toFixed(2)}`}
+                                {overheadUsd === null ? `$${(seedTotalUsdUi + seedMintFeeUsd).toFixed(2)} + SOL overhead (USD unavailable)` : `≈ $${(seedTotalUsdUi + seedMintFeeUsd + overheadUsd).toFixed(2)}`}
                               </span>
                             </div>
                             <p className="text-xs text-muted-foreground">
                               Requested as {(Number(costEstimate.totalLamports) / 1e9).toFixed(5)} SOL
-                              {usdcCapitalUsd > 0 ? <> plus &asymp; {fmtUsd(usdcToHoldUsd)} of your USDC</> : null}, across {costEstimate.numTransactions} transactions -- each Phantom popup asks for only its own share, never the full amount at once.
+                              {usdcToHoldUsd > 0 ? <> plus &asymp; {fmtUsd(usdcToHoldUsd)} of your USDC</> : null}, across {costEstimate.numTransactions} transactions -- each Phantom popup asks for only its own share, never the full amount at once.
                             </p>
                           </div>
                         </>
@@ -2544,7 +2537,7 @@ export function CreateDTR({
                           );
                           step += swapCount;
                         }
-                        lines.push(<p key="seed">{step++}. Seed the Reserve (deposits the assets, mints your initial Reserve Tokens)</p>);
+                        lines.push(<p key="seed">{step++}. Seed the Reserve (deposits the assets, {IS_MAINNET ? "pays the mint fee in USDC to the SSR Treasury and the Manager, " : ""}mints your initial Reserve Tokens)</p>);
                         if (IS_MAINNET) {
                           lines.push(
                             <p key="alt">
@@ -2565,7 +2558,8 @@ export function CreateDTR({
                       {(() => {
                         const grossSeedTokens = Math.max(1, Math.floor(parseFloat(initialSeedUsdc) || 10));
                         const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
-                        const netSeedTokens = estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
+                        // DEC-0238: on Mainnet the fee is paid in USDC, so the creator keeps every seed token.
+                        const netSeedTokens = IS_MAINNET ? grossSeedTokens : estimateNetSeedReserveTokens(grossSeedTokens, mintFeePct);
                         // On Mainnet, any non-SOL asset is paid for in USDC (directly
                         // for the USDC holding, via Jupiter swaps for the rest) -- say
                         // so, rather than describing only the SOL side of the spend.
@@ -2577,7 +2571,9 @@ export function CreateDTR({
                               ~{netSeedTokens.toLocaleString(undefined, { maximumFractionDigits: 6 })} {ticker || "Reserve"}
                             </span>{" "}
                             tokens
-                            -- the initial seed is a mint like any other, so the {(Number(split.effectiveTotalBps) / 100).toFixed(2)}% Protocol + Manager mint fee applies to it too. Any test-asset
+                            {IS_MAINNET
+                              ? `-- the initial seed is a mint like any other, so the ${(Number(split.effectiveTotalBps) / 100).toFixed(2)}% Protocol + Manager mint fee applies to it too, paid in USDC with the seed. Any`
+                              : `-- the initial seed is a mint like any other, so the ${(Number(split.effectiveTotalBps) / 100).toFixed(2)}% Protocol + Manager mint fee applies to it too. Any test-asset`}
                             amounts appearing and disappearing from your wallet mid-flow (e.g. minted then immediately deposited) are expected intermediate steps, not final balances -- deployment
                             isn't complete until the last step confirms.
                           </p>

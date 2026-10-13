@@ -4322,10 +4322,10 @@ export type SsrProtocol = {
         {
           "name": "managerFeeRecipients",
           "docs": [
-            "Optional (pass the program id as None) -- same convention as",
-            "`distribute_fee_usdc`."
+            "Uninitialized means the Reserve has not opted into multi-recipient",
+            "routing, so the manager half goes to the legacy `fee_destination`. The",
+            "program decides that from the account itself, never from the caller."
           ],
-          "optional": true,
           "pda": {
             "seeds": [
               {
@@ -6180,7 +6180,11 @@ export type SsrProtocol = {
         },
         {
           "name": "managerFeeRecipients",
-          "optional": true,
+          "docs": [
+            "Uninitialized means the Reserve has not opted into multi-recipient",
+            "routing, so the manager half goes to the legacy `fee_destination`. The",
+            "program decides that from the account itself, never from the caller."
+          ],
           "pda": {
             "seeds": [
               {
@@ -8848,7 +8852,7 @@ export type SsrProtocol = {
       "docs": [
         "The mint fee of one mint or initial seed, paid in USDC from the minter's",
         "own USDC account to the Protocol treasury and the Reserve's Manager fee",
-        "recipient(s) inside the same instruction (DEC-0235). No fee shares are",
+        "recipient(s) inside the same instruction (DEC-0238). No fee shares are",
         "minted on this path; `usdc_fee` was co-signed by `fee_quote_signer`."
       ],
       "type": {

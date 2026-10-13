@@ -350,7 +350,7 @@ pub mod ssr_protocol {
         instructions::collect_transfer_fees::handler(ctx)
     }
 
-    // --- DEC-0235: mint fee paid in USDC at mint/seed time ---
+    // --- DEC-0238: mint fee paid in USDC at mint/seed time ---
 
     /// `seed_reserve` with the mint fee paid in USDC to the Protocol
     /// treasury and the Manager fee recipients in the same instruction.

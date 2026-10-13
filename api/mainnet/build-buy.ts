@@ -26,6 +26,7 @@ import {
   fetchJupiterQuoteWithRetry,
 } from "../../lib/mainnet/jupiter";
 import { BuildBuyError, buildBuyTransactions, serializeBuildBuyResult } from "../../lib/mainnet/buildBuy";
+import { loadFeeQuoteSigner } from "../../lib/mainnet/usdcMintFee";
 
 interface ApiResponseWithHeaders extends ApiResponse {
   setHeader?(name: string, value: string): void;
@@ -128,6 +129,8 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
         jupiterBuildTransaction: buildJupiterSwapTransactionWithRetry,
         jupiterBuildInstructions: buildJupiterSwapInstructionsWithRetry,
         lookupReserveAlt,
+        // DEC-0238: co-signs the mint so its fee is paid in USDC.
+        feeQuoteSigner: process.env.SSR_FEE_SETTLEMENT_KEEPER_SECRET ? loadFeeQuoteSigner() : null,
         // DEC-0229: the manager tax is gone; the builder has no tax option, so
         // a mint never pays one (legacy metadata buyTaxPct is ignored).
         simulate: async (tx) => {
