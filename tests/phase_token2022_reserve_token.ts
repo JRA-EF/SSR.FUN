@@ -12,7 +12,8 @@
 import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY } from "@solana/web3.js";
+import { buildCreateTokenMetadataInstruction } from "../packages/sdk/src/tokenMetadata";
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import idl from "../packages/sdk/idl/ssr_protocol.json";
 import { buildReadOnlyProgram, rememberMintTokenProgram, resolveMintTokenProgram, clearMintTokenProgramCache } from "../packages/sdk/src/readOnly";
@@ -97,6 +98,21 @@ describe("DEC-0229 Token-2022 Reserve Token -- addresses and builders", () => {
     expect(p.equals(TOKEN_2022_PROGRAM_ID)).to.equal(true);
   });
 
+  it("a mint that does not exist yet resolves to Token-2022 and is not remembered", async () => {
+    let reads = 0;
+    const conn = { getAccountInfo: async () => (reads++, null) } as unknown as Connection;
+    expect((await resolveMintTokenProgram(conn, mint)).equals(TOKEN_2022_PROGRAM_ID)).to.equal(true);
+    await resolveMintTokenProgram(conn, mint);
+    expect(reads).to.equal(2);
+  });
+
+  it("a failed mint read throws instead of guessing classic", async () => {
+    const conn = { getAccountInfo: async () => { throw new Error("429"); } } as unknown as Connection;
+    let threw = false;
+    await resolveMintTokenProgram(conn, mint).catch(() => (threw = true));
+    expect(threw).to.equal(true);
+  });
+
   it("create_reserve is built against Token-2022 with the transfer-fee authority PDA", async () => {
     const addresses = { reserveId: 0n, reserve, reserveTokenMint: mint, mintAuthority: findMintAuthority(reserve, PROGRAM_ID)[0], vaultAuthority: findVaultAuthority(reserve, PROGRAM_ID)[0], protocolConfig: findProtocolConfig(PROGRAM_ID)[0], reserveTokenProgram: TOKEN_2022_PROGRAM_ID };
     const built = await buildCreateReserveInstruction(program, addresses, user, { metadataUri: "https://x", mintFeeBps: 50, redemptionFeeBps: 0, tvlFeeBps: 100, feeDestination: user });
@@ -168,5 +184,40 @@ describe("DEC-0229 Token-2022 Reserve Token -- addresses and builders", () => {
     const keys = built.keys.map((k) => k.pubkey.toBase58());
     expect(keys).to.include(getAssociatedTokenAddressSync(mint, treasury, true, TOKEN_2022_PROGRAM_ID).toBase58());
     for (const s of sources) expect(built.keys.find((k) => k.pubkey.equals(s))!.isWritable).to.equal(true);
+  });
+});
+
+describe("DEC-0229 Token-2022 Reserve Token -- metadata in the Launch batch", () => {
+  afterEach(() => clearMintTokenProgramCache());
+  const reserve = key();
+  const [mint] = findReserveTokenMint(reserve, PROGRAM_ID);
+  const user = key();
+  // The Launch flow builds create_token_metadata before create_reserve has
+  // run, so the mint account does not exist yet. A stubbed connection stands
+  // in for each state of the mint.
+  const programWithMint = (owner: PublicKey | null) => {
+    const connection = { getAccountInfo: async () => (owner ? { owner, data: Buffer.alloc(0), lamports: 1, executable: false } : null) } as unknown as Connection;
+    return buildReadOnlyProgram(connection) as any;
+  };
+  const build = (owner: PublicKey | null) =>
+    buildCreateTokenMetadataInstruction(programWithMint(owner), PROGRAM_ID, reserve, user, key(), "Name", "SYM", "https://x");
+
+  it("a mint that does not exist yet is Token-2022: instructions sysvar + Token-2022 passed, mint writable (6015 on every launch otherwise)", async () => {
+    const built = await build(null);
+    const tail = built.keys.slice(-2).map((k) => k.pubkey.toBase58());
+    expect(tail).to.deep.equal([SYSVAR_INSTRUCTIONS_PUBKEY.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58()]);
+    expect(built.keys.find((k) => k.pubkey.equals(mint))!.isWritable).to.equal(true);
+  });
+
+  it("an existing Token-2022 mint gets the same accounts", async () => {
+    const built = await build(TOKEN_2022_PROGRAM_ID);
+    expect(built.keys.slice(-1)[0].pubkey.equals(TOKEN_2022_PROGRAM_ID)).to.equal(true);
+  });
+
+  it("an existing classic mint (created before DEC-0229) gets no extra accounts", async () => {
+    const built = await build(TOKEN_PROGRAM_ID);
+    const keys = built.keys.map((k) => k.pubkey.toBase58());
+    expect(keys).to.not.include(SYSVAR_INSTRUCTIONS_PUBKEY.toBase58());
+    expect(keys).to.not.include(TOKEN_2022_PROGRAM_ID.toBase58());
   });
 });

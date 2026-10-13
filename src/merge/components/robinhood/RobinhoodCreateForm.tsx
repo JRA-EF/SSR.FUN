@@ -39,6 +39,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ERC20_ABI, FEE_REGISTRY_ABI, LIMITS, ROBINHOOD, SAFE_REBALANCE_DEFAULTS, USDG, WETH } from "@/lib/evmChain";
 import { describeEvmError, fmtUnits, publicClientFor, rhReserveId } from "@/lib/evmReserve";
 import { invalidateRobinhoodReserves } from "@/hooks/useRobinhoodReserves";
+import { containsProfanity, PROFANITY_MESSAGE } from "@ssr/sdk";
 import { useRobinhoodAssetCatalogue, type RobinhoodAsset } from "@/hooks/useRobinhoodAssetCatalogue";
 import { RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY, type FeeRecipient } from "@/lib/types";
 import { TICKER_MAX_LENGTH, formatUsdc } from "@/lib/calculations";
@@ -249,11 +250,18 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
   const plan = planned.plan;
   const planKey = plan ? plan.legs.map((l) => `${l.asset.address}:${l.usdgRaw}`).join("|") : "";
 
+  // Name, ticker and description are public; the metadata store refuses
+  // profanity too (lib/reserve-metadata/payload.ts).
+  const nameProfane = containsProfanity(name);
+  const symbolProfane = containsProfanity(symbol);
+  const descriptionProfane = containsProfanity(description);
+
   /** Blocks Next until the current step is actually answerable. */
   function stepError(atStep: number): string | null {
     if (atStep === 1) {
       if (!name.trim()) return "Give the reserve a name.";
       if (!symbol.trim()) return "Give the reserve a ticker.";
+      if (nameProfane || symbolProfane || descriptionProfane) return PROFANITY_MESSAGE;
     }
     if (atStep === 2) {
       if (assets.length === 0) return "Add at least one asset.";
@@ -511,7 +519,8 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="rhc-name">Reserve Name</Label>
-                  <Input id="rhc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Strategic Tech Reserve" />
+                  <Input id="rhc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Strategic Tech Reserve" aria-invalid={nameProfane} />
+                  {nameProfane && <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="rhc-symbol">Ticker</Label>
@@ -523,7 +532,11 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                     placeholder="e.g. TECH"
                     onChange={(e) => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, TICKER_MAX_LENGTH))}
                   />
-                  <p className="text-xs text-muted-foreground">Up to {TICKER_MAX_LENGTH} letters, no numbers.</p>
+                  {symbolProfane ? (
+                    <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Up to {TICKER_MAX_LENGTH} letters, no numbers.</p>
+                  )}
                 </div>
               </div>
 
@@ -550,7 +563,9 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                   rows={4}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
+                  aria-invalid={descriptionProfane}
                 />
+                {descriptionProfane && <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

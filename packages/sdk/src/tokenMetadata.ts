@@ -147,6 +147,8 @@ export async function buildCreateTokenMetadataInstruction(
   // DEC-0229: a Token-2022 Reserve Token is published through Metaplex's
   // Create (V1), which needs the instructions sysvar and the token program
   // (remaining accounts) and the mint writable. Classic mints are unchanged.
+  // In the Launch batch the mint does not exist yet; the resolver reads that
+  // as Token-2022 (see resolveMintTokenProgram).
   const isToken2022 = (await resolveMintTokenProgram(program.provider.connection, reserveTokenMint)).equals(TOKEN_2022_PROGRAM_ID);
   const ix = await program.methods
     .createTokenMetadata(name, symbol, uri)

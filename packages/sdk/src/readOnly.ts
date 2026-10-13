@@ -11,7 +11,7 @@ import idl from "../idl/ssr_protocol.json";
 import type { SsrProtocol } from "../idl/ssr_protocol";
 import { findReserveAsset, findReserveVault, findManagerFeeRecipients, findFeeSettlement } from "./pda";
 import { computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS } from "./feeMath";
-import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, tokenProgramFromMintOwner, type TokenProgramKindDecoded } from "./tokenPrograms";
+import { assetAta, tokenAccountAmountByOwner, tokenProgramFromKind, tokenProgramFromMintOwner, TOKEN_2022_PROGRAM_ID, type TokenProgramKindDecoded } from "./tokenPrograms";
 
 /**
  * A transient RPC failure (429/timeout) while reading token supply must
@@ -352,7 +352,9 @@ export async function fetchFeeSettlement(connection: Connection, programId: Publ
  * read).
  */
 export async function fetchTokenBalanceRaw(connection: Connection, mint: PublicKey, owner: PublicKey, tokenProgram?: PublicKey | string | null): Promise<string> {
-  const program = tokenProgram ?? (await resolveMintTokenProgram(connection, mint));
+  // An unreadable mint has no readable balance either: 0, as before.
+  const program = tokenProgram ?? (await resolveMintTokenProgram(connection, mint).catch(() => null));
+  if (!program) return "0";
   const ata = assetAta(mint, owner, program);
   const info = await connection.getAccountInfo(ata).catch(() => null);
   return tokenAccountAmountByOwner(ata, info).toString();
@@ -362,8 +364,17 @@ export async function fetchTokenBalanceRaw(connection: Connection, mint: PublicK
  * mint -> owning token program, remembered for the life of the module: a
  * mint's owner program never changes, so the lookup costs one account read
  * per mint per session, not one per balance read (this reader sits on the
- * discovery poll and every trade). A failed read is NOT remembered -- the
- * classic program is used for that call only, and the next call retries.
+ * discovery poll and every trade).
+ *
+ * Never guesses classic SPL Token:
+ * - A mint that does not exist yet is Token-2022, not remembered. The Launch
+ *   flow builds instructions for the Reserve Token mint before create_reserve
+ *   has made it, and create_reserve only makes Token-2022 mints since
+ *   DEC-0229 (the old classic fallback dropped Token-2022's accounts from
+ *   create_token_metadata: 6015 on every launch). Every classic Reserve Token
+ *   mint already exists, so it always resolves from its owner.
+ * - A failed read throws: building against a guessed program sends the
+ *   wrong token accounts, so the caller retries or reports the failure.
  */
 const MINT_TOKEN_PROGRAM_CACHE = new Map<string, PublicKey>();
 
@@ -371,8 +382,8 @@ export async function resolveMintTokenProgram(connection: Connection, mint: Publ
   const key = mint.toBase58();
   const cached = MINT_TOKEN_PROGRAM_CACHE.get(key);
   if (cached) return cached;
-  const mintInfo = await connection.getAccountInfo(mint).catch(() => null);
-  if (!mintInfo) return TOKEN_PROGRAM_ID;
+  const mintInfo = await connection.getAccountInfo(mint);
+  if (!mintInfo) return TOKEN_2022_PROGRAM_ID;
   const program = tokenProgramFromMintOwner(mintInfo.owner);
   MINT_TOKEN_PROGRAM_CACHE.set(key, program);
   return program;

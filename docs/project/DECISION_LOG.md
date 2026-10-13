@@ -7154,3 +7154,33 @@
   ]
 }
 ```
+
+## DEC-0234
+
+```json
+{
+  "id": "DEC-0234",
+  "date": "2026-10-13",
+  "title": "Launch fix: a Reserve Token mint that does not exist yet is Token-2022; the shared mint-program resolver never guesses classic SPL Token",
+  "status": "CONFIRMED (frontend/SDK only; no program change)",
+  "decision": "packages/sdk resolveMintTokenProgram: a missing mint resolves to Token-2022 and is not cached; a failed RPC read throws instead of falling back to classic. fetchTokenBalanceRaw keeps answering \"0\" for an unreadable mint. buildCreateTokenMetadataInstruction goes through this resolver, so in the Launch batch it passes the instructions sysvar and Token-2022 as remaining accounts and marks the mint writable.",
+  "context": "From the DEC-0229/0230 upgrade (2026-10-08, slot 454528266) every Mainnet launch failed at step 1 with 6015 RemainingAccountsMismatch, thrown at create_token_metadata.rs:151. The Launch batch builds create_token_metadata before create_reserve has created the mint in the same transaction. The resolver read the missing mint as classic SPL Token, so the two Token-2022 remaining accounts were left out and the whole step rolled back. Seen on 2026-10-13: three user launch attempts between 09:59 and 10:00 UTC (2EcXzt2B..., 3JNQ5xGC...5PuQ, 33QViQsu...). These were the only launch attempts since the upgrade. The same classic guess also sat under the post-launch lookup table, launch resume, and every Reserve Token builder whose caller does not pass the program, where a lagging or failed read would have built against the wrong token accounts.",
+  "rationale": "Since DEC-0229, create_reserve makes only Token-2022 mints, and every classic Reserve Token mint already exists on-chain. So the only Reserve Token mint that can be missing is one being created right now, and it is Token-2022. For a non-Reserve mint that is missing, the balance is 0 under either program. A failed read gives no information, and building against a guessed program sends the wrong token accounts, so the resolver now throws.",
+  "alternativesConsidered": [
+    "Fix only the metadata builder (the first commit, c2a831a; superseded within the same change because the post-launch lookup table and launch resume relied on the same guess)",
+    "Pass the program explicitly from the Launch flow (also correct, but leaves the trap for every other caller)"
+  ],
+  "impact": "Launch a Reserve works again on Mainnet. Builders called without a reachable RPC and without reserveTokenProgram now throw instead of building a classic-shaped instruction.",
+  "affectedAreas": [
+    "packages/sdk/src/readOnly.ts, packages/sdk/src/tokenMetadata.ts",
+    "tests/phase_token2022_reserve_token.ts, phase_token2022_wallet_balance_read.ts, phase_mainnet_buy_mint_shape.ts, phase_mainnet_sell_and_perf.ts, phase_one_approval_buy.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Failed Mainnet launch 3JNQ5xGC...5PuQ (slot 456401279) re-simulated on Mainnet with the rebuilt create_token_metadata: CreateReserve, both InitializeReserveAsset and CreateTokenMetadata (Metaplex Create V1) succeed; 1,185 bytes.",
+    "Regression tests: without the fix 2 of 3 new launch-batch tests fail; with it phase_token2022_reserve_token.ts 18/18. Offline phase suite 1342 passing, 4 failing (pre-existing chart range selector x2, native-control reset x2).",
+    "DEC ids 0231-0233 are taken on unmerged branches (Raydium CPMM adapter, liquidity revenue routing, Compound sourcing); a peer session is taking DEC-0235 onward."
+  ]
+}
+```

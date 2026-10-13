@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, type RecipientInput } from "@ssr/sdk";
+import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, containsProfanity, PROFANITY_MESSAGE, type RecipientInput } from "@ssr/sdk";
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
@@ -405,6 +405,12 @@ export function CreateDTR({
   const [name, setName] = useState("");
   const [ticker, setTicker] = useState("");
   const [description, setDescription] = useState("");
+  // Name, ticker and description are public on the Reserve page and in
+  // wallets; the metadata store refuses profanity too (lib/reserve-metadata/payload.ts).
+  const nameProfane = containsProfanity(name);
+  const tickerProfane = containsProfanity(ticker);
+  const descriptionProfane = containsProfanity(description);
+  const identityProfane = nameProfane || tickerProfane || descriptionProfane;
   // Optional creator YouTube links -- saved onto the Reserve after deploy and
   // shown in the Reserve page's "From the Creator" video panel.
   const [youtubeChannel, setYoutubeChannel] = useState("");
@@ -572,7 +578,7 @@ export function CreateDTR({
   // (see uploadReserveMetadata), so a debounced re-upload of unchanged
   // content is a safe no-op, never a duplicate.
   useEffect(() => {
-    if (!realDeploymentCandidate || !name.trim() || !ticker.trim()) {
+    if (!realDeploymentCandidate || !name.trim() || !ticker.trim() || identityProfane) {
       setMetadataUri(null);
       setMetadataUriError(null);
       setMetadataUploading(false);
@@ -620,7 +626,7 @@ export function CreateDTR({
       cancelled = true;
       clearTimeout(debounceHandle);
     };
-  }, [realDeploymentCandidate, name, ticker, description, category, profileImageDataUrl]);
+  }, [realDeploymentCandidate, name, ticker, description, category, profileImageDataUrl, identityProfane]);
 
   // Recovers from a page reload (or a return visit, hours or days later --
   // see PendingReserveDeploy's no-expiry note) that happened mid-deployment:
@@ -1089,6 +1095,10 @@ export function CreateDTR({
     // failed/declined on-chain rejection for something checkable up front.
     // Mirrors the Launch button's own disabled condition below; re-checked
     // here too since this handler is the actual point of no return.
+    if (identityProfane) {
+      toast({ variant: "destructive", title: PROFANITY_MESSAGE, description: "Edit the Reserve's name, ticker or description in step 1 before launching." });
+      return;
+    }
     if (metadataUploading || !metadataUri) {
       toast({
         variant: "destructive",
@@ -1580,7 +1590,9 @@ export function CreateDTR({
                     placeholder="e.g. Solana Blue Chips" 
                     value={name} 
                     onChange={(e) => setName(e.target.value)} 
+                    aria-invalid={nameProfane}
                   />
+                  {nameProfane && <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ticker">Ticker</Label>
@@ -1592,7 +1604,11 @@ export function CreateDTR({
                     value={ticker} 
                     onChange={(e) => setTicker(e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, TICKER_MAX_LENGTH))}
                   />
-                  <p className="text-xs text-muted-foreground">Up to {TICKER_MAX_LENGTH} letters, no numbers.</p>
+                  {tickerProfane ? (
+                    <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Up to {TICKER_MAX_LENGTH} letters, no numbers.</p>
+                  )}
                 </div>
               </div>
               
@@ -1619,7 +1635,9 @@ export function CreateDTR({
                   rows={4}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
+                  aria-invalid={descriptionProfane}
                 />
+                {descriptionProfane && <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1684,7 +1702,7 @@ export function CreateDTR({
               </div>
             </CardContent>
             <CardFooter className="justify-end border-t border-border/40 pt-6">
-              <Button onClick={handleNext} disabled={!name || !ticker} className="font-bold gap-2">
+              <Button onClick={handleNext} disabled={!name || !ticker || identityProfane} className="font-bold gap-2">
                 Next <ChevronRight className="w-4 h-4" />
               </Button>
             </CardFooter>
@@ -2645,7 +2663,7 @@ export function CreateDTR({
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={isSubmitting || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri}
+                disabled={isSubmitting || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri || identityProfane}
                 title={
                   !isRealDeployment
                     ? `Every selected asset must be a supported real ${CLUSTER_LABEL} asset.`
