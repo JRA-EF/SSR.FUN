@@ -17,6 +17,7 @@ import { fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/me
 import { BuildError, compileV0, fitsV0, readReserveAndWallet, toBase64, type ReadDeps } from "./buildCommon";
 import { MAINNET_USDC_MINT } from "./jupiter";
 import { coSignFee, missingFeeDestinationAtaInstructions, quoteUsdcMintFee, resolveUsdcFeeRouting } from "./usdcMintFee";
+import { loadFeeLookupTable } from "./feeLookupTable";
 
 export interface BuildSeedInput {
   reserve: PublicKey;
@@ -124,13 +125,19 @@ export async function buildSeedTransaction(deps: BuildSeedDeps, input: BuildSeed
     seedIx,
   ];
 
-  const tables: AddressLookupTableAccount[] = input.lookupTable ? await fetchLookupTables(connection, [input.lookupTable.toBase58()]) : [];
-  if (input.lookupTable && tables.length === 0) {
+  // DEC-0238: the protocol-wide fee table always, plus the creator's own table for a large seed.
+  const [ownTables, feeTables] = await Promise.all([
+    input.lookupTable ? fetchLookupTables(connection, [input.lookupTable.toBase58()]).catch(() => [] as AddressLookupTableAccount[]) : Promise.resolve([] as AddressLookupTableAccount[]),
+    loadFeeLookupTable(connection),
+  ]);
+  const tables = [...ownTables, ...feeTables];
+  if (input.lookupTable && ownTables.length === 0) {
     throw new BuildError(409, "The lookup table for this seed is not active yet. Wait a few seconds and retry. Nothing was submitted.");
   }
   if (!fitsV0(input.manager, instructions, tables)) {
     if (input.lookupTable) throw new BuildError(422, "This seed does not fit one transaction even with a lookup table. Nothing was submitted.");
-    const signerKeys = new Set([input.manager.toBase58(), feeQuoteSigner.publicKey.toBase58()]);
+    // Signers cannot be looked up, and the fee table already holds the fixed fee accounts.
+    const signerKeys = new Set([input.manager.toBase58(), feeQuoteSigner.publicKey.toBase58(), ...feeTables.flatMap((t) => t.state.addresses.map((a) => a.toBase58()))]);
     const lookup = Array.from(new Set(instructions.flatMap((ix) => [ix.programId.toBase58(), ...ix.keys.map((k) => k.pubkey.toBase58())]))).filter((k) => !signerKeys.has(k));
     return { status: "needsLookupTable", addresses: lookup, usdcMintFeeRaw: usdcFeeRaw.toString(), seedValueUsdcRaw: depositValueUsdcRaw.toString() };
   }

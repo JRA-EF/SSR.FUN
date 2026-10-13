@@ -38,6 +38,7 @@
 import { AddressLookupTableAccount, ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import { buildMintWithUsdcFeeInstructions, computeMintRequirements, describeOnChainError } from "@ssr/sdk";
 import { coSignFee, missingFeeDestinationAtaInstructions, quoteUsdcMintFee, resolveUsdcFeeRouting } from "./usdcMintFee";
+import { loadFeeLookupTable } from "./feeLookupTable";
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
 import { assembleSingleBuyInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
@@ -275,7 +276,8 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   const wrapIxs = wrapActions.flatMap((a) => buildWrapRecoveredSolInstructions(wallet, a.lamports));
 
   // Table facts: the registered table (if any) and the would-be one.
-  const alt = await planAlt(connection, wallet, read, input.reserve, ssrProgramId);
+  // DEC-0238: plus the protocol-wide fee table, which every USDC-fee mint compiles against.
+  const [alt, feeTables] = await Promise.all([planAlt(connection, wallet, read, input.reserve, ssrProgramId), loadFeeLookupTable(connection)]);
 
   // Single attempt: instruction builds in parallel, then ONE compile.
   let single: { instructions: TransactionInstruction[]; swapTables: AddressLookupTableAccount[] } | null = null;
@@ -307,10 +309,10 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
 
   const decision = decideMode({
     attemptedSingle: single !== null,
-    singleFitsWithExistingTables: single !== null && fitsV0(wallet, single.instructions, [...alt.existingTables, ...single.swapTables]),
-    singleFitsWithWouldBeTable: single !== null && wouldBe !== null && fitsV0(wallet, single.instructions, [wouldBe, ...single.swapTables]),
-    coreFitsWithExistingTables: fitsV0(wallet, mintFull, alt.existingTables) || fitsV0(wallet, mintLean, alt.existingTables),
-    coreFitsWithWouldBeTable: wouldBe !== null && (fitsV0(wallet, mintFull, [wouldBe]) || fitsV0(wallet, mintLean, [wouldBe])),
+    singleFitsWithExistingTables: single !== null && fitsV0(wallet, single.instructions, [...alt.existingTables, ...feeTables, ...single.swapTables]),
+    singleFitsWithWouldBeTable: single !== null && wouldBe !== null && fitsV0(wallet, single.instructions, [wouldBe, ...feeTables, ...single.swapTables]),
+    coreFitsWithExistingTables: fitsV0(wallet, mintFull, [...alt.existingTables, ...feeTables]) || fitsV0(wallet, mintLean, [...alt.existingTables, ...feeTables]),
+    coreFitsWithWouldBeTable: wouldBe !== null && (fitsV0(wallet, mintFull, [wouldBe, ...feeTables]) || fitsV0(wallet, mintLean, [wouldBe, ...feeTables])),
     hasRegisteredAlt: reserveAlt !== null,
   });
   if (decision.mode === "unfit") {
@@ -319,7 +321,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
 
   // ONE fresh blockhash for every transaction, fetched last so it is as young as possible.
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-  const reserveTables = decision.createAlt && wouldBe ? [wouldBe] : alt.existingTables;
+  const reserveTables = [...(decision.createAlt && wouldBe ? [wouldBe] : alt.existingTables), ...feeTables];
   const transactions: BuiltTransaction[] = decision.createAlt ? altTransactions(wallet, blockhash, lastValidBlockHeight, alt) : [];
 
   if (decision.mode === "single" && single) {
