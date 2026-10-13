@@ -5,6 +5,7 @@
 // database connection -- mirrors lib/reserve-activity/cursorLogic.ts's
 // precedent of splitting pure logic out from the DB-touching indexer.ts.
 import { createHash } from "node:crypto";
+import { findProfaneReserveField, PROFANITY_MESSAGE } from "../../packages/sdk/src/profanity";
 
 export interface ReserveMetadataPayload {
   name: string;
@@ -113,6 +114,10 @@ export function validateReserveMetadataPayload(body: unknown): ReserveMetadataPa
     description: typeof p.description === "string" ? p.description : "",
     category: typeof p.category === "string" ? p.category : "",
   };
+  // Same check the Create forms show inline; enforced here so a direct POST
+  // cannot store a profane name/ticker/description. Writes only -- stored
+  // rows are served by id and never re-validated.
+  if (findProfaneReserveField(payload)) throw new Error(PROFANITY_MESSAGE);
   // DEC-0229: Reserves carry no manager Buy/Sell tax, and new payloads from
   // this app never include buyTaxPct/sellTaxPct. A LEGACY payload that does
   // carry them keeps them, normalized exactly as before and in the same key
