@@ -7184,3 +7184,40 @@
   ]
 }
 ```
+
+## DEC-0238
+
+```json
+{
+  "id": "DEC-0238",
+  "date": "2026-10-13",
+  "title": "The mint fee at creation (seed) and at every mint is paid in USDC to the SSR Treasury and the Manager, inside the mint transaction",
+  "status": "CONFIRMED -- built, DevNet live-tested; Mainnet program upgrade pending buffer funding",
+  "decision": "Creator directive (2026-10-13, repeated after DEC-0173 and DEC-0206 deferred it): the mint fee at reserve creation and at every mint is taken in USDC and lands in the SSR Treasury automatically, in the same transaction as the mint. Scope is MINT AND SEED ONLY; the Creator scratched DEC-0173's 'USDC on redeem' clause, so redemption fees are unchanged. Program: two new instructions, mint_reserve_tokens_in_kind_usdc_fee and seed_reserve_usdc_fee. They mint the FULL requested Reserve Tokens (no fee shares, no fee vault) and move usdc_fee from the minter's USDC account to the Treasury's USDC ATA (protocol share) and the Manager fee recipients' USDC ATAs (manager share, apportioned exactly like distribute_fee_usdc). The split is the same split_configured_bps/split_total_fee the share fee used. usdc_fee must be co-signed by the fee quote signer, which is the existing SettlementKeeperConfig.keeper (server-held SSR_FEE_SETTLEMENT_KEEPER_SECRET), so no ProtocolConfig growth was needed. The ManagerFeeRecipients PDA is a required, seeds-checked account and the program decides legacy vs. multi-recipient routing from it. New event MintFeePaidUsdc; errors 6068-6070 appended (NotFeeQuoteSigner, UsdcMintFeeRequired, UsdcMintFeeNotExpected). The original mint_reserve_tokens_in_kind/seed_reserve are untouched, so old clients keep working, and a direct caller without the co-signature still pays the share fee. Server: api/mainnet/build-buy builds the new mint and co-signs the mint/single transaction; new api/mainnet/build-seed builds and co-signs the seed. The fee is the Reserve's effective mint-fee rate on the deposit's USD value at SSR's prices (USDC legs = 1), rounded up; an unpriced leg refuses the build. The server only co-signs transactions it compiled itself; the signer is never the fee payer. A protocol-wide frozen lookup table (4EUmenaC82D83UER3iuCuFM8pRxnov2cJ9PfxJ4ku9Fq) holds the fixed fee accounts. App: Mint tab shows the fee in USDC on top of the amount and the full token amount; Create's cost summary shows 'Mint Fee on the initial seed: $X USDC to the SSR Treasury + Manager'; feasibility checks count it; every Mainnet mint (pure-USDC Reserves included) goes through the server-built path.",
+  "context": "The Create cost summary still read 'Mint Fee on the initial seed (1.00%) ~0.1 TESTA (taken in Reserve Tokens)'. Since the 2026-09-08 fee-vault upgrade, mint fees were minted as Reserve Token shares and converted to USDC by the hourly keeper; DEC-0173 rejected a literal USDC leg because the program has no oracle, and DEC-0206 deferred it again. The Creator rejected the keeper as the answer.",
+  "rationale": "The co-signature binds the server's quote to the exact transaction, so the program never needs a price and the client can neither skip nor shrink the fee. The worst a compromised signer can do is lower or waive mint fees; it never touches a vault, and every destination is still checked on-chain. New instructions instead of changing the deployed ones avoid a DEC-0144-style account-shape cutover. The DEC-0229/0230 mint path is otherwise identical.",
+  "alternativesConsidered": [
+    "On-chain price oracle (Pyth/Switchboard) to value the deposit -- rejected: new trust dependency, per-asset feed coverage gaps for launchpad tokens, much larger program change.",
+    "Atomically redeem the fee shares and swap them to USDC inside the user's mint -- rejected: keeper-gated swaps and transaction size.",
+    "Client adds a plain USDC transfer and the program's share fee is configured to zero -- rejected: PROTOCOL_MIN_MINT_FEE_BPS cannot be switched off, and an unenforced client transfer can be skipped.",
+    "Server co-signs any wallet-signed transaction sent to it -- rejected: the server would have to parse and trust arbitrary transactions; it only signs what it built."
+  ],
+  "impact": "After the Mainnet upgrade and the frontend deploy, every Mainnet creation and mint pays its mint fee in USDC to the Treasury and the Manager in the same transaction, and the minter receives every requested Reserve Token. Fee shares already in fee vaults and the TVL fee keep settling through the hourly keeper. Binary 1,097,472 bytes (sha256 44778940...f085, reproducible), fits the existing 1,099,592-byte ProgramData without extension. The queued Raydium liquidity build (DEC-0236/0237) rebases on this upgrade and renumbers its error variants after 6070 (Creator chose this order).",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/{usdc_mint_fee,mint_reserve_tokens_in_kind_usdc_fee,seed_reserve_usdc_fee}.rs, lib.rs, errors.rs, events.rs",
+    "packages/sdk/src/usdcMintFee.ts, packages/sdk/idl/*",
+    "lib/mainnet/{usdcMintFee,buildBuy,buildSeed,feeLookupTable}.ts, api/mainnet/{build-buy,build-seed}.ts",
+    "src/merge/lib/{createReserveClient,launchFunding,multiAssetBuyPlan,seedBudget}.ts, src/merge/pages/{CreateDTR,DTRDetail,ManageDTR}.tsx",
+    "event indexing (activityLog, ledger, reserve-activity KPIs and fee payouts)",
+    "src/pages/legal/Terms.tsx, src/docs/content/{GettingStarted,ProtocolReference}.tsx"
+  ],
+  "supersedes": "DEC-0173 (its mint/seed fee delivery mechanism, and its 'USDC on redeem' clause, which the Creator scratched); DEC-0206's deferred 'deduct the Manager fee in USDC at mint' alternative.",
+  "supersededBy": null,
+  "evidence": [
+    "DevNet live test on throwaway program DDBZWFB6...nbk (closed afterwards, rent reclaimed): seed 49kgZ7G4...BvG gave the creator all 2.000000 RT, Treasury +0.010000 USDC, manager +0.010000; mint R21JugB2...UiW gave the holder all 0.500000 RT, Treasury +0.002500, manager +0.002500; 60/40 recipients 8HKWnM7L...pgh; refusals NotFeeQuoteSigner, UsdcMintFeeRequired, InvalidFeeShareSplit, legacy routing after recipients exist (RemainingAccountsMismatch); keeper SOL unchanged; the share-fee mint still nets 99%.",
+    "The first DevNet run caught a real defect, fixed before Mainnet: with an optional recipients account a caller could route the manager half to the legacy destination although the Reserve had recipients.",
+    "Read-only Mainnet check (scripts/check_usdc_fee_mint_fit_mainnet.ts): every active Reserve's USDC-fee mint fits; the tightest (#24, 10 assets) is 1,170 bytes with the fee table.",
+    "Offline tests: tests/phase_usdc_mint_fee.ts (15), phase_server_built_buy.ts (18)."
+  ]
+}
+```
