@@ -486,3 +486,26 @@ pub struct ReserveTokenTransferFeesCollected {
     pub collected_by: Pubkey,
     pub ts: i64,
 }
+
+/// The mint fee of one mint or initial seed, paid in USDC from the minter's
+/// own USDC account to the Protocol treasury and the Reserve's Manager fee
+/// recipient(s) inside the same instruction (DEC-0235). No fee shares are
+/// minted on this path; `usdc_fee` was co-signed by `fee_quote_signer`.
+#[event]
+pub struct MintFeePaidUsdc {
+    pub reserve: Pubkey,
+    pub payer: Pubkey,
+    /// True for the initial seed at creation, false for a regular mint.
+    pub is_seed: bool,
+    /// Reserve Tokens minted to the payer -- the full amount, no fee shares
+    /// are withheld on this path.
+    pub reserve_tokens_out: u64,
+    pub usdc_fee: u64,
+    pub protocol_usdc: u64,
+    pub manager_usdc: u64,
+    pub protocol_destination: Pubkey,
+    pub manager_recipients: Vec<Pubkey>,
+    pub manager_amounts: Vec<u64>,
+    pub fee_quote_signer: Pubkey,
+    pub ts: i64,
+}

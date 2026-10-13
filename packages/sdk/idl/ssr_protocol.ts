@@ -3976,6 +3976,430 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "mintReserveTokensInKindUsdcFee",
+      "docs": [
+        "`mint_reserve_tokens_in_kind` with the mint fee paid in USDC to the",
+        "Protocol treasury and the Manager fee recipients in the same",
+        "instruction. Requires the fee quote signer's co-signature."
+      ],
+      "discriminator": [
+        36,
+        34,
+        236,
+        35,
+        2,
+        173,
+        198,
+        64
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mintAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "depositorReserveTokenAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "depositor"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "tvlAccrual",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  118,
+                  108,
+                  95,
+                  97,
+                  99,
+                  99,
+                  114,
+                  117,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlementKeeperConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeQuoteSigner",
+          "docs": [
+            "SSR's fee quote signer (the configured keeper). Its signature binds",
+            "`usdc_fee` and the rest of this transaction."
+          ],
+          "signer": true
+        },
+        {
+          "name": "usdcMint",
+          "docs": [
+            "Real Circle USDC on Mainnet (classic SPL Token). Not hardcoded",
+            "on-chain, same as `distribute_fee_usdc`; the fee quote signer only",
+            "co-signs transactions that pass the genuine USDC mint."
+          ]
+        },
+        {
+          "name": "depositorUsdcAccount",
+          "writable": true
+        },
+        {
+          "name": "protocolUsdcDestination",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protocolFeeDestination"
+              },
+              {
+                "kind": "account",
+                "path": "usdcTokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "usdcMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocolFeeDestination",
+          "docs": [
+            "configured on ProtocolConfig."
+          ]
+        },
+        {
+          "name": "managerFeeRecipients",
+          "docs": [
+            "Optional (pass the program id as None) -- same convention as",
+            "`distribute_fee_usdc`."
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram"
+        },
+        {
+          "name": "usdcTokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "reserveTokensRequested",
+          "type": "u64"
+        },
+        {
+          "name": "minReserveTokensOut",
+          "type": "u64"
+        },
+        {
+          "name": "maxAssetAmounts",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "usdcFee",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "pauseReserve",
       "discriminator": [
         83,
@@ -5411,6 +5835,422 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "seedReserveUsdcFee",
+      "docs": [
+        "`seed_reserve` with the mint fee paid in USDC to the Protocol",
+        "treasury and the Manager fee recipients in the same instruction.",
+        "Requires the fee quote signer's co-signature over `usdc_fee`."
+      ],
+      "discriminator": [
+        89,
+        134,
+        108,
+        105,
+        38,
+        176,
+        249,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mintAuthority",
+          "docs": [
+            "bump from `create_reserve`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "managerReserveTokenAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "manager"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "manager",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "reserve"
+          ]
+        },
+        {
+          "name": "tvlAccrual",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  118,
+                  108,
+                  95,
+                  97,
+                  99,
+                  99,
+                  114,
+                  117,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlementKeeperConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeQuoteSigner",
+          "docs": [
+            "SSR's fee quote signer (the configured keeper)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "managerUsdcAccount",
+          "writable": true
+        },
+        {
+          "name": "protocolUsdcDestination",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protocolFeeDestination"
+              },
+              {
+                "kind": "account",
+                "path": "usdcTokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "usdcMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocolFeeDestination",
+          "docs": [
+            "configured on ProtocolConfig."
+          ]
+        },
+        {
+          "name": "managerFeeRecipients",
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  97,
+                  103,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  105,
+                  112,
+                  105,
+                  101,
+                  110,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram"
+        },
+        {
+          "name": "usdcTokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seedAmounts",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "initialReserveTokens",
+          "type": "u64"
+        },
+        {
+          "name": "usdcFee",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "setFeeSettlementKeeper",
       "discriminator": [
         64,
@@ -6457,6 +7297,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "mintFeePaidUsdc",
+      "discriminator": [
+        171,
+        22,
+        80,
+        232,
+        74,
+        14,
+        29,
+        120
+      ]
+    },
+    {
       "name": "protocolConfigUpdated",
       "discriminator": [
         20,
@@ -7148,6 +8001,21 @@ export type SsrProtocol = {
       "code": 6067,
       "name": "delegateSelfModification",
       "msg": "A co-manager cannot change its own permissions."
+    },
+    {
+      "code": 6068,
+      "name": "notFeeQuoteSigner",
+      "msg": "The USDC mint fee must be co-signed by the configured fee quote signer."
+    },
+    {
+      "code": 6069,
+      "name": "usdcMintFeeRequired",
+      "msg": "This Reserve charges a mint fee, so the USDC mint fee must be greater than zero."
+    },
+    {
+      "code": 6070,
+      "name": "usdcMintFeeNotExpected",
+      "msg": "This Reserve charges no mint fee, so the USDC mint fee must be zero."
     }
   ],
   "types": [
@@ -7966,6 +8834,79 @@ export type SsrProtocol = {
           },
           {
             "name": "updatedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mintFeePaidUsdc",
+      "docs": [
+        "The mint fee of one mint or initial seed, paid in USDC from the minter's",
+        "own USDC account to the Protocol treasury and the Reserve's Manager fee",
+        "recipient(s) inside the same instruction (DEC-0235). No fee shares are",
+        "minted on this path; `usdc_fee` was co-signed by `fee_quote_signer`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "isSeed",
+            "docs": [
+              "True for the initial seed at creation, false for a regular mint."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "reserveTokensOut",
+            "docs": [
+              "Reserve Tokens minted to the payer -- the full amount, no fee shares",
+              "are withheld on this path."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "usdcFee",
+            "type": "u64"
+          },
+          {
+            "name": "protocolUsdc",
+            "type": "u64"
+          },
+          {
+            "name": "managerUsdc",
+            "type": "u64"
+          },
+          {
+            "name": "protocolDestination",
+            "type": "pubkey"
+          },
+          {
+            "name": "managerRecipients",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "managerAmounts",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "feeQuoteSigner",
             "type": "pubkey"
           },
           {

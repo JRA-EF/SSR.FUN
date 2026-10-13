@@ -349,4 +349,42 @@ pub mod ssr_protocol {
     ) -> Result<()> {
         instructions::collect_transfer_fees::handler(ctx)
     }
+
+    // --- DEC-0235: mint fee paid in USDC at mint/seed time ---
+
+    /// `seed_reserve` with the mint fee paid in USDC to the Protocol
+    /// treasury and the Manager fee recipients in the same instruction.
+    /// Requires the fee quote signer's co-signature over `usdc_fee`.
+    pub fn seed_reserve_usdc_fee<'info>(
+        ctx: Context<'info, SeedReserveUsdcFee<'info>>,
+        seed_amounts: Vec<u64>,
+        initial_reserve_tokens: u64,
+        usdc_fee: u64,
+    ) -> Result<()> {
+        instructions::seed_reserve_usdc_fee::handler(
+            ctx,
+            seed_amounts,
+            initial_reserve_tokens,
+            usdc_fee,
+        )
+    }
+
+    /// `mint_reserve_tokens_in_kind` with the mint fee paid in USDC to the
+    /// Protocol treasury and the Manager fee recipients in the same
+    /// instruction. Requires the fee quote signer's co-signature.
+    pub fn mint_reserve_tokens_in_kind_usdc_fee<'info>(
+        ctx: Context<'info, MintReserveTokensInKindUsdcFee<'info>>,
+        reserve_tokens_requested: u64,
+        min_reserve_tokens_out: u64,
+        max_asset_amounts: Vec<u64>,
+        usdc_fee: u64,
+    ) -> Result<()> {
+        instructions::mint_reserve_tokens_in_kind_usdc_fee::handler(
+            ctx,
+            reserve_tokens_requested,
+            min_reserve_tokens_out,
+            max_asset_amounts,
+            usdc_fee,
+        )
+    }
 }
