@@ -210,4 +210,17 @@ pub enum SsrError {
     UsdcMintFeeRequired,
     #[msg("This Reserve charges no mint fee, so the USDC mint fee must be zero.")]
     UsdcMintFeeNotExpected,
+    // DEC-0232: append only, preserving every deployed error number.
+    #[msg("Liquidity revenue accounts, token pair, authority or fee configuration do not match the registered policy.")]
+    LiquidityRevenueValidationFailed,
+    #[msg("Raydium fee retention changed; reconcile pending creator fees before resuming distribution.")]
+    LiquidityRevenueEconomicsChanged,
+    #[msg("The secondary swap would deliver less than your minimum after all fees and project tax.")]
+    LiquiditySwapMinimumNotMet,
+
+    #[msg("Liquidity lock expiry must be in the future and can only be extended.")]
+    LiquidityLockTermInvalid,
+    #[msg("Liquidity principal is locked or this tranche has already been withdrawn.")]
+    LiquidityPrincipalLocked,
+
 }

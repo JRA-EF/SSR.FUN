@@ -8,6 +8,7 @@ import type { ReserveCardProps } from "../../components/ReserveCard";
 import type { ReserveSnapshot } from "./evmReserve";
 import type { DTR } from "./types";
 import { buildReserveCardProps, type ReserveCardStats } from "./reserveCardProps";
+import type { LiquidityPoolPreview } from "./liquidityPreview";
 import { normalizeReserveCategory } from "./types";
 import { formatUsdc } from "./calculations";
 import { rhReserveId } from "./evmReserveId";
@@ -29,7 +30,8 @@ export interface DirectoryEntry {
   card: Omit<ReserveCardProps, "renderCta">;
 }
 
-export function solanaEntry(dtr: DTR, isMainnet: boolean, stats: ReserveCardStats): DirectoryEntry {
+/** `pool` = the Reserve Token's liquidity pool preview (DEC-0217/0218), when one exists -- drives the card's trust badges. */
+export function solanaEntry(dtr: DTR, isMainnet: boolean, stats: ReserveCardStats, pool?: LiquidityPoolPreview): DirectoryEntry {
   return {
     key: `sol:${dtr.id}`,
     chain: "solana",
@@ -40,7 +42,7 @@ export function solanaEntry(dtr: DTR, isMainnet: boolean, stats: ReserveCardStat
     price: dtr.tokenPrice,
     change24h: dtr.change24h,
     href: `/dtr/${dtr.id}`,
-    card: buildReserveCardProps(dtr, isMainnet, stats),
+    card: buildReserveCardProps(dtr, isMainnet, stats, pool),
   };
 }
 

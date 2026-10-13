@@ -70,6 +70,7 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
   const [chainFilter, setChainFilter] = useState<ChainFilter>(initialChain);
   const chainDiscoveryStatus = useAppStore((s) => s.chainDiscoveryStatus);
   const chainDiscoveryError = useAppStore((s) => s.chainDiscoveryError);
+  const liquidityPreviews = useAppStore((s) => s.liquidityPreviews);
   const [searchFilter, setSearchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   // Per-Reserve all-time volume for the cards' stats row -- the same fetch/
@@ -96,10 +97,10 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
       solanaEntry(dtr, IS_MAINNET, {
         status: landingStats.status,
         volumeAllTimeUsd: dtr.onChain ? landingStats.data?.perReserve[dtr.onChain.reserve]?.volumeAllTimeUsd : undefined,
-      }),
+      }, liquidityPreviews[dtr.id]),
     );
     return [...sol, ...robinhood.reserves.map(robinhoodEntry)];
-  }, [dtrs, robinhood.reserves, landingStats.status, landingStats.data]);
+  }, [dtrs, robinhood.reserves, landingStats.status, landingStats.data, liquidityPreviews]);
 
   const q = searchFilter.toLowerCase();
   const filtered = entries.filter(

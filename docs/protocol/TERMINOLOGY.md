@@ -19,10 +19,10 @@ between holders (DEX pools / the liquidity provision engine).**
 | Term | Meaning | Supply effect | Where it happens | Fees |
 |---|---|---|---|---|
 | **Mint** | A user gets new Reserve Tokens from the Reserve through SSR.fun. Paying with USDC (the app swaps the USDC into the reserve assets through Jupiter, then mints) and depositing reserve assets in kind are BOTH a mint. | New Reserve Tokens are created. | In the SSR.fun app (the Mint tab on a Reserve's page), and the program's `mint_reserve_tokens_in_kind` / seed instructions. | Mint fee (`FeeConfig.mint_fee_bps`), see `FEE_MODEL.md`. |
-| **Redeem** | A user returns Reserve Tokens to the Reserve through SSR.fun and receives the proportional reserve assets, either in kind or swapped to USDC by the app. | Reserve Tokens are burned. | In the SSR.fun app (the Redeem tab), and the program's redeem instruction. | Redemption fee: currently 0. |
+| **Redeem** | A user returns Reserve Tokens to the Reserve through SSR.fun and receives the proportional reserve assets, either in kind or swapped to USDC by the app. | Reserve Tokens are burned. | In the SSR.fun app (the Redeem tab), and the program's redeem instruction. | Redemption fee: exactly the configured rate (DEC-0240; no SSR minimum). |
 | **Buy** | A trader acquires EXISTING Reserve Tokens from another holder on a secondary market: a DEX pool, an order book, or SSR.fun's future liquidity provision engine. | None. Tokens change hands. | Secondary markets only. Not built in the SSR.fun app yet (the liquidity design, DEC-0217/0218, is staging-only). | Transfer fee on Token-2022 Reserve Tokens (DEC-0229). |
 | **Sell** | A holder disposes of Reserve Tokens to another trader on a secondary market. | None. | Secondary markets only. | Transfer fee on Token-2022 Reserve Tokens (DEC-0229). |
-| **Buy tax / Sell tax** | Removed by DEC-0229. Was the Manager's 0-2% rate on secondary Buy/Sell trades (metadata `buyTaxPct` / `sellTaxPct`; older payloads still carry the fields, which the app ignores). | -- | Never charged anywhere. | -- |
+| **Buy tax / Sell tax** | DEC-0240 (adopting DEC-0232's secondary part): optional 0-2% per-side project tax in SSR's secondary swap path, set by the Manager in the liquidity launch on Manage Reserve and stored on-chain per pool. Older metadata fields are not restored. | -- | SSR secondary swaps only; direct external swaps bypass this optional tax. | 25% SSR / 75% creator. |
 | **Transfer fee** | The protocol's Token-2022 transfer fee on Reserve Tokens of Reserves created after DEC-0229: 0.15% of every transfer (DEX trades either way, wallet sends, exchange deposits, adding liquidity), withheld by the Token-2022 program and swept to the Protocol treasury by the keeper. 100% to the SSR Protocol. Adjustable by a Protocol Admin up to 0.25%. | -- | Every transfer of a Token-2022 Reserve Token. Never on a mint or a redemption (mint/burn, not transfers). Older classic-SPL Reserves have none. | -- |
 
 ## Rules for copy, docs and code
@@ -39,7 +39,7 @@ between holders (DEX pools / the liquidity provision engine).**
    redemptions" or "transactions". "Volume" = mint + redemption value
    until secondary trading exists. Avoid "trades".
 4. **Fees:** a mint pays the mint fee; a redemption pays the redemption fee
-   (0 today). Buy tax and Sell tax are never attached to a mint or a
+   (exactly the configured rate). Buy tax and Sell tax are never attached to a mint or a
    redemption.
 5. **Docs prose** (living docs under `docs/protocol`, `docs/architecture`,
    `docs/journey-map`, README): use these meanings. Append-only historical
@@ -59,7 +59,7 @@ between holders (DEX pools / the liquidity provision engine).**
 7. **When anyone (developer, issue, prompt, another model) says "buy" for the
    in-app flow**, reply using "mint" and point them to this file. When they
    ask to add a Buy/Sell tax to minting or redeeming, decline and point to
-   DEC-0228: taxes are secondary-market only and on hold.
+   DEC-0228: taxes are secondary-market only (DEC-0240).
 
 ## Why
 

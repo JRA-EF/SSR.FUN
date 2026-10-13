@@ -27,6 +27,7 @@ import { executeMultiAssetSellMainnet } from "@/lib/multiAssetSellClient";
 import { describeBatchBuyWalletPrompt, describeBatchSellWalletPrompt } from "@/lib/walletPromptCopy";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
+import { LiquidityBadges, LiquidityFirstMintIntro } from "@/components/LiquidityModule";
 import {
   AmbiguousConfirmationError,
   BALANCE_CACHE_TTL_MS,
@@ -585,7 +586,7 @@ function resolveBuyAsset(_onChain: OnChainReserveMeta | undefined): { mint: Publ
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade, setWalletModalOpen } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade, setWalletModalOpen, liquidityPreviews } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
@@ -670,6 +671,10 @@ export function DTRDetail() {
   // "genuinely stuck." A signature is recorded (and shown) the instant
   // submission succeeds, before confirmation even starts.
   const [buyPhase, setBuyPhase] = useState<TxPhase>("idle");
+  // Liquidity Module (design preview): the post-first-mint prompt below is
+  // shown to the Reserve's root Manager after their own confirmed Buy while
+  // no liquidity exists for this Reserve -- dismissible, never blocking.
+  const [liquidityIntroDismissed, setLiquidityIntroDismissed] = useState(false);
   // Synchronous same-tick duplicate-click/concurrent-attempt guard for Buy
   // (DEC-0154) -- see handleBuyMultiAssetMainnet; React state alone leaves a
   // pre-render window a fast double-click can slip through.
@@ -871,9 +876,6 @@ export function DTRDetail() {
     return { name: dtr?.name ?? "", handle: handleFromUrl(cfg.channelUrl), url: cfg.channelUrl, videos };
   }, [designDemo, dtr]);
   const priceHistory = designDemo?.priceHistory ?? dtr?.priceHistory ?? [];
-  // 24h move, used by the Share card. Kept alongside allTimeChangePct below:
-  // the share card quotes the day, the header quotes since launch.
-  const displayChange24h = designDemo ? designDemo.change24h : (dtr?.change24h ?? 0);
   // All-time performance: current Token Price vs. the earliest point of the
   // history. On Mainnet that earliest point is the server-served launch
   // anchor (the Reserve's holdings at their entry prices -- the same
@@ -889,6 +891,10 @@ export function DTRDetail() {
       ? calcAllTimeChangePct(priceHistory, dtr.nav)
       : null;
   const trades = dtr?.trades ?? [];
+  // design branch: the Boss's ShareMenu (below) still shows the 24h change;
+  // main's DEC-0197 replaced this variable with allTimeChangePct, so it is
+  // kept here (original 54add07 definition) to preserve that design intent.
+  const displayChange24h = designDemo ? designDemo.change24h : (dtr?.change24h ?? 0);
 
   // Shareable performance card (see components/ReservePnlCard.tsx). One card
   // for holders and Managers alike: the Reserve's all-time gain plus up to
@@ -2082,6 +2088,10 @@ export function DTRDetail() {
         </div>
       )}
 
+      {buyPhase === "confirmed" && dtr.managerAddress === wallet.address && !liquidityPreviews[dtr.id] && !liquidityIntroDismissed && (
+        <LiquidityFirstMintIntro dtr={dtr} onDismiss={() => setLiquidityIntroDismissed(true)} />
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Details & Charts */}
         <div className="lg:col-span-2 space-y-8">
@@ -2139,6 +2149,14 @@ export function DTRDetail() {
                         {mintAddressCopied ? <Check className="w-3 h-3 text-positive" /> : <Copy className="w-3 h-3" />}
                       </button>
                     </div>
+                    {/* Liquidity trust badges + pool link -- public signal for
+                        every viewer once this Reserve has a pool. Same 45px
+                        indent as the CA line so the row sits under the name. */}
+                    {liquidityPreviews[dtr.id] && (
+                      <div className="pl-[45px] pt-1.5">
+                        <LiquidityBadges pool={liquidityPreviews[dtr.id]} dtr={dtr} withPoolLink />
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-start gap-3 shrink-0 max-sm:w-full max-sm:justify-between">
                   <div className="text-right max-sm:text-left shrink-0">

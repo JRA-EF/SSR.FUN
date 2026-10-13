@@ -4,6 +4,14 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import {
+  compoundPreviewPool,
+  makePreviewPoolAddress,
+  strongerLock,
+  type LiquidityLock,
+  type LiquidityPoolPreview,
+  type ReserveChain,
+} from "@/lib/liquidityPreview";
 import type {
   DTR,
   Delegate,
@@ -173,6 +181,29 @@ interface AppState {
    */
   recordConfirmedTrade: (dtrId: string, side: "buy" | "sell", tokenAmount: number, usdcAmount: number) => void;
 
+  /**
+   * Liquidity Module -- DESIGN PREVIEW state, keyed by DTR id (see
+   * src/merge/lib/liquidityPreview.ts and
+   * docs/project/LIQUIDITY_MODULE_SPEC.md). Purely local: no pool exists on
+   * any chain and no funds move; every surface rendering this is labelled
+   * as a preview. The real integration replaces these four actions behind the
+   * liquidity adapter (LIQUIDITY_MODULE_SPEC.md Section 12.4; build + sign +
+   * confirm, then persist the observed on-chain result) while keeping their
+   * call sites.
+   */
+  liquidityPreviews: Record<string, LiquidityPoolPreview>;
+  /** Creates the preview pool on first use (root Manager only in the UI), or tops an existing one up. Locks only ever strengthen. */
+  addLiquidityPreview: (
+    dtrId: string,
+    input: { chain: ReserveChain; quoteSymbol: LiquidityPoolPreview["quoteSymbol"]; baseTokens: number; quoteUsd: number; lock: LiquidityLock },
+  ) => void;
+  /** Applies a stronger lock to the preview position; a weaker lock than the current one is ignored. */
+  lockLiquidityPreview: (dtrId: string, lock: LiquidityLock) => void;
+  /** Marks accrued preview fees as collected to the creator treasury and restarts accrual. */
+  collectLiquidityPreviewFees: (dtrId: string, amountUsd: number) => void;
+  /** Marks accrued preview fees as compounded: adds them to the position as balanced liquidity and restarts accrual (DEC-0222). No-op without a valid NAV. */
+  compoundLiquidityPreviewFees: (dtrId: string, amountUsd: number, navPerToken: number) => void;
+
   addDelegate: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   updateDelegatePermissions: (dtrId: string, address: string, permissions: ManagerPermissions) => ActionResult;
   removeDelegate: (dtrId: string, address: string) => ActionResult;
@@ -214,6 +245,7 @@ export const useAppStore = create<AppState>()(
       dtrs: [...REAL_PLACEHOLDER_DTRS],
       quarantinedReserves: {},
       profiles: {},
+      liquidityPreviews: {},
       chainDiscoveryStatus: "loading",
       chainDiscoveryError: null,
       setChainDiscoveryStatus: (status, error) => set({ chainDiscoveryStatus: status, chainDiscoveryError: error ?? null }),
@@ -279,6 +311,64 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           dtrs: state.dtrs.map((d) => (d.id === dtrId ? { ...d, headerImageUrl: headerImageUrl ?? undefined } : d)),
         }));
+      },
+
+      addLiquidityPreview: (dtrId, input) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          const now = Date.now();
+          const pool: LiquidityPoolPreview = existing
+            ? {
+                ...existing,
+                baseTokens: existing.baseTokens + input.baseTokens,
+                quoteUsd: existing.quoteUsd + input.quoteUsd,
+                lock: strongerLock(existing.lock, input.lock),
+              }
+            : {
+                poolAddress: makePreviewPoolAddress(dtrId),
+                chain: input.chain,
+                quoteSymbol: input.quoteSymbol,
+                baseTokens: input.baseTokens,
+                quoteUsd: input.quoteUsd,
+                createdTs: now,
+                lock: input.lock,
+                collectedTotalUsd: 0,
+                compoundedTotalUsd: 0,
+                collectedThroughTs: now,
+              };
+          return { liquidityPreviews: { ...state.liquidityPreviews, [dtrId]: pool } };
+        });
+      },
+
+      lockLiquidityPreview: (dtrId, lock) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          if (!existing) return state;
+          return { liquidityPreviews: { ...state.liquidityPreviews, [dtrId]: { ...existing, lock: strongerLock(existing.lock, lock) } } };
+        });
+      },
+
+      collectLiquidityPreviewFees: (dtrId, amountUsd) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          if (!existing) return state;
+          return {
+            liquidityPreviews: {
+              ...state.liquidityPreviews,
+              [dtrId]: { ...existing, collectedTotalUsd: existing.collectedTotalUsd + amountUsd, collectedThroughTs: Date.now() },
+            },
+          };
+        });
+      },
+
+      compoundLiquidityPreviewFees: (dtrId, amountUsd, navPerToken) => {
+        set((state) => {
+          const existing = state.liquidityPreviews[dtrId];
+          if (!existing) return state;
+          const next = compoundPreviewPool(existing, amountUsd, navPerToken);
+          if (!next) return state;
+          return { liquidityPreviews: { ...state.liquidityPreviews, [dtrId]: next } };
+        });
       },
 
       syncRealHolding: (dtrId, tokenBalanceRaw, nav) => {

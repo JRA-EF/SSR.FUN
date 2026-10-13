@@ -1,41 +1,33 @@
-# SSR.fun fee model (Mainnet, as implemented)
+# SSR.fun fee model (DEC-0240, live)
 
-The rule, as stated by JRA on 2026-09-10 and adopted:
+The Creator's 2026-10-13 ruling (DEC-0240) adopts the secondary-market part of Yeh's DEC-0232 model and keeps primary mint/redeem fees as they were live. Mint fees are paid in USDC at mint time (DEC-0238).
 
-> Mint fee: we charge 50% of what the managers set the fee to, min 0.5% if they set to lower than 1%.
-> Annualized TVL fee: calculated and charged daily, same structure but min is 0.5%.
-> Buy/sell tax on secondary markets = 50%, no minimum.
+| Revenue | SSR receives | Creator receives | Scope |
+|---|---|---|---|
+| Mint, including initial seed | Configured 0%: nothing. Otherwise max(0.5%, half the configured fee), paid in USDC in the mint transaction (DEC-0238) | Configured fee minus SSR share, floored at zero, in USDC | Primary issuance |
+| Redeem | Protocol share of exactly the configured fee (never raised by a floor) | Remainder of the configured fee | Primary redemption |
+| Annualized TVL | Existing split; zero configuration remains zero | Existing split | Unchanged |
+| Token-2022 transfer fee | 100% of existing 0.15% fee (admin ceiling 0.25%) | None | All transfers, every venue |
+| SSR-created canonical pool | 0.05% equivalent of native creator-fee base, carved from the 0.75% bucket | Native creator earnings after Raydium retention and SSR share | All swaps in that pool, including external interfaces |
+| Optional project tax | 25% of tax, no minimum | 75% of tax | Set by the Manager in the liquidity launch on Manage Reserve; SSR secondary swap wrapper only; zero tax means zero tax revenue |
 
-**Terminology (mandatory, `TERMINOLOGY.md`, DEC-0228):** a **mint** is
-getting Reserve Tokens from SSR.fun in the app; a **redemption** is handing them
-back. **Buy** and **Sell** are strictly secondary-market trades between holders
-(DEX pools, the future liquidity provision engine). So "Buy/sell tax on
-secondary markets" above never applies to a mint or a redemption.
+DEC-0232's unconditional 0.5% minimum on mint and redemption (including configured zero) was NOT adopted.
 
-This file records how each line maps onto the deployed program
-`8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9` and the app, and where the
-numbers live in code. Decision history: DEC-0094/0095 (mint + TVL split),
-DEC-0100..0103 (TVL accrual), DEC-0173/0184/0196 (USDC settlement),
-DEC-0198 (daily TVL cadence; also charged the Buy/Sell tax on in-app mints
-and redemptions, which DEC-0228 put on hold as a terminology mistake).
+## Native pool fee routing
 
-| Fee | Who sets the rate | Protocol share | Manager share | Charged in | Charged when | Enforced by |
-|---|---|---|---|---|---|---|
-| Mint fee | Manager, 0-5% at Create (`FeeConfig.mint_fee_bps`) | max(0.5%, rate / 2) | rate - protocol share | Reserve Tokens into the fee vault, swapped to USDC by the keeper | every mint (in the app: the Mint tab) and every seed | program (`mint_reserve_tokens_in_kind`, `fee_math::split_configured_bps`) |
-| Annualized TVL fee | Manager, 0-10%/yr at Create (`FeeConfig.annual_tvl_fee_bps`) | max(0.5%, rate / 2) | rate - protocol share | same | accrues per full elapsed day; the keeper calls `accrue_fees` for any Reserve 1+ day since its last accrual (daily since DEC-0198, weekly before) | program (`accrue_fees`) + keeper (`api/mainnet/fee-settlement-cron.ts`) |
-| Transfer fee (DEC-0229) | Protocol Admin, per mint: 0.15% at creation, `update_transfer_fee` up to 0.25% (`MAX_RESERVE_TOKEN_TRANSFER_FEE_BPS`) | 100% | none | Reserve Tokens, withheld by Token-2022 in the receiving account, swept to the Treasury's Reserve Token account by the keeper (`collect_transfer_fees`) | every transfer of a Token-2022 Reserve Token (Reserves created after DEC-0229); never a mint or a redemption | Token-2022 program itself (`TransferFeeConfig`); authorities are the program's `transfer_fee_authority` PDA |
-| Buy tax / Sell tax | removed by DEC-0229 (replaced by the transfer fee) | -- | -- | -- | never | -- |
-| Redemption fee | constant 0 (`DEFAULT_REDEMPTION_FEE_BPS`) | -- | -- | -- | every redemption (the Redeem tab); 0 in v1, so nothing is charged | -- |
+Raydium config 9 charges 0.25% trade plus 0.75% native creator fees, collected in USDC only. Its currently observed default retention is 5% of creator fees, leaving 0.7125%. The pool creator is the per-Reserve `liquidity_revenue` PDA, never the creator's ordinary wallet. After collection, the router distributes net USDC in the ratio `500 * 1e6 / (7500 * (1e6 - retainedRate))` to SSR and the remainder to the fixed creator treasury. At 5% retention this is 4/57 of net USDC: SSR 0.05%, creator 0.6625%, Raydium retention 0.0375%, before the separate 0.25% trade fee.
 
-## The 0.5% floor
+The equivalence is to Raydium's native creator-fee base, not necessarily gross wallet turnover: USDC input/output fee bases and integer rounding differ. The token transfer fee is withheld in Reserve Tokens, so it must not be reported as USDC cash revenue without valuation/settlement. Do not add these rates and promise an exact all-in percentage on every trade.
 
-`protocol_bps = max(PROTOCOL_MIN_*_FEE_BPS, configured_bps / 2)`,
-`manager_bps = configured_bps - protocol_bps` (never below 0). A configured
-0% is a true 0% for both sides (DEC-0095). A configured rate below 0.5% but
-above 0 gives the manager 0% and the minter pays the protocol's 0.5% floor.
-Constants: `programs/ssr_protocol/src/constants.rs`
-(`PROTOCOL_MIN_MINT_FEE_BPS = 50`, `PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS = 50`,
-caps `MAX_MINT_FEE_BPS = 500`, `MAX_ANNUAL_TVL_FEE_BPS = 1000`).
+Raydium's direct permissionless collect can only fund the router ATA. It cannot send fees to the creator directly. The splitter uses the registered retention rate and carries fractional USDC remainders across collections. Config/override changes fail closed; pending balances must be reconciled before any future retention migration. No mutable treasury or retention migration instruction is provided. Protocol treasury follows the existing ProtocolConfig destination. LP ownership and LP fees stay separate.
+
+## Optional secondary project tax
+
+A new on-chain swap wrapper invokes Raydium atomically. Buy tax is charged on gross USDC input; the remaining input is swapped. Sell tax is charged on actual USDC received. The final minimum output is checked after project tax and token transfer fees; failure rolls back everything. Rates are configured on-chain at registration, 0-2% per side, and split 25/75 in USDC. Tiny taxes round upward; SSR receives allocation dust. No per-trade caller may override the rate or treasury. Direct external swaps can bypass this optional tax, but cannot bypass the token-level transfer fee or redirect native fees from SSR-created pools.
+
+## Deployment
+
+The liquidity instructions ship in the same program upgrade as DEC-0238's successors (see PROJECT_STATUS for slot and deployment). Pool creation is co-signed by the Raydium-approved payer `6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS`; all initial LP ends in the creator treasury (`finalize_liquidity_pool`).
 
 ## `ProtocolConfig.default_protocol_fee_bps` is inert
 
@@ -46,7 +38,7 @@ for anything. `ProtocolConfig.default_protocol_fee_destination` DOES matter:
 other recipient, which is how the protocol share lands in the Treasury vault
 `3CBpVMPDQD75b5bXgDunkpVJ3EeQWcwU9DCSLsTjWQL5`.
 
-## Buy/Sell tax: on hold (DEC-0228), then removed (DEC-0229)
+## Historical tax removal — superseded for SSR-routed DEX swaps by DEC-0240
 
 DEC-0229 removed the Buy/Sell tax entirely (Create Reserve sliders, metadata
 fields for new payloads, the build-buy/build-sell lookups, and then the tax

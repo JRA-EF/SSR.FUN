@@ -48,13 +48,13 @@ use crate::state::{FeeSettlement, ManagerFeeRecipients, ProtocolConfig, Reserve}
 #[derive(Accounts)]
 pub struct DistributeFeeUsdc<'info> {
     #[account(seeds = [PROTOCOL_CONFIG_SEED], bump = protocol_config.bump)]
-    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub protocol_config: Box<Account<'info, ProtocolConfig>>,
 
     #[account(
         seeds = [RESERVE_SEED, reserve.reserve_id.to_le_bytes().as_ref()],
         bump = reserve.bump,
     )]
-    pub reserve: Account<'info, Reserve>,
+    pub reserve: Box<Account<'info, Reserve>>,
 
     #[account(
         mut,
@@ -62,20 +62,20 @@ pub struct DistributeFeeUsdc<'info> {
         bump = fee_settlement.bump,
         constraint = fee_settlement.reserve == reserve.key() @ SsrError::FeeSettlementReserveMismatch,
     )]
-    pub fee_settlement: Account<'info, FeeSettlement>,
+    pub fee_settlement: Box<Account<'info, FeeSettlement>>,
 
     /// Real Circle USDC on Mainnet -- always the classic SPL Token program
     /// (this protocol never hardcodes this address on-chain; the caller,
     /// same as every other Mainnet write path in this app, is responsible
     /// for always passing the genuine USDC mint).
-    pub usdc_mint: Account<'info, SplMint>,
+    pub usdc_mint: Box<Account<'info, SplMint>>,
 
     #[account(
         mut,
         associated_token::mint = usdc_mint,
         associated_token::authority = settlement_authority,
     )]
-    pub usdc_staging_ata: Account<'info, SplTokenAccount>,
+    pub usdc_staging_ata: Box<Account<'info, SplTokenAccount>>,
 
     /// CHECK: signer-only PDA, owns every settlement staging ATA -- signs
     /// every transfer below.
@@ -88,7 +88,7 @@ pub struct DistributeFeeUsdc<'info> {
         associated_token::mint = usdc_mint,
         associated_token::authority = protocol_fee_destination,
     )]
-    pub protocol_usdc_destination: Account<'info, SplTokenAccount>,
+    pub protocol_usdc_destination: Box<Account<'info, SplTokenAccount>>,
     /// CHECK: only used as the associated-token-account authority above;
     /// must equal `protocol_config.default_protocol_fee_destination`,
     /// checked in the handler -- the fixed, official Protocol Treasury.
@@ -102,7 +102,7 @@ pub struct DistributeFeeUsdc<'info> {
         seeds = [crate::constants::MANAGER_FEE_RECIPIENTS_SEED, reserve.key().as_ref()],
         bump = manager_fee_recipients.bump,
     )]
-    pub manager_fee_recipients: Option<Account<'info, ManagerFeeRecipients>>,
+    pub manager_fee_recipients: Option<Box<Account<'info, ManagerFeeRecipients>>>,
 
     #[account(mut)]
     pub payer: Signer<'info>,

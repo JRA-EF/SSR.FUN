@@ -1,0 +1,25 @@
+{
+  "observedOn": "2026-10-12",
+  "sourceCommit": "0caca75daf046c19e4e6b6806cf3beec2fdd2e96",
+  "scope": "ssr14",
+  "project": "ssr-fun",
+  "projectId": "prj_cbTf3idEypjW1ccQA90NEEVbUUxQ",
+  "deployment": "dpl_TF86u5YuR1V7iDS176esAVf7mfr5",
+  "previewUrl": "https://ssr-9n5xot45x-ssr14.vercel.app",
+  "ready": true,
+  "productionUnchanged": "dpl_8fi1xHmGUxJPk3hKtqJJCLcVsHWF",
+  "executionEnabled": false,
+  "releaseEndpoint": "Verified through authenticated Vercel CLI",
+  "emptyRequestChecks": {
+    "liquidity": 400,
+    "liquidity-setup": 400,
+    "compound-quotes": 400,
+    "prepare-compound": 400
+  },
+  "browser": "Homepage rendered Solana Mainnet; stopped at Terms modal without acceptance or wallet interaction.",
+  "previewEnvironmentNamesChecked": true,
+  "jupiterApiKeyConfiguredInPreview": false,
+  "heliusMainnetRpcConfiguredInPreview": false,
+  "mainnetWrites": false,
+  "envValuesRead": false
+}

@@ -15,7 +15,7 @@ decision log entry, issue or prompt that disagrees.
 | **Mint** | Getting Reserve Tokens from SSR.fun **in the app**: paying USDC (the app swaps it into the reserve assets, then mints) or depositing reserve assets in kind. New tokens are created. Mint fee applies. | -- |
 | **Redeem** | Handing Reserve Tokens back to SSR.fun **in the app** for the proportional reserve assets, in kind or swapped to USDC. Tokens are burned. | -- |
 | **Buy** / **Sell** | **Strictly secondary-market** trades of existing Reserve Tokens between holders: DEX pools, the future liquidity provision engine. Not offered in the app yet. | The in-app flow. |
-| **Buy tax** / **Sell tax** | **Removed (DEC-0229).** Replaced by the protocol **transfer fee** on Token-2022 Reserve Tokens (0.15%, ceiling 0.25%, 100% to the SSR Protocol), charged by Token-2022 on every transfer. | A mint or a redemption. Ever. |
+| **Buy tax** / **Sell tax** | **DEC-0240:** optional secondary-market tax (0-2%, set in Manage Reserve's liquidity launch) through SSR swaps only, 25% SSR / 75% project; SSR-created pools also pay SSR 0.05% from the creator-fee bucket. Separate from the Token-2022 transfer fee (0.15%, ceiling 0.25%, 100% SSR). | A mint or a redemption. Ever. |
 
 What you must do:
 
@@ -33,9 +33,7 @@ What you must do:
    `api/mainnet/build-buy`, `multiAssetBuyClient`, tab value `"buy"`, ledger
    `side` values): they are API and stored data. Prefer `mint`/`redeem` in
    new names.
-5. Do not reintroduce a Buy/Sell tax: DEC-0229 replaced it with the
-   protocol transfer fee. Changing that needs a new decision in
-   `docs/project/DECISION_LOG.md`.
+5. DEC-0240 allows the optional Buy/Sell tax only for the separate secondary-market swap path; mint and redeem fees stay as live (no DEC-0232 floor). Never attach it to minting or redeeming. The Token-2022 transfer fee remains independent.
 
 `tests/phase_terminology_and_tax_hold.ts` enforces the UI copy and the tax
 hold. Keep it passing; never weaken it to make a change pass.

@@ -1,0 +1,146 @@
+{
+  "observedAt": "2026-10-11T19:50:01.919Z",
+  "readOnly": true,
+  "raydium": {
+    "slot": 455772421,
+    "permissionVerified": true,
+    "config9": {
+      "tradeFeeRate": "2500",
+      "creatorFeeRate": "7500",
+      "creatorFeeShareRate": "50000",
+      "createPoolLamports": "150000000"
+    }
+  },
+  "jupiter": {
+    "available": true,
+    "swapMode": "ExactOut",
+    "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "outputMint": "So11111111111111111111111111111111111111112",
+    "inAmount": "111427",
+    "outAmount": "1000000",
+    "maximumInput": "111985",
+    "contextSlot": 455772424
+  },
+  "basketChecks": [
+    {
+      "assetCount": 1,
+      "notionalUsdc": 1000,
+      "compositionSource": "9KkRx62FwvXvzYZeWqpBdLvokdPjdfqYMZ6vawUFvf4i",
+      "newTokenEndToEndTest": false,
+      "legs": [
+        {
+          "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "targetRaw": "1000000000",
+          "mintFunding": {
+            "available": true,
+            "inAmount": "1000000000",
+            "outAmount": "1000000000",
+            "otherAmountThreshold": "1000000000"
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "1000000000",
+            "outAmount": "1000000000",
+            "otherAmountThreshold": "1000000000"
+          }
+        }
+      ]
+    },
+    {
+      "assetCount": 5,
+      "notionalUsdc": 1000,
+      "compositionSource": "GH3oPXD1uzE5hbQsXTEQkBgd3Ja7E87T3Ln2fLoer7aD",
+      "newTokenEndToEndTest": false,
+      "legs": [
+        {
+          "mint": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+          "targetRaw": "103961561",
+          "mintFunding": {
+            "available": false,
+            "status": 400
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "103961561",
+            "outAmount": "240843010",
+            "otherAmountThreshold": "239638795",
+            "slot": 455772452
+          }
+        },
+        {
+          "mint": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+          "targetRaw": "18561727",
+          "mintFunding": {
+            "available": false,
+            "status": 429
+          },
+          "redemptionExecution": {
+            "available": false,
+            "status": 429
+          }
+        },
+        {
+          "mint": "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx",
+          "targetRaw": "1203449621774",
+          "mintFunding": {
+            "available": true,
+            "inAmount": "174297332",
+            "outAmount": "1203449621774",
+            "otherAmountThreshold": "175168819",
+            "slot": 455772471
+          },
+          "redemptionExecution": {
+            "available": false,
+            "status": 429
+          }
+        },
+        {
+          "mint": "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8",
+          "targetRaw": "73850310",
+          "mintFunding": {
+            "available": false,
+            "status": 400
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "73850310",
+            "outAmount": "121315357",
+            "otherAmountThreshold": "120708781",
+            "slot": 455772490
+          }
+        },
+        {
+          "mint": "So11111111111111111111111111111111111111112",
+          "targetRaw": "2050370904",
+          "mintFunding": {
+            "available": true,
+            "inAmount": "228519110",
+            "outAmount": "2050370904",
+            "otherAmountThreshold": "229661706",
+            "slot": 455772495
+          },
+          "redemptionExecution": {
+            "available": true,
+            "inAmount": "2050370904",
+            "outAmount": "228479116",
+            "otherAmountThreshold": "227336721",
+            "slot": 455772501
+          }
+        }
+      ]
+    },
+    {
+      "assetCount": 10,
+      "available": false,
+      "priceStatus": 429
+    }
+  ],
+  "eligibleToken2022ReserveCount": 0,
+  "limitations": [
+    "No transaction signed or submitted.",
+    "Basket asset compositions only; this does not add support for legacy Reserve Tokens.",
+    "The one-asset composition is USDC-only, so its two directions require no swap.",
+    "Five-asset quote responses include HTTP 400 and 429; ten-asset pricing returned 429. No complete 5/10-asset cost or arbitrage band is claimed.",
+    "No deployed Token-2022 Reserve was found; full Compound simulation against an eligible real pool remains unverified."
+  ]
+}

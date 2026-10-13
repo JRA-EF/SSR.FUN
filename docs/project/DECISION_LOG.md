@@ -7221,3 +7221,143 @@
   ]
 }
 ```
+
+## DEC-0231
+
+```json
+{
+  "id": "DEC-0231",
+  "date": "2026-10-08",
+  "status": "permission-verified; integration-started; not-deployed",
+  "decision": "Activate the preferred permissioned Raydium CPMM architecture after verifying the grant for SSR payer 6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS. Implement read/prepare adapter checks and fixed-treasury Collect preparation. Live pool creation awaits the signer/funding arrangement (OPEN-14), transfer-fee-aware amount handling and the required keyed basket quote verification. Live Compound remains blocked by OPEN-13.",
+  "context": "Yeh supplied the Raydium grant transaction and authorized proceeding. Finalized transaction succeeded at slot 454602528; derived Permission PDA HqMmvmtRUHup5ACL7mTf5bCj6STYB6ZUMgnd4CN8LmLB stores the approved payer. Current config 9 default creator fee share is 5%, rather than the earlier zero snapshot. DEC-0229 introduces transfer-fee Token-2022 Reserve Tokens.",
+  "rationale": "Use the now-authorized native creator-fee path while enforcing actual chain economics, immutable collection destinations and explicit signer ownership.",
+  "alternativesConsidered": [
+    "Continue CLMM fallback despite permission: unnecessary for the preferred integration.",
+    "Assume every Manager can use the payer permission: rejected; Raydium binds permission and initial asset accounts to the payer."
+  ],
+  "impact": "Read/prepare CPMM adapter and regression tests; spec and project status updated. No deployment or fund-moving transaction.",
+  "affectedAreas": [
+    "src/merge/lib/liquidity/raydiumCpmm.ts",
+    "tests/phase_raydium_cpmm.ts",
+    "docs/project/LIQUIDITY_MODULE_SPEC.md",
+    "docs/project/PROJECT_STATUS.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Grant transaction 2k2tw5MiPcxhoorb5EsL8guFkuRtqDD3ZJLqWRSFN9vKAtAepuTYYcur6WQJ98X9wdUYEhxFgqjRKXbKLfS1HpG, finalized and successful.",
+    "Permission and config accounts read at finalized slot 454640268: expected owner, authority and sizes; trade rate 2500, creator rate 7500, default share rate 50000.",
+    "Raydium cp-swap source b3187ae53a1b95a201f855a59024a12ca8f5b51a inspected without executing it."
+  ]
+}
+```
+
+## DEC-0232 — Yeh's revenue model: transaction minimums, native pool share and optional secondary tax (2026-10-11)
+
+Yeh explicitly authorized implementation in this chat. Supersedes DEC-0095's zero exemption for minting only, the zero/no-floor redemption economics, and DEC-0229's removal of optional secondary-market tax. Annual TVL zero exemption and Token-2022 protocol transfer fee remain unchanged. Legacy Reserve Tokens are excluded from product modeling, not migrated.
+
+- Mint (including seed) and Redeem: SSR receives `max(50 bps, configured / 2)` even when configured zero; creator receives nonnegative remainder. A configured 2% gives SSR 1%. Existing integer-bps half-split/rounding convention retained.
+- Every SSR-created canonical pool: SSR's 0.05% equivalent comes from the existing 0.75% native creator bucket, not an additional Raydium swap fee. The native creator is a fixed per-Reserve revenue PDA. Permissionless native collection pays that PDA only; permissionless distribution pays the existing ProtocolConfig treasury and fixed creator treasury, never caller-selected owners.
+- At config 9's observed 5% Raydium retention, net native fees are 0.7125%; SSR receives 4/57 of net, equivalent to 0.05% of the native fee base, leaving creator 0.6625%. Wallet turnover and native output/input fee bases differ; integer rounding means these are rate equivalents, not an exact promise for every USDC trade. Carry prevents avoiding SSR's share through fragmented distribution. Config/override retention changes fail closed; migration/reconciliation deliberately not invented.
+- Optional project tax: 0-2% per side in the separate SSR secondary swap path, 25% SSR / 75% creator. Buy basis is gross USDC input; Sell basis is actual USDC output. Atomic native Raydium CPI plus USDC tax transfers; minimum output checked on final user balance delta after tax and token transfer fee. No mint/redemption tax path or legacy metadata tax fields restored. Direct external swaps bypass optional project tax, but not token-level transfer fees or fixed native creator routing for SSR-created pools.
+- Existing protocol transfer fee remains 0.15% of Reserve Token transfers (ceiling 0.25%), 100% SSR, accrued in Reserve Tokens. Do not describe it as automatic USDC cash revenue.
+- Pool-creation and Collect transaction preparation added; approved payer funding, signing and initial LP ownership explicitly exposed. No wallet custody assumed. OPEN-14 blocks enabling creation. OPEN-13 still blocks live Compound. Timed/permanent lock integration and representative real-basket quote verification remain pending.
+
+Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, signing, pool creation, Raydium outreach, or merge to design/staging/main. Existing account layouts preserved; revenue PDA and instructions are additive. Program upgrade, generated IDL/SDK and frontend must ship together. Verification and build limitations recorded in the dated Collaboration Alignment entry.
+
+
+## DEC-0233 — OPEN-13 resolved: creator-approved mint-versus-pool Compound comparison (2026-10-11)
+
+- **Status:** accepted product decision; comparison/review foundation implemented, live execution pending.
+- **Decision/evidence:** Yeh instructed in this chat: “compare minting versus purchasing at execution time, show the creator the resulting liquidity and costs, and use their approved route”. Fetch fresh primary-mint and canonical-pool acquisition/deposit plans for the same net earnings budget, show net balanced deposits, minimum/expected LP, costs, extra SOL and leftovers; execute only the creator-selected, specifically approved plan.
+- **Context/rationale:** Raydium permission resolves pool-creation access, but USDC-only creator earnings need Reserve Tokens before liquidity can be added. The cheapest/net-best route depends on NAV, actual pool price/depth, basket execution, fees and transfer fees. A permanent default or a fixed half-budget allocation is economically inaccurate.
+- **Alternatives:** fixed mint route, fixed pool route and creator inventory were considered in OPEN-13. Neither route is privileged; creator inventory/single-sided deposits are not silently used as fallbacks. Suggest greatest protected LP output, without preselection or automatic execution; creator retains choice.
+- **Approval semantics:** quote expiry at most 30 seconds; exact plan/state, creator, destination, lock terms, budget, costs and minima bound to review state. Refresh/change requires reapproval; no silent route switch. SDK approval is not a signature. Actual treasury authority, simulation, on-chain limits and existing transaction confirmation gates remain mandatory for live spending.
+- **Impact/affected areas:** resolves OPEN-13's source-selection product blocker; SDK route-comparison contract and tests, reusable review panel, preview copy, adapter readiness and liquidity/fee/status docs. Live quote-provider and treasury-authorized executor integration, locks and deployment verification remain engineering work. OPEN-14 remains separate; neither Raydium permission nor this decision authorizes a service to take custody of creator funds.
+- **Supersedes:** unresolved source-selection wording of OPEN-13 / DEC-0224; updates DEC-0231/0232's OPEN-13 blocker references prospectively. Historical entries remain unchanged. DEC-0232 fee economics remain unchanged.
+- **Environment:** feature/raydium-permissioned-cpmm only; no merge, deployment, signing, live quote report or transaction submission.
+
+
+## DEC-0239 — Read-only Compound live quote providers (originally numbered DEC-0234 on the design branch; renumbered on merge to main because main's DEC-0234 is the launch fix) (2026-10-11)
+
+- **Status:** implemented in source; live verification and execution pending.
+- **Decision/evidence:** Yeh instructed “let's crush these - start with the live quote providers”. Implement a no-store rate-limited read-only API and browser client using real contextual account reads and Jupiter ExactOut basket funding, with the existing creator-controlled comparison contract. No deployment or spend authorization is inferred.
+- **Context/rationale:** DEC-0233 resolved OPEN-13, but only supplied injected provider contracts. Quote amounts need current pool/backing balances, epoch transfer fees, fee retention and real basket execution. Pool acquisition changes the following deposit ratio; primary funding requires exact proportional basket inputs.
+- **Implementation:** validated canonical SSR pool/router/config/fixed treasury; one contextual financial snapshot including Clock; native fee rounding, LP-retained post-swap fees and acquisition/deposit transfer fees; bounded primary allocation search with at most eight parallel constituent batches. Price/quote identities, amounts, input caps, recent slots, decimals and expiry are checked. ExactOut-unsupported/fee-on-transfer baskets fail closed for primary mint without disabling the independent pool route. Quote plans accompany fingerprints; no executor consumes them yet.
+- **Alternatives:** fixed half-budget, fixed basket execution cost, stale/guessed valuations, arbitrary pool routing and synthetic fallback quotes rejected. Unbounded quote search rejected for latency/API cost; the bounded primary result is not presented as a globally optimal allocation.
+- **Impact/limits:** preserves DEC-0232 economics and DEC-0233 source-choice/approval policy. Unlocked plans only; settled treasury funds and live revenue registration required. Treasury balance is a funding check, not proof of earnings provenance. SOL fields are explicitly planning caps until exact construction/simulation; changed exact costs need fresh approval. Actual treasury authorization, on-chain spend/output/lock limits, live UI wiring, representative keyed Mainnet quote verification, OPEN-14 and SBF/runtime diagnostics remain gates.
+- **Affected areas:** `lib/mainnet/compoundQuotes.ts`, shared Jupiter quote mode (default ExactIn unchanged), `/api/mainnet/compound-quotes`, browser quote client, cost labels, provider/account-layout regression tests, liquidity spec, project status and alignment handoff.
+- **Supersedes/supersededBy:** implements DEC-0233's provider work; does not supersede fee economics or authorize execution/deployment.
+- **Verification/environment:** production build/API typecheck and 18 new offline tests pass; full phase suite 1390 passing with four existing chart/reset failures. No real quote result, exact transaction simulation, signature/submission, new dependency, credential access, deployment or branch merge claimed.
+
+## DEC-0235 — Atomic Compound preparation and live read-only verification (2026-10-11)
+
+- **Status:** source implemented; execution and deployment disabled.
+- **Decision/evidence:** Yeh said “proceed with all please” after the live-validation / transaction-construction / simulation next steps. Build the creator-selected acquisition and balanced deposit as one unsigned transaction, simulate it, and expose a final cost review. A route that cannot fit atomically is unavailable; no partially funded staged fallback is invented.
+- **Context/rationale:** quotes alone do not enforce treasury authority or output/spending limits. Native CPMM exact-LP deposits, primary mint net-output minima and Jupiter ExactOut input caps must be enforced by actual instructions. Require both root creator approval (signed memo) and treasury authorization; program-controlled treasuries require a separate execution adapter.
+- **Implementation:** no-store rate-limited preparation API; fresh state/epoch/policy and acquisition-plan fingerprint checks; no arbitrary Jupiter setup/cleanup execution; exact-output instruction discriminator, cap, mint, recipient and signer validation; full-message simulation with treasury USDC/Reserve Token inventory preservation and protected LP output. The browser validates message digest, authorities, destinations, lifetime and simulated costs. Mainnet liquidity screen now requests real quotes and selected-route simulation; design examples remain previews. No wallet signing/submission path is enabled.
+- **Corrections:** Raydium internal LP supply includes withheld initial liquidity and may exceed minted SPL LP supply; use internal supply for allocation. Permit the fixed creator/protocol treasury token accounts to alias the swap user's account where the existing on-chain destination constraints hold (`dup`, as already used by fee collection). Widen optional-tax multiplication to u128. Pin the fixed treasury associated LP account so displayed and built destinations cannot differ. Jupiter API key is optional for requests, not a guarantee of quota or venue support.
+- **Alternatives:** silent route switching, existing Reserve Token inventory as hidden funding, staged acquisitions without recovery, accepting quote-service setup instructions, and an environment toggle that bypasses the release gate were rejected.
+- **Impact/affected areas:** SDK CPMM deposit/withdraw/swap account builders; Compound provider, API, preparation/client/UI; revenue alias/overflow corrections; tests, read-only validation script and evidence. No account layout or instruction discriminator changes; generated IDL unchanged. No new third-party skill/dependency, keys, environment changes, deployment or branch merge.
+- **Live evidence:** permission/config verified at slot 455772421; current native trade/creator rates remain 0.25%/0.75%, Raydium creator retention 5%. Anonymous Jupiter ExactOut succeeded. Funded 1/5/10-asset compositions were probed independently in both directions; 1-asset is USDC-only, 5-asset checks contain HTTP 400/429, and 10-asset pricing is rate-limited. Do not claim a verified whole-basket arbitrage band. Zero deployed Token-2022 Reserves found; no complete real Compound simulation was possible. See `docs/project/evidence/2026-10-11-liquidity-readonly.json`.
+- **Release gates:** wallet signing/confirmation/reconciliation, funded eligible Reserve/pool testing, representative complete quote coverage, larger-plan recovery if needed, OPEN-14 approved-payer creation arrangement, locks, and existing SBF stack/runtime diagnostics. Source build and offline simulation fixtures are not runtime deployment approval.
+- **Supersedes/supersededBy:** implements DEC-0239's construction/simulation follow-up and updates its key-required assumption; DEC-0232 economics and DEC-0233 route-selection policy remain unchanged.
+
+## DEC-0236 — Liquidity lifecycle, signing recovery and local runtime verification (2026-10-11)
+
+- **Status:** implemented and locally verified; Mainnet activation remains disabled.
+- **Decision/evidence:** Yeh authorized completing and shipping the entire stack without routine approval requests, then instructed “please keep pushing everything forward.” Implement creation, additions, Collect, withdrawal, per-tranche timed/native permanent locks, explicit Compound route execution, and recoverable wallet submission together. Authorization to ship does not provide missing cryptographic signers.
+- **Context/rationale:** OPEN-14 requires initial asset funding and final LP ownership to be atomic. The approved payer receives capped treasury assets, creates the native pool, and returns all initial LP to the fixed treasury; an on-chain finalizer rejects stranded LP. Both Token-2022 transfer-fee hops are included. Pool creation prices use validated NAV, never a $1 fallback.
+- **Implementation:** exact-message multi-wallet signing, durable pending submission and confirmation recovery; scoped cross-tab exclusion; address lookup setup for large atomic messages; on-chain authorization rejects additions after a pause or manager change. Unlocked withdrawal and expired-tranche exits remain available while paused. Timed escrow requires strictly increasing terms; permanent conversion uses actual Raydium native locking and delivers its Fee Key to the fixed creator treasury. Permissionless Collect cannot redirect funds. Compound supports both approved acquisition routes and all v1 tranche terms.
+- **Alternatives:** non-atomic funding, guessed NAV, silent route switching, shortening locks, custom permanent custody and environment-variable bypass of release checks rejected. Address tables solve packet size, not the conservative 64-account transaction limit. Unsupported routes remain unavailable.
+- **Impact/affected areas:** additive protocol instructions/account/errors, SDK/IDL, liquidity APIs and browser controls, local integration fixtures and regression tests. Boxed program account wrappers remove SBF stack diagnostics without changing existing serialized layouts. DEC-0232 economics and DEC-0233 route-choice semantics remain unchanged.
+- **Limits:** OPEN-14 transaction design is implemented; operational approved-payer co-sign access is still required. Sequential wallet switching is supported; no hosted co-sign service or program-owned treasury spending adapter is provided. Actual Mainnet eligible Reserve/pool execution, browser-wallet verification and complete real Jupiter 1/5/10-basket evidence remain pending. Local multi-asset tests do not substitute for Jupiter measurements. Timed escrow remains subject to SSR upgrade governance.
+- **Release:** current upgrade authority is Squads vault HFmqpPVVdMRcwaSKkbxLNga8byBJb3LK1FsURsDQqYoW. A funded upload signer and authorized Squads upgrade execution are unavailable in this session. Program storage needs extension; exact artifact/rent snapshot is in the launch runbook/evidence. No Mainnet funds moved. Source release gates stay false until deployment and verification. Production frontend must ship from main.
+- **Verification:** production app build and API typecheck pass; Rust 33/33; phase suite 1419 passing with four pre-existing chart/reset failures. Actual local validator executes SSR plus public Raydium CPMM/native-lock/Metaplex binaries, including both Compound routes, fee routing, pause-after-simulation rejection and lock attacks. Five- and ten-asset seed/mint/redeem pass locally. SBF stack diagnostics eliminated; empty installed syscall manifest still causes a tooling warning, so no warning-free build claim.
+- **Supersedes/supersededBy:** advances DEC-0235's source/runtime/signing/lock blockers; does not supersede economics or claim production release. See LIQUIDITY_LAUNCH_RUNBOOK.md and evidence/2026-10-11-liquidity-runtime.json.
+
+## DEC-0237 — Use existing SSR hosting for disabled liquidity preview (2026-10-12)
+
+- **Status:** preview deployed and smoke checked; production activation pending.
+- **Decision:** use existing `ssr14/ssr-fun` preview environment for the full design stack, keeping execution disabled and production unchanged.
+- **Context/evidence:** current login exposes the SSR team and its production project. Full preview dpl_TF86u5YuR1V7iDS176esAVf7mfr5 from 0caca75 is READY. Deployed release endpoint is false; four preparation endpoints reject empty requests with 400; homepage renders.
+- **Rationale/alternatives:** resolves the separate design Hobby account limit without purchasing a plan, deleting endpoints, changing production schedules or promoting unverified source.
+- **Impact/affected areas:** deployment handoff, runbook, project status and evidence only; no functional source or environment changes. Program/IDL upgrade, legitimate signer access, eligible Mainnet pool and full Jupiter/browser verification remain necessary.
+- **Supersedes/supersededBy:** corrects DEC-0236 follow-up's unresolved hosting-access prerequisite; preserves economics and all live-execution gates. Does not claim Mainnet launch or production frontend delivery.
+
+## DEC-0240
+
+```json
+{
+  "id": "DEC-0240",
+  "date": "2026-10-13",
+  "title": "Ship Yeh's DEX liquidity provision flow to production now, with the Creator's secondary-market fee model; keep live mint/redeem fees",
+  "status": "CONFIRMED -- merged into main with DEC-0238; Mainnet program upgrade pending buffer funding",
+  "decision": "Creator ruling (2026-10-13), answering three questions when asked to ship the USDC mint fee plus the DEX liquidity flow: (1) enable liquidity execution for everyone in the same release as the program upgrade, rather than after the runbook's funded verification steps; (2) fees: every venue pays the 0.15% Token-2022 protocol transfer fee; pools created through SSR additionally pay SSR 0.05% from the creator-fee bucket; an optional project Buy/Sell tax is set in the liquidity launch on Manage Reserve (not in Create Reserve) and split 25% SSR / 75% project, with no minimum; (3) keep today's mint and redeem fees -- DEC-0232's unconditional 0.5% floor on mint and redemption is not adopted.",
+  "context": "origin/design carried Yeh's liquidity stack (PR #14, DEC-0231..0237) with release gates off, plus DEC-0232 fee-math changes to mint/seed/redeem that would raise redemption fees on existing Reserves and contradict CLAUDE.md's DEC-0229 'never reintroduce Buy/Sell tax' rule. Main had just shipped DEC-0238 (USDC mint fee, Squads #10).",
+  "rationale": "The program's liquidity_revenue already implements the Creator's model exactly (base_split gives SSR 0.05% of the native creator-fee base with remainder carry; tax_split is 25/75, 0-2% per side, no minimum), so only the DEC-0232 primary-fee changes were reverted. Public pool launches need the Raydium-approved payer's signature, so the server co-signs pool creation -- only for a transaction it built and simulated in the same request, and only when the creator refunds the payer's full SOL cost inside that transaction, so the payer cannot be drained by repeated launches.",
+  "alternativesConsidered": [
+    "Ship gated and verify first (runbook steps 5-7) -- offered as the recommended option; the Creator chose to enable immediately.",
+    "Strip the project tax to keep DEC-0229 absolute -- rejected by the Creator; the tax applies only to SSR-routed DEX swaps, never to minting or redeeming.",
+    "Adopt DEC-0232's mint/redeem floor -- rejected by the Creator.",
+    "SSR's payer funds pool rent (Yeh's design) -- replaced by a creator refund in the same transaction, since a public, server-co-signed payer would otherwise be drainable."
+  ],
+  "impact": "After the upgrade and deploy, a Reserve's Manager can launch a Raydium CPMM pool from Manage Reserve > Liquidity, add/withdraw liquidity, collect earnings and lock tranches. Compound remains a preview (COMPOUND_EXECUTION_ENABLED=false) pending its funding decision. Liquidity errors are 6071-6075 (after DEC-0238's 6068-6070). Design's DEC-0234 (Compound quote providers) is renumbered DEC-0239 on main.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/{liquidity_revenue,liquidity_lock}.rs, lib.rs, errors.rs (fee_math/mint/seed/redeem kept as main)",
+    "packages/sdk/src/{liquidityRevenue,liquidityLocks,compoundRoutes,raydiumCpmmInstructions}.ts, feeMath.ts (main), idl/*",
+    "lib/mainnet/{poolPayer,liquidityRelease,createLiquidity,prepareCompound}.ts, api/mainnet/{liquidity,liquidity-setup,liquidity-release,prepare-compound}.ts",
+    "src/merge/components/Live*Liquidity*, LiquidityModule.tsx, ManageDTR.tsx",
+    "CLAUDE.md, AGENTS.md, docs/protocol/{FEE_MODEL,TERMINOLOGY}.md",
+    "Vercel env SSR_RAYDIUM_POOL_PAYER_SECRET (production)"
+  ],
+  "supersedes": "DEC-0232's mint/seed/redemption floor (not adopted); DEC-0229's 'never reintroduce Buy/Sell tax' for SSR-routed DEX pool swaps only; the runbook's verify-before-release sequence (DEC-0236/0237) for the liquidity gates",
+  "supersededBy": null,
+  "evidence": [
+    "Merged IDL is purely additive versus live main (every existing instruction, account, event, error and type byte-identical; 9 new liquidity instructions).",
+    "Rust unit tests 33/33; tsc -b and the Mainnet API type check clean; offline suite 1515 passing with the 4 known pre-existing failures (chart selector x2, native-control reset x2).",
+    "tests/phase_pool_payer.ts (5): payer co-sign refuses any net payer cost and any transaction where it is not the fee payer."
+  ]
+}
+```

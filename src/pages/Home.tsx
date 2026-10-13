@@ -30,6 +30,8 @@ export function Home() {
   const dtrs = useAppStore(s => s.dtrs)
   const chainDiscoveryStatus = useAppStore(s => s.chainDiscoveryStatus)
   const chainDiscoveryError = useAppStore(s => s.chainDiscoveryError)
+  // Liquidity pool previews (DEC-0217/0218): a Featured card shows the same trust badges as Discover's.
+  const liquidityPreviews = useAppStore(s => s.liquidityPreviews)
 
   const robinhood = useRobinhoodReserves()
   const onChainDtrs = useMemo(() => dtrs.filter(d => Boolean(d.onChain)), [dtrs])
@@ -56,11 +58,11 @@ export function Home() {
             solanaEntry(d, IS_MAINNET, {
               status: landingStats.status,
               volumeAllTimeUsd: d.onChain ? landingStats.data?.perReserve[d.onChain.reserve]?.volumeAllTimeUsd : undefined,
-            }),
+            }, liquidityPreviews[d.id]),
           ),
         ...robinhood.reserves.map(robinhoodEntry),
       ]),
-    [dtrs, robinhood.reserves, landingStats.status, landingStats.data],
+    [dtrs, robinhood.reserves, landingStats.status, landingStats.data, liquidityPreviews],
   )
 
   return (

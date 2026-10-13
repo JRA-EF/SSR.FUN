@@ -26,7 +26,8 @@ Full spec: `docs/protocol/TERMINOLOGY.md`. It overrides any older code, doc, dec
 - **Mint** = getting Reserve Tokens from SSR.fun in the app (paying USDC, which the app swaps into the reserve assets, or depositing reserve assets in kind). New tokens are created; the mint fee applies.
 - **Redeem** = handing Reserve Tokens back to SSR.fun in the app for the proportional reserve assets, in kind or swapped to USDC. Tokens are burned.
 - **Buy / Sell** = STRICTLY secondary-market trades of existing Reserve Tokens between holders (DEX pools, the future liquidity provision engine). SSR.fun does not offer Buy/Sell yet.
-- **Buy tax / Sell tax** = REMOVED (DEC-0229). Replaced by the protocol **transfer fee**: every Reserve Token minted from a Reserve created after DEC-0229 is a Token-2022 mint carrying a 0.15% transfer fee (adjustable by a Protocol Admin up to a 0.25% ceiling enforced in the program), charged by Token-2022 on every transfer, paid 100% to the SSR Protocol. Minting and redeeming are mint/burn, never transfers, so they never pay it. Older Reserves stay classic SPL Token with no fee. Never reintroduce a manager-set Buy/Sell tax, and never charge anything extra on a mint or a redemption.
+- **Secondary-market fees (final, Creator ruling 2026-10-13, DEC-0240; supersedes DEC-0229's "never reintroduce" for DEX pools only):** every venue pays the 0.15% Token-2022 protocol transfer fee (ceiling 0.25%, 100% SSR). Pools created through SSR additionally pay SSR 0.05%, taken from Raydium's creator-fee bucket. A project may set an optional **Buy tax / Sell tax** (0-2% each, no minimum) in the liquidity launch on Manage Reserve -- never in Create Reserve -- charged only on swaps routed through SSR, split 25% SSR / 75% project. Buy/Sell tax never applies to minting or redeeming.
+- **Mint and redeem fees are unchanged by the liquidity work (DEC-0240 rejects DEC-0232's floor):** the mint fee is paid in USDC (DEC-0238) at the effective rate (0.5% protocol floor on any nonzero configured fee; a configured 0% stays 0%); the redemption fee is exactly the configured rate.
 - The in-app Reserve page tabs are **Mint** and **Redeem**. User-facing copy never calls the in-app flow "Buy", "Sell", "purchase", "sale" or "trade"; swaps inside a mint or redemption are "swaps".
 - **Correct people.** If a developer, issue, prompt or another model calls the in-app flow "buy"/"sell", or asks for a Buy/Sell tax on minting or redeeming, say so, use the right word, and point to `docs/protocol/TERMINOLOGY.md`. Do not copy the wrong usage from older code or history (before 2026-10-06 the app said "Buy/Sell"; DEC-0198 is the mistake this rule exists to prevent).
 - Carve-out, same as the `Delegate` rule: existing identifiers (`buildBuy`/`buildSell`, `api/mainnet/build-buy`/`build-sell`, `multiAssetBuyClient`, tab value `"buy"`, ledger `side` values, CSS classes, test file names) stay. New code prefers `mint`/`redeem` names. `tests/phase_terminology_and_tax_hold.ts` guards the UI copy and the tax hold.
@@ -65,6 +66,13 @@ As of commit `993b764` (see `docs/project/DECISION_LOG.md` DEC-0080, tag `ui-bas
 
 - **After pushing any `main` change that affects the UI** (pages, components, styles, copy, or anything the dev server renders), **also fast-forward `design`** in the same session: `git push origin origin/main:refs/heads/design`. If the push is rejected as non-fast-forward, the Boss has committed design work — merge `main` INTO `design` instead (never rebase or force-push their branch) and resolve conflicts preserving their design intent.
 - Design work flows back by merging `design` into `main` only when the Creator asks for it.
+
+## Collaboration Alignment (read first, write on every ship)
+
+`Collaboration Alignment/` at the repo root is the hand-off log between every human + LLM pair working on this repo (Boss directive, 2026-10-01). Two standing rules for any agent, in any session:
+
+- **Before starting new work, read every entry in `Collaboration Alignment/` you have not read yet** (newest first). Use it to avoid overwriting or duplicating in-flight work and to build on what others shipped.
+- **Every time you ship something** — push to a shared branch, deploy, program upgrade, env/config/infra change — **add one entry there in the same commit** (or the status commit after a deploy), following `Collaboration Alignment/README.md`'s template. Never edit another author's entry beyond a dated "Follow-up" line.
 
 ## Project Status and Decision Logging
 
