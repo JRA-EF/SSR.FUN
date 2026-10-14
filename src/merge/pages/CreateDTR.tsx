@@ -2442,7 +2442,7 @@ export function CreateDTR({
                               </InfoTip>
                             </span>
                             <span className="font-merge-mono">
-                              {fmtUsd(seedMintFeeUsd)} <span className="text-muted-foreground">USDC to the SSR Treasury + Manager</span>
+                              {fmtUsd(seedMintFeeUsd)} <span className="text-muted-foreground">USDC</span>
                             </span>
                           </div>
                           {usdcToHoldUsd > 0 && (
