@@ -11,6 +11,7 @@ import { RealReserveSync } from './merge/lib/RealReserveSync'
 import { ReserveSnapshotHydrator } from './merge/lib/ReserveSnapshotHydrator'
 import { Discover } from './merge/pages/Discover'
 import { Portfolio } from './merge/pages/Portfolio'
+import { IncompleteTransactions } from './merge/pages/IncompleteTransactions'
 import { Manage } from './merge/pages/Manage'
 import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
@@ -94,6 +95,13 @@ function Routes() {
     return (
       <MergeLayout>
         <Portfolio />
+      </MergeLayout>
+    )
+  }
+  if (matchPath('/recover', path)) {
+    return (
+      <MergeLayout>
+        <IncompleteTransactions />
       </MergeLayout>
     )
   }

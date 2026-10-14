@@ -212,6 +212,9 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     log("resuming a previously-started sale", { startedAt: new Date(pending.startedAt).toISOString(), redeemSignature: pending.redeemSignature ?? null });
   }
   const baselineUsdcRaw = BigInt(pending.preSaleUsdcRaw);
+  // A resumed sale whose redeem landed finishes the amount it started with,
+  // never whatever the Redeem box holds now (DEC-0241).
+  let reserveTokensToRedeem = BigInt(pending.reserveTokensToRedeem);
 
   const verifyDelivery = async (signature: string): Promise<MultiAssetSellResult> => {
     const usdcAfter = await fetchOwnedBalanceRawSettled(params.connection, usdcMint, owner, baselineUsdcRaw);
@@ -221,7 +224,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
       throw new Error(`The redemption confirmed but your USDC balance has not increased yet (still ${usdcAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`);
     }
     clearPendingSell(ownerBase58, reserveBase58);
-    return { signature, reserveTokensRedeemed: params.reserveTokensToRedeem, usdcReceivedRaw: gained };
+    return { signature, reserveTokensRedeemed: reserveTokensToRedeem, usdcReceivedRaw: gained };
   };
 
   const reconcileSignature = async (signature: string): Promise<"confirmed" | "failed" | "unknown"> => {
@@ -242,12 +245,22 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
       throw new Error(`A previous redeem transaction for this redemption could not be verified yet (signature ${pending.redeemSignature}). Nothing was submitted -- try again in a moment; a landed redeem will be counted, never repeated.`);
     }
   }
-  if (!redeemDone && BigInt(pending.preRedeemRtRaw) - preRedeemRtRaw >= params.reserveTokensToRedeem) {
+  if (!redeemDone && BigInt(pending.preRedeemRtRaw) - preRedeemRtRaw >= reserveTokensToRedeem) {
     log("redeem already landed for this sale (balance guard) -- not re-submitting");
     redeemDone = true;
   }
   if (redeemDone) {
     pending.redeemConfirmed = true;
+    savePendingSell(pending);
+  } else if (params.reserveTokensToRedeem !== reserveTokensToRedeem) {
+    // The earlier attempt's redeem never landed, so nothing was burned: this
+    // attempt redeems the amount asked for now, if the wallet holds it.
+    if (preRedeemRtRaw < params.reserveTokensToRedeem) {
+      throw new Error(`This wallet holds ${preRedeemRtRaw.toString()} raw Reserve Tokens but the redemption needs ${params.reserveTokensToRedeem.toString()} raw. Nothing was submitted.`);
+    }
+    reserveTokensToRedeem = params.reserveTokensToRedeem;
+    pending.reserveTokensToRedeem = reserveTokensToRedeem.toString();
+    pending.preRedeemRtRaw = preRedeemRtRaw.toString();
     savePendingSell(pending);
   }
 
@@ -312,7 +325,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   const buildRequest = (extra: Partial<BuildSellRequest> = {}): BuildSellRequest => ({
     reserve: reserveBase58,
     wallet: ownerBase58,
-    reserveTokensToRedeem: params.reserveTokensToRedeem.toString(),
+    reserveTokensToRedeem: reserveTokensToRedeem.toString(),
     assetMints: params.assets.map((a) => a.mint),
     redeemDone,
     ...(redeemDone && remainingLegs.length < nonUsdcMints.length ? { legsOnly: remainingLegs } : {}),
