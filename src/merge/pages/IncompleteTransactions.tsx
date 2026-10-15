@@ -14,9 +14,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { explorerUrl } from "@/lib/solana-config";
 import { fetchAssetPricesUsd, type AssetPriceInfo } from "@/lib/assetPricing";
-import { convertLeftoversToUsdc, findIncompleteTransactions, type IncompleteTransaction, type RecoveryProgress } from "@/lib/incompleteTransactions";
+import { convertLeftoversToUsdc, dismissIncompleteTransaction, findIncompleteTransactions, type IncompleteKind, type IncompleteTransaction, type RecoveryProgress } from "@/lib/incompleteTransactions";
 
 const short = (s: string) => `...${s.slice(-6)}`;
+
+const KIND_COPY: Record<IncompleteKind, { title: (name: string) => string; body: string }> = {
+  redeem: { title: (n) => `Redemption of ${n} did not finish`, body: "Your Reserve Tokens were redeemed, but not every asset was swapped into USDC." },
+  mint: { title: (n) => `Mint of ${n} did not finish`, body: "Your USDC was swapped into some of the Reserve's assets, but the Reserve Tokens were not minted." },
+  create: { title: (n) => `Cancelled launch of ${n}`, body: "You cancelled this Reserve before it was seeded. The assets its seed swaps received are still in your wallet." },
+  "mint-dust": { title: (n) => `Leftover from your mint of ${n}`, body: "Your mint completed. Each swap gets slightly more than the Reserve needs so prices can move; this is the unused part." },
+};
 
 function formatRaw(raw: bigint, decimals: number): string {
   const n = Number(raw) / 10 ** decimals;
@@ -119,7 +126,7 @@ export function IncompleteTransactions() {
       <div className="space-y-2">
         <h1 className="text-3xl font-merge-display font-bold">Incomplete transactions</h1>
         <p className="text-muted-foreground">
-          Large Reserves mint and redeem in several steps. If one step fails after another went through, the assets in between stay in your wallet. Here you can see what happened and convert them back to USDC.
+          Large Reserves mint and redeem in several steps. If one step fails after another went through, the assets in between stay in your wallet. The same goes for a launch you cancelled after its seed swaps, and the small unused part of a completed mint. Here you can see what happened and convert them back to USDC.
         </p>
       </div>
 
@@ -147,7 +154,7 @@ export function IncompleteTransactions() {
         <Card>
           <CardContent className="pt-6 flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-primary" />
-            <span>Nothing to finish. Every mint and redemption from this browser completed.</span>
+            <span>Nothing to finish. Nothing from this browser's mints, redemptions or launches is left in your wallet.</span>
           </CardContent>
         </Card>
       )}
@@ -164,14 +171,9 @@ export function IncompleteTransactions() {
         return (
           <Card key={key}>
             <CardHeader>
-              <CardTitle className="text-lg">
-                {item.kind === "redeem" ? "Redemption" : "Mint"} of {name} did not finish
-              </CardTitle>
+              <CardTitle className="text-lg">{KIND_COPY[item.kind].title(name)}</CardTitle>
               <CardDescription>
-                Started {new Date(item.startedAt).toLocaleString()}.{" "}
-                {item.kind === "redeem"
-                  ? "Your Reserve Tokens were redeemed, but not every asset was swapped into USDC."
-                  : "Your USDC was swapped into some of the Reserve's assets, but the Reserve Tokens were not minted."}
+                Started {new Date(item.startedAt).toLocaleString()}. {KIND_COPY[item.kind].body}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
@@ -214,6 +216,19 @@ export function IncompleteTransactions() {
               ) : (
                 <span />
               )}
+              <div className="flex flex-wrap items-center gap-2">
+              {item.kind === "mint-dust" && (
+                <Button
+                  variant="ghost"
+                  disabled={busyKey !== null}
+                  onClick={() => {
+                    dismissIncompleteTransaction(item);
+                    void load();
+                  }}
+                >
+                  Keep in wallet
+                </Button>
+              )}
               <Button onClick={() => void handleConvert(item)} disabled={busyKey !== null}>
                 {busy ? (
                   <>
@@ -223,6 +238,7 @@ export function IncompleteTransactions() {
                   `Convert to USDC${totalUsd > 0 ? ` (~$${totalUsd.toFixed(2)})` : ""}`
                 )}
               </Button>
+              </div>
             </CardFooter>
           </Card>
         );

@@ -7361,3 +7361,36 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0241
+
+```json
+{
+  "id": "DEC-0241",
+  "date": "2026-10-15",
+  "title": "After any mint, redemption or launch the user holds only USDC or the Reserve Token: /recover converts whatever an unfinished (or cancelled) flow left in the wallet back to USDC",
+  "status": "implemented on wip/incomplete-tx-recovery; not yet on main or production",
+  "decision": "Creator rule (2026-10-14): after a mint or redeem the user may hold ONLY USDC or the Reserve Token. Two layers ('mix of both'): (1) atomicity where it fits -- a mint/redeem that fits one transaction (<=4 swaps, 64 account locks, 1232 bytes) already is one, unchanged; (2) a new /recover page plus a banner on every merge page that finds, from the flows' own persisted records and the chain, exactly what each flow put in the wallet and has not yet turned into USDC or Reserve Tokens, and converts it with one wallet approval through the existing /api/mainnet/jupiter-swap proxy (300 bps slippage, one automatic re-quote of swaps that provably did not land). Four sources: an unfinished redemption (redeem landed, a swap to USDC did not), an unfinished mint (some swaps landed, the mint did not), a Create cancelled after its seed swaps landed (Cancel Deploy now hands the funding record to /recover and opens it), and a completed mint's leftover from the 2% swap buffer (BUY_SWAP_BUFFER_FRACTION; shown as a quiet info banner, with 'Keep in wallet' since it can be too small to route). Mint/redeem failure handlers route to /recover instead of claiming nothing moved; a resumed redemption whose redeem landed finishes its saved amount.",
+  "context": "2026-10-14 redemption by wallet ...4Rw8 on Reserve 6z1r...KJKTB: the redeem (...R2Ta9q) burned 20 Reserve Tokens, BONK and A7bd... swapped to USDC, the RAY swap (...D5fXBV) failed with Jupiter 6001, leaving 4.877 RAY in the wallet while the UI said 'No funds were moved'.",
+  "rationale": "Attribution is strict so the user's own coins are never sold: only amounts proven by that flow's own confirmed transactions (redeem payout deltas, reconciled swap outputs, seed-swap deltas, acquired-plus-mint-delta for dust), capped by what the wallet still holds and net of confirmed recovery swaps. Every recovery swap signature is persisted before confirmation and reconciled before anything is rebuilt, so nothing is sold twice. A cancelled Create is re-read on-chain first: a Reserve past AssetsInitializing was seeded after all and is dropped. Wrapped SOL a Create wrapped from the user's own SOL is never sold.",
+  "alternativesConsidered": [
+    "Automatic conversion right after a failure, without a page (rejected: needs another wallet approval at the moment the user is reading an error; /recover makes it explicit and verifiable)",
+    "Only atomic transactions (rejected: large Reserves do not fit one transaction)",
+    "Sweep the whole balance of each asset (rejected: would sell the user's own pre-existing coins)"
+  ],
+  "impact": "New route /recover (Mainnet only). New localStorage keys ssr_recovery_sweeps_v1, ssr_abandoned_creates_v1, ssr_mint_dust_v1. Every successful mint writes a dust record; the banner clears itself once nothing attributable is left. No program or server change.",
+  "affectedAreas": [
+    "src/merge/lib/incompleteTransactions.ts (new), src/merge/lib/recoveryRecords.ts (new)",
+    "src/merge/pages/IncompleteTransactions.tsx (new), src/merge/components/IncompleteTransactionsBanner.tsx (new), src/App.tsx, src/merge/MergeLayout.tsx",
+    "src/merge/lib/multiAssetBuyClient.ts (dust record), src/merge/lib/multiAssetSellClient.ts, src/merge/pages/DTRDetail.tsx, src/merge/pages/CreateDTR.tsx (Cancel Deploy)",
+    "tests/phase_incomplete_transactions.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_incomplete_transactions.ts: 11 passing (redeem attribution on the real ...R2Ta9q deltas, wallet cap, no double conversion, batch + single-transaction dust, user-funded deposits excluded, cancelled-launch record only saved after a submitted swap).",
+    "tsc -b clean.",
+    "NOT browser-tested with a real wallet; the recovery swap path reuses the production jupiter-swap proxy and submitSignedJupiterSwap."
+  ]
+}
+```

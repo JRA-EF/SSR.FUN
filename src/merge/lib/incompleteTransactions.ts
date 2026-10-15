@@ -23,9 +23,16 @@
 // user's own pre-existing balance of the same asset is never touched.
 // Every sweep swap's signature is persisted before confirmation and
 // reconciled before anything is rebuilt, so nothing is ever sold twice.
+//
+// Two more sources feed the same page (lib/recoveryRecords.ts): a Reserve
+// creation cancelled after its seed swaps landed ("create"), and a
+// completed mint whose 2% swap buffer left a little of each asset behind
+// ("mint-dust"). Same attribution rule: only what that flow's own confirmed
+// transactions provably put in the wallet.
 import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { MAINNET_USDC_MINT } from "@ssr/sdk";
+import { MAINNET_USDC_MINT, fetchReserveOnChain } from "@ssr/sdk";
+import { clearAbandonedCreate, clearMintDust, readAbandonedCreates, readMintDust, type AbandonedCreateRecord, type MintDustRecord } from "./recoveryRecords";
 import { clearPendingBuy, type PendingBuyState } from "./multiAssetBuyClient";
 import { clearPendingSell, type PendingSellState } from "./multiAssetSellClient";
 import { computeOwnerTokenDeltaRaw, type TokenBalanceEntry } from "./multiAssetBuyPlan";
@@ -39,10 +46,12 @@ const log = (msg: string, extra?: Record<string, unknown>) => {
 
 const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const TOKEN_2022_PROGRAM = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+/** Wrapped SOL a Create wrapped from the user's own SOL is not a swap output -- never sold to USDC. */
+const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 /** Slippage for a recovery swap. Wider than a mint's 200 bps on purpose: here a failed swap is worse for the user than a slightly worse price. Still within the proxy's 500 bps ceiling. */
 export const RECOVERY_SLIPPAGE_BPS = 300;
 
-export type IncompleteKind = "mint" | "redeem";
+export type IncompleteKind = "mint" | "redeem" | "create" | "mint-dust";
 
 export interface LeftoverAsset {
   mint: string;
@@ -140,6 +149,23 @@ export function redeemAttribution(
   for (const [mint, amount] of Object.entries(payoutByMint)) {
     if (mint === MAINNET_USDC_MINT || amount <= 0n || legSwaps[mint]?.confirmed) continue;
     out[mint] = amount;
+  }
+  return out;
+}
+
+/**
+ * Pure: what a completed mint left behind. Each asset's leftover is what the
+ * flow's swaps acquired plus the mint transaction's own net token delta for
+ * the owner (negative: the deposit; positive: a single atomic transaction's
+ * swap output beyond the deposit). USDC, the Reserve Token and anything the
+ * mint consumed from the user's own balance (a negative sum) are excluded.
+ */
+export function dustAttribution(acquired: Record<string, bigint>, mintTxDelta: Record<string, bigint>, exclude: string[]): Record<string, bigint> {
+  const out: Record<string, bigint> = {};
+  for (const mint of new Set([...Object.keys(acquired), ...Object.keys(mintTxDelta)])) {
+    if (mint === MAINNET_USDC_MINT || exclude.includes(mint)) continue;
+    const left = (acquired[mint] ?? 0n) + (mintTxDelta[mint] ?? 0n);
+    if (left > 0n) out[mint] = left;
   }
   return out;
 }
@@ -269,6 +295,68 @@ async function inspectMint(connection: Connection, p: PendingBuyState, held: Rec
   };
 }
 
+const heldRaw = (held: Record<string, { raw: bigint; decimals: number }>) => Object.fromEntries(Object.entries(held).map(([m, h]) => [m, h.raw]));
+const shortMint = (mint: string) => `${mint.slice(0, 4)}...${mint.slice(-4)}`;
+
+async function inspectCreate(connection: Connection, rec: AbandonedCreateRecord, held: Record<string, { raw: bigint; decimals: number }>): Promise<IncompleteTransaction | null> {
+  // A Reserve past AssetsInitializing was seeded after all (another tab, a
+  // late confirmation): its swapped assets are in the vaults, not the wallet.
+  const onChain = await fetchReserveOnChain(connection, new PublicKey(rec.programId), new PublicKey(rec.reserve), []);
+  if (onChain && onChain.status !== "created" && onChain.status !== "assetsInitializing") {
+    clearAbandonedCreate(rec.wallet, rec.reserve);
+    return null;
+  }
+  const attributed: Record<string, bigint> = {};
+  const events: { label: string; signature: string }[] = [];
+  for (const [mint, f] of Object.entries(rec.assetFunding)) {
+    if (!f.lastSignature || mint === MAINNET_USDC_MINT || mint === WRAPPED_SOL_MINT) continue;
+    const st = await signatureStatus(connection, f.lastSignature);
+    if (st === "unknown") throw new Error(`A seed swap from this cancelled Reserve could not be verified yet (${f.lastSignature}). Try again in a moment.`);
+    if (st !== "confirmed") continue;
+    const d = await ownerDeltasFromSignature(connection, f.lastSignature, rec.wallet);
+    if (!d) throw new Error(`Could not read a seed swap from this cancelled Reserve yet (${f.lastSignature}). Try again in a moment.`);
+    if ((d[mint] ?? 0n) > 0n) {
+      attributed[mint] = d[mint];
+      events.push({ label: `Swapped USDC into ${shortMint(mint)}`, signature: f.lastSignature });
+    }
+  }
+  const left = computeLeftovers(attributed, sweptByMint(readSweep("create", rec.wallet, rec.reserve)), heldRaw(held));
+  if (Object.keys(left).length === 0) {
+    clearAbandonedCreate(rec.wallet, rec.reserve);
+    clearSweep("create", rec.wallet, rec.reserve);
+    return null;
+  }
+  return {
+    kind: "create",
+    wallet: rec.wallet,
+    reserve: rec.reserve,
+    startedAt: rec.startedAt,
+    events,
+    leftovers: Object.entries(left).map(([mint, amountRaw]) => ({ mint, amountRaw, decimals: held[mint]?.decimals ?? 0 })),
+  };
+}
+
+async function inspectMintDust(connection: Connection, rec: MintDustRecord, held: Record<string, { raw: bigint; decimals: number }>): Promise<IncompleteTransaction | null> {
+  const delta = await ownerDeltasFromSignature(connection, rec.mintSignature, rec.wallet);
+  if (!delta) throw new Error(`Could not read your mint transaction yet (${rec.mintSignature}). Try again in a moment.`);
+  const acquired = Object.fromEntries(Object.entries(rec.acquiredRaw).map(([m, r]) => [m, BigInt(r || "0")]));
+  const attributed = dustAttribution(acquired, delta, [rec.reserveTokenMint]);
+  const left = computeLeftovers(attributed, sweptByMint(readSweep("mint-dust", rec.wallet, rec.reserve)), heldRaw(held));
+  if (Object.keys(left).length === 0) {
+    clearMintDust(rec.wallet, rec.reserve);
+    clearSweep("mint-dust", rec.wallet, rec.reserve);
+    return null;
+  }
+  return {
+    kind: "mint-dust",
+    wallet: rec.wallet,
+    reserve: rec.reserve,
+    startedAt: rec.startedAt,
+    events: [{ label: "Reserve Tokens minted", signature: rec.mintSignature }],
+    leftovers: Object.entries(left).map(([mint, amountRaw]) => ({ mint, amountRaw, decimals: held[mint]?.decimals ?? 0 })),
+  };
+}
+
 /**
  * Every unfinished mint or redemption this browser recorded for `wallet`
  * that left something other than USDC or Reserve Tokens behind.
@@ -283,7 +371,9 @@ export async function findIncompleteTransactions(
   const wallet = owner.toBase58();
   const redemptions = readAllPending<PendingSellState>("ssr_pending_sells_v1", wallet);
   const mints = readAllPending<PendingBuyState>("ssr_pending_buys_v2", wallet);
-  if (redemptions.length === 0 && mints.length === 0) return [];
+  const creates = readAbandonedCreates(wallet);
+  const dust = readMintDust(wallet);
+  if (redemptions.length === 0 && mints.length === 0 && creates.length === 0 && dust.length === 0) return [];
   const held = await readWalletHoldings(connection, owner);
   const out: IncompleteTransaction[] = [];
   for (const s of redemptions) {
@@ -294,12 +384,39 @@ export async function findIncompleteTransactions(
     const item = await inspectMint(connection, b, held, reserveTokenMintOf(b.reserve));
     if (item) out.push(item);
   }
+  for (const c of creates) {
+    const item = await inspectCreate(connection, c, held);
+    if (item) out.push(item);
+  }
+  for (const d of dust) {
+    const item = await inspectMintDust(connection, d, held);
+    if (item) out.push(item);
+  }
   return out.sort((a, b) => b.startedAt - a.startedAt);
 }
 
 /** Cheap, synchronous check (no network) used to decide whether to show the banner at all. */
 export function hasPendingRecords(wallet: string): boolean {
-  return readAllPending("ssr_pending_sells_v1", wallet).length > 0 || readAllPending("ssr_pending_buys_v2", wallet).length > 0;
+  return (
+    readAllPending("ssr_pending_sells_v1", wallet).length > 0 ||
+    readAllPending("ssr_pending_buys_v2", wallet).length > 0 ||
+    readAbandonedCreates(wallet).length > 0 ||
+    readMintDust(wallet).length > 0
+  );
+}
+
+/** Drops this item's record without converting anything -- the assets stay in the wallet. Offered for mint dust only, which can be too small for Jupiter to route. */
+export function dismissIncompleteTransaction(item: IncompleteTransaction): void {
+  if (item.kind !== "mint-dust") return;
+  clearMintDust(item.wallet, item.reserve);
+  clearSweep(item.kind, item.wallet, item.reserve);
+}
+
+function clearSource(item: Pick<IncompleteTransaction, "kind" | "wallet" | "reserve">): void {
+  if (item.kind === "redeem") clearPendingSell(item.wallet, item.reserve);
+  else if (item.kind === "mint") clearPendingBuy(item.wallet, item.reserve);
+  else if (item.kind === "create") clearAbandonedCreate(item.wallet, item.reserve);
+  else clearMintDust(item.wallet, item.reserve);
 }
 
 // --- Recovery -------------------------------------------------------------------
@@ -412,8 +529,7 @@ export async function convertLeftoversToUsdc(
   onProgress?.({ phase: "verifying" });
   const after = (await findIncompleteTransactions(connection, owner, () => null)).find((t) => t.kind === item.kind && t.reserve === item.reserve);
   if (!after || after.leftovers.length === 0) {
-    if (item.kind === "redeem") clearPendingSell(item.wallet, item.reserve);
-    else clearPendingBuy(item.wallet, item.reserve);
+    clearSource(item);
     clearSweep(item.kind, item.wallet, item.reserve);
     return { converted, remaining: [] };
   }
