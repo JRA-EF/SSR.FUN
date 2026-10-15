@@ -5,6 +5,7 @@ import {fetchJupiterPrices} from './asset-prices';
 import {LiquidityLookupRequired} from '../../lib/mainnet/liquidityLookup';
 import {Connection,PublicKey} from '@solana/web3.js';
 import {buildReadOnlyProgram,findLiquidityTranche} from '@ssr/sdk';
+import {getAssociatedTokenAddressSync,unpackAccount,TOKEN_PROGRAM_ID} from '@solana/spl-token';
 import {type ApiRequest,type ApiResponse,parseJsonBody} from '../devnet/_lib/apiTypes';
 import {checkRateWindow} from '../devnet/_lib/rateLimit';
 import {resolveRpcUrl,redactRpcSecrets} from './_lib/rpc';
@@ -34,7 +35,10 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
   if(!input){const s=await readLiquidityState(deps,reserve);
    const rows=await connection.getProgramAccounts(deps.programId,{commitment:'confirmed',filters:[{dataSize:187},{memcmp:{offset:8,bytes:reserve.toBase58()}}]});
    const tranches=rows.map(row=>{const t=deps.program.coder.accounts.decode('liquidityTranche',row.account.data);if(!new PublicKey(t.pool).equals(s.pool)||!new PublicKey(t.beneficiary).equals(s.treasury)||!findLiquidityTranche(reserve,s.treasury,BigInt(t.nonce.toString()),deps.programId).equals(row.pubkey))throw new Error('Invalid liquidity tranche');return {address:row.pubkey.toBase58(),unlockTs:t.unlockTs.toString(),permanent:t.permanent,withdrawn:t.withdrawn};});
-   result={tranches,reserve:s.reserve,pool:s.pool,mint:s.mint,creator:s.creator,treasury:s.treasury,hasPool:!!s.registered,paused:s.paused,reserveDecimals:s.rt.decimals,lpDecimals:s.lpDecimals,usdcBalanceRaw:s.usdcBalance,reserveBalanceRaw:s.reserveBalance,lpBalanceRaw:s.lpBalance,nativeEarningsUsdcRaw:s.registered?.accruedUsdc??0n,stagedEarningsUsdcRaw:s.staged,slot:s.slot,executionEnabled:LIQUIDITY_EXECUTION_ENABLED};}
+   // Each lock holds its LP in an escrow owned by the tranche PDA; permanent locks have moved theirs into Raydium's lock.
+   const escrows=tranches.map(t=>getAssociatedTokenAddressSync(s.lp,new PublicKey(t.address),true,TOKEN_PROGRAM_ID)),escrowInfos=escrows.length?await connection.getMultipleAccountsInfo(escrows,'confirmed'):[];
+   const lockedTranches=tranches.map((t,i)=>{const info=escrowInfos[i];if(!info)return {...t,lpRaw:'0'};const acc=unpackAccount(escrows[i],info,TOKEN_PROGRAM_ID);if(!acc.mint.equals(s.lp))throw new Error('Invalid liquidity escrow');return {...t,lpRaw:acc.amount.toString()};});
+   result={tranches:lockedTranches,reserve:s.reserve,pool:s.pool,mint:s.mint,creator:s.creator,treasury:s.treasury,hasPool:!!s.registered,paused:s.paused,reserveDecimals:s.rt.decimals,lpDecimals:s.lpDecimals,usdcBalanceRaw:s.usdcBalance,reserveBalanceRaw:s.reserveBalance,lpBalanceRaw:s.lpBalance,nativeEarningsUsdcRaw:s.registered?.accruedUsdc??0n,stagedEarningsUsdcRaw:s.staged,poolUsdcRaw:s.usdc,poolReserveRaw:s.tokens,lpSupplyRaw:s.lpSupply,slot:s.slot,executionEnabled:LIQUIDITY_EXECUTION_ENABLED};}
   else if(input.action==='create'){const payer=loadPoolPayer();const prepared=await prepareCreateLiquidity({...deps,prices:fetchJupiterPrices},{reserve:input.reserve,actor:input.actor,usdcRaw:input.maximumUsdcRaw??0n,maximumSolRaw:input.maximumSolRaw,buyTaxBps:input.buyTaxBps,sellTaxBps:input.sellTaxBps,lock:input.lock,lookupTables:input.lookupTables});
    result={...prepared,transactionBase64:coSignPoolPayer(prepared.transactionBase64,payer,BigInt(prepared.payerNetCostLamports))};}
   else result=await prepareLiquidityLifecycle(deps,input);

@@ -45,6 +45,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   { file: "src/docs/content/ReserveTokensOnDexes.tsx", contains: "bought on an exchange", why: "secondary market (DEX)" },
   { file: "src/pages/legal/Privacy.tsx", contains: "do not sell your information", why: "privacy wording, unrelated to Reserve Tokens" },
   { file: "src/merge/components/LiveLiquidityActions.tsx", contains: "Optional project Buy tax", why: "secondary-market project tax; never primary mint/redeem" },
+  { file: "src/merge/components/LiveLiquidityActions.tsx", contains: "Optional project Sell tax", why: "secondary-market project tax; never primary mint/redeem" },
 ];
 
 /** Every line under src/ that uses buy/sell/purchase in user-visible text (string literals, JSX text). */
