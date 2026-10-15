@@ -87,6 +87,7 @@ import { applyDesignDemo, demoPriceHistory, isDesignDemoEnabled } from "@/lib/de
 import { parseYouTubeVideoId, youTubeThumbnailUrl } from "@/lib/youtube";
 import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
 import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
+import { LIQUIDITY_ENABLED } from "@/lib/liquidityFeature";
 
 /* Candlestick glyph for the Recharts range-Bar: the bar's y/height map the
    candle's [low, high] band, so open/close are interpolated inside it. A
@@ -2115,7 +2116,7 @@ export function DTRDetail() {
         </div>
       )}
 
-      {buyPhase === "confirmed" && dtr.managerAddress === wallet.address && !liquidityPreviews[dtr.id] && !liquidityIntroDismissed && (
+      {LIQUIDITY_ENABLED && buyPhase === "confirmed" && dtr.managerAddress === wallet.address && !liquidityPreviews[dtr.id] && !liquidityIntroDismissed && (
         <LiquidityFirstMintIntro dtr={dtr} onDismiss={() => setLiquidityIntroDismissed(true)} />
       )}
 
