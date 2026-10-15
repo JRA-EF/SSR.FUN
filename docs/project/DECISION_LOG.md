@@ -7394,3 +7394,28 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0242
+
+```json
+{
+  "id": "DEC-0242",
+  "date": "2026-10-15",
+  "title": "Manage Reserve > Liquidity renders the designed creator dashboard on live data, and live liquidity actions are no longer blocked by a stale release check",
+  "status": "merged to main; staging verified 2026-10-14 (dpl_DrWs6z455f...)",
+  "decision": "Creator (2026-10-14): keep liquidity on ssr.fun and fix it in place, Manage Reserve tab only (Reserve-page intro and badges deferred). LiveLiquiditySection now renders the design (empty state -> pool launch; pool dashboard with pool liquidity, creator DEX earnings + Collect, lock status, pool details, locks) from on-chain state via the new lib/liquidity/liveLiquidityClient.ts; /api/mainnet/liquidity also returns poolUsdcRaw, poolReserveRaw, lpSupplyRaw and each lock's lpRaw. The Compound route-compare card is removed from the tab (Compound stays disabled).",
+  "context": "Mainnet Reserves skipped the designed LiquiditySection and showed a bare engineering form. LiveLiquidityActions and LiquidityLookupSetup still required executionEnabled===false after DEC-0240 released liquidity, so every live action failed at review; pool launch also arrived pre-signed by the Raydium payer and was rejected.",
+  "rationale": "Fixes the regression DEC-0240 introduced without changing fee economics or the payer co-sign rules: only the Raydium payer may pre-sign, and only the server-built, refunded launch transaction.",
+  "alternativesConsidered": ["Re-gate liquidity until the runbook's funded steps 5-7 run (not chosen: the Creator kept it live)"],
+  "impact": "Managers of Mainnet Reserves can launch, add, withdraw, collect and lock from Manage Reserve > Liquidity. Staging lacks SSR_RAYDIUM_POOL_PAYER_SECRET, so pool launch 503s there; production has it.",
+  "affectedAreas": [
+    "api/mainnet/liquidity.ts",
+    "src/merge/components/{LiveLiquiditySection,LiveLiquidityActions,LiquidityLookupSetup}.tsx",
+    "src/merge/lib/liquidity/liveLiquidityClient.ts (new)",
+    "tests/phase_liquidity_manage_tab.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": ["tests/phase_liquidity_manage_tab.ts passing; tsc -b clean; staging deployment checked on live Mainnet data 2026-10-14. Runbook steps 5-7 (funded pool lifecycle) still not run on real funds."]
+}
+```
