@@ -7483,3 +7483,31 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0248
+
+```json
+{
+  "id": "DEC-0248",
+  "date": "2026-10-15",
+  "title": "Fee keeper rotated to a key held by both ssr-fun and ssr-fun-staging, so Launch and Mint work on staging",
+  "status": "live: on-chain keeper 6adZbFYM...FBqDVN; production dpl_5YTM8YUKnPSeRzwoAyR9e5rqh1zx; staging dpl_nZJqLWEDvrLWWDz1iKwnWC7bmU8j",
+  "decision": "Staging Launch failed with 'the USDC mint-fee signer is not configured on this deployment': since DEC-0238 every seed and mint is co-signed by SettlementKeeperConfig.keeper, whose secret (...GPhsF) existed only as a write-only Sensitive variable on ssr-fun. The Creator chose to rotate it. New keeper 6adZbFYM83jKSK4fjy7QbSCA8vRLCosBh6m8DoFBqDVN (funded 0.05 SOL), secret set as SSR_FEE_SETTLEMENT_KEEPER_SECRET on both projects, set_fee_settlement_keeper signed by Protocol Admin ...4Rw8 the moment the production redeploy went live. SSR_RAYDIUM_POOL_PAYER_SECRET (...CFoqAS) also added to staging so pool launches work there.",
+  "context": "DEC-0225 created the keeper as a dedicated wallet whose secret lived only in the production Vercel env. Staging (ssr-fun-staging) shares Mainnet with production, so it needs the same single on-chain keeper to co-sign fee quotes.",
+  "rationale": "The program accepts exactly one fee quote signer, so staging can only mint if it holds that key. Staging has no CRON_SECRET, so its fee-settlement cron stops before loading the key and only production settles fees.",
+  "alternativesConsidered": [
+    "Leave staging unable to launch or mint -- declined by the Creator."
+  ],
+  "impact": "Anyone with read access to ssr-fun-staging's env can sign fee quotes (accepted). Old keeper ...GPhsF retired with 0.383 SOL stranded (no holder of its secret). A local copy of the new key is on the Creator's machine.",
+  "affectedAreas": [
+    "Vercel env: ssr-fun, ssr-fun-staging",
+    "Mainnet SettlementKeeperConfig"
+  ],
+  "supersedes": "DEC-0225's 'keeper secret only in the production Vercel env'",
+  "supersededBy": null,
+  "evidence": [
+    "On-chain keeper reads 6adZbFYM...FBqDVN after the rotation.",
+    "Server-built USDC-fee mint for Reserve DYp3f...spB3Zs, co-signed with the new key, simulated on Mainnet: err null, 93,746 CU."
+  ]
+}
+```
