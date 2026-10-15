@@ -22,3 +22,5 @@
 
 ## Verification
 tsc -b, vite build clean; oxlint count unchanged; offline suite 1519 passing with the 5 known failures.
+
+Follow-up 2026-10-15: deployed to production `dpl_3DgwPKsxLm6sxpz447ZAffMEdU7H` (ssr-hlxul7kzi), aliased to ssr.fun; live `assets/main-C7SOuJmQ.js` checked: the old card text is absent and the new setup wording is present.
