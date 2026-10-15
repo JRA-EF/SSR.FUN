@@ -506,6 +506,8 @@ A second, independently significant finding from the same investigation: ~~there
 - **Production (former coming-soon): project `ssr-fun-final`** kept with its deployment history (`ssr-fun-final.vercel.app`, `dpl_7P8tBKcozeT1Prw9ZG34mRujLrv1` lineage) but no longer holds any custom domain since 2026-09-07 (DEC-0186); the Coming Soon page is obsolete. `strategic-super-reserve.com` is a separate Cloudflare-hosted marketing site outside this Vercel team (not managed from this repo).
 
 ## Last Updated
+2026-10-15 (DEC-0243: the lookup-table feature ("One-Approval Mint and Redeem") is hidden from the UI -- Manage card and the optional launch step removed, launch needs one fewer approval; the automatic one-time setup on the first large mint or redemption stays.)
+
 2026-10-07 (BRANCH `feat/token2022-transfer-fee`, not yet on main or Mainnet: DEC-0229 Token-2022 Reserve Token with 0.15% protocol transfer fee, Buy/Sell tax removed. Offline suite 1340 passing, 4 failing (the known pre-existing set); live DevNet verification passed; tsc -b exit 0; vite build OK.)
 
 2026-10-06 (COMMITTED on `main`: DEC-0228 terminology Mint/Redeem = in-app, Buy/Sell = secondary only, enforced by `tests/phase_terminology_and_tax_hold.ts`; Buy/Sell tax ON HOLD. Offline suite 1304 passing, 5 failing (the known pre-existing set); tsc -b exit 0; vite build OK.)

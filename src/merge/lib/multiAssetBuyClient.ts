@@ -420,7 +420,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // ---------------------------------------------------------------------
     const altIdx = build.transactions.map((t, i) => (t.kind === "alt-create" || t.kind === "alt-extend" ? i : -1)).filter((i) => i >= 0);
     if (altIdx.length > 0) {
-      currentStage = "enabling one-approval mint and redeem for this Reserve (a one-time setup)";
+      currentStage = "a one-time setup for this Reserve";
       params.onProgress?.({ phase: "enabling-one-approval-trading" });
       for (const i of altIdx) {
         const t = build.transactions[i];
