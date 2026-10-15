@@ -5,7 +5,7 @@
 // USDC entry selectable regardless of this hook's status, since USDC is a
 // local constant this app already knows, never dependent on this fetch.
 import { useEffect, useState } from "react";
-import type { LaunchpadId, LaunchpadStage, LaunchpadVenue, TokenIssuerId } from "@ssr/sdk";
+import { displayAssetIdentity, type LaunchpadId, type LaunchpadStage, type LaunchpadVenue, type TokenIssuerId } from "@ssr/sdk";
 
 /** Where the token was launched and whether it has graduated -- a label only; every token here already passed the catalogue's eligibility gates. */
 export interface CatalogueAssetLaunchpad {
@@ -54,8 +54,7 @@ export function useMainnetAssetCatalogue(enabled: boolean): { status: CatalogueS
       .then((data: { tokens: RawToken[] }) => {
         if (cancelled) return;
         const tokens: CatalogueAsset[] = (data.tokens ?? []).map((t) => ({
-          symbol: t.symbol,
-          name: t.name,
+          ...displayAssetIdentity(t.mint, t.symbol, t.name),
           mint: t.mint,
           decimals: t.decimals,
           real: true as const,

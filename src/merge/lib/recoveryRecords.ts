@@ -18,6 +18,8 @@ export interface AbandonedCreateRecord {
   name: string;
   startedAt: number;
   assetFunding: Record<string, PersistedAssetFunding>;
+  /** Every asset the Reserve registered -- a SOL leg is wrapped, not swapped, so it has no funding signature. */
+  assetMints?: string[];
 }
 
 /** A completed mint: what its swaps acquired, and the mint transaction that consumed most of it. */
@@ -58,9 +60,11 @@ function forWallet<T extends { wallet: string; reserve: string }>(key: string, w
   return Object.values(readMap<T>(key)).filter((e) => e && e.wallet === wallet && typeof e.reserve === "string");
 }
 
-/** Saved only when at least one seed swap was submitted -- a Create that never swapped left nothing behind. Returns whether it was saved. */
+const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
+
+/** Saved only when at least one seed swap was submitted or SOL was wrapped for the seed -- otherwise the Create left nothing behind. Returns whether it was saved. */
 export function recordAbandonedCreate(rec: AbandonedCreateRecord): boolean {
-  if (!Object.values(rec.assetFunding ?? {}).some((f) => f.lastSignature)) return false;
+  if (!Object.values(rec.assetFunding ?? {}).some((f) => f.lastSignature) && !(rec.assetMints ?? []).includes(WRAPPED_SOL)) return false;
   writeEntry(ABANDONED_CREATE_KEY, rec.wallet, rec.reserve, rec);
   return true;
 }

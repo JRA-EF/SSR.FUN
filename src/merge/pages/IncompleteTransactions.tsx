@@ -17,6 +17,15 @@ import { fetchAssetPricesUsd, type AssetPriceInfo } from "@/lib/assetPricing";
 import { convertLeftoversToUsdc, dismissIncompleteTransaction, findIncompleteTransactions, type IncompleteKind, type IncompleteTransaction, type RecoveryProgress } from "@/lib/incompleteTransactions";
 
 const short = (s: string) => `...${s.slice(-6)}`;
+const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
+
+/** DEC-0244: wrapped SOL comes back as SOL, everything else as USDC. */
+function convertLabel(item: IncompleteTransaction): string {
+  const sol = item.leftovers.some((l) => l.mint === WRAPPED_SOL);
+  const usdc = item.leftovers.some((l) => l.mint !== WRAPPED_SOL);
+  if (sol && !usdc) return "Return as SOL";
+  return sol ? "Convert to USDC and SOL" : "Convert to USDC";
+}
 
 const KIND_COPY: Record<IncompleteKind, { title: (name: string) => string; body: string }> = {
   redeem: { title: (n) => `Redemption of ${n} did not finish`, body: "Your Reserve Tokens were redeemed, but not every asset was swapped into USDC." },
@@ -235,7 +244,7 @@ export function IncompleteTransactions() {
                     <Loader2 className="w-4 h-4 animate-spin mr-2" /> {describeProgress(progress)}
                   </>
                 ) : (
-                  `Convert to USDC${totalUsd > 0 ? ` (~$${totalUsd.toFixed(2)})` : ""}`
+                  `${convertLabel(item)}${totalUsd > 0 ? ` (~$${totalUsd.toFixed(2)})` : ""}`
                 )}
               </Button>
               </div>

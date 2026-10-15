@@ -29,7 +29,7 @@
 // completed mint whose 2% swap buffer left a little of each asset behind
 // ("mint-dust"). Same attribution rule: only what that flow's own confirmed
 // transactions provably put in the wallet.
-import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
+import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import { MAINNET_USDC_MINT, fetchReserveOnChain } from "@ssr/sdk";
 import { clearAbandonedCreate, clearMintDust, readAbandonedCreates, readMintDust, type AbandonedCreateRecord, type MintDustRecord } from "./recoveryRecords";
@@ -38,6 +38,7 @@ import { clearPendingSell, type PendingSellState } from "./multiAssetSellClient"
 import { computeOwnerTokenDeltaRaw, type TokenBalanceEntry } from "./multiAssetBuyPlan";
 import { fetchJupiterSwapQuote, JupiterSwapNotLandedError, submitSignedJupiterSwap, type JupiterSwapQuote } from "./jupiterSwapClient";
 import { withRateLimitRetry } from "./rpcResilience";
+import { buildUnwrapSolInstructions } from "./singleTxBuy";
 import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 
 const log = (msg: string, extra?: Record<string, unknown>) => {
@@ -46,7 +47,7 @@ const log = (msg: string, extra?: Record<string, unknown>) => {
 
 const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const TOKEN_2022_PROGRAM = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
-/** Wrapped SOL a Create wrapped from the user's own SOL is not a swap output -- never sold to USDC. */
+/** Wrapped SOL is never sold: whatever a flow left of it is unwrapped back to native SOL (DEC-0244). */
 const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 /** Slippage for a recovery swap. Wider than a mint's 200 bps on purpose: here a failed swap is worse for the user than a slightly worse price. Still within the proxy's 500 bps ceiling. */
 export const RECOVERY_SLIPPAGE_BPS = 300;
@@ -320,6 +321,10 @@ async function inspectCreate(connection: Connection, rec: AbandonedCreateRecord,
       events.push({ label: `Swapped USDC into ${shortMint(mint)}`, signature: f.lastSignature });
     }
   }
+  // The seed wrapped the creator's OWN SOL (no swap, so no signature to attribute): unwrapping it only
+  // returns their SOL, so whatever wrapped SOL the wallet holds is offered back as SOL.
+  const wsolHeld = held[WRAPPED_SOL_MINT]?.raw ?? 0n;
+  if ((rec.assetMints ?? Object.keys(rec.assetFunding)).includes(WRAPPED_SOL_MINT) && wsolHeld > 0n) attributed[WRAPPED_SOL_MINT] = wsolHeld;
   const left = computeLeftovers(attributed, sweptByMint(readSweep("create", rec.wallet, rec.reserve)), heldRaw(held));
   if (Object.keys(left).length === 0) {
     clearAbandonedCreate(rec.wallet, rec.reserve);
@@ -476,13 +481,23 @@ export async function convertLeftoversToUsdc(
 
   // Attempt 0, then one automatic retry of the swaps that provably did not land.
   for (let attempt = 0; attempt < 2 && todo.length > 0; attempt++) {
-    const quotes: JupiterSwapQuote[] = [];
+    // One transaction per leftover, index-aligned with `todo`: a Jupiter
+    // swap to USDC, or -- for wrapped SOL (DEC-0244) -- a plain unwrap back
+    // to native SOL (no swap, no slippage).
+    const builds: { tx: VersionedTransaction; lastValidBlockHeight: number }[] = [];
     for (let i = 0; i < todo.length; i++) {
       onProgress?.({ phase: "quoting", index: i, total: todo.length });
-      quotes.push(await fetchJupiterSwapQuote(MAINNET_USDC_MINT, todo[i].amountRaw, owner.toBase58(), RECOVERY_SLIPPAGE_BPS, undefined, todo[i].mint));
+      if (todo[i].mint === WRAPPED_SOL_MINT) {
+        const { blockhash, lastValidBlockHeight } = await withRateLimitRetry(() => connection.getLatestBlockhash("confirmed"), 3, 500);
+        const message = new TransactionMessage({ payerKey: owner, recentBlockhash: blockhash, instructions: buildUnwrapSolInstructions(owner, [WRAPPED_SOL_MINT]) }).compileToV0Message();
+        builds.push({ tx: new VersionedTransaction(message), lastValidBlockHeight });
+      } else {
+        const q: JupiterSwapQuote = await fetchJupiterSwapQuote(MAINNET_USDC_MINT, todo[i].amountRaw, owner.toBase58(), RECOVERY_SLIPPAGE_BPS, undefined, todo[i].mint);
+        builds.push({ tx: VersionedTransaction.deserialize(Buffer.from(q.swapTransaction, "base64")), lastValidBlockHeight: q.lastValidBlockHeight });
+      }
     }
-    onProgress?.({ phase: "awaiting-wallet", total: quotes.length });
-    const unsigned = quotes.map((q) => VersionedTransaction.deserialize(Buffer.from(q.swapTransaction, "base64")));
+    onProgress?.({ phase: "awaiting-wallet", total: builds.length });
+    const unsigned = builds.map((b) => b.tx);
     let signed: VersionedTransaction[];
     if (wallet.signAllTransactions) signed = await wallet.signAllTransactions(unsigned);
     else {
@@ -496,7 +511,7 @@ export async function convertLeftoversToUsdc(
       signed.map(async (tx, i) => {
         if (i > 0) await new Promise((r) => setTimeout(r, 150 * i));
         const leg = todo[i];
-        const sig = await submitSignedJupiterSwap(connection, tx, quotes[i].lastValidBlockHeight, (signature) => {
+        const sig = await submitSignedJupiterSwap(connection, tx, builds[i].lastValidBlockHeight, (signature) => {
           const rec = readSweep(item.kind, item.wallet, item.reserve);
           rec[leg.mint] = [...(rec[leg.mint] ?? []), { signature, amountRaw: leg.amountRaw.toString() }];
           saveSweep(item.kind, item.wallet, item.reserve, rec);
@@ -505,7 +520,7 @@ export async function convertLeftoversToUsdc(
         const rec = readSweep(item.kind, item.wallet, item.reserve);
         rec[leg.mint] = (rec[leg.mint] ?? []).map((l) => (l.signature === sig ? { ...l, confirmed: true } : l));
         saveSweep(item.kind, item.wallet, item.reserve, rec);
-        log("leftover converted to USDC", { mint: leg.mint, signature: sig });
+        log(leg.mint === WRAPPED_SOL_MINT ? "leftover wrapped SOL returned as SOL" : "leftover converted to USDC", { mint: leg.mint, signature: sig });
         return leg.mint;
       }),
     );

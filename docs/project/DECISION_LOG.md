@@ -7449,3 +7449,37 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0244
+
+```json
+{
+  "id": "DEC-0244",
+  "date": "2026-10-15",
+  "title": "Users only see and hold native SOL: wrapped SOL stays the vaults' custody format but is wrapped and unwrapped inside each flow's own transaction",
+  "status": "implemented on feat/native-sol-ux; not yet on main, staging or production",
+  "decision": "Creator: 'why are we using wrapped sol anyways? lets please change it to SOL throughout'. Asked whether to change the program's vault model or the user experience, the Creator chose the user experience (no program change). (1) Display: the So111... mint is always shown as SOL / Solana (displayAssetIdentity in packages/sdk/src/zapPricing.ts), applied at the catalogue API, the client catalogue hook and the snapshot's mintMeta, so the Create picker, Rebalance picker and cards never show Jupiter's 'Wrapped SOL'. (2) Mint: the mint transaction (single and batch) ends with closeAccount on the buyer's wrapped-SOL account, so the 2% swap buffer and the account rent come back as native SOL. (3) Redeem: the single-transaction redeem ends with the same unwrap after its last swap. (4) Seed: the seed transaction ends with the unwrap. (5) /recover returns leftover wrapped SOL as native SOL (a plain unwrap, no swap, no slippage), including the SOL a cancelled Create wrapped for its seed.",
+  "context": "Vaults are SPL token accounts, which can only custody SOL as wrapped SOL; Jupiter, Raydium and every Solana vault protocol do the same. The problem was exposure: the catalogue name 'Wrapped SOL', and every Mainnet swap running with wrapAndUnwrapSol:false (DEC-0156), so mints, seeds and redeems left wrapped SOL (or an empty wrapped-SOL account holding rent) in the user's wallet.",
+  "rationale": "A native-lamport vault would mean rewriting mint, redeem, seed, rebalance, fees and liquidity plus migrating every existing wrapped-SOL vault, with no visible difference to users. The unwrap is always the LAST instruction of the transaction that consumes the wrapped SOL and is never added to a stand-alone swap transaction, so the DEC-0156 incident (Jupiter's cleanup closing the account between the swap and the mint) cannot recur; wrapAndUnwrapSol stays false everywhere. closeAccount on a wrapped-SOL account returns its whole balance, including any wrapped SOL the user already held -- that is their own SOL coming back as SOL, which is the intent.",
+  "alternativesConsidered": [
+    "Native SOL in vaults (program rewrite + migration + Squads upgrade) -- offered, the Creator chose the UX-only change",
+    "Let Jupiter unwrap (wrapAndUnwrapSol:true) -- rejected: DEC-0156"
+  ],
+  "impact": "No program, IDL or env change. Gap: a batch-mode redeem (too big for one transaction) still leaves an EMPTY wrapped-SOL account (rent ~0.002 SOL) because its swaps are prebuilt Jupiter transactions; a failed SOL leg there is returned as SOL by /recover.",
+  "affectedAreas": [
+    "packages/sdk/src/zapPricing.ts (displayAssetIdentity)",
+    "src/merge/lib/singleTxBuy.ts (buildUnwrapSolInstructions; assembleSingleBuyInstructions unwrapInstructions)",
+    "lib/mainnet/buildBuy.ts, buildSell.ts, buildSeed.ts",
+    "api/ledger/asset-catalogue.ts, api/mainnet/warm-cache-cron.ts, src/merge/hooks/useMainnetAssetCatalogue.ts",
+    "src/merge/lib/incompleteTransactions.ts, recoveryRecords.ts, src/merge/pages/IncompleteTransactions.tsx, CreateDTR.tsx",
+    "tests/phase_native_sol_ux.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_native_sol_ux.ts 6 passing (display identity; unwrap targets the owner's wSOL ATA and returns lamports to the owner; unwrap is after the mint; no unwrap without a SOL leg).",
+    "Full offline suite 1543 passing / 4 known failures; tsc -b clean; server builders typecheck; npm run build clean.",
+    "NOT yet exercised on Mainnet: the production single-transaction build simulates before signing, but a batch mint and the seed are not simulated server-side -- first live check should be a small mint of a Reserve with a SOL leg."
+  ]
+}
+```

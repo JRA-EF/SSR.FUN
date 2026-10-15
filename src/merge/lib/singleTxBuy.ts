@@ -28,7 +28,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
-import { createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { createCloseAccountInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { WRAPPED_SOL_MINT } from "@ssr/sdk";
 
 export const SOLANA_MAX_TX_BYTES = 1232;
@@ -110,6 +110,20 @@ export function buildWrapRecoveredSolInstructions(owner: PublicKey, lamports: bi
   ];
 }
 
+/**
+ * DEC-0244: closes the owner's wrapped-SOL account so its whole balance
+ * (and the account rent) returns as native SOL -- empty when `assetMints`
+ * has no wrapped-SOL leg. MUST be the very last instruction of the one
+ * transaction that consumes the wrapped SOL (after the mint, seed, or the
+ * last swap of a redeem): placed any earlier it unwraps the leg before it
+ * is used, which is exactly the DEC-0156 incident Jupiter's own cleanup
+ * caused. Never added to a stand-alone swap transaction.
+ */
+export function buildUnwrapSolInstructions(owner: PublicKey, assetMints: string[]): TransactionInstruction[] {
+  if (!assetMints.includes(WRAPPED_SOL_MINT.toBase58())) return [];
+  return [createCloseAccountInstruction(getAssociatedTokenAddressSync(WRAPPED_SOL_MINT, owner), owner, owner)];
+}
+
 /** One swap leg's instruction material, as returned by /api/mainnet/jupiter-swap in mode "instructions". */
 export interface SwapInstructionSet {
   setupInstructions: JupiterInstructionJson[];
@@ -141,13 +155,15 @@ export class SingleTxTooLargeError extends Error {
  * leg ATA including wSOL and the Reserve Token ATAs) -> each swap's setup
  * + swap instruction (its own compute-budget instructions dropped, its
  * cleanup NEVER included -- cleanup is the wSOL-closing unwrap) -> any
- * recovered-SOL re-wrap -> the mint itself, last.
+ * recovered-SOL re-wrap -> the mint itself -> the wrapped-SOL unwrap
+ * (DEC-0244), which must come after the mint.
  */
 export function assembleSingleBuyInstructions(params: {
   ataCreateInstructions: TransactionInstruction[];
   swapSets: SwapInstructionSet[];
   wrapInstructions: TransactionInstruction[];
   mintInstruction: TransactionInstruction;
+  unwrapInstructions?: TransactionInstruction[];
 }): TransactionInstruction[] {
   const ixs: TransactionInstruction[] = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: SINGLE_TX_COMPUTE_UNIT_LIMIT }),
@@ -164,6 +180,7 @@ export function assembleSingleBuyInstructions(params: {
   }
   ixs.push(...params.wrapInstructions);
   ixs.push(params.mintInstruction);
+  ixs.push(...(params.unwrapInstructions ?? []));
   return ixs;
 }
 

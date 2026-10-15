@@ -40,7 +40,7 @@ import { buildMintWithUsdcFeeInstructions, computeMintRequirements, describeOnCh
 import { coSignFee, missingFeeDestinationAtaInstructions, quoteUsdcMintFee, resolveUsdcFeeRouting } from "./usdcMintFee";
 import { loadFeeLookupTable } from "./feeLookupTable";
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
-import { assembleSingleBuyInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
+import { assembleSingleBuyInstructions, buildUnwrapSolInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
 import {
   BuildError,
@@ -274,6 +274,8 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   const mintIx = mintPrelude[mintPrelude.length - 1];
   const ataIxs = mintPrelude.slice(0, -1);
   const wrapIxs = wrapActions.flatMap((a) => buildWrapRecoveredSolInstructions(wallet, a.lamports));
+  // DEC-0244: unwrap whatever wrapped SOL is left (the swap buffer) back to native SOL, after the mint.
+  const unwrapIxs = buildUnwrapSolInstructions(wallet, orderedAssets.map((a) => a.mint));
 
   // Table facts: the registered table (if any) and the would-be one.
   // DEC-0238: plus the protocol-wide fee table, which every USDC-fee mint compiles against.
@@ -294,6 +296,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
       swapSets: sets.map((s) => ({ setupInstructions: s.setupInstructions, swapInstruction: s.swapInstruction, addressLookupTableAddresses: s.addressLookupTableAddresses })),
       wrapInstructions: wrapIxs,
       mintInstruction: mintIx,
+      unwrapInstructions: unwrapIxs,
     });
     const swapTables = await fetchLookupTables(connection, sets.flatMap((s) => s.addressLookupTableAddresses));
     single = { instructions, swapTables };
@@ -302,9 +305,9 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     ComputeBudgetProgram.setComputeUnitLimit({ units: MINT_TX_COMPUTE_UNIT_LIMIT }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }),
   ];
-  const mintFull = [...mintBudgetIxs, ...ataIxs, ...feeAtaIxs, ...wrapIxs, mintIx];
+  const mintFull = [...mintBudgetIxs, ...ataIxs, ...feeAtaIxs, ...wrapIxs, mintIx, ...unwrapIxs];
   // Fee-destination ATA creates stay in the lean set: the fee transfer fails without them.
-  const mintLean = [...mintBudgetIxs, ...feeAtaIxs, ...wrapIxs, mintIx];
+  const mintLean = [...mintBudgetIxs, ...feeAtaIxs, ...wrapIxs, mintIx, ...unwrapIxs];
   const wouldBe = alt.wouldBeTable;
 
   const decision = decideMode({

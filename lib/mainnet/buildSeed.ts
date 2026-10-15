@@ -13,7 +13,7 @@
 import { AddressLookupTableAccount, ComputeBudgetProgram, Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { buildSeedReserveUsdcFeeInstruction, describeOnChainError, type NewReserveAddresses, type ReserveAssetAddresses } from "@ssr/sdk";
 import { seedComputeUnitLimit } from "../../src/merge/lib/seedBudget";
-import { fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/merge/lib/singleTxBuy";
+import { buildUnwrapSolInstructions, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/merge/lib/singleTxBuy";
 import { BuildError, compileV0, fitsV0, readReserveAndWallet, toBase64, type ReadDeps } from "./buildCommon";
 import { MAINNET_USDC_MINT } from "./jupiter";
 import { coSignFee, missingFeeDestinationAtaInstructions, quoteUsdcMintFee, resolveUsdcFeeRouting } from "./usdcMintFee";
@@ -123,6 +123,8 @@ export async function buildSeedTransaction(deps: BuildSeedDeps, input: BuildSeed
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SINGLE_TX_MICRO_LAMPORTS_PER_CU }),
     ...feeAtaIxs,
     seedIx,
+    // DEC-0244: any wrapped SOL left after the seed returns to the creator as native SOL.
+    ...buildUnwrapSolInstructions(input.manager, read.orderedAssets.map((a) => a.mint)),
   ];
 
   // DEC-0238: the protocol-wide fee table always, plus the creator's own table for a large seed.

@@ -19,7 +19,7 @@
 import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { buildDirectMultiAssetRedeemInstructions, describeOnChainError } from "@ssr/sdk";
-import { countAccountLocks, deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_COMPUTE_UNIT_LIMIT, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
+import { buildUnwrapSolInstructions, countAccountLocks, deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_COMPUTE_UNIT_LIMIT, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
 import {
   BuildError,
@@ -199,6 +199,8 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
       const swapIx = deserializeJupiterInstruction(set.swapInstruction);
       if (!isComputeBudgetInstruction(swapIx)) ixs.push(swapIx);
     }
+    // DEC-0244: after the last swap, close the wrapped-SOL account the redeem paid into (rent + any remainder back as native SOL).
+    ixs.push(...buildUnwrapSolInstructions(wallet, orderedAssets.map((a) => a.mint)));
     const swapTables = await fetchLookupTables(connection, sets.flatMap((s) => s.addressLookupTableAddresses));
     single = { instructions: ixs, swapTables };
   }

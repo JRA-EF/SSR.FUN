@@ -26,6 +26,7 @@
 import { getSql } from "../../lib/ledger/db";
 import { isLaunchpadId, type LaunchpadId, type LaunchpadStage, type LaunchpadVenue } from "../../packages/sdk/src/launchpads";
 import { isTokenIssuerId, type TokenIssuerId } from "../../packages/sdk/src/issuers";
+import { displayAssetIdentity } from "../../packages/sdk/src/zapPricing";
 
 interface ApiRequest {
   method?: string;
@@ -130,8 +131,8 @@ export function dedupeBySymbolPreferOrganicScore(rows: CatalogueRow[]): Catalogu
     .sort((a, b) => (b.organicScore ?? -Infinity) - (a.organicScore ?? -Infinity) || a.symbol.localeCompare(b.symbol))
     .map((r) => ({
       mint: r.mint,
-      symbol: r.symbol,
-      name: r.name || r.symbol,
+      // DEC-0244: "SOL" / "Solana", never Jupiter's "Wrapped SOL".
+      ...displayAssetIdentity(r.mint, r.symbol, r.name),
       decimals: r.decimals,
       tokenProgram: r.tokenProgram === TOKEN_2022_PROGRAM_ID ? TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID,
       launchpad: launchpadOfRow(r),

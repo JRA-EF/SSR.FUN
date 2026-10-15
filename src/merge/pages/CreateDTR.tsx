@@ -825,7 +825,7 @@ export function CreateDTR({
     // so the user can convert them back to USDC.
     const latest = walletCtx.publicKey ? readPendingReserveDeploy(walletCtx.publicKey.toBase58()) : null;
     const handedToRecovery =
-      IS_MAINNET && latest !== null && recordAbandonedCreate({ wallet: latest.wallet, reserve: latest.reserve, programId: SSR_PROGRAM_ID.toBase58(), name: latest.name, startedAt: latest.startedAt, assetFunding: latest.assetFunding ?? {} });
+      IS_MAINNET && latest !== null && recordAbandonedCreate({ wallet: latest.wallet, reserve: latest.reserve, programId: SSR_PROGRAM_ID.toBase58(), name: latest.name, startedAt: latest.startedAt, assetFunding: latest.assetFunding ?? {}, assetMints: latest.assets.map((a) => a.mint) });
     clearPendingReserveDeploy();
     setResumePending(null);
     setResumeError(null);

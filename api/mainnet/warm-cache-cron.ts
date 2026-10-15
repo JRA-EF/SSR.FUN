@@ -40,6 +40,7 @@ import {
   type ParsedReserveMetadata,
 } from "@ssr/sdk";
 import { fetchJupiterPrices } from "./asset-prices";
+import { displayAssetIdentity } from "../../packages/sdk/src/zapPricing";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { getSql as getMetadataSql } from "../../lib/reserve-metadata/db";
@@ -172,7 +173,7 @@ async function refreshOnce(
       select mint, symbol, name from ledger_asset_catalogue
       where mint = any(${allAssetMints}) and symbol is not null
     `) as { mint: string; symbol: string; name: string | null }[];
-    for (const row of rows) mintMeta[row.mint] = { symbol: row.symbol, name: row.name ?? row.symbol };
+    for (const row of rows) mintMeta[row.mint] = displayAssetIdentity(row.mint, row.symbol, row.name);
   } catch (e) {
     console.error("api/mainnet/warm-cache-cron: asset-symbol lookup failed (non-fatal):", e);
   }
