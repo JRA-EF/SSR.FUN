@@ -7481,5 +7481,32 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
     "Full offline suite 1543 passing / 4 known failures; tsc -b clean; server builders typecheck; npm run build clean.",
     "NOT yet exercised on Mainnet: the production single-transaction build simulates before signing, but a batch mint and the seed are not simulated server-side -- first live check should be a small mint of a Reserve with a SOL leg."
   ]
+
+## DEC-0245
+
+```json
+{
+  "id": "DEC-0245",
+  "date": "2026-10-15",
+  "title": "Turn the DEX liquidity flow off in production behind VITE_ENABLE_LIQUIDITY; keep it on staging for testing",
+  "status": "CONFIRMED",
+  "decision": "Creator directive (2026-10-15): production (ssr.fun) must be clean for the hackathon judges, so the DEX liquidity flow on Manage Reserve is turned off there and kept on the staging site for testing. One env var, VITE_ENABLE_LIQUIDITY, controls both halves: it is inlined at build time to show the Manage Reserve Liquidity tab and the post-first-mint prompt that leads into it (src/merge/lib/liquidityFeature.ts), and read at runtime by lib/mainnet/liquidityRelease.ts so the liquidity execution endpoints refuse to prepare transactions when it is unset. Production leaves it unset; ssr-fun-staging sets it to true.",
+  "context": "DEC-0240 released liquidity execution to everyone with the 2026-10-13 program upgrade. The first real pool launch was to be the first end-to-end run, and the Manage tab was still being fixed on release/2026-10-15 (DEC-0242).",
+  "rationale": "A flag rather than a revert keeps the code, the program instructions and DEC-0242's in-flight fixes intact, and lets the same commit ship to production (off) and staging (on). Gating the tab entry point leaves the liquidity component files untouched, so it does not conflict with DEC-0242.",
+  "alternativesConsidered": [
+    "Revert the DEC-0240 frontend -- loses the code and conflicts with release/2026-10-15.",
+    "Hide only the UI -- the execution endpoints would still prepare pool transactions for anyone calling them directly."
+  ],
+  "impact": "On ssr.fun, Manage Reserve has no Liquidity tab and the liquidity release check reports executionEnabled false. The program is unchanged; pool badges for any existing pool still render. Staging behaves as before.",
+  "affectedAreas": [
+    "src/merge/lib/liquidityFeature.ts (new)",
+    "src/merge/pages/ManageDTR.tsx (Liquidity tab)",
+    "src/merge/pages/DTRDetail.tsx (post-first-mint liquidity prompt)",
+    "lib/mainnet/liquidityRelease.ts (LIQUIDITY_EXECUTION_ENABLED now env-driven)",
+    ".env.example"
+  ],
+  "supersedes": "DEC-0240's 'enable for everyone right away' for production only",
+  "supersededBy": null,
+  "evidence": []
 }
 ```

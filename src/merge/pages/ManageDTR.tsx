@@ -68,6 +68,7 @@ import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { addableAssetsForRebalance, type AddableAsset } from "@/lib/rebalanceAddableAssets";
 import { issuerBadgeText, issuerBadgeTitle, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
 import { MAX_ASSETS_PER_RESERVE } from "@/lib/createReserveClient";
+import { LIQUIDITY_ENABLED } from "@/lib/liquidityFeature";
 
 /**
  * Real DevNet SPL mints eligible to be added as a new Reserve Asset -- the
@@ -1277,7 +1278,7 @@ export function ManageDTR() {
             <Sliders className="w-4 h-4" /> Rebalance
           </button>
 
-          {isRoot && (
+          {LIQUIDITY_ENABLED && isRoot && (
             <button
               onClick={() => setActiveTab("liquidity")}
               className={`w-full text-left px-4 py-3 rounded-lg font-medium transition-colors flex items-center gap-3 ${activeTab === "liquidity" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
@@ -2645,7 +2646,7 @@ export function ManageDTR() {
             </div>
           )}
 
-          {activeTab === "liquidity" && isRoot && <LiquiditySection dtr={dtr} />}
+          {LIQUIDITY_ENABLED && activeTab === "liquidity" && isRoot && <LiquiditySection dtr={dtr} />}
 
           {activeTab === "activity" && dtr.onChain && (
             <div className="space-y-6">
