@@ -70,6 +70,21 @@ export interface ReserveEligibilityResult {
 const LIFECYCLE_STATUSES_PERMITTING_NORMAL_USE = new Set(["active", "paused", "windDown"]);
 
 /**
+ * DEC-0246: a seeded Reserve whose every Reserve Token has been redeemed.
+ * It stays discoverable (see evaluateReserveEligibility) but is shown with a
+ * "possibly abandoned" warning and no price, and it cannot be minted: the
+ * program's mint requires a non-zero supply, and seed_reserve only accepts a
+ * Reserve that has never been seeded.
+ */
+export function isEmptyReserve(r: { status: string; reserveTokenSupplyRaw: string } | null | undefined): boolean {
+  return !!r && LIFECYCLE_STATUSES_PERMITTING_NORMAL_USE.has(r.status) && r.reserveTokenSupplyRaw === "0";
+}
+
+/** The warning every surface shows for an empty Reserve (DEC-0246) -- one wording, so Discover and the Reserve page never disagree. */
+export const EMPTY_RESERVE_WARNING =
+  "This Reserve has 0 Reserve Tokens and 0 reserve assets: every token has been redeemed. It may have been abandoned by its creator. Do your own research before relying on it.";
+
+/**
  * Exported alias of the same set, named for its OTHER real use site:
  * api/devnet/swap-sign.ts's Sell-vs-Buy status gate (2026-08-13 corrective
  * pass, DEC-0093). Before this pass that endpoint used one Active-only check
@@ -122,9 +137,12 @@ export function evaluateReserveEligibility(input: ReserveEligibilityInput): Rese
     return { eligible: false, reason: `This Reserve's lifecycle status ("${input.status}") does not permit normal public trading.` };
   }
 
-  if (input.reserveTokenSupplyRaw === "0") {
-    return { eligible: false, reason: "This Reserve was never seeded -- no Reserve Tokens exist, so AUM/NAV cannot be computed." };
-  }
+  // DEC-0246: zero supply on a seeded (Active/Paused/WindDown) Reserve is NOT
+  // a reason to hide it. It means every holder redeemed out, and hiding it
+  // made a creator's own Reserve vanish from Discover, search and Manage
+  // ("Salami", 2026-10-15). A never-seeded Reserve is still excluded, by its
+  // assetsInitializing status above. Callers show the empty state
+  // (isEmptyReserve) and its warning instead.
 
   return { eligible: true, reason: null };
 }

@@ -7420,3 +7420,35 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   "evidence": []
 }
 ```
+
+## DEC-0246
+
+```json
+{
+  "id": "DEC-0246",
+  "date": "2026-10-15",
+  "title": "A seeded Reserve whose every Reserve Token was redeemed stays discoverable, with a 'possibly abandoned' warning and Mint disabled",
+  "status": "implemented on fix/empty-reserve-discoverable; not yet deployed",
+  "decision": "Creator: 'keep all reserves discoverable ... only remove the ones that are post complete wind down phase', then 'maybe just add a warning saying this reserve has 0 reserve assets and it's possibly abandoned by the reserve creator, do your own diligence'. evaluateReserveEligibility no longer hides a Reserve for zero supply. A never-seeded Reserve stays hidden by its assetsInitializing status (Creator: keep hidden), and a Closed Reserve no longer exists on-chain. isEmptyReserve() (seeded status + supply 0) drives an 'Empty / possibly abandoned' badge and EMPTY_RESERVE_WARNING on the Discover card and the Reserve page, 'Price unavailable' instead of the 0/0 NAV fallback of 1, and a disabled Mint tab, mobile Mint button and card CTA ('View').",
+  "context": "The Creator launched SOLAMI (Reserve Djpu9bgv...9TdPji) and redeemed everything the same morning; it vanished from Discover, search and Manage Reserve because the shared gate treated supply 0 as 'never seeded'. Mainnet read 2026-10-15: 8 Active Reserves at supply 0 (SOLAMI, I, testt, STOCKLANA, SUPERTEAMGERMANYRULES, ILOVESOLANA, ram, ...gNZRir), every asset vault and fee vault at 0 -- nothing stranded.",
+  "rationale": "Hiding a creator's own Reserve is wrong; a warning is honest. Minting stays disabled because the program cannot do it: mint_reserve_tokens_in_kind(_usdc_fee) requires supply > 0 (ZeroSupply) and seed_reserve(_usdc_fee) requires assetsInitializing and the Manager. Offering a Mint that always fails would be worse than saying why.",
+  "alternativesConsidered": [
+    "Program upgrade letting anyone re-seed an Active Reserve at supply 0 (Creator first chose 'anyone may re-seed', then chose the warning instead) -- would make these Reserves mintable again; needs a Squads upgrade.",
+    "Permanently lock a tiny supply at seed (Uniswap MINIMUM_LIQUIDITY) -- declined by the Creator.",
+    "Show never-seeded Reserves too -- declined (no price; only the creator can seed them)."
+  ],
+  "impact": "App-only; no program, IDL or env change. Landing-stats Reserve counts now include empty Reserves. Closing an empty Reserve (initiate_wind_down + close_reserve, rent back to the Manager) remains possible on-chain but has no UI yet.",
+  "affectedAreas": [
+    "packages/sdk/src/reserveEligibility.ts (zero-supply rule removed; isEmptyReserve, EMPTY_RESERVE_WARNING)",
+    "src/merge/lib/reserveCardProps.ts, src/components/ReserveCard.tsx, src/index.css (.badge-warn)",
+    "src/merge/pages/DTRDetail.tsx",
+    "tests/phase_empty_reserve.ts (new), tests/phase_reserve_eligibility.ts"
+  ],
+  "supersedes": "the 'never seeded = zero supply' rule in reserveEligibility.ts",
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_empty_reserve.ts 5 passing; full offline suite 1526 passing / 4 known failures; tsc -b and npm run build clean.",
+    "Read-only Mainnet reads of the 8 Reserves' vault and fee-vault token accounts: all 0."
+  ]
+}
+```

@@ -30,6 +30,8 @@ export interface ReserveCardProps {
   metrics: ReserveCardMetric[]
   /** Liquidity trust badges (DEC-0218): lock state of the Reserve Token's pool, plus the deep-liquidity signal. Absent = no pool, no row. */
   liquidityBadge?: { kind: 'unlocked' | 'locked' | 'forever'; label: string; deep: boolean }
+  /** DEC-0246: every Reserve Token has been redeemed -- shown as a warning badge. */
+  emptyWarning?: string
   ctaLabel?: string
   /** Rendered as the CTA — a router Link in both call sites, kept generic so this component doesn't depend on a specific router. */
   renderCta: (props: { className: string; children: ReactNode }) => ReactNode
@@ -58,6 +60,7 @@ export function ReserveCard({
   topAssets,
   metrics,
   liquidityBadge,
+  emptyWarning,
   ctaLabel = 'Mint',
   renderCta,
 }: ReserveCardProps) {
@@ -99,6 +102,12 @@ export function ReserveCard({
       </div>
 
       <p className={`fcard-desc ${liquidityBadge ? 'lc2 fcard-desc-with-liq' : 'lc3'}`}>{description}</p>
+
+      {emptyWarning && (
+        <div className="fcard-liq">
+          <span className="badge badge-warn" title="Every Reserve Token has been redeemed, so it holds no assets. Do your own research.">{emptyWarning}</span>
+        </div>
+      )}
 
       {liquidityBadge && (
         <div className="fcard-liq">

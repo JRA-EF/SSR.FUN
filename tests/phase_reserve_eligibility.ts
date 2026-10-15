@@ -98,10 +98,16 @@ describe("evaluateReserveEligibility (packages/sdk/src/reserveEligibility.ts) --
     expect(evaluateReserveEligibility(baseInput({ status: "windDown" })).eligible).to.equal(true);
   });
 
-  it("is NOT eligible for a never-seeded Reserve (zero Reserve Token supply) even if otherwise fully valid", () => {
-    const result = evaluateReserveEligibility(baseInput({ reserveTokenSupplyRaw: "0" }));
-    expect(result.eligible).to.equal(false);
-    expect(result.reason).to.match(/never seeded/);
+  it("IS eligible for a seeded Reserve whose every token was redeemed (zero supply) -- DEC-0246, it stays discoverable with a warning", () => {
+    for (const status of ["active", "paused", "windDown"]) {
+      expect(evaluateReserveEligibility(baseInput({ status, reserveTokenSupplyRaw: "0" })).eligible).to.equal(true);
+    }
+  });
+
+  it("is NOT eligible for a never-seeded Reserve (assetsInitializing, zero supply) or a created one", () => {
+    for (const status of ["assetsInitializing", "created"]) {
+      expect(evaluateReserveEligibility(baseInput({ status, reserveTokenSupplyRaw: "0" })).eligible).to.equal(false);
+    }
   });
 
   it("is NOT eligible for the explicit HIDDEN_RESERVE_ADDRESSES entry, regardless of everything else being valid", () => {

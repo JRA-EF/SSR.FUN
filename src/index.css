@@ -937,6 +937,12 @@ input, select, textarea {
    Reserve cards. Same taxonomy as the Reserve page's badges -- amber caution
    for unlocked, accent for a running lock, action yellow for permanent, and
    green for deep liquidity. Tokens adapt per theme. */
+.badge-warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+}
+
 .badge-liq-unlocked {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
