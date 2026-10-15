@@ -7,6 +7,7 @@ import { applyDesignDemo } from "./designDemo";
 import { computeMarketCap } from "./onChainReserve";
 import { isDeepLiquidity, liquidityBadgeKind, lockRemainingDays, poolTvlUsd, type LiquidityPoolPreview } from "./liquidityPreview";
 import { normalizeReserveCategory, type DTR } from "./types";
+import { isEmptyReserve } from "@ssr/sdk";
 
 export interface ReserveCardData {
   name: string;
@@ -28,6 +29,10 @@ export interface ReserveCardData {
   metrics: { key: string; label: string; value: string; tone?: "up" | "down" }[];
   /** Liquidity trust badges (DEC-0218) -- present only when this Reserve has a pool. */
   liquidityBadge?: ReserveCardLiquidityBadge;
+  /** DEC-0246: set when every Reserve Token has been redeemed -- the card shows it as a warning badge. */
+  emptyWarning?: string;
+  /** The card's button label; an empty Reserve cannot be minted, so it reads "View". */
+  ctaLabel?: string;
 }
 
 /** Plain-data shape ReserveCard renders as the liquidity trust pills -- computed here so Discover and Featured Reserves can never drift. */
@@ -99,7 +104,10 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, stat
   const demo = applyDesignDemo(dtr, isMainnet);
   const change24h = demo ? demo.change24h : dtr.change24h;
   const recentHistory = buildLineSeries(demo ? demo.priceHistory : dtr.priceHistory, "7d", validNav);
-  const pricingUnavailable = isMainnet && dtr.onChain?.priceSource === "unavailable";
+  // DEC-0246: with no Reserve Tokens in existence there is no price to show
+  // (the NAV fallback of 1 is a 0/0 guard, not a price).
+  const empty = isEmptyReserve(dtr.onChain);
+  const pricingUnavailable = (isMainnet && dtr.onChain?.priceSource === "unavailable") || empty;
   const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
   // All-time PNL (%): the same figure (and the same guards) as DTRDetail's
   // stats band -- current Token Price vs. the earliest point of the history.
@@ -157,6 +165,7 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, stat
       { key: "volume", label: "All-Time Volume", value: allTimeVolume },
     ],
     liquidityBadge: buildLiquidityBadge(dtr, pool),
+    ...(empty ? { emptyWarning: "Empty · possibly abandoned", ctaLabel: "View" } : {}),
   };
 }
 

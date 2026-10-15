@@ -14,6 +14,8 @@ import {
   findReserve,
   findProtocolConfig,
   WRAPPED_SOL_MINT,
+  isEmptyReserve,
+  EMPTY_RESERVE_WARNING,
   type ZapAssetLeg,
 } from "@ssr/sdk";
 import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
@@ -715,6 +717,11 @@ export function DTRDetail() {
   // to claim out while winding down) -- this is what actually lets prior
   // holders claim their share instead of the Reserve just vanishing.
   const isWindingDown = isOnChain && dtr.onChain?.status === "windDown";
+  // DEC-0246: every Reserve Token was redeemed. It stays visible with a
+  // warning, but cannot be minted -- the program's mint needs a non-zero
+  // supply and seed_reserve only accepts a never-seeded Reserve.
+  const isEmpty = isOnChain && isEmptyReserve(dtr.onChain);
+  const mintBlocked = isWindingDown || isEmpty;
 
   /**
    * Re-fetches THIS Reserve's on-chain state + the connected wallet's real
@@ -1102,7 +1109,7 @@ export function DTRDetail() {
   // asset this pass couldn't get a valid Pyth/Jupiter quote for), never a
   // simulated DTR or a DevNet Reserve (neither ever go through the real
   // pricing pipeline -- see onChainReserve.ts's computeAumFromPrices).
-  const pricingUnavailable = isOnChain && IS_MAINNET && dtr.onChain?.priceSource === "unavailable";
+  const pricingUnavailable = (isOnChain && IS_MAINNET && dtr.onChain?.priceSource === "unavailable") || isEmpty;
   const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
   const priceSourceLabel = dtr.onChain?.priceSource === "pyth" ? "Pyth" : dtr.onChain?.priceSource === "jupiter" ? "Jupiter" : dtr.onChain?.priceSource === "mixed" ? "Pyth + Jupiter" : null;
   const priceAgeLabel = (() => {
@@ -2496,6 +2503,11 @@ export function DTRDetail() {
                       Wind Down
                     </Badge>
                   )}
+                  {isEmpty && (
+                    <Badge variant="outline" className="uppercase text-[10px] tracking-wide border-amber-500/50 text-amber-600 dark:text-amber-400">
+                      Empty
+                    </Badge>
+                  )}
                   <Badge variant={isOnChain ? "default" : "secondary"} className="uppercase text-[10px] tracking-wide">
                     {isOnChain ? `Live on Solana ${CLUSTER_LABEL}` : "Simulated Demo"}
                   </Badge>
@@ -2557,6 +2569,12 @@ export function DTRDetail() {
             <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--destructive, #e5484d)", color: "var(--destructive, #e5484d)" }}>
               Live {CLUSTER_LABEL} data could not be refreshed{dtr.chainError ? `: ${dtr.chainError}` : "."} Figures below are the last known
               on-chain state, not necessarily current.
+            </div>
+          )}
+          {isEmpty && (
+            <div className="rounded-lg border border-dashed p-3 text-sm" style={{ borderColor: "var(--warn, #d9a13c)" }}>
+              <strong>Possibly abandoned.</strong> {EMPTY_RESERVE_WARNING} Minting is unavailable: the protocol cannot mint a Reserve
+              whose supply is zero.
             </div>
           )}
           {isWindingDown && (
@@ -2828,10 +2846,10 @@ export function DTRDetail() {
               the panel animate OVER the chart, not behind it. */}
           <div id="section-trade" className="sticky top-24 z-20 scroll-mt-28">
             <Card className="border-border shadow-xl bg-card">
-              <Tabs value={isWindingDown ? "sell" : tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
+              <Tabs value={mintBlocked ? "sell" : tradeTab} onValueChange={(v) => setTradeTab(v as "buy" | "sell")} className="w-full">
                 <CardHeader className="pb-4">
                   <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="buy" disabled={isWindingDown} className="buy-tab font-bold data-[state=active]:text-primary disabled:opacity-40 disabled:cursor-not-allowed" title={isWindingDown ? "This Reserve is winding down -- new mints are disabled." : undefined}>
+                    <TabsTrigger value="buy" disabled={mintBlocked} className="buy-tab font-bold data-[state=active]:text-primary disabled:opacity-40 disabled:cursor-not-allowed" title={isWindingDown ? "This Reserve is winding down -- new mints are disabled." : isEmpty ? "Every Reserve Token has been redeemed -- this Reserve cannot be minted." : undefined}>
                       Mint
                     </TabsTrigger>
                     <TabsTrigger value="sell" className="font-bold data-[state=active]:text-destructive">Redeem</TabsTrigger>
@@ -3453,7 +3471,7 @@ export function DTRDetail() {
       >
         <button
           type="button"
-          disabled={isWindingDown}
+          disabled={mintBlocked}
           className="rounded-full px-8 h-10 text-sm font-bold bg-action text-action-foreground disabled:opacity-40 disabled:cursor-not-allowed"
           onClick={() => {
             setTradeTab("buy");
