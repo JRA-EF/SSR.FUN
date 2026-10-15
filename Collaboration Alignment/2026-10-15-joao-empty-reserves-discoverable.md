@@ -3,7 +3,7 @@
 - **Date:** 2026-10-15
 - **Author:** Joao via Claude Code (Opus 5.5)
 - **Branch / commits:** `fix/empty-reserve-discoverable`, cut from `origin/main` @ `3250b70`
-- **Deployed to:** not yet (waits on the Creator's go)
+- **Deployed to:** production ssr.fun dpl_38y4crRQfnvF3PDqHAhazWUhDfWq (main 7b48dc1), 2026-10-15. Staging not redeployed (Yeh is testing liquidity there).
 - **Decision log:** DEC-0246
 
 ## Why
