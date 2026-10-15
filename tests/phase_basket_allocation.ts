@@ -7,7 +7,7 @@
 // 33.3/33.3/33.3 = 99.9%, the form refuses to submit, and every row still
 // *displays* correctly, so the user cannot see which one is wrong.
 import { expect } from "chai";
-import { TOTAL_BPS, assignRemainder, clearAll, isFullyAllocated, splitEvenly, toBps, toWeight, unallocatedBps } from "../src/merge/lib/basketAllocation";
+import { TOTAL_BPS, apportionBps, assignRemainder, clearAll, isFullyAllocated, splitEvenly, toBps, toWeight, unallocatedBps } from "../src/merge/lib/basketAllocation";
 
 const pct = (w: number) => +(w * 100).toFixed(4);
 
@@ -92,5 +92,46 @@ describe('"Clear"', () => {
     expect(out).to.deep.equal([0, 0, 0]);
     expect(unallocatedBps(out)).to.equal(TOTAL_BPS);
     expect(isFullyAllocated(out)).to.equal(false);
+  });
+});
+
+// DEC-0247: launch converted each row to bps with its own Math.round, so a
+// full basket could sum to 10003/10002 bps and fail "Invalid allocation
+// total (100.03%)" at launch. apportionBps must land on exactly 100%.
+describe("apportionBps -- weights to on-chain bps without overshooting", () => {
+  const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+
+  it("seven equal assets sum to exactly 10000, not 10003", () => {
+    const out = apportionBps(Array.from({ length: 7 }, () => 1 / 7));
+    expect(sum(out)).to.equal(TOTAL_BPS);
+    expect(Math.max(...out) - Math.min(...out)).to.be.at.most(1);
+  });
+
+  it("every basket of 1-12 assets with awkward weights normalised to 100% sums to exactly 10000", () => {
+    for (let n = 1; n <= 12; n++) {
+      for (const raw of [Array.from({ length: n }, () => 1), Array.from({ length: n }, (_, i) => i + 1), Array.from({ length: n }, (_, i) => (i % 3) + 0.1)]) {
+        const total = sum(raw);
+        const out = apportionBps(raw.map((w) => w / total));
+        expect(sum(out), `n=${n} ${raw}`).to.equal(TOTAL_BPS);
+        out.forEach((b) => expect(b).to.be.greaterThan(0));
+      }
+    }
+  });
+
+  it("70% across seven assets keeps exactly 30% unallocated", () => {
+    const out = apportionBps(Array.from({ length: 7 }, () => 0.1));
+    expect(sum(out)).to.equal(7000);
+    const odd = apportionBps(Array.from({ length: 7 }, () => 0.7 / 7));
+    expect(sum(odd)).to.equal(7000);
+  });
+
+  it("never exceeds 100%, even for a slightly over-allocated basket", () => {
+    expect(sum(apportionBps([0.3334, 0.3334, 0.3334]))).to.equal(TOTAL_BPS);
+    expect(sum(apportionBps([0.6, 0.6]))).to.equal(TOTAL_BPS);
+  });
+
+  it("leaves zero, negative and NaN weights at 0bps", () => {
+    expect(apportionBps([0.5, 0, -1, Number.NaN, 0.5])).to.deep.equal([5000, 0, 0, 0, 5000]);
+    expect(apportionBps([])).to.deep.equal([]);
   });
 });

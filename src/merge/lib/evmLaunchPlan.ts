@@ -9,6 +9,7 @@
 // the contract mints and redeems pro-rata against the basket (NAV), so the
 // creator never "picks a share count".
 import type { Address } from "viem";
+import { apportionBps } from "./basketAllocation";
 
 export const D18 = 10n ** 18n;
 /** USDG has 6 decimals. */
@@ -76,9 +77,13 @@ export function isUsdg(address: string, usdg: Address): boolean {
  */
 export function planLaunch(assets: PlannedAsset[], seedUsdgRaw: bigint, usdg: Address): LaunchPlan {
   if (seedUsdgRaw <= 0n) throw new Error("Enter an initial amount in USDG greater than zero.");
-  const bpsList = assets.map((a) => toBps(a.weight));
+  // DEC-0247: refuse only a basket that is really over 100% (the form's 0.01%
+  // tolerance), then apportion, so float rounding of a full basket (seven
+  // equal assets = 10003bps when rounded per row) can never trip it.
+  const rawTotal = assets.reduce((s, a) => s + (Number.isFinite(a.weight) && a.weight > 0 ? a.weight : 0), 0);
+  if (rawTotal > 1.0001) throw new Error("Target weights exceed 100%.");
+  const bpsList = apportionBps(assets.map((a) => a.weight));
   const total = bpsList.reduce((s, b) => s + b, 0);
-  if (total > 10_000) throw new Error("Target weights exceed 100%.");
   const seen = new Set<string>();
   for (const a of assets) {
     const k = a.address.toLowerCase();

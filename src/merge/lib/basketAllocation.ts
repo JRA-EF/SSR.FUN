@@ -64,6 +64,38 @@ export function splitEvenly(count: number): number[] {
   });
 }
 
+/**
+ * Fractional weights -> integer bps for the chain, rounded so the total is
+ * exactly what the weights add up to (DEC-0247). Rounding each row on its own
+ * overshoots: seven equal assets are 1428.57bps each, which rounds to 1429
+ * and sums to 10003 -- "Invalid allocation total (100.03%)" at launch.
+ *
+ * Largest-remainder: the target total is the rounded sum, capped at 100%
+ * (a basket over 100% is first scaled down to 100%); every row gets its
+ * floor, then the leftover bps go one each to the rows with the biggest
+ * fractional parts (ties to the earlier row). A basket that adds up to 100%
+ * therefore always lands on exactly 10000, and one that is deliberately
+ * under 100% keeps its unallocated share. The caller decides whether a
+ * genuinely over-100% basket is an error; this never exceeds 100%.
+ */
+export function apportionBps(weights: number[]): number[] {
+  let exact = weights.map((w) => (Number.isFinite(w) && w > 0 ? w * TOTAL_BPS : 0));
+  const sum = exact.reduce((s, x) => s + x, 0);
+  if (sum > TOTAL_BPS) exact = exact.map((x) => (x * TOTAL_BPS) / sum);
+  const target = Math.min(TOTAL_BPS, Math.round(Math.min(sum, TOTAL_BPS)));
+  const bps = exact.map((x) => Math.floor(x));
+  let leftover = target - bps.reduce((s, b) => s + b, 0);
+  const order = exact
+    .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+    .filter(({ i }) => exact[i] > 0)
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (let k = 0; leftover > 0 && order.length > 0; k = (k + 1) % order.length) {
+    bps[order[k].i] += 1;
+    leftover -= 1;
+  }
+  return bps;
+}
+
 /** "Clear": every asset back to 0%, leaving the whole basket unallocated. */
 export function clearAll(count: number): number[] {
   return Array.from({ length: count }, () => 0);
