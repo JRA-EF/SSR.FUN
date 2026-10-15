@@ -44,8 +44,7 @@ import {
 import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, formatAllocationUsd, type LaunchAssetPlan } from "@/lib/launchFunding";
 import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
-import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, MAINNET_TREASURY_VAULT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
-import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
+import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { requestReserveSnapshotRefresh } from "@/lib/reserveSnapshotClient";
 import { RESERVE_VISIBILITY_NOTE } from "@/lib/walletPromptCopy";
 import { recordAbandonedCreate } from "@/lib/recoveryRecords";
@@ -1354,36 +1353,9 @@ export function CreateDTR({
       // list would otherwise catch up -- see useAppStore.mainnetKnownAssetMints.
       if (IS_MAINNET) addKnownAssetMints(realAssets.map((a) => a.mint));
 
-      // One-approval trading from day one (DEC-0171): create + register the
-      // Reserve's trading lookup table as the deployment's final step, so
-      // this Reserve's very first Buy/Sell composes into a single wallet
-      // approval instead of falling back to the multi-approval flow (the
-      // exact gap behind the live 2026-08-27 four-approval ECHO purchase:
-      // no Reserve had a table registered). Best-effort by design: the
-      // Reserve is already fully deployed at this point, so a declined
-      // popup or a transient failure loses nothing -- trading falls back
-      // exactly as before, and the table can be added later from Manage or
-      // automatically on the first trade that needs it.
-      if (IS_MAINNET) {
-        try {
-          setCreateStep(null);
-          await createAndRegisterReserveAlt(connection, walletCtx, {
-            ssrProgramId: SSR_PROGRAM_ID,
-            reserve: new PublicKey(result.reserve),
-            reserveTokenMint: new PublicKey(result.reserveTokenMint),
-            mintAuthority: new PublicKey(result.mintAuthority),
-            vaultAuthority: new PublicKey(result.vaultAuthority),
-            protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
-            assets: result.assets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
-          });
-          toast({ title: "One-approval mint and redeem enabled", description: "Mints and redemptions of this Reserve complete in a single wallet approval for everyone." });
-        } catch {
-          toast({
-            title: "One-approval mint and redeem not enabled yet",
-            description: "Your Reserve is fully deployed. This optional setup was skipped -- it can be enabled any time from the Manage page, and the first mint or redemption that needs it will offer it again.",
-          });
-        }
-      }
+      // No lookup-table step at launch: the first mint or redemption that
+      // needs this Reserve's table creates and registers it automatically
+      // (the build-buy/build-sell fallback from DEC-0171).
 
       // The launch batch carried create_token_metadata; confirm the account
       // really exists before telling the creator they are done, and publish
@@ -2519,9 +2491,7 @@ export function CreateDTR({
                         // asset the wallet already holds enough of skips its swap at
                         // launch time, which is why the headline says "up to".
                         const swapCount = IS_MAINNET ? assets.filter((a) => a.symbol !== "SOL" && REAL_ASSET_BY_SYMBOL.get(a.symbol)?.mint !== MAINNET_USDC_MINT).length : 0;
-                        // +1 on Mainnet: the optional one-approval-trading
-                        // setup that runs as deployment's final step (DEC-0171).
-                        const approvals = (costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets) + swapCount) + (IS_MAINNET ? 1 : 0);
+                        const approvals = costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets) + swapCount;
                         let step = 1;
                         const lines: ReactNode[] = [];
                         if (registerBatches === 1) {
@@ -2548,13 +2518,6 @@ export function CreateDTR({
                           step += swapCount;
                         }
                         lines.push(<p key="seed">{step++}. Seed the Reserve (deposits the assets, {IS_MAINNET ? "pays the mint fee in USDC to the SSR Treasury and the Manager, " : ""}mints your initial Reserve Tokens)</p>);
-                        if (IS_MAINNET) {
-                          lines.push(
-                            <p key="alt">
-                              {step}. Enable one-approval mint and redeem (optional one-time setup, ~0.002 SOL -- future mints and redemptions of this Reserve then need a single wallet approval; skipping it changes nothing else)
-                            </p>,
-                          );
-                        }
                         return (
                           <>
                             <p className="font-semibold text-foreground">

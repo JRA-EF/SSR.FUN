@@ -1580,7 +1580,7 @@ export function DTRDetail() {
             setMultiAssetBuyStep("One transaction: your USDC is swapped, deposited, and your Reserve Tokens minted -- a single wallet approval.");
             setBuyPhase("preparing");
           } else if (e.phase === "enabling-one-approval-trading") {
-            setMultiAssetBuyStep("One-time setup: enabling one-approval minting for this Reserve (a small separate approval), then your mint completes in a single transaction.");
+            setMultiAssetBuyStep("One-time setup for this Reserve (a small separate approval), then your mint completes in a single transaction.");
             setBuyPhase("awaiting-wallet");
           } else if (e.phase === "signing-batch") {
             // The wallet is about to preview each transaction on its own

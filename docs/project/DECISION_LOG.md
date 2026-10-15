@@ -7419,3 +7419,33 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   "evidence": ["tests/phase_liquidity_manage_tab.ts passing; tsc -b clean; staging deployment checked on live Mainnet data 2026-10-14. Runbook steps 5-7 (funded pool lifecycle) still not run on real funds."]
 }
 ```
+
+## DEC-0243
+
+```json
+{
+  "id": "DEC-0243",
+  "date": "2026-10-15",
+  "title": "Hide the lookup-table (\"One-Approval Mint and Redeem\") feature from the UI; keep its automatic setup during a mint or redemption",
+  "status": "CONFIRMED",
+  "decision": "Creator directive (2026-10-15, did not recognise the Manage card and asked for it to be turned off; chose 'hide every visible mention' over hiding only the Manage card or removing the feature). Removed the Manage Reserve card and its Enable button, removed the optional table step (and its extra wallet approval and toasts) from the end of Launch a Reserve, and reworded the one-time-setup progress line shown during a mint so it no longer names the feature. The build-buy/build-sell path that creates and registers a Reserve's table on the first mint or redemption that needs it is unchanged.",
+  "context": "DEC-0161 added the Manage card ('One-Approval Trading', later reworded to mint/redeem per DEC-0228) and DEC-0171 added the table step at launch. The card asked Managers to pay ~0.003 SOL for something they had no context for.",
+  "rationale": "The automatic fallback already covers every Reserve without a table, so the visible controls add a decision and an approval without adding capability. Keeping the fallback preserves single-approval mints and redemptions for large multi-asset Reserves.",
+  "alternativesConsidered": [
+    "Hide the Manage card only -- leaves the extra approval and wording at the end of Launch a Reserve.",
+    "Remove the feature everywhere -- large multi-asset mints and redemptions would fall back to several wallet approvals."
+  ],
+  "impact": "Launch a Reserve on Mainnet requests one fewer wallet approval. The first large mint or redemption of a new Reserve carries the one-time setup approval instead. Existing registered tables keep working.",
+  "affectedAreas": [
+    "src/merge/pages/ManageDTR.tsx (card, state, fetch and enable handler removed)",
+    "src/merge/pages/CreateDTR.tsx (post-launch table step, approval-count +1 and step line removed)",
+    "src/merge/pages/DTRDetail.tsx, src/merge/lib/multiAssetBuyClient.ts (setup wording)"
+  ],
+  "supersedes": "DEC-0161's Manage control and DEC-0171's launch-time table step (the automatic first-trade setup from DEC-0171 stays)",
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b and vite build clean; oxlint finding count unchanged versus HEAD (11, all pre-existing rules-of-hooks).",
+    "Offline suite 1519 passing, 5 known pre-existing failures (chart selector x2, native-control reset x2, deployed-binary account-shape pinning)."
+  ]
+}
+```
