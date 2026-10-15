@@ -21,3 +21,5 @@
 
 ## Verification
 See the DEC-0247 evidence.
+
+- **Follow-up 2026-10-15:** production `ssr-fun` dpl_B9R2eeBohiGPPwt77w9BGk2PNxTF (main 21a04d3). Staging `ssr-fun-staging` dpl_6bW6FV1kvMmVRdmNUyGE6oRJs3qp = release/2026-10-15 5e2ee8a + 21a04d3 (detached merge 1b77417; liquidity still on, native SOL not included).
