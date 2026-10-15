@@ -22,3 +22,5 @@
 
 ## Verification
 See the DEC-0245 evidence.
+
+- **Follow-up 2026-10-15:** production `ssr-fun` dpl_6Jv7MTESGZPyFsn3k9ecHuJWy7vX (main 2259908, Liquidity tab absent from assets/main-w4e6k_4f.js). Staging `ssr-fun-staging` dpl_2KjpHEwqMUm9MwuqujfCHtkHQm96 = release/2026-10-15 4adea87 + 2259908 (merge 7cada03, detached; tab present). Suite 1519 passing, 5 known failures; tsc -b and vite build clean.
