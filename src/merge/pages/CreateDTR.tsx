@@ -48,6 +48,7 @@ import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MI
 import { createAndRegisterReserveAlt } from "@/lib/reserveAltClient";
 import { requestReserveSnapshotRefresh } from "@/lib/reserveSnapshotClient";
 import { RESERVE_VISIBILITY_NOTE } from "@/lib/walletPromptCopy";
+import { recordAbandonedCreate } from "@/lib/recoveryRecords";
 import { describeAfterLaunchMetadataOutcome, type AfterLaunchMetadataResult } from "@/lib/tokenMetadataAfterLaunch";
 import { ensureReserveTokenMetadataPublishedOnChain } from "@/lib/tokenMetadataAfterLaunchOnChain";
 import { CopySignatureButton } from "@/components/TransactionConfirmation";
@@ -820,13 +821,22 @@ export function CreateDTR({
    * being stuck showing this Resume panel forever.
    */
   const handleAbandonPendingDeploy = () => {
+    // DEC-0241: seed swaps that already landed left reserve assets in the
+    // wallet -- hand them to /recover (re-read for the latest funding state)
+    // so the user can convert them back to USDC.
+    const latest = walletCtx.publicKey ? readPendingReserveDeploy(walletCtx.publicKey.toBase58()) : null;
+    const handedToRecovery =
+      IS_MAINNET && latest !== null && recordAbandonedCreate({ wallet: latest.wallet, reserve: latest.reserve, programId: SSR_PROGRAM_ID.toBase58(), name: latest.name, startedAt: latest.startedAt, assetFunding: latest.assetFunding ?? {} });
     clearPendingReserveDeploy();
     setResumePending(null);
     setResumeError(null);
     toast({
       title: "Stopped tracking this deployment",
-      description: `"${resumePending?.name}" (${resumePending?.reserve}) is still real on-chain, unchanged -- this only stops this browser from tracking it. You can now start a new Reserve.`,
+      description: handedToRecovery
+        ? `"${resumePending?.name}" is still on-chain, unchanged. The assets its seed swaps received are still in your wallet -- convert them back to USDC on the Incomplete transactions page (/recover).`
+        : `"${resumePending?.name}" (${resumePending?.reserve}) is still real on-chain, unchanged -- this only stops this browser from tracking it. You can now start a new Reserve.`,
     });
+    if (handedToRecovery) setLocation("/recover");
   };
 
   if (recovering) {

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
+import { IncompleteTransactionsBanner } from "@/components/IncompleteTransactionsBanner";
 import "./merge.css";
 
 /** Wraps every ported MERGE page in the .merge-scope theme boundary (see
@@ -8,7 +9,10 @@ import "./merge.css";
 export function MergeLayout({ children }: { children: ReactNode }) {
   return (
     <div className="merge-scope min-h-[100dvh]">
-      <TooltipProvider>{children}</TooltipProvider>
+      <TooltipProvider>
+        <IncompleteTransactionsBanner />
+        {children}
+      </TooltipProvider>
       <Toaster />
     </div>
   );

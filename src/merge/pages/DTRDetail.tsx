@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import {
@@ -23,7 +23,7 @@ import { buildDelegateCandidateWallets } from "@/lib/delegateDiscoveryCandidates
 import { executeBuyZapDevUsdc, executeSellZap, ZapBuildError, describeUnknownSignerMessage } from "@/lib/zapClient";
 import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
 import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested, MultiAssetBuyError } from "@/lib/multiAssetBuyClient";
-import { executeMultiAssetSellMainnet } from "@/lib/multiAssetSellClient";
+import { executeMultiAssetSellMainnet, readPendingSell } from "@/lib/multiAssetSellClient";
 import { describeBatchBuyWalletPrompt, describeBatchSellWalletPrompt } from "@/lib/walletPromptCopy";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
@@ -591,6 +591,7 @@ export function DTRDetail() {
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { connection } = useConnection();
 
   // Covers the rarer gap resolveDtrPageState's chainDiscoveryStatus check
@@ -1637,6 +1638,18 @@ export function DTRDetail() {
         // even that read failed, the message says the state is unverified
         // instead of guessing.
         const report = e instanceof MultiAssetBuyError ? e.report : null;
+        // DEC-0241: swaps landed but no Reserve Tokens were minted -- the
+        // wallet now holds reserve assets. Send the user to /recover, where
+        // they can convert them back to USDC (or return here to finish).
+        if (report && !report.reserveTokenMinted && report.legs.some((l) => l.mint !== MAINNET_USDC_MINT && BigInt(l.purchaseAcquiredRaw) > 0n)) {
+          toast({
+            variant: "destructive",
+            title: "Mint did not finish",
+            description: `Some of your USDC was swapped into the Reserve's assets, but no Reserve Tokens were minted (${raw}). Convert those assets back to USDC on the next page, or come back and mint again.`,
+          });
+          setLocation("/recover");
+          return;
+        }
         const reportLines = report
           ? `This mint stopped at: ${report.failedStage}. Verified on-chain after the failure: ${report.legs.map((l) => `${l.mint.slice(0, 4)}...${l.mint.slice(-4)} -- this mint acquired ${l.purchaseAcquiredRaw} of the ${l.requiredRaw} raw needed${l.fundedEnough ? " (fully funded)" : ""}`).join("; ")}. Reserve Tokens minted: ${report.reserveTokenMinted ? "YES -- already in your wallet" : "no"}. ${report.retrySummary}`
           : "The post-failure on-chain state check itself could not complete -- verify your balances on Explorer before retrying.";
@@ -1895,6 +1908,20 @@ export function DTRDetail() {
         setSellPhase("failed");
         const raw = e instanceof Error ? e.message : "The redemption failed.";
         console.error("Sell failed:", raw);
+        // DEC-0241: a batch redemption can fail AFTER the redeem landed --
+        // the Reserve Tokens are gone and some assets sit in the wallet.
+        // Never say "no funds were moved" then; send the user to /recover.
+        const pendingSell = walletCtx.publicKey && dtr.onChain ? readPendingSell(walletCtx.publicKey.toBase58(), dtr.onChain.reserve) : null;
+        if (pendingSell?.redeemConfirmed) {
+          await refreshRealReserveNow().catch(() => undefined);
+          toast({
+            variant: "destructive",
+            title: "Redemption did not finish",
+            description: `Your Reserve Tokens were redeemed, but not every asset could be swapped into USDC (${raw}). Convert what is left on the next page.`,
+          });
+          setLocation("/recover");
+          return;
+        }
         // Same gap/reasoning as handleBuyMainnet's catch above -- see
         // isMultiAssetSellUnsupported's own header for why this should be
         // unreachable from the UI; kept as an honest fallback regardless.

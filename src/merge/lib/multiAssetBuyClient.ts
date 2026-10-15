@@ -43,6 +43,7 @@ import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 import { shouldSubmitMint, buildBuyStateReport, countableAcquiredRaw, computeOwnerTokenDeltaRaw, type BuyStateReport, type TokenBalanceEntry } from "./multiAssetBuyPlan";
 import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
+import { recordMintDust } from "./recoveryRecords";
 
 /** Same threshold createReserveClient.ts's seed funding uses -- routine slippage below this is never reported as a shortfall worth warning about. */
 const SHORTFALL_WARN_PCT = 0.05;
@@ -586,6 +587,17 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     if (rtAfter <= before) {
       throw new Error(`The mint transaction confirmed but your Reserve Token balance has not increased yet (before ${before.toString()}, now ${rtAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`);
     }
+    // DEC-0241: the swap buffer (BUY_SWAP_BUFFER_FRACTION) leaves a little of
+    // each asset behind; /recover works out exactly how much from this mint's
+    // own transactions and offers to convert it to USDC.
+    recordMintDust({
+      wallet: ownerBase58,
+      reserve: reserveBase58,
+      startedAt: Date.now(),
+      mintSignature: signature,
+      reserveTokenMint: params.reserveTokenMint.toBase58(),
+      acquiredRaw: Object.fromEntries(Object.entries(pending!.legFunding).map(([mint, leg]) => [mint, leg.acquiredRaw ?? "0"])),
+    });
     clearPendingBuy(ownerBase58, reserveBase58);
     return { signature, reserveTokensRequested: params.reserveTokensRequested, requiredAmountsRaw, alreadyMinted: false };
   }
