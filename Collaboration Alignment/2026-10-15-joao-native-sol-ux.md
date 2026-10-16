@@ -23,3 +23,5 @@ Users see "SOL" (name "Solana") for the So111… mint everywhere, and never end 
 
 ## Verification
 `tests/phase_native_sol_ux.ts` 6 passing; full offline suite 1543 / 4 known failures; tsc + build clean. Not yet exercised on Mainnet.
+
+- **Follow-up 2026-10-16:** shipped to production `ssr-fun` dpl_HJ5q4FkHSqAEWWjiLbZ5Bsfi3ZEn (main fa02e95 = feat/native-sol-ux + origin/main 7c8f3e1). This also ships DEC-0241 `/recover` and DEC-0242 (Liquidity tab, hidden in prod by VITE_ENABLE_LIQUIDITY, DEC-0245). Build + 165 unit tests green. First live check still owed: a small mint of a Reserve with a SOL leg (batch mint and seed are not server-simulated). Raydium pool-creation permission stays staging-only for testing.
