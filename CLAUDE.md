@@ -8,6 +8,16 @@ Vite + React 19 + TypeScript. Two design systems coexist in this repo:
 - **Ported "merge" pages** (`src/merge/**`): Discover, Create, Portfolio, Manage, and Reserve-detail, ported from the SSR.FUN-MERGE prototype. Styled with Tailwind + shadcn components, scoped under the `.merge-scope` class (`src/merge/merge.css`) so its own color tokens never collide with the native ones — see the comment at the top of `merge.css` for the token-renaming convention (`--font-display` → `--font-merge-display`, `--accent` → `--merge-accent`, etc.) used whenever a merge-side token would otherwise shadow a native `:root` token of the same name.
 - Components from either system can be reused inside the other's pages (e.g. `src/components/ReserveCard.tsx` is native-styled but also rendered inside the merge-scoped Discover page) — when doing this, check for token-name collisions first.
 
+## Mandatory: check and sweep funds before retiring any key
+
+Before rotating, retiring, replacing or deleting ANY key, wallet, keypair or secret (fee keeper, pool payer, deployer, an env-var secret, a buffer authority):
+
+1. Check what it holds: SOL balance, every token account (classic and Token-2022) and the rent locked in them, plus any authority or delegate role.
+2. Tell the Creator the total at risk.
+3. Sweep it to a wallet we control (transfer SOL and tokens, close the accounts) while the key is still usable. Only then remove the secret or switch the authority. If the key exists only in a write-only Vercel Sensitive variable, add a temporary sweep step to the deployment that still holds it BEFORE removing the variable.
+
+Why: on 2026-10-15 (DEC-0248) the fee keeper …GPhsF was rotated and its only copy (a Sensitive Vercel variable) was removed without this check. About 0.44 SOL (0.383 SOL plus token-account rent) was stranded.
+
 ## Mandatory terminology
 
 **Final, as of 2026-08-04 (see `docs/project/DECISION_LOG.md` DEC-0074) — this supersedes both the 2026-07-29 round-3 wording of this section and DEC-0072's same-day decision to keep that wording:**

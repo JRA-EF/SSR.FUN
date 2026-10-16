@@ -57,6 +57,13 @@ describe("planLaunch -- one USDG amount, weights, legs that add up", () => {
     expect(odd.legs.reduce((s, l) => s + l.usdgRaw, 0n)).to.equal(1_000_001n);
   });
 
+  it("a full basket of seven equal assets launches instead of failing on rounding (DEC-0247)", () => {
+    const seven = Array.from({ length: 7 }, (_, i) => ({ ...AAPL, address: `0x${(i + 1).toString(16).padStart(40, "0")}` as `0x${string}`, symbol: `A${i}`, weight: 1 / 7 }));
+    const plan = planLaunch(seven, 1_000_000n, USDG);
+    expect(plan.legs.reduce((s, l) => s + l.bps, 0)).to.equal(10_000);
+    expect(plan.legs.reduce((s, l) => s + l.usdgRaw, 0n)).to.equal(1_000_000n);
+  });
+
   it("refuses weights over 100%, duplicates, a zero seed, and a non-cash asset without a pool", () => {
     expect(() => planLaunch([{ ...AAPL, weight: 0.7 }, { ...FIH, weight: 0.4 }], 1_000_000n, USDG)).to.throw(/exceed 100%/);
     expect(() => planLaunch([{ ...AAPL, weight: 0.3 }, { ...AAPL, weight: 0.3 }], 1_000_000n, USDG)).to.throw(/listed twice/);

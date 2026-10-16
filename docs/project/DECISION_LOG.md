@@ -7542,3 +7542,62 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0247
+
+```json
+{
+  "id": "DEC-0247",
+  "date": "2026-10-15",
+  "title": "Launch weights are apportioned to exactly 100% instead of rounded per asset",
+  "status": "CONFIRMED",
+  "decision": "Creator directive (2026-10-15): 'just round everything to fit the total 100% always, this should never be an error', after launches failed on production and staging with 'Deployment Failed (setup) Invalid allocation total (100.03%)' and '(100.02%)'. Launch now converts weights to basis points with largest-remainder apportionment (apportionBps in src/merge/lib/basketAllocation.ts): every asset gets its floor, and the leftover bps go one at a time to the largest fractional parts, so a full basket always sums to exactly 10000 and a partial one keeps its unallocated share. Used for the Solana launch and cost estimate (CreateDTR.tsx) and the Robinhood launch plan (evmLaunchPlan.planLaunch).",
+  "context": "CreateDTR normalises weights by their total and then called Math.round on each asset's share. Seven equal assets are 1428.57bps each, which rounds to 1429 and sums to 10003. validateCreateReserveAssets correctly refuses more than 10000, so the launch failed after setup. The Robinhood plan rounded the same way and refused more than 10000 as 'Target weights exceed 100%'.",
+  "rationale": "The over-100% guard is right, and the input was valid. The bug was the rounding, so the fix belongs in the conversion rather than in loosening the check. Largest remainder is the method feeMath.apportionToRecipients already uses for fee splits.",
+  "alternativesConsidered": [
+    "Loosen validateCreateReserveAssets to accept a few bps over 100% -- the program and the eligibility check would still see an over-allocated basket.",
+    "Floor every asset -- under-allocates up to n-1 bps, leaving a stray unallocated share the user never chose."
+  ],
+  "impact": "Any basket the form accepts now launches, whatever the asset count or weights. On-chain weights differ from the old per-row rounding by at most 1bp per asset. Robinhood still refuses a basket really over 100% (more than 0.01% over), as the form does.",
+  "affectedAreas": [
+    "src/merge/lib/basketAllocation.ts (apportionBps)",
+    "src/merge/pages/CreateDTR.tsx (launch and cost-estimate weightBps)",
+    "src/merge/lib/evmLaunchPlan.ts (planLaunch)",
+    "tests/phase_basket_allocation.ts, tests/phase_robinhood_launch_plan.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b and vite build clean; offline suite 1531 passing, 5 known pre-existing failures (chart selector x2, native-control reset x2, account-shape pinning).",
+    "New tests: seven equal assets sum to 10000 bps; every basket of 1-12 assets with three weight shapes sums to exactly 10000; 70% across seven assets keeps 7000; a seven-asset Robinhood plan has legs summing to 10000 bps and the full seed."
+  ]
+}
+```
+
+## DEC-0248
+
+```json
+{
+  "id": "DEC-0248",
+  "date": "2026-10-15",
+  "title": "Fee keeper rotated to a key held by both ssr-fun and ssr-fun-staging, so Launch and Mint work on staging",
+  "status": "live: on-chain keeper 6adZbFYM...FBqDVN; production dpl_5YTM8YUKnPSeRzwoAyR9e5rqh1zx; staging dpl_nZJqLWEDvrLWWDz1iKwnWC7bmU8j",
+  "decision": "Staging Launch failed with 'the USDC mint-fee signer is not configured on this deployment': since DEC-0238 every seed and mint is co-signed by SettlementKeeperConfig.keeper, whose secret (...GPhsF) existed only as a write-only Sensitive variable on ssr-fun. The Creator chose to rotate it. New keeper 6adZbFYM83jKSK4fjy7QbSCA8vRLCosBh6m8DoFBqDVN (funded 0.05 SOL), secret set as SSR_FEE_SETTLEMENT_KEEPER_SECRET on both projects, set_fee_settlement_keeper signed by Protocol Admin ...4Rw8 the moment the production redeploy went live. SSR_RAYDIUM_POOL_PAYER_SECRET (...CFoqAS) also added to staging so pool launches work there.",
+  "context": "DEC-0225 created the keeper as a dedicated wallet whose secret lived only in the production Vercel env. Staging (ssr-fun-staging) shares Mainnet with production, so it needs the same single on-chain keeper to co-sign fee quotes.",
+  "rationale": "The program accepts exactly one fee quote signer, so staging can only mint if it holds that key. Staging has no CRON_SECRET, so its fee-settlement cron stops before loading the key and only production settles fees.",
+  "alternativesConsidered": [
+    "Leave staging unable to launch or mint -- declined by the Creator."
+  ],
+  "impact": "Anyone with read access to ssr-fun-staging's env can sign fee quotes (accepted). Old keeper ...GPhsF retired with 0.383 SOL stranded (no holder of its secret). A local copy of the new key is on the Creator's machine.",
+  "affectedAreas": [
+    "Vercel env: ssr-fun, ssr-fun-staging",
+    "Mainnet SettlementKeeperConfig"
+  ],
+  "supersedes": "DEC-0225's 'keeper secret only in the production Vercel env'",
+  "supersededBy": null,
+  "evidence": [
+    "On-chain keeper reads 6adZbFYM...FBqDVN after the rotation.",
+    "Server-built USDC-fee mint for Reserve DYp3f...spB3Zs, co-signed with the new key, simulated on Mainnet: err null, 93,746 CU."
+  ]
+}
+```
