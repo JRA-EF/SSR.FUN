@@ -7601,3 +7601,39 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0250
+
+```json
+{
+  "id": "DEC-0250",
+  "date": "2026-10-18",
+  "title": "Real rebalancing on Mainnet: rebalance_swap_begin/end (flash swap through Jupiter), remove_reserve_asset_compact, one-approval rebalance in Manage",
+  "status": "built on feat/rebalance-execution; program upgrade NOT executed (needs buffer funding + Squads vote); frontend gated on the chain having the instruction",
+  "decision": "Submit Rebalance on Mainnet only ever wrote target weights (update_targets): the Creator rebalanced 'testes' (JUP to 0%, ZEC and USDC added), paid the fee, and the vaults did not change. Nothing in the deployed program can move an asset out of a vault except a pro-rata redemption, so this is a program change. Three additive instructions: (1) rebalance_swap_begin(amount_in, min_out) lends amount_in of a vault asset to the signer and writes a RebalanceTicket PDA; it refuses unless the next SSR instruction in the same transaction is rebalance_swap_end for the same Reserve (instructions sysvar), the signer is the root Manager or a co-manager with EXECUTE_REBALANCE, and SSR's fee quote signer (SettlementKeeperConfig.keeper, the DEC-0238 key) co-signs, which binds min_out. (2) rebalance_swap_end deposits whatever arrived in the signer's buy-asset account since begin into the buy vault, refuses below min_out, closes the ticket. Between them sits the Jupiter route. (3) remove_reserve_asset_compact removes an empty asset from ANY position by moving the last-registered asset into the freed order_index (the old remove_reserve_asset only removes the last one, so JUP could never have been removed). Server: /api/mainnet/build-rebalance plans legs from live vault balances, SSR prices and the targets (lib/mainnet/rebalancePlan.ts), refuses any leg losing more than 5% against SSR prices, builds targets tx + one co-signed tx per leg + one cleanup tx; GET returns whether the deployed program has the instruction. Client: Manage -> Submit Rebalance signs every transaction in ONE wallet approval (signAllTransactions), submits in order, shows per-step results; a 'Rebalance Holdings to Targets' action appears whenever holdings are off target. Composition hides 0% assets with empty vaults.",
+  "context": "Creator, 2026-10-18: 'the rebalance is broken... i did the rebalance, submitted and paid a sol fee and nothing happened'; requirement: the actual values in the Reserve change to the desired assets, the composition reflects it and removes zeroed assets; one approval preferred.",
+  "rationale": "Flash-swap (begin/route/end in one atomic transaction) instead of CPI into Jupiter from the program: no CPI account limits, any Jupiter route works, and atomicity means a failed swap moves nothing. The quote signer co-signature is the same trust model already accepted for the USDC mint fee: the program has no oracle, so SSR's server states the fair minimum. One approval via signAllTransactions over several transactions, because several Jupiter routes never fit one 1232-byte transaction. The frontend asks the chain whether the instruction exists rather than reading an env flag, so deploy order between program and frontend does not matter (DEC-0226 is what an env flag set on one project only caused).",
+  "alternativesConsidered": [
+    "CPI into Jupiter from the program -- rejected: account limits per route, larger attack surface.",
+    "execute_rebalance_leg (DevNet AMM CPI, DEC-0077) -- DevNet test exchange only, never usable on Mainnet.",
+    "Manager funds new assets himself (fund_new_reserve_asset) -- cannot take anything out of a vault; does not rebalance."
+  ],
+  "impact": "Program binary 1,383,608 -> 1,466,624 bytes (sha256 7919dacd81d2edd4bb6947a080c2e2125cf0218fbfafa545ca41154e4705fc7e); the program account needs extending by ~83 KB (~0.42 SOL, permanent, ExtendProgram must run top level) and a ~7.45 SOL buffer deposit (refunded on execute). Purely additive: no existing instruction, account or error number changes (IDL diff: 3 instructions, 1 account, 2 events, errors 6076-6079 appended). Until the upgrade executes, Manage keeps the old target-only Submit Rebalance with copy that says so.",
+  "affectedAreas": [
+    "programs/ssr_protocol: rebalance_swap.rs, remove_reserve_asset_compact.rs, state/rebalance_ticket.rs, errors.rs, events.rs, constants.rs, lib.rs",
+    "packages/sdk: idl, rebalanceSwapInstructions.ts",
+    "lib/mainnet/rebalancePlan.ts, buildRebalance.ts; api/mainnet/build-rebalance.ts",
+    "src/merge/lib/rebalanceClient.ts, onChainReserve.ts; src/merge/pages/ManageDTR.tsx",
+    "tools/rebalance-litesvm (program simulation); scripts/rebalance-dry-run.ts, rebalance-probe.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "origin/main's program builds byte-identical to the live Mainnet program (sha256 88bce6d0..., 1,383,608 bytes), so the upgrade carries only this change.",
+    "tools/rebalance-litesvm against the compiled binary in LiteSVM: real Reserve created and seeded; swap moved A vault 1,000,000 -> 0 and C 0 -> 950,000; refused: begin without end (6076), SSR instruction between begin and end (6076), output below min (6077), wrong quote signer (6068), non-manager (6032), more than the vault (6078), removing a non-empty asset (6017); compact remove of position 0 moved the last asset into it; an in-kind redemption afterwards paid both remaining assets pro-rata in the new order.",
+    "Read-only dry run of the builder on the live 'testes' Reserve: two swaps (11.849154 JUP split into USDC and ZEC, to the last raw unit) + one removal; transactions 987, 1179 and 497 bytes.",
+    "Capability probe on Mainnet: rebalance_swap_end -> custom 101 (not live), update_targets -> 102 (exists), made-up -> 101.",
+    "tests/phase_real_rebalance.ts 16 passing; full offline suite 1570 passing / 5 known failing; cargo test 33 passed; tsc -b, api tsc, vite build clean."
+  ]
+}
+```

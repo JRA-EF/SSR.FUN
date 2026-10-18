@@ -10,6 +10,7 @@ import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
 import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
+import { executeRealRebalance, type RebalanceRunResult } from "@/lib/rebalanceClient";
 import { LiquiditySection } from "@/components/LiquidityModule";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -405,6 +406,26 @@ export function ManageDTR() {
   }, [mainnetCatalogue.tokens]);
   const rebalanceIssuerFilterAvailable = IS_MAINNET && mainnetCatalogue.tokens.some((t) => t.issuer);
   const [onChainTxPending, setOnChainTxPending] = useState<string | null>(null); // which action is in flight, for button disabling
+
+  // DEC-0250: real rebalancing (vaults actually change). On only once the
+  // deployed program has the rebalance swap instruction -- asked of the chain
+  // itself, so it switches on the moment the Mainnet upgrade executes.
+  const [realRebalanceLive, setRealRebalanceLive] = useState(false);
+  const [rebalanceProgress, setRebalanceProgress] = useState<string | null>(null);
+  const [rebalanceResult, setRebalanceResult] = useState<RebalanceRunResult | null>(null);
+  useEffect(() => {
+    if (!IS_MAINNET) return;
+    let cancelled = false;
+    fetch(`${window.location.origin}/api/mainnet/build-rebalance`)
+      .then((r) => r.json())
+      .then((j: { live?: boolean }) => {
+        if (!cancelled) setRealRebalanceLive(j.live === true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Profile-picture editor (Overview tab's Reserve Identity card). The
   // picked file is normalized to a small data URL locally (see
@@ -1215,6 +1236,69 @@ export function ManageDTR() {
   // could not resolve one, a submit would fail on-chain and the sliders
   // would be proposing against an incomplete picture -- so Rebalance pauses.
   const rebalanceChainVisible = dtr.onChain ? dtr.onChain.assetsResolvedFully !== false : true;
+
+  // DEC-0250: the real rebalance. Holdings that are off their targets (or an
+  // asset at 0% that still holds value) can be traded back to target even
+  // when no weight was edited -- that is exactly the "testes" situation where
+  // targets changed on-chain but the vaults never did.
+  const realRebalance = IS_MAINNET && realRebalanceLive;
+  const canExecuteRebalanceOnChain = isRoot || hasOnChainPermission(dtr.onChain, wallet.address, PERMISSION_FLAGS.EXECUTE_REBALANCE);
+  const holdingsOffTarget = currentCompositionRows.some((r) => r.priced && ((r.targetPct === 0 && r.balanceHuman > 0) || Math.abs(r.actualPct - r.targetPct) > 1));
+  const symbolOfMint = (mint: string) =>
+    dtr.onChain?.assets.find((a) => a.mint === mint)?.symbol ?? sessionAddedAssets.find((a) => a.mint === mint)?.symbol ?? `${mint.slice(0, 4)}...${mint.slice(-4)}`;
+  const rebalanceButtonEnabled =
+    totalProposedBps === 10_000 &&
+    rebalanceChainVisible &&
+    onChainTxPending === null &&
+    (realRebalance ? canExecuteRebalanceOnChain && canSubmitRebalance && (hasRebalanceChanges || holdingsOffTarget) : canSubmitRebalance && hasRebalanceChanges);
+
+  async function runRealRebalance() {
+    const reserveAddress = dtr?.onChain?.reserve;
+    if (!reserveAddress || !walletCtx.publicKey) return;
+    setOnChainTxPending("Submit Rebalance");
+    setRebalanceResult(null);
+    try {
+      const result = await executeRealRebalance({
+        connection,
+        wallet: walletCtx,
+        reserve: reserveAddress,
+        // Every current asset (0% ones are sold and removed) plus new ones above 0%.
+        targets: rebalanceAssetPlan.map((a) => ({ mint: a.mint, targetBps: a.targetWeightBps })),
+        origin: window.location.origin,
+        onProgress: (p) =>
+          setRebalanceProgress(
+            p.phase === "building"
+              ? "Working out the swaps..."
+              : p.phase === "awaiting-wallet"
+                ? `Approve ${p.count} transaction${p.count === 1 ? "" : "s"} in your wallet (one approval)...`
+                : p.tx.kind === "swap"
+                  ? `Swapping ${symbolOfMint(p.tx.sellMint!)} for ${symbolOfMint(p.tx.buyMint!)} (${p.index + 1} of ${p.count})...`
+                  : p.tx.kind === "targets"
+                    ? `Saving the new target weights (${p.index + 1} of ${p.count})...`
+                    : `Removing emptied assets (${p.index + 1} of ${p.count})...`,
+          ),
+      });
+      setRebalanceResult(result);
+      const swaps = result.steps.filter((s) => s.tx.kind === "swap");
+      const failed = result.steps.filter((s) => s.status === "failed").length + result.build.skipped.length;
+      toast(
+        failed === 0
+          ? { title: "Rebalance complete", description: `${swaps.length} swap${swaps.length === 1 ? "" : "s"} moved your Reserve's holdings to the new weights.` }
+          : { variant: "destructive", title: "Rebalance partly done", description: "Some swaps did not go through -- see the results below. Nothing was lost; run Submit Rebalance again to finish." },
+      );
+      setProposedWeightsBps({});
+      setSessionAddedAssets([]);
+      if (IS_MAINNET) addKnownAssetMints(rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint));
+      await refreshRealReserveNow(rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint));
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      console.error("Rebalance failed:", raw);
+      toast({ variant: "destructive", title: "Rebalance failed", description: raw });
+    } finally {
+      setRebalanceProgress(null);
+      setOnChainTxPending(null);
+    }
+  }
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl relative">
@@ -2291,9 +2375,18 @@ export function ManageDTR() {
                   <CardHeader>
                     <CardTitle className="text-xl font-merge-display">Reserve Composition & Rebalance</CardTitle>
                     <CardDescription>
-                      Drag a slider to propose a new target weight -- this only records what you intend the Reserve to look like, it
-                      doesn't move any assets yet. Adding, adjusting, or removing an asset below never asks your wallet to approve
-                      anything; only Submit Rebalance does, and it applies your complete proposal in a single approval.{" "}
+                      {realRebalance ? (
+                        <>
+                          Drag a slider to set a new target weight, or add an asset. Submit Rebalance then really moves the Reserve's holdings: it swaps
+                          over-weight assets into under-weight ones through Jupiter, removes any asset you set to 0% once it has been fully swapped out, and asks your wallet
+                          for one approval covering every step. Each swap must deliver at least the amount SSR quotes, or it is cancelled and nothing moves.{" "}
+                        </>
+                      ) : (
+                        <>
+                          Drag a slider to set a new target weight. Submit Rebalance currently records the target weights only -- it does not swap the
+                          Reserve's holdings yet, so the assets in the vaults stay as they are until swapping goes live.{" "}
+                        </>
+                      )}
                       {!canUpdateTargetsOnChain && "You need the Root Manager or a co-manager with Update Targets permission to submit a rebalance."}
                     </CardDescription>
                   </CardHeader>
@@ -2606,27 +2699,74 @@ export function ManageDTR() {
                       </div>
                       <Button
                         onClick={() =>
-                          void runOnChainAction(
-                            "Submit Rebalance",
-                            () => executeSubmitRebalance(connection, walletCtx, dtr.onChain!.reserve, rebalanceAssetPlan),
-                            rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint),
-                          )
+                          realRebalance
+                            ? void runRealRebalance()
+                            : void runOnChainAction(
+                                "Submit Rebalance",
+                                () => executeSubmitRebalance(connection, walletCtx, dtr.onChain!.reserve, rebalanceAssetPlan),
+                                rebalanceAssetPlan.filter((a) => a.isNew).map((a) => a.mint),
+                              )
                         }
-                        disabled={totalProposedBps !== 10_000 || !canSubmitRebalance || !hasRebalanceChanges || onChainTxPending !== null || !rebalanceChainVisible}
+                        disabled={!rebalanceButtonEnabled}
                         title={
                           !canUpdateTargetsOnChain
                             ? "You need the Root Manager or a co-manager with Update Targets permission to submit a rebalance."
                             : !canSubmitRebalance
                               ? "You need the Root Manager or a co-manager with Manage Liquidity Config permission to register a new asset."
-                              : !rebalanceChainVisible
-                                ? "Not every asset this Reserve holds could be read right now. Rebalancing resumes once all of them are visible."
-                                : undefined
+                              : realRebalance && !canExecuteRebalanceOnChain
+                                ? "You need the Root Manager or a co-manager with Execute Rebalance permission to swap the Reserve's holdings."
+                                : !rebalanceChainVisible
+                                  ? "Not every asset this Reserve holds could be read right now. Rebalancing resumes once all of them are visible."
+                                  : undefined
                         }
                         className="w-full sm:w-auto font-bold gap-2"
                       >
-                        <Save className="w-4 h-4" /> {onChainTxPending === "Submit Rebalance" ? "Confirming..." : "Submit Rebalance"}
+                        <Save className="w-4 h-4" /> {onChainTxPending === "Submit Rebalance" ? "Confirming..." : realRebalance && !hasRebalanceChanges && holdingsOffTarget ? "Rebalance Holdings to Targets" : "Submit Rebalance"}
                       </Button>
                     </div>
+                    {rebalanceProgress && (
+                      <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 text-sm flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0" /> {rebalanceProgress}
+                      </div>
+                    )}
+                    {realRebalance && !hasRebalanceChanges && holdingsOffTarget && !rebalanceProgress && (
+                      <div className="bg-amber-500/10 text-amber-700 dark:text-amber-400 p-3 rounded text-sm flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        The Reserve's holdings don't match its target weights. Rebalance Holdings to Targets swaps them into line and removes any asset set to 0%.
+                      </div>
+                    )}
+                    {rebalanceResult && (
+                      <div className="rounded-lg border border-border overflow-hidden text-sm">
+                        <div className="bg-muted/50 px-3 py-2 font-semibold">Rebalance results</div>
+                        <div className="divide-y divide-border/60">
+                          {rebalanceResult.steps.map((s, i) => (
+                            <div key={i} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                              <span>
+                                {s.tx.kind === "swap"
+                                  ? `Swapped ${symbolOfMint(s.tx.sellMint!)} for ${symbolOfMint(s.tx.buyMint!)} (about $${(s.tx.usd ?? 0).toFixed(2)})`
+                                  : s.tx.kind === "targets"
+                                    ? "Saved the new target weights"
+                                    : `Removed ${(s.tx.removes ?? []).map(symbolOfMint).join(", ")} from the Reserve`}
+                              </span>
+                              <span className={s.status === "confirmed" ? "text-emerald-600 dark:text-emerald-400" : s.status === "failed" ? "text-destructive" : "text-muted-foreground"}>
+                                {s.status === "confirmed" ? "Done" : s.status === "failed" ? `Failed: ${s.error}` : "Not sent (an earlier step did not finish)"}
+                                {s.signature && (
+                                  <a href={explorerUrl("tx", s.signature)} target="_blank" rel="noreferrer" className="underline ml-2">
+                                    View
+                                  </a>
+                                )}
+                              </span>
+                            </div>
+                          ))}
+                          {rebalanceResult.build.skipped.map((s, i) => (
+                            <div key={`skip-${i}`} className="px-3 py-2 flex flex-wrap justify-between gap-2">
+                              <span>{`${symbolOfMint(s.sellMint)} into ${symbolOfMint(s.buyMint)}`}</span>
+                              <span className="text-destructive">Left out: {s.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {!rebalanceChainVisible && (
                       <div className="bg-amber-500/10 text-amber-700 dark:text-amber-400 p-3 rounded text-sm flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0" />

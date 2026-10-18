@@ -509,3 +509,27 @@ pub struct MintFeePaidUsdc {
     pub fee_quote_signer: Pubkey,
     pub ts: i64,
 }
+
+/// DEC-0250: one rebalance swap moved value from one vault to another.
+/// Every amount is a real balance change, never caller-supplied.
+#[event]
+pub struct RebalanceSwapExecuted {
+    pub reserve: Pubkey,
+    pub mint_sell: Pubkey,
+    pub mint_buy: Pubkey,
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub min_out: u64,
+    pub executed_by: Pubkey,
+    pub ts: i64,
+}
+
+/// DEC-0250: an asset was removed from any position; the last-registered
+/// asset (if a different one) took over its position.
+#[event]
+pub struct ReserveAssetCompacted {
+    pub reserve: Pubkey,
+    pub removed_mint: Pubkey,
+    pub moved_mint: Option<Pubkey>,
+    pub order_index: u8,
+}

@@ -5329,6 +5329,435 @@ export type SsrProtocol = {
       "args": []
     },
     {
+      "name": "rebalanceSwapBegin",
+      "docs": [
+        "Lends `amount_in` of a vault asset to the signer for a swap; the",
+        "matching `rebalance_swap_end` must follow in the same transaction."
+      ],
+      "discriminator": [
+        231,
+        138,
+        229,
+        251,
+        66,
+        99,
+        163,
+        214
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "delegate"
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "reserveAssetSell",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mintSell"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultSell",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mintSell"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mintSell"
+        },
+        {
+          "name": "signerSellAccount",
+          "docs": [
+            "The signer's own account the sell asset is lent to for the swap."
+          ],
+          "writable": true
+        },
+        {
+          "name": "reserveAssetBuy",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mintBuy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultBuy",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "mintBuy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mintBuy"
+        },
+        {
+          "name": "signerBuyAccount",
+          "docs": [
+            "The signer's own account the swap pays the buy asset into."
+          ]
+        },
+        {
+          "name": "vaultAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ticket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  98,
+                  97,
+                  108,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlementKeeperConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeQuoteSigner",
+          "docs": [
+            "SSR's fee quote signer: its co-signature binds `min_out`."
+          ],
+          "signer": true
+        },
+        {
+          "name": "instructionsSysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "tokenProgramSell"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amountIn",
+          "type": "u64"
+        },
+        {
+          "name": "minOut",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "rebalanceSwapEnd",
+      "docs": [
+        "Deposits the swap's output into the buy vault (at least `min_out`)."
+      ],
+      "discriminator": [
+        166,
+        148,
+        94,
+        198,
+        155,
+        99,
+        159,
+        219
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "docs": [
+            "First account on purpose: begin's sysvar check matches it."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "ticket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  98,
+                  97,
+                  108,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mintBuy"
+        },
+        {
+          "name": "signerBuyAccount",
+          "writable": true
+        },
+        {
+          "name": "vaultBuy",
+          "writable": true
+        },
+        {
+          "name": "tokenProgramBuy"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "recordRebalance",
       "discriminator": [
         204,
@@ -6309,6 +6738,175 @@ export type SsrProtocol = {
           "docs": [
             "see `common::require_reserve_permission`."
           ]
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "removeReserveAssetCompact",
+      "docs": [
+        "Removes an empty asset from any position (swap-remove)."
+      ],
+      "discriminator": [
+        102,
+        207,
+        42,
+        130,
+        161,
+        189,
+        16,
+        169
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveAsset",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "assetMint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "assetMint"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              },
+              {
+                "kind": "account",
+                "path": "assetMint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lastReserveAsset",
+          "docs": [
+            "The last-registered asset, which moves into the freed position. Omit",
+            "it only when the removed asset IS the last one."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "vaultAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "manager",
+          "writable": true
+        },
+        {
+          "name": "delegate"
         },
         {
           "name": "signer",
@@ -8176,6 +8774,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "rebalanceTicket",
+      "discriminator": [
+        37,
+        115,
+        82,
+        51,
+        31,
+        220,
+        91,
+        150
+      ]
+    },
+    {
       "name": "reserve",
       "discriminator": [
         43,
@@ -8542,6 +9153,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "rebalanceSwapExecuted",
+      "discriminator": [
+        229,
+        21,
+        177,
+        49,
+        124,
+        169,
+        181,
+        142
+      ]
+    },
+    {
       "name": "reserveAssetAdded",
       "discriminator": [
         127,
@@ -8552,6 +9176,19 @@ export type SsrProtocol = {
         194,
         168,
         93
+      ]
+    },
+    {
+      "name": "reserveAssetCompacted",
+      "discriminator": [
+        192,
+        156,
+        76,
+        220,
+        94,
+        17,
+        43,
+        21
       ]
     },
     {
@@ -9182,6 +9819,26 @@ export type SsrProtocol = {
       "code": 6075,
       "name": "liquidityPrincipalLocked",
       "msg": "Liquidity principal is locked or this tranche has already been withdrawn."
+    },
+    {
+      "code": 6076,
+      "name": "rebalanceSwapEndMissing",
+      "msg": "A rebalance swap must be followed by its matching finish step in the same transaction."
+    },
+    {
+      "code": 6077,
+      "name": "rebalanceSwapMinimumNotMet",
+      "msg": "The rebalance swap delivered less of the new asset than the minimum SSR quoted."
+    },
+    {
+      "code": 6078,
+      "name": "rebalanceSwapExceedsVault",
+      "msg": "The rebalance swap amount is larger than the vault holds."
+    },
+    {
+      "code": 6079,
+      "name": "rebalanceLastAssetMismatch",
+      "msg": "The asset moved into this position must be the last-registered one."
     }
   ],
   "types": [
@@ -10620,6 +11277,114 @@ export type SsrProtocol = {
       }
     },
     {
+      "name": "rebalanceSwapExecuted",
+      "docs": [
+        "DEC-0250: one rebalance swap moved value from one vault to another.",
+        "Every amount is a real balance change, never caller-supplied."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "mintSell",
+            "type": "pubkey"
+          },
+          {
+            "name": "mintBuy",
+            "type": "pubkey"
+          },
+          {
+            "name": "amountIn",
+            "type": "u64"
+          },
+          {
+            "name": "amountOut",
+            "type": "u64"
+          },
+          {
+            "name": "minOut",
+            "type": "u64"
+          },
+          {
+            "name": "executedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rebalanceTicket",
+      "docs": [
+        "DEC-0250: the short-lived link between `rebalance_swap_begin` and",
+        "`rebalance_swap_end` inside ONE transaction. Created by begin, closed by",
+        "end (rent back to the signer), so it never outlives the transaction:",
+        "begin refuses to run unless end follows it in the same transaction, and",
+        "the transaction is atomic. One per Reserve at a time (seeded by the",
+        "Reserve), so two swaps can never interleave."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "mintSell",
+            "type": "pubkey"
+          },
+          {
+            "name": "mintBuy",
+            "type": "pubkey"
+          },
+          {
+            "name": "vaultBuy",
+            "docs": [
+              "The Reserve's vault for `mint_buy` -- where end must deposit."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "signerBuyAccount",
+            "docs": [
+              "The signer's token account for `mint_buy` the swap pays into."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "buyBalanceBefore",
+            "docs": [
+              "Its balance when begin ran: end deposits only what arrived after it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "amountIn",
+            "type": "u64"
+          },
+          {
+            "name": "minOut",
+            "docs": [
+              "The least `mint_buy` the vault must receive, set by SSR's quote signer."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "reserve",
       "docs": [
         "Canonical per-Reserve state. See docs/protocol/ACCOUNT_MODEL.md \"Reserve\"."
@@ -10786,6 +11551,36 @@ export type SsrProtocol = {
           {
             "name": "ts",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reserveAssetCompacted",
+      "docs": [
+        "DEC-0250: an asset was removed from any position; the last-registered",
+        "asset (if a different one) took over its position."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "removedMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "movedMint",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "orderIndex",
+            "type": "u8"
           }
         ]
       }

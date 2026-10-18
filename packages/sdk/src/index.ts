@@ -35,6 +35,7 @@ export * from "./issuers";
 export * from "./pricing";
 export * from "./transferFeeInstructions";
 export * from "./usdcMintFee";
+export * from "./rebalanceSwapInstructions";
 
 export * from "./liquidityRevenue";
 

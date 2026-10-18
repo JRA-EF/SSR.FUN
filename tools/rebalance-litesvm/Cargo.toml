@@ -1,0 +1,22 @@
+# DEC-0250: runs the REAL compiled ssr_protocol program (target/deploy/
+# ssr_protocol.so) in LiteSVM, in-process, to exercise the rebalance swap and
+# asset compaction end to end. Standalone crate (own [workspace], own lock)
+# on purpose: adding test-only dependencies to the program's workspace could
+# shift shared crate versions and change the Mainnet binary.
+[package]
+name = "rebalance-litesvm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+ssr_protocol = { path = "../../programs/ssr_protocol", features = ["no-entrypoint"] }
+anchor-lang = "1.1.2"
+anchor-spl = { version = "1.1.2", features = ["token", "associated_token", "token_2022"] }
+litesvm = "0.10"
+litesvm-token = "0.10"
+solana-keypair = "3.1"
+solana-signer = "3"
+solana-transaction = "3"

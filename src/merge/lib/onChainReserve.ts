@@ -359,7 +359,10 @@ export function mergeOnChainIntoDTR(
     nav,
     aum: aumUsd,
     liquidityUsdc: aumUsd,
-    composition: assets.map((a) => ({ symbol: a.symbol, name: a.symbol, weight: a.weightBps / 10_000 })),
+    // DEC-0250: an asset at 0% with an empty vault is not part of the Reserve any
+    // more (normally it is removed outright after a rebalance; this covers the
+    // moment in between). One still holding value stays visible.
+    composition: visibleCompositionAssets(assets, vaultBalancesRaw).map((a) => ({ symbol: a.symbol, name: a.symbol, weight: a.weightBps / 10_000 })),
     unallocatedPct: Math.max(0, 1 - onChain.totalTargetWeightBps / 10_000),
     priceHistory: series.priceHistory,
     change24h: series.change24h,
@@ -580,7 +583,10 @@ export function buildDtrFromDiscoveredReserve(
     // getProgramAccounts limitation as delegates/assets) -- 0 is an honest
     // "unknown", never a fabricated figure.
     holders: 0,
-    composition: assets.map((a) => ({ symbol: a.symbol, name: a.symbol, weight: a.weightBps / 10_000 })),
+    // DEC-0250: an asset at 0% with an empty vault is not part of the Reserve any
+    // more (normally it is removed outright after a rebalance; this covers the
+    // moment in between). One still holding value stays visible.
+    composition: visibleCompositionAssets(assets, vaultBalancesRaw).map((a) => ({ symbol: a.symbol, name: a.symbol, weight: a.weightBps / 10_000 })),
     unallocatedPct: Math.max(0, 1 - discovered.totalTargetWeightBps / 10_000),
     isUserCreated: connectedWallet !== null && discovered.manager === connectedWallet,
     priceHistory: [{ t: Date.now(), price: nav }],
@@ -804,4 +810,9 @@ export function parseOnChainReserveId(dtrId: string | undefined): bigint | null 
   } catch {
     return null;
   }
+}
+
+/** DEC-0250: drops assets whose target is 0% AND whose vault is empty -- what a finished rebalance leaves before (or if) the asset is removed. */
+export function visibleCompositionAssets<T extends { mint: string; weightBps: number }>(assets: T[], vaultBalancesRaw: Record<string, string>): T[] {
+  return assets.filter((a) => a.weightBps > 0 || BigInt(vaultBalancesRaw[a.mint] ?? "0") > 0n);
 }

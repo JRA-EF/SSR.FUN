@@ -25,6 +25,10 @@ anchor-spl = { version = "1.1.2", features = ["token", "associated_token", "toke
 # calls into -- see instructions/execute_rebalance_leg.rs. Path dependency,
 # same workspace (Cargo.toml's `members` list) -- not published anywhere.
 ssr_devnet_amm = { path = "../ssr_devnet_amm", features = ["cpi"] }
+# DEC-0250: rebalance_swap_begin reads the instructions sysvar to require its
+# matching rebalance_swap_end in the same transaction. Already in the lock
+# tree via anchor-lang; listed here only to reach its load_* helpers.
+solana-instructions-sysvar = "3.0.1"
 
 # Silences cosmetic "unexpected cfg condition value" warnings from
 # anchor-lang's own macro-generated code, which checks for optional

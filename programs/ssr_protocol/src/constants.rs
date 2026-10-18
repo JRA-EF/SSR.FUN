@@ -44,6 +44,8 @@ pub const SETTLEMENT_AUTHORITY_SEED: &[u8] = b"settlement_authority";
 /// state/settlement_keeper_config.rs's header for why this is a SEPARATE
 /// account from `ProtocolConfig` rather than a field grown onto it.
 pub const SETTLEMENT_KEEPER_CONFIG_SEED: &[u8] = b"settlement_keeper_config";
+/// DEC-0250: one in-flight rebalance swap per Reserve (see state/rebalance_ticket.rs).
+pub const REBALANCE_TICKET_SEED: &[u8] = b"rebalance_ticket";
 
 /// Reserve Token decimals. See docs/protocol/SSR_ARCHITECTURE.md section 2.
 pub const RESERVE_TOKEN_DECIMALS: u8 = 6;

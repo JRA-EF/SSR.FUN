@@ -223,4 +223,13 @@ pub enum SsrError {
     #[msg("Liquidity principal is locked or this tranche has already been withdrawn.")]
     LiquidityPrincipalLocked,
 
+    // DEC-0250: rebalance swaps (append only, preserving every deployed error number).
+    #[msg("A rebalance swap must be followed by its matching finish step in the same transaction.")]
+    RebalanceSwapEndMissing,
+    #[msg("The rebalance swap delivered less of the new asset than the minimum SSR quoted.")]
+    RebalanceSwapMinimumNotMet,
+    #[msg("The rebalance swap amount is larger than the vault holds.")]
+    RebalanceSwapExceedsVault,
+    #[msg("The asset moved into this position must be the last-registered one.")]
+    RebalanceLastAssetMismatch,
 }

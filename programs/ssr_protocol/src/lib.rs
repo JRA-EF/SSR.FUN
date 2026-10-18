@@ -319,6 +319,30 @@ pub mod ssr_protocol {
         instructions::remove_reserve_asset::handler(ctx)
     }
 
+    // --- DEC-0250: real rebalancing on Mainnet ---
+
+    /// Lends `amount_in` of a vault asset to the signer for a swap; the
+    /// matching `rebalance_swap_end` must follow in the same transaction.
+    pub fn rebalance_swap_begin<'info>(
+        ctx: Context<'info, RebalanceSwapBegin<'info>>,
+        amount_in: u64,
+        min_out: u64,
+    ) -> Result<()> {
+        instructions::rebalance_swap::begin_handler(ctx, amount_in, min_out)
+    }
+
+    /// Deposits the swap's output into the buy vault (at least `min_out`).
+    pub fn rebalance_swap_end<'info>(ctx: Context<'info, RebalanceSwapEnd<'info>>) -> Result<()> {
+        instructions::rebalance_swap::end_handler(ctx)
+    }
+
+    /// Removes an empty asset from any position (swap-remove).
+    pub fn remove_reserve_asset_compact<'info>(
+        ctx: Context<'info, RemoveReserveAssetCompact<'info>>,
+    ) -> Result<()> {
+        instructions::remove_reserve_asset_compact::handler(ctx)
+    }
+
     // --- Phase G: wind-down lifecycle ---
 
     pub fn initiate_wind_down<'info>(
