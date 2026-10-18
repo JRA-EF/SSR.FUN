@@ -7601,3 +7601,39 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0249
+
+```json
+{
+  "id": "DEC-0249",
+  "date": "2026-10-18",
+  "title": "Create Reserve: route check before launch, exact-100% gate, swaps before the Reserve exists, 20-minute price lock, slippage accepted",
+  "status": "built on feat/create-preflight; not deployed",
+  "decision": "Five changes to Launch a Reserve, from the Creator's request of 2026-10-15. (1) Leaving Basket Composition runs a read-only route check (new POST /api/mainnet/launch-preflight): for every non-USDC, non-SOL asset, a Jupiter quote of USDC into it for the exact amount the launch will spend, plus a quote back to USDC, plus the Token-2022 compatibility read. Each asset is Ready, Risky (price impact over 3%, or no route back to USDC: can continue), Must remove (no route, or price impact over the 15% the swap proxy refuses), or Could not check (Jupiter busy: never blocks). Must-remove assets block Next until removed; removed assets stay listed with a 'replace it' note. The check re-runs at Launch if the basket or seed changed or it is over 3 minutes old. (2) Next is disabled unless the weights total exactly 100% (bps), with a message saying how much to add or take off; the old 'Unallocated USDC Reserve' row is gone. (3) createReserveOnChain now funds (swaps) BEFORE create-and-register. A swap that fails because of one asset's route throws SeedAssetFundingError with that mint; nothing exists on-chain, so the page returns to Basket Composition with the asset flagged 'Must remove', every field kept, and the assets already swapped for reused from the wallet on the next attempt. (4) Prices are locked for 20 minutes (LAUNCH_PRICE_LOCK_MS) from the first launch attempt: inside the window, retries, relaunches after removing an asset, and Resume reuse already-quoted targets and keep what earlier swaps really delivered, never re-pricing. (5) Slippage is accepted instead of stopping: a swap that does not land is re-quoted at 1.5%, then 3%, then 5% (the proxy's MAX_SLIPPAGE_BPS); the received-vs-quoted gap is shown under each asset in the Wallet Cost Summary and in a footer warning. The whole Create form is saved per wallet (ssr_create_draft_v1, pictures excluded) and restored on return; cleared on launch.",
+  "context": "Creator, 2026-10-15: check every asset for liquidity or route problems before a Reserve is created; on a failure caused by an asset, go back, show which asset, let the user remove it without redoing the whole Reserve; never continue unless the allocation is exactly 100%; ignore price changes for 20 minutes from the start of creation; accept slippage and warn in the wallet summary. Before this, a swap failure happened after create-and-register, leaving a half-built Reserve whose only way forward was Resume with the same broken asset.",
+  "rationale": "Moving the swaps ahead of creation is what makes 'remove the asset and continue' possible: the asset list is written on-chain at registration and cannot be changed while the Reserve is initialising. The route check uses quotes only (no transaction build), sized at the real launch amount, so its verdict matches what the launch will meet. Slippage is capped at the proxy's existing 5% ceiling rather than unlimited, so a sandwiched or broken route still stops instead of losing most of an asset's value.",
+  "alternativesConsidered": [
+    "Keep create-first and add on-chain asset removal for an initialising Reserve -- needs a program upgrade.",
+    "Unlimited slippage -- rejected: exposes the creator to sandwich losses; 5% is the existing proxy ceiling.",
+    "Route check through the existing jupiter-swap proxy -- rejected: it builds a transaction per call and is paced 1.5s per call."
+  ],
+  "impact": "Wallet approval order at launch changes: swaps (and the SOL set-aside) come first, then create-and-register, then seed. A creator who abandons a launch after some swaps keeps those assets in the wallet; /recover does not yet list them (it only knows Reserves that were created). New endpoint /api/mainnet/launch-preflight (quotes only, 12 calls/min per IP). The jupiter-swap proxy now adds a 'reason' field to errors. No program change, no env change.",
+  "affectedAreas": [
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/launchPreflight.ts, createDraft.ts, launchFunding.ts, jupiterSwapClient.ts, basketAllocation.ts",
+    "src/merge/components/LaunchCheckPanel.tsx",
+    "api/mainnet/launch-preflight.ts, api/mainnet/jupiter-swap.ts, lib/mainnet/launchPreflight.ts"
+  ],
+  "supersedes": "DEC-0151's create-then-fund order inside createReserveOnChain (its per-asset funding state machine is kept)",
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_create_preflight.ts: 23 passing.",
+    "Full offline suite: 1577 passing, 5 failing (the 4 known UI-contract failures, plus the deployed-IDL pin test that needs target/idl, absent in a fresh worktree; it fails identically on the unmodified base).",
+    "tsc -b clean; api/mainnet tsconfig clean; vite build OK; oxlint clean on changed files.",
+    "Live read-only run of runLaunchPreflight against Jupiter's lite API: BONK and JUP came back ok with routes; a non-token mint came back blocked with Jupiter's 'is not tradable'.",
+    "Not yet exercised with a real wallet launch."
+  ]
+}
+```

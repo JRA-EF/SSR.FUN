@@ -76,7 +76,7 @@ import {
   type ReserveOnChain,
   type RecipientInput,
 } from "@ssr/sdk";
-import { fetchJupiterSwapQuote, executeJupiterSwap } from "./jupiterSwapClient";
+import { fetchJupiterSwapQuote, executeJupiterSwap, JupiterQuoteError, JupiterSwapNotLandedError } from "./jupiterSwapClient";
 import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded, getCached } from "./rpcResilience";
 import {
   computeFundingShortfall,
@@ -1131,6 +1131,36 @@ export interface JupiterSwapFundingOptions {
    * warn the user. Never fired for a shortfall within SHORTFALL_WARN_PCT.
    */
   onSwapShortfall?: (info: { mint: string; targetRaw: bigint; actualRaw: bigint; shortfallPct: number }) => void;
+  /** DEC-0249: every executed swap's quoted vs really received amount and the slippage it needed -- shown under that asset in the Wallet Cost Summary. */
+  onSwapSettled?: (info: { mint: string; quotedOutRaw: bigint; receivedRaw: bigint; slippageBps: number }) => void;
+}
+
+/**
+ * DEC-0249 (Creator, 2026-10-15): price changes in the reserve assets are
+ * ignored for 20 minutes from the moment a launch starts. Inside that window
+ * an attempt (a retry, a Resume, a relaunch after removing an asset) reuses
+ * the targets already quoted and keeps whatever earlier swaps really
+ * delivered, instead of re-pricing and chasing the market.
+ */
+export const LAUNCH_PRICE_LOCK_MS = 20 * 60_000;
+
+/** DEC-0249: the slippage each retry of a launch swap allows. The last step is the swap proxy's own ceiling (MAX_SLIPPAGE_BPS). */
+export const LAUNCH_SWAP_SLIPPAGE_STEPS_BPS = [150, 300, 500] as const;
+
+/**
+ * DEC-0249: funding failed because of ONE asset's route (no route, too
+ * little liquidity, or every slippage step failed). Thrown before the
+ * Reserve exists, so the creator can remove or replace that asset and launch
+ * again without losing anything -- assets already swapped for stay in the
+ * wallet and count toward the next attempt.
+ */
+export class SeedAssetFundingError extends Error {
+  readonly mint: string;
+  constructor(mint: string, message: string, cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = "SeedAssetFundingError";
+    this.mint = mint;
+  }
 }
 
 /** Below this fraction short of the live quote's expected output, a swap's result is treated as ordinary slippage and never warned about -- comfortably above the default/typical slippageBps (150 = 1.5%) so routine execution-price movement never trips it. */
@@ -1219,6 +1249,8 @@ export interface FundSeedAssetsOptions {
   persistedFunding?: Record<string, PersistedAssetFunding>;
   /** Called with the full updated record on every transition so the caller can persist it (savePendingAssetFunding) -- progress survives refresh/reconnect. */
   onFundingStateChange?: (record: Record<string, PersistedAssetFunding>) => void;
+  /** DEC-0249: epoch ms until which already-quoted targets and already-swapped amounts are kept regardless of price (launch start + LAUNCH_PRICE_LOCK_MS). */
+  priceLockUntil?: number;
 }
 
 async function fundSeedAssetsIdempotent(
@@ -1252,7 +1284,7 @@ async function fundSeedAssetsIdempotent(
   // never inferred from a wallet approval, a submitted transaction, or a
   // timeout, only from an authoritatively verified balance.
   let funding: Record<string, PersistedAssetFunding> = { ...(opts.persistedFunding ?? {}) };
-  const advance = (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw">>) => {
+  const advance = (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw" | "budgetUsdcRaw">>) => {
     funding = advanceAssetFunding(funding, mint, to, extra);
     opts.onFundingStateChange?.(funding);
     opts.onAssetProgress?.({ funded: countReadyToSeed(assets.map((a) => funding[a.mint] ?? { mint: a.mint, status: "not_started" })), total: assets.length, mint, stage: to });
@@ -1296,6 +1328,17 @@ async function fundSeedAssetsIdempotent(
         continue;
       }
       const usdcBudgetRaw = BigInt(Math.round(usdBudget * 1_000_000));
+      // DEC-0249: a target quoted for a DIFFERENT budget (the basket was
+      // edited after a failed launch) is not this asset's target any more.
+      // Reset it so the state machine can walk forward again; the wallet's
+      // real balance still counts toward the new target below.
+      const priorForBudget = funding[asset.mint];
+      if (priorForBudget?.budgetUsdcRaw && priorForBudget.budgetUsdcRaw !== usdcBudgetRaw.toString()) {
+        resetForRetry(asset.mint);
+        delete funding[asset.mint].targetRaw;
+        delete funding[asset.mint].verifiedBalanceRaw;
+      }
+      const priceLocked = opts.priceLockUntil !== undefined && Date.now() < opts.priceLockUntil;
       // The price-aware TARGET amount for this asset, replacing the $1-peg
       // placeholder seedAmounts[i] was computed with (only ever correct for
       // real USDC itself). Source, in preference order:
@@ -1326,7 +1369,10 @@ async function fundSeedAssetsIdempotent(
       //    what the shortfall-tolerance machinery already absorbs.
       const persistedTarget = funding[asset.mint];
       let targetRaw: bigint;
-      if (persistedTarget?.status === "ready_to_seed" && persistedTarget.targetRaw) {
+      // DEC-0249: inside the launch's 20-minute price lock ANY target already
+      // quoted for this budget is reused, not only a verified one -- a price
+      // move between attempts never changes what the launch is aiming for.
+      if ((persistedTarget?.status === "ready_to_seed" || priceLocked) && persistedTarget?.targetRaw) {
         targetRaw = BigInt(persistedTarget.targetRaw);
       } else {
         const fullQuote = await getCached(`jupiter-full-quote:${asset.mint}:${usdcBudgetRaw.toString()}`, 60_000, () =>
@@ -1341,7 +1387,17 @@ async function fundSeedAssetsIdempotent(
         // Already holds enough (from a prior confirmed swap, an earlier
         // attempt, or simply already owned) -- verified against the real
         // balance, so straight to ready. No swap, no fee spent.
-        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: existingRaw.toString(), targetRaw: targetRaw.toString() });
+        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: existingRaw.toString(), targetRaw: targetRaw.toString(), budgetUsdcRaw: usdcBudgetRaw.toString() });
+        continue;
+      }
+
+      // DEC-0249: inside the price lock, an asset this launch already swapped
+      // for keeps what its swap really delivered, however far the price or
+      // slippage moved it from the quote. Never swapped for twice.
+      const verifiedEarlier = persistedTarget?.status === "ready_to_seed" && persistedTarget.verifiedBalanceRaw ? BigInt(persistedTarget.verifiedBalanceRaw) : null;
+      if (priceLocked && verifiedEarlier !== null && verifiedEarlier > 0n && existingRaw >= verifiedEarlier) {
+        finalSeedAmounts[i] = verifiedEarlier;
+        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: verifiedEarlier.toString(), targetRaw: targetRaw.toString(), budgetUsdcRaw: usdcBudgetRaw.toString() });
         continue;
       }
 
@@ -1373,7 +1429,7 @@ async function fundSeedAssetsIdempotent(
         // never silently understating what the Reserve actually ends up
         // holding.
         finalSeedAmounts[i] = existingRaw;
-        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: existingRaw.toString(), targetRaw: targetRaw.toString() });
+        advance(asset.mint, "ready_to_seed", { verifiedBalanceRaw: existingRaw.toString(), targetRaw: targetRaw.toString(), budgetUsdcRaw: usdcBudgetRaw.toString() });
         const dustShortfallPct = computeSwapShortfallPct(targetRaw, existingRaw);
         if (dustShortfallPct > SHORTFALL_WARN_PCT) {
           jupiterSwap.onSwapShortfall?.({ mint: asset.mint, targetRaw, actualRaw: existingRaw, shortfallPct: dustShortfallPct });
@@ -1403,12 +1459,39 @@ async function fundSeedAssetsIdempotent(
       // route/amounts can be up to 20s stale, exactly the staleness class
       // the "fresh quote immediately before each swap" invariant exists to
       // prevent).
-      advance(asset.mint, "quoted", { targetRaw: targetRaw.toString() });
-      const quote = await fetchJupiterSwapQuote(asset.mint, existingRaw <= 0n ? usdcBudgetRaw : scaledDeficitUsdcRaw, owner.toBase58());
-
-      jupiterSwap.onSwapStart?.(asset.mint);
-      advance(asset.mint, "awaiting_signature");
-      jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote, (submittedSig) => advance(asset.mint, "submitted", { lastSignature: submittedSig }));
+      advance(asset.mint, "quoted", { targetRaw: targetRaw.toString(), budgetUsdcRaw: usdcBudgetRaw.toString() });
+      const swapInRaw = existingRaw <= 0n ? usdcBudgetRaw : scaledDeficitUsdcRaw;
+      // DEC-0249: slippage never stops a launch. A swap that definitively did
+      // not land (price moved past the allowed slippage, or the blockhash
+      // expired) is re-quoted with more room, up to the proxy's 5% ceiling.
+      // Only a route that is genuinely broken -- no route, a price impact the
+      // proxy refuses, or every slippage step failing -- names the asset so
+      // the creator can remove or replace it.
+      let quotedOutRaw = 0n;
+      let usedSlippageBps: number = LAUNCH_SWAP_SLIPPAGE_STEPS_BPS[0];
+      for (let attempt = 0; ; attempt++) {
+        usedSlippageBps = LAUNCH_SWAP_SLIPPAGE_STEPS_BPS[attempt];
+        try {
+          const quote = await fetchJupiterSwapQuote(asset.mint, swapInRaw, owner.toBase58(), usedSlippageBps);
+          quotedOutRaw = quote.outAmount;
+          jupiterSwap.onSwapStart?.(asset.mint);
+          advance(asset.mint, "awaiting_signature");
+          jupiterSwapSig = await executeJupiterSwap(connection, wallet, quote, (submittedSig) => advance(asset.mint, "submitted", { lastSignature: submittedSig }));
+          break;
+        } catch (e) {
+          if (e instanceof JupiterSwapNotLandedError && attempt + 1 < LAUNCH_SWAP_SLIPPAGE_STEPS_BPS.length) {
+            resetForRetry(asset.mint);
+            advance(asset.mint, "quoted", { targetRaw: targetRaw.toString(), budgetUsdcRaw: usdcBudgetRaw.toString() });
+            continue;
+          }
+          if (e instanceof JupiterSwapNotLandedError) {
+            resetForRetry(asset.mint);
+            throw new SeedAssetFundingError(asset.mint, `${e.message} It failed at every slippage setting up to ${usedSlippageBps / 100}%.`, e);
+          }
+          if (e instanceof JupiterQuoteError && e.isAssetRouteProblem) throw new SeedAssetFundingError(asset.mint, e.message, e);
+          throw e;
+        }
+      }
       advance(asset.mint, "confirmed");
       // Use whatever the swap actually produced -- Jupiter's on-chain swap
       // instruction already enforces its own worst-case slippage floor
@@ -1425,6 +1508,7 @@ async function fundSeedAssetsIdempotent(
       });
       finalSeedAmounts[i] = newBalance;
       advance(asset.mint, "balance_verified", { verifiedBalanceRaw: newBalance.toString() });
+      jupiterSwap.onSwapSettled?.({ mint: asset.mint, quotedOutRaw, receivedRaw: newBalance > existingRaw ? newBalance - existingRaw : 0n, slippageBps: usedSlippageBps });
       // Shortfall is always measured against the FULL target (targetRaw),
       // not the smaller deficit-only quote -- newBalance is the creator's
       // real TOTAL holding (existing + just-acquired), so comparing it
@@ -1623,6 +1707,10 @@ export async function createReserveOnChain(params: {
   onAssetProgress?: (event: AssetFundingProgressEvent) => void;
   /** Persist per-asset funding state on every transition (see savePendingAssetFunding) so progress survives refresh/reconnect. */
   onFundingStateChange?: (record: Record<string, PersistedAssetFunding>) => void;
+  /** DEC-0249: funding progress from an earlier attempt of THIS launch (one that stopped on a bad asset before the Reserve existed). */
+  persistedFunding?: Record<string, PersistedAssetFunding>;
+  /** DEC-0249: launch start + LAUNCH_PRICE_LOCK_MS -- see FundSeedAssetsOptions.priceLockUntil. */
+  priceLockUntil?: number;
 }): Promise<CreateReserveResult> {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
@@ -1647,6 +1735,34 @@ export async function createReserveOnChain(params: {
   const solPriceUsd = params.solPriceUsd ?? SOL_TEST_PRICE_USD;
   const clusterLabel = params.clusterLabel ?? "DevNet";
   const program = buildReadOnlyProgram(connection) as any;
+
+  // DEC-0249: fund FIRST, create second. Every swap runs before the Reserve
+  // exists, so an asset whose route fails stops the launch with nothing
+  // created on-chain: the creator removes or replaces that asset and launches
+  // again, and the assets already swapped for stay in the wallet and count
+  // toward the next attempt (fundSeedAssetsIdempotent reads real balances).
+  // Before this, a route failure left a half-built Reserve whose only way
+  // forward was Resume with the same broken asset.
+  params.onProgress("fund-seed-assets");
+  const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction, solPriceUsd));
+
+  let fundSeedAssetsSig: string | null = null;
+  let finalSeedAmounts = seedAmounts;
+  let fundingStates: PersistedAssetFunding[] = [];
+  try {
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel, {
+      onAssetProgress: params.onAssetProgress,
+      onFundingStateChange: params.onFundingStateChange,
+      persistedFunding: params.persistedFunding,
+      priceLockUntil: params.priceLockUntil,
+    });
+    fundSeedAssetsSig = fundResult.signature;
+    finalSeedAmounts = fundResult.finalSeedAmounts;
+    fundingStates = fundResult.fundingStates;
+  } catch (e) {
+    // addresses null: the Reserve was never created (see CreateDTR.tsx).
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", null, e);
+  }
 
   params.onProgress("create-and-register");
   const addresses: NewReserveAddresses = await deriveNewReserveAddresses(program, programId);
@@ -1749,24 +1865,6 @@ export async function createReserveOnChain(params: {
     createAndRegisterSig = batchSigs[0];
   } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", addresses, e);
-  }
-
-  params.onProgress("fund-seed-assets");
-  const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction, solPriceUsd));
-
-  let fundSeedAssetsSig: string | null = null;
-  let finalSeedAmounts = seedAmounts;
-  let fundingStates: PersistedAssetFunding[] = [];
-  try {
-    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel, {
-      onAssetProgress: params.onAssetProgress,
-      onFundingStateChange: params.onFundingStateChange,
-    });
-    fundSeedAssetsSig = fundResult.signature;
-    finalSeedAmounts = fundResult.finalSeedAmounts;
-    fundingStates = fundResult.fundingStates;
-  } catch (e) {
-    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", addresses, e);
   }
 
   params.onProgress("seed");
@@ -2039,6 +2137,8 @@ export async function resumeReserveDeploymentOnChain(params: {
       // (never repeat) already-verified assets.
       persistedFunding: pending.assetFunding,
       onFundingStateChange: (record) => savePendingAssetFunding(pending.wallet, record),
+      // DEC-0249: same 20-minute price lock as the launch that created it.
+      priceLockUntil: pending.startedAt + LAUNCH_PRICE_LOCK_MS,
     });
     fundSeedAssetsSig = fundResult.signature;
     finalSeedAmounts = fundResult.finalSeedAmounts;

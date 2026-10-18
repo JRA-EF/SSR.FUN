@@ -108,3 +108,18 @@ export function clearAll(count: number): number[] {
 export function isFullyAllocated(weights: number[]): boolean {
   return weights.reduce((sum, w) => sum + toBps(w), 0) === TOTAL_BPS;
 }
+
+/**
+ * DEC-0249: the Create Reserve gate. Null when the basket is exactly 100%;
+ * otherwise the sentence that tells the user what to fix. The launch never
+ * runs on a basket under or over 100% (Creator, 2026-10-15).
+ */
+export function allocationGateMessage(weights: number[]): string | null {
+  if (weights.length === 0) return "Add at least one asset to the Reserve.";
+  const used = weights.reduce((sum, w) => sum + toBps(w), 0);
+  if (used === TOTAL_BPS) return null;
+  const pct = (bps: number) => `${(bps / 100).toFixed(2).replace(/\.?0+$/, "")}%`;
+  return used < TOTAL_BPS
+    ? `Your allocations add up to ${pct(used)}. They must total exactly 100% before you can continue -- add the missing ${pct(TOTAL_BPS - used)} to one or more assets.`
+    : `Your allocations add up to ${pct(used)}. They must total exactly 100% before you can continue -- take ${pct(used - TOTAL_BPS)} off one or more assets.`;
+}
