@@ -33,3 +33,5 @@
 
 ## Verification
 `tests/phase_create_preflight.ts` 23 passing. Full offline suite 1577 passing / 5 failing (known set plus the IDL pin test that needs `target/idl`). tsc, vite build and oxlint are clean. A live read-only route check against Jupiter's lite API behaved as expected. Not yet run with a real wallet launch.
+
+- **Follow-up 2026-10-18:** deployed to staging `ssr-fun-staging` (strategic-super-reserve.fun) dpl_F5fJ4t3bzBqacL6X8rb6BTQTGPu9 = `feat/create-preflight` d8f29b4 (contains staging's previous build 1b77417, so this also brings DEC-0244 native SOL to staging). Not on main or ssr.fun. The route-check endpoint sits behind the site password gate like every API there; test from a signed-in browser.
