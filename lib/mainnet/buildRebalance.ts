@@ -70,6 +70,10 @@ export interface BuiltRebalanceTx {
   route?: string[];
   /** Mints the cleanup transaction removes. */
   removes?: string[];
+  /** Index of the swap this one relies on (the first half of a route via a hub); sent only if that one confirmed. */
+  dependsOn?: number;
+  /** Hub asset a two-step swap goes through. */
+  via?: string;
 }
 
 export interface BuildRebalanceResult {
@@ -148,14 +152,26 @@ export async function buildRebalanceTransactions(deps: BuildRebalanceDeps, input
     out.push({ kind: "targets", ...toBase64(tx), lastValidBlockHeight });
   }
 
-  // 2. One transaction per swap leg.
+  // 2. One transaction per swap leg. A leg whose direct route will not fit one
+  // transaction (typically a two-pool route into a thin token) goes through a
+  // liquid hub the Reserve already holds instead: sell -> hub, then hub -> buy,
+  // the second sent only if the first confirmed.
   const failedSells = new Set<string>();
+  const legCtx = { delegate, quoteSigner, blockhash, lastValidBlockHeight, programOf, decimalsOf, priceOf, cu };
+  const balanceOf = new Map(planAssets.map((a) => [a.mint, a.balanceRaw]));
   for (const leg of plan.legs) {
     try {
-      out.push(await buildLeg(deps, input, leg, { delegate, quoteSigner, blockhash, lastValidBlockHeight, programOf, decimalsOf, priceOf, cu, simulate: targetsChange ? undefined : deps.simulate }));
+      out.push(await buildLeg(deps, input, leg, { ...legCtx, simulate: targetsChange ? undefined : deps.simulate }));
     } catch (e) {
-      skipped.push({ sellMint: leg.sellMint, buyMint: leg.buyMint, reason: e instanceof Error ? e.message : String(e) });
-      failedSells.add(leg.sellMint);
+      const directReason = e instanceof Error ? e.message : String(e);
+      const viaHub = await buildViaHub(deps, input, leg, finalOrder, balanceOf, { ...legCtx, simulate: targetsChange ? undefined : deps.simulate }).catch(() => null);
+      if (viaHub) {
+        const first = out.length;
+        out.push(viaHub[0], { ...viaHub[1], dependsOn: first });
+      } else {
+        skipped.push({ sellMint: leg.sellMint, buyMint: leg.buyMint, reason: directReason });
+        failedSells.add(leg.sellMint);
+      }
     }
   }
 
@@ -182,6 +198,43 @@ export async function buildRebalanceTransactions(deps: BuildRebalanceDeps, input
     throw new BuildError(422, `None of the swaps could be built: ${skipped.map((s) => s.reason).join(" ")} Nothing was submitted.`);
   }
   return { transactions: out, totalUsd: plan.totalUsd, rows: plan.rows, skipped };
+}
+
+/** Liquid assets a leg may route through when its direct route does not fit; used only if the Reserve holds them. */
+export const REBALANCE_HUB_MINTS = [MAINNET_USDC_MINT, "So11111111111111111111111111111111111111112"];
+
+/**
+ * sell -> hub, then hub -> buy, each its own atomic swap. The second sells no
+ * more of the hub than the vault has now plus the first leg's guaranteed
+ * minimum, so it never depends on more than the first one is sure to deliver.
+ */
+async function buildViaHub(
+  deps: BuildRebalanceDeps,
+  input: BuildRebalanceInput,
+  leg: PlannedLeg,
+  finalOrder: string[],
+  balanceOf: Map<string, bigint>,
+  ctx: Parameters<typeof buildLeg>[3],
+): Promise<[BuiltRebalanceTx, BuiltRebalanceTx] | null> {
+  for (const hub of REBALANCE_HUB_MINTS) {
+    if (hub === leg.sellMint || hub === leg.buyMint || !finalOrder.includes(hub)) continue;
+    const hubPrice = ctx.priceOf(hub);
+    if (!hubPrice) continue;
+    try {
+      const first = await buildLeg(deps, input, { ...leg, buyMint: hub }, ctx);
+      const fairHub = BigInt(Math.floor((leg.usd / hubPrice) * 10 ** ctx.decimalsOf.get(hub)!));
+      const available = (balanceOf.get(hub) ?? 0n) + BigInt(first.minOutRaw!);
+      const amountInRaw = fairHub < available ? fairHub : available;
+      if (amountInRaw <= 0n) continue;
+      const usd = (Number(amountInRaw) / 10 ** ctx.decimalsOf.get(hub)!) * hubPrice;
+      // Not simulated: it relies on the first leg having landed.
+      const second = await buildLeg(deps, input, { sellMint: hub, buyMint: leg.buyMint, amountInRaw, usd, sellsAll: false }, { ...ctx, simulate: undefined });
+      return [{ ...first, via: hub }, { ...second, via: hub }];
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 async function buildLeg(

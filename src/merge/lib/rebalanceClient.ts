@@ -24,6 +24,9 @@ export interface RebalanceBuiltTx {
   usd?: number;
   route?: string[];
   removes?: string[];
+  /** Index of the swap this one relies on (first half of a route via a hub). */
+  dependsOn?: number;
+  via?: string;
 }
 
 export interface RebalanceBuild {
@@ -89,6 +92,7 @@ export async function executeRealRebalance(params: {
   for (let i = 0; i < signed.length; i++) {
     const step = steps[i];
     if (step.tx.kind === "cleanup" && !cleanupAllowed(step.tx, steps)) continue;
+    if (step.tx.dependsOn !== undefined && steps[step.tx.dependsOn]?.status !== "confirmed") continue;
     params.onProgress?.({ phase: "submitting", index: i, count: signed.length, tx: step.tx });
     const { signature, outcome } = await sendAndConfirmWithRebroadcast(params.connection, signed[i].serialize(), step.tx.lastValidBlockHeight);
     step.signature = signature;
