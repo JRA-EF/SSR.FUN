@@ -26,6 +26,7 @@ import { planBasketFeedLegs, LIQUIDITY_TERMS_SIZE } from "../lib/mainnet/basketF
 import { feeTermsToBps, exampleSplit, DEFAULT_FEE_TERMS } from "../src/merge/lib/liquidity/feeTerms";
 import { parseLifecycleRequest } from "../api/mainnet/liquidity";
 import { isLiquidityTermsV2Live } from "../lib/mainnet/createLiquidity";
+import { loadLiquidityTables } from "../lib/mainnet/liquidityLookup";
 
 const PROGRAM = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
 const k = () => Keypair.generate().publicKey;
@@ -159,6 +160,19 @@ describe("DEC-0251 chain probe: v2 switches on when the upgrade executes", () =>
   it("any other answer (account errors) means the instruction exists", async () => {
     expect(await isLiquidityTermsV2Live(sim({ InstructionError: [0, { Custom: 3005 }] }), k(), PROGRAM)).to.equal(true);
     expect(await isLiquidityTermsV2Live(sim({ InstructionError: [0, { Custom: 1010 }] }), k(), PROGRAM)).to.equal(true);
+  });
+});
+
+describe("Liquidity lookup tables: a saved table that was never created", () => {
+  it("is skipped instead of blocking the review (its setup transaction expired before landing)", async () => {
+    const connection = { getMultipleAccountsInfoAndContext: async () => ({ context: { slot: 100 }, value: [null] }) } as any;
+    expect(await loadLiquidityTables(connection, k(), [k()])).to.deep.equal([]);
+  });
+  it("still refuses an address that exists but is not a lookup table", async () => {
+    const connection = { getMultipleAccountsInfoAndContext: async () => ({ context: { slot: 100 }, value: [{ owner: k(), data: Buffer.alloc(0) }] }) } as any;
+    let error = "";
+    try { await loadLiquidityTables(connection, k(), [k()]); } catch (e) { error = String(e); }
+    expect(error).to.include("Liquidity lookup table unavailable");
   });
 });
 
