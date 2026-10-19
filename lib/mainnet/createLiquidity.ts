@@ -54,7 +54,7 @@ export async function isLiquidityTermsV2Live(connection:Pick<Connection,'simulat
  return !/"Custom":101\b/.test(JSON.stringify(value.err??null));
 }
 export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionEnabled:boolean;prices:(mints:string[])=>Promise<Map<string,Price>>},p:{reserve:PublicKey;actor:PublicKey;usdcRaw:bigint;maximumSolRaw:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;lock:TrancheChoice;lookupTables?:PublicKey[]}){
- const now=deps.now??Date.now,expiresAtMs=now()+25000,s=await readLiquidityState(deps,p.reserve);
+ const now=deps.now??Date.now,expiresAtMs=now()+45000,s=await readLiquidityState(deps,p.reserve);
  check(!s.registered&&!s.paused,'Pool already exists or the protocol is paused');check(p.actor.equals(s.creator),'Connect the creator wallet to prepare pool creation');
  check(PublicKey.isOnCurve(s.treasury.toBytes())&&PublicKey.isOnCurve(s.creator.toBytes()),'Program treasuries require their own multisig execution adapter');
  check(p.usdcRaw>0n&&p.usdcRaw<=s.usdcBalance,'Creator treasury has insufficient USDC');

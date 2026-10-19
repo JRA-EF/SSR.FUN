@@ -14,6 +14,6 @@ export async function prepareLiquiditySetup(deps:CompoundReadDeps & {executionEn
  if(!remaining.length)return {complete:true as const,table:table.toBase58(),remaining:0};
  if(existing.length+remaining.length>256)throw new Error('Address table has insufficient capacity');
  instructions.push(AddressLookupTableProgram.extendLookupTable({lookupTable:table,authority:p.actor,payer:p.actor,addresses:remaining.slice(0,20)}));
- const now=deps.now??Date.now,prepared=await simulateLiquidityTransaction({connection:deps.connection,instructions,treasury:s.treasury,creator:p.actor,feePayer:p.actor,action:'setup',reserve:p.reserve,pool:s.pool,expiresAtMs:now()+50000,executionEnabled:deps.executionEnabled,maximumSol:p.maximumSolRaw,now});
+ const now=deps.now??Date.now,prepared=await simulateLiquidityTransaction({connection:deps.connection,instructions,treasury:s.treasury,creator:p.actor,feePayer:p.actor,action:'setup',reserve:p.reserve,pool:s.pool,expiresAtMs:now()+75000,executionEnabled:deps.executionEnabled,maximumSol:p.maximumSolRaw,now});
  return {complete:false as const,table:table.toBase58(),remaining:Math.max(0,remaining.length-20),prepared};
 }

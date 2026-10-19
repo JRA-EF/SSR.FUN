@@ -16,8 +16,12 @@ export function LiquidityTransactionReview({plan}:{plan:PreparedLiquidity}){
   try{const saved=readPendingLiquidity(localStorage,plan);if(saved){setSignature(saved.signature);setMessage(`Saved transaction: ${saved.state}. Check its status before another submission.`);}}catch(e){setMessage(e instanceof Error?e.message:'Saved transaction could not be read.');}
  },[plan]);
  const run=async(work:()=>Promise<void>)=>{if(busy)return;setBusy(true);try{await work();}catch(e){setMessage(e instanceof Error?e.message:'Could not complete this step.');}finally{setBusy(false);}};
- const sign=()=>run(async()=>{const current=generation.current;const result=await signLiquidityPlan({plan,transactionBase64:serialized,confirmation,wallet});if(current!==generation.current)return;setSerialized(result.transactionBase64);setMissing(result.missingSigners);setMessage(result.missingSigners.length?'Signature saved. Connect the next required wallet.':'All required wallets have signed. Ready to submit.');});
- const submit=()=>run(async()=>{const result=await submitLiquidityPlan({connection,storage:localStorage,plan,transactionBase64:serialized,releaseCheck:async()=>{const response=await fetch('/api/mainnet/liquidity-release',{cache:'no-store'});if(!response.ok)return false;const release=await response.json();return release.executionEnabled===true;}});setSignature(result.signature);setMessage(result.message);});
+ const send=async(transactionBase64:string)=>{const result=await submitLiquidityPlan({connection,storage:localStorage,plan,transactionBase64,releaseCheck:async()=>{const response=await fetch('/api/mainnet/liquidity-release',{cache:'no-store'});if(!response.ok)return false;const release=await response.json();return release.executionEnabled===true;}});setSignature(result.signature);setMessage(result.message);};
+ // Once the last required wallet signs, send straight away: the review window is short and a second click only loses time.
+ const sign=()=>run(async()=>{const current=generation.current;const result=await signLiquidityPlan({plan,transactionBase64:serialized,confirmation,wallet});if(current!==generation.current)return;setSerialized(result.transactionBase64);setMissing(result.missingSigners);
+  if(result.missingSigners.length){setMessage('Signature saved. Connect the next required wallet.');return;}
+  setMessage('All required wallets have signed. Submitting…');await send(result.transactionBase64);});
+ const submit=()=>run(()=>send(serialized));
  const reconcile=()=>run(async()=>{const result=await reconcileLiquidity(connection,localStorage,plan);setMessage(result?`Transaction ${result.state}.`:'No saved transaction for this Reserve and treasury.');if(result)setSignature(result.signature);});
  return <div className="space-y-3">
   <p className="text-sm">Required wallets: {plan.requiredSigners.map(k=>`${k.slice(0,6)}…${k.slice(-4)}`).join(', ')}</p>

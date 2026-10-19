@@ -37,7 +37,7 @@ export async function checkLiquidityMessage(plan:LiquidityExecutionPlan,serializ
 }
 function current(p:LiquidityExecutionPlan,now:number){
  if(!p.executionEnabled)throw new Error('Liquidity execution has not been released');
- if(!Number.isSafeInteger(p.expiresAtMs)||now>=p.expiresAtMs)throw new Error('Liquidity review expired; no new signature or submission is allowed');
+ if(!Number.isSafeInteger(p.expiresAtMs)||now>=p.expiresAtMs)throw new Error('Liquidity review expired before it was sent, so nothing was submitted or spent. Prepare it again for a fresh review.');
 }
 export async function signLiquidityPlan(p:{plan:LiquidityExecutionPlan;transactionBase64?:string;confirmation:string;wallet:{publicKey:PublicKey|null;signTransaction?:(tx:VersionedTransaction)=>Promise<VersionedTransaction>};now?:()=>number}){
  const now=p.now??Date.now;current(p.plan,now());
