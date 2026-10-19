@@ -8,7 +8,7 @@
 // asset will be swapped from, and says per asset: fine, risky, or must go.
 //
 // Read-only: quotes only, never builds or signs a transaction.
-import { MAINNET_USDC_MINT, MAX_PRICE_IMPACT_PCT, describeSwapFailure, fetchJupiterQuoteWithRetry, routeLabelsOf, type JupiterCallResult, type JupiterQuote, type JupiterQuoteParams } from "./jupiter";
+import { JUPITER_KEY_REJECTED_MESSAGE, MAINNET_USDC_MINT, MAX_PRICE_IMPACT_PCT, describeSwapFailure, fetchJupiterQuoteWithRetry, isJupiterKeyRejected, routeLabelsOf, type JupiterCallResult, type JupiterQuote, type JupiterQuoteParams } from "./jupiter";
 
 export const WRAPPED_SOL_MINT_STR = "So11111111111111111111111111111111111111112";
 /** Above this price impact an asset still launches, but the creator is told it is thin and will land noticeably short. */
@@ -61,6 +61,7 @@ export function classifyPreflight(
 ): PreflightAssetResult {
   const base = { mint: input.mint, route: [] as string[], priceImpactPct: null as number | null, expectedOutRaw: null as string | null, canSwapBack: null as boolean | null };
   if (swapIn.kind === "exhausted") {
+    if (isJupiterKeyRejected(swapIn.lastStatus)) return { ...base, status: "unchecked", reason: JUPITER_KEY_REJECTED_MESSAGE };
     return { ...base, status: "unchecked", reason: "Jupiter was busy and could not check this asset right now. It does not block the launch; the swap is checked again when you launch." };
   }
   if (swapIn.kind === "specific-error") {

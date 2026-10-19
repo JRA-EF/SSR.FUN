@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { PublicKey } from "@solana/web3.js";
 import { allocationGateMessage, splitEvenly } from "../src/merge/lib/basketAllocation";
 import { classifyPreflight, needsRouteCheck, runLaunchPreflight, PREFLIGHT_WARN_PRICE_IMPACT_PCT, WRAPPED_SOL_MINT_STR, type PreflightDeps } from "../lib/mainnet/launchPreflight";
-import { MAINNET_USDC_MINT, MAX_PRICE_IMPACT_PCT, MAX_SLIPPAGE_BPS, type JupiterQuote } from "../lib/mainnet/jupiter";
+import { JUPITER_KEY_REJECTED_MESSAGE, MAINNET_USDC_MINT, MAX_PRICE_IMPACT_PCT, MAX_SLIPPAGE_BPS, jupiterExhaustedResponse, type JupiterQuote } from "../lib/mainnet/jupiter";
 import { parsePreflightRequest } from "../api/mainnet/launch-preflight";
 import { blockedAssets, checkLaunchRoutes, isLaunchCheckFresh, launchCheckFingerprint, markLaunchFailure, warningAssets, LAUNCH_CHECK_MAX_AGE_MS, type LaunchCheckAsset } from "../src/merge/lib/launchPreflight";
 import { isMeaningfulDraft } from "../src/merge/lib/createDraft";
@@ -44,6 +44,18 @@ describe("DEC-0249 -- server route classification", () => {
 
   it("Jupiter busy is 'unchecked', never a block", () => {
     expect(classifyPreflight(input, { kind: "exhausted", lastStatus: 429 }, null).status).to.equal("unchecked");
+  });
+
+  it("a rejected Jupiter key (401/403) says so -- never 'busy' or 'network error'", () => {
+    for (const lastStatus of [401, 403]) {
+      const r = classifyPreflight(input, { kind: "exhausted", lastStatus }, null);
+      expect(r.status).to.equal("unchecked");
+      expect(r.reason).to.equal(JUPITER_KEY_REJECTED_MESSAGE);
+      const http = jupiterExhaustedResponse("quote", lastStatus);
+      expect(http.error).to.equal(JUPITER_KEY_REJECTED_MESSAGE);
+      expect(http.error).to.not.match(/network error|busy/i);
+    }
+    expect(jupiterExhaustedResponse("quote", 502).error).to.match(/network error/);
   });
   it("no route is 'blocked' and tells the creator to remove or replace it", () => {
     const r = classifyPreflight(input, { kind: "specific-error", message: "Could not find any route" }, null);

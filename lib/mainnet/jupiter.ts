@@ -307,6 +307,13 @@ export function isPriceImpactAcceptable(quote: Pick<JupiterQuote, "priceImpactPc
   return !(Number.isFinite(pct) && pct > MAX_PRICE_IMPACT_PCT);
 }
 
+/** Jupiter answered 401/403: the server's Jupiter API key was rejected (a configuration problem, not a network one). */
+export function isJupiterKeyRejected(lastStatus: number | null): boolean {
+  return lastStatus === 401 || lastStatus === 403;
+}
+export const JUPITER_KEY_REJECTED_MESSAGE =
+  "Jupiter rejected SSR's server API key (HTTP 401/403), so swaps cannot be quoted right now. This is a problem with SSR's server settings, not your connection or your assets -- please tell the SSR team.";
+
 /** Pure: the HTTP answer for an exhausted-retries Jupiter call -- 429 (with Retry-After 10s) when Jupiter itself rate-limited the key, else 502 with a transient-worded message classifyCreateReserveError already recognizes as retryable. */
 export function jupiterExhaustedResponse(what: "quote" | "transaction", lastStatus: number | null): { status: 429 | 502; retryAfterSeconds?: number; error: string } {
   if (lastStatus === 429) {
@@ -315,6 +322,9 @@ export function jupiterExhaustedResponse(what: "quote" | "transaction", lastStat
       retryAfterSeconds: 10,
       error: "Jupiter's API answered with too many requests for this key right now (a burst of quotes in quick succession) -- wait a few seconds and try again.",
     };
+  }
+  if (isJupiterKeyRejected(lastStatus)) {
+    return { status: 502, error: JUPITER_KEY_REJECTED_MESSAGE };
   }
   return {
     status: 502,
