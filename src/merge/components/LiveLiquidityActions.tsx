@@ -9,6 +9,8 @@ import type {DTR} from '@/lib/types';
 import {formatUsdc} from '@/lib/calculations';
 import {LOCK_MONTH_PRESETS,MIN_LIQUIDITY_USD,QUICK_AMOUNTS_USD,RECOMMENDED_LIQUIDITY_USD} from '@/lib/liquidityPreview';
 import {fromRaw,rawToNumber,toRaw,type LiveLiquidityState,type LockTerm,type LiquiditySummary} from '../lib/liquidity/liveLiquidityClient';
+import {DEFAULT_FEE_TERMS,feeTermsToBps,type FeeTermsValue} from '../lib/liquidity/feeTerms';
+import {LiquidityFeeTerms} from './LiquidityFeeTerms';
 import {Button} from './ui/button';
 import {Input} from './ui/input';
 import {Label} from './ui/label';
@@ -49,13 +51,12 @@ function Warning({children}:{children:ReactNode}){
 /** No pool yet: launch the canonical Raydium pool at the Reserve Token's backing value. */
 export function CreatePoolForm({dtr,state,nav,busy,onPrepare}:{dtr:DTR;state:LiveLiquidityState;nav:number;busy:boolean;onPrepare:PrepareFn}){
  const [total,setTotal]=useState(RECOMMENDED_LIQUIDITY_USD),[customOpen,setCustomOpen]=useState(false),[custom,setCustom]=useState('');
- const [lock,setLock]=useState<LockTerm>('12-month'),[taxOpen,setTaxOpen]=useState(false),[buyTax,setBuyTax]=useState('0'),[sellTax,setSellTax]=useState('0');
+ const [lock,setLock]=useState<LockTerm>('12-month'),[terms,setTerms]=useState<FeeTermsValue>(DEFAULT_FEE_TERMS);
  const [error,setError]=useState('');
  const effective=customOpen?Math.max(0,Number(custom)||0):total,usdcSide=effective/2,tokens=nav>0?usdcSide/nav:0;
  const short=usdcSide>rawToNumber(state.usdcBalanceRaw,6)||tokens>rawToNumber(state.reserveBalanceRaw,state.reserveDecimals);
  const submit=()=>{setError('');try{
-  const tax=(v:string)=>{if(!/^(?:[01](?:\.\d{1,2})?|2(?:\.0{1,2})?)$/.test(v))throw new Error('Project tax must be between zero and two percent.');return Math.round(Number(v)*100);};
-  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),buyTaxBps:tax(buyTax),sellTaxBps:tax(sellTax),lock});
+  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),...feeTermsToBps(terms),lock});
  }catch(e){setError(e instanceof Error?e.message:'Check the amounts.');}};
  return <div className="space-y-5">
   <div className="space-y-2">
@@ -76,15 +77,7 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare}:{dtr:DTR;state:Liv
   <p className="text-xs text-muted-foreground -mt-3">Both sides are balanced at the Reserve Token's current backing value ({formatUsdc(nav)} per token), so the pool opens at fair value instead of gifting an instant profit to arbitrage bots. The exact token amount is fixed in the review.</p>
   <TreasuryLine dtr={dtr} state={state}/>
   <div className="space-y-2"><Label className="text-xs uppercase tracking-wider text-muted-foreground">Lock your liquidity</Label><LockChoice value={lock} onChange={setLock} disabled={busy}/></div>
-  <div>
-   <button type="button" className="text-xs text-muted-foreground underline" onClick={()=>setTaxOpen(v=>!v)}>{taxOpen?'Hide':'Set'} optional project tax</button>
-   {taxOpen&&<div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-    {/* DEC-0240: secondary-market (DEX) project tax only -- never on a mint or redemption. */}
-    <div className="space-y-1"><Label htmlFor="liquidity-buy-tax">Optional project Buy tax (%)</Label><Input id="liquidity-buy-tax" value={buyTax} onChange={e=>setBuyTax(e.target.value)} inputMode="decimal" disabled={busy}/></div>
-    <div className="space-y-1"><Label htmlFor="liquidity-sell-tax">Optional project Sell tax (%)</Label><Input id="liquidity-sell-tax" value={sellTax} onChange={e=>setSellTax(e.target.value)} inputMode="decimal" disabled={busy}/></div>
-    <p className="text-xs text-muted-foreground sm:col-span-2">Applies to DEX trades only, up to 2%. SSR receives 25% of each project tax; zero tax means zero revenue from it.</p>
-   </div>}
-  </div>
+  <div className="border-t border-border pt-5"><LiquidityFeeTerms value={terms} onChange={setTerms} disabled={busy}/></div>
   {effective>0&&effective<MIN_LIQUIDITY_USD&&<Warning>Pools under {formatUsdc(MIN_LIQUIDITY_USD,{compact:true})} produce unstable pricing and a poor chart. We recommend at least {formatUsdc(RECOMMENDED_LIQUIDITY_USD,{compact:true})} in total.</Warning>}
   {short&&<Warning>The creator treasury does not hold enough USDC or {dtr.ticker} for this amount yet.</Warning>}
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}

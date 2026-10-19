@@ -9,7 +9,7 @@ export const RAYDIUM_CPMM = new PublicKey("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQ
 export const SSR_POOL_PAYER = new PublicKey("6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS");
 export const SSR_CPMM_CONFIG = new PublicKey("LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC");
 export const LIQUIDITY_USDC = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-import { findLiquidityRevenue, buildConfigureLiquidityRevenue, buildDistributeLiquidityRevenue } from "@ssr/sdk";
+import { findLiquidityRevenue, buildConfigureLiquidityRevenueV2, buildDistributeLiquidityRevenue, buildDistributeLiquidityRevenueV2 } from "@ssr/sdk";
 
 const DENOMINATOR = 1_000_000n;
 const DISCRIMINATORS = {
@@ -122,7 +122,7 @@ export async function prepareRevenuePool(input: {
   connection: Pick<Connection,'getMultipleAccountsInfo'|'getAccountInfo'>;
   programId: PublicKey; reserve: PublicKey; reserveMint: PublicKey; manager: PublicKey;
   payer: PublicKey; protocolConfig: PublicKey; reserveAmountRaw: bigint; usdcAmountRaw: bigint;
-  openTime: bigint; buyTaxBps: number; sellTaxBps: number;
+  openTime: bigint; buyTaxBps: number; sellTaxBps: number; holderShareBps: number;
 }) {
   if(!input.payer.equals(SSR_POOL_PAYER)) throw new Error('Pool creation requires the Raydium-approved payer (OPEN-14)');
   if(input.reserveAmountRaw<=0n||input.usdcAmountRaw<=0n||input.openTime<0n)throw new Error('Invalid initial liquidity');
@@ -145,7 +145,8 @@ export async function prepareRevenuePool(input: {
     meta(getAssociatedTokenAddressSync(mint0,input.payer,false,program0),true),meta(getAssociatedTokenAddressSync(mint1,input.payer,false,program1),true),meta(getAssociatedTokenAddressSync(lp,input.payer),true),
     meta(pda(Buffer.from('pool_vault'),pool.toBuffer(),mint0.toBuffer()),true),meta(pda(Buffer.from('pool_vault'),pool.toBuffer(),mint1.toBuffer()),true),
     meta(new PublicKey('DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8'),true),meta(pda(Buffer.from('observation'),pool.toBuffer()),true),meta(permissionAddress()),meta(TOKEN_PROGRAM_ID),meta(program0),meta(program1),meta(ASSOCIATED_TOKEN_PROGRAM_ID),meta(SystemProgram.programId)]});
-  const configure=buildConfigureLiquidityRevenue({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)});
+  // DEC-0251: every new pool records the current terms, including the creator's once-only holder share.
+  const configure=buildConfigureLiquidityRevenueV2({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)});
   return {instructions:[initialize,configure],pool,revenue,lpMint:lp,initialLpOwner:input.payer,
     requiresSigners:[input.payer,input.manager],compoundAvailable:false as const,blockers:['LIVE_COMPOUND_EXECUTOR','OPEN-14'] as const};
 }
@@ -157,6 +158,8 @@ export async function prepareRevenueCollect(input: {
  connection:Pick<Connection,'getMultipleAccountsInfo'|'getAccountInfo'>;
  programId:PublicKey;reserve:PublicKey;reserveMint:PublicKey;pool:PublicKey;payer:PublicKey;
  protocolConfig:PublicKey;protocolTreasury:PublicKey;creatorTreasury:PublicKey;
+ /** DEC-0251: the pool has v2 terms (its LiquidityTerms account exists). */
+ termsV2?:boolean;
 }) {
  const revenue=findLiquidityRevenue(input.reserve,input.programId);
  const adapter=new RaydiumPermissionedCpmmAdapter(input.connection);
@@ -168,6 +171,6 @@ export async function prepareRevenueCollect(input: {
  if(staged+collected.netUsdcRaw===0n)throw new Error('No creator DEX earnings to collect');
  const instructions=[input.protocolTreasury,input.creatorTreasury].map(owner=>createAssociatedTokenAccountIdempotentInstruction(input.payer,ata(owner),owner,LIQUIDITY_USDC));
  if(collected.grossUsdcRaw>0n)instructions.push(collected.instruction);
- instructions.push(buildDistributeLiquidityRevenue({...input,staging:ata(revenue),protocolDestination:ata(input.protocolTreasury),creatorDestination:ata(input.creatorTreasury),ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)}));
+ instructions.push((input.termsV2?buildDistributeLiquidityRevenueV2:buildDistributeLiquidityRevenue)({...input,staging:ata(revenue),protocolDestination:ata(input.protocolTreasury),creatorDestination:ata(input.creatorTreasury),ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)}));
  return {instructions,revenue,grossUsdcRaw:collected.grossUsdcRaw,netUsdcRaw:collected.netUsdcRaw+staged};
 }

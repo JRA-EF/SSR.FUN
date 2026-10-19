@@ -70,7 +70,7 @@ pub(crate) fn validate_pool(pool: &AccountInfo, reserve_mint: Pubkey, revenue: P
     require_keys_eq!(key(&d,if usdc0 {264} else {232}), anchor_spl::token_2022::ID, SsrError::LiquidityRevenueValidationFailed);
     Ok(())
 }
-fn retained_rate(config: &AccountInfo, override_account: &AccountInfo, revenue: Pubkey) -> Result<u64> {
+pub(crate) fn retained_rate(config: &AccountInfo, override_account: &AccountInfo, revenue: Pubkey) -> Result<u64> {
     require_keys_eq!(*config.owner, RAYDIUM, SsrError::LiquidityRevenueValidationFailed);
     require_keys_eq!(config.key(), AMM_CONFIG, SsrError::LiquidityRevenueValidationFailed);
     let d = config.try_borrow_data()?;
@@ -87,13 +87,13 @@ fn retained_rate(config: &AccountInfo, override_account: &AccountInfo, revenue: 
     require!(rate <= 50_000, SsrError::LiquidityRevenueValidationFailed);
     Ok(rate)
 }
-pub fn configure(ctx: Context<ConfigureLiquidityRevenue>, buy_tax_bps: u16, sell_tax_bps: u16) -> Result<()> {
-    require!(!ctx.accounts.protocol_config.paused && buy_tax_bps <= 200 && sell_tax_bps <= 200, SsrError::LiquidityRevenueValidationFailed);
-    validate_pool(&ctx.accounts.pool, ctx.accounts.reserve.reserve_token_mint, ctx.accounts.revenue.key())?;
-    let rate = retained_rate(&ctx.accounts.amm_config, &ctx.accounts.creator_fee_share, ctx.accounts.revenue.key())?;
-    *ctx.accounts.revenue = LiquidityRevenue { reserve: ctx.accounts.reserve.key(), pool: ctx.accounts.pool.key(),
-        treasury: ctx.accounts.reserve.fee_config.fee_destination, buy_tax_bps, sell_tax_bps, retained_rate: rate, remainder: 0, bump: ctx.bumps.revenue };
-    Ok(())
+/// DEC-0251: refuses. New pools take the current terms through
+/// `configure_liquidity_revenue_v2`; pools configured here before that
+/// upgrade keep their recorded terms through the v1 instructions below.
+/// Kept (rather than removed) so the instruction and its accounts stay in
+/// the IDL and existing clients get a clear error.
+pub fn configure(_ctx: Context<ConfigureLiquidityRevenue>, _buy_tax_bps: u16, _sell_tax_bps: u16) -> Result<()> {
+    err!(SsrError::LiquidityTermsV2Required)
 }
 
 #[derive(Accounts)]

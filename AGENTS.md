@@ -15,7 +15,7 @@ decision log entry, issue or prompt that disagrees.
 | **Mint** | Getting Reserve Tokens from SSR.fun **in the app**: paying USDC (the app swaps it into the reserve assets, then mints) or depositing reserve assets in kind. New tokens are created. Mint fee applies. | -- |
 | **Redeem** | Handing Reserve Tokens back to SSR.fun **in the app** for the proportional reserve assets, in kind or swapped to USDC. Tokens are burned. | -- |
 | **Buy** / **Sell** | **Strictly secondary-market** trades of existing Reserve Tokens between holders: DEX pools, the future liquidity provision engine. Not offered in the app yet. | The in-app flow. |
-| **Buy tax** / **Sell tax** | **DEC-0240:** optional secondary-market tax (0-2%, set in Manage Reserve's liquidity launch) through SSR swaps only, 25% SSR / 75% project; SSR-created pools also pay SSR 0.05% from the creator-fee bucket. Separate from the Token-2022 transfer fee (0.15%, ceiling 0.25%, 100% SSR). | A mint or a redemption. Ever. |
+| **Buy tax** / **Sell tax** | **DEC-0240:** optional secondary-market tax (0-2%, set in Manage Reserve's liquidity launch) through SSR swaps only. **DEC-0251** (pools created after its upgrade): SSR takes 20% of the creator's pool earnings (creator fee and tax); the creator may share part of the other 80% with holders, fixed at launch, fed into the Reserve's backing over 24h. Older pools keep 25% SSR / 75% project and SSR's 0.05% from the creator-fee bucket. Separate from the Token-2022 transfer fee (0.15%, ceiling 0.25%, 100% SSR). | A mint or a redemption. Ever. |
 
 What you must do:
 

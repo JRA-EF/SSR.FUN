@@ -432,4 +432,19 @@ pub mod ssr_protocol {
 
     pub fn finalize_liquidity_pool(ctx:Context<FinalizeLiquidityPool>)->Result<()>{instructions::liquidity_revenue::finalize_pool(ctx)}
 
+    // DEC-0251: liquidity terms v2 (SSR 20% of creator earnings, optional
+    // holder share fed into the basket over 24 hours).
+    pub fn configure_liquidity_revenue_v2(ctx: Context<ConfigureLiquidityRevenueV2>, buy_tax_bps: u16, sell_tax_bps: u16, holder_share_bps: u16) -> Result<()> {
+        instructions::liquidity_terms::configure_v2(ctx, buy_tax_bps, sell_tax_bps, holder_share_bps)
+    }
+    pub fn distribute_liquidity_revenue_v2(ctx: Context<DistributeLiquidityRevenueV2>) -> Result<()> {
+        instructions::liquidity_terms::distribute_v2(ctx)
+    }
+    pub fn swap_with_project_tax_v2<'info>(ctx: Context<'info, SwapWithProjectTaxV2<'info>>, buy: bool, amount_in: u64, minimum_net_out: u64) -> Result<()> {
+        instructions::liquidity_terms::taxed_swap_v2(ctx, buy, amount_in, minimum_net_out)
+    }
+    pub fn basket_feed_begin<'info>(ctx: Context<'info, BasketFeedBegin<'info>>, amount_in: u64, min_out: u64) -> Result<()> {
+        instructions::liquidity_terms::feed_begin(ctx, amount_in, min_out)
+    }
+
 }

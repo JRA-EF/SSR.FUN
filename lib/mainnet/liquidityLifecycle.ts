@@ -5,7 +5,7 @@ export type {TrancheChoice} from './liquidityTranches';
 import {createHash} from 'node:crypto';
 import {PublicKey,SYSVAR_CLOCK_PUBKEY,type TransactionInstruction} from '@solana/web3.js';
 import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,getAssociatedTokenAddressSync,unpackAccount,unpackMint,getTransferFeeConfig,getEpochFee,getTransferHook,createAssociatedTokenAccountIdempotentInstruction} from '@solana/spl-token';
-import {buildAuthorizeLiquidityAddition,findProtocolConfig,findReserve,findLiquidityRevenue,cpmmLpMint,cpmmAuthority,buildCpmmDeposit,buildCpmmWithdraw,buildMakeLiquidityTranchePermanent,buildExtendLiquidityTranche,buildWithdrawLiquidityTranche,findLiquidityTranche} from '@ssr/sdk';
+import {buildAuthorizeLiquidityAddition,findProtocolConfig,findReserve,findLiquidityRevenue,findLiquidityTerms,findBasketFeed,decodeLiquidityTerms,cpmmLpMint,cpmmAuthority,buildCpmmDeposit,buildCpmmWithdraw,buildMakeLiquidityTranchePermanent,buildExtendLiquidityTranche,buildWithdrawLiquidityTranche,findLiquidityTranche} from '@ssr/sdk';
 import {RAYDIUM_CPMM,SSR_CPMM_CONFIG,LIQUIDITY_USDC,decodePool,decodeConfig,creatorShareAddress,effectiveCreatorShare,prepareRevenueCollect} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {transferNet,transferGross,type CompoundReadDeps} from './compoundQuotes';
 import {simulateLiquidityTransaction} from './prepareCompound';
@@ -21,7 +21,7 @@ export async function readLiquidityState(deps:CompoundReadDeps,reserve:PublicKey
  const [m0,m1]=[mint,LIQUIDITY_USDC].sort((a,b)=>Buffer.compare(a.toBuffer(),b.toBuffer()));
  const vault=(m:PublicKey)=>PublicKey.findProgramAddressSync([Buffer.from('pool_vault'),pool.toBuffer(),m.toBuffer()],RAYDIUM_CPMM)[0];
  const ata=(m:PublicKey,p=TOKEN_PROGRAM_ID,o=treasury)=>getAssociatedTokenAddressSync(m,o,true,p);
- const keys=[reserve,protocolConfig,mint,revenue,pool,SSR_CPMM_CONFIG,creatorShareAddress(revenue),lp,SYSVAR_CLOCK_PUBKEY,ata(LIQUIDITY_USDC),ata(mint,TOKEN_2022_PROGRAM_ID),ata(lp),vault(m0),vault(m1),ata(LIQUIDITY_USDC,TOKEN_PROGRAM_ID,revenue)];
+ const keys=[reserve,protocolConfig,mint,revenue,pool,SSR_CPMM_CONFIG,creatorShareAddress(revenue),lp,SYSVAR_CLOCK_PUBKEY,ata(LIQUIDITY_USDC),ata(mint,TOKEN_2022_PROGRAM_ID),ata(lp),vault(m0),vault(m1),ata(LIQUIDITY_USDC,TOKEN_PROGRAM_ID,revenue),findLiquidityTerms(reserve,programId),findBasketFeed(reserve,programId)];
  const batch=await connection.getMultipleAccountsInfoAndContext(keys,{commitment:'confirmed'}),a=batch.value;
  const owned=(i:number,owner:PublicKey)=>{check(a[i]?.owner.equals(owner),'Liquidity account owner mismatch');return a[i]!;};
  const r=program.coder.accounts.decode('reserve',owned(0,programId).data),protocol=program.coder.accounts.decode('protocolConfig',owned(1,programId).data);
@@ -46,7 +46,11 @@ export async function readLiquidityState(deps:CompoundReadDeps,reserve:PublicKey
   usdc=values[m0.equals(LIQUIDITY_USDC)?0:1];tokens=values[m0.equals(mint)?0:1];lpSupply=data.readBigUInt64LE(333);status=data[329];openTime=data.readBigUInt64LE(373);
   const lpt=unpackMint(lp,owned(7,TOKEN_PROGRAM_ID));check(lpt.isInitialized&&lpt.mintAuthority?.equals(cpmmAuthority())&&lpt.supply<=lpSupply&&lpSupply>0n,'Invalid pool LP mint');lpDecimals=lpt.decimals;
  }else check(!a[3]&&!a[7],'Incomplete canonical pool registration');
- return {reserve,mint,treasury,creator,protocolTreasury,protocolConfig,pool,lp,revenue,ata,rt,fee,time,epoch,slot:batch.context.slot,paused:!!protocol.paused,registered,router,usdc,tokens,lpSupply,status,openTime,lpDecimals,usdcBalance,reserveBalance,lpBalance,staged,retention,
+ // DEC-0251: v2 pools carry their terms (holder share fixed at launch) and a basket feed.
+ const terms=a[15]?decodeLiquidityTerms(owned(15,programId).data):null;
+ check(!terms||(terms.reserve.equals(reserve)&&terms.revenue.equals(revenue)),'Liquidity terms registration changed');
+ const feedBalance=terms?balance(16,LIQUIDITY_USDC,TOKEN_PROGRAM_ID,keys[15]):0n;
+ return {reserve,mint,treasury,creator,protocolTreasury,protocolConfig,pool,lp,revenue,ata,rt,fee,time,epoch,slot:batch.context.slot,paused:!!protocol.paused,registered,router,usdc,tokens,lpSupply,status,openTime,lpDecimals,usdcBalance,reserveBalance,lpBalance,staged,retention,terms,feedBalance,
   fingerprint:createHash('sha256').update(JSON.stringify(keys.map((k,i)=>[k.toBase58(),i===8?epoch.toString():a[i]?.data.toString('base64')??null]))).digest('hex')};
 }
 export type LiquidityState=Awaited<ReturnType<typeof readLiquidityState>>;
@@ -91,7 +95,7 @@ export async function prepareLiquidityLifecycle(deps:CompoundReadDeps & {executi
   watch.push({address:s.ata(LIQUIDITY_USDC),minimum:s.usdcBalance+a.minimumUsdc,program:TOKEN_PROGRAM_ID},{address:s.ata(s.mint,TOKEN_2022_PROGRAM_ID),minimum:s.reserveBalance+a.minimumReserve,program:TOKEN_2022_PROGRAM_ID});
   review={lpWithdrawnRaw:lp.toString(),minimumUsdcRaw:a.minimumUsdc.toString(),minimumReserveRaw:a.minimumReserve.toString()};
  }else if(input.action==='collect'){
-  const c=await prepareRevenueCollect({connection:deps.connection,programId:deps.programId,reserve:s.reserve,reserveMint:s.mint,pool:s.pool,payer:input.actor,protocolConfig:s.protocolConfig,protocolTreasury:s.protocolTreasury,creatorTreasury:s.treasury});instructions.push(...c.instructions);review={grossNativeUsdcRaw:c.grossUsdcRaw.toString(),distributableUsdcRaw:c.netUsdcRaw.toString(),creatorTreasury:s.treasury.toBase58(),protocolTreasury:s.protocolTreasury.toBase58()};
+  const c=await prepareRevenueCollect({connection:deps.connection,programId:deps.programId,reserve:s.reserve,reserveMint:s.mint,pool:s.pool,payer:input.actor,protocolConfig:s.protocolConfig,protocolTreasury:s.protocolTreasury,creatorTreasury:s.treasury,termsV2:!!s.terms});instructions.push(...c.instructions);review={grossNativeUsdcRaw:c.grossUsdcRaw.toString(),distributableUsdcRaw:c.netUsdcRaw.toString(),creatorTreasury:s.treasury.toBase58(),protocolTreasury:s.protocolTreasury.toBase58()};
  }else if(input.action==='lock'){
   const amount=input.lpAmountRaw??0n;check(amount>0n&&amount<=s.lpBalance&&input.lock!=='unlocked','Choose available LP tokens and a lock term');const locked=await appendTrancheLock(deps,s,instructions,amount,input.lock);tranche=locked!.tranche.toBase58();review={lpLockedRaw:amount.toString(),lock:input.lock};
  }else{

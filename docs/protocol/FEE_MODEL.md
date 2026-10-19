@@ -1,4 +1,6 @@
-# SSR.fun fee model (DEC-0240, live)
+# SSR.fun fee model (DEC-0240, live; DEC-0251 liquidity terms v2)
+
+> **DEC-0251 (2026-10-19, Creator ruling):** pools created after the DEC-0251 program upgrade use **liquidity terms v2**: SSR takes 20% of everything the creator earns from the pool (collected creator fee and Buy/Sell tax), and the creator may share part of the remaining 80% with holders, chosen once at launch. See "Liquidity terms v2" below. The two pool rows in the table describe pools created before that upgrade, which keep their recorded terms.
 
 The Creator's 2026-10-13 ruling (DEC-0240) adopts the secondary-market part of Yeh's DEC-0232 model and keeps primary mint/redeem fees as they were live. Mint fees are paid in USDC at mint time (DEC-0238).
 
@@ -24,6 +26,18 @@ Raydium's direct permissionless collect can only fund the router ATA. It cannot 
 ## Optional secondary project tax
 
 A new on-chain swap wrapper invokes Raydium atomically. Buy tax is charged on gross USDC input; the remaining input is swapped. Sell tax is charged on actual USDC received. The final minimum output is checked after project tax and token transfer fees; failure rolls back everything. Rates are configured on-chain at registration, 0-2% per side, and split 25/75 in USDC. Tiny taxes round upward; SSR receives allocation dust. No per-trade caller may override the rate or treasury. Direct external swaps can bypass this optional tax, but cannot bypass the token-level transfer fee or redirect native fees from SSR-created pools.
+
+## Liquidity terms v2 (DEC-0251)
+
+| Revenue | SSR receives | Creator receives | Holders receive |
+|---|---|---|---|
+| Collected creator fee (Raydium's 0.75% after its own retention) | 20% (fractional remainders carried across collections) | 80% minus the holder share | Holder share of the 80% (0-100%, fixed at launch, default 0) |
+| Optional Buy/Sell tax (0-2% per side, set with sliders in the liquidity launch) | 20% (rounding dust to SSR) | 80% minus the holder share | Holder share of the 80% |
+
+- **Where it is recorded:** `configure_liquidity_revenue_v2` writes the taxes and the holder share into the pool's `LiquidityRevenue` + `LiquidityTerms` accounts when the pool is created. No instruction changes them afterwards. v1 `configure_liquidity_revenue` now refuses (`LiquidityTermsV2Required`), so every new pool is v2.
+- **Holder share ("feed the basket"):** paid in USDC to the basket feed (the `LiquidityTerms` PDA's USDC ATA). The program releases it linearly over 24 hours (a new deposit spreads together with whatever is still locked over a fresh 24 hours). Each hour the keeper (fee-settlement-cron job D) collects the pool's creator fees, then splits the released USDC across the Reserve's assets by target weight and runs one atomic transaction per asset: `basket_feed_begin` (keeper-signed; lends the released USDC) -> Jupiter route -> `rebalance_swap_end` (deposits what arrived into the vault, refusing below the quoted minimum). A USDC asset needs no route. Nothing is minted, and mint/redeem price every token from live vault balances, so the backing behind every Reserve Token grows. This mirrors MAG7's "fees go back into the basket" on Robinhood Chain.
+- **Rounding:** SSR's 20% of collected fees carries remainders like v1; the holder part rounds down in the creator's favour; tax total rounds up as in v1.
+- **Unchanged:** the 0.15% transfer fee (100% SSR), mint/redeem/TVL fees, the 0.25% pool trade fee.
 
 ## Deployment
 

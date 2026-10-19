@@ -7637,3 +7637,42 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0251
+
+```json
+{
+  "id": "DEC-0251",
+  "date": "2026-10-19",
+  "title": "Liquidity terms v2: SSR takes 20% of the creator's pool earnings; optional, launch-only holder share fed into the Reserve's backing over 24h (MAG7-style); Buy/Sell tax sliders in the liquidity launch",
+  "status": "built on feat/lp-fee-basket; program upgrade NOT executed (needs ExtendProgram + buffer + Squads vote); frontend and keeper not deployed",
+  "decision": "For pools created after this upgrade, SSR takes 20% of everything the creator earns from an SSR pool: the Raydium creator fee measured after Raydium's own retention, and the optional Buy/Sell tax (0-2% per side, set with the same sliders Create Reserve had before DEC-0229, now in Manage Reserve -> Liquidity launch). The creator may OPTIONALLY share part of the remaining 80% with holders (0-100% of the creator portion, default 0), chosen once at pool launch and never changeable. The holder share is paid in USDC to a basket feed (the LiquidityTerms PDA's USDC ATA), released linearly over 24 hours on-chain, and fed into the Reserve's vaults by the keeper: each hour fee-settlement-cron job D collects the pool's creator fees (permissionless collect + distribute_liquidity_revenue_v2), splits the released USDC across the Reserve's assets by target weight, and runs one atomic transaction per asset [basket_feed_begin (keeper-signed; lends released USDC) -> Jupiter route -> rebalance_swap_end (deposits what arrived, refuses below the quoted minimum)]. Nothing is minted; mint and redeem price every token from live vault balances, so the backing behind every Reserve Token grows. Pools created before the upgrade keep their recorded terms (0.05% of the creator-fee base, 25/75 tax) through the unchanged v1 instructions; v1 configure_liquidity_revenue now refuses (LiquidityTermsV2Required) so every new pool is v2.",
+  "context": "User (Creator), 2026-10-19, after reviewing MAG7 on Robinhood Chain (a Uniswap v4 hook index whose 0.30% holder fee is released into the basket over 24h): 'like the auto feed circular mechanism'; 'we're going to still have taxes on the LP side. like raydium takes its cut, and we take 20% of what the creator makes on top of the txn fee'; answers: 20% covers creator fee + tax; the holder loop is funded from the creator's 80%; 'this loop is optional. this must be in the UI of the liquidity provision flow'; opt in or out at launch only; 'the buy/sell tax will be re-implemented in the liquidity launch UI flow as the same sliders etc. we had before on reserve creation'. Confirmed 'feed the basket' (deposit into vaults) over buyback-and-burn after being shown that MAG7 adds to the basket rather than burning.",
+  "rationale": "Depositing into the vaults is exactly MAG7's mechanism and puts the fee's full value into backing (buyback-and-burn loses value whenever the pool trades above NAV). The 24h linear release removes the incentive to mint just before a large feed and redeem just after. The holder share is stored on-chain at creation with no setter, so 'permanent' is enforced by the program, not the UI. Reusing DEC-0250's flash-swap end (rebalance_swap_end + RebalanceTicket) keeps the new attack surface to one begin instruction whose USDC can only come from the released part of this pool's feed and can only end in this Reserve's vault. The keeper is SSR's fee quote signer (SettlementKeeperConfig.keeper), the same trust boundary as the DEC-0238 mint fee and DEC-0250 rebalance minimums. Distribution and taxed swaps start the release clock themselves (a harness run caught that observing deposits only at feed time made the first feed always fail).",
+  "alternativesConsidered": [
+    "Buyback-and-burn of the Reserve Token -- rejected by the user once shown MAG7 adds to the basket; also loses value when the pool trades above NAV.",
+    "Burning Reserve-Token-denominated fees (transfer fee, TVL fee) -- rejected: the user ruled the holder share comes from the creator's 80% only, which is USDC; the 0.15% transfer fee stays 100% SSR.",
+    "Holder share changeable later (with or without 48h notice) -- rejected by the user: launch-only.",
+    "A Uniswap-v4-hook-style mint/burn on every pool swap -- not possible on Raydium CPMM; would need SSR's own AMM program listed on Jupiter.",
+    "Appending fields to LiquidityRevenue -- rejected: would break deserialization of existing pool accounts; a separate LiquidityTerms PDA marks v2 pools."
+  ],
+  "impact": "Program 1,466,624 -> 1,585,400 bytes (sha256 745dcaa0d009ca540c4b21958d1760f86efa960beb3ce19aae2ca957d74b48a6), built on live 9498d04 (DEC-0250); needs ExtendProgram by 118,776 bytes (top level, deployer pays) and a buffer before the Squads vote. Additive: 4 instructions (configure_liquidity_revenue_v2, distribute_liquidity_revenue_v2, swap_with_project_tax_v2, basket_feed_begin), 1 account (LiquidityTerms, 115 B), 4 events, errors 6080-6082 appended; no existing instruction, account or error number changes except that v1 configure_liquidity_revenue now always refuses. Frontend must deploy AFTER the upgrade (it builds v2 instructions). Liquidity stays off on prod (VITE_ENABLE_LIQUIDITY, DEC-0245).",
+  "affectedAreas": [
+    "programs/ssr_protocol: instructions/liquidity_terms.rs (new), liquidity_revenue.rs (v1 configure refuses; retained_rate pub(crate)), errors.rs, lib.rs, instructions/mod.rs",
+    "packages/sdk: idl (regenerated, additive), liquidityRevenue.ts (v2 builders, split/release mirrors, terms decoder)",
+    "src/merge/lib/liquidity/raydiumCpmm.ts, feeTerms.ts; src/merge/components/LiquidityFeeTerms.tsx (new), LiveLiquidityActions.tsx, LiveLiquiditySection.tsx; liveLiquidityClient.ts",
+    "lib/mainnet/basketFeed.ts (new), atomicPool.ts, createLiquidity.ts, liquidityLifecycle.ts, prepareCompound.ts; api/mainnet/liquidity.ts, fee-settlement-cron.ts (job D)",
+    "tools/rebalance-litesvm/src/feed.rs; tests/phase_liquidity_terms_v2.ts (new), phase_raydium_cpmm.ts, phase_reserve_deploy_resumability.ts, phase_terminology_and_tax_hold.ts",
+    "CLAUDE.md, AGENTS.md, docs/protocol/FEE_MODEL.md, docs/protocol/TERMINOLOGY.md"
+  ],
+  "supersedes": "DEC-0240 (pool 0.05% share and 25/75 tax split) for pools created after this upgrade",
+  "supersededBy": null,
+  "evidence": [
+    "tools/rebalance-litesvm against the compiled binary: v1 configure refused (6080); holder share 10,001 refused (6081); a pre-created feed ATA does not block configuration; re-configure refused; distribute_v2 of 1,000,000 USDC -> SSR 200,000 + creator 400,000 + feed 400,000; feeding at deposit time refused (6082); after 1h exactly 16,666 releasable (16,667 refused); begin without end refused (6076); non-keeper refused (6068); route below minimum refused (6077); fed 16,666 USDC -> 5,000 B into the vault, keeper keeps nothing; after 24h the remaining 383,334 USDC fed directly into a USDC vault, 400,000 fed in total; a direct transfer to the feed is picked up by the next distribution and streams (600 of 86,400 after 10 min). All 11 DEC-0250 checks still pass (25 PASS, ALL PASS).",
+    "cargo test (MSVC): 39 passed, including 6 new liquidity_terms tests (20% split with carry, tax conservation, holder bounds, linear release, window restart, balance cap).",
+    "IDL diff vs 9498d04: instructions/accounts/types/events/errors only added, none changed or removed; errors 6080-6082.",
+    "tests/phase_liquidity_terms_v2.ts: SDK mirrors equal the program's numbers; every v2 builder matches the IDL account order and signer/writable flags; keeper leg planning; API holder-share validation. Full offline suite 1589 passing / 4 known failing (chart range selector x2, native-control reset x2); tsc -b, api tsc, oxlint on changed files, vite build clean.",
+    "Not exercised: swap_with_project_tax_v2 against a real Raydium pool (LiteSVM has no Raydium); it differs from the live v1 wrapper only in the 20/80 split and the extra feed transfer + release sync. First real check = first v2 pool on staging after the upgrade."
+  ]
+}
+```

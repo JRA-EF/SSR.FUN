@@ -1,4 +1,5 @@
-//! DEC-0250 end-to-end check of the rebalance swap and asset compaction,
+//! DEC-0250 end-to-end check of the rebalance swap and asset compaction
+//! (and DEC-0251 liquidity terms v2 + basket feed, see feed.rs),
 //! against the REAL compiled program (target/deploy/ssr_protocol.so) in
 //! LiteSVM. Run: `cargo +stable-x86_64-pc-windows-msvc run` from this folder
 //! after `cargo-build-sbf`. Every check prints PASS or panics.
@@ -18,6 +19,8 @@ use solana_signer::Signer;
 use solana_transaction::Transaction;
 use ssr_protocol::constants::*;
 use ssr_protocol::state::{RebalanceTicket, Reserve, ReserveAsset};
+
+mod feed;
 
 const PID: Pubkey = ssr_protocol::ID;
 const TOKEN: Pubkey = anchor_spl::token::ID;
@@ -389,6 +392,8 @@ fn main() {
     assert!(c1 < c0 && b1 < b0, "both remaining assets pay out");
     println!("PASS redeem after compaction: C {c0} -> {c1}, B {b0} -> {b1} (pro-rata, new order accepted)");
 
+
+    feed::run(&mut env);
 
     println!("ALL PASS");
 }

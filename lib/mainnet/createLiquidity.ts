@@ -38,7 +38,7 @@ export async function initialReserveAtNav(deps:CompoundReadDeps,s:LiquidityState
  check(netReserve>0n&&netReserve<=0xffffffffffffffffn,'Initial Reserve amount exceeds supported limits');
  return {netReserve,navUsdc:Number(totalUsd)/Number(usdcPrice)/(Number(rt.supply)/10**rt.decimals),slot:batch.context.slot};
 }
-export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionEnabled:boolean;prices:(mints:string[])=>Promise<Map<string,Price>>},p:{reserve:PublicKey;actor:PublicKey;usdcRaw:bigint;maximumSolRaw:bigint;buyTaxBps:number;sellTaxBps:number;lock:TrancheChoice;lookupTables?:PublicKey[]}){
+export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionEnabled:boolean;prices:(mints:string[])=>Promise<Map<string,Price>>},p:{reserve:PublicKey;actor:PublicKey;usdcRaw:bigint;maximumSolRaw:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;lock:TrancheChoice;lookupTables?:PublicKey[]}){
  const now=deps.now??Date.now,expiresAtMs=now()+25000,s=await readLiquidityState(deps,p.reserve);
  check(!s.registered&&!s.paused,'Pool already exists or the protocol is paused');check(p.actor.equals(s.creator),'Connect the creator wallet to prepare pool creation');
  check(PublicKey.isOnCurve(s.treasury.toBytes())&&PublicKey.isOnCurve(s.creator.toBytes()),'Program treasuries require their own multisig execution adapter');
@@ -46,7 +46,7 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
  const nav=await initialReserveAtNav(deps,s,p.usdcRaw,deps.prices),reserveAmountRaw=transferGross(nav.netReserve,s.fee),maximumReserveDebitRaw=s.treasury.equals(SSR_POOL_PAYER)?reserveAmountRaw:transferGross(reserveAmountRaw,s.fee);
  check(maximumReserveDebitRaw<=s.reserveBalance,'Creator treasury has insufficient Reserve Tokens to initialize at NAV');
  const minimumLpRaw=integerSqrt(nav.netReserve*p.usdcRaw)-100n;
- const built=await prepareAtomicRevenuePool({connection:deps.connection,program:deps.program,programId:deps.programId,reserve:s.reserve,reserveMint:s.mint,manager:s.creator,treasury:s.treasury,protocolConfig:s.protocolConfig,reserveAmountRaw,usdcAmountRaw:p.usdcRaw,maximumReserveDebitRaw,minimumLpRaw,openTime:0n,buyTaxBps:p.buyTaxBps,sellTaxBps:p.sellTaxBps});
+ const built=await prepareAtomicRevenuePool({connection:deps.connection,program:deps.program,programId:deps.programId,reserve:s.reserve,reserveMint:s.mint,manager:s.creator,treasury:s.treasury,protocolConfig:s.protocolConfig,reserveAmountRaw,usdcAmountRaw:p.usdcRaw,maximumReserveDebitRaw,minimumLpRaw,openTime:0n,buyTaxBps:p.buyTaxBps,sellTaxBps:p.sellTaxBps,holderShareBps:p.holderShareBps});
  const [m0,m1]=[s.mint,LIQUIDITY_USDC].sort((a,b)=>Buffer.compare(a.toBuffer(),b.toBuffer()));const vault=(mint:PublicKey)=>PublicKey.findProgramAddressSync([Buffer.from('pool_vault'),s.pool.toBuffer(),mint.toBuffer()],RAYDIUM_CPMM)[0];
  const locked=await appendTrancheLock(deps,{...s,registered:{vault0:vault(m0),vault1:vault(m1)}},built.instructions,built.expectedLpRaw,p.lock);
  const tables:AddressLookupTableAccount[]=await loadLiquidityTables(deps.connection,s.reserve,p.lookupTables);
@@ -62,5 +62,5 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
  const prepared=await simulate(measured);
  const payerNetCostLamports=payerCost(prepared);
  check(payerNetCostLamports<=0n,'Pool launch refund does not cover the pool payer; nothing was submitted');
- return {...prepared,payerNetCostLamports:payerNetCostLamports.toString(),review:{navUsdc:nav.navUsdc.toString(),usdcDebitRaw:p.usdcRaw.toString(),reserveDebitRaw:maximumReserveDebitRaw.toString(),lpAddedRaw:built.expectedLpRaw.toString(),lock:p.lock,buyTaxBps:String(p.buyTaxBps),sellTaxBps:String(p.sellTaxBps),initialLpOwner:s.treasury.toBase58()},tranche:locked?.tranche.toBase58()};
+ return {...prepared,payerNetCostLamports:payerNetCostLamports.toString(),review:{navUsdc:nav.navUsdc.toString(),usdcDebitRaw:p.usdcRaw.toString(),reserveDebitRaw:maximumReserveDebitRaw.toString(),lpAddedRaw:built.expectedLpRaw.toString(),lock:p.lock,buyTaxBps:String(p.buyTaxBps),sellTaxBps:String(p.sellTaxBps),holderShareBps:String(p.holderShareBps),initialLpOwner:s.treasury.toBase58()},tranche:locked?.tranche.toBase58()};
 }

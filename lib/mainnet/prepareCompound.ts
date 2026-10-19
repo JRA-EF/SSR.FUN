@@ -6,7 +6,7 @@ import {appendTrancheLock,type TrancheChoice} from './liquidityTranches';
 import {createHash} from 'node:crypto';
 import {PublicKey,TransactionInstruction,TransactionMessage,VersionedTransaction,ComputeBudgetProgram,type Connection,type AddressLookupTableAccount} from '@solana/web3.js';
 import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,getAssociatedTokenAddressSync,createAssociatedTokenAccountIdempotentInstruction,unpackAccount} from '@solana/spl-token';
-import {buildAuthorizeLiquidityAddition,assertCompoundApproval,validateCompoundQuote,buildCpmmDeposit,cpmmSwapAccounts,buildSwapWithProjectTax,findProtocolConfig,findMintAuthority,buildDirectMultiAssetMintInstructions,
+import {buildAuthorizeLiquidityAddition,assertCompoundApproval,validateCompoundQuote,buildCpmmDeposit,cpmmSwapAccounts,buildSwapWithProjectTax,buildSwapWithProjectTaxV2,findLiquidityTerms,findProtocolConfig,findMintAuthority,buildDirectMultiAssetMintInstructions,
   type CompoundApproval,type CompoundQuote} from '@ssr/sdk';
 import {poolAcquisition,transferGross,compoundPlanFingerprint,type CompoundSnapshot,type CompoundReadDeps,readCompoundSnapshot} from './compoundQuotes';
 import {LIQUIDITY_USDC,SSR_CPMM_CONFIG,RAYDIUM_CPMM} from '../../src/merge/lib/liquidity/raydiumCpmm';
@@ -154,7 +154,9 @@ export async function prepareCompound(deps:PrepareCompoundDeps,input:CompoundPla
   const tables:AddressLookupTableAccount[]=await loadLiquidityTables(deps.connection,reserve,input.lookupTables);
   if(q.route==='pool'){
     instructions.push(createAssociatedTokenAccountIdempotentInstruction(treasury,ata(LIQUIDITY_USDC,TOKEN_PROGRAM_ID,protocolTreasury),protocolTreasury,LIQUIDITY_USDC));
-    instructions.push(buildSwapWithProjectTax({programId:deps.programId,user:treasury,protocolConfig:findProtocolConfig(deps.programId)[0],reserve,userUsdc:ata(LIQUIDITY_USDC),protocolDestination:ata(LIQUIDITY_USDC,TOKEN_PROGRAM_ID,protocolTreasury),creatorDestination:ata(LIQUIDITY_USDC),raydiumProgram:RAYDIUM_CPMM,
+    // DEC-0251: v2 pools route the holder share of the tax to the basket feed.
+    const termsV2=!!(await deps.connection.getAccountInfo(findLiquidityTerms(reserve,deps.programId),'confirmed'));
+    instructions.push((termsV2?buildSwapWithProjectTaxV2:buildSwapWithProjectTax)({programId:deps.programId,user:treasury,protocolConfig:findProtocolConfig(deps.programId)[0],reserve,userUsdc:ata(LIQUIDITY_USDC),protocolDestination:ata(LIQUIDITY_USDC,TOKEN_PROGRAM_ID,protocolTreasury),creatorDestination:ata(LIQUIDITY_USDC),raydiumProgram:RAYDIUM_CPMM,
       nativeSwapAccounts:cpmmSwapAccounts(accounts,treasury,SSR_CPMM_CONFIG,LIQUIDITY_USDC),buy:true,amountIn:q.acquisitionUsdcRaw,minimumNetOut:q.depositReserveGrossRaw}));
   }else{
     const results=await Promise.all(plan.quotes.map(async(leg:JupiterQuote|null,i:number)=>{

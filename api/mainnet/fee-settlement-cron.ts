@@ -48,6 +48,13 @@
 //      no keeper role; the keeper only pays fees and the first-use ATA rent.
 //      Classic (pre-DEC-0229) Reserves have no fee and are skipped.
 //
+//   D. BASKET FEED (DEC-0251): for every pool created with liquidity terms v2
+//      whose creator shares earnings with holders, collect + distribute the
+//      pool's creator fees, then swap whatever the program has released (over
+//      24h) into the Reserve's assets at target weights and deposit it in the
+//      vaults -- see lib/mainnet/basketFeed.ts. Needs the on-chain keeper role
+//      (basket_feed_begin is keeper-signed), same as job A.
+//
 // Scheduled in vercel.json, allowlisted in middleware.ts CRON_PATHS. Same
 // CRON_SECRET / `?dryRun=true` conventions as every other cron here. Time
 // budgeted (api/mainnet/* maxDuration is 60s): settlement first, accruals with
@@ -97,6 +104,7 @@ import { readReserveAndWallet, compileV0, fitsV0, CORE_TX_COMPUTE_UNIT_LIMIT, MA
 import { DEFAULT_SLIPPAGE_BPS, MAINNET_USDC_MINT as USDC_MINT_STR, MAX_PRICE_IMPACT_PCT, buildJupiterSwapInstructionsWithRetry, fetchJupiterQuoteWithRetry, isPriceImpactAcceptable } from "../../lib/mainnet/jupiter";
 import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/merge/lib/singleTxBuy";
 import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience";
+import { findSharingPools, runBasketFeedForPool, type BasketFeedResult } from "../../lib/mainnet/basketFeed";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -353,6 +361,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const transferFeeReserves = reserves.filter((r) => r.reserveTokenProgram === "token-2022");
   const transferFeeDue = forceTransferFees || new Date(startedAt).getUTCHours() === TRANSFER_FEE_COLLECT_UTC_HOUR;
 
+  // --- Job D candidates (DEC-0251): v2 pools whose creator shares earnings with holders. ---
+  const sharingPools = await findSharingPools(connection, PROGRAM_ID).catch(() => [] as Awaited<ReturnType<typeof findSharingPools>>);
+
   const status = {
     keeperWallet: keeper ? keeper.publicKey.toBase58() : null,
     keeperEnvError,
@@ -371,11 +382,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     accrualsDue: accrueDue.length,
     transferFeeReserves: transferFeeReserves.length,
     transferFeeCollectionDue: transferFeeDue,
+    basketFeedPools: sharingPools.length,
   };
 
   if (dryRun) {
     res.status(200).json({
       dryRun: true,
+      basketFeed: sharingPools.map((p) => ({ reserve: p.terms.reserve.toBase58(), holderShareBps: p.terms.holderShareBps, lockedRaw: p.terms.locked.toString(), unlockedRaw: p.terms.unlocked.toString(), totalFedRaw: p.terms.totalFed.toString() })),
       ...status,
       candidates: candidates.map((c) => ({ reserve: c.reserve, assetsResolved: c.assetsResolved, feeSettlement: c.feeSettlement, staged: c.staged })),
       accrueDue,
@@ -653,6 +666,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Job D (DEC-0251): feed released holder shares into Reserve vaults.
+  // ---------------------------------------------------------------------
+  const basketFeedResults: BasketFeedResult[] = [];
+  const basketFeedSkippedForBudget: string[] = [];
+  if (keeperMatchesOnChain) {
+    const feedDeps = {
+      connection, keeper, program: readOnly, programId: PROGRAM_ID, protocolTreasury: protocolFeeDestination, apiKey, deadline,
+      send: (label: string, ixs: TransactionInstruction[], tables: AddressLookupTableAccount[]) => sendV0(connection, keeper!, label, ixs, tables),
+      budget: budgetIxs,
+      fits: (ixs: TransactionInstruction[], tables: AddressLookupTableAccount[]) => fitsV0(keeper!.publicKey, ixs, tables),
+      reserveTables: async (reserve: PublicKey) => { const alt = await lookupReserveAlt(reserve.toBase58()).catch(() => null); return alt ? fetchLookupTables(connection, [alt]) : []; },
+      jupiterTables: (addresses: string[]) => fetchLookupTables(connection, addresses),
+      jupiterInstructions: (built: any) => [...built.setupInstructions.map(deserializeJupiterInstruction).filter((ix: TransactionInstruction) => !isComputeBudgetInstruction(ix)), deserializeJupiterInstruction(built.swapInstruction)],
+    };
+    for (const p of sharingPools) {
+      if (Date.now() > deadline) { basketFeedSkippedForBudget.push(p.terms.reserve.toBase58()); continue; }
+      try { basketFeedResults.push(await runBasketFeedForPool(feedDeps, p.terms)); }
+      catch (e) { basketFeedResults.push({ reserve: p.terms.reserve.toBase58(), holderShareBps: p.terms.holderShareBps, releasedUsdcRaw: "0", legs: [], error: e instanceof Error ? e.message : String(e) }); }
+    }
+  }
+
   res.status(200).json({
     dryRun: false,
     ...status,
@@ -660,6 +695,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     settlement: { reservesProcessed: results.length, results, skippedForBudget },
     accrual: { processed: accruals.length, results: accruals, skippedForBudget: accrualsSkippedForBudget },
     transferFees: { ran: transferFeeDue, results: transferFeeResults, skippedForBudget: transferFeeSkippedForBudget },
+    basketFeed: { ran: keeperMatchesOnChain, results: basketFeedResults, skippedForBudget: basketFeedSkippedForBudget },
   });
 }
 

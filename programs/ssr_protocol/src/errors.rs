@@ -232,4 +232,12 @@ pub enum SsrError {
     RebalanceSwapExceedsVault,
     #[msg("The asset moved into this position must be the last-registered one.")]
     RebalanceLastAssetMismatch,
+
+    // DEC-0251: liquidity terms v2 (append only, preserving every deployed error number).
+    #[msg("New liquidity pools must be set up with the current liquidity terms.")]
+    LiquidityTermsV2Required,
+    #[msg("The holder share must be between 0% and 100% of the creator's portion.")]
+    LiquidityHolderShareInvalid,
+    #[msg("The basket feed amount is larger than what has been released to holders so far.")]
+    BasketFeedExceedsReleased,
 }

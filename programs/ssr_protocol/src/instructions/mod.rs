@@ -110,5 +110,8 @@ pub use update_transfer_fee::*;
 pub mod liquidity_revenue;
 pub use liquidity_revenue::*;
 
+pub mod liquidity_terms;
+pub use liquidity_terms::*;
+
 pub mod liquidity_lock;
 pub use liquidity_lock::*;
