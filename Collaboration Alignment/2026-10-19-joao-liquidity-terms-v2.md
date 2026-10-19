@@ -28,3 +28,5 @@ New pools (after the upgrade): SSR takes 20% of everything the creator earns fro
 
 ## Verification
 LiteSVM against the compiled binary (14 new checks + DEC-0250's 11), cargo test 39, offline suite 1592 passing / 4 known failing, tsc -b, api tsc, oxlint, vite build. Read-only Mainnet probe: v2 not live yet, rebalance control live. Live program verified = 7919dacd (DEC-0250) before building on it.
+
+- Follow-up 2026-10-19: LIVE. Program upgraded via Squads #15 (slot 458879753, sha 745dcaa0...48a6, extend tx 49s97FKg...gdHQ3, buffer refunded). Production dpl_Go4aE8N5m6Yw9EWcYs8gyArM3xAy (main 0051b75; liquidity off). Staging dpl_DqTwBTCN6eDZn4cY9J4BFUkr3gJT = feat/create-preflight merged with main (bfabca8, not pushed to main per the DEC-0249 owner). Chain probe now reports v2 live; new pools get the v2 terms and the holder option.
