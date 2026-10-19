@@ -1,4 +1,5 @@
-import {prepareCreateLiquidity} from '../../lib/mainnet/createLiquidity';
+import {prepareCreateLiquidity,isLiquidityTermsV2Live} from '../../lib/mainnet/createLiquidity';
+import {SSR_POOL_PAYER} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {loadPoolPayer,coSignPoolPayer,PoolPayerUnavailable} from '../../lib/mainnet/poolPayer';
 import {LIQUIDITY_EXECUTION_ENABLED} from '../../lib/mainnet/liquidityRelease';
 import {fetchJupiterPrices} from './asset-prices';
@@ -42,7 +43,9 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
    const lockedTranches=tranches.map((t,i)=>{const info=escrowInfos[i];if(!info)return {...t,lpRaw:'0'};const acc=unpackAccount(escrows[i],info,TOKEN_PROGRAM_ID);if(!acc.mint.equals(s.lp))throw new Error('Invalid liquidity escrow');return {...t,lpRaw:acc.amount.toString()};});
    result={tranches:lockedTranches,reserve:s.reserve,pool:s.pool,mint:s.mint,creator:s.creator,treasury:s.treasury,hasPool:!!s.registered,paused:s.paused,reserveDecimals:s.rt.decimals,lpDecimals:s.lpDecimals,usdcBalanceRaw:s.usdcBalance,reserveBalanceRaw:s.reserveBalance,lpBalanceRaw:s.lpBalance,nativeEarningsUsdcRaw:s.registered?.accruedUsdc??0n,stagedEarningsUsdcRaw:s.staged,poolUsdcRaw:s.usdc,poolReserveRaw:s.tokens,lpSupplyRaw:s.lpSupply,slot:s.slot,executionEnabled:LIQUIDITY_EXECUTION_ENABLED,
     // DEC-0251: the pool's permanent fee terms (v1 = created before liquidity terms v2).
-    termsVersion:s.terms?2:s.registered?1:null,buyTaxBps:s.router?.buyTaxBps??null,sellTaxBps:s.router?.sellTaxBps??null,holderShareBps:s.terms?.holderShareBps??0,basketFeedUsdcRaw:s.feedBalance,basketFedUsdcRaw:s.terms?.totalFed??0n};}
+    termsVersion:s.terms?2:s.registered?1:null,buyTaxBps:s.router?.buyTaxBps??null,sellTaxBps:s.router?.sellTaxBps??null,holderShareBps:s.terms?.holderShareBps??0,basketFeedUsdcRaw:s.feedBalance,basketFedUsdcRaw:s.terms?.totalFed??0n,
+    // Which terms a NEW pool would get right now (v1 until the DEC-0251 upgrade executes).
+    termsV2Available:s.registered?undefined:await isLiquidityTermsV2Live(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false)};}
   else if(input.action==='create'){const payer=loadPoolPayer();const prepared=await prepareCreateLiquidity({...deps,prices:fetchJupiterPrices},{reserve:input.reserve,actor:input.actor,usdcRaw:input.maximumUsdcRaw??0n,maximumSolRaw:input.maximumSolRaw,buyTaxBps:input.buyTaxBps,sellTaxBps:input.sellTaxBps,holderShareBps:input.holderShareBps,lock:input.lock,lookupTables:input.lookupTables});
    result={...prepared,transactionBase64:coSignPoolPayer(prepared.transactionBase64,payer,BigInt(prepared.payerNetCostLamports))};}
   else result=await prepareLiquidityLifecycle(deps,input);

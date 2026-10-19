@@ -6,7 +6,7 @@ import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,getAssociatedTokenAddressSync,cre
 import {prepareRevenuePool,SSR_POOL_PAYER,LIQUIDITY_USDC} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {transferGross,transferNet} from './compoundQuotes';
 export function integerSqrt(n:bigint):bigint {if(n<0n)throw new Error('Negative initial liquidity');if(n<2n)return n;let x=n,y=(x+1n)/2n;while(y<x){x=y;y=(x+n/x)/2n;}return x;}
-export interface AtomicPoolInput {connection:Connection;program:any;programId:PublicKey;reserve:PublicKey;reserveMint:PublicKey;manager:PublicKey;treasury:PublicKey;protocolConfig:PublicKey;reserveAmountRaw:bigint;usdcAmountRaw:bigint;maximumReserveDebitRaw:bigint;minimumLpRaw:bigint;openTime:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;}
+export interface AtomicPoolInput {connection:Connection;program:any;programId:PublicKey;reserve:PublicKey;reserveMint:PublicKey;manager:PublicKey;treasury:PublicKey;protocolConfig:PublicKey;reserveAmountRaw:bigint;usdcAmountRaw:bigint;maximumReserveDebitRaw:bigint;minimumLpRaw:bigint;openTime:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;termsV2?:boolean;}
 export async function prepareAtomicRevenuePool(p:AtomicPoolInput){
  const [mintInfo,epoch,reserveInfo]=await Promise.all([p.connection.getAccountInfo(p.reserveMint,'confirmed'),p.connection.getEpochInfo('confirmed'),p.connection.getAccountInfo(p.reserve,'confirmed')]);
  if(!reserveInfo?.owner.equals(p.programId))throw new Error('Reserve unavailable');

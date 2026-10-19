@@ -23,8 +23,18 @@ function TaxSlider({id,label,value,onChange,disabled,note}:{id:string;label:stri
  </div>;
 }
 
-export function LiquidityFeeTerms({value,onChange,disabled}:{value:FeeTermsValue;onChange:(v:FeeTermsValue)=>void;disabled?:boolean}){
+/** `v2` is false only while the deployed program predates DEC-0251: the old terms apply and holder sharing is not offered. */
+export function LiquidityFeeTerms({value,onChange,disabled,v2=true}:{value:FeeTermsValue;onChange:(v:FeeTermsValue)=>void;disabled?:boolean;v2?:boolean}){
  const set=(patch:Partial<FeeTermsValue>)=>onChange({...value,...patch});
+ if(!v2)return <div className="space-y-5">
+  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+   <TaxSlider id="liquidity-buy-tax" label="Buy tax" value={value.buyTaxPct} disabled={disabled} onChange={v=>set({buyTaxPct:v})}
+    note="Charged on DEX trades into your Reserve Token routed through SSR. Default 0%."/>
+   <TaxSlider id="liquidity-sell-tax" label="Sell tax" value={value.sellTaxPct} disabled={disabled} onChange={v=>set({sellTaxPct:v})}
+    note="Charged on DEX trades out of your Reserve Token routed through SSR. Default 0%."/>
+  </div>
+  <p className="text-xs text-muted-foreground">SSR receives 25% of each tax and 0.05% of pool volume from the creator fee; the rest is yours. These terms are permanent once the pool launches.</p>
+ </div>;
  const onBuys=exampleSplit(value.buyTaxPct,value),onSells=exampleSplit(value.sellTaxPct,value);
  const cell=(n:number)=><td className="py-1.5 text-right font-merge-mono">{formatUsdc(n)}</td>;
  return <div className="space-y-5">

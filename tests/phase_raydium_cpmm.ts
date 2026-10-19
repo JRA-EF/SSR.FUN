@@ -70,6 +70,15 @@ describe('Revenue-routed pool creation preparation',()=>{
   expect(built.initialLpOwner.equals(SSR_POOL_PAYER)).eq(true);
   expect(built.instructions[0].data[32]).eq(Buffer.compare(LIQUIDITY_USDC.toBuffer(),reserve.toBuffer())<0?1:2);
  });
+ it('DEC-0251: before the upgrade executes, creates with the live v1 instruction and refuses a holder share',async()=>{
+  const programId=new PublicKey('8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9');
+  const connection={getMultipleAccountsInfo:async()=>[permission(),config(),null],getAccountInfo:async(key:PublicKey)=>key.equals(reserve)?{...account('Mint',82),owner:TOKEN_2022_PROGRAM_ID}:null};
+  const base={connection:connection as any,programId,reserve:treasury,reserveMint:reserve,manager:treasury,payer:SSR_POOL_PAYER,protocolConfig:treasury,reserveAmountRaw:100n,usdcAmountRaw:200n,openTime:0n,buyTaxBps:100,sellTaxBps:200,termsV2:false};
+  const built=await prepareRevenuePool({...base,holderShareBps:0});
+  expect([...built.instructions[1].data.subarray(0,8)]).deep.eq([218,58,113,200,121,81,159,178]);
+  expect(built.instructions[1].data.length).eq(12);
+  try{await prepareRevenuePool({...base,holderShareBps:100});expect.fail('must reject');}catch(e){expect(String(e)).include('next protocol upgrade');}
+ });
  it('rejects creation by an unapproved payer before requesting funding',async()=>{
   let reads=0;
   const connection={getMultipleAccountsInfo:async()=>{reads++;return[];},getAccountInfo:async()=>null};

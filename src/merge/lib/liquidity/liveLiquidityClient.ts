@@ -19,6 +19,8 @@ export interface LiveLiquidityState{
  /** DEC-0251: the pool's permanent fee terms; 1 = created before liquidity terms v2, null = no pool. */
  termsVersion?:1|2|null;buyTaxBps?:number|null;sellTaxBps?:number|null;holderShareBps?:number;
  basketFeedUsdcRaw?:string;basketFedUsdcRaw?:string;
+ /** Terms a new pool gets now: false until the DEC-0251 upgrade executes. */
+ termsV2Available?:boolean;
 }
 export type LiveAction='create'|'add'|'withdraw'|'collect'|'lock'|'extend'|'unlock'|'permanent';
 export type LockTerm='unlocked'|'1-month'|'3-month'|'6-month'|'12-month'|'permanent';

@@ -9,7 +9,7 @@ export const RAYDIUM_CPMM = new PublicKey("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQ
 export const SSR_POOL_PAYER = new PublicKey("6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS");
 export const SSR_CPMM_CONFIG = new PublicKey("LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC");
 export const LIQUIDITY_USDC = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-import { findLiquidityRevenue, buildConfigureLiquidityRevenueV2, buildDistributeLiquidityRevenue, buildDistributeLiquidityRevenueV2 } from "@ssr/sdk";
+import { findLiquidityRevenue, buildConfigureLiquidityRevenue, buildConfigureLiquidityRevenueV2, buildDistributeLiquidityRevenue, buildDistributeLiquidityRevenueV2 } from "@ssr/sdk";
 
 const DENOMINATOR = 1_000_000n;
 const DISCRIMINATORS = {
@@ -123,6 +123,8 @@ export async function prepareRevenuePool(input: {
   programId: PublicKey; reserve: PublicKey; reserveMint: PublicKey; manager: PublicKey;
   payer: PublicKey; protocolConfig: PublicKey; reserveAmountRaw: bigint; usdcAmountRaw: bigint;
   openTime: bigint; buyTaxBps: number; sellTaxBps: number; holderShareBps: number;
+  /** DEC-0251: false only while the deployed program predates liquidity terms v2. */
+  termsV2?: boolean;
 }) {
   if(!input.payer.equals(SSR_POOL_PAYER)) throw new Error('Pool creation requires the Raydium-approved payer (OPEN-14)');
   if(input.reserveAmountRaw<=0n||input.usdcAmountRaw<=0n||input.openTime<0n)throw new Error('Invalid initial liquidity');
@@ -146,7 +148,10 @@ export async function prepareRevenuePool(input: {
     meta(pda(Buffer.from('pool_vault'),pool.toBuffer(),mint0.toBuffer()),true),meta(pda(Buffer.from('pool_vault'),pool.toBuffer(),mint1.toBuffer()),true),
     meta(new PublicKey('DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8'),true),meta(pda(Buffer.from('observation'),pool.toBuffer()),true),meta(permissionAddress()),meta(TOKEN_PROGRAM_ID),meta(program0),meta(program1),meta(ASSOCIATED_TOKEN_PROGRAM_ID),meta(SystemProgram.programId)]});
   // DEC-0251: every new pool records the current terms, including the creator's once-only holder share.
-  const configure=buildConfigureLiquidityRevenueV2({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)});
+  // Until the upgrade executes the deployed program only has v1 (no holder share).
+  if(input.termsV2===false&&input.holderShareBps!==0)throw new Error('Sharing pool earnings with holders becomes available after the next protocol upgrade');
+  const configure=input.termsV2===false?buildConfigureLiquidityRevenue({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)})
+    :buildConfigureLiquidityRevenueV2({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)});
   return {instructions:[initialize,configure],pool,revenue,lpMint:lp,initialLpOwner:input.payer,
     requiresSigners:[input.payer,input.manager],compoundAvailable:false as const,blockers:['LIVE_COMPOUND_EXECUTOR','OPEN-14'] as const};
 }

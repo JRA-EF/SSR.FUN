@@ -25,6 +25,7 @@ import idl from "../packages/sdk/idl/ssr_protocol.json";
 import { planBasketFeedLegs, LIQUIDITY_TERMS_SIZE } from "../lib/mainnet/basketFeed";
 import { feeTermsToBps, exampleSplit, DEFAULT_FEE_TERMS } from "../src/merge/lib/liquidity/feeTerms";
 import { parseLifecycleRequest } from "../api/mainnet/liquidity";
+import { isLiquidityTermsV2Live } from "../lib/mainnet/createLiquidity";
 
 const PROGRAM = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
 const k = () => Keypair.generate().publicKey;
@@ -147,6 +148,17 @@ describe("DEC-0251 keeper leg planning", () => {
     expect(planBasketFeedLegs(1_000_000n, assets, 250_000n).map((l) => l.mint)).to.deep.equal(["A", "B"]);
     expect(planBasketFeedLegs(0n, assets)).to.deep.equal([]);
     expect(planBasketFeedLegs(1_000_000n, [{ mint: "Z", targetWeightBps: 0, tokenProgram: "t" }])).to.deep.equal([]);
+  });
+});
+
+describe("DEC-0251 chain probe: v2 switches on when the upgrade executes", () => {
+  const sim = (err: unknown) => ({ simulateTransaction: async () => ({ value: { err } }) }) as any;
+  it("unknown instruction (custom 101) means the program predates v2", async () => {
+    expect(await isLiquidityTermsV2Live(sim({ InstructionError: [0, { Custom: 101 }] }), k(), PROGRAM)).to.equal(false);
+  });
+  it("any other answer (account errors) means the instruction exists", async () => {
+    expect(await isLiquidityTermsV2Live(sim({ InstructionError: [0, { Custom: 3005 }] }), k(), PROGRAM)).to.equal(true);
+    expect(await isLiquidityTermsV2Live(sim({ InstructionError: [0, { Custom: 1010 }] }), k(), PROGRAM)).to.equal(true);
   });
 });
 

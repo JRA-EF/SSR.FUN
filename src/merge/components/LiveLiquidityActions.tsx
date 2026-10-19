@@ -53,10 +53,11 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare}:{dtr:DTR;state:Liv
  const [total,setTotal]=useState(RECOMMENDED_LIQUIDITY_USD),[customOpen,setCustomOpen]=useState(false),[custom,setCustom]=useState('');
  const [lock,setLock]=useState<LockTerm>('12-month'),[terms,setTerms]=useState<FeeTermsValue>(DEFAULT_FEE_TERMS);
  const [error,setError]=useState('');
+ const v2=state.termsV2Available!==false;
  const effective=customOpen?Math.max(0,Number(custom)||0):total,usdcSide=effective/2,tokens=nav>0?usdcSide/nav:0;
  const short=usdcSide>rawToNumber(state.usdcBalanceRaw,6)||tokens>rawToNumber(state.reserveBalanceRaw,state.reserveDecimals);
  const submit=()=>{setError('');try{
-  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),...feeTermsToBps(terms),lock});
+  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),...feeTermsToBps(v2?terms:{...terms,shareWithHolders:false}),lock});
  }catch(e){setError(e instanceof Error?e.message:'Check the amounts.');}};
  return <div className="space-y-5">
   <div className="space-y-2">
@@ -77,7 +78,7 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare}:{dtr:DTR;state:Liv
   <p className="text-xs text-muted-foreground -mt-3">Both sides are balanced at the Reserve Token's current backing value ({formatUsdc(nav)} per token), so the pool opens at fair value instead of gifting an instant profit to arbitrage bots. The exact token amount is fixed in the review.</p>
   <TreasuryLine dtr={dtr} state={state}/>
   <div className="space-y-2"><Label className="text-xs uppercase tracking-wider text-muted-foreground">Lock your liquidity</Label><LockChoice value={lock} onChange={setLock} disabled={busy}/></div>
-  <div className="border-t border-border pt-5"><LiquidityFeeTerms value={terms} onChange={setTerms} disabled={busy}/></div>
+  <div className="border-t border-border pt-5"><LiquidityFeeTerms value={terms} onChange={setTerms} disabled={busy} v2={v2}/></div>
   {effective>0&&effective<MIN_LIQUIDITY_USD&&<Warning>Pools under {formatUsdc(MIN_LIQUIDITY_USD,{compact:true})} produce unstable pricing and a poor chart. We recommend at least {formatUsdc(RECOMMENDED_LIQUIDITY_USD,{compact:true})} in total.</Warning>}
   {short&&<Warning>The creator treasury does not hold enough USDC or {dtr.ticker} for this amount yet.</Warning>}
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
