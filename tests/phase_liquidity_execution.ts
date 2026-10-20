@@ -1,6 +1,6 @@
 import {expect} from 'chai';
 import {createHash,webcrypto} from 'node:crypto';
-import {Keypair,PublicKey,TransactionMessage,TransactionInstruction,VersionedTransaction,SystemProgram,ComputeBudgetProgram} from '@solana/web3.js';
+import {AddressLookupTableAccount,Keypair,PublicKey,TransactionMessage,TransactionInstruction,VersionedTransaction,SystemProgram,ComputeBudgetProgram} from '@solana/web3.js';
 import {SendTransactionError,SolanaJSONRPCError} from '@solana/web3.js';
 import {onLocalClock,definiteRejection,isWalletGuardedRewrite,checkLiquidityMessage,signLiquidityPlan,submitLiquidityPlan,reconcileLiquidity,signatureBase58,type LiquidityExecutionPlan,type LiquidityExclusive} from '../src/merge/lib/liquidity/liquidityExecution';
 if(!globalThis.crypto)Object.defineProperty(globalThis,'crypto',{value:webcrypto});
@@ -91,4 +91,30 @@ describe('Submission outcomes and review clocks',()=>{
   rewritten.signatures[0]=tx.signatures[0];
   await rejects(()=>signLiquidityPlan({plan,confirmation:'CREATE',wallet:{publicKey:creator.publicKey,signTransaction:async()=>{rewritten.sign([creator]);rewritten.signatures[0]=tx.signatures[0];return rewritten;}},now:()=>NOW}),'voids the co-signature');
   const ok=await signLiquidityPlan({plan,confirmation:'CREATE',wallet:{publicKey:creator.publicKey,signTransaction:async t=>{t.sign([creator]);return t;}},now:()=>NOW});expect(ok.missingSigners).deep.eq([]);});
+});
+describe('Wallet rewrites of transactions that use a lookup table',()=>{
+ const LIGHTHOUSE=new PublicKey('L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95');
+ function lookupFixture(){
+  const a=Keypair.generate(),blockhash=Keypair.generate().publicKey.toBase58();
+  const pool=Keypair.generate().publicKey,vault=Keypair.generate().publicKey,mint=Keypair.generate().publicKey,program=Keypair.generate().publicKey;
+  const table=new AddressLookupTableAccount({key:Keypair.generate().publicKey,state:{deactivationSlot:BigInt('18446744073709551615'),lastExtendedSlot:0,lastExtendedSlotStartIndex:0,authority:a.publicKey,addresses:[pool,vault,mint]}});
+  const deposit=(to=vault)=>new TransactionInstruction({programId:program,keys:[{pubkey:a.publicKey,isSigner:true,isWritable:true},{pubkey:pool,isSigner:false,isWritable:true},{pubkey:to,isSigner:false,isWritable:true},{pubkey:mint,isSigner:false,isWritable:false}],data:Buffer.from([9,9])});
+  const compile=(ixs:TransactionInstruction[],tables:AddressLookupTableAccount[])=>new VersionedTransaction(new TransactionMessage({payerKey:a.publicKey,recentBlockhash:blockhash,instructions:ixs}).compileToV0Message(tables));
+  const tx=compile([ComputeBudgetProgram.setComputeUnitLimit({units:1_400_000}),ComputeBudgetProgram.setComputeUnitPrice({microLamports:1000}),deposit()],[table]);
+  const plan:LiquidityExecutionPlan={action:'add',reserve:Keypair.generate().publicKey.toBase58(),treasury:a.publicKey.toBase58(),transactionBase64:Buffer.from(tx.serialize()).toString('base64'),messageHash:createHash('sha256').update(tx.message.serialize()).digest('hex'),requiredSigners:[a.publicKey.toBase58()],blockhash,lastValidBlockHeight:100,expiresAtMs:NOW+1000,executionEnabled:true,confirmationText:'ADD'};
+  // Phantom-style rebuild: guards assert the vault, and the vault moves from the table into the static keys.
+  const guard=new TransactionInstruction({programId:LIGHTHOUSE,keys:[{pubkey:vault,isSigner:false,isWritable:false}],data:Buffer.from([4])});
+  const shrunk=new AddressLookupTableAccount({key:table.key,state:{...table.state,addresses:[pool,Keypair.generate().publicKey,mint]}});
+  const rebuilt=compile([ComputeBudgetProgram.setComputeUnitPrice({microLamports:50_000}),guard,deposit()],[shrunk]);
+  const loader=async(keys:PublicKey[])=>keys.some(k=>k.equals(table.key))?[table]:[];
+  return {a,plan,tx,deposit,compile,table,shrunk,guard,rebuilt,loader};
+ }
+ const wallet=(a:Keypair,t:VersionedTransaction)=>({publicKey:a.publicKey,signTransaction:async()=>{t.sign([a]);return t;}});
+ it('accepts a rebuild that moves a lookup account into the static keys when the real table is read',async()=>{const t=lookupFixture();
+  expect(t.rebuilt.message.addressTableLookups[0].writableIndexes).not.deep.eq(t.tx.message.addressTableLookups[0].writableIndexes);
+  const r=await signLiquidityPlan({plan:t.plan,confirmation:'ADD',wallet:wallet(t.a,t.rebuilt),now:()=>NOW,loadTables:t.loader});expect(r.missingSigners).deep.eq([]);});
+ it('still refuses that rebuild when the table cannot be read, and refuses a changed account even with the table',async()=>{const t=lookupFixture();
+  await rejects(()=>signLiquidityPlan({plan:t.plan,confirmation:'ADD',wallet:wallet(t.a,t.rebuilt),now:()=>NOW}),'could not be verified');
+  const redirected=t.compile([t.guard,t.deposit(Keypair.generate().publicKey)],[t.shrunk]);
+  await rejects(()=>signLiquidityPlan({plan:t.plan,confirmation:'ADD',wallet:wallet(t.a,redirected),now:()=>NOW,loadTables:t.loader}),'could not be verified');});
 });
