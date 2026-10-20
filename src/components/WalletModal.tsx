@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletReadyState, type WalletName } from '@solana/wallet-adapter-base'
 import { Modal } from './ui'
@@ -23,71 +23,56 @@ type ModalWalletId = WalletProviderId | 'metamask'
 interface WalletOption {
   id: ModalWalletId
   name: string
+  /** Tile background behind the logo. */
   color: string
-  glyph: ReactNode
+  /** Official logo file in public/wallets (sources listed below). */
+  logo: string
+  /** 'bleed': the file is the full square app icon (its own background) and fills the tile; 'mark': a bare mark centred on `color`. */
+  logoFit: 'bleed' | 'mark'
   installUrl: string
 }
 
-/** Simplified brand marks, used when the wallet extension isn't installed so no
- *  official icon is available from the Wallet Standard adapter. Detected
- *  wallets render their real `adapter.icon` instead (see WalletTile). */
-const GLYPHS: Record<ModalWalletId, ReactNode> = {
-  backpack: (
-    <svg viewBox="0 0 24 24" width="60%" height="60%" fill="currentColor" aria-hidden="true">
-      <path fillRule="evenodd" d="M9 4.2a3.1 3.1 0 0 1 6 0c2.9.8 5 3.4 5 6.4V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8.4c0-3 2.1-5.6 5-6.4Zm1.7-.3h2.6a1.35 1.35 0 0 0-2.6 0ZM12 10a3.2 3.2 0 1 0 0 6.4A3.2 3.2 0 0 0 12 10Z" />
-    </svg>
-  ),
-  metamask: (
-    <svg viewBox="0 0 24 24" width="60%" height="60%" fill="currentColor" aria-hidden="true">
-      <path d="M3.5 2.8 10 7.5h4l6.5-4.7-2 6.1 1.9 3.6-1.7 5L12 21.2l-6.7-3.7-1.7-5 1.9-3.6-2-6.1Zm5.6 10.1a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2Zm5.8 0a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2Z" />
-    </svg>
-  ),
-  phantom: (
-    <svg viewBox="0 0 24 24" width="60%" height="60%" fill="currentColor" aria-hidden="true">
-      <path d="M12 3.5c-4.42 0-8 3.58-8 8v7.1c0 .66.74 1.05 1.29.68l1.71-1.16 1.86 1.26c.34.23.79.23 1.13 0L12 18.16l2.01 1.22c.34.23.79.23 1.13 0l1.86-1.26 1.71 1.16c.55.37 1.29-.02 1.29-.68v-7.1c0-4.42-3.58-8-8-8Zm-2.75 8.9a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm5.5 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z" />
-    </svg>
-  ),
-  solflare: (
-    <svg viewBox="0 0 24 24" width="60%" height="60%" fill="currentColor" aria-hidden="true">
-      <path d="M12 2.25c.52 3.1 1.9 5.23 4.02 6.98 2.18 1.8 3.73 3.77 3.73 6.17 0 3.87-3.47 6.35-7.75 6.35s-7.75-2.48-7.75-6.35c0-2.4 1.55-4.37 3.73-6.17C10.1 7.48 11.48 5.35 12 2.25Zm0 10.15c-1.9 1.05-2.9 2.2-2.9 3.55 0 1.6 1.3 2.7 2.9 2.7s2.9-1.1 2.9-2.7c0-1.35-1-2.5-2.9-3.55Z" />
-    </svg>
-  ),
-}
+/** Where each logo file came from -- the company's own brand assets, never a
+ *  redraw. Re-download from these if a brand changes; do not edit the files.
+ *  - Phantom: Phantom_SVG_Icon.svg, docs.phantom.com/resources/assets
+ *  - Solflare: Solflare_INSIGNIA_Obsidian_Noir_BACKGROUND_Yellow.svg, solflare.com/solflare-brand-kit.zip
+ *  - Backpack: Backpack-Icon.svg, Backpack Media Kit linked from backpack.app/media-kit (their store icon is this red mark on white)
+ *  - MetaMask: MetaMask-icon-fox.svg, metamask.io/assets */
 
 // Alphabetical order.
 const WALLET_OPTIONS: WalletOption[] = [
-  { id: 'backpack', name: 'Backpack', color: '#E33E3F', glyph: GLYPHS.backpack, installUrl: 'https://backpack.app/' },
-  { id: 'metamask', name: 'MetaMask', color: '#E2761B', glyph: GLYPHS.metamask, installUrl: 'https://metamask.io/' },
-  { id: 'phantom', name: 'Phantom', color: '#AB9FF2', glyph: GLYPHS.phantom, installUrl: 'https://phantom.app/' },
-  { id: 'solflare', name: 'Solflare', color: '#FC9231', glyph: GLYPHS.solflare, installUrl: 'https://solflare.com/' },
+  { id: 'backpack', name: 'Backpack', color: '#FFFFFF', logo: '/wallets/backpack.svg', logoFit: 'mark', installUrl: 'https://backpack.app/' },
+  { id: 'metamask', name: 'MetaMask', color: '#FFFFFF', logo: '/wallets/metamask.svg', logoFit: 'mark', installUrl: 'https://metamask.io/' },
+  { id: 'phantom', name: 'Phantom', color: '#AB9FF2', logo: '/wallets/phantom.svg', logoFit: 'bleed', installUrl: 'https://phantom.app/' },
+  { id: 'solflare', name: 'Solflare', color: '#FFEF46', logo: '/wallets/solflare.svg', logoFit: 'bleed', installUrl: 'https://solflare.com/' },
 ]
 
-/** Colored wallet tile: shows the official adapter icon when the wallet is
- *  detected, falling back to the simplified brand glyph. */
+/** Wallet tile: the company's official logo, the same whether or not the
+ *  extension is installed. */
 function WalletTile({
   wallet,
-  iconUrl,
   size,
   className,
   dimmed,
 }: {
   wallet: WalletOption
-  iconUrl?: string
   size: number
   className?: string
   dimmed?: boolean
 }) {
+  const bleed = wallet.logoFit === 'bleed'
   return (
     <span
       className={className ? `ticon ${className}` : 'ticon'}
-      style={{ width: size, height: size, background: wallet.color, opacity: dimmed ? 0.5 : undefined }}
+      style={{ width: size, height: size, background: wallet.color, opacity: dimmed ? 0.5 : undefined, boxShadow: bleed ? undefined : 'inset 0 0 0 1px rgba(0, 0, 0, 0.08)' }}
       aria-hidden="true"
     >
-      {iconUrl ? (
-        <img src={iconUrl} alt="" style={{ width: '62%', height: '62%', objectFit: 'contain', borderRadius: 4 }} />
-      ) : (
-        wallet.glyph
-      )}
+      <img
+        src={wallet.logo}
+        alt=""
+        draggable={false}
+        style={bleed ? { width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' } : { width: '58%', height: '58%', objectFit: 'contain' }}
+      />
     </span>
   )
 }
@@ -140,11 +125,6 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
 
   function findAdapter(id: WalletProviderId) {
     return wallets.find(w => w.adapter.name.toLowerCase().includes(id))
-  }
-
-  function iconFor(opt: WalletOption): string | undefined {
-    if (opt.id === 'metamask') return undefined
-    return findAdapter(opt.id)?.adapter.icon
   }
 
   function isDetected(opt: WalletOption): boolean {
@@ -235,7 +215,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
           <div className="wm-list">
             {WALLET_OPTIONS.map(opt => (
               <button key={opt.id} type="button" className="wm-option" onClick={() => selectWallet(opt)}>
-                <WalletTile wallet={opt} iconUrl={iconFor(opt)} size={34} />
+                <WalletTile wallet={opt} size={34} />
                 <span className="wm-option-name">{opt.name}</span>
                 <span className="wm-option-hint">{isDetected(opt) ? 'Detected' : 'Not installed'}</span>
               </button>
@@ -246,7 +226,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
 
       {step.kind === 'connecting' && (
         <div className="wm-status">
-          <WalletTile wallet={step.wallet} iconUrl={iconFor(step.wallet)} size={44} className="wm-spinner" />
+          <WalletTile wallet={step.wallet} size={44} className="wm-spinner" />
           <p className="wm-status-text">Connecting to {step.wallet.name}…</p>
           <button
             type="button"
@@ -280,7 +260,7 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
 
       {step.kind === 'not-installed' && (
         <div className="wm-status">
-          <WalletTile wallet={step.wallet} iconUrl={iconFor(step.wallet)} size={44} dimmed />
+          <WalletTile wallet={step.wallet} size={44} dimmed />
           <p className="wm-status-text">{step.wallet.name} isn't installed in this browser.</p>
           <p className="wm-sub" style={{ textAlign: 'center' }}>
             Install the extension to connect it, or choose a different wallet.
