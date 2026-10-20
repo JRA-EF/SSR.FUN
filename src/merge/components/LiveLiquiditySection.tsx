@@ -22,6 +22,7 @@ import {checkLiveState,checkPrepared,defaultSolCap,fromRaw,postLiquidity,summari
 import {AddLiquidityForm,CreatePoolForm,LockForm,WithdrawForm} from './LiveLiquidityActions';
 import {LiquidityLookupSetup} from './LiquidityLookupSetup';
 import {LiquidityTransactionReview} from './LiquidityTransactionReview';
+import {useToast} from '@/hooks/use-toast';
 import {Badge} from './ui/badge';
 import {Button} from './ui/button';
 import {Card,CardContent,CardDescription,CardHeader,CardTitle} from './ui/card';
@@ -33,7 +34,7 @@ const kpiLabel='text-[10px] uppercase tracking-wider font-semibold text-muted-fo
 const date=(ms:number)=>new Date(ms).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
 
 export function LiveLiquiditySection({dtr}:{dtr:DTR}){
- const chain=dtr.onChain!,wallet=useWallet();
+ const chain=dtr.onChain!,wallet=useWallet(),{toast}=useToast();
  const [state,setState]=useState<LiveLiquidityState|null>(null),[loading,setLoading]=useState(true),[loadError,setLoadError]=useState('');
  const [panel,setPanel]=useState<'add'|'withdraw'|'lock'|null>(null);
  const [prepared,setPrepared]=useState<PreparedLiveLiquidity|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -65,7 +66,10 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
    if(result.requiredSigners.some(k=>!allowed.includes(k)))throw new Error('Unexpected signing wallet.');
    VersionedTransaction.deserialize(Buffer.from(result.transactionBase64,'base64'));
    if(current===generation.current)setPrepared(result);
-  }catch(e){if(current===generation.current){if(e instanceof LiquiditySetupNeeded)setSetupAddresses(e.addresses);setError(e instanceof Error?e.message:'Could not prepare this transaction.');}}
+  }catch(e){if(current===generation.current){const text=e instanceof Error?e.message:'Could not prepare this transaction.';
+   if(e instanceof LiquiditySetupNeeded){setSetupAddresses(e.addresses);toast({title:'One-time setup needed',description:'Approve the setup step below first. It only pays account rent and network fees.'});}
+   else toast({variant:'destructive',title:`${ACTION_TITLES[action]} could not be prepared`,description:text});
+   setError(text);}}
   finally{if(current===generation.current)setBusy(false);}
  };
 

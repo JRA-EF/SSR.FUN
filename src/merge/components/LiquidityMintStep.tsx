@@ -17,6 +17,9 @@ import {AmbiguousConfirmationError} from '@/lib/rpcResilience';
 import {MAINNET_TREASURY_VAULT,MAINNET_USDC_MINT,SSR_PROGRAM_ID} from '@/lib/solana-config';
 import {fromRaw,type LiveLiquidityState} from '../lib/liquidity/liveLiquidityClient';
 import type {LiquidityMintPlan} from '../lib/liquidity/liquidityMintPlan';
+import {useToast} from '@/hooks/use-toast';
+import {transactionConfirmedToast} from './TransactionConfirmation';
+import {walletErrorText} from '../lib/liquidity/liquidityExecution';
 import {Button} from './ui/button';
 
 const progressText=(e:MultiAssetBuyProgressEvent,ticker:string)=>{
@@ -33,7 +36,7 @@ const progressText=(e:MultiAssetBuyProgressEvent,ticker:string)=>{
 };
 
 export function LiquidityMintStep({dtr,state,plan,disabled,onMinted}:{dtr:DTR;state:LiveLiquidityState;plan:LiquidityMintPlan;disabled:boolean;onMinted:()=>void}){
- const {connection}=useConnection(),wallet=useWallet();
+ const {connection}=useConnection(),wallet=useWallet(),{toast}=useToast();
  const [busy,setBusy]=useState(false),[message,setMessage]=useState(''),[recover,setRecover]=useState(false);
  const chain=dtr.onChain!,amount=Number(fromRaw(plan.mintRaw,state.reserveDecimals)).toLocaleString(undefined,{maximumFractionDigits:4});
  const isTreasury=wallet.publicKey?.toBase58()===state.treasury;
@@ -43,17 +46,18 @@ export function LiquidityMintStep({dtr,state,plan,disabled,onMinted}:{dtr:DTR;st
    const reserve=new PublicKey(chain.reserve),live=await fetchReserveOnChain(connection,SSR_PROGRAM_ID,reserve,chain.assets.map(a=>new PublicKey(a.mint)));
    if(!live)throw new Error("Could not read this Reserve's live state. Try again shortly.");
    const assets:ZapAssetLeg[]=live.assets.map(a=>({mint:a.assetMint,decimals:a.decimals,reserveAsset:a.reserveAsset,vault:a.vault,vaultBalanceRaw:a.vaultBalanceRaw,tokenProgram:a.tokenProgram}));
-   const {alreadyMinted}=await executeMultiAssetBuyMainnet({connection,wallet,protocolConfig:findProtocolConfig(SSR_PROGRAM_ID)[0],protocolFeeDestination:new PublicKey(MAINNET_TREASURY_VAULT),
+   const {signature,alreadyMinted}=await executeMultiAssetBuyMainnet({connection,wallet,protocolConfig:findProtocolConfig(SSR_PROGRAM_ID)[0],protocolFeeDestination:new PublicKey(MAINNET_TREASURY_VAULT),
     reserve,reserveTokenMint:new PublicKey(chain.reserveTokenMint),mintAuthority:new PublicKey(chain.mintAuthority),assets,reserveTokenSupplyRaw:live.reserveTokenSupplyRaw,
     reserveTokensRequested:plan.mintRaw,effectiveMintFeeTotalBps:BigInt(chain.effectiveMintFeeTotalBps??chain.mintFeeBps??0),assetPricesUsd:chain.assetPricesUsd??{},
     onProgress:e=>setMessage(progressText(e,dtr.ticker))});
    setMessage(alreadyMinted?`An earlier attempt had already minted the ${dtr.ticker}. Preparing the liquidity review…`:`Minted ${amount} ${dtr.ticker}. Preparing the liquidity review…`);
+   toast(alreadyMinted?{title:'Mint already completed',description:`An earlier attempt had already minted the ${dtr.ticker}; nothing was minted twice.`}:transactionConfirmedToast(signature,'Mint confirmed'));
    onMinted();
   }catch(e){
-   if(e instanceof AmbiguousConfirmationError){setMessage(`Solana has not confirmed the mint yet. Refresh in a minute and check your ${dtr.ticker} balance before minting again.`);return;}
+   if(e instanceof AmbiguousConfirmationError){const text=`Solana has not confirmed the mint yet. Refresh in a minute and check your ${dtr.ticker} balance before minting again.`;setMessage(text);toast({title:'Mint still confirming',description:text});return;}
    const report=e instanceof MultiAssetBuyError?e.report:null;
-   if(report&&!report.reserveTokenMinted&&report.legs.some(l=>l.mint!==MAINNET_USDC_MINT&&BigInt(l.purchaseAcquiredRaw)>0n)){setRecover(true);setMessage(`Some USDC was swapped into the reserve assets, but no ${dtr.ticker} was minted. Convert those assets back to USDC, or mint again.`);return;}
-   setMessage(e instanceof Error?e.message:'The mint did not complete.');
+   if(report&&!report.reserveTokenMinted&&report.legs.some(l=>l.mint!==MAINNET_USDC_MINT&&BigInt(l.purchaseAcquiredRaw)>0n)){const text=`Some USDC was swapped into the reserve assets, but no ${dtr.ticker} was minted. Convert those assets back to USDC, or mint again.`;setRecover(true);setMessage(text);toast({variant:'destructive',title:'Mint did not finish',description:text});return;}
+   const text=walletErrorText(e);setMessage(text);toast({variant:'destructive',title:'Mint not completed',description:text});
   }finally{setBusy(false);}
  };
  return <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">

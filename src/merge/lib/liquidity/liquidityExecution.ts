@@ -10,6 +10,11 @@ export interface LiquidityExecutionPlan {
 }
 /** 'rejected': the RPC explicitly refused it before broadcast (preflight or JSON-RPC error), so it can never land. */
 export interface PendingLiquidity {plan:LiquidityExecutionPlan;transactionBase64:string;signature:string;state:'pending'|'confirmed'|'failed'|'expired'|'rejected';error?:string;}
+/** Wallets report a declined prompt as an error; say plainly that nothing happened. */
+export function walletErrorText(e:unknown):string{
+ const text=e instanceof Error?e.message:String(e??'');
+ return /reject|denied|cancel|declined/i.test(text)?'You declined the approval in your wallet, so nothing was sent.':text||'Could not complete this step.';
+}
 /** Re-measures a server review window on this browser's clock, so a skewed clock neither shortens nor stretches it. */
 export function onLocalClock<T extends {expiresAtMs:number;serverNowMs?:number}>(plan:T,receivedAtMs=Date.now()):T{
  if(!Number.isSafeInteger(plan.serverNowMs)||!Number.isSafeInteger(plan.expiresAtMs))return plan;
