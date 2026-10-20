@@ -183,7 +183,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
     <p className="text-xs text-muted-foreground mt-4">Withdrawing is only possible for unlocked liquidity, and any withdrawal is publicly visible. Locking never touches your fees: collected fees always go to your creator treasury. The position excludes liquidity locked forever.</p>
     {panel&&<div className="mt-5 border-t border-border pt-5">
      {panel==='add'&&<AddLiquidityForm dtr={dtr} state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)} refresh={load}/>}
-     {panel==='withdraw'&&<WithdrawForm state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
+     {panel==='withdraw'&&<WithdrawForm dtr={dtr} state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
      {panel==='lock'&&<LockForm state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
     </div>}
    </CardContent>

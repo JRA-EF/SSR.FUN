@@ -88,6 +88,12 @@ export interface LiquiditySummary{
  lockedPct:number;nextUnlockMs:number|null;
  positionLp:bigint;sharePct:number;positionUsdc:number;positionTokens:number;
 }
+/** What burning `lpRaw` returns at the pool's current balances: USDC, and Reserve Tokens after the 0.15% transfer fee. */
+export function withdrawPreview(s:Pick<LiveLiquidityState,'poolUsdcRaw'|'poolReserveRaw'|'lpSupplyRaw'|'reserveDecimals'>,lpRaw:bigint):{usdc:number;tokens:number}{
+ const supply=BigInt(s.lpSupplyRaw);if(lpRaw<=0n||supply<=0n)return {usdc:0,tokens:0};
+ const usdcRaw=lpRaw*BigInt(s.poolUsdcRaw)/supply,tokenRaw=lpRaw*BigInt(s.poolReserveRaw)/supply;
+ return {usdc:rawToNumber(usdcRaw.toString(),6),tokens:rawToNumber((tokenRaw-(tokenRaw*15n+9999n)/10000n).toString(),s.reserveDecimals)};
+}
 export function summarizeLiquidity(s:LiveLiquidityState,navPerToken:number,nowMs=Date.now()):LiquiditySummary{
  const poolUsdc=rawToNumber(s.poolUsdcRaw,6),poolTokens=rawToNumber(s.poolReserveRaw,s.reserveDecimals);
  const marketPrice=poolTokens>0?poolUsdc/poolTokens:null;

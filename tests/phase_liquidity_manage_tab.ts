@@ -1,7 +1,7 @@
 import {expect} from 'chai';
 import fs from 'node:fs';
 import path from 'node:path';
-import {defaultSolCap,checkLiveState,checkPrepared,fromRaw,summarizeLiquidity,toRaw,type LiveLiquidityState} from '../src/merge/lib/liquidity/liveLiquidityClient';
+import {withdrawPreview,defaultSolCap,checkLiveState,checkPrepared,fromRaw,summarizeLiquidity,toRaw,type LiveLiquidityState} from '../src/merge/lib/liquidity/liveLiquidityClient';
 
 const ROOT=path.resolve(__dirname,'..');
 const ids={reserve:'R',creator:'C',treasury:'T'};
@@ -16,6 +16,12 @@ function plan(over:Record<string,unknown>={}){
 }
 
 describe('Manage Reserve liquidity tab (live)',()=>{
+ it('previews a withdrawal as USDC and Reserve Tokens, net of the 0.15% transfer fee',()=>{
+  // The second creator pool on 2026-10-20: 9.191573 USDC + 2.536749 tokens, 4,804,853 LP (100 locked by Raydium).
+  const pool={poolUsdcRaw:'9191573',poolReserveRaw:'2536749',lpSupplyRaw:'4804853',reserveDecimals:6};
+  const all=withdrawPreview(pool,4_804_753n);expect(all.usdc).closeTo(9.191381,1e-6);expect(all.tokens).closeTo(2.536696-0.003806,2e-6);
+  expect(withdrawPreview(pool,0n)).deep.eq({usdc:0,tokens:0});expect(withdrawPreview({...pool,lpSupplyRaw:'0'},5n)).deep.eq({usdc:0,tokens:0});
+ });
  it('defaults the pool-launch SOL limit above the Raydium 0.15 SOL creation fee plus rent',()=>{
   expect(Number(defaultSolCap('create'))).gte(0.25);expect(defaultSolCap('add')).eq('0.05');expect(toRaw(defaultSolCap('create'),9)).eq('300000000');
  });

@@ -8,7 +8,7 @@ import {AlertCircle,Droplets,Lock,Unlock} from 'lucide-react';
 import type {DTR} from '@/lib/types';
 import {formatUsdc} from '@/lib/calculations';
 import {LOCK_MONTH_PRESETS,MIN_LIQUIDITY_USD,QUICK_AMOUNTS_USD,RECOMMENDED_LIQUIDITY_USD} from '@/lib/liquidityPreview';
-import {fromRaw,rawToNumber,toRaw,type LiveLiquidityState,type LockTerm,type LiquiditySummary} from '../lib/liquidity/liveLiquidityClient';
+import {fromRaw,rawToNumber,toRaw,withdrawPreview,type LiveLiquidityState,type LockTerm,type LiquiditySummary} from '../lib/liquidity/liveLiquidityClient';
 import {DEFAULT_FEE_TERMS,feeTermsToBps,type FeeTermsValue} from '../lib/liquidity/feeTerms';
 import {LiquidityFeeTerms} from './LiquidityFeeTerms';
 import {LiquidityMintStep} from './LiquidityMintStep';
@@ -117,14 +117,17 @@ export function AddLiquidityForm({dtr,state,summary,busy,onPrepare,refresh}:{dtr
 }
 
 /** Withdraw unlocked LP back to the creator treasury. */
-export function WithdrawForm({state,summary,busy,onPrepare}:{state:LiveLiquidityState;summary:LiquiditySummary;busy:boolean;onPrepare:PrepareFn}){
+export function WithdrawForm({dtr,state,summary,busy,onPrepare}:{dtr:DTR;state:LiveLiquidityState;summary:LiquiditySummary;busy:boolean;onPrepare:PrepareFn}){
  const [lp,setLp]=useState(''),[error,setError]=useState('');
+ let lpRaw=0n;try{lpRaw=lp?BigInt(toRaw(lp,state.lpDecimals)):0n;}catch{lpRaw=0n;}
+ const back=withdrawPreview(state,lpRaw),all=withdrawPreview(state,summary.unlockedLp),fmt=(n:number)=>n.toLocaleString(undefined,{maximumFractionDigits:4});
  const set=(pct:bigint)=>setLp(fromRaw(summary.unlockedLp*pct/100n,state.lpDecimals));
  const submit=()=>{setError('');try{onPrepare('withdraw',{lpAmountRaw:toRaw(lp,state.lpDecimals)});}catch(e){setError(e instanceof Error?e.message:'Check the amount.');}};
  return <div className="space-y-4">
-  <p className="text-sm">Unlocked: <span className="font-merge-mono">{fromRaw(summary.unlockedLp,state.lpDecimals)}</span> LP tokens. Locked liquidity cannot be withdrawn until its lock expires and is released.</p>
+  <p className="text-sm">Withdrawing returns your share of the pool to your creator treasury as USDC and {dtr.ticker}. Your unlocked position is worth about <span className="font-merge-mono">{formatUsdc(all.usdc)} USDC + {fmt(all.tokens)} {dtr.ticker}</span> at the pool's current balances ({fromRaw(summary.unlockedLp,state.lpDecimals)} LP tokens). Locked liquidity cannot be withdrawn until its lock expires and is released.</p>
   <div className="flex flex-wrap gap-2">{[25n,50n,100n].map(p=><button key={String(p)} type="button" className={pill(false)} onClick={()=>set(p)} disabled={busy||summary.unlockedLp===0n}>{String(p)}%</button>)}</div>
   <div className="space-y-1"><Label htmlFor="liquidity-withdraw-lp">LP tokens to withdraw</Label><Input id="liquidity-withdraw-lp" value={lp} onChange={e=>setLp(e.target.value)} inputMode="decimal" className="max-w-[240px] font-merge-mono" disabled={busy}/></div>
+  {lpRaw>0n&&<div className="rounded-lg border border-border p-3 text-sm"><p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">You receive about</p><p className="font-merge-mono">{formatUsdc(back.usdc)} USDC + {fmt(back.tokens)} {dtr.ticker}</p><p className="text-xs text-muted-foreground mt-1">The exact minimums are fixed in the review. To turn the {dtr.ticker} back into USDC afterwards, redeem it on the Reserve page at its backing value.</p></div>}
   <p className="text-xs text-muted-foreground">Withdrawals are publicly visible and allow 0.5% price movement within the displayed minimums.</p>
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
   <Button variant="outline" disabled={busy||!lp} onClick={submit}>{busy?'Preparing review…':'Review withdrawal'}</Button>
