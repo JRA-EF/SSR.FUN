@@ -38,7 +38,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
  const [panel,setPanel]=useState<'add'|'withdraw'|'lock'|null>(null);
  const [prepared,setPrepared]=useState<PreparedLiveLiquidity|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const [setupAddresses,setSetupAddresses]=useState<string[]>([]),[advancedOpen,setAdvancedOpen]=useState(false),[solCap,setSolCap]=useState('');
- const [copied,setCopied]=useState(false);
+ const [copied,setCopied]=useState(false),[notice,setNotice]=useState<{title:string;signature:string|null}|null>(null);
  const generation=useRef(0),reviewRef=useRef<HTMLDivElement>(null),lastRequest=useRef<{action:LiveAction;extras:Record<string,unknown>}|null>(null);
  const nav=dtr.nav>0?dtr.nav:dtr.tokenPrice;
 
@@ -53,7 +53,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
 
  const prepare=async(action:LiveAction,extras:Record<string,unknown>={})=>{
   if(!state||!wallet.publicKey||busy)return;
-  const current=++generation.current;lastRequest.current={action,extras};setBusy(true);setError('');setPrepared(null);setSetupAddresses([]);
+  const current=++generation.current;lastRequest.current={action,extras};setBusy(true);setError('');setNotice(null);setPrepared(null);setSetupAddresses([]);
   try{
    const actor=wallet.publicKey.toBase58(),maximumSolRaw=toRaw(solCap.trim()||defaultSolCap(action),9);
    const result=checkPrepared(await postLiquidity({action,reserve:chain.reserve,actor,lock:'unlocked',slippageBps:50,maximumSolRaw,lookupTables:savedLiquidityTables(chain.reserve),...extras}),{action,reserve:chain.reserve,creator:chain.manager,treasury:chain.feeDestination,maximumSolRaw});
@@ -87,6 +87,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
  const disabled=busy||state.paused||!wallet.publicKey;
 
  const review=<div ref={reviewRef} className="space-y-4">
+  {notice&&<div role="status" className="rounded-lg border border-primary/30 bg-primary/10 p-3 text-sm flex flex-wrap items-center gap-2"><Check className="w-4 h-4 text-primary"/>{notice.title}{notice.signature&&<a className="underline" href={solscanUrl('tx',notice.signature)} target="_blank" rel="noreferrer">View transaction</a>}<button type="button" className="ml-auto text-xs text-muted-foreground underline" onClick={()=>setNotice(null)}>Dismiss</button></div>}
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
   {setupAddresses.length>0&&chain.feeDestination&&<LiquidityLookupSetup reserve={chain.reserve} treasury={chain.feeDestination} addresses={setupAddresses} onComplete={()=>{const last=lastRequest.current;if(last)void prepare(last.action,last.extras);}}/>}
   {prepared&&<Card className="border-primary/30"><CardHeader><CardTitle className="text-base font-merge-display">Review: {ACTION_TITLES[prepared.action as LiveAction]??prepared.action}</CardTitle>
@@ -98,8 +99,11 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
     {prepared.review.minimumUsdcRaw&&<p>You receive at least {fromRaw(prepared.review.minimumUsdcRaw,6)} USDC and {fromRaw(prepared.review.minimumReserveRaw,state.reserveDecimals)} {dtr.ticker}.</p>}
     {prepared.review.distributableUsdcRaw&&<p>{fromRaw(prepared.review.distributableUsdcRaw,6)} USDC is split by the pool's fee terms between SSR, your creator treasury{state.holderShareBps?' and your holders (added to the Reserve over 24 hours)':''}.</p>}
     {prepared.solCostsByWallet?.map(c=><p key={c.wallet} className="text-xs text-muted-foreground">…{c.wallet.slice(-4)} pays {fromRaw(c.lamports,9)} SOL.</p>)}
-    <LiquidityTransactionReview plan={prepared} onSettled={state=>{if(state==='confirmed')void load();}}/>
-    <Button variant="ghost" size="sm" onClick={()=>{setPrepared(null);void load();}}>Done · refresh pool</Button>
+    <LiquidityTransactionReview plan={prepared} onSettled={(state,signature)=>{if(state!=='confirmed')return;
+      // Close the review and show the outcome above it, with fresh pool numbers.
+      setNotice({title:`${ACTION_TITLES[prepared.action as LiveAction]??'Liquidity action'} confirmed on Solana.`,signature});setPrepared(null);setPanel(null);void load();}}
+     onRetry={()=>{const last=lastRequest.current;if(last)void prepare(last.action,last.extras);}}/>
+    <Button variant="ghost" size="sm" onClick={()=>{setPrepared(null);void load();}}>Close review</Button>
    </CardContent></Card>}
  </div>;
  const advanced=<div>
