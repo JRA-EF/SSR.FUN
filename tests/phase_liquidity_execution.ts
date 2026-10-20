@@ -1,7 +1,7 @@
 import {expect} from 'chai';
 import {createHash,webcrypto} from 'node:crypto';
-import {Keypair,TransactionMessage,TransactionInstruction,VersionedTransaction,SystemProgram} from '@solana/web3.js';
-import {checkLiquidityMessage,signLiquidityPlan,submitLiquidityPlan,reconcileLiquidity,signatureBase58,type LiquidityExecutionPlan,type LiquidityExclusive} from '../src/merge/lib/liquidity/liquidityExecution';
+import {Keypair,PublicKey,TransactionMessage,TransactionInstruction,VersionedTransaction,SystemProgram,ComputeBudgetProgram} from '@solana/web3.js';
+import {isWalletGuardedRewrite,checkLiquidityMessage,signLiquidityPlan,submitLiquidityPlan,reconcileLiquidity,signatureBase58,type LiquidityExecutionPlan,type LiquidityExclusive} from '../src/merge/lib/liquidity/liquidityExecution';
 if(!globalThis.crypto)Object.defineProperty(globalThis,'crypto',{value:webcrypto});
 const NOW=1800000000000;
 const exclusive:LiquidityExclusive=(()=>{const tails=new Map<string,Promise<unknown>>();return async(name:string,work:()=>Promise<any>)=>{const previous=tails.get(name)??Promise.resolve();let release!:()=>void;const next=new Promise<void>(r=>release=r);tails.set(name,next);await previous;try{return await work();}finally{release();if(tails.get(name)===next)tails.delete(name);}};})();
@@ -27,4 +27,37 @@ describe('Liquidity wallet execution and recovery',()=>{
  it('persists unknown outcomes and reconciles successful confirmations without resending',async()=>{const f=fixture();f.connection.sendRawTransaction=async()=>{throw new Error('timeout');};expect((await submitLiquidityPlan(f.input)).message).contain('unknown');await rejects(()=>submitLiquidityPlan(f.input),'still pending');f.setStatus({confirmationStatus:'confirmed',err:null});expect((await reconcileLiquidity(f.connection,f.storage,f.plan,exclusive))?.state).eq('confirmed');await rejects(()=>submitLiquidityPlan(f.input),'recorded outcome');});
  it('only releases an absent signature after finalized blockhash expiry',async()=>{const f=fixture();await submitLiquidityPlan(f.input);f.setHeight(100);expect((await reconcileLiquidity(f.connection,f.storage,f.plan,exclusive))?.state).eq('pending');f.setHeight(101);f.setStatus({confirmationStatus:'processed',err:null});expect((await reconcileLiquidity(f.connection,f.storage,f.plan,exclusive))?.state).eq('pending');f.setStatus(null);expect((await reconcileLiquidity(f.connection,f.storage,f.plan,exclusive))?.state).eq('expired');});
  it('records confirmed failures and checks confirmation expiry after a slow RPC response',async()=>{const f=fixture();await submitLiquidityPlan(f.input);f.setStatus({confirmationStatus:'finalized',err:{InstructionError:[0,'Custom']}});expect((await reconcileLiquidity(f.connection,f.storage,f.plan,exclusive))?.state).eq('failed');const g=fixture();let clock=NOW;g.connection.getBlockHeight=async()=>{clock=NOW+1001;return 90;};await rejects(()=>submitLiquidityPlan({...g.input,now:()=>clock}),'review expired');expect(g.sends()).eq(0);});
+});
+
+describe('Wallet-guarded rewrites (Phantom Lighthouse)',()=>{
+ const LIGHTHOUSE=new PublicKey('L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95');
+ const guard=(account:PublicKey,tag:number)=>new TransactionInstruction({programId:LIGHTHOUSE,keys:[{pubkey:account,isSigner:false,isWritable:false}],data:Buffer.from([tag,1,2,3])});
+ function single(){
+  const a=Keypair.generate(),target=Keypair.generate().publicKey,blockhash=Keypair.generate().publicKey.toBase58();
+  const core=[SystemProgram.transfer({fromPubkey:a.publicKey,toPubkey:target,lamports:5}),new TransactionInstruction({programId:SystemProgram.programId,keys:[{pubkey:a.publicKey,isSigner:true,isWritable:false}],data:Buffer.from('memo')})];
+  const build=(ixs:TransactionInstruction[])=>new VersionedTransaction(new TransactionMessage({payerKey:a.publicKey,recentBlockhash:blockhash,instructions:ixs}).compileToV0Message());
+  const tx=build([ComputeBudgetProgram.setComputeUnitLimit({units:1_400_000}),ComputeBudgetProgram.setComputeUnitPrice({microLamports:1000}),...core]);
+  const plan:LiquidityExecutionPlan={action:'setup',reserve:Keypair.generate().publicKey.toBase58(),treasury:a.publicKey.toBase58(),transactionBase64:Buffer.from(tx.serialize()).toString('base64'),messageHash:createHash('sha256').update(tx.message.serialize()).digest('hex'),requiredSigners:[a.publicKey.toBase58()],blockhash,lastValidBlockHeight:100,expiresAtMs:NOW+1000,executionEnabled:true,confirmationText:'SETUP'};
+  // What Phantom returned for CgHF's setup transactions: one price instruction, guards around the core.
+  const phantom=build([ComputeBudgetProgram.setComputeUnitPrice({microLamports:200_000}),guard(a.publicKey,0),...core,guard(Keypair.generate().publicKey,1)]);
+  return {a,core,build,tx,plan,phantom};
+ }
+ const wallet=(a:Keypair,replacement:VersionedTransaction)=>({publicKey:a.publicKey,signTransaction:async()=>{replacement.sign([a]);return replacement;}});
+ it('accepts Phantom adding Lighthouse guards and replacing the compute budget, then submits it',async()=>{const t=single();
+  const r=await signLiquidityPlan({plan:t.plan,confirmation:'SETUP',wallet:wallet(t.a,t.phantom),now:()=>NOW});expect(r.missingSigners).deep.eq([]);
+  let sent:Uint8Array|null=null;const data=new Map<string,string>();
+  const out=await submitLiquidityPlan({plan:t.plan,transactionBase64:r.transactionBase64,storage:{getItem:k=>data.get(k)??null,setItem:(k,v)=>{data.set(k,v);}},connection:{getBlockHeight:async()=>90,getSignatureStatuses:async()=>({value:[null]}),sendRawTransaction:async(b:any)=>{sent=b;return signatureBase58(VersionedTransaction.deserialize(b).signatures[0]);}} as any,now:()=>NOW,releaseCheck:async()=>true,exclusive});
+  expect(out.message).contain('Submitted');expect(Buffer.from(sent!).equals(Buffer.from(t.phantom.serialize()))).eq(true);});
+ it('rejects a rewrite that alters, drops or adds a non-guard instruction',async()=>{const t=single();
+  const altered=t.build([guard(t.a.publicKey,0),SystemProgram.transfer({fromPubkey:t.a.publicKey,toPubkey:Keypair.generate().publicKey,lamports:5}),t.core[1]]);
+  const dropped=t.build([guard(t.a.publicKey,0),t.core[0]]);
+  const added=t.build([...t.core,SystemProgram.transfer({fromPubkey:t.a.publicKey,toPubkey:Keypair.generate().publicKey,lamports:1})]);
+  for(const bad of [altered,dropped,added])await rejects(()=>signLiquidityPlan({plan:t.plan,confirmation:'SETUP',wallet:wallet(t.a,bad),now:()=>NOW}),'changed');});
+ it('caps the priority fee a wallet may add',()=>{const t=single();
+  expect(isWalletGuardedRewrite(t.tx.message,t.phantom.message)).eq(true);
+  expect(isWalletGuardedRewrite(t.tx.message,t.build([ComputeBudgetProgram.setComputeUnitPrice({microLamports:2_000_000}),...t.core]).message)).eq(false);
+  expect(isWalletGuardedRewrite(t.tx.message,t.build([ComputeBudgetProgram.setComputeUnitLimit({units:100_000}),ComputeBudgetProgram.setComputeUnitPrice({microLamports:2_000_000}),...t.core]).message)).eq(true);});
+ it('still rejects a different blockhash even with identical instructions',async()=>{const t=single();
+  const other=new VersionedTransaction(new TransactionMessage({payerKey:t.a.publicKey,recentBlockhash:Keypair.generate().publicKey.toBase58(),instructions:t.core}).compileToV0Message());
+  await rejects(()=>signLiquidityPlan({plan:t.plan,confirmation:'SETUP',wallet:wallet(t.a,other),now:()=>NOW}),'changed');});
 });

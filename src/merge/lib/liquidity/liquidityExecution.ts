@@ -1,7 +1,7 @@
 /** Exact-message co-signing and durable atomic-transaction recovery.
  * A network timeout never authorizes a second spend or a new blockhash. */
 import {Buffer} from 'buffer';
-import {VersionedTransaction,type PublicKey,type Connection} from '@solana/web3.js';
+import {VersionedTransaction,type VersionedMessage,type PublicKey,type Connection} from '@solana/web3.js';
 export interface LiquidityExecutionPlan {
  action:string;reserve:string;treasury:string;transactionBase64:string;messageHash:string;requiredSigners:string[];
  blockhash:string;lastValidBlockHeight:number;expiresAtMs:number;executionEnabled:boolean;confirmationText:string;
@@ -21,12 +21,43 @@ export function signatureBase58(bytes:Uint8Array):string {
  let result='';while(n>0n){result=alphabet[Number(n%58n)]+result;n/=58n;}
  for(const b of bytes){if(b!==0)break;result='1'+result;}return result;
 }
+// Phantom rewrites single-signer transactions before signing: it replaces the compute budget and
+// wraps the instructions in Lighthouse balance assertions. Accept that rewrite only when every
+// reviewed instruction survives byte-for-byte, in order, with the same accounts and lookups.
+const LIGHTHOUSE='L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95',COMPUTE_BUDGET='ComputeBudget111111111111111111111111111111';
+export const MAX_WALLET_PRIORITY_LAMPORTS=2_000_000n;
+function resolvedInstructions(m:VersionedMessage){
+ const keys=m.staticAccountKeys.map((k,i)=>`${k.toBase58()}:${m.isAccountWritable(i)?'w':'r'}${m.isAccountSigner(i)?'s':''}`);
+ for(const l of m.addressTableLookups)for(const i of l.writableIndexes)keys.push(`${l.accountKey.toBase58()}#${i}:w`);
+ for(const l of m.addressTableLookups)for(const i of l.readonlyIndexes)keys.push(`${l.accountKey.toBase58()}#${i}:r`);
+ return m.compiledInstructions.map(ix=>({program:m.staticAccountKeys[ix.programIdIndex]?.toBase58()??'',accounts:ix.accountKeyIndexes.map(i=>keys[i]),data:Buffer.from(ix.data).toString('hex')}));
+}
+export function isWalletGuardedRewrite(reviewed:VersionedMessage,signed:VersionedMessage):boolean{
+ if(reviewed.version!==0||signed.version!==0||reviewed.recentBlockhash!==signed.recentBlockhash||reviewed.header.numRequiredSignatures!==signed.header.numRequiredSignatures)return false;
+ if(!reviewed.staticAccountKeys[0]?.equals(signed.staticAccountKeys[0]))return false;
+ const lookups=(m:VersionedMessage)=>JSON.stringify(m.addressTableLookups.map(l=>[l.accountKey.toBase58(),[...l.writableIndexes],[...l.readonlyIndexes]]));
+ if(lookups(reviewed)!==lookups(signed))return false;
+ const core=(m:VersionedMessage)=>JSON.stringify(resolvedInstructions(m).filter(ix=>ix.program!==COMPUTE_BUDGET&&ix.program!==LIGHTHOUSE));
+ if(resolvedInstructions(reviewed).some(ix=>ix.program===LIGHTHOUSE)||core(reviewed)!==core(signed))return false;
+ let limit:bigint|null=null,price=0n;const seen=new Set<number>();
+ for(const ix of resolvedInstructions(signed).filter(ix=>ix.program===COMPUTE_BUDGET)){
+  const data=Buffer.from(ix.data,'hex'),tag=data[0];if(seen.has(tag)||ix.accounts.length)return false;seen.add(tag);
+  if(tag===2&&data.length===5)limit=BigInt(data.readUInt32LE(1));
+  else if(tag===3&&data.length===9)price=data.readBigUInt64LE(1);
+  else if(!((tag===1||tag===4)&&data.length===5))return false;
+ }
+ return price*(limit??1_400_000n)/1_000_000n<=MAX_WALLET_PRIORITY_LAMPORTS;
+}
 export async function checkLiquidityMessage(plan:LiquidityExecutionPlan,serialized=plan.transactionBase64):Promise<VersionedTransaction>{
  if(typeof serialized!=='string'||serialized.length>1644)throw new Error('Invalid liquidity transaction');
  const bytes=Buffer.from(serialized,'base64');
  if(bytes.length>1232||bytes.toString('base64')!==serialized||!Array.isArray(plan.requiredSigners)||!Number.isSafeInteger(plan.lastValidBlockHeight)||plan.lastValidBlockHeight<0)throw new Error('Invalid liquidity transaction');
  const tx=VersionedTransaction.deserialize(bytes);
- if(await digest(tx.message.serialize())!==plan.messageHash||tx.message.recentBlockhash!==plan.blockhash)throw new Error('Liquidity transaction changed; review again');
+ if(tx.message.recentBlockhash!==plan.blockhash)throw new Error('Liquidity transaction changed; review again');
+ if(await digest(tx.message.serialize())!==plan.messageHash){
+  const reviewed=serialized===plan.transactionBase64?null:VersionedTransaction.deserialize(Buffer.from(plan.transactionBase64,'base64'));
+  if(!reviewed||await digest(reviewed.message.serialize())!==plan.messageHash||!isWalletGuardedRewrite(reviewed.message,tx.message))throw new Error('Liquidity transaction changed; review again');
+ }
  const signers=tx.message.staticAccountKeys.slice(0,tx.message.header.numRequiredSignatures);
  if(signers.map(s=>s.toBase58()).join(',')!==plan.requiredSigners.join(','))throw new Error('Liquidity authorities changed');
  for(let i=0;i<signers.length;i++)if(tx.signatures[i].some(b=>b!==0)){
