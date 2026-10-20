@@ -7,6 +7,7 @@
  */
 import type {PreparedLiquidity} from '../../../../lib/mainnet/prepareCompound';
 import {throwLiquidityResponse} from './liquiditySetupClient';
+import {onLocalClock} from './liquidityExecution';
 
 export interface LiveTranche{address:string;unlockTs:string;permanent:boolean;withdrawn:boolean;lpRaw:string;}
 export interface LiveLiquidityState{
@@ -60,7 +61,8 @@ export function checkLiveState(value:any,expected:{reserve:string;creator:string
  * flag is reported by the server and enforced again at signing
  * (liquidityExecution.ts), so it only has to be a boolean here.
  */
-export function checkPrepared(result:any,expected:{action:LiveAction;reserve:string;creator:string;treasury?:string;maximumSolRaw:string}):PreparedLiveLiquidity{
+export function checkPrepared(response:any,expected:{action:LiveAction;reserve:string;creator:string;treasury?:string;maximumSolRaw:string}):PreparedLiveLiquidity{
+ const result=response&&typeof response==='object'?onLocalClock(response):response;
  if(result?.action!==expected.action||result.reserve!==expected.reserve||result.creator!==expected.creator||result.treasury!==expected.treasury||result.confirmationText!==expected.action.toUpperCase()||!(result.expiresAtMs>Date.now())||typeof result.executionEnabled!=='boolean'||!result.simulation?.passed)throw new Error('Liquidity review changed or has expired.');
  if(!RAW.test(String(result.totalSolRaw))||BigInt(result.totalSolRaw)>BigInt(expected.maximumSolRaw))throw new Error('Simulated SOL cost exceeds your cap.');
  return {...result,review:result.review??{}};

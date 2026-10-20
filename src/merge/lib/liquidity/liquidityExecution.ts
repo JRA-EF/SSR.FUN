@@ -1,12 +1,26 @@
 /** Exact-message co-signing and durable atomic-transaction recovery.
  * A network timeout never authorizes a second spend or a new blockhash. */
 import {Buffer} from 'buffer';
-import {VersionedTransaction,type VersionedMessage,type PublicKey,type Connection} from '@solana/web3.js';
+import {VersionedTransaction,SendTransactionError,SolanaJSONRPCError,type VersionedMessage,type PublicKey,type Connection} from '@solana/web3.js';
 export interface LiquidityExecutionPlan {
  action:string;reserve:string;treasury:string;transactionBase64:string;messageHash:string;requiredSigners:string[];
- blockhash:string;lastValidBlockHeight:number;expiresAtMs:number;executionEnabled:boolean;confirmationText:string;
+ blockhash:string;lastValidBlockHeight:number;expiresAtMs:number;executionEnabled:boolean;confirmationText:string;serverNowMs?:number;
 }
-export interface PendingLiquidity {plan:LiquidityExecutionPlan;transactionBase64:string;signature:string;state:'pending'|'confirmed'|'failed'|'expired';}
+/** 'rejected': the RPC explicitly refused it before broadcast (preflight or JSON-RPC error), so it can never land. */
+export interface PendingLiquidity {plan:LiquidityExecutionPlan;transactionBase64:string;signature:string;state:'pending'|'confirmed'|'failed'|'expired'|'rejected';error?:string;}
+/** Re-measures a server review window on this browser's clock, so a skewed clock neither shortens nor stretches it. */
+export function onLocalClock<T extends {expiresAtMs:number;serverNowMs?:number}>(plan:T,receivedAtMs=Date.now()):T{
+ if(!Number.isSafeInteger(plan.serverNowMs)||!Number.isSafeInteger(plan.expiresAtMs))return plan;
+ return {...plan,expiresAtMs:receivedAtMs+Math.max(0,plan.expiresAtMs-plan.serverNowMs!)-1000};
+}
+/** An explicit JSON-RPC error means the node refused the transaction; anything else (timeout, HTTP, network) is ambiguous. */
+export function definiteRejection(e:unknown):string|null{
+ const name=(e as {name?:string})?.name;
+ if(!(e instanceof SendTransactionError||e instanceof SolanaJSONRPCError||name==='SendTransactionError'||name==='SolanaJSONRPCError'))return null;
+ const logs=(e as {logs?:string[];transactionLogs?:string[]}).logs??(e as {transactionLogs?:string[]}).transactionLogs??[];
+ const message=e instanceof Error?e.message:String(e);
+ return [message,...(Array.isArray(logs)?logs.slice(-8):[])].join('\n');
+}
 export interface LiquidityStorage {getItem(key:string):string|null;setItem(key:string,value:string):void;}
 export type LiquidityExclusive = <T>(name:string,work:()=>Promise<T>)=>Promise<T>;
 const browserExclusive:LiquidityExclusive = async(name,work)=>{
@@ -54,7 +68,8 @@ export async function checkLiquidityMessage(plan:LiquidityExecutionPlan,serializ
  if(bytes.length>1232||bytes.toString('base64')!==serialized||!Array.isArray(plan.requiredSigners)||!Number.isSafeInteger(plan.lastValidBlockHeight)||plan.lastValidBlockHeight<0)throw new Error('Invalid liquidity transaction');
  const tx=VersionedTransaction.deserialize(bytes);
  if(tx.message.recentBlockhash!==plan.blockhash)throw new Error('Liquidity transaction changed; review again');
- if(await digest(tx.message.serialize())!==plan.messageHash){
+ const rewritten=await digest(tx.message.serialize())!==plan.messageHash;
+ if(rewritten){
   const reviewed=serialized===plan.transactionBase64?null:VersionedTransaction.deserialize(Buffer.from(plan.transactionBase64,'base64'));
   if(!reviewed||await digest(reviewed.message.serialize())!==plan.messageHash||!isWalletGuardedRewrite(reviewed.message,tx.message))throw new Error('Liquidity transaction changed; review again');
  }
@@ -62,7 +77,7 @@ export async function checkLiquidityMessage(plan:LiquidityExecutionPlan,serializ
  if(signers.map(s=>s.toBase58()).join(',')!==plan.requiredSigners.join(','))throw new Error('Liquidity authorities changed');
  for(let i=0;i<signers.length;i++)if(tx.signatures[i].some(b=>b!==0)){
   const publicKey=await crypto.subtle.importKey('raw',Uint8Array.from(signers[i].toBytes()),{name:'Ed25519'},false,['verify']);
-  if(!await crypto.subtle.verify('Ed25519',publicKey,Uint8Array.from(tx.signatures[i]),Uint8Array.from(tx.message.serialize())))throw new Error('Invalid liquidity signature');
+  if(!await crypto.subtle.verify('Ed25519',publicKey,Uint8Array.from(tx.signatures[i]),Uint8Array.from(tx.message.serialize())))throw new Error(rewritten?'Your wallet modified a transaction that was already co-signed, which voids the co-signature. Nothing was sent. Prepare it again.':'Invalid liquidity signature');
  }
  return tx;
 }
@@ -87,11 +102,16 @@ export async function signLiquidityPlan(p:{plan:LiquidityExecutionPlan;transacti
 export function readPendingLiquidity(storage:LiquidityStorage,plan:LiquidityExecutionPlan):PendingLiquidity|null{
  const raw=storage.getItem(key(plan));if(!raw)return null;
  let record:PendingLiquidity;try{record=JSON.parse(raw);}catch{throw new Error('Saved liquidity transaction needs reconciliation before another spend');}
- if(!record?.plan||record.plan.reserve!==plan.reserve||record.plan.treasury!==plan.treasury||!['pending','confirmed','failed','expired'].includes(record.state)||typeof record.signature!=='string')throw new Error('Saved liquidity transaction is invalid; do not submit again');
+ if(!record?.plan||record.plan.reserve!==plan.reserve||record.plan.treasury!==plan.treasury||!['pending','confirmed','failed','expired','rejected'].includes(record.state)||typeof record.signature!=='string')throw new Error('Saved liquidity transaction is invalid; do not submit again');
  return record;
 }
 async function reconcileUnlocked(connection:Pick<Connection,'getSignatureStatuses'|'getBlockHeight'>,storage:LiquidityStorage,plan:LiquidityExecutionPlan):Promise<PendingLiquidity|null>{
- const record=readPendingLiquidity(storage,plan);if(!record||record.state!=='pending')return record;
+ const record=readPendingLiquidity(storage,plan);if(!record)return null;
+ // A rejection is explicit, but confirm on chain once before releasing the next spend.
+ if(record.state==='rejected'){const seen=(await connection.getSignatureStatuses([record.signature],{searchTransactionHistory:true})).value[0];
+  if(seen){record.state=seen.confirmationStatus==='confirmed'||seen.confirmationStatus==='finalized'?(seen.err?'failed':'confirmed'):'pending';storage.setItem(key(plan),JSON.stringify(record));}
+  if(record.state!=='pending')return record;}
+ if(record.state!=='pending')return record;
  const tx=await checkLiquidityMessage(record.plan,record.transactionBase64);
  if(signatureBase58(tx.signatures[0])!==record.signature)throw new Error('Saved signature does not match the pending transaction');
  const [height,statuses]=await Promise.all([connection.getBlockHeight('finalized'),connection.getSignatureStatuses([record.signature],{searchTransactionHistory:true})]);
@@ -122,8 +142,15 @@ export async function submitLiquidityPlan(p:{connection:Pick<Connection,'getSign
  const signature=signatureBase58(tx.signatures[0]),record:PendingLiquidity={plan:p.plan,transactionBase64:p.transactionBase64,signature,state:'pending'};
  // Persist BEFORE networking. A storage failure prevents submission entirely.
  p.storage.setItem(key(p.plan),JSON.stringify(record));
- try{const returned=await p.connection.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:2});if(returned!==signature)throw new Error('RPC signature differs');}
- catch{return {signature,state:'pending' as const,message:'Submission outcome is unknown. Check the saved transaction before trying again.'};}
+ let returned:string;
+ try{returned=await p.connection.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:2});}
+ catch(e){
+  const rejection=definiteRejection(e);
+  if(rejection===null)return {signature,state:'pending' as const,message:'Submission outcome is unknown. Check the saved transaction before trying again.'};
+  p.storage.setItem(key(p.plan),JSON.stringify({...record,state:'rejected',error:rejection}));
+  return {signature,state:'rejected' as const,message:`The network rejected this transaction before broadcasting it, so nothing was spent. Prepare it again.\n${rejection}`};
+ }
+ if(returned!==signature)return {signature,state:'pending' as const,message:'Submission outcome is unknown. Check the saved transaction before trying again.'};
  return {signature,state:'pending' as const,message:'Submitted. Awaiting confirmation.'};
  });
 }

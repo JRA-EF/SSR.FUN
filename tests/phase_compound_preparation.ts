@@ -74,6 +74,14 @@ describe('Atomic Compound preparation',()=>{
   expect(tx.signatures.every(s=>s.every(n=>n===0))).eq(true);
   expect(r.messageHash).eq(createHash('sha256').update(tx.message.serialize()).digest('hex'));
  });
+ it('starts the signing window after simulation and never lets it outlive the blockhash',async()=>{
+  const run=async(simulatedAt:number,reviewWindowMs?:number)=>{const {p,c}=simulationFixture();let clock=NOW;const bh=c.getLatestBlockhash,sim=c.simulateTransaction;
+   c.getLatestBlockhash=async()=>{clock=NOW+2000;return bh();};c.simulateTransaction=async()=>{clock=NOW+simulatedAt;return sim();};
+   return simulateLiquidityTransaction({...p,expiresAtMs:NOW+30000,reviewWindowMs,now:()=>clock});};
+  const fast=await run(3000,45000);expect(fast.serverNowMs).eq(NOW+3000);expect(fast.expiresAtMs).eq(NOW+48000);
+  const slow=await run(20000,45000);expect(slow.expiresAtMs).eq(NOW+2000+55000);
+  const fixed=await run(3000);expect(fixed.expiresAtMs).eq(NOW+30000);
+ });
  it('rejects failed simulation, unknown fee, unexpected signer, expired or oversized plans',async()=>{
   {const {p,c}=simulationFixture();c.simulateTransaction=async()=>({value:{err:{InstructionError:[1,'failure']}}});await rejects(()=>simulateLiquidityTransaction(p),'simulation failed');}
   {const {p,c}=simulationFixture();c.getFeeForMessage=async()=>({value:null});await rejects(()=>simulateLiquidityTransaction(p),'fee unavailable');}

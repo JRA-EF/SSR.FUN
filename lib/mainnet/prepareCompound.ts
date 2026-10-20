@@ -17,12 +17,16 @@ const MEMO=new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 const fail=(message:string):never=>{throw new Error(message);};
 const assert=(ok:unknown,message:string)=>{if(!ok)fail(message);};
 const ceil=(a:bigint,b:bigint)=>(a+b-1n)/b;
+/** A blockhash lands for ~150 slots (~60 s); a review never outlives this much of it. */
+export const BLOCKHASH_REVIEW_LIMIT_MS=55_000;
 export const messageDigest=(message:Uint8Array)=>createHash('sha256').update(message).digest('hex');
 export interface PreparedLiquidity {
   action:'compound'|'collect'|'add'|'withdraw'|'create'|'lock'|'extend'|'unlock'|'permanent'|'setup';
   reserve:string;pool:string;creator:string;treasury:string;
   transactionBase64:string;messageHash:string;requiredSigners:string[];
   blockhash:string;lastValidBlockHeight:number;expiresAtMs:number;
+  /** Server clock when the review was returned, so the browser can measure the window on its own clock. */
+  serverNowMs?:number;
   networkFeeRaw:string;accountRentRaw:string;totalSolRaw:string;
   solCostsByWallet?:{wallet:string;lamports:string}[];
   simulation:{slot:number;unitsConsumed:number;passed:true};
@@ -60,11 +64,13 @@ export function validateCompoundJupiterInstruction(w:JupiterInstructionJson,q:Ju
  * transaction. No signature means no live funds can move. */
 export async function simulateLiquidityTransaction(p:{connection:Connection;instructions:TransactionInstruction[];treasury:PublicKey;creator:PublicKey;lookupTables?:AddressLookupTableAccount[];
   feePayer?:PublicKey;solPayers?:PublicKey[];action:PreparedLiquidity['action'];reserve:PublicKey;pool:PublicKey;expiresAtMs:number;executionEnabled:boolean;quoteId?:string;
-  watch?:{address:PublicKey;minimum:bigint;program:PublicKey}[];maximumSol?:bigint;now?:()=>number}):Promise<PreparedLiquidity> {
+  watch?:{address:PublicKey;minimum:bigint;program:PublicKey}[];maximumSol?:bigint;now?:()=>number;
+  /** When set, expiresAtMs is a preparation deadline and the signing window starts once simulation passes. */
+  reviewWindowMs?:number}):Promise<PreparedLiquidity> {
   const now=p.now??Date.now;
   assert(now()<p.expiresAtMs,'Liquidity review expired; prepare again');
   const feePayer=p.feePayer??p.treasury;
-  const latest=await p.connection.getLatestBlockhash('confirmed');
+  const latest=await p.connection.getLatestBlockhash('confirmed'),blockhashAtMs=now();
   const recent=await p.connection.getRecentPrioritizationFees({lockedWritableAccounts:[p.pool]});
   const priority=Math.min(50_000,Math.max(1_000,...recent.slice(-20).map(f=>f.prioritizationFee)));
   const memo=new TransactionInstruction({programId:MEMO,keys:[{pubkey:p.action==='collect'?feePayer:p.action==='unlock'?p.treasury:p.creator,isSigner:true,isWritable:false}],data:Buffer.from(`SSR ${p.action} ${p.quoteId??p.pool.toBase58()}`)});
@@ -98,9 +104,10 @@ export async function simulateLiquidityTransaction(p:{connection:Connection;inst
     assert(decoded.amount>=w.minimum,'Simulation violates an approved balance or liquidity minimum');
   }
   assert(now()<p.expiresAtMs,'Liquidity review expired during simulation; prepare again');
+  const serverNowMs=now(),expiresAtMs=p.reviewWindowMs?Math.min(serverNowMs+p.reviewWindowMs,blockhashAtMs+BLOCKHASH_REVIEW_LIMIT_MS):p.expiresAtMs;
   return {action:p.action,reserve:p.reserve.toBase58(),pool:p.pool.toBase58(),creator:p.creator.toBase58(),treasury:p.treasury.toBase58(),
     transactionBase64:Buffer.from(bytes!).toString('base64'),messageHash:messageDigest(message.serialize()),requiredSigners:signatures,
-    blockhash:latest.blockhash,lastValidBlockHeight:latest.lastValidBlockHeight,expiresAtMs:p.expiresAtMs,
+    blockhash:latest.blockhash,lastValidBlockHeight:latest.lastValidBlockHeight,expiresAtMs,serverNowMs,
     solCostsByWallet,networkFeeRaw:network.toString(),accountRentRaw:(total-network).toString(),totalSolRaw:total.toString(),
     simulation:{slot:simulation.context.slot,unitsConsumed:simulation.value.unitsConsumed??0,passed:true},executionEnabled:p.executionEnabled,confirmationText:p.action.toUpperCase(),quoteId:p.quoteId};
 }

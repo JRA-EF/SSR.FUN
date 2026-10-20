@@ -54,7 +54,8 @@ export async function isLiquidityTermsV2Live(connection:Pick<Connection,'simulat
  return !/"Custom":101\b/.test(JSON.stringify(value.err??null));
 }
 export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionEnabled:boolean;prices:(mints:string[])=>Promise<Map<string,Price>>},p:{reserve:PublicKey;actor:PublicKey;usdcRaw:bigint;maximumSolRaw:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;lock:TrancheChoice;lookupTables?:PublicKey[]}){
- const now=deps.now??Date.now,expiresAtMs=now()+45000,s=await readLiquidityState(deps,p.reserve);
+ // Preparation (reads, pricing, two simulations) gets its own deadline; the 45 s signing window starts when it ends.
+ const now=deps.now??Date.now,expiresAtMs=now()+30000,s=await readLiquidityState(deps,p.reserve);
  check(!s.registered&&!s.paused,'Pool already exists or the protocol is paused');check(p.actor.equals(s.creator),'Connect the creator wallet to prepare pool creation');
  check(PublicKey.isOnCurve(s.treasury.toBytes())&&PublicKey.isOnCurve(s.creator.toBytes()),'Program treasuries require their own multisig execution adapter');
  check(p.usdcRaw>0n&&p.usdcRaw<=s.usdcBalance,'Creator treasury has insufficient USDC');
@@ -69,7 +70,7 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
  const tables:AddressLookupTableAccount[]=await loadLiquidityTables(deps.connection,s.reserve,p.lookupTables);
  // DEC-0240: the creator refunds SSR's pool payer inside this transaction. Pass 1 refunds the creator's SOL cap to
  // measure the payer's real cost (the payer holds only a small float); pass 2 refunds exactly that cost plus a margin.
- const simulate=(refundLamports:bigint)=>simulateLiquidityTransaction({connection:deps.connection,instructions:[poolPayerRefund(s.creator,refundLamports),...built.instructions],treasury:s.treasury,creator:s.creator,feePayer:SSR_POOL_PAYER,solPayers:[s.creator,s.treasury],lookupTables:tables,action:'create',reserve:s.reserve,pool:s.pool,expiresAtMs,executionEnabled:deps.executionEnabled,maximumSol:p.maximumSolRaw,now,
+ const simulate=(refundLamports:bigint)=>simulateLiquidityTransaction({connection:deps.connection,instructions:[poolPayerRefund(s.creator,refundLamports),...built.instructions],treasury:s.treasury,creator:s.creator,feePayer:SSR_POOL_PAYER,solPayers:[s.creator,s.treasury],lookupTables:tables,action:'create',reserve:s.reserve,pool:s.pool,expiresAtMs,reviewWindowMs:45000,executionEnabled:deps.executionEnabled,maximumSol:p.maximumSolRaw,now,
   watch:[{address:s.ata(LIQUIDITY_USDC),program:TOKEN_PROGRAM_ID,minimum:s.usdcBalance-p.usdcRaw},{address:s.ata(s.mint,TOKEN_2022_PROGRAM_ID),program:TOKEN_2022_PROGRAM_ID,minimum:s.reserveBalance-maximumReserveDebitRaw},{address:s.ata(s.lp),program:TOKEN_PROGRAM_ID,minimum:locked?0n:minimumLpRaw}]});
  const payerCost=(r:Awaited<ReturnType<typeof simulate>>)=>BigInt(r.solCostsByWallet?.find(c=>c.wallet===SSR_POOL_PAYER.toBase58())?.lamports??'0');
  check(p.maximumSolRaw>POOL_PAYER_REFUND_MARGIN_LAMPORTS,'Choose a higher SOL cost cap');

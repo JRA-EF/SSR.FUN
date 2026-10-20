@@ -1,7 +1,8 @@
 import {expect} from 'chai';
 import {createHash,webcrypto} from 'node:crypto';
 import {Keypair,PublicKey,TransactionMessage,TransactionInstruction,VersionedTransaction,SystemProgram,ComputeBudgetProgram} from '@solana/web3.js';
-import {isWalletGuardedRewrite,checkLiquidityMessage,signLiquidityPlan,submitLiquidityPlan,reconcileLiquidity,signatureBase58,type LiquidityExecutionPlan,type LiquidityExclusive} from '../src/merge/lib/liquidity/liquidityExecution';
+import {SendTransactionError,SolanaJSONRPCError} from '@solana/web3.js';
+import {onLocalClock,definiteRejection,isWalletGuardedRewrite,checkLiquidityMessage,signLiquidityPlan,submitLiquidityPlan,reconcileLiquidity,signatureBase58,type LiquidityExecutionPlan,type LiquidityExclusive} from '../src/merge/lib/liquidity/liquidityExecution';
 if(!globalThis.crypto)Object.defineProperty(globalThis,'crypto',{value:webcrypto});
 const NOW=1800000000000;
 const exclusive:LiquidityExclusive=(()=>{const tails=new Map<string,Promise<unknown>>();return async(name:string,work:()=>Promise<any>)=>{const previous=tails.get(name)??Promise.resolve();let release!:()=>void;const next=new Promise<void>(r=>release=r);tails.set(name,next);await previous;try{return await work();}finally{release();if(tails.get(name)===next)tails.delete(name);}};})();
@@ -60,4 +61,34 @@ describe('Wallet-guarded rewrites (Phantom Lighthouse)',()=>{
  it('still rejects a different blockhash even with identical instructions',async()=>{const t=single();
   const other=new VersionedTransaction(new TransactionMessage({payerKey:t.a.publicKey,recentBlockhash:Keypair.generate().publicKey.toBase58(),instructions:t.core}).compileToV0Message());
   await rejects(()=>signLiquidityPlan({plan:t.plan,confirmation:'SETUP',wallet:wallet(t.a,other),now:()=>NOW}),'changed');});
+});
+describe('Submission outcomes and review clocks',()=>{
+ const rejection=()=>new SendTransactionError({action:'send',signature:'',transactionMessage:'Transaction simulation failed: Error processing Instruction 2: custom program error: 0x1',logs:['Program log: Instruction: Initialize','Program log: Error: insufficient funds']});
+ it('records an explicit preflight rejection with its logs and allows a fresh preparation',async()=>{const f=fixture();f.connection.sendRawTransaction=async()=>{throw rejection();};
+  const out=await submitLiquidityPlan(f.input);expect(out.state).eq('rejected');expect(out.message).contain('nothing was spent').contain('0x1').contain('insufficient funds');
+  const saved=JSON.parse([...f.data.values()][0]);expect(saved.state).eq('rejected');expect(saved.error).contain('insufficient funds');
+  await rejects(()=>submitLiquidityPlan(f.input),'recorded outcome');
+  const g=fixture();g.data.set([...f.data.keys()][0].replace(f.plan.reserve,g.plan.reserve).replace(f.plan.treasury,g.plan.treasury),JSON.stringify({...saved,plan:{...saved.plan,reserve:g.plan.reserve,treasury:g.plan.treasury}}));
+  expect((await submitLiquidityPlan(g.input)).state).eq('pending');expect(g.sends()).eq(1);});
+ it('treats JSON-RPC errors as definite and transport failures as unknown',async()=>{
+  expect(definiteRejection(new SolanaJSONRPCError({code:-32005,message:'rate-limited'},'failed to send transaction'))).contain('rate-limited');
+  expect(definiteRejection(new Error('fetch failed'))).eq(null);expect(definiteRejection(new TypeError('NetworkError'))).eq(null);
+  const f=fixture();f.connection.sendRawTransaction=async()=>{throw new Error('fetch failed');};expect((await submitLiquidityPlan(f.input)).message).contain('unknown');await rejects(()=>submitLiquidityPlan(f.input),'still pending');});
+ it('re-checks a rejected signature on chain before releasing another spend',async()=>{const f=fixture();f.connection.sendRawTransaction=async()=>{throw rejection();};await submitLiquidityPlan(f.input);
+  f.setStatus({confirmationStatus:'confirmed',err:null});expect((await reconcileLiquidity(f.connection,f.storage,f.plan,exclusive))?.state).eq('confirmed');});
+ it('measures the review window on the browser clock regardless of server clock skew',()=>{
+  const plan={expiresAtMs:5_000_000+45_000,serverNowMs:5_000_000};
+  expect(onLocalClock(plan,NOW).expiresAtMs).eq(NOW+44_000);
+  expect(onLocalClock({expiresAtMs:NOW+9000},NOW).expiresAtMs).eq(NOW+9000);
+  expect(onLocalClock({expiresAtMs:10,serverNowMs:50},NOW).expiresAtMs).eq(NOW-1000);});
+ it('refuses a wallet rewrite of a transaction SSR already co-signed, without weakening the check',async()=>{
+  const payer=Keypair.generate(),creator=Keypair.generate(),blockhash=Keypair.generate().publicKey.toBase58(),LIGHTHOUSE=new PublicKey('L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95');
+  const core=[new TransactionInstruction({programId:SystemProgram.programId,keys:[{pubkey:creator.publicKey,isSigner:true,isWritable:true}],data:Buffer.from('launch')})];
+  const build=(ixs:TransactionInstruction[])=>new VersionedTransaction(new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:blockhash,instructions:ixs}).compileToV0Message());
+  const tx=build(core);tx.sign([payer]);
+  const plan:LiquidityExecutionPlan={action:'create',reserve:Keypair.generate().publicKey.toBase58(),treasury:creator.publicKey.toBase58(),transactionBase64:Buffer.from(tx.serialize()).toString('base64'),messageHash:createHash('sha256').update(tx.message.serialize()).digest('hex'),requiredSigners:[payer.publicKey.toBase58(),creator.publicKey.toBase58()],blockhash,lastValidBlockHeight:100,expiresAtMs:NOW+1000,executionEnabled:true,confirmationText:'CREATE'};
+  const rewritten=build([...core,new TransactionInstruction({programId:LIGHTHOUSE,keys:[{pubkey:creator.publicKey,isSigner:false,isWritable:false}],data:Buffer.from([1])})]);
+  rewritten.signatures[0]=tx.signatures[0];
+  await rejects(()=>signLiquidityPlan({plan,confirmation:'CREATE',wallet:{publicKey:creator.publicKey,signTransaction:async()=>{rewritten.sign([creator]);rewritten.signatures[0]=tx.signatures[0];return rewritten;}},now:()=>NOW}),'voids the co-signature');
+  const ok=await signLiquidityPlan({plan,confirmation:'CREATE',wallet:{publicKey:creator.publicKey,signTransaction:async t=>{t.sign([creator]);return t;}},now:()=>NOW});expect(ok.missingSigners).deep.eq([]);});
 });
