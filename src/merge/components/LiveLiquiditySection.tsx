@@ -113,7 +113,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
    <CardTitle className="text-xl font-merge-display flex items-center gap-2"><Droplets className="w-5 h-5 text-primary"/> Take your Reserve Token to market</CardTitle>
    <CardDescription>Add liquidity on Raydium and {dtr.ticker} becomes tradeable outside SSR.fun, with a public chart. Liquidity is what turns a backed token into a market.</CardDescription>
   </CardHeader><CardContent className="space-y-4">
-   <CreatePoolForm dtr={dtr} state={state} nav={nav} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>
+   <CreatePoolForm dtr={dtr} state={state} nav={nav} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)} refresh={load}/>
    {advanced}
   </CardContent></Card>
   {review}
@@ -174,7 +174,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
     </div>
     <p className="text-xs text-muted-foreground mt-4">Withdrawing is only possible for unlocked liquidity, and any withdrawal is publicly visible. Locking never touches your fees: collected fees always go to your creator treasury. The position excludes liquidity locked forever.</p>
     {panel&&<div className="mt-5 border-t border-border pt-5">
-     {panel==='add'&&<AddLiquidityForm dtr={dtr} state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
+     {panel==='add'&&<AddLiquidityForm dtr={dtr} state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)} refresh={load}/>}
      {panel==='withdraw'&&<WithdrawForm state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
      {panel==='lock'&&<LockForm state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
     </div>}

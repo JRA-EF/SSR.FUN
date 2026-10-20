@@ -7677,3 +7677,37 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0252
+
+```json
+{
+  "id": "DEC-0252",
+  "date": "2026-10-20",
+  "title": "Liquidity launch and add mint the missing Reserve Tokens at NAV when the creator treasury does not hold enough",
+  "status": "SHIPPED to staging 2026-10-20 (frontend only, no program change); prod liquidity stays off (DEC-0245).",
+  "decision": "When a pool launch or an addition needs more Reserve Tokens than the creator treasury holds, the liquidity panel offers to mint only the missing amount (the shortfall plus 2% headroom) through the normal Mint flow (same server build, USDC mint fee to Treasury, swaps into the reserve assets, double-mint guard, delivery check), then refreshes balances and re-prepares the liquidity review. Minting is offered only when the connected wallet is the creator treasury, because minted tokens go to the connected wallet. Each step keeps its own wallet approval.",
+  "context": "User (Creator), 2026-10-20, after the first v2 pool (Reserve LIQUIDITY) was capped at ~9.6 USDC because the creator held the whole 10-token supply: 'we need to create a flow where the liquidity add goes mint new tokens ofc' / 'when they're not enough'.",
+  "rationale": "A launch at NAV needs equal value in Reserve Tokens and USDC, so pool size was capped by the tokens the creator happened to hold. Minting at NAV creates tokens fully backed by deposited reserve assets, so it adds no dilution; reusing the audited Mint path avoids a second mint implementation. Larger launches also resist snipers (the first pool went to ~30x NAV from a few dollars of buys).",
+  "alternativesConsidered": [
+    "One atomic mint-and-launch transaction -- rejected for now: the mint swaps into every reserve asset (up to 4 swaps in one transaction, otherwise a batch) and would not fit beside pool creation; a separate approval is reliable.",
+    "Always mint the whole token side -- rejected by the user: mint only when the treasury's tokens are not enough.",
+    "A USDC-only launch -- impossible on Raydium CPMM, which needs both sides.",
+    "Minting directly into a treasury that is not the connected wallet -- not supported by the Mint flow; the panel asks for the treasury wallet instead."
+  ],
+  "impact": "The creator pays the Reserve's own effective mint fee on the minted tokens (DEC-0238, USDC to Treasury). The panel shows the estimated mint USDC and the total USDC needed and blocks the mint when the treasury's USDC cannot cover both.",
+  "affectedAreas": [
+    "src/merge/lib/liquidity/liquidityMintPlan.ts (new): launch sizing at NAV with the 0.15% transfer fee, shortfall with 2% headroom, USDC estimate",
+    "src/merge/components/LiquidityMintStep.tsx (new): runs executeMultiAssetBuyMainnet for the shortfall; partial-swap recovery link",
+    "src/merge/components/LiveLiquidityActions.tsx, LiveLiquiditySection.tsx: mint step in the launch and add forms; review re-prepares after the mint",
+    "tests/phase_liquidity_mint_plan.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Reserve LIQUIDITY 2026-10-20: 10 LIQUID covered at most ~9.6 USDC at NAV 0.98; 9.8 and 9.9 USDC launches failed 'insufficient Reserve Tokens'.",
+    "Offline suite 1610 passing / 4 known failing; tsc -b; vite build with VITE_ENABLE_LIQUIDITY=true and VITE_SOLANA_CLUSTER=mainnet-beta contains the step.",
+    "Not yet exercised: a real mint-then-launch or mint-then-add with a wallet."
+  ]
+}
+```
