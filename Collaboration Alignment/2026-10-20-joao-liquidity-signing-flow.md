@@ -22,3 +22,5 @@
 
 ## Verification
 Offline suite: 1604 passing, 4 known failing (chart selector, native-control reset). tsc, oxlint on the changed files, a vite build with `VITE_ENABLE_LIQUIDITY=true VITE_SOLANA_CLUSTER=mainnet-beta` (all four changes present in the bundle). A read-only Mainnet preparation of the LIQUIDITY launch reaches lookup setup (29 addresses) in about 1 s. NOT yet verified: a real Phantom setup plus pool launch end to end.
+
+- **Follow-up 2026-10-20:** the first real setup transaction landed (table `Cvg5mC1bC8Rsbd88xXc22PnihUe63Xjp7CiziJHMJ4HC`, Phantom Lighthouse-guarded). The launch then failed simulation because the default 0.05 SOL cost limit capped the creator's refund to the pool payer below Raydium's 0.15 SOL creation fee. The limit now defaults to 0.30 SOL for a pool launch, a starved fee gets a plain "raise the limit" message, and every failed simulation states its reason. A read-only Mainnet preparation with that table and 9.6 USDC passes: about 0.189 SOL paid by the creator, pool payer reimbursed.

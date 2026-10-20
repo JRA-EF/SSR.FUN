@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {Keypair,VersionedTransaction,TransactionInstruction} from '@solana/web3.js';
 import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,getAssociatedTokenAddressSync} from '@solana/spl-token';
 import {buildCpmmDeposit,buildCpmmWithdraw,cpmmSwapAccounts,approveCompoundRoute,compareCompoundRoutes,type CpmmAccounts} from '@ssr/sdk';
-import {simulateLiquidityTransaction,validateCompoundPlan,validateCompoundJupiterInstruction,JUPITER_PROGRAM} from '../lib/mainnet/prepareCompound';
+import {simulationReason,simulateLiquidityTransaction,validateCompoundPlan,validateCompoundJupiterInstruction,JUPITER_PROGRAM} from '../lib/mainnet/prepareCompound';
 import {createLiveCompoundProviders,type CompoundSnapshot} from '../lib/mainnet/compoundQuotes';
 import {parsePrepareCompound} from '../api/mainnet/prepare-compound';
 import {validatePreparedCompound} from '../src/merge/lib/liquidity/compoundPreparationClient';
@@ -73,6 +73,14 @@ describe('Atomic Compound preparation',()=>{
   const tx=VersionedTransaction.deserialize(Buffer.from(r.transactionBase64,'base64'));
   expect(tx.signatures.every(s=>s.every(n=>n===0))).eq(true);
   expect(r.messageHash).eq(createHash('sha256').update(tx.message.serialize()).digest('hex'));
+ });
+ it('explains a failed simulation in plain words, from its logs',async()=>{
+  expect(simulationReason(['Program 11111111111111111111111111111111 invoke [2]','Transfer: insufficient lamports 66089760, need 150000000'])).eq('a wallet in this transaction does not have enough SOL');
+  expect(simulationReason(['Program log: Error: insufficient funds'])).eq('a token balance is too low');
+  expect(simulationReason(['Program log: AnchorError occurred. Error Code: X. Error Number: 6000. Error Message: Pool already exists.'])).eq('Pool already exists');
+  expect(simulationReason(null)).eq('a program rejected it');
+  const {p,c}=simulationFixture();c.simulateTransaction=async()=>({value:{err:{InstructionError:[7,{Custom:1}]},logs:['Transfer: insufficient lamports 1, need 2']}});
+  await rejects(()=>simulateLiquidityTransaction(p),'does not have enough SOL');
  });
  it('starts the signing window after simulation and never lets it outlive the blockhash',async()=>{
   const run=async(simulatedAt:number,reviewWindowMs?:number)=>{const {p,c}=simulationFixture();let clock=NOW;const bh=c.getLatestBlockhash,sim=c.simulateTransaction;

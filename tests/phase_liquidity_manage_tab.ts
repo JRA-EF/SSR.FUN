@@ -1,7 +1,7 @@
 import {expect} from 'chai';
 import fs from 'node:fs';
 import path from 'node:path';
-import {checkLiveState,checkPrepared,fromRaw,summarizeLiquidity,toRaw,type LiveLiquidityState} from '../src/merge/lib/liquidity/liveLiquidityClient';
+import {defaultSolCap,checkLiveState,checkPrepared,fromRaw,summarizeLiquidity,toRaw,type LiveLiquidityState} from '../src/merge/lib/liquidity/liveLiquidityClient';
 
 const ROOT=path.resolve(__dirname,'..');
 const ids={reserve:'R',creator:'C',treasury:'T'};
@@ -16,6 +16,9 @@ function plan(over:Record<string,unknown>={}){
 }
 
 describe('Manage Reserve liquidity tab (live)',()=>{
+ it('defaults the pool-launch SOL limit above the Raydium 0.15 SOL creation fee plus rent',()=>{
+  expect(Number(defaultSolCap('create'))).gte(0.25);expect(defaultSolCap('add')).eq('0.05');expect(toRaw(defaultSolCap('create'),9)).eq('300000000');
+ });
  it('accepts a released plan -- regression: the client used to demand executionEnabled===false',()=>{
   expect(()=>checkPrepared(plan(),{action:'add',...ids,maximumSolRaw:'5000'})).to.not.throw();
   expect(()=>checkPrepared(plan({executionEnabled:false}),{action:'add',...ids,maximumSolRaw:'5000'})).to.not.throw();

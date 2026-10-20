@@ -18,7 +18,7 @@ import {solscanUrl} from '@/lib/solana-config';
 import {SSR_POOL_PAYER} from '../lib/liquidity/raydiumCpmm';
 import {LiquiditySetupNeeded,savedLiquidityTables} from '../lib/liquidity/liquiditySetupClient';
 import {checkLiquidityMessage} from '../lib/liquidity/liquidityExecution';
-import {checkLiveState,checkPrepared,fromRaw,postLiquidity,summarizeLiquidity,toRaw,LOCK_TERM_DAYS,type LiveAction,type LiveLiquidityState,type LiveTranche,type PreparedLiveLiquidity} from '../lib/liquidity/liveLiquidityClient';
+import {checkLiveState,checkPrepared,defaultSolCap,fromRaw,postLiquidity,summarizeLiquidity,toRaw,LOCK_TERM_DAYS,type LiveAction,type LiveLiquidityState,type LiveTranche,type PreparedLiveLiquidity} from '../lib/liquidity/liveLiquidityClient';
 import {AddLiquidityForm,CreatePoolForm,LockForm,WithdrawForm} from './LiveLiquidityActions';
 import {LiquidityLookupSetup} from './LiquidityLookupSetup';
 import {LiquidityTransactionReview} from './LiquidityTransactionReview';
@@ -37,7 +37,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
  const [state,setState]=useState<LiveLiquidityState|null>(null),[loading,setLoading]=useState(true),[loadError,setLoadError]=useState('');
  const [panel,setPanel]=useState<'add'|'withdraw'|'lock'|null>(null);
  const [prepared,setPrepared]=useState<PreparedLiveLiquidity|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const [setupAddresses,setSetupAddresses]=useState<string[]>([]),[advancedOpen,setAdvancedOpen]=useState(false),[solCap,setSolCap]=useState('0.05');
+ const [setupAddresses,setSetupAddresses]=useState<string[]>([]),[advancedOpen,setAdvancedOpen]=useState(false),[solCap,setSolCap]=useState('');
  const [copied,setCopied]=useState(false);
  const generation=useRef(0),reviewRef=useRef<HTMLDivElement>(null),lastRequest=useRef<{action:LiveAction;extras:Record<string,unknown>}|null>(null);
  const nav=dtr.nav>0?dtr.nav:dtr.tokenPrice;
@@ -55,7 +55,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
   if(!state||!wallet.publicKey||busy)return;
   const current=++generation.current;lastRequest.current={action,extras};setBusy(true);setError('');setPrepared(null);setSetupAddresses([]);
   try{
-   const actor=wallet.publicKey.toBase58(),maximumSolRaw=toRaw(solCap,9);
+   const actor=wallet.publicKey.toBase58(),maximumSolRaw=toRaw(solCap.trim()||defaultSolCap(action),9);
    const result=checkPrepared(await postLiquidity({action,reserve:chain.reserve,actor,lock:'unlocked',slippageBps:50,maximumSolRaw,lookupTables:savedLiquidityTables(chain.reserve),...extras}),{action,reserve:chain.reserve,creator:chain.manager,treasury:chain.feeDestination,maximumSolRaw});
    const tx=await checkLiquidityMessage(result);
    // Only pool launch arrives pre-signed, and only by SSR's Raydium payer.
@@ -104,8 +104,8 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
  </div>;
  const advanced=<div>
   <button type="button" className="text-xs text-muted-foreground underline" onClick={()=>setAdvancedOpen(v=>!v)}>{advancedOpen?'Hide':'Show'} advanced</button>
-  {advancedOpen&&<div className="mt-3 space-y-1 max-w-[260px]"><Label htmlFor="liquidity-sol-cap">Maximum network and setup cost (SOL)</Label><Input id="liquidity-sol-cap" value={solCap} onChange={e=>setSolCap(e.target.value)} inputMode="decimal" className="font-merge-mono"/>
-   <p className="text-xs text-muted-foreground">The review is refused if simulation costs more. Pool launch includes Raydium's account rent.</p></div>}
+  {advancedOpen&&<div className="mt-3 space-y-1 max-w-[260px]"><Label htmlFor="liquidity-sol-cap">Maximum network and setup cost (SOL)</Label><Input id="liquidity-sol-cap" value={solCap} onChange={e=>setSolCap(e.target.value)} placeholder={`Automatic: ${defaultSolCap('add')} SOL, ${defaultSolCap('create')} SOL for a pool launch`} inputMode="decimal" className="font-merge-mono"/>
+   <p className="text-xs text-muted-foreground">The review is refused if the simulated cost is higher. A pool launch costs about 0.19 SOL: Raydium's 0.15 SOL pool-creation fee plus account rent.</p></div>}
  </div>;
 
  if(!state.hasPool)return <div className="space-y-6">{header(false)}{notices}

@@ -19,6 +19,14 @@ const assert=(ok:unknown,message:string)=>{if(!ok)fail(message);};
 const ceil=(a:bigint,b:bigint)=>(a+b-1n)/b;
 /** A blockhash lands for ~150 slots (~60 s); a review never outlives this much of it. */
 export const BLOCKHASH_REVIEW_LIMIT_MS=55_000;
+/** Plain-language reason for a failed simulation, from its program logs. */
+export function simulationReason(logs:string[]|null|undefined):string{
+  const lines=logs??[];
+  if(lines.some(l=>/insufficient lamports/i.test(l)))return 'a wallet in this transaction does not have enough SOL';
+  if(lines.some(l=>/insufficient funds/i.test(l)))return 'a token balance is too low';
+  const anchor=[...lines].reverse().find(l=>/Error Message:/.test(l));
+  return anchor?anchor.replace(/^.*Error Message:\s*/,'').replace(/\.$/,''):'a program rejected it';
+}
 export const messageDigest=(message:Uint8Array)=>createHash('sha256').update(message).digest('hex');
 export interface PreparedLiquidity {
   action:'compound'|'collect'|'add'|'withdraw'|'create'|'lock'|'extend'|'unlock'|'permanent'|'setup';
@@ -87,7 +95,7 @@ export async function simulateLiquidityTransaction(p:{connection:Connection;inst
     p.connection.getFeeForMessage(message,'confirmed'),Promise.all(solPayers.map(k=>p.connection.getBalance(k,'confirmed'))),
     p.connection.simulateTransaction(tx,{sigVerify:false,commitment:'confirmed',accounts:{encoding:'base64',addresses:[...solPayers.map(k=>k.toBase58()),...(p.watch??[]).map(w=>w.address.toBase58())]}}),
   ]);
-  assert(!simulation.value.err,'Liquidity simulation failed; nothing was submitted');
+  assert(!simulation.value.err,`Liquidity simulation failed (${simulationReason(simulation.value.logs)}); nothing was submitted`);
   assert(fee.value!==null&&Number.isSafeInteger(fee.value)&&fee.value>=0,'Network fee unavailable');
   const solCostsByWallet=solPayers.map((payer,i)=>{
     const before=balances[i],after=simulation.value.accounts?.[i];

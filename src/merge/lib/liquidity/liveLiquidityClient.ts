@@ -68,6 +68,9 @@ export function checkPrepared(response:any,expected:{action:LiveAction;reserve:s
  return {...result,review:result.review??{}};
 }
 
+/** SOL cost cap used when the creator leaves it blank. A pool launch pays Raydium's 0.15 SOL creation fee plus ~0.04 SOL rent. */
+export function defaultSolCap(action:LiveAction):string{return action==='create'?'0.30':'0.05';}
+
 export async function postLiquidity(body:unknown):Promise<any>{
  const response=await fetch('/api/mainnet/liquidity',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
  const result=await response.json().catch(()=>({}));

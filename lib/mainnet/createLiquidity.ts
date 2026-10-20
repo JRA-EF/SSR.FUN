@@ -74,7 +74,11 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
   watch:[{address:s.ata(LIQUIDITY_USDC),program:TOKEN_PROGRAM_ID,minimum:s.usdcBalance-p.usdcRaw},{address:s.ata(s.mint,TOKEN_2022_PROGRAM_ID),program:TOKEN_2022_PROGRAM_ID,minimum:s.reserveBalance-maximumReserveDebitRaw},{address:s.ata(s.lp),program:TOKEN_PROGRAM_ID,minimum:locked?0n:minimumLpRaw}]});
  const payerCost=(r:Awaited<ReturnType<typeof simulate>>)=>BigInt(r.solCostsByWallet?.find(c=>c.wallet===SSR_POOL_PAYER.toBase58())?.lamports??'0');
  check(p.maximumSolRaw>POOL_PAYER_REFUND_MARGIN_LAMPORTS,'Choose a higher SOL cost cap');
- const first=await simulate(p.maximumSolRaw-POOL_PAYER_REFUND_MARGIN_LAMPORTS);
+ const capSol=(Number(p.maximumSolRaw)/1e9).toFixed(2);
+ const first=await simulate(p.maximumSolRaw-POOL_PAYER_REFUND_MARGIN_LAMPORTS).catch((e:unknown)=>{
+  // The refund is capped by the creator's SOL limit, so a low cap starves Raydium's 0.15 SOL creation fee.
+  if(e instanceof Error&&/not have enough SOL/.test(e.message))throw new Error(`Launching this pool needs more SOL than your ${capSol} SOL cost limit allows: Raydium charges 0.15 SOL to create a pool, plus about 0.04 SOL of account rent. Raise the maximum network and setup cost to 0.25 SOL or more (or add SOL to your wallet). Nothing was submitted.`);
+  throw e;});
  const measured=payerCost(first)+p.maximumSolRaw;
  check(measured>0n&&measured<=p.maximumSolRaw,'Pool launch SOL cost exceeds your cap');
  const prepared=await simulate(measured);
