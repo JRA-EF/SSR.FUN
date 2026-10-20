@@ -70,7 +70,8 @@ export function withdrawAmounts(s:Pick<LiquidityState,'fee'|'usdc'|'tokens'|'lpS
 export interface LifecycleInput{reserve:PublicKey;actor:PublicKey;action:'create'|'add'|'withdraw'|'collect'|'lock'|'extend'|'unlock'|'permanent';maximumUsdcRaw?:bigint;maximumReserveRaw?:bigint;lpAmountRaw?:bigint;slippageBps:number;lock:TrancheChoice;tranche?:PublicKey;unlockTs?:bigint;maximumSolRaw:bigint;lookupTables?:PublicKey[];}
 export async function prepareLiquidityLifecycle(deps:CompoundReadDeps & {executionEnabled:boolean},input:LifecycleInput){
  check(input.action!=='create','Use the initial pool creation flow');
- const s=await readLiquidityState(deps,input.reserve),now=deps.now??Date.now,expiresAtMs=now()+25000;
+ // Preparation gets its own deadline; the 45 s signing window starts once simulation passes (as for pool launch).
+ const s=await readLiquidityState(deps,input.reserve),now=deps.now??Date.now,expiresAtMs=now()+30000;
  check(s.registered,'Canonical liquidity pool is not available');
  const permissionless=input.action==='collect';check(permissionless||input.actor.equals(s.creator)||input.actor.equals(s.treasury),'Connect the creator or fixed treasury wallet');
  check(PublicKey.isOnCurve(input.actor.toBytes())&&(permissionless||PublicKey.isOnCurve(s.treasury.toBytes()))&&(['collect','unlock'].includes(input.action)||PublicKey.isOnCurve(s.creator.toBytes())),'Program treasuries require their own multisig execution adapter');
@@ -106,6 +107,6 @@ export async function prepareLiquidityLifecycle(deps:CompoundReadDeps & {executi
   else if(input.action==='unlock'){check(s.time>=BigInt(t.unlockTs.toString()),'Tranche has not expired');setup(s.lp);instructions.push(await buildWithdrawLiquidityTranche(deps.program as any,{tranche:input.tranche!,owner:s.treasury,lpMint:s.lp}));review={destination:s.treasury.toBase58()};}
   else instructions.push(await buildMakeLiquidityTranchePermanent(deps.program as any,{tranche:input.tranche!,creator:s.creator,owner:s.treasury,pool:s.pool,lpMint:s.lp,vault0:accounts.vault0,vault1:accounts.vault1}));
  }
- const prepared=await simulateLiquidityTransaction({connection:deps.connection,instructions,lookupTables:await loadLiquidityTables(deps.connection,s.reserve,input.lookupTables),treasury:s.treasury,creator:s.creator,feePayer:permissionless?input.actor:s.treasury,action:input.action,reserve:s.reserve,pool:s.pool,expiresAtMs,executionEnabled:deps.executionEnabled,maximumSol:input.maximumSolRaw,watch,now});
+ const prepared=await simulateLiquidityTransaction({connection:deps.connection,instructions,lookupTables:await loadLiquidityTables(deps.connection,s.reserve,input.lookupTables),treasury:s.treasury,creator:s.creator,feePayer:permissionless?input.actor:s.treasury,action:input.action,reserve:s.reserve,pool:s.pool,expiresAtMs,executionEnabled:deps.executionEnabled,maximumSol:input.maximumSolRaw,watch,now,reviewWindowMs:45000});
  return {...prepared,review,tranche,stateFingerprint:s.fingerprint};
 }
