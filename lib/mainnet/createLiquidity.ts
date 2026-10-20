@@ -13,6 +13,9 @@ import {appendTrancheLock,type TrancheChoice} from './liquidityTranches';
 import {poolPayerRefund,POOL_PAYER_REFUND_MARGIN_LAMPORTS} from './poolPayer';
 const check=(ok:unknown,message:string)=>{if(!ok)throw new Error(message);};
 interface Price{usdPrice?:number|null;decimals?:number|null;blockId?:number|null;}
+/** Jupiter re-stamps a price only when the asset trades, so a thinly traded asset's latest price is often minutes old.
+ * The launch price only seeds the creator's own pool, so ~10 minutes of age is accepted (Compound keeps its 150-slot rule). */
+export const LAUNCH_PRICE_MAX_AGE_SLOTS=1500;
 /** USDC numeraire; external prices are used only for non-USDC backing. */
 export async function initialReserveAtNav(deps:CompoundReadDeps,s:LiquidityState,usdcRaw:bigint,prices:(mints:string[])=>Promise<Map<string,Price>>){
  const rows=await deps.connection.getProgramAccounts(deps.programId,{commitment:'confirmed',filters:[{dataSize:111},{memcmp:{offset:8,bytes:s.reserve.toBase58()}}]});
@@ -25,7 +28,7 @@ export async function initialReserveAtNav(deps:CompoundReadDeps,s:LiquidityState
  const reserve=deps.program.coder.accounts.decode('reserve',a[0]!.data),rt=unpackMint(s.mint,a[1]!,TOKEN_2022_PROGRAM_ID);
  check(reserve.assetCount===n&&new PublicKey(reserve.reserveTokenMint).equals(s.mint)&&rt.supply>0n,'Reserve backing or supply changed');
  const nonUsdc=mints.filter(m=>!m.equals(LIQUIDITY_USDC));const values=nonUsdc.length?await prices([...nonUsdc.map(m=>m.toBase58()),LIQUIDITY_USDC.toBase58()]):new Map<string,Price>();
- const scaled=(mint:PublicKey,decimals:number)=>{if(!nonUsdc.length)return 1000000000000n;const p=values.get(mint.toBase58());check(p&&p.decimals===decimals&&typeof p.usdPrice==='number'&&Number.isFinite(p.usdPrice)&&p.usdPrice>0&&p.usdPrice<1e12&&Number.isSafeInteger(p.blockId)&&p.blockId!>=batch.context.slot-150&&p.blockId!<=batch.context.slot+150,'A fresh price is required for every backing asset');const raw=BigInt(p!.usdPrice!.toFixed(12).replace('.',''));check(raw>0n,'Backing asset price is below supported precision');return raw;};
+ const scaled=(mint:PublicKey,decimals:number)=>{if(!nonUsdc.length)return 1000000000000n;const p=values.get(mint.toBase58());check(p&&p.decimals===decimals&&typeof p.usdPrice==='number'&&Number.isFinite(p.usdPrice)&&p.usdPrice>0&&p.usdPrice<1e12&&Number.isSafeInteger(p.blockId)&&p.blockId!>=batch.context.slot-LAUNCH_PRICE_MAX_AGE_SLOTS&&p.blockId!<=batch.context.slot+150,`No recent market price is available for the reserve asset ${mint.toBase58().slice(0,4)}…${mint.toBase58().slice(-4)} (none in the last 10 minutes), so the launch price cannot be set at NAV. Try again shortly.`);const raw=BigInt(p!.usdPrice!.toFixed(12).replace('.',''));check(raw>0n,'Backing asset price is below supported precision');return raw;};
  const usdcPrice=scaled(LIQUIDITY_USDC,6);
  let totalUsd=0n;
  registrations.forEach((r,i)=>{const registration=a[2+i];check(registration?.owner.equals(deps.programId),'Backing registration unavailable');const row=deps.program.coder.accounts.decode('reserveAsset',registration!.data),mintInfo=a[2+n+i],vaultInfo=a[2+2*n+i];
