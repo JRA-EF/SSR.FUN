@@ -10,18 +10,14 @@ import { DEMO_WALLET_ADDRESS, isDesignDemoEnabled, setDemoWalletConnected } from
 
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
-/** The four wallets offered in the picker. MetaMask is listed but never actually
- *  connects — it doesn't support Solana — so selecting it always surfaces the
- *  "not installed" or "connection failed" state, which keeps both failure paths
- *  reachable deterministically instead of relying on randomness. The other
- *  three are matched against wallet-adapter-react's live Wallet Standard
- *  detection by name (case-insensitive substring) rather than raw
- *  `window.phantom`-style global checks, which is more reliable across wallet
- *  versions. */
-type ModalWalletId = WalletProviderId | 'metamask'
-
+/** The four wallets offered in the picker. All four are matched against
+ *  wallet-adapter-react's live Wallet Standard detection by name
+ *  (case-insensitive substring) rather than raw `window.phantom`-style global
+ *  checks, which is more reliable across wallet versions. MetaMask included:
+ *  its extension registers a Solana wallet named "MetaMask" through the Wallet
+ *  Standard, so `window.ethereum` (its EVM side) says nothing about Solana. */
 interface WalletOption {
-  id: ModalWalletId
+  id: WalletProviderId
   name: string
   /** Tile background behind the logo. */
   color: string
@@ -77,10 +73,6 @@ function WalletTile({
   )
 }
 
-function hasGlobal(key: string): boolean {
-  return typeof window !== 'undefined' && Boolean((window as unknown as Record<string, unknown>)[key])
-}
-
 type Step =
   | { kind: 'select' }
   | { kind: 'connecting'; wallet: WalletOption }
@@ -128,7 +120,6 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
   }
 
   function isDetected(opt: WalletOption): boolean {
-    if (opt.id === 'metamask') return hasGlobal('ethereum')
     // Design preview (never on Mainnet): every Solana wallet reads as
     // available, since choosing one performs a simulated connection instead
     // of reaching an extension.
@@ -138,19 +129,6 @@ export function WalletModal({ open, onClose }: { open: boolean; onClose: () => v
   }
 
   async function selectWallet(opt: WalletOption) {
-    if (opt.id === 'metamask') {
-      if (!hasGlobal('ethereum')) {
-        setStep({ kind: 'not-installed', wallet: opt })
-        return
-      }
-      setStep({
-        kind: 'failed',
-        wallet: opt,
-        reason: "MetaMask doesn't support Solana yet. Choose a Solana wallet like Phantom, Solflare, or Backpack instead.",
-      })
-      return
-    }
-
     // Design preview: simulate the whole connect flow in the store. The real
     // wallet adapter never engages (no extension popup, no keys), so this is
     // safe even when a real Phantom/Solflare is installed in the browser.

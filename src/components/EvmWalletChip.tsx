@@ -2,30 +2,25 @@
 //
 // Imports nothing from viem: the EVM stack is dynamic-imported on click, so
 // the main bundle is unaffected.
-import { useEffect, useRef, useState } from 'react'
-import { connectEvmWallet, disconnectEvmWallet, discoverEvmProviders, useEvmWallet, type EvmProviderChoice } from '@/components/robinhood/useEvmWallet'
+import { useState } from 'react'
+import { Modal } from './ui'
+import {
+  askEvmWalletChoice,
+  connectEvmWallet,
+  disconnectEvmWallet,
+  discoverEvmProviders,
+  dismissEvmWalletPicker,
+  pickEvmWallet,
+  useEvmWallet,
+  type EvmProviderChoice,
+} from '@/components/robinhood/useEvmWallet'
 
 export function EvmWalletChip() {
-  const { account, connecting } = useEvmWallet()
+  const { account, connecting, choices } = useEvmWallet()
   const [error, setError] = useState<string | null>(null)
-  // With more than one injected wallet installed, ASK instead of guessing --
-  // window.ethereum is whichever extension won the race, which made connecting
-  // hit the wrong wallet and take several attempts.
-  const [choices, setChoices] = useState<EvmProviderChoice[] | null>(null)
-  const wrapRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!choices) return
-    const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setChoices(null)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [choices])
 
   async function run(choice?: EvmProviderChoice) {
     setError(null)
-    setChoices(null)
     try {
       await connectEvmWallet(choice)
     } catch (e) {
@@ -35,6 +30,11 @@ export function EvmWalletChip() {
     }
   }
 
+  // With more than one injected wallet installed, ASK instead of guessing --
+  // window.ethereum is whichever extension won the race, which made connecting
+  // hit the wrong wallet and take several attempts. The header always asks
+  // (so the person can switch wallets); in-page connect buttons reuse the last
+  // pick and open this same picker only when there is none.
   async function onClick() {
     setError(null)
     const found = await discoverEvmProviders()
@@ -43,25 +43,58 @@ export function EvmWalletChip() {
       return
     }
     if (found.length === 1) return run(found[0])
-    setChoices(found)
+    try {
+      await run(await askEvmWalletChoice(found))
+    } catch {
+      // Picker closed: nothing to connect.
+    }
   }
+
+  // Rendered whatever the connection state, since an in-page connect button
+  // can open it.
+  const picker = (
+    <Modal open={!!choices} onClose={dismissEvmWalletPicker} labelledBy="evm-wallet-picker-title">
+      <div className="wm-head">
+        <h3 id="evm-wallet-picker-title">Choose a wallet</h3>
+        <button type="button" className="wm-close" aria-label="Close" onClick={dismissEvmWalletPicker}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <p className="wm-sub">Several wallets are installed in this browser. Pick the one to connect on Robinhood Chain.</p>
+      <div className="wm-list">
+        {choices?.map(c => (
+          <button key={c.uuid} type="button" className="wm-option" onClick={() => pickEvmWallet(c)}>
+            <span className="ticon" style={{ width: 34, height: 34, overflow: 'hidden' }} aria-hidden="true">
+              {c.icon && <img src={c.icon} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+            </span>
+            <span className="wm-option-name">{c.name}</span>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  )
 
   if (account) {
     return (
-      <button
-        type="button"
-        className="wallet-chip"
-        title={`Connected on Robinhood Chain — ${account}. Click to disconnect.`}
-        onClick={disconnectEvmWallet}
-      >
-        <span className="dot" aria-hidden="true" style={{ background: 'var(--s4)' }} />
-        RH {account.slice(0, 4)}…{account.slice(-4)}
-      </button>
+      <>
+        <button
+          type="button"
+          className="wallet-chip"
+          title={`Connected on Robinhood Chain — ${account}. Click to disconnect.`}
+          onClick={disconnectEvmWallet}
+        >
+          <span className="dot" aria-hidden="true" style={{ background: 'var(--s4)' }} />
+          RH {account.slice(0, 4)}…{account.slice(-4)}
+        </button>
+        {picker}
+      </>
     )
   }
 
   return (
-    <div className="wallet-panel-wrap" ref={wrapRef}>
+    <>
       <button
         type="button"
         className="wallet-chip"
@@ -73,30 +106,7 @@ export function EvmWalletChip() {
         <span className="dot" aria-hidden="true" style={{ background: error ? 'var(--down)' : 'var(--text-3)' }} />
         {connecting ? 'Connecting…' : 'Robinhood'}
       </button>
-
-      {choices && (
-        <div className="wallet-panel" role="menu" style={{ width: 220, padding: 8 }}>
-          <p style={{ fontSize: 11, color: 'var(--text-3)', padding: '4px 8px 8px' }}>Choose a wallet</p>
-          {choices.map(c => (
-            <button
-              key={c.uuid}
-              type="button"
-              role="menuitem"
-              onClick={() => run(c)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10, width: '100%',
-                padding: '8px 10px', borderRadius: 8, background: 'transparent',
-                color: 'var(--text)', font: 'inherit', fontSize: 13, textAlign: 'left', cursor: 'pointer',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            >
-              {c.icon && <img src={c.icon} alt="" width={18} height={18} style={{ borderRadius: 4 }} />}
-              {c.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      {picker}
+    </>
   )
 }

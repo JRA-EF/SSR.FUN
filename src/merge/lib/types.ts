@@ -337,7 +337,7 @@ export interface OnChainReserveMeta {
   assetEntryPricesUsd?: Record<string, number>;
 }
 
-export type WalletProviderId = "phantom" | "solflare" | "backpack";
+export type WalletProviderId = "phantom" | "solflare" | "backpack" | "metamask";
 
 export interface WalletState {
   connected: boolean;

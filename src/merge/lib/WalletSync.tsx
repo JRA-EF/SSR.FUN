@@ -18,6 +18,7 @@ function normalizeProviderName(name: string | undefined): WalletProviderId | nul
   if (lower.includes("phantom")) return "phantom";
   if (lower.includes("solflare")) return "solflare";
   if (lower.includes("backpack")) return "backpack";
+  if (lower.includes("metamask")) return "metamask";
   return null;
 }
 

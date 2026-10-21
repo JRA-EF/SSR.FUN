@@ -54,48 +54,120 @@ export interface EvmWalletState {
   wallet: WalletClient | null;
   account: Address | null;
   connecting: boolean;
+  /** Installed wallets waiting for the person to pick one (EvmWalletChip renders the picker), or null. */
+  choices: EvmProviderChoice[] | null;
 }
 
-let state: EvmWalletState = { wallet: null, account: null, connecting: false };
+let state: EvmWalletState = { wallet: null, account: null, connecting: false, choices: null };
 /** When the in-flight attempt started, so a prompt the user never answers cannot wedge the button. */
 let connectStartedAt = 0;
 const CONNECT_STUCK_MS = 60_000;
 const listeners = new Set<() => void>();
-let listening = false;
+const listenedProviders = new WeakSet<object>();
+/** The provider behind the current connection, so another installed wallet's events cannot drop it. */
+let activeProvider: EIP1193Provider | null = null;
 
 function set(next: Partial<EvmWalletState>) {
   state = { ...state, ...next };
   listeners.forEach((l) => l());
 }
 
+// The wallet picked last time (its EIP-6963 rdns, e.g. "io.metamask"), so a
+// connect button deep in a page reuses it instead of asking every time.
+const LAST_WALLET_KEY = "ssr.fun:evmWalletRdns";
+
+function lastWalletRdns(): string | null {
+  try {
+    return localStorage.getItem(LAST_WALLET_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberWallet(choice: EvmProviderChoice) {
+  try {
+    if (choice.rdns) localStorage.setItem(LAST_WALLET_KEY, choice.rdns);
+  } catch {
+    // Storage blocked: the picker just asks again next time.
+  }
+}
+
+let pendingChoice: { resolve: (c: EvmProviderChoice) => void; reject: (e: unknown) => void } | null = null;
+
+/** Closing the picker reads as a declined wallet request (4001), which every caller already treats as "nothing happened". */
+function pickerDismissed() {
+  return Object.assign(new Error("You closed the wallet picker. Nothing was connected."), { code: 4001 });
+}
+
+/**
+ * Opens the shared wallet picker and resolves with the person's pick. One
+ * picker for every connect button (header, Create, Portfolio, reserve page),
+ * so with Phantom AND MetaMask installed the person chooses instead of getting
+ * whichever announced first.
+ */
+export function askEvmWalletChoice(list: EvmProviderChoice[]): Promise<EvmProviderChoice> {
+  pendingChoice?.reject(pickerDismissed());
+  return new Promise((resolve, reject) => {
+    pendingChoice = { resolve, reject };
+    set({ choices: list });
+  });
+}
+
+export function pickEvmWallet(choice: EvmProviderChoice) {
+  const p = pendingChoice;
+  pendingChoice = null;
+  set({ choices: null });
+  p?.resolve(choice);
+}
+
+export function dismissEvmWalletPicker() {
+  const p = pendingChoice;
+  pendingChoice = null;
+  set({ choices: null });
+  p?.reject(pickerDismissed());
+}
+
 export async function connectEvmWallet(choice?: EvmProviderChoice): Promise<void> {
   // A wallet prompt the user ignores never settles, so a stale "connecting"
   // must not disable the control forever.
   if (state.connecting && Date.now() - connectStartedAt < CONNECT_STUCK_MS) return;
+  let picked = choice;
+  if (!picked) {
+    // No explicit choice: the only installed wallet, else the one picked last
+    // time, else ask.
+    const found = await discoverEvmProviders();
+    if (found.length === 0) throw new Error("No EVM wallet found. Install MetaMask, Phantom or another wallet.");
+    const last = lastWalletRdns();
+    picked = found.length === 1 ? found[0] : (found.find((c) => last && c.rdns === last) ?? (await askEvmWalletChoice(found)));
+  }
   connectStartedAt = Date.now();
   set({ connecting: true });
   try {
     const [{ ROBINHOOD }, { connectWallet }] = await Promise.all([import("@/lib/evmChain"), import("@/lib/evmReserve")]);
-    // With no explicit choice, use the only announced wallet; if several are
-    // installed the caller should have asked first (see EvmWalletChip).
-    const provider = choice?.provider ?? (await discoverEvmProviders()).find(Boolean)?.provider;
+    const provider = picked.provider;
     const { wallet, account } = await connectWallet(ROBINHOOD, provider);
     set({ wallet, account });
-    if (!listening) {
-      listening = true;
+    rememberWallet(picked);
+    if (!listenedProviders.has(provider)) {
+      listenedProviders.add(provider);
       // A wallet can switch account or network under us; never keep acting on
-      // a stale one -- drop the connection and let the user reconnect.
-      const reset = () => set({ wallet: null, account: null });
-      const p = provider as unknown as { on?: (e: string, f: () => void) => void } | undefined;
-      p?.on?.("accountsChanged", reset);
-      p?.on?.("chainChanged", reset);
+      // a stale one -- drop the connection and let the user reconnect. Only
+      // the wallet currently connected may reset it.
+      const reset = () => {
+        if (activeProvider === provider) disconnectEvmWallet();
+      };
+      const p = provider as unknown as { on?: (e: string, f: () => void) => void };
+      p.on?.("accountsChanged", reset);
+      p.on?.("chainChanged", reset);
     }
+    activeProvider = provider;
   } finally {
     set({ connecting: false });
   }
 }
 
 export function disconnectEvmWallet() {
+  activeProvider = null;
   set({ wallet: null, account: null });
 }
 
