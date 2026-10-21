@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { useAppStore, isManagerOrDelegate, canManageDelegates, canRebalance } from "@/store/useAppStore";
@@ -317,7 +317,12 @@ export function ManageDTR() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageState.kind, dtrId, connection]);
 
-  const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance" | "liquidity" | "activity">("overview");
+  // `?tab=liquidity` (the Reserve page's "Launch liquidity" banner) opens the
+  // Liquidity tab directly; the tab itself still only renders for the root Manager.
+  const [routePath] = useLocation();
+  const [activeTab, setActiveTab] = useState<"overview" | "delegates" | "rebalance" | "liquidity" | "activity">(() =>
+    LIQUIDITY_ENABLED && new URLSearchParams(routePath.split("?")[1] ?? "").get("tab") === "liquidity" ? "liquidity" : "overview",
+  );
 
   // DL-01b fix: lazy-loaded only when the Activity tab is actually opened
   // (never an unconditional background poll). Reads from the Reserve

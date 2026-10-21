@@ -7,8 +7,9 @@
  *    panel; live preview state -> pool dashboard with hyperlinked pool
  *    address, lock status, and the two fee actions: Collect to the creator
  *    treasury or Compound back into the pool -- DEC-0222).
- *  - LiquidityFirstMintIntro: the split-layout prompt shown on the Reserve
- *    page right after the root Manager's own first mint.
+ *  - LiquidityLaunchNudge: a one-line banner on the Reserve page telling the
+ *    root Manager the Reserve has no pool yet, linking to Manage Reserve ->
+ *    Liquidity, where pools are actually launched.
  *
  * Local examples render DESIGN-PREVIEW state (see
  * src/merge/lib/liquidityPreview.ts and docs/project/LIQUIDITY_MODULE_SPEC.md)
@@ -19,8 +20,10 @@
  * Solana Reserve, Uniswap for a Robinhood Reserve -- never hardcoded.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "wouter";
 import { LiveLiquiditySection } from "./LiveLiquiditySection";
+import { postLiquidity } from "@/lib/liquidity/liveLiquidityClient";
 import { IS_MAINNET } from "@/lib/solana-config";
 import { CompoundRouteReview } from "./CompoundRouteReview";
 import { useAppStore } from "@/store/useAppStore";
@@ -588,32 +591,53 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
 }
 
 /** Split-layout prompt on the Reserve page after the root Manager's own first mint, while no pool exists. */
-export function LiquidityFirstMintIntro({ dtr, onDismiss }: { dtr: DTR; onDismiss: () => void }) {
+/**
+ * Whether a live Mainnet Reserve has no pool yet: true / false once known,
+ * null while loading or when the read fails (the banner then stays hidden --
+ * never nag about a pool that may well exist). One server read per Reserve
+ * page view, and only for the connected root Manager.
+ */
+function useLiveHasNoPool(dtr: DTR, enabled: boolean): boolean | null {
+  const reserve = dtr.onChain?.reserve;
+  const [noPool, setNoPool] = useState<boolean | null>(null);
+  useEffect(() => {
+    setNoPool(null);
+    if (!enabled || !reserve) return;
+    let cancelled = false;
+    postLiquidity({ action: "read", reserve })
+      .then((s: { hasPool?: unknown }) => {
+        if (!cancelled && typeof s?.hasPool === "boolean") setNoPool(!s.hasPool);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, reserve]);
+  return noPool;
+}
+
+/** Reserve page banner for the root Manager while the Reserve has no pool. */
+export function LiquidityLaunchNudge({ dtr, onDismiss }: { dtr: DTR; onDismiss: () => void }) {
+  const live = IS_MAINNET && !!dtr.onChain && reserveChain(dtr) === "solana";
+  const liveNoPool = useLiveHasNoPool(dtr, live);
+  const previewPool = useAppStore((s) => s.liquidityPreviews[dtr.id]);
+  if (live ? liveNoPool !== true : !!previewPool) return null;
   const dex = dexInfoFor(reserveChain(dtr));
   return (
-    <Card className="mb-8 border-primary/30">
-      <CardContent className="pt-6">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
-          <div className="lg:col-span-2 space-y-3">
-            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">New · Creator only</Badge>
-            <h3 className="text-2xl font-merge-display font-bold flex items-center gap-2">
-              <Droplets className="w-5 h-5 text-primary" /> Take your Reserve Token to market
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Your mint is complete: {dtr.ticker} is live and fully backed, but it is not tradeable anywhere yet. Add liquidity on{" "}
-              {dex.name} and it becomes a market with a public chart.
-            </p>
-            <p className="text-xs text-muted-foreground">Only you, as this Reserve's Root Manager, see this step.</p>
-            <Button variant="ghost" size="sm" onClick={onDismiss}>
-              I'll do this later
-            </Button>
-          </div>
-          <div className="lg:col-span-3 space-y-4">
-            <LiquidityPreviewBanner />
-            <LiquidityPanel dtr={dtr} onDone={onDismiss} />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div role="status" className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+      <Droplets className="w-5 h-5 text-primary shrink-0" aria-hidden="true" />
+      <p className="text-sm flex-1">
+        <span className="font-semibold">{dtr.ticker} has no liquidity pool yet.</span>{" "}
+        <span className="text-muted-foreground">Add one on {dex.name} to give it an open market, with a public price and chart.</span>
+      </p>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button asChild size="sm">
+          <Link href={`/dtr/${dtr.id}/manage?tab=liquidity`}>Launch liquidity</Link>
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onDismiss}>
+          Not now
+        </Button>
+      </div>
+    </div>
   );
 }

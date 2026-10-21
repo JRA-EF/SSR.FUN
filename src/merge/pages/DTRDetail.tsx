@@ -29,7 +29,7 @@ import { executeMultiAssetSellMainnet, readPendingSell } from "@/lib/multiAssetS
 import { describeBatchBuyWalletPrompt, describeBatchSellWalletPrompt } from "@/lib/walletPromptCopy";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
-import { LiquidityBadges, LiquidityFirstMintIntro } from "@/components/LiquidityModule";
+import { LiquidityBadges, LiquidityLaunchNudge } from "@/components/LiquidityModule";
 import {
   AmbiguousConfirmationError,
   BALANCE_CACHE_TTL_MS,
@@ -675,9 +675,9 @@ export function DTRDetail() {
   // "genuinely stuck." A signature is recorded (and shown) the instant
   // submission succeeds, before confirmation even starts.
   const [buyPhase, setBuyPhase] = useState<TxPhase>("idle");
-  // Liquidity Module (design preview): the post-first-mint prompt below is
-  // shown to the Reserve's root Manager after their own confirmed Buy while
-  // no liquidity exists for this Reserve -- dismissible, never blocking.
+  // Liquidity: a one-line banner tells the Reserve's root Manager the Reserve
+  // has no pool yet and links to Manage Reserve -> Liquidity, where pools are
+  // launched -- dismissible, never blocking.
   const [liquidityIntroDismissed, setLiquidityIntroDismissed] = useState(false);
   // Synchronous same-tick duplicate-click/concurrent-attempt guard for Buy
   // (DEC-0154) -- see handleBuyMultiAssetMainnet; React state alone leaves a
@@ -2123,8 +2123,8 @@ export function DTRDetail() {
         </div>
       )}
 
-      {LIQUIDITY_ENABLED && buyPhase === "confirmed" && dtr.managerAddress === wallet.address && !liquidityPreviews[dtr.id] && !liquidityIntroDismissed && (
-        <LiquidityFirstMintIntro dtr={dtr} onDismiss={() => setLiquidityIntroDismissed(true)} />
+      {LIQUIDITY_ENABLED && dtr.managerAddress === wallet.address && !liquidityIntroDismissed && (
+        <LiquidityLaunchNudge dtr={dtr} onDismiss={() => setLiquidityIntroDismissed(true)} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
