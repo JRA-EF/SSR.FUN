@@ -38,6 +38,10 @@
       "schedule": "0 3 * * *"
     },
     {
+      "path": "/api/kpis/dex-volume-cron",
+      "schedule": "30 3 * * *"
+    },
+    {
       "path": "/api/ledger/ingest-cron",
       "schedule": "0 4 * * *"
     },

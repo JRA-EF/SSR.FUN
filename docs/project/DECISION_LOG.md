@@ -7711,3 +7711,40 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0254
+
+```json
+{
+  "id": "DEC-0254",
+  "date": "2026-10-21",
+  "title": "Protocol KPIs count DEX volume and pool-priced market cap, kept separate in the backend",
+  "status": "Committed 2026-10-21; Neon tables applied and first sweep run (2 pools, $196.87 all-time DEX volume). Production deploy pending coordination with the in-flight liquidity prod deploy.",
+  "decision": "Swaps in every SSR-created Raydium CPMM pool are indexed once a day into new tables (dex_pools, dex_pool_swaps), valued by their USDC leg (exact USD; every SSR pool is USDC-paired). The landing-stats API reports DEX volume (dexVolumeAllTimeUsd) separately from SSR's mint/redeem volume (volumeAllTimeUsd) and returns each pool's current reserves; /internal/kpis shows DEX volume as its own tile, never added into mint + redeem. Only the homepage combines them: All-Time Volume = mint/redeem + DEX, and Total Reserve Market Cap = per Reserve, tokens outside its SSR pool at NAV plus tokens inside the pool at the pool price (equal to the pool's USDC side in a constant-product pool), so no token is counted twice.",
+  "context": "Creator, 2026-10-21: log all DEX volume from these LPs into the homepage all-time volume and total Reserve market cap, but keep the distinction in the protocol KPI backend; market cap = 'nav in the protocol side + in the pool the market cap of the tokens there'.",
+  "rationale": "The USDC leg is exact and needs no price feed. Pools are found from the on-chain LiquidityRevenue registrations (the marker that SSR created the pool). Swaps are told apart from deposits, withdrawals and fee collections by the two vaults moving in opposite directions. The sweep runs daily (03:30 UTC) off the hot path: one program-account scan plus a signature walk per pool, under the shared Helius cap and without keeping Neon awake (DEC-0209). The homepage reads pool reserves with one batched account read over the registered pools.",
+  "alternativesConsidered": [
+    "Index ProjectTaxCharged events -- rejected: no gross amount, and only swaps routed through SSR emit it.",
+    "Value pooled tokens at NAV -- rejected by the Creator's definition; pool price is the market's price for those tokens.",
+    "Supply x pool price for the whole supply -- rejected: most tokens are not in the pool and redeem at NAV; it would inflate thin pools (LIQUID ~8x NAV)."
+  ],
+  "impact": "Homepage All-Time Volume and Total Reserve Market Cap now include SSR DEX pools. DEX volume lags by up to a day (daily sweep). Per-Reserve cards and pages still show NAV-based market cap and mint/redeem volume. web3.js 1.98 rejects Mainnet's new version-1 transactions, so the index fetches transactions with raw JSON-RPC; the activity log, 24h volume, ledger ingest and fee-payout readers still use getTransaction with version 0 and may error on a version-1 transaction (follow-up).",
+  "affectedAreas": [
+    "lib/dex-volume/ (new): schema.sql, classify.ts, indexer.ts, read.ts",
+    "api/kpis/dex-volume-cron.ts (new) + vercel.json cron 30 3 * * *",
+    "api/mainnet/landing-stats.ts: dexVolumeAllTimeUsd, pools",
+    "lib/reserve-activity/kpis.ts + src/internal-kpis/Dashboard.tsx: totalDexVolumeUsd, separate tile",
+    "src/pages/Home.tsx, src/merge/lib/protocolKpis.ts, src/merge/hooks/useLandingStats.ts",
+    "scripts/migrate-dex-volume.mjs, scripts/verify_dex_volume.ts, scripts/run_dex_volume_sweep.ts",
+    "tests/phase_dex_volume_kpis.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live read-only check (scripts/verify_dex_volume.ts): 2 SSR pools discovered; LIQUID sell JmwfG35c... classified 'out 1.236804 USDC'; add uxHHiRfu..., withdraw 3t716nNB... and fee collection wHn9wEjr... skipped; version-1 transaction FeBKDT71... read correctly.",
+    "First sweep into Neon: LIQUID pool 72 swaps / $139.80, Reserve 6Jih... pool 44 swaps / $57.07; second run scanned 0 (cursor).",
+    "LIQUID pool reserves 14.44 USDC + 1.6456 tokens after accrued fees (price ~$8.78).",
+    "Offline suite 1622 passing / 5 known failing; tsc -b, api/kpis and api/mainnet tsc, oxlint, vite build clean."
+  ]
+}
+```

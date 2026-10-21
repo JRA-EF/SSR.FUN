@@ -24,6 +24,10 @@ export interface LandingStatsData {
   volume24hUsd: number;
   /** All-time USD trade volume since deployment (DEC-0180) -- the Home page's KPI reads this; the per-Reserve DTRDetail view still reads the rolling volume24hUsd above. null when the server's Ledger read failed (render as "Unavailable", never 0). Optional so a cached response from before this field shipped still parses. */
   volumeAllTimeUsd?: number | null;
+  /** All-time USD volume of swaps in SSR-created DEX pools (DEC-0254), separate from the mint/redeem volume above; the Home page shows their sum. Optional/null like volumeAllTimeUsd. */
+  dexVolumeAllTimeUsd?: number | null;
+  /** Current reserves of each SSR pool, keyed by Reserve address (raw amounts as decimal strings), for the market-cap split. */
+  pools?: Record<string, { pool: string; pooledTokensRaw: string; poolUsdcRaw: string }>;
   computedAt: number;
   reservesCounted: number;
   perReserve: Record<string, PerReserveStats>;
