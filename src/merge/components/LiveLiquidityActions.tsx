@@ -18,7 +18,9 @@ import {Checkbox} from './ui/checkbox';
 import {Input} from './ui/input';
 import {Label} from './ui/label';
 
-export type PrepareFn=(action:'create'|'add'|'withdraw'|'lock',extras:Record<string,unknown>)=>void;
+/** A mint of the missing Reserve Tokens that just confirmed; the liquidity review that follows is the one step left. */
+export interface MintedHandoff{amount:string;signature:string|null}
+export type PrepareFn=(action:'create'|'add'|'withdraw'|'lock',extras:Record<string,unknown>,minted?:MintedHandoff)=>void;
 
 const pill=(active:boolean)=>`px-4 py-2 rounded-full text-sm border transition-colors ${active?'bg-primary/10 text-primary border-primary/40':'border-border text-muted-foreground hover:bg-muted'}`;
 const monthsToTerm=(m:number)=>`${m}-month` as LockTerm;
@@ -63,8 +65,8 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare,refresh}:{dtr:DTR;s
  const usdcHeld=rawToNumber(state.usdcBalanceRaw,6);
  const mint=planLiquidityMint({neededRaw:launchTokensNeededRaw(usdcSide,nav,state.reserveDecimals),heldRaw:BigInt(state.reserveBalanceRaw),usdcSide,usdcHeld,decimals:state.reserveDecimals,nav,mintFeeBps:mintFeeBps(dtr)});
  const short=mint.mintRaw===0n&&usdcSide>usdcHeld;
- const submit=()=>{setError('');try{
-  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),...feeTermsToBps(v2?terms:{...terms,shareWithHolders:false}),lock});
+ const submit=(minted?:MintedHandoff)=>{setError('');try{
+  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),...feeTermsToBps(v2?terms:{...terms,shareWithHolders:false}),lock},minted);
  }catch(e){setError(e instanceof Error?e.message:'Check the amounts.');}};
  return <div className="space-y-5">
   <div className="space-y-2">
@@ -88,9 +90,9 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare,refresh}:{dtr:DTR;s
   <div className="border-t border-border pt-5"><LiquidityFeeTerms value={terms} onChange={setTerms} disabled={busy} v2={v2}/></div>
   {effective>0&&effective<MIN_LIQUIDITY_USD&&<Warning>Pools under {formatUsdc(MIN_LIQUIDITY_USD,{compact:true})} produce unstable pricing and a poor chart. We recommend at least {formatUsdc(RECOMMENDED_LIQUIDITY_USD,{compact:true})} in total.</Warning>}
   {short&&<Warning>The creator treasury does not hold enough USDC for this amount yet.</Warning>}
-  {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy} onMinted={()=>void refresh().then(submit)}/>}
+  {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy} onMinted={m=>void refresh().then(()=>submit(m))}/>}
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
-  <Button className="w-full" size="lg" disabled={busy||effective<=0||mint.mintRaw>0n} onClick={submit}><Droplets className="w-4 h-4 mr-2"/>{busy?'Preparing review…':'Review pool launch on Raydium'}</Button>
+  <Button className="w-full" size="lg" disabled={busy||effective<=0||mint.mintRaw>0n} onClick={()=>submit()}><Droplets className="w-4 h-4 mr-2"/>{busy?'Preparing review…':'Review pool launch on Raydium'}</Button>
   <p className="text-xs text-muted-foreground">Reviewing simulates the transaction first. Nothing moves until the required wallets sign.</p>
  </div>;
 }
@@ -103,9 +105,9 @@ export function AddLiquidityForm({dtr,state,summary,busy,onPrepare,refresh}:{dtr
  // The server checks the treasury against the token cap below (tokens + 1%), so that is what must be held.
  const neededRaw=tokens>0?BigInt(toRaw((tokens*1.01).toFixed(state.reserveDecimals),state.reserveDecimals)):0n;
  const mint=planLiquidityMint({neededRaw,heldRaw:BigInt(state.reserveBalanceRaw),usdcSide:Number(usdc)||0,usdcHeld:rawToNumber(state.usdcBalanceRaw,6),decimals:state.reserveDecimals,nav,mintFeeBps:mintFeeBps(dtr)});
- const submit=()=>{setError('');try{
+ const submit=(minted?:MintedHandoff)=>{setError('');try{
   // The pool takes whichever side binds first; 1% headroom on the token cap keeps the USDC amount the binding one.
-  onPrepare('add',{maximumUsdcRaw:toRaw(usdc,6),maximumReserveRaw:toRaw((tokens*1.01).toFixed(state.reserveDecimals),state.reserveDecimals),lock});
+  onPrepare('add',{maximumUsdcRaw:toRaw(usdc,6),maximumReserveRaw:toRaw((tokens*1.01).toFixed(state.reserveDecimals),state.reserveDecimals),lock},minted);
  }catch(e){setError(e instanceof Error?e.message:'Check the amounts.');}};
  return <div className="space-y-4">
   <div className="space-y-1"><Label htmlFor="liquidity-add-usdc">USDC to add</Label><Input id="liquidity-add-usdc" value={usdc} onChange={e=>setUsdc(e.target.value)} inputMode="decimal" placeholder="0.00" className="max-w-[240px] font-merge-mono" disabled={busy}/></div>
@@ -118,9 +120,9 @@ export function AddLiquidityForm({dtr,state,summary,busy,onPrepare,refresh}:{dtr
     :`The pool prices ${dtr.ticker} at ${formatUsdc(summary.marketPrice??0)}, ${deviation.pct.toFixed(1)}% below its backing value of ${formatUsdc(nav)}. Anyone can take ${dtr.ticker} out of the pool cheaply and redeem it at backing value. Adding now puts your ${dtr.ticker} on the losing side of that gap.`}</Warning>
    <label className="flex items-start gap-2 text-sm"><Checkbox checked={accepted} onCheckedChange={v=>setAccepted(v===true)} disabled={busy} className="mt-0.5"/>I understand the pool is not at backing value and I may lose the difference.</label>
   </div>}
-  {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy||blocked} onMinted={()=>void refresh().then(submit)}/>}
+  {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy||blocked} onMinted={m=>void refresh().then(()=>submit(m))}/>}
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
-  <Button disabled={busy||blocked||!usdc||mint.mintRaw>0n} onClick={submit}><Droplets className="w-3.5 h-3.5 mr-1.5"/>{busy?'Preparing review…':'Review add liquidity'}</Button>
+  <Button disabled={busy||blocked||!usdc||mint.mintRaw>0n} onClick={()=>submit()}><Droplets className="w-3.5 h-3.5 mr-1.5"/>{busy?'Preparing review…':'Review add liquidity'}</Button>
  </div>;
 }
 

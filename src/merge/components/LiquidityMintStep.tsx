@@ -21,6 +21,7 @@ import {useToast} from '@/hooks/use-toast';
 import {transactionConfirmedToast} from './TransactionConfirmation';
 import {walletErrorText} from '../lib/liquidity/liquidityExecution';
 import {Button} from './ui/button';
+import type {MintedHandoff} from './LiveLiquidityActions';
 
 const progressText=(e:MultiAssetBuyProgressEvent,ticker:string)=>{
  switch(e.phase){
@@ -35,7 +36,7 @@ const progressText=(e:MultiAssetBuyProgressEvent,ticker:string)=>{
  }
 };
 
-export function LiquidityMintStep({dtr,state,plan,disabled,onMinted}:{dtr:DTR;state:LiveLiquidityState;plan:LiquidityMintPlan;disabled:boolean;onMinted:()=>void}){
+export function LiquidityMintStep({dtr,state,plan,disabled,onMinted}:{dtr:DTR;state:LiveLiquidityState;plan:LiquidityMintPlan;disabled:boolean;onMinted:(minted:MintedHandoff)=>void}){
  const {connection}=useConnection(),wallet=useWallet(),{toast}=useToast();
  const [busy,setBusy]=useState(false),[message,setMessage]=useState(''),[recover,setRecover]=useState(false);
  const chain=dtr.onChain!,amount=Number(fromRaw(plan.mintRaw,state.reserveDecimals)).toLocaleString(undefined,{maximumFractionDigits:4});
@@ -52,7 +53,7 @@ export function LiquidityMintStep({dtr,state,plan,disabled,onMinted}:{dtr:DTR;st
     onProgress:e=>setMessage(progressText(e,dtr.ticker))});
    setMessage(alreadyMinted?`An earlier attempt had already minted the ${dtr.ticker}. Preparing the liquidity review…`:`Minted ${amount} ${dtr.ticker}. Preparing the liquidity review…`);
    toast(alreadyMinted?{title:'Mint already completed',description:`An earlier attempt had already minted the ${dtr.ticker}; nothing was minted twice.`}:transactionConfirmedToast(signature,'Mint confirmed'));
-   onMinted();
+   onMinted({amount,signature:signature??null});
   }catch(e){
    if(e instanceof AmbiguousConfirmationError){const text=`Solana has not confirmed the mint yet. Refresh in a minute and check your ${dtr.ticker} balance before minting again.`;setMessage(text);toast({title:'Mint still confirming',description:text});return;}
    const report=e instanceof MultiAssetBuyError?e.report:null;

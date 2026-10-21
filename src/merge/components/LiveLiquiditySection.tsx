@@ -19,7 +19,7 @@ import {SSR_POOL_PAYER} from '../lib/liquidity/raydiumCpmm';
 import {LiquiditySetupNeeded,savedLiquidityTables} from '../lib/liquidity/liquiditySetupClient';
 import {checkLiquidityMessage} from '../lib/liquidity/liquidityExecution';
 import {checkLiveState,checkPrepared,defaultSolCap,fromRaw,postLiquidity,summarizeLiquidity,toRaw,LOCK_TERM_DAYS,type LiveAction,type LiveLiquidityState,type LiveTranche,type PreparedLiveLiquidity} from '../lib/liquidity/liveLiquidityClient';
-import {AddLiquidityForm,CreatePoolForm,LockForm,WithdrawForm} from './LiveLiquidityActions';
+import {AddLiquidityForm,CreatePoolForm,LockForm,WithdrawForm,type MintedHandoff} from './LiveLiquidityActions';
 import {LiquidityLookupSetup} from './LiquidityLookupSetup';
 import {LiquidityTransactionReview} from './LiquidityTransactionReview';
 import {useToast} from '@/hooks/use-toast';
@@ -52,7 +52,8 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
  useEffect(()=>{setState(null);setPrepared(null);setPanel(null);void load();},[load]);
  useEffect(()=>{if(prepared)reviewRef.current?.scrollIntoView({behavior:'smooth',block:'nearest'});},[prepared]);
 
- const prepare=async(action:LiveAction,extras:Record<string,unknown>={})=>{
+ /** `minted`: the form just minted the missing Reserve Tokens, so the review is the one step left and must not go unnoticed. */
+ const prepare=async(action:LiveAction,extras:Record<string,unknown>={},minted?:MintedHandoff)=>{
   if(!state||!wallet.publicKey||busy)return;
   const current=++generation.current;lastRequest.current={action,extras};setBusy(true);setError('');setNotice(null);setPrepared(null);setSetupAddresses([]);
   try{
@@ -65,8 +66,10 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
    const allowed=action==='collect'?[actor]:[state.creator,state.treasury,...(action==='create'?[SSR_POOL_PAYER.toBase58()]:[])];
    if(result.requiredSigners.some(k=>!allowed.includes(k)))throw new Error('Unexpected signing wallet.');
    VersionedTransaction.deserialize(Buffer.from(result.transactionBase64,'base64'));
-   if(current===generation.current)setPrepared(result);
-  }catch(e){if(current===generation.current){const text=e instanceof Error?e.message:'Could not prepare this transaction.';
+   if(current===generation.current){setPrepared(result);
+    if(minted){setNotice({title:`Minted ${minted.amount} ${dtr.ticker}. One step left: type ${result.confirmationText} in the review below and approve, or the liquidity is not added.`,signature:minted.signature});
+     toast({title:'Mint confirmed. One step left',description:`Approve the ${ACTION_TITLES[action].toLowerCase()} review below to finish.`});}}
+  }catch(e){if(current===generation.current){const text=(minted?`The ${dtr.ticker} was minted and is in the treasury, but the liquidity review could not be prepared. `:'')+(e instanceof Error?e.message:'Could not prepare this transaction.');
    if(e instanceof LiquiditySetupNeeded){setSetupAddresses(e.addresses);toast({title:'One-time setup needed',description:'Approve the setup step below first. It only pays account rent and network fees.'});}
    else toast({variant:'destructive',title:`${ACTION_TITLES[action]} could not be prepared`,description:text});
    setError(text);}}
@@ -107,7 +110,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
       // Close the review and show the outcome above it, with fresh pool numbers.
       setNotice({title:`${ACTION_TITLES[prepared.action as LiveAction]??'Liquidity action'} confirmed on Solana.`,signature});setPrepared(null);setPanel(null);void load();}}
      onRetry={()=>{const last=lastRequest.current;if(last)void prepare(last.action,last.extras);}}/>
-    <Button variant="ghost" size="sm" onClick={()=>{setPrepared(null);void load();}}>Close review</Button>
+    <Button variant="ghost" size="sm" onClick={()=>{setPrepared(null);setNotice(null);void load();}}>Close review</Button>
    </CardContent></Card>}
  </div>;
  const advanced=<div>
@@ -121,7 +124,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
    <CardTitle className="text-xl font-merge-display flex items-center gap-2"><Droplets className="w-5 h-5 text-primary"/> Take your Reserve Token to market</CardTitle>
    <CardDescription>Add liquidity on Raydium and {dtr.ticker} becomes tradeable outside SSR.fun, with a public chart. Liquidity is what turns a backed token into a market.</CardDescription>
   </CardHeader><CardContent className="space-y-4">
-   <CreatePoolForm dtr={dtr} state={state} nav={nav} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)} refresh={load}/>
+   <CreatePoolForm dtr={dtr} state={state} nav={nav} busy={disabled} onPrepare={(a,x,m)=>void prepare(a,x,m)} refresh={load}/>
    {advanced}
   </CardContent></Card>
   {review}
@@ -182,7 +185,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
     </div>
     <p className="text-xs text-muted-foreground mt-4">Withdrawing is only possible for unlocked liquidity, and any withdrawal is publicly visible. Locking never touches your fees: collected fees always go to your creator treasury. The position excludes liquidity locked forever.</p>
     {panel&&<div className="mt-5 border-t border-border pt-5">
-     {panel==='add'&&<AddLiquidityForm dtr={dtr} state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)} refresh={load}/>}
+     {panel==='add'&&<AddLiquidityForm dtr={dtr} state={state} summary={s} busy={disabled} onPrepare={(a,x,m)=>void prepare(a,x,m)} refresh={load}/>}
      {panel==='withdraw'&&<WithdrawForm dtr={dtr} state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
      {panel==='lock'&&<LockForm state={state} summary={s} busy={disabled} onPrepare={(a,x)=>void prepare(a,x)}/>}
     </div>}
