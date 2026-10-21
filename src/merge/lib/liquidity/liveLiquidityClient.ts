@@ -78,6 +78,14 @@ export async function postLiquidity(body:unknown):Promise<any>{
  return result;
 }
 
+/** Spec 4.3: a pool more than 1% from NAV hands the gap to the first arbitrageur, paid by whoever adds liquidity at that price. */
+export const NAV_DEVIATION_LIMIT_PCT=1;
+/** How far the pool is from backing value, or null when it is within the limit or no price is known. */
+export function navDeviation(premiumPct:number|null):{direction:'above'|'below';pct:number}|null{
+ if(premiumPct===null||!Number.isFinite(premiumPct)||Math.abs(premiumPct)<=NAV_DEVIATION_LIMIT_PCT)return null;
+ return {direction:premiumPct>0?'above':'below',pct:Math.abs(premiumPct)};
+}
+
 export const LOCK_TERM_DAYS:Record<Exclude<LockTerm,'unlocked'|'permanent'>,number>={'1-month':30,'3-month':90,'6-month':180,'12-month':365};
 
 export interface LiquiditySummary{

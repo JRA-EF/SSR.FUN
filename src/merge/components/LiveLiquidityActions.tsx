@@ -8,12 +8,13 @@ import {AlertCircle,Droplets,Lock,Unlock} from 'lucide-react';
 import type {DTR} from '@/lib/types';
 import {formatUsdc} from '@/lib/calculations';
 import {LOCK_MONTH_PRESETS,MIN_LIQUIDITY_USD,QUICK_AMOUNTS_USD,RECOMMENDED_LIQUIDITY_USD} from '@/lib/liquidityPreview';
-import {fromRaw,rawToNumber,toRaw,withdrawPreview,type LiveLiquidityState,type LockTerm,type LiquiditySummary} from '../lib/liquidity/liveLiquidityClient';
+import {fromRaw,navDeviation,rawToNumber,toRaw,withdrawPreview,type LiveLiquidityState,type LockTerm,type LiquiditySummary} from '../lib/liquidity/liveLiquidityClient';
 import {DEFAULT_FEE_TERMS,feeTermsToBps,type FeeTermsValue} from '../lib/liquidity/feeTerms';
 import {LiquidityFeeTerms} from './LiquidityFeeTerms';
 import {LiquidityMintStep} from './LiquidityMintStep';
 import {launchTokensNeededRaw,planLiquidityMint} from '../lib/liquidity/liquidityMintPlan';
 import {Button} from './ui/button';
+import {Checkbox} from './ui/checkbox';
 import {Input} from './ui/input';
 import {Label} from './ui/label';
 
@@ -96,11 +97,12 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare,refresh}:{dtr:DTR;s
 
 /** Add to the existing pool at its current ratio. */
 export function AddLiquidityForm({dtr,state,summary,busy,onPrepare,refresh}:{dtr:DTR;state:LiveLiquidityState;summary:LiquiditySummary;busy:boolean;onPrepare:PrepareFn;refresh:()=>Promise<void>}){
- const [usdc,setUsdc]=useState(''),[lock,setLock]=useState<LockTerm>('unlocked'),[error,setError]=useState('');
+ const [usdc,setUsdc]=useState(''),[lock,setLock]=useState<LockTerm>('unlocked'),[error,setError]=useState(''),[accepted,setAccepted]=useState(false);
+ const nav=dtr.nav>0?dtr.nav:dtr.tokenPrice,deviation=navDeviation(summary.premiumPct),blocked=deviation!==null&&!accepted;
  const ratio=summary.poolUsdc>0?summary.poolTokens/summary.poolUsdc:0,tokens=(Number(usdc)||0)*ratio;
  // The server checks the treasury against the token cap below (tokens + 1%), so that is what must be held.
  const neededRaw=tokens>0?BigInt(toRaw((tokens*1.01).toFixed(state.reserveDecimals),state.reserveDecimals)):0n;
- const mint=planLiquidityMint({neededRaw,heldRaw:BigInt(state.reserveBalanceRaw),usdcSide:Number(usdc)||0,usdcHeld:rawToNumber(state.usdcBalanceRaw,6),decimals:state.reserveDecimals,nav:dtr.nav>0?dtr.nav:dtr.tokenPrice,mintFeeBps:mintFeeBps(dtr)});
+ const mint=planLiquidityMint({neededRaw,heldRaw:BigInt(state.reserveBalanceRaw),usdcSide:Number(usdc)||0,usdcHeld:rawToNumber(state.usdcBalanceRaw,6),decimals:state.reserveDecimals,nav,mintFeeBps:mintFeeBps(dtr)});
  const submit=()=>{setError('');try{
   // The pool takes whichever side binds first; 1% headroom on the token cap keeps the USDC amount the binding one.
   onPrepare('add',{maximumUsdcRaw:toRaw(usdc,6),maximumReserveRaw:toRaw((tokens*1.01).toFixed(state.reserveDecimals),state.reserveDecimals),lock});
@@ -110,9 +112,15 @@ export function AddLiquidityForm({dtr,state,summary,busy,onPrepare,refresh}:{dtr
   <p className="text-sm">Paired with ≈ <span className="font-merge-mono">{tokens.toLocaleString(undefined,{maximumFractionDigits:2})} {dtr.ticker}</span> at the pool's current price.</p>
   <TreasuryLine dtr={dtr} state={state}/>
   <div className="space-y-2"><Label className="text-xs uppercase tracking-wider text-muted-foreground">Lock this addition</Label><LockChoice value={lock} onChange={setLock} disabled={busy}/></div>
-  {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy} onMinted={()=>void refresh().then(submit)}/>}
+  {deviation&&<div className="space-y-2">
+   <Warning>{deviation.direction==='above'
+    ?`The pool prices ${dtr.ticker} at ${formatUsdc(summary.marketPrice??0)}, ${deviation.pct.toFixed(1)}% above its backing value of ${formatUsdc(nav)}. Anyone can mint at backing value and swap into the pool, taking USDC out of it. Adding now puts your USDC on the losing side of that gap.`
+    :`The pool prices ${dtr.ticker} at ${formatUsdc(summary.marketPrice??0)}, ${deviation.pct.toFixed(1)}% below its backing value of ${formatUsdc(nav)}. Anyone can take ${dtr.ticker} out of the pool cheaply and redeem it at backing value. Adding now puts your ${dtr.ticker} on the losing side of that gap.`}</Warning>
+   <label className="flex items-start gap-2 text-sm"><Checkbox checked={accepted} onCheckedChange={v=>setAccepted(v===true)} disabled={busy} className="mt-0.5"/>I understand the pool is not at backing value and I may lose the difference.</label>
+  </div>}
+  {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy||blocked} onMinted={()=>void refresh().then(submit)}/>}
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
-  <Button disabled={busy||!usdc||mint.mintRaw>0n} onClick={submit}><Droplets className="w-3.5 h-3.5 mr-1.5"/>{busy?'Preparing review…':'Review add liquidity'}</Button>
+  <Button disabled={busy||blocked||!usdc||mint.mintRaw>0n} onClick={submit}><Droplets className="w-3.5 h-3.5 mr-1.5"/>{busy?'Preparing review…':'Review add liquidity'}</Button>
  </div>;
 }
 

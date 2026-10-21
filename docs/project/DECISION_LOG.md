@@ -7711,3 +7711,35 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0253
+
+```json
+{
+  "id": "DEC-0253",
+  "date": "2026-10-21",
+  "title": "Add liquidity warns and asks for acknowledgement when the pool is more than 1% from backing value",
+  "status": "Committed 2026-10-21 (frontend only, no program change); prod liquidity stays off (DEC-0245).",
+  "decision": "The Add liquidity form compares the pool price with the Reserve Token's backing value (NAV). Beyond 1% either way it shows a plain warning naming the pool price, the backing value, the gap and who loses it, and both the review button and the mint-missing-tokens step stay disabled until the creator ticks an acknowledgement. Within 1%, or with no pool price, nothing changes.",
+  "context": "Live test on Reserve LIQUID (mint Ewm6...GzBS), 2026-10-21: the canonical pool sat at ~$8.89 per token while NAV was ~$1.06 (a 5.66-token redemption returned ~$6.01 of reserve assets). The add form showed nothing, so 19.90 USDC went in at ~8.4x NAV, and DEC-0252's mint step minted at NAV only to deposit at the pool price. Spec 4.3 (price = NAV, hard warning beyond 1%) only covered pool launch.",
+  "rationale": "Adding at the pool's ratio is mechanically correct, but when the pool is off NAV the gap is free money for the first arbitrageur (mint at NAV and swap into the pool, or take tokens out cheaply and redeem), paid by the liquidity just added. Friction is warranted here for the same reason spec 4.3 gives for launch. An acknowledgement rather than a hard block keeps the creator able to add when they mean to (for example to deepen a pool they will rebalance).",
+  "alternativesConsidered": [
+    "Hard-block additions beyond 1% -- rejected: the creator may knowingly add, and a block cannot be overridden when NAV data lags.",
+    "Server-side refusal in the prepare endpoint -- deferred: NAV is computed client-side from the same data the form shows; the review still states the funding amounts.",
+    "Offer to rebalance the pool to NAV first -- out of scope; needs an executor and its own decision."
+  ],
+  "impact": "Creators see the gap before funding. No change for pools within 1% of NAV. Launch is unchanged (it already opens at NAV).",
+  "affectedAreas": [
+    "src/merge/lib/liquidity/liveLiquidityClient.ts: NAV_DEVIATION_LIMIT_PCT, navDeviation() on the existing summary premiumPct",
+    "src/merge/components/LiveLiquidityActions.tsx: AddLiquidityForm warning, acknowledgement, gating of review and mint step",
+    "tests/phase_liquidity_nav_guard.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "DEC-0252 exercised live on staging 2026-10-21: mint of the 2.1546 LIQUID shortfall confirmed (2HZqrzZv...), estimate ~$2.37 vs actual ~$2.35. The liquidity review was prepared (POST /api/mainnet/liquidity 200 at 10:13:50) but never signed; tracked separately.",
+    "Add uxHHiRfu... (19.90 USDC + 2.2457 LIQUID) and withdraw 3t716nNB... both confirmed; 0.15% transfer fee withheld as expected.",
+    "Offline suite 1619 passing / 5 known failing (chart range selector x2, native-control reset x2, deployed-binary IDL pinning); tsc -b clean."
+  ]
+}
+```
