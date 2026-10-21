@@ -3,7 +3,7 @@
 - **Date:** 2026-10-21
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `fix/metamask-solana` -> `main`
-- **Deployed to:** none yet (see follow-ups)
+- **Deployed to:** production (`dpl_DgV5aD4beB1PkicUfsVBxEyQFcb3`, ssr.fun); staging not yet
 - **Decision log:** none (bug fix)
 
 ## What shipped
