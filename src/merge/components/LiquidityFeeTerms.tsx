@@ -42,7 +42,7 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
  return <div className="space-y-5">
   <div className="space-y-1">
    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Your pool earnings</Label>
-   <p className="text-xs text-muted-foreground">You earn the pool's 0.75% creator fee (Raydium keeps 5% of it) plus any tax you set below. SSR takes 20% of what you earn; the other 80% is yours.</p>
+   <p className="text-xs text-muted-foreground">You earn the pool's 0.75% creator fee (Raydium keeps 5% of it) plus any tax you set below. SSR takes 20% of what you earn; the rest is yours.</p>
   </div>
   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
    {/* DEC-0240/0251: secondary-market (DEX) project tax only -- never on a mint or redemption. */}
@@ -56,18 +56,18 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Share earnings?</Label>
    <div role="radiogroup" aria-label="Share earnings" className="grid grid-cols-1 md:grid-cols-2 gap-3">
     <button type="button" role="radio" aria-checked={!value.shareWithHolders} disabled={disabled} onClick={()=>set({shareWithHolders:false})} className={choice(!value.shareWithHolders)}>
-     <p className="text-sm font-medium">No, I keep my 80%</p>
+     <p className="text-sm font-medium">No, I keep my part</p>
      <p className="text-xs text-muted-foreground mt-1">All of your share goes to your creator treasury.</p>
     </button>
     <button type="button" role="radio" aria-checked={value.shareWithHolders} disabled={disabled} onClick={()=>set({shareWithHolders:true})} className={choice(value.shareWithHolders)}>
-     <p className="text-sm font-medium">{split?'Yes, share with holders and/or add as locked liquidity':'Yes, share part of it with holders'}</p>
+     <p className="text-sm font-medium">{split?'Share a piece of your rewards with holders / LP':'Share a piece of your rewards with holders'}</p>
      <p className="text-xs text-muted-foreground mt-1">{split
       ?"Over 24 hours, that part goes into the Reserve's backing, into your pool as locked liquidity, or both. You choose the mix below."
       :"That part is added to the Reserve's backing over 24 hours, so every Reserve Token is backed by a little more."}</p>
     </button>
    </div>
    {value.shareWithHolders&&<div className="space-y-3 pt-2">
-    <Label htmlFor="liquidity-holder-share" className="flex justify-between"><span>Share of your 80% for holders</span><span className="font-merge-mono text-primary">{value.holderSharePct.toFixed(0)}%</span></Label>
+    <Label htmlFor="liquidity-holder-share" className="flex justify-between"><span>{split?'Share of your rewards for holders / LP':'Share of your rewards for holders'}</span><span className="font-merge-mono text-primary">{value.holderSharePct.toFixed(0)}%</span></Label>
     <Slider id="liquidity-holder-share" value={[value.holderSharePct]} min={1} max={100} step={1} disabled={disabled} onValueChange={v=>set({holderSharePct:v[0]})}/>
     <p className="text-xs text-muted-foreground">It is released a little every hour over 24 hours. Choose below where it goes.</p>
    </div>}
