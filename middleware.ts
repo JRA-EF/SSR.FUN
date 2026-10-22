@@ -48,6 +48,8 @@ import { configuredAccessKeys, siteGateMode, siteSessionSecret, SITE_SESSION_COO
 const CRON_PATHS = new Set([
   '/api/devnet/accrue-fees-cron',
   '/api/kpis/kpis-backfill-cron',
+  '/api/kpis/dex-volume-cron',
+  '/api/robinhood/catalogue-refresh-cron',
   '/api/ledger/ingest-cron',
   '/api/ledger/reclassify-actors-cron',
   '/api/ledger/jupiter-snapshot-cron',

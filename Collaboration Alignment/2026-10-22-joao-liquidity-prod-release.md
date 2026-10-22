@@ -1,0 +1,19 @@
+# Liquidity production release: staging branches merged into main, cron gate fix
+
+- **Date:** 2026-10-22
+- **Author:** Joao via Claude Code (Opus 5.5)
+- **Branch / commits:** `release/liquidity-prod` -> `main` (merges `feat/create-preflight`, `fix/liquidity-nav-guard`, `feat/dex-kpis`; plus the middleware fix below)
+- **Deployed to:** not yet. Production deploy = set `VITE_ENABLE_LIQUIDITY=true` on the `ssr-fun` project, then deploy from main.
+- **Decision log:** DEC-0249, DEC-0251, DEC-0252, DEC-0253, DEC-0254 (no new decision)
+
+## What shipped
+- `main` now carries everything staging runs (`087bd89`, dpl_GtULZkiYLJZs3SsjCpStejGanKXH): Create Reserve route check (DEC-0249), liquidity NAV guard and mint hand-off (DEC-0253), homepage DEX volume / pool-priced market cap (DEC-0254). The code tree equals staging's except for this entry, the DEC-0253 hand-off note and the fix below. Doc conflicts (DECISION_LOG, PROJECT_STATUS) were resolved with staging's copies, which are main plus additions only.
+- **Fix:** `middleware.ts` CRON_PATHS was missing `/api/kpis/dex-volume-cron` (new in DEC-0254) and `/api/robinhood/catalogue-refresh-cron` (missing since it was added). The site gate answers 401 to any path not on that list, and Vercel's cron runner carries no session cookie, so behind the gate (production) neither handler would ever run. New test `tests/phase_cron_gate_exempt.ts` fails if any `vercel.json` cron is missing from CRON_PATHS.
+
+## Effect on others -- READ THIS
+- Adding a cron now means adding it to `middleware.ts` CRON_PATHS too; the test enforces it.
+- `VITE_ENABLE_LIQUIDITY` is read twice: inlined into the frontend at build time, and at runtime by `lib/mainnet/liquidityRelease.ts` (pool launch/add/withdraw endpoints). Setting it on the production project and redeploying turns on both.
+- Jupiter rate limiting (HTTP 429) is common on both projects (fee keeper, swaps, and on staging the new route check). The route check marks an asset "unchecked" and does not block the launch when that happens. Staging also runs the fee-settlement cron against Mainnet, which competes for Jupiter quota if both projects share a key.
+
+## Verification
+`tsc -b` clean; offline suite 1653 passing / 5 pre-existing failures (chart range selector x2, native-control reset x2, IDL pinning) plus the new cron test passing (and failing on the pre-fix middleware). A `VITE_SOLANA_CLUSTER=mainnet-beta VITE_ENABLE_LIQUIDITY=true VITE_ENABLE_EVM=false` build contains the "no pool yet" banner, the Manage Liquidity tab link, the NAV-guard warning, the route check and the DEX KPI field. Mainnet: pool payer `6smL...oqAS` holds 0.05 SOL (it fronts fees; the creator refunds its costs in the same transaction) and its Raydium permission PDA exists.
