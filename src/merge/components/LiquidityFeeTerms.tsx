@@ -3,9 +3,8 @@
  * liquidity launch (Manage Reserve -> Liquidity) and fixed on-chain when the
  * pool is created: the optional project Buy/Sell tax (the same 0-2% sliders
  * Create Reserve had before DEC-0229) and the optional holder share of the
- * creator's 80% that is fed back into the Reserve's backing over 24 hours,
- * and (DEC-0255) how that holder share divides between backing and locked
- * pool liquidity.
+ * creator's 80% released to holders over 24 hours, and (DEC-0255) how that
+ * holder share divides between Reserve backing and locked pool liquidity.
  * Secondary-market (DEX) trades only -- never a mint or a redemption.
  */
 import {AlertCircle} from 'lucide-react';
@@ -54,15 +53,17 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
   </div>
 
   <div className="space-y-2">
-   <Label className="text-xs uppercase tracking-wider text-muted-foreground">Feed earnings back into the Reserve?</Label>
-   <div role="radiogroup" aria-label="Feed earnings back into the Reserve" className="grid grid-cols-1 md:grid-cols-2 gap-3">
+   <Label className="text-xs uppercase tracking-wider text-muted-foreground">Share earnings with holders?</Label>
+   <div role="radiogroup" aria-label="Share earnings with holders" className="grid grid-cols-1 md:grid-cols-2 gap-3">
     <button type="button" role="radio" aria-checked={!value.shareWithHolders} disabled={disabled} onClick={()=>set({shareWithHolders:false})} className={choice(!value.shareWithHolders)}>
      <p className="text-sm font-medium">No, I keep my 80%</p>
      <p className="text-xs text-muted-foreground mt-1">All of your share goes to your creator treasury.</p>
     </button>
     <button type="button" role="radio" aria-checked={value.shareWithHolders} disabled={disabled} onClick={()=>set({shareWithHolders:true})} className={choice(value.shareWithHolders)}>
      <p className="text-sm font-medium">Yes, share part of it with holders</p>
-     <p className="text-xs text-muted-foreground mt-1">That part is added to the Reserve's backing over 24 hours, so every Reserve Token is backed by a little more.</p>
+     <p className="text-xs text-muted-foreground mt-1">{split
+      ?"Over 24 hours, that part goes into the Reserve's backing, into your pool as locked liquidity, or both. You choose the mix below."
+      :"That part is added to the Reserve's backing over 24 hours, so every Reserve Token is backed by a little more."}</p>
     </button>
    </div>
    {value.shareWithHolders&&<div className="space-y-3 pt-2">
