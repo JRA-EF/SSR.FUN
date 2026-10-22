@@ -9,7 +9,7 @@ import { JUPITER_KEY_REJECTED_MESSAGE, MAINNET_USDC_MINT, MAX_PRICE_IMPACT_PCT, 
 import { parsePreflightRequest } from "../api/mainnet/launch-preflight";
 import { blockedAssets, checkLaunchRoutes, isLaunchCheckFresh, launchCheckFingerprint, markLaunchFailure, warningAssets, LAUNCH_CHECK_MAX_AGE_MS, type LaunchCheckAsset } from "../src/merge/lib/launchPreflight";
 import { isMeaningfulDraft } from "../src/merge/lib/createDraft";
-import { LAUNCH_PRICE_LOCK_MS, LAUNCH_SWAP_SLIPPAGE_STEPS_BPS, SeedAssetFundingError } from "../src/merge/lib/createReserveClient";
+import { LAUNCH_PRICE_LOCK_MS, LAUNCH_SWAP_SLIPPAGE_STEPS_BPS, SeedAssetFundingError, seedRawAmountForAsset } from "../src/merge/lib/createReserveClient";
 import { JupiterQuoteError } from "../src/merge/lib/jupiterSwapClient";
 
 const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
@@ -36,6 +36,19 @@ describe("DEC-0249 -- allocations must total exactly 100%", () => {
   });
   it("refuses an empty basket", () => {
     expect(allocationGateMessage([])).to.contain("at least one asset");
+  });
+  // Live 2026-10-22: SOL at 0% next to a 100% asset was registered and the
+  // launch then stopped at seeding (every asset needs the protocol minimum).
+  it("refuses a 0% asset by name, even when the total is 100%", () => {
+    const msg = allocationGateMessage([0, 1], ["SOL", "BONK"]);
+    expect(msg).to.contain("SOL is at 0%");
+    expect(msg).to.contain("remove it");
+    expect(allocationGateMessage([0, 0, 1], ["SOL", "WIF", "BONK"])).to.contain("SOL, WIF are at 0%");
+  });
+  it("a 0% SOL already registered is seeded with the protocol minimum, so Resume can finish", () => {
+    const sol = { mint: WRAPPED_SOL_MINT_STR, decimals: 9 };
+    expect(seedRawAmountForAsset(sol, 0, 150)).to.equal(1000n);
+    expect(seedRawAmountForAsset(sol, 1.5, 150)).to.equal(10_000_000n);
   });
 });
 

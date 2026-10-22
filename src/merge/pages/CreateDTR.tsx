@@ -1132,7 +1132,7 @@ export function CreateDTR({
   };
 
   // Gate for leaving the basket step: exactly 100%, then the route check.
-  const allocationProblem = allocationGateMessage(assets.map((a) => a.weight));
+  const allocationProblem = allocationGateMessage(assets.map((a) => a.weight), assets.map((a) => a.symbol));
   const basketBlockers = blockedAssets(launchCheck).filter((r) => assets.some((a) => a.symbol === r.symbol));
   const handleBasketNext = async () => {
     if (allocationProblem || assets.length === 0) return;

@@ -191,6 +191,10 @@ export function validateCreateReserveAssets(assets: CreateReserveAssetInput[]): 
   if (totalWeightBps <= 0 || totalWeightBps > 10_000) {
     throw new Error(`Invalid allocation total (${(totalWeightBps / 100).toFixed(2)}%) -- allocations must sum to more than 0% and no more than 100%.`);
   }
+  // A 0% asset cannot be seeded (the program needs MIN_SEED_AMOUNT_PER_ASSET of every asset); refuse it before anything is spent.
+  if (assets.some((a) => !(a.weightBps > 0))) {
+    throw new Error("Every reserve asset needs an allocation above 0% -- give it a share or remove it from the Reserve.");
+  }
 }
 
 /**
@@ -373,7 +377,10 @@ export function seedRawAmountForAsset(asset: Pick<CreateReserveAssetInput, "mint
     if (!(solPriceUsd > 0)) {
       throw new Error("A real current SOL/USD price is required to compute how much of your SOL becomes this Reserve's SOL holding, but none is available right now. Try again shortly.");
     }
-    return BigInt(Math.floor((usd / solPriceUsd) * 1_000_000_000));
+    // Floored at the protocol minimum like every other asset: a 0% SOL already
+    // registered (before validateCreateReserveAssets refused it) is seeded with
+    // a wrapped dust amount so Resume can finish the Reserve.
+    return BigInt(Math.max(1000, Math.floor((usd / solPriceUsd) * 1_000_000_000)));
   }
   return BigInt(Math.max(1000, Math.floor(usd * 10 ** asset.decimals)));
 }

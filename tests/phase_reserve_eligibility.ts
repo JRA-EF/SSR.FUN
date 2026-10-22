@@ -240,6 +240,11 @@ describe("validateCreateReserveAssets (src/merge/lib/createReserveClient.ts) -- 
     expect(() => validateCreateReserveAssets([asset(MOCK_X, 0)])).to.throw(/Invalid allocation total/);
   });
 
+  // Live 2026-10-22: a 0% asset next to a 100% one was registered and the launch stopped at seeding.
+  it("rejects a 0% asset even when the total is 100%", () => {
+    expect(() => validateCreateReserveAssets([asset(MOCK_X, 0), asset(MOCK_Y, 10_000)])).to.throw(/above 0%/);
+  });
+
   it("accepts an allocation total of exactly 100%", () => {
     expect(() => validateCreateReserveAssets([asset(MOCK_X, 4_000), asset(MOCK_Y, 6_000)])).to.not.throw();
   });
