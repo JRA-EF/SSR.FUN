@@ -7818,3 +7818,43 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0255
+
+```json
+{
+  "id": "DEC-0255",
+  "date": "2026-10-22",
+  "title": "The holder share of SSR pool earnings can be split between Reserve backing and permanently locked pool liquidity, chosen once at launch",
+  "status": "Built 2026-10-22 on feat/holder-pool-split (program + app + keeper); frontend on staging; Mainnet program upgrade NOT executed (needs deployer funding, a buffer and a Squads vote; the Creator asked to approve before execution). Prod liquidity stays off (DEC-0245).",
+  "decision": "A new LiquiditySplit account (PDA [\"liquidity_split\", terms]) records pool_share_bps, 1-10,000 of the DEC-0251 holder share. configure_liquidity_split is accepted only in the same transaction as configure_liquidity_revenue_v2 (instructions-sysvar check), so the split is chosen at pool launch and never changes; a pool without it sends everything to backing exactly as DEC-0251. The pool leg reuses the basket feed's flash shape: pool_feed_begin (signed by SSR's fee quote signer) lends released holder USDC to the keeper; the keeper swaps about half into Reserve Tokens on the pool and deposits both sides (native Raydium CPMM instructions in the same transaction); pool_feed_end moves the new LP into the split's own LP account, refuses fewer than the keeper-signed min_lp, returns unspent USDC to the feed as still-released and keeps Reserve Token dust in the split. No instruction moves LP out of the split's account: the liquidity is locked for good and compounds (CPMM keeps trading fees in the pool). The program caps the pool at its share of everything released so far (fed + waiting), so legs run in any order and the pool can catch up but never overtake. The keeper (fee-settlement-cron job D) runs the pool leg before backing, only while the pool price is within 1% of NAV and at most 2% of the pool's USDC per leg; off NAV that run's pool part goes to backing. Launch form: a Backing/Pool slider under the holder share, disabled with a plain note until the upgrade is live (server probe, custom 101).",
+  "context": "Creator, 2026-10-21: add a choice inside the holder loop between adding to Reserve assets (AUM) and adding back into liquidity; agreed assumptions: a split set at launch, permanently locked program-owned liquidity, swap half the USDC in the pool, 1% NAV guard with fallback to backing; ship with a checkbox for holder rewards and the split; Squads upgrade only with explicit approval.",
+  "rationale": "Locking in a program-owned account instead of Raydium Burn & Earn: Burn & Earn creates a new position NFT and lock account per lock (rent every feed, daily), while CPMM LP already earns by compounding inside the pool, so a plain program account gives the same permanence at no per-feed cost. Keeper-routed swap + deposit (instead of program CPIs into Raydium) keeps the program's trust surface to what the basket feed already has: SSR's quote signer binds the minimum, the program checks only the result. The NAV guard cannot be on-chain without price oracles, so it lives in the keeper; the on-chain share cap bounds what any keeper can do.",
+  "alternativesConsidered": [
+    "Raydium Burn & Earn per feed -- rejected: per-lock rent and an NFT per feed; LP fees compound in CPMM anyway.",
+    "Burning the LP -- rejected: permanent, but it gifts the value to the other LP holders (mostly the creator).",
+    "Program-signed Raydium CPIs -- rejected for now: larger program surface and account layout risk; the flash pattern is already live for the basket feed.",
+    "Storing the split in LiquidityTerms -- impossible without migrating live accounts (no spare bytes).",
+    "Applying the split to existing pools -- rejected: their terms were fixed at launch (DEC-0251)."
+  ],
+  "impact": "New pools may send part of the holder share into locked pool liquidity. Existing pools (LIQUID, 6Jih...) are unchanged: all of their holder share goes to backing. Program grows 1,585,400 -> 1,684,776 bytes (ExtendProgram +99,376 B, about 0.51 SOL, top level); buffer rent about 8.56 SOL, refunded at upgrade.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/liquidity_split.rs (new), lib.rs, errors.rs (6083-6087), instructions/mod.rs",
+    "tools/rebalance-litesvm/src/split.rs (new) + main.rs/feed.rs",
+    "packages/sdk: liquidityRevenue.ts (split builders/decoders), raydiumCpmmInstructions.ts (swap_base_input), idl/",
+    "lib/mainnet/poolFeed.ts (new), basketFeed.ts (pool leg), createLiquidity.ts (split probe), atomicPool.ts, liquidityLifecycle.ts (reads the split)",
+    "api/mainnet/liquidity.ts (poolShareBps, splitAvailable, split state), api/mainnet/fee-settlement-cron.ts (prices for NAV)",
+    "src/merge/lib/liquidity/feeTerms.ts, raydiumCpmm.ts, liveLiquidityClient.ts; src/merge/components/LiquidityFeeTerms.tsx, LiveLiquidityActions.tsx, LiveLiquiditySection.tsx",
+    "tests/phase_liquidity_split.ts (new); scripts/verify_pool_feed_raydium.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live program before this change = origin/main (sha 745dcaa0..., slot 458879753, DEC-0251); no program commits on any branch since.",
+    "cargo-build-sbf: 1,684,776 bytes. Program unit tests 40/40. LiteSVM (real compiled program): split only in the launch transaction (6084 otherwise), invalid splits 6083, cap 6085 (30% of 400,000 = 120,000; 10,001 over refused, 10,000 catch-up accepted), missing end 6086, LP below minimum 6087, non-keeper 6068; 120,000 lent -> 110,000 added, 10,000 back as released, 1,000 LP locked in an account owned by the split with no delegate or close authority; all earlier rebalance/basket-feed checks still pass.",
+    "Regenerated IDL equals the committed IDL except the three new instructions, two accounts, two events and five errors.",
+    "Mainnet simulation (scripts/verify_pool_feed_raydium.ts, LIQUID pool, wallet CgHF...qVDN): planned 0.270013 USDC leg -> swap 0.135013 + deposit, 47,367 LP minted exactly as planned, 0.268503 USDC used, 138 raw Reserve Token dust.",
+    "Offline suite 1666 passing / 4 known failing (chart range selector x2, native-control reset x2); tsc -b clean."
+  ]
+}
+```
