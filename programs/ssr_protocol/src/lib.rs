@@ -447,4 +447,16 @@ pub mod ssr_protocol {
         instructions::liquidity_terms::feed_begin(ctx, amount_in, min_out)
     }
 
+    // DEC-0255: the holder share's backing/pool split, chosen at launch, and
+    // the keeper's pool leg (LP locked in the split's account for good).
+    pub fn configure_liquidity_split(ctx: Context<ConfigureLiquiditySplit>, pool_share_bps: u16) -> Result<()> {
+        instructions::liquidity_split::configure_split(ctx, pool_share_bps)
+    }
+    pub fn pool_feed_begin<'info>(ctx: Context<'info, PoolFeedBegin<'info>>, amount_in: u64, min_lp: u64) -> Result<()> {
+        instructions::liquidity_split::split_feed_begin(ctx, amount_in, min_lp)
+    }
+    pub fn pool_feed_end<'info>(ctx: Context<'info, PoolFeedEnd<'info>>) -> Result<()> {
+        instructions::liquidity_split::split_feed_end(ctx)
+    }
+
 }

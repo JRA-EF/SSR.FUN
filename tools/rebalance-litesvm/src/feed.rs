@@ -14,7 +14,7 @@ fn raydium_account(data: Vec<u8>) -> Account {
     Account { lamports: 1_000_000_000, data, owner: RAYDIUM, executable: false, rent_epoch: 0 }
 }
 
-fn install_usdc(env: &mut Env) {
+pub(crate) fn install_usdc(env: &mut Env) {
     let mut data = vec![0u8; spl_token::state::Mint::LEN];
     let mint = spl_token::state::Mint {
         mint_authority: Some(env.admin.pubkey()).into(),
@@ -27,7 +27,7 @@ fn install_usdc(env: &mut Env) {
     env.svm.set_account(USDC, Account { lamports: 1_000_000_000, data, owner: TOKEN, executable: false, rent_epoch: 0 }).unwrap();
 }
 
-fn install_pool(env: &mut Env, revenue: &Pubkey) -> Pubkey {
+pub(crate) fn install_pool(env: &mut Env, revenue: &Pubkey) -> Pubkey {
     let mut cfg = vec![0u8; 236];
     cfg[..8].copy_from_slice(&[218, 244, 33, 104, 203, 203, 43, 111]);
     cfg[12..20].copy_from_slice(&2500u64.to_le_bytes());
@@ -46,7 +46,7 @@ fn install_pool(env: &mut Env, revenue: &Pubkey) -> Pubkey {
     pool
 }
 
-fn warp(env: &mut Env, seconds: i64) {
+pub(crate) fn warp(env: &mut Env, seconds: i64) {
     let mut clock: Clock = env.svm.get_sysvar();
     clock.unix_timestamp += seconds;
     clock.slot += 1;

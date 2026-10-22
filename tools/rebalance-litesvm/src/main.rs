@@ -21,6 +21,7 @@ use ssr_protocol::constants::*;
 use ssr_protocol::state::{RebalanceTicket, Reserve, ReserveAsset};
 
 mod feed;
+mod split;
 
 const PID: Pubkey = ssr_protocol::ID;
 const TOKEN: Pubkey = anchor_spl::token::ID;
@@ -394,6 +395,7 @@ fn main() {
 
 
     feed::run(&mut env);
+    split::run();
 
     println!("ALL PASS");
 }

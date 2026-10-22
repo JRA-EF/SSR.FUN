@@ -113,5 +113,8 @@ pub use liquidity_revenue::*;
 pub mod liquidity_terms;
 pub use liquidity_terms::*;
 
+pub mod liquidity_split;
+pub use liquidity_split::*;
+
 pub mod liquidity_lock;
 pub use liquidity_lock::*;

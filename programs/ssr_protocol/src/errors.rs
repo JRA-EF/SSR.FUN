@@ -240,4 +240,16 @@ pub enum SsrError {
     LiquidityHolderShareInvalid,
     #[msg("The basket feed amount is larger than what has been released to holders so far.")]
     BasketFeedExceedsReleased,
+
+    // DEC-0255: holder share split between backing and the pool (append only).
+    #[msg("The pool share must be between 1% and 100% of the holder share, and the pool must share earnings with holders.")]
+    LiquiditySplitInvalid,
+    #[msg("The holder share split can only be chosen when the pool is launched.")]
+    LiquiditySplitNotAtLaunch,
+    #[msg("This would put more than the chosen pool share of holder earnings into the pool.")]
+    PoolFeedExceedsShare,
+    #[msg("Adding holder earnings to the pool must be followed by its finish step in the same transaction.")]
+    PoolFeedEndMissing,
+    #[msg("Adding holder earnings to the pool created fewer pool shares than the minimum SSR quoted.")]
+    PoolFeedMinimumNotMet,
 }
