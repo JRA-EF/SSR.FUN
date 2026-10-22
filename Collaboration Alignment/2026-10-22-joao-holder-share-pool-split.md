@@ -26,3 +26,6 @@
 
 ## Verification
 Program unit tests 40/40; LiteSVM ALL PASS (new split scenario + every earlier rebalance/basket-feed check); regenerated IDL equals the committed one except the new items; Mainnet simulation of the keeper's Raydium swap + deposit on the LIQUID pool minted exactly the planned LP; offline suite 1666 passing / 4 known failing (chart selector x2, native-control reset x2); `tsc -b` clean; Mainnet probe reports terms v2 live, split not live.
+
+## Follow-up 2026-10-22
+Mainnet upgrade LIVE: Squads #16 executed (Creator approved), slot 460059707, program sha256 8957bec2...7739 = this branch's build; ExtendProgram +99,376 B (tx R3Wm9vvK...zVf1R); buffer 5dFf...rCws refunded to CgHF...4Rw8. The live program now has errors 6000-6087: any further program work must start from this branch. The split probe reports live, so staging enables the slider.
