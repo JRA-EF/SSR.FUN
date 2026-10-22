@@ -44,7 +44,7 @@ import {
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
 import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, formatAllocationUsd, type LaunchAssetPlan } from "@/lib/launchFunding";
-import { allocationGateMessage, apportionBps, assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
+import { allocationGateMessage, apportionBps, withoutEmptyAssets, assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
 import { blockedAssets, checkLaunchRoutes, isLaunchCheckFresh, launchCheckFingerprint, markLaunchFailure, type LaunchCheck, type LaunchCheckAsset, type RemovedLaunchAsset } from "@/lib/launchPreflight";
 import { clearCreateDraft, readCreateDraft, saveCreateDraft, type LaunchSession } from "@/lib/createDraft";
 import { LaunchCheckPanel } from "@/components/LaunchCheckPanel";
@@ -616,8 +616,9 @@ export function CreateDTR({
     // (also cached/deduped/retried at the source -- see createReserveClient.ts).
     const debounceHandle = setTimeout(() => {
       const seedUsd = parseFloat(initialSeedUsdc) || 10;
-      const costWeightBps = apportionBps(assets.map((a) => a.weight / totalWeightForCost));
-      const realAssets = assets.map((a, i) => {
+      const costAssets = withoutEmptyAssets(assets);
+      const costWeightBps = apportionBps(costAssets.map((a) => a.weight / totalWeightForCost));
+      const realAssets = costAssets.map((a, i) => {
         const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
         return { mint: meta.mint, decimals: meta.decimals, weightBps: costWeightBps[i], seedWeightFraction: a.weight / totalWeightForCost };
       });
@@ -1089,7 +1090,7 @@ export function CreateDTR({
   const launchCheckAssets = (forAssets: CreateDTRAssetInput[] = assets): LaunchCheckAsset[] => {
     const seedUsd = parseFloat(initialSeedUsdc) || 10;
     const total = forAssets.reduce((s, a) => s + a.weight, 0);
-    return forAssets
+    return withoutEmptyAssets(forAssets)
       .filter((a) => REAL_ASSET_BY_SYMBOL.has(a.symbol))
       .map((a) => {
         const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
@@ -1102,8 +1103,8 @@ export function CreateDTR({
       });
   };
 
-  const runLaunchCheck = async (): Promise<LaunchCheck | null> => {
-    const checkAssets = launchCheckAssets();
+  const runLaunchCheck = async (forAssets: CreateDTRAssetInput[] = assets): Promise<LaunchCheck | null> => {
+    const checkAssets = launchCheckAssets(forAssets);
     if (checkAssets.length === 0) return null;
     setLaunchChecking(true);
     try {
@@ -1132,11 +1133,18 @@ export function CreateDTR({
   };
 
   // Gate for leaving the basket step: exactly 100%, then the route check.
-  const allocationProblem = allocationGateMessage(assets.map((a) => a.weight), assets.map((a) => a.symbol));
+  const allocationProblem = allocationGateMessage(assets.map((a) => a.weight));
   const basketBlockers = blockedAssets(launchCheck).filter((r) => assets.some((a) => a.symbol === r.symbol));
   const handleBasketNext = async () => {
     if (allocationProblem || assets.length === 0) return;
-    const check = isLaunchCheckFresh(launchCheck, launchCheckAssets()) ? launchCheck : await runLaunchCheck();
+    // A 0% asset is ignored: dropped from the basket here, never registered.
+    const kept = withoutEmptyAssets(assets);
+    if (kept.length !== assets.length) {
+      const dropped = assets.filter((a) => !kept.includes(a)).map((a) => a.symbol);
+      setAssets(kept);
+      toast({ title: `Left out ${dropped.join(", ")}`, description: `${dropped.length === 1 ? "It was" : "They were"} at 0%, so ${dropped.length === 1 ? "it is" : "they are"} not part of the Reserve.` });
+    }
+    const check = isLaunchCheckFresh(launchCheck, launchCheckAssets(kept)) ? launchCheck : await runLaunchCheck(kept);
     if (check && blockedAssets(check).length > 0) return; // the panel says what to do
     handleNext();
   };
@@ -1322,8 +1330,10 @@ export function CreateDTR({
         : undefined;
     // DEC-0247: apportioned, not rounded per row -- seven equal assets used to
     // sum to 10003bps and fail validateCreateReserveAssets at launch.
-    const launchWeightBps = apportionBps(assets.map((a) => a.weight / totalWeight));
-    const realAssets = assets.map((a, i) => {
+    // 0% rows are ignored (withoutEmptyAssets): only assets with a share are registered.
+    const launchAssets = withoutEmptyAssets(assets);
+    const launchWeightBps = apportionBps(launchAssets.map((a) => a.weight / totalWeight));
+    const realAssets = launchAssets.map((a, i) => {
       const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
       // DEC-0201: carry the asset's own token program from the catalogue --
       // it decides which program the Reserve's vault is created under and is
@@ -1531,7 +1541,7 @@ export function CreateDTR({
         change24h: 0,
         change7d: 0,
         holders: 1,
-        composition: assets.map((a) => ({ symbol: a.symbol, name: a.name, weight: a.weight / totalWeight })),
+        composition: launchAssets.map((a) => ({ symbol: a.symbol, name: a.name, weight: a.weight / totalWeight })),
         unallocatedPct: 0,
         isUserCreated: true,
         priceHistory: [{ t: Date.now(), price: 1 }],

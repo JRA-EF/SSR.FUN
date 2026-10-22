@@ -3,7 +3,7 @@
 import { expect } from "chai";
 import { readFileSync } from "node:fs";
 import { PublicKey } from "@solana/web3.js";
-import { allocationGateMessage, splitEvenly } from "../src/merge/lib/basketAllocation";
+import { allocationGateMessage, splitEvenly, withoutEmptyAssets } from "../src/merge/lib/basketAllocation";
 import { classifyPreflight, needsRouteCheck, runLaunchPreflight, PREFLIGHT_WARN_PRICE_IMPACT_PCT, WRAPPED_SOL_MINT_STR, type PreflightDeps } from "../lib/mainnet/launchPreflight";
 import { JUPITER_KEY_REJECTED_MESSAGE, MAINNET_USDC_MINT, MAX_PRICE_IMPACT_PCT, MAX_SLIPPAGE_BPS, jupiterExhaustedResponse, type JupiterQuote } from "../lib/mainnet/jupiter";
 import { parsePreflightRequest } from "../api/mainnet/launch-preflight";
@@ -39,11 +39,14 @@ describe("DEC-0249 -- allocations must total exactly 100%", () => {
   });
   // Live 2026-10-22: SOL at 0% next to a 100% asset was registered and the
   // launch then stopped at seeding (every asset needs the protocol minimum).
-  it("refuses a 0% asset by name, even when the total is 100%", () => {
-    const msg = allocationGateMessage([0, 1], ["SOL", "BONK"]);
-    expect(msg).to.contain("SOL is at 0%");
-    expect(msg).to.contain("remove it");
-    expect(allocationGateMessage([0, 0, 1], ["SOL", "WIF", "BONK"])).to.contain("SOL, WIF are at 0%");
+  it("ignores a 0% asset: the gate passes and the launch never registers it", () => {
+    expect(allocationGateMessage([0, 1])).to.equal(null);
+    const basket = [{ symbol: "SOL", weight: 0 }, { symbol: "WIF", weight: 0.00001 }, { symbol: "BONK", weight: 1 }];
+    expect(withoutEmptyAssets(basket).map((a) => a.symbol)).to.deep.equal(["BONK"]);
+    const src = readFileSync("src/merge/pages/CreateDTR.tsx", "utf8");
+    expect(src).to.contain("const launchAssets = withoutEmptyAssets(assets);");
+    expect(src).to.contain("const realAssets = launchAssets.map(");
+    expect(src).to.contain("return withoutEmptyAssets(forAssets)");
   });
   it("a 0% SOL already registered is seeded with the protocol minimum, so Resume can finish", () => {
     const sol = { mint: WRAPPED_SOL_MINT_STR, decimals: 9 };

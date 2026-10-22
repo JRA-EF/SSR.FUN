@@ -114,12 +114,18 @@ export function isFullyAllocated(weights: number[]): boolean {
  * otherwise the sentence that tells the user what to fix. The launch never
  * runs on a basket under or over 100% (Creator, 2026-10-15).
  */
-export function allocationGateMessage(weights: number[], symbols: string[] = []): string | null {
+/**
+ * The assets a launch actually registers: a 0% row is ignored, never sent to
+ * the chain. Every registered asset must be seeded with at least the
+ * protocol minimum, so a 0% asset would stop the launch at seeding (live
+ * 2026-10-22: SOL left at 0% next to a 100% asset).
+ */
+export function withoutEmptyAssets<T extends { weight: number }>(assets: T[]): T[] {
+  return assets.filter((a) => toBps(a.weight) > 0);
+}
+
+export function allocationGateMessage(weights: number[]): string | null {
   if (weights.length === 0) return "Add at least one asset to the Reserve.";
-  // Every registered asset must be seeded with at least the protocol minimum,
-  // so a 0% asset would stop the launch at seeding (live 2026-10-22: SOL at 0%).
-  const empty = weights.map((w, i) => (toBps(w) <= 0 ? symbols[i] ?? `Asset ${i + 1}` : null)).filter((s): s is string => s !== null);
-  if (empty.length > 0) return `${empty.join(", ")} ${empty.length === 1 ? "is" : "are"} at 0%. Give ${empty.length === 1 ? "it" : "each"} a share or remove ${empty.length === 1 ? "it" : "them"} from the Reserve.`;
   const used = weights.reduce((sum, w) => sum + toBps(w), 0);
   if (used === TOTAL_BPS) return null;
   const pct = (bps: number) => `${(bps / 100).toFixed(2).replace(/\.?0+$/, "")}%`;
