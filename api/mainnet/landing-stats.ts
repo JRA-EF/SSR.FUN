@@ -37,6 +37,7 @@ import { fetchJupiterPrices } from "./asset-prices";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { fetchAllTimeTradeVolumeUsd, fetchAllTimeTradeVolumeUsdByReserve } from "../../lib/reserve-activity/kpis";
+import { fetchDexVolumeUsd, readPoolBalances, type PoolBalances } from "../../lib/dex-volume/read";
 import { withReadConcurrencyLimit } from "../../src/merge/lib/rpcResilience";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 
@@ -94,6 +95,14 @@ interface LandingStats {
    * 0) when the Ledger read fails, so a DB hiccup can't turn into a false stat.
    */
   volumeAllTimeUsd: number | null;
+  /**
+   * All-time USD volume of swaps in SSR-created DEX pools (DEC-0254), kept
+   * apart from volumeAllTimeUsd (SSR's own mint/redeem market). The homepage
+   * shows the sum; null when the read failed.
+   */
+  dexVolumeAllTimeUsd: number | null;
+  /** Current reserves of each SSR pool, keyed by Reserve address, for the homepage market-cap split (NAV outside pools, pool price inside). */
+  pools: Record<string, PoolBalances>;
   computedAt: number;
   reservesCounted: number;
   perReserve: Record<string, PerReserveStats>;
@@ -173,6 +182,18 @@ async function computeLandingStats(): Promise<LandingStats> {
     return null;
   });
 
+  // DEC-0254: secondary-market volume from the daily DEX index, and the
+  // pools' current reserves (one batched account read over the registered
+  // pools). Both best-effort and independent of the reads above.
+  const dexVolumePromise = fetchDexVolumeUsd("mainnet-beta").catch((e) => {
+    console.error("api/mainnet/landing-stats: DEX volume read failed:", e);
+    return null;
+  });
+  const poolsPromise = readPoolBalances(connection, "mainnet-beta").catch((e) => {
+    console.error("api/mainnet/landing-stats: pool balances read failed:", e);
+    return {} as Record<string, PoolBalances>;
+  });
+
   // Live USD prices for every asset any displayable Reserve holds -- one
   // batched Jupiter Price read, best-effort per mint (an unpriced mint's
   // volume counts as 0, never a guess).
@@ -214,7 +235,8 @@ async function computeLandingStats(): Promise<LandingStats> {
     for (const address of Object.keys(perReserve)) perReserve[address].volumeAllTimeUsd = volumeAllTimeByReserve[address] ?? 0;
   }
 
-  return { holders: globalOwners.size, volume24hUsd, volumeAllTimeUsd, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
+  const [dexVolumeAllTimeUsd, pools] = await Promise.all([dexVolumePromise, poolsPromise]);
+  return { holders: globalOwners.size, volume24hUsd, volumeAllTimeUsd, dexVolumeAllTimeUsd, pools, computedAt: Date.now(), reservesCounted: displayable.length, perReserve };
 }
 
 function clientIp(req: ApiRequest): string {

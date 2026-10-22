@@ -10,6 +10,7 @@
 //     since assetCount is current state, not an emitted amount).
 import { getSql } from "./db";
 import { ACTIVITY_CLUSTERS, type ActivityCluster } from "./clusters";
+import { fetchDexVolumeUsd } from "../dex-volume/read";
 
 /** "YYYY-MM" in UTC from a Unix-seconds timestamp -- stable, sortable, no locale/timezone ambiguity. */
 export function monthKey(unixSeconds: number): string {
@@ -111,6 +112,12 @@ export interface ProtocolKpiTotals {
   /** USD sums of the rows' frozen at-indexing valuations (DEC-0176). A row indexed without a valuation contributes 0 here while still counting in the Raw totals. */
   totalMintVolumeUsd: number;
   totalRedeemVolumeUsd: number;
+  /**
+   * DEC-0254: all-time USD volume of swaps in SSR-created DEX pools (Mainnet
+   * only), a secondary market kept apart from the mint/redeem volume above and
+   * never added into it here. null when the read failed.
+   */
+  totalDexVolumeUsd: number | null;
   /** Fee revenue in USD from BOTH fee paths: share-denominated fees (valued at indexing) plus USDC mint fees (exact). No double count -- a USDC mint fee mints no fee shares. */
   totalProtocolFeeUsd: number;
   totalManagerFeeUsd: number;
@@ -241,6 +248,7 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
   const creationEvents = (creationRows as { reserve: string; ts: number }[]).map((r) => ({ reserve: r.reserve, ts: Number(r.ts) }));
 
   const cursor = cursorRows[0] as { complete: string | number; incomplete: string | number } | undefined;
+  const totalDexVolumeUsd = clusters.includes("mainnet-beta") ? await fetchDexVolumeUsd("mainnet-beta").catch(() => null) : 0;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -255,6 +263,7 @@ export async function computeProtocolKpis(liveReserves: LiveReserveState[], clus
       totalManagerFeeUsdcRaw: totalsRow?.manager_fee_usdc ?? "0",
       totalMintVolumeUsd: totalsRow?.mint_volume_usd ?? 0,
       totalRedeemVolumeUsd: totalsRow?.redeem_volume_usd ?? 0,
+      totalDexVolumeUsd,
       totalProtocolFeeUsd: totalsRow?.protocol_fee_usd ?? 0,
       totalManagerFeeUsd: totalsRow?.manager_fee_usd ?? 0,
       totalManagerFeeClaimedUsd: totalsRow?.manager_fee_claimed_usd ?? 0,

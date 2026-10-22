@@ -43,6 +43,8 @@ interface ProtocolKpiTotals {
   reservesDiscovered: number
   totalMintVolumeUsd: number
   totalRedeemVolumeUsd: number
+  /** DEC-0254: swaps in SSR DEX pools, separate from mint + redeem. Optional for older cached responses. */
+  totalDexVolumeUsd?: number | null
   totalProtocolFeeUsd: number
   totalManagerFeeUsd: number
   totalManagerFeeClaimedUsd: number
@@ -248,6 +250,10 @@ export function KpiDashboard() {
           <div className="dash-metric-tile">
             <span className="dash-metric-value dash-mono">{formatUsd(kpis.totals.totalRedeemVolumeUsd)}</span>
             <span className="dash-metric-label dash-muted dash-small">Redeem volume</span>
+          </div>
+          <div className="dash-metric-tile">
+            <span className="dash-metric-value dash-mono">{kpis.totals.totalDexVolumeUsd == null ? 'Unavailable' : formatUsd(kpis.totals.totalDexVolumeUsd)}</span>
+            <span className="dash-metric-label dash-muted dash-small">DEX volume (SSR pools, not in the total above)</span>
           </div>
           <div className="dash-metric-tile">
             <span className="dash-metric-value dash-mono">{formatUsd(kpis.totals.totalProtocolFeeUsd)}</span>

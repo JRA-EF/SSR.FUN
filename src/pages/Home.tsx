@@ -7,7 +7,7 @@ import { avatarStyle } from '../lib/avatarStyle'
 import { useAppStore } from '@/store/useAppStore'
 import { robinhoodEntry, selectFeaturedEntries, solanaEntry, type DirectoryEntry } from '@/lib/directoryEntry'
 import { useRobinhoodReserves } from '@/hooks/useRobinhoodReserves'
-import { computeMarketCap } from '@/lib/onChainReserve'
+import { combinedAllTimeVolume, splitMarketCap } from '@/lib/protocolKpis'
 import { useLandingStats } from '@/hooks/useLandingStats'
 import { IS_MAINNET } from '@/lib/solana-config'
 
@@ -35,16 +35,21 @@ export function Home() {
 
   const robinhood = useRobinhoodReserves()
   const onChainDtrs = useMemo(() => dtrs.filter(d => Boolean(d.onChain)), [dtrs])
-  // Total Reserve Market Cap = sum over every live Reserve of circulating
-  // Reserve Token supply x displayed Token Price (computeMarketCap) --
-  // genuinely computed per Reserve, never a relabeled AUM sum, per the
-  // Mainnet pricing-layer decision (see computeMarketCap's own header;
-  // an unpriced Reserve contributes 0, never a fabricated figure).
-  const totalMarketCap = onChainDtrs.reduce((s, d) => s + computeMarketCap(d.onChain?.reserveTokenSupplyRaw ?? '0', d.tokenPrice), 0)
+  const landingStats = useLandingStats()
+  // Total Reserve Market Cap (DEC-0254) = per live Reserve, tokens outside its
+  // SSR pool at NAV (displayed Token Price) plus tokens inside the pool at the
+  // pool's price (splitMarketCap). Without pool data every token is at NAV, as
+  // before. An unpriced Reserve contributes 0, never a fabricated figure.
+  const pools = landingStats.data?.pools
+  const totalMarketCap = onChainDtrs.reduce((s, d) => {
+    const cap = splitMarketCap(d.onChain?.reserveTokenSupplyRaw ?? '0', d.tokenPrice, d.onChain ? pools?.[d.onChain.reserve] : undefined)
+    return s + cap.navCapUsd + cap.poolCapUsd
+  }, 0)
+  // All-Time Volume (DEC-0254) = SSR mint/redeem plus swaps in SSR pools; the backend keeps them apart.
+  const allTimeVolume = combinedAllTimeVolume(landingStats.data?.volumeAllTimeUsd, landingStats.data?.dexVolumeAllTimeUsd)
   const activeCount = onChainDtrs.length
   const stillDiscovering = chainDiscoveryStatus === 'loading' && onChainDtrs.length === 0
   const discoveryUnavailable = chainDiscoveryStatus === 'error' && onChainDtrs.length === 0
-  const landingStats = useLandingStats()
 
   // Featured spans BOTH chains: the largest live reserves, ranked together,
   // so Robinhood is a first-class citizen of the landing page rather than a
@@ -109,9 +114,9 @@ export function Home() {
                   {landingStats.status === 'loading' && '…'}
                   {landingStats.status === 'unavailable' && <span className="faint">Unavailable</span>}
                   {landingStats.status === 'ready' && landingStats.data && (
-                    landingStats.data.volumeAllTimeUsd == null
+                    allTimeVolume == null
                       ? <span className="faint">Unavailable</span>
-                      : fmtUsd(landingStats.data.volumeAllTimeUsd)
+                      : fmtUsd(allTimeVolume)
                   )}
                 </div>
               </div>
