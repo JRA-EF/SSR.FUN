@@ -178,8 +178,8 @@ describe("Liquidity lookup tables: a saved table that was never created", () => 
 
 describe("DEC-0251 liquidity launch inputs", () => {
   it("the launch form sends a zero holder share unless the creator opts in", () => {
-    expect(feeTermsToBps(DEFAULT_FEE_TERMS)).to.deep.equal({ buyTaxBps: 0, sellTaxBps: 0, holderShareBps: 0 });
-    expect(feeTermsToBps({ buyTaxPct: 1.25, sellTaxPct: 2, shareWithHolders: true, holderSharePct: 50 })).to.deep.equal({ buyTaxBps: 125, sellTaxBps: 200, holderShareBps: 5000 });
+    expect(feeTermsToBps(DEFAULT_FEE_TERMS)).to.deep.equal({ buyTaxBps: 0, sellTaxBps: 0, holderShareBps: 0, poolShareBps: 0 });
+    expect(feeTermsToBps({ buyTaxPct: 1.25, sellTaxPct: 2, shareWithHolders: true, holderSharePct: 50, poolSharePct: 0 })).to.deep.equal({ buyTaxBps: 125, sellTaxBps: 200, holderShareBps: 5000, poolShareBps: 0 });
   });
   it("the per-$1,000 example adds up to what the creator earns, SSR exactly 20%", () => {
     const s = exampleSplit(1, { ...DEFAULT_FEE_TERMS, shareWithHolders: true, holderSharePct: 50 });

@@ -2765,6 +2765,160 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "configureLiquiditySplit",
+      "discriminator": [
+        24,
+        221,
+        195,
+        248,
+        236,
+        149,
+        110,
+        104
+      ],
+      "accounts": [
+        {
+          "name": "manager",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "terms",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  116,
+                  101,
+                  114,
+                  109,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "split",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  115,
+                  112,
+                  108,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "terms"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructionsSysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "poolShareBps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "createReserve",
       "discriminator": [
         26,
@@ -5990,6 +6144,594 @@ export type SsrProtocol = {
         {
           "name": "signer",
           "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "poolFeedBegin",
+      "discriminator": [
+        128,
+        76,
+        46,
+        237,
+        37,
+        163,
+        201,
+        233
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "docs": [
+            "First account on purpose, matching `PoolFeedEnd`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "docs": [
+            "SSR's fee quote signer: receives the released USDC, adds the",
+            "liquidity, and its signature binds `min_lp`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "settlementKeeperConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "terms",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  116,
+                  101,
+                  114,
+                  109,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "split",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  115,
+                  112,
+                  108,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "terms"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feedUsdc",
+          "writable": true
+        },
+        {
+          "name": "keeperUsdc",
+          "writable": true
+        },
+        {
+          "name": "keeperReserveToken"
+        },
+        {
+          "name": "lpMint"
+        },
+        {
+          "name": "keeperLp"
+        },
+        {
+          "name": "ticket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100,
+                  95,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructionsSysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amountIn",
+          "type": "u64"
+        },
+        {
+          "name": "minLp",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "poolFeedEnd",
+      "discriminator": [
+        233,
+        182,
+        61,
+        169,
+        110,
+        119,
+        99,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "docs": [
+            "First account on purpose: begin's sysvar check matches it."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "terms",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  116,
+                  101,
+                  114,
+                  109,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "split",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  115,
+                  112,
+                  108,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "terms"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ticket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100,
+                  95,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feedUsdc",
+          "writable": true
+        },
+        {
+          "name": "keeperUsdc",
+          "writable": true
+        },
+        {
+          "name": "keeperReserveToken",
+          "writable": true
+        },
+        {
+          "name": "keeperLp",
+          "writable": true
+        },
+        {
+          "name": "lpMint"
+        },
+        {
+          "name": "splitLp",
+          "docs": [
+            "The locked LP: no instruction moves tokens out of it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "split"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "lpMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "reserveTokenMint"
+        },
+        {
+          "name": "splitReserveToken",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "split"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "reserveTokenProgram"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -9551,6 +10293,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "liquiditySplit",
+      "discriminator": [
+        105,
+        120,
+        208,
+        91,
+        229,
+        148,
+        37,
+        250
+      ]
+    },
+    {
       "name": "liquidityTerms",
       "discriminator": [
         4,
@@ -9587,6 +10342,19 @@ export type SsrProtocol = {
         220,
         15,
         116
+      ]
+    },
+    {
+      "name": "poolFeedTicket",
+      "discriminator": [
+        88,
+        172,
+        168,
+        202,
+        214,
+        123,
+        150,
+        109
       ]
     },
     {
@@ -9826,6 +10594,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "liquiditySplitConfigured",
+      "discriminator": [
+        159,
+        126,
+        241,
+        111,
+        32,
+        166,
+        206,
+        91
+      ]
+    },
+    {
       "name": "liquidityTermsConfigured",
       "discriminator": [
         45,
@@ -9914,6 +10695,19 @@ export type SsrProtocol = {
         14,
         29,
         120
+      ]
+    },
+    {
+      "name": "poolFeedExecuted",
+      "discriminator": [
+        79,
+        156,
+        153,
+        160,
+        12,
+        54,
+        227,
+        152
       ]
     },
     {
@@ -10735,6 +11529,31 @@ export type SsrProtocol = {
       "code": 6082,
       "name": "basketFeedExceedsReleased",
       "msg": "The basket feed amount is larger than what has been released to holders so far."
+    },
+    {
+      "code": 6083,
+      "name": "liquiditySplitInvalid",
+      "msg": "The pool share must be between 1% and 100% of the holder share, and the pool must share earnings with holders."
+    },
+    {
+      "code": 6084,
+      "name": "liquiditySplitNotAtLaunch",
+      "msg": "The holder share split can only be chosen when the pool is launched."
+    },
+    {
+      "code": 6085,
+      "name": "poolFeedExceedsShare",
+      "msg": "This would put more than the chosen pool share of holder earnings into the pool."
+    },
+    {
+      "code": 6086,
+      "name": "poolFeedEndMissing",
+      "msg": "Adding holder earnings to the pool must be followed by its finish step in the same transaction."
+    },
+    {
+      "code": 6087,
+      "name": "poolFeedMinimumNotMet",
+      "msg": "Adding holder earnings to the pool created fewer pool shares than the minimum SSR quoted."
     }
   ],
   "types": [
@@ -11471,6 +12290,63 @@ export type SsrProtocol = {
       }
     },
     {
+      "name": "liquiditySplit",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "terms",
+            "type": "pubkey"
+          },
+          {
+            "name": "poolShareBps",
+            "docs": [
+              "Share of the holder share that goes to the pool. Set once."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "poolFed",
+            "docs": [
+              "Lifetime holder USDC that went into the pool."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lpLocked",
+            "docs": [
+              "Lifetime LP tokens locked in the split's LP account."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "liquiditySplitConfigured",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "terms",
+            "type": "pubkey"
+          },
+          {
+            "name": "poolShareBps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
       "name": "liquidityTerms",
       "type": {
         "kind": "struct",
@@ -11971,6 +12847,96 @@ export type SsrProtocol = {
           {
             "name": "createdAt",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "poolFeedExecuted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "usdcIn",
+            "type": "u64"
+          },
+          {
+            "name": "usdcReturned",
+            "type": "u64"
+          },
+          {
+            "name": "lpLocked",
+            "type": "u64"
+          },
+          {
+            "name": "reserveTokenKept",
+            "type": "u64"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "poolFeedTicket",
+      "docs": [
+        "Written by `pool_feed_begin`, closed by `pool_feed_end` in the same transaction."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeperUsdc",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeperReserveToken",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeperLp",
+            "type": "pubkey"
+          },
+          {
+            "name": "usdcBefore",
+            "docs": [
+              "Balances before begin lent anything: end counts only what changed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "reserveTokenBefore",
+            "type": "u64"
+          },
+          {
+            "name": "lpBefore",
+            "type": "u64"
+          },
+          {
+            "name": "amountIn",
+            "type": "u64"
+          },
+          {
+            "name": "minLp",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }

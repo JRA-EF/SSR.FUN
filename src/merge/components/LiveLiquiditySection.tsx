@@ -101,7 +101,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
    <CardDescription>Simulation passed. Estimated network and setup cost {fromRaw(prepared.totalSolRaw,9)} SOL.</CardDescription></CardHeader>
    <CardContent className="space-y-3 text-sm">
     {prepared.review.usdcDebitRaw&&<p>Funding: {fromRaw(prepared.review.usdcDebitRaw,6)} USDC and {fromRaw(prepared.review.reserveDebitRaw,state.reserveDecimals)} {dtr.ticker}{prepared.review.navUsdc?` at ${prepared.review.navUsdc} USDC per token`:''}.</p>}
-    {prepared.review.holderShareBps!==undefined&&<p>Permanent fee terms: {Number(prepared.review.buyTaxBps)/100}% tax on trades into {dtr.ticker}, {Number(prepared.review.sellTaxBps)/100}% on trades out of it, and {Number(prepared.review.holderShareBps)/100}% of your share fed back to holders.</p>}
+    {prepared.review.holderShareBps!==undefined&&<p>Permanent fee terms: {Number(prepared.review.buyTaxBps)/100}% tax on trades into {dtr.ticker}, {Number(prepared.review.sellTaxBps)/100}% on trades out of it, and {Number(prepared.review.holderShareBps)/100}% of your share fed back to holders{Number(prepared.review.poolShareBps??0)>0?`, of which ${Number(prepared.review.poolShareBps)/100}% is added to the pool as locked liquidity and the rest to backing`:''}.</p>}
     {prepared.review.lpAddedRaw&&<p>Liquidity added: {fromRaw(prepared.review.lpAddedRaw,state.lpDecimals)} LP tokens. Lock: {prepared.review.lock}.</p>}
     {prepared.review.minimumUsdcRaw&&<p>You receive at least {fromRaw(prepared.review.minimumUsdcRaw,6)} USDC and {fromRaw(prepared.review.minimumReserveRaw,state.reserveDecimals)} {dtr.ticker}.</p>}
     {prepared.review.distributableUsdcRaw&&<p>{fromRaw(prepared.review.distributableUsdcRaw,6)} USDC is split by the pool's fee terms between SSR, your creator treasury{state.holderShareBps?' and your holders (added to the Reserve over 24 hours)':''}.</p>}
@@ -150,7 +150,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
      <Button size="sm" disabled={disabled||s.earningsUsdc<0.01} onClick={()=>void prepare('collect')}><Coins className="w-3.5 h-3.5 mr-1.5"/> Collect</Button>
      <Button size="sm" variant="outline" disabled title="Compound is not released yet"><Droplets className="w-3.5 h-3.5 mr-1.5"/> Compound</Button>
     </div>
-    <p className="text-xs text-muted-foreground">{state.termsVersion===2?`Accrues in USDC. When collected, SSR takes 20%${state.holderShareBps?`, ${state.holderShareBps/100}% of the rest is added to the Reserve's backing for holders,`:''} and the rest goes to your fixed creator treasury.`:"Accrues in USDC after SSR's pool share. Collect sends it to your fixed creator treasury."} Compound is coming later.</p>
+    <p className="text-xs text-muted-foreground">{state.termsVersion===2?`Accrues in USDC. When collected, SSR takes 20%${state.holderShareBps?`, ${state.holderShareBps/100}% of the rest goes to holders (${state.poolShareBps?`${(10000-state.poolShareBps)/100}% to backing, ${state.poolShareBps/100}% to locked pool liquidity`:"added to the Reserve's backing"}),`:''} and the rest goes to your fixed creator treasury.`:"Accrues in USDC after SSR's pool share. Collect sends it to your fixed creator treasury."} Compound is coming later.</p>
    </CardContent></Card>
    <Card><CardContent className="pt-6 space-y-1.5">
     <p className={kpiLabel}>Lock status</p>
@@ -175,6 +175,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
       <button type="button" onClick={copy} aria-label="Copy pool address" className="text-muted-foreground hover:text-foreground">{copied?<Check className="w-3.5 h-3.5 text-positive"/>:<Copy className="w-3.5 h-3.5"/>}</button></span>)}
      {row('Your position',<span className="font-merge-mono">{s.positionTokens.toLocaleString(undefined,{maximumFractionDigits:2})} {dtr.ticker} + {formatUsdc(s.positionUsdc)}</span>)}
      {state.termsVersion===2&&row('Shared with holders',<span className="font-merge-mono">{state.holderShareBps?`${state.holderShareBps/100}% of your earnings · ${formatUsdc(Number(fromRaw(state.basketFedUsdcRaw??'0',6)))} added so far`:'None (your choice at launch)'}</span>)}
+     {state.termsVersion===2&&!!state.poolShareBps&&row('Locked for holders',<span className="font-merge-mono">{state.poolShareBps/100}% of the holders' share · {formatUsdc(Number(fromRaw(state.poolFedUsdcRaw??'0',6)))} added to the pool so far</span>)}
      {row('Your share of the pool',<span className="font-merge-mono">{s.sharePct.toFixed(2)}%</span>)}
      {row('Market price vs backing',s.premiumPct===null?<span className="text-muted-foreground">No price yet</span>:<span className={`font-merge-mono ${s.premiumPct>=0?'text-positive':'text-destructive'}`}>{s.premiumPct>=0?'+':''}{s.premiumPct.toFixed(2)}%</span>)}
     </div>

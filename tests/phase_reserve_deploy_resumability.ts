@@ -254,9 +254,9 @@ describe("Reserve deploy resumability -- 7. Wallet rejection and expired-transac
     expect(decoded?.name).to.equal("UnexpectedReserveStatus");
   });
 
-  it("confirms 6400 is NOT a real ssr_protocol error -- this program's entire custom-error range is 6000-6082 (6000-6056 after the 2026-08-21 USDC fee-settlement pass, 6000-6061 after its FeeSettlement* variants, 6062 since DEC-0200 appended TokenMetadataFieldTooLong, 6065 since DEC-0229 appended the three transfer-fee errors, 6067 with the two co-manager containment errors, 6070 with the three DEC-0238 USDC mint-fee errors, 6075 with the five liquidity errors, 6079 with the four DEC-0250 rebalance-swap errors, and 6082 with the three DEC-0251 liquidity-terms errors)", () => {
+  it("confirms 6400 is NOT a real ssr_protocol error -- this program's entire custom-error range is 6000-6087 (6000-6056 after the 2026-08-21 USDC fee-settlement pass, 6000-6061 after its FeeSettlement* variants, 6062 since DEC-0200 appended TokenMetadataFieldTooLong, 6065 since DEC-0229 appended the three transfer-fee errors, 6067 with the two co-manager containment errors, 6070 with the three DEC-0238 USDC mint-fee errors, 6075 with the five liquidity errors, 6079 with the four DEC-0250 rebalance-swap errors, 6082 with the three DEC-0251 liquidity-terms errors, and 6087 with the five DEC-0255 liquidity-split errors)", () => {
     expect(decodeSsrProtocolError(6400)).to.equal(null);
-    expect(ssrProtocolErrorCodeRange()).to.equal("6000-6082");
+    expect(ssrProtocolErrorCodeRange()).to.equal("6000-6087");
     expect(decodeSsrProtocolError(6071)?.name).to.equal("LiquidityRevenueValidationFailed");
     expect(decodeSsrProtocolError(6073)?.name).to.equal("LiquiditySwapMinimumNotMet");
     expect(decodeSsrProtocolError(6074)?.name).to.equal("LiquidityLockTermInvalid");
@@ -264,6 +264,7 @@ describe("Reserve deploy resumability -- 7. Wallet rejection and expired-transac
     expect(decodeSsrProtocolError(6079)?.name).to.equal("RebalanceLastAssetMismatch");
     expect(decodeSsrProtocolError(6080)?.name).to.equal("LiquidityTermsV2Required");
     expect(decodeSsrProtocolError(6082)?.name).to.equal("BasketFeedExceedsReleased");
+    expect(decodeSsrProtocolError(6087)?.name).to.equal("PoolFeedMinimumNotMet");
   });
 
   it("extracts a Custom(N) code from a raw InstructionError object (e.g. status.err from getSignatureStatuses)", () => {
@@ -296,7 +297,7 @@ describe("Reserve deploy resumability -- 7. Wallet rejection and expired-transac
     const described = describeOnChainError(new Error(`Transaction failed on-chain (${stringified}).`));
     expect(described).to.include("6400");
     expect(described).to.include("not defined anywhere in the deployed SSR Protocol IDL");
-    expect(described).to.include("6000-6082");
+    expect(described).to.include("6000-6087");
   });
 
   it("describeOnChainError passes through a message unchanged when it carries no error code at all", () => {

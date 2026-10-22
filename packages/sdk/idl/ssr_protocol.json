@@ -2759,6 +2759,160 @@
       ]
     },
     {
+      "name": "configure_liquidity_split",
+      "discriminator": [
+        24,
+        221,
+        195,
+        248,
+        236,
+        149,
+        110,
+        104
+      ],
+      "accounts": [
+        {
+          "name": "manager",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "terms",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  116,
+                  101,
+                  114,
+                  109,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "split",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  115,
+                  112,
+                  108,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "terms"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "pool_share_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "create_reserve",
       "discriminator": [
         26,
@@ -5984,6 +6138,594 @@
         {
           "name": "signer",
           "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "pool_feed_begin",
+      "discriminator": [
+        128,
+        76,
+        46,
+        237,
+        37,
+        163,
+        201,
+        233
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "docs": [
+            "First account on purpose, matching `PoolFeedEnd`."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "docs": [
+            "SSR's fee quote signer: receives the released USDC, adds the",
+            "liquidity, and its signature binds `min_lp`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "settlement_keeper_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "terms",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  116,
+                  101,
+                  114,
+                  109,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "split",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  115,
+                  112,
+                  108,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "terms"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feed_usdc",
+          "writable": true
+        },
+        {
+          "name": "keeper_usdc",
+          "writable": true
+        },
+        {
+          "name": "keeper_reserve_token"
+        },
+        {
+          "name": "lp_mint"
+        },
+        {
+          "name": "keeper_lp"
+        },
+        {
+          "name": "ticket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100,
+                  95,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_lp",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "pool_feed_end",
+      "discriminator": [
+        233,
+        182,
+        61,
+        169,
+        110,
+        119,
+        99,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "reserve",
+          "docs": [
+            "First account on purpose: begin's sysvar check matches it."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserve_id",
+                "account": "Reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "revenue",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "terms",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  116,
+                  101,
+                  114,
+                  109,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "split",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  115,
+                  112,
+                  108,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "terms"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ticket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100,
+                  95,
+                  116,
+                  105,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feed_usdc",
+          "writable": true
+        },
+        {
+          "name": "keeper_usdc",
+          "writable": true
+        },
+        {
+          "name": "keeper_reserve_token",
+          "writable": true
+        },
+        {
+          "name": "keeper_lp",
+          "writable": true
+        },
+        {
+          "name": "lp_mint"
+        },
+        {
+          "name": "split_lp",
+          "docs": [
+            "The locked LP: no instruction moves tokens out of it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "split"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "lp_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "reserve_token_mint"
+        },
+        {
+          "name": "split_reserve_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "split"
+              },
+              {
+                "kind": "account",
+                "path": "reserve_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "reserve_token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "reserve_token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -9545,6 +10287,19 @@
       ]
     },
     {
+      "name": "LiquiditySplit",
+      "discriminator": [
+        105,
+        120,
+        208,
+        91,
+        229,
+        148,
+        37,
+        250
+      ]
+    },
+    {
       "name": "LiquidityTerms",
       "discriminator": [
         4,
@@ -9581,6 +10336,19 @@
         220,
         15,
         116
+      ]
+    },
+    {
+      "name": "PoolFeedTicket",
+      "discriminator": [
+        88,
+        172,
+        168,
+        202,
+        214,
+        123,
+        150,
+        109
       ]
     },
     {
@@ -9820,6 +10588,19 @@
       ]
     },
     {
+      "name": "LiquiditySplitConfigured",
+      "discriminator": [
+        159,
+        126,
+        241,
+        111,
+        32,
+        166,
+        206,
+        91
+      ]
+    },
+    {
       "name": "LiquidityTermsConfigured",
       "discriminator": [
         45,
@@ -9908,6 +10689,19 @@
         14,
         29,
         120
+      ]
+    },
+    {
+      "name": "PoolFeedExecuted",
+      "discriminator": [
+        79,
+        156,
+        153,
+        160,
+        12,
+        54,
+        227,
+        152
       ]
     },
     {
@@ -10729,6 +11523,31 @@
       "code": 6082,
       "name": "BasketFeedExceedsReleased",
       "msg": "The basket feed amount is larger than what has been released to holders so far."
+    },
+    {
+      "code": 6083,
+      "name": "LiquiditySplitInvalid",
+      "msg": "The pool share must be between 1% and 100% of the holder share, and the pool must share earnings with holders."
+    },
+    {
+      "code": 6084,
+      "name": "LiquiditySplitNotAtLaunch",
+      "msg": "The holder share split can only be chosen when the pool is launched."
+    },
+    {
+      "code": 6085,
+      "name": "PoolFeedExceedsShare",
+      "msg": "This would put more than the chosen pool share of holder earnings into the pool."
+    },
+    {
+      "code": 6086,
+      "name": "PoolFeedEndMissing",
+      "msg": "Adding holder earnings to the pool must be followed by its finish step in the same transaction."
+    },
+    {
+      "code": 6087,
+      "name": "PoolFeedMinimumNotMet",
+      "msg": "Adding holder earnings to the pool created fewer pool shares than the minimum SSR quoted."
     }
   ],
   "types": [
@@ -11465,6 +12284,63 @@
       }
     },
     {
+      "name": "LiquiditySplit",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "terms",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool_share_bps",
+            "docs": [
+              "Share of the holder share that goes to the pool. Set once."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "pool_fed",
+            "docs": [
+              "Lifetime holder USDC that went into the pool."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lp_locked",
+            "docs": [
+              "Lifetime LP tokens locked in the split's LP account."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LiquiditySplitConfigured",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "terms",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool_share_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
       "name": "LiquidityTerms",
       "type": {
         "kind": "struct",
@@ -11965,6 +12841,96 @@
           {
             "name": "created_at",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolFeedExecuted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "usdc_in",
+            "type": "u64"
+          },
+          {
+            "name": "usdc_returned",
+            "type": "u64"
+          },
+          {
+            "name": "lp_locked",
+            "type": "u64"
+          },
+          {
+            "name": "reserve_token_kept",
+            "type": "u64"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolFeedTicket",
+      "docs": [
+        "Written by `pool_feed_begin`, closed by `pool_feed_end` in the same transaction."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeper_usdc",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeper_reserve_token",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeper_lp",
+            "type": "pubkey"
+          },
+          {
+            "name": "usdc_before",
+            "docs": [
+              "Balances before begin lent anything: end counts only what changed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "reserve_token_before",
+            "type": "u64"
+          },
+          {
+            "name": "lp_before",
+            "type": "u64"
+          },
+          {
+            "name": "amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "min_lp",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }

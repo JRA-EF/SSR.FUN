@@ -3,7 +3,9 @@
  * liquidity launch (Manage Reserve -> Liquidity) and fixed on-chain when the
  * pool is created: the optional project Buy/Sell tax (the same 0-2% sliders
  * Create Reserve had before DEC-0229) and the optional holder share of the
- * creator's 80% that is fed back into the Reserve's backing over 24 hours.
+ * creator's 80% that is fed back into the Reserve's backing over 24 hours,
+ * and (DEC-0255) how that holder share divides between backing and locked
+ * pool liquidity.
  * Secondary-market (DEX) trades only -- never a mint or a redemption.
  */
 import {AlertCircle} from 'lucide-react';
@@ -23,8 +25,9 @@ function TaxSlider({id,label,value,onChange,disabled,note}:{id:string;label:stri
  </div>;
 }
 
-/** `v2` is false only while the deployed program predates DEC-0251: the old terms apply and holder sharing is not offered. */
-export function LiquidityFeeTerms({value,onChange,disabled,v2=true}:{value:FeeTermsValue;onChange:(v:FeeTermsValue)=>void;disabled?:boolean;v2?:boolean}){
+/** `v2` is false only while the deployed program predates DEC-0251: the old terms apply and holder sharing is not offered.
+ * `split` is false while it predates DEC-0255: the holder share goes to backing only. */
+export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{value:FeeTermsValue;onChange:(v:FeeTermsValue)=>void;disabled?:boolean;v2?:boolean;split?:boolean}){
  const set=(patch:Partial<FeeTermsValue>)=>onChange({...value,...patch});
  if(!v2)return <div className="space-y-5">
   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -65,7 +68,17 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true}:{value:FeeTe
    {value.shareWithHolders&&<div className="space-y-3 pt-2">
     <Label htmlFor="liquidity-holder-share" className="flex justify-between"><span>Share of your 80% for holders</span><span className="font-merge-mono text-primary">{value.holderSharePct.toFixed(0)}%</span></Label>
     <Slider id="liquidity-holder-share" value={[value.holderSharePct]} min={5} max={100} step={5} disabled={disabled} onValueChange={v=>set({holderSharePct:v[0]})}/>
-    <p className="text-xs text-muted-foreground">SSR swaps this USDC into the Reserve's assets at their target weights and adds them to the vaults, a little every hour. No new tokens are created, so the backing per token grows.</p>
+    <p className="text-xs text-muted-foreground">It is released a little every hour over 24 hours. Choose below where it goes.</p>
+   </div>}
+   {value.shareWithHolders&&<div className="space-y-3 pt-2">
+    <Label htmlFor="liquidity-pool-share" className="flex justify-between"><span>Where the holders' share goes</span>
+     <span className="font-merge-mono text-primary">{(100-value.poolSharePct).toFixed(0)}% backing · {value.poolSharePct.toFixed(0)}% pool</span></Label>
+    <Slider id="liquidity-pool-share" aria-label="Share added to the pool" value={[value.poolSharePct]} min={0} max={100} step={5} disabled={disabled||!split} onValueChange={v=>set({poolSharePct:v[0]})}/>
+    <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+     <p><span className="text-foreground">Backing:</span> swapped into the Reserve's assets at their target weights and added to the vaults. No new tokens are created, so the backing per token grows.</p>
+     <p className="text-right"><span className="text-foreground">Pool:</span> added to your Reserve Token's pool as liquidity that is locked for good, for deeper and steadier trading. Added only while the pool price is within 1% of backing value; otherwise that part goes to backing.</p>
+    </div>
+    {!split&&<p className="text-xs text-muted-foreground">Adding to the pool becomes available after the next protocol upgrade. Until then the whole holders' share goes to backing.</p>}
    </div>}
   </div>
 
@@ -75,7 +88,8 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true}:{value:FeeTe
     <thead><tr className="text-xs text-muted-foreground"><th className="text-left font-normal"></th><th className="text-right font-normal">Into {pct(value.buyTaxPct)} tax</th><th className="text-right font-normal">Out of {pct(value.sellTaxPct)} tax</th></tr></thead>
     <tbody>
      <tr><td className="py-1.5">You</td>{cell(onBuys.creator)}{cell(onSells.creator)}</tr>
-     {value.shareWithHolders&&<tr><td className="py-1.5">Holders' backing</td>{cell(onBuys.holders)}{cell(onSells.holders)}</tr>}
+     {value.shareWithHolders&&<tr><td className="py-1.5">Holders' backing</td>{cell(onBuys.backing)}{cell(onSells.backing)}</tr>}
+     {value.shareWithHolders&&value.poolSharePct>0&&<tr><td className="py-1.5">Locked pool liquidity</td>{cell(onBuys.pool)}{cell(onSells.pool)}</tr>}
      <tr><td className="py-1.5">SSR</td>{cell(onBuys.ssr)}{cell(onSells.ssr)}</tr>
     </tbody>
    </table>
@@ -84,7 +98,7 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true}:{value:FeeTe
 
   <div className="bg-primary/10 text-foreground p-3 rounded text-sm flex items-start gap-2">
    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-primary"/>
-   <span>These terms are permanent once the pool launches: the taxes, and whether and how much you share with holders, can never be changed.</span>
+   <span>These terms are permanent once the pool launches: the taxes, whether and how much you share with holders, and how that share divides between backing and the pool can never be changed.</span>
   </div>
  </div>;
 }

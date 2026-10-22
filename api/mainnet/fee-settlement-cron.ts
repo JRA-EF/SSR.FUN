@@ -105,6 +105,7 @@ import { DEFAULT_SLIPPAGE_BPS, MAINNET_USDC_MINT as USDC_MINT_STR, MAX_PRICE_IMP
 import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/merge/lib/singleTxBuy";
 import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience";
 import { findSharingPools, runBasketFeedForPool, type BasketFeedResult } from "../../lib/mainnet/basketFeed";
+import { fetchJupiterPrices } from "./asset-prices";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -680,6 +681,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       reserveTables: async (reserve: PublicKey) => { const alt = await lookupReserveAlt(reserve.toBase58()).catch(() => null); return alt ? fetchLookupTables(connection, [alt]) : []; },
       jupiterTables: (addresses: string[]) => fetchLookupTables(connection, addresses),
       jupiterInstructions: (built: any) => [...built.setupInstructions.map(deserializeJupiterInstruction).filter((ix: TransactionInstruction) => !isComputeBudgetInstruction(ix)), deserializeJupiterInstruction(built.swapInstruction)],
+      prices: fetchJupiterPrices,
     };
     for (const p of sharingPools) {
       if (Date.now() > deadline) { basketFeedSkippedForBudget.push(p.terms.reserve.toBase58()); continue; }

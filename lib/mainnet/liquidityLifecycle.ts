@@ -5,7 +5,7 @@ export type {TrancheChoice} from './liquidityTranches';
 import {createHash} from 'node:crypto';
 import {PublicKey,SYSVAR_CLOCK_PUBKEY,type TransactionInstruction} from '@solana/web3.js';
 import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,getAssociatedTokenAddressSync,unpackAccount,unpackMint,getTransferFeeConfig,getEpochFee,getTransferHook,createAssociatedTokenAccountIdempotentInstruction} from '@solana/spl-token';
-import {buildAuthorizeLiquidityAddition,findProtocolConfig,findReserve,findLiquidityRevenue,findLiquidityTerms,findBasketFeed,decodeLiquidityTerms,cpmmLpMint,cpmmAuthority,buildCpmmDeposit,buildCpmmWithdraw,buildMakeLiquidityTranchePermanent,buildExtendLiquidityTranche,buildWithdrawLiquidityTranche,findLiquidityTranche} from '@ssr/sdk';
+import {buildAuthorizeLiquidityAddition,findProtocolConfig,findReserve,findLiquidityRevenue,findLiquidityTerms,findBasketFeed,decodeLiquidityTerms,findLiquiditySplit,decodeLiquiditySplit,cpmmLpMint,cpmmAuthority,buildCpmmDeposit,buildCpmmWithdraw,buildMakeLiquidityTranchePermanent,buildExtendLiquidityTranche,buildWithdrawLiquidityTranche,findLiquidityTranche} from '@ssr/sdk';
 import {RAYDIUM_CPMM,SSR_CPMM_CONFIG,LIQUIDITY_USDC,decodePool,decodeConfig,creatorShareAddress,effectiveCreatorShare,prepareRevenueCollect} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {transferNet,transferGross,type CompoundReadDeps} from './compoundQuotes';
 import {simulateLiquidityTransaction} from './prepareCompound';
@@ -21,7 +21,7 @@ export async function readLiquidityState(deps:CompoundReadDeps,reserve:PublicKey
  const [m0,m1]=[mint,LIQUIDITY_USDC].sort((a,b)=>Buffer.compare(a.toBuffer(),b.toBuffer()));
  const vault=(m:PublicKey)=>PublicKey.findProgramAddressSync([Buffer.from('pool_vault'),pool.toBuffer(),m.toBuffer()],RAYDIUM_CPMM)[0];
  const ata=(m:PublicKey,p=TOKEN_PROGRAM_ID,o=treasury)=>getAssociatedTokenAddressSync(m,o,true,p);
- const keys=[reserve,protocolConfig,mint,revenue,pool,SSR_CPMM_CONFIG,creatorShareAddress(revenue),lp,SYSVAR_CLOCK_PUBKEY,ata(LIQUIDITY_USDC),ata(mint,TOKEN_2022_PROGRAM_ID),ata(lp),vault(m0),vault(m1),ata(LIQUIDITY_USDC,TOKEN_PROGRAM_ID,revenue),findLiquidityTerms(reserve,programId),findBasketFeed(reserve,programId)];
+ const keys=[reserve,protocolConfig,mint,revenue,pool,SSR_CPMM_CONFIG,creatorShareAddress(revenue),lp,SYSVAR_CLOCK_PUBKEY,ata(LIQUIDITY_USDC),ata(mint,TOKEN_2022_PROGRAM_ID),ata(lp),vault(m0),vault(m1),ata(LIQUIDITY_USDC,TOKEN_PROGRAM_ID,revenue),findLiquidityTerms(reserve,programId),findBasketFeed(reserve,programId),findLiquiditySplit(reserve,programId)];
  const batch=await connection.getMultipleAccountsInfoAndContext(keys,{commitment:'confirmed'}),a=batch.value;
  const owned=(i:number,owner:PublicKey)=>{check(a[i]?.owner.equals(owner),'Liquidity account owner mismatch');return a[i]!;};
  const r=program.coder.accounts.decode('reserve',owned(0,programId).data),protocol=program.coder.accounts.decode('protocolConfig',owned(1,programId).data);
@@ -50,7 +50,10 @@ export async function readLiquidityState(deps:CompoundReadDeps,reserve:PublicKey
  const terms=a[15]?decodeLiquidityTerms(owned(15,programId).data):null;
  check(!terms||(terms.reserve.equals(reserve)&&terms.revenue.equals(revenue)),'Liquidity terms registration changed');
  const feedBalance=terms?balance(16,LIQUIDITY_USDC,TOKEN_PROGRAM_ID,keys[15]):0n;
- return {reserve,mint,treasury,creator,protocolTreasury,protocolConfig,pool,lp,revenue,ata,rt,fee,time,epoch,slot:batch.context.slot,paused:!!protocol.paused,registered,router,usdc,tokens,lpSupply,status,openTime,lpDecimals,usdcBalance,reserveBalance,lpBalance,staged,retention,terms,feedBalance,
+ // DEC-0255: pools whose creator sends part of the holder share into the pool carry a split.
+ const split=a[17]?decodeLiquiditySplit(owned(17,programId).data):null;
+ check(!split||(!!terms&&split.terms.equals(keys[15])),'Liquidity split registration changed');
+ return {reserve,mint,treasury,creator,protocolTreasury,protocolConfig,pool,lp,revenue,ata,rt,fee,time,epoch,slot:batch.context.slot,paused:!!protocol.paused,registered,router,usdc,tokens,lpSupply,status,openTime,lpDecimals,usdcBalance,reserveBalance,lpBalance,staged,retention,terms,feedBalance,split,
   fingerprint:createHash('sha256').update(JSON.stringify(keys.map((k,i)=>[k.toBase58(),i===8?epoch.toString():a[i]?.data.toString('base64')??null]))).digest('hex')};
 }
 export type LiquidityState=Awaited<ReturnType<typeof readLiquidityState>>;

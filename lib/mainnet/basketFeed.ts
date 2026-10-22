@@ -1,5 +1,8 @@
 // DEC-0251: the basket feed keeper (fee-settlement-cron job D).
 //
+// DEC-0255: a pool with a backing/pool split first adds the pool's part as
+// locked liquidity (lib/mainnet/poolFeed.ts), then feeds the rest as below.
+//
 // For every pool created with liquidity terms v2 whose creator chose to share
 // earnings with holders (LiquidityTerms.holder_share_bps > 0):
 //   1. Collect + distribute: when the pool has accrued creator fees (or the
@@ -32,9 +35,14 @@ import {
   findReserveVault,
   findSettlementKeeperConfig,
   releasedBasketFeed,
+  decodeLiquiditySplit,
+  findLiquiditySplit,
+  poolFeedRoom,
 } from "@ssr/sdk";
 import { decodePool, prepareRevenueCollect, LIQUIDITY_USDC } from "../../src/merge/lib/liquidity/raydiumCpmm";
-import { canonicalLiquidityPool } from "./liquidityLifecycle";
+import { canonicalLiquidityPool, readLiquidityState } from "./liquidityLifecycle";
+import { initialReserveAtNav } from "./createLiquidity";
+import { POOL_LEG_MAX_SHARE_BPS, POOL_NAV_LIMIT_PCT, buildPoolFeedInstructions, planPoolLeg, poolNavDeviationPct } from "./poolFeed";
 import { DEFAULT_SLIPPAGE_BPS, buildJupiterSwapInstructionsWithRetry, fetchJupiterQuoteWithRetry, isPriceImpactAcceptable } from "./jupiter";
 
 /** LiquidityTerms account size (programs/ssr_protocol/src/instructions/liquidity_terms.rs). */
@@ -64,7 +72,12 @@ export function planBasketFeedLegs(released: bigint, assets: FeedAsset[], legMin
 }
 
 export interface BasketFeedLegResult { mint: string; usdcIn: string; status: "fed" | "skipped-price-impact" | "skipped-no-route" | "skipped-too-large" | "skipped-error"; minOut?: string; signature?: string; detail?: string }
-export interface BasketFeedResult { reserve: string; holderShareBps: number; collectSignature?: string; releasedUsdcRaw: string; legs: BasketFeedLegResult[]; error?: string }
+/** DEC-0255: the pool leg of a pool whose creator sends part of the holder share into the pool. */
+export interface PoolFeedLegResult {
+  status: "added" | "skipped-off-nav" | "skipped-no-price" | "skipped-too-small" | "skipped-too-large" | "skipped-error";
+  poolShareBps: number; usdcIn: string; lp?: string; navUsdc?: number; poolPriceUsdc?: number; deviationPct?: number; signature?: string; detail?: string;
+}
+export interface BasketFeedResult { reserve: string; holderShareBps: number; collectSignature?: string; releasedUsdcRaw: string; pool?: PoolFeedLegResult; legs: BasketFeedLegResult[]; error?: string }
 
 export interface BasketFeedDeps {
   connection: Connection;
@@ -80,6 +93,8 @@ export interface BasketFeedDeps {
   reserveTables: (reserve: PublicKey) => Promise<AddressLookupTableAccount[]>;
   jupiterTables: (addresses: string[]) => Promise<AddressLookupTableAccount[]>;
   jupiterInstructions: (built: any) => TransactionInstruction[];
+  /** USD prices for NAV (api/mainnet/asset-prices.ts fetchJupiterPrices). Without it the pool leg waits; it never guesses NAV. */
+  prices?: (mints: string[]) => Promise<Map<string, { usdPrice?: number | null; decimals?: number | null; blockId?: number | null }>>;
 }
 
 /** Every v2 pool whose creator shares with holders. */
@@ -133,6 +148,57 @@ export async function runBasketFeedForPool(deps: BasketFeedDeps, terms: ReturnTy
   let released = releasedBasketFeed(fresh, now, unpackAccount(feed, feedInfo).amount).unlocked;
   result.releasedUsdcRaw = released.toString();
   if (released < FEED_MIN_USDC_RAW) return result;
+
+  // 2a. DEC-0255: the pool's part, when the creator chose a split. Off NAV it
+  // goes to backing this run; on any other failure it stays released for the next run.
+  const splitInfo = await connection.getAccountInfo(findLiquiditySplit(reserve, programId), "confirmed");
+  if (splitInfo?.owner.equals(programId)) {
+    const split = decodeLiquiditySplit(splitInfo.data);
+    const room = poolFeedRoom(split, fresh.totalFed + released);
+    const leg: PoolFeedLegResult = { status: "skipped-too-small", poolShareBps: split.poolShareBps, usdcIn: "0" };
+    result.pool = leg;
+    let held = 0n;
+    if (room >= LEG_MIN_USDC_RAW) {
+      held = room < released ? room : released;
+      try {
+        const s = await readLiquidityState(deps, reserve);
+        if (!s.registered) throw new Error("Pool unavailable");
+        const cap = s.usdc * POOL_LEG_MAX_SHARE_BPS / 10_000n;
+        const amount = held < cap ? held : cap;
+        leg.usdcIn = amount.toString();
+        if (!deps.prices) { leg.status = "skipped-no-price"; leg.detail = "No price source for NAV."; }
+        else {
+          const nav = (await initialReserveAtNav(deps, s, 1n, deps.prices)).navUsdc;
+          const deviation = poolNavDeviationPct(s.usdc, s.tokens, nav);
+          Object.assign(leg, { navUsdc: nav, poolPriceUsdc: Number(s.usdc) / Number(s.tokens), deviationPct: deviation ?? undefined });
+          const plan = amount >= LEG_MIN_USDC_RAW ? planPoolLeg(amount, s) : null;
+          if (deviation === null) { leg.status = "skipped-no-price"; leg.detail = "NAV unavailable."; }
+          else if (Math.abs(deviation) > POOL_NAV_LIMIT_PCT) {
+            leg.status = "skipped-off-nav";
+            leg.detail = `Pool is ${deviation.toFixed(2)}% from NAV; this run's pool part goes to backing.`;
+            held = 0n;
+          } else if (!plan) leg.status = "skipped-too-small";
+          else {
+            const ixs = [...deps.budget(600_000), ...buildPoolFeedInstructions({ programId, reserve, reserveMint: mint, keeper: keeper.publicKey, accounts: { pool, ...s.registered }, plan })];
+            const tables = await deps.reserveTables(reserve);
+            if (!deps.fits(ixs, tables)) { leg.status = "skipped-too-large"; leg.detail = "The pool leg does not fit one transaction."; }
+            else {
+              leg.signature = await deps.send(`pool feed ${result.reserve.slice(0, 6)}`, ixs, tables);
+              leg.status = "added";
+              leg.lp = plan.lp.toString();
+              // The rest of the pool's part (above the 2% cap, or unused by the deposit and
+              // returned to the feed) stays released for the pool's next run.
+            }
+          }
+        }
+      } catch (e) {
+        leg.status = "skipped-error";
+        leg.detail = e instanceof Error ? e.message : String(e);
+      }
+    }
+    released -= held;
+    if (released < FEED_MIN_USDC_RAW) return result;
+  }
 
   const assets = await readFeedAssets(deps, reserve);
   const tables = await deps.reserveTables(reserve);

@@ -126,6 +126,73 @@ export function buildSwapWithProjectTaxV2(input:{programId:PublicKey;user:Public
    meta(findLiquidityRevenue(input.reserve,input.programId)),meta(findLiquidityTerms(input.reserve,input.programId),true),meta(input.userUsdc,true),meta(input.protocolDestination,true),meta(input.creatorDestination,true),
    meta(findBasketFeed(input.reserve,input.programId),true),meta(input.raydiumProgram),meta(TOKEN_PROGRAM_ID),...input.nativeSwapAccounts]});
 }
+// DEC-0255: the creator may send part of the holder share into the pool
+// instead of the basket, chosen once at launch (LiquiditySplit). SSR's keeper
+// adds that part as liquidity; the LP is locked in the split's own account.
+export const LIQUIDITY_SPLIT_SEED = 'liquidity_split';
+export const POOL_FEED_TICKET_SEED = 'pool_feed_ticket';
+const RAYDIUM_CPMM_PROGRAM = new PublicKey('CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C');
+const DISCRIMINATORS_SPLIT = {
+  configure: Buffer.from([24,221,195,248,236,149,110,104]),
+  begin: Buffer.from([128,76,46,237,37,163,201,233]),
+  end: Buffer.from([233,182,61,169,110,119,99,101]),
+  splitAccount: Buffer.from([105,120,208,91,229,148,37,250]),
+};
+export const LIQUIDITY_SPLIT_SIZE = 8+32+2+8+8+1;
+export function findLiquiditySplit(reserve: PublicKey, programId: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from(LIQUIDITY_SPLIT_SEED),findLiquidityTerms(reserve,programId).toBuffer()],programId)[0];
+}
+export function findPoolFeedTicket(reserve: PublicKey, programId: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from(POOL_FEED_TICKET_SEED),reserve.toBuffer()],programId)[0];
+}
+export function findPoolLpMint(pool: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('pool_lp_mint'),pool.toBuffer()],RAYDIUM_CPMM_PROGRAM)[0];
+}
+const ataOf=(owner:PublicKey,mint:PublicKey,tokenProgram:PublicKey)=>PublicKey.findProgramAddressSync([owner.toBuffer(),tokenProgram.toBuffer(),mint.toBuffer()],ASSOCIATED_TOKEN_PROGRAM)[0];
+/** The split's locked LP account (classic SPL, as Raydium CPMM LP mints are). */
+export function findSplitLpAccount(reserve: PublicKey, pool: PublicKey, programId: PublicKey): PublicKey {
+  return ataOf(findLiquiditySplit(reserve,programId),findPoolLpMint(pool),TOKEN_PROGRAM_ID);
+}
+export interface LiquiditySplitState { terms:PublicKey; poolShareBps:number; poolFed:bigint; lpLocked:bigint; }
+export function decodeLiquiditySplit(data: Buffer): LiquiditySplitState {
+  if(data.length<LIQUIDITY_SPLIT_SIZE||!data.subarray(0,8).equals(DISCRIMINATORS_SPLIT.splitAccount))throw new Error('Not a LiquiditySplit account');
+  return { terms:new PublicKey(data.subarray(8,40)), poolShareBps:data.readUInt16LE(40), poolFed:data.readBigUInt64LE(42), lpLocked:data.readBigUInt64LE(50) };
+}
+/** Mirrors `pool_feed_allowed`: the most the pool may take now, given everything released so far (fed + still waiting). */
+export function poolFeedRoom(split: Pick<LiquiditySplitState,'poolShareBps'|'poolFed'>, releasedTotal: bigint): bigint {
+  const cap=releasedTotal*BigInt(split.poolShareBps)/10_000n;
+  return cap>split.poolFed?cap-split.poolFed:0n;
+}
+function checkPoolShare(poolShareBps:number){
+  if(!Number.isInteger(poolShareBps)||poolShareBps<1||poolShareBps>HOLDER_SHARE_MAX_BPS)throw new Error('Pool share must be between 0.01% and 100% of the holder share');
+}
+/** Must be in the same transaction as `buildConfigureLiquidityRevenueV2` (the program refuses it otherwise). */
+export function buildConfigureLiquiditySplit(input:{programId:PublicKey;manager:PublicKey;reserve:PublicKey;poolShareBps:number}) {
+  checkPoolShare(input.poolShareBps);
+  const b=Buffer.alloc(2);b.writeUInt16LE(input.poolShareBps);
+  return new TransactionInstruction({programId:input.programId,data:Buffer.concat([DISCRIMINATORS_SPLIT.configure,b]),keys:[meta(input.manager,true,true),meta(input.reserve),
+    meta(findLiquidityRevenue(input.reserve,input.programId)),meta(findLiquidityTerms(input.reserve,input.programId)),meta(findLiquiditySplit(input.reserve,input.programId),true),
+    meta(INSTRUCTIONS_SYSVAR),meta(SystemProgram.programId)]});
+}
+/** Must be followed (after the keeper's Raydium swap and deposit) by `buildPoolFeedEnd` for the same Reserve. */
+export function buildPoolFeedBegin(input:{programId:PublicKey;reserve:PublicKey;pool:PublicKey;keeper:PublicKey;settlementKeeperConfig:PublicKey;
+  keeperUsdc:PublicKey;keeperReserveToken:PublicKey;keeperLp:PublicKey;amountIn:bigint;minLp:bigint}) {
+  if(input.amountIn<=0n||input.minLp<=0n)throw new Error('Invalid pool feed amount');
+  return new TransactionInstruction({programId:input.programId,data:Buffer.concat([DISCRIMINATORS_SPLIT.begin,u64(input.amountIn),u64(input.minLp)]),keys:[meta(input.reserve),meta(input.keeper,true,true),
+    meta(input.settlementKeeperConfig),meta(findLiquidityRevenue(input.reserve,input.programId)),meta(findLiquidityTerms(input.reserve,input.programId),true),meta(findLiquiditySplit(input.reserve,input.programId),true),
+    meta(findBasketFeed(input.reserve,input.programId),true),meta(input.keeperUsdc,true),meta(input.keeperReserveToken),meta(findPoolLpMint(input.pool)),meta(input.keeperLp),
+    meta(findPoolFeedTicket(input.reserve,input.programId),true),meta(INSTRUCTIONS_SYSVAR),meta(TOKEN_PROGRAM_ID),meta(SystemProgram.programId)]});
+}
+export function buildPoolFeedEnd(input:{programId:PublicKey;reserve:PublicKey;pool:PublicKey;reserveMint:PublicKey;reserveTokenProgram:PublicKey;keeper:PublicKey;
+  keeperUsdc:PublicKey;keeperReserveToken:PublicKey;keeperLp:PublicKey}) {
+  const split=findLiquiditySplit(input.reserve,input.programId),lpMint=findPoolLpMint(input.pool);
+  return new TransactionInstruction({programId:input.programId,data:DISCRIMINATORS_SPLIT.end,keys:[meta(input.reserve),meta(input.keeper,true,true),
+    meta(findLiquidityRevenue(input.reserve,input.programId)),meta(findLiquidityTerms(input.reserve,input.programId),true),meta(split,true),meta(findPoolFeedTicket(input.reserve,input.programId),true),
+    meta(findBasketFeed(input.reserve,input.programId),true),meta(input.keeperUsdc,true),meta(input.keeperReserveToken,true),meta(input.keeperLp,true),meta(lpMint),
+    meta(ataOf(split,lpMint,TOKEN_PROGRAM_ID),true),meta(input.reserveMint),meta(ataOf(split,input.reserveMint,input.reserveTokenProgram),true),
+    meta(TOKEN_PROGRAM_ID),meta(input.reserveTokenProgram),meta(ASSOCIATED_TOKEN_PROGRAM),meta(SystemProgram.programId)]});
+}
+
 /** Must be followed (after the swap route, if any) by `rebalance_swap_end` for the same Reserve and buy mint. */
 export function buildBasketFeedBegin(input:{programId:PublicKey;reserve:PublicKey;keeper:PublicKey;settlementKeeperConfig:PublicKey;keeperUsdc:PublicKey;
   reserveAssetBuy:PublicKey;vaultBuy:PublicKey;mintBuy:PublicKey;keeperBuyAccount:PublicKey;ticket:PublicKey;amountIn:bigint;minOut:bigint}) {

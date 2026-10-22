@@ -1,4 +1,4 @@
-import {prepareCreateLiquidity,isLiquidityTermsV2Live} from '../../lib/mainnet/createLiquidity';
+import {prepareCreateLiquidity,isLiquidityTermsV2Live,isLiquiditySplitLive} from '../../lib/mainnet/createLiquidity';
 import {SSR_POOL_PAYER} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {loadPoolPayer,coSignPoolPayer,PoolPayerUnavailable} from '../../lib/mainnet/poolPayer';
 import {LIQUIDITY_EXECUTION_ENABLED} from '../../lib/mainnet/liquidityRelease';
@@ -14,7 +14,7 @@ import {prepareLiquidityLifecycle,readLiquidityState,type LifecycleInput,type Tr
 const actions=['create','add','withdraw','collect','lock','extend','unlock','permanent'];
 const locks=['unlocked','1-month','3-month','6-month','12-month','permanent'];
 function amount(v:unknown,required=false){if(v===undefined&&!required)return undefined;if(typeof v!=='string'||!/^\d{1,20}$/.test(v)||BigInt(v)>0xffffffffffffffffn)throw new Error('Invalid raw token amount');return BigInt(v);}
-export function parseLifecycleRequest(body:any):LifecycleInput & {buyTaxBps:number;sellTaxBps:number;holderShareBps:number}{
+export function parseLifecycleRequest(body:any):LifecycleInput & {buyTaxBps:number;sellTaxBps:number;holderShareBps:number;poolShareBps:number}{
  if(!body||JSON.stringify(body).length>4000||!actions.includes(body.action))throw new Error('Invalid liquidity action');
  const lock=body.lock??'unlocked',slippageBps=body.slippageBps??50;
  if(!locks.includes(lock)||!Number.isInteger(slippageBps)||slippageBps<0||slippageBps>100)throw new Error('Invalid lock or slippage');
@@ -23,8 +23,11 @@ export function parseLifecycleRequest(body:any):LifecycleInput & {buyTaxBps:numb
  const buyTaxBps=body.buyTaxBps??0,sellTaxBps=body.sellTaxBps??0;for(const bps of [buyTaxBps,sellTaxBps])if(!Number.isInteger(bps)||bps<0||bps>200)throw new Error('Project tax must be between zero and two percent');
  // DEC-0251: share of the creator's pool earnings fed to holders, chosen once at pool creation.
  const holderShareBps=body.holderShareBps??0;if(!Number.isInteger(holderShareBps)||holderShareBps<0||holderShareBps>10000)throw new Error('Holder share must be between zero and one hundred percent');
+ // DEC-0255: share of that holder share added to the pool as locked liquidity, also chosen once at pool creation.
+ const poolShareBps=body.poolShareBps??0;if(!Number.isInteger(poolShareBps)||poolShareBps<0||poolShareBps>10000)throw new Error('Pool share must be between zero and one hundred percent');
+ if(poolShareBps>0&&holderShareBps===0)throw new Error('Adding holder earnings to the pool needs a holder share');
  const lookupTables=body.lookupTables??[];if(!Array.isArray(lookupTables)||lookupTables.length>4)throw new Error('Invalid lookup tables');
- return {buyTaxBps,sellTaxBps,holderShareBps,lookupTables:lookupTables.map((k:any)=>new PublicKey(k)),action:body.action,reserve:new PublicKey(body.reserve),actor:new PublicKey(body.actor),maximumSolRaw,maximumUsdcRaw:amount(body.maximumUsdcRaw),maximumReserveRaw:amount(body.maximumReserveRaw),lpAmountRaw:amount(body.lpAmountRaw),slippageBps,lock:lock as TrancheChoice,tranche:body.tranche?new PublicKey(body.tranche):undefined,unlockTs};
+ return {buyTaxBps,sellTaxBps,holderShareBps,poolShareBps,lookupTables:lookupTables.map((k:any)=>new PublicKey(k)),action:body.action,reserve:new PublicKey(body.reserve),actor:new PublicKey(body.actor),maximumSolRaw,maximumUsdcRaw:amount(body.maximumUsdcRaw),maximumReserveRaw:amount(body.maximumReserveRaw),lpAmountRaw:amount(body.lpAmountRaw),slippageBps,lock:lock as TrancheChoice,tranche:body.tranche?new PublicKey(body.tranche):undefined,unlockTs};
 }
 export default async function handler(req:ApiRequest,res:ApiResponse & {setHeader?(name:string,value:string):void}){
  res.setHeader?.('Cache-Control','no-store');if(req.method!=='POST'){res.status(405).json({error:'Method not allowed'});return;}
@@ -44,9 +47,12 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
    result={tranches:lockedTranches,reserve:s.reserve,pool:s.pool,mint:s.mint,creator:s.creator,treasury:s.treasury,hasPool:!!s.registered,paused:s.paused,reserveDecimals:s.rt.decimals,lpDecimals:s.lpDecimals,usdcBalanceRaw:s.usdcBalance,reserveBalanceRaw:s.reserveBalance,lpBalanceRaw:s.lpBalance,nativeEarningsUsdcRaw:s.registered?.accruedUsdc??0n,stagedEarningsUsdcRaw:s.staged,poolUsdcRaw:s.usdc,poolReserveRaw:s.tokens,lpSupplyRaw:s.lpSupply,slot:s.slot,executionEnabled:LIQUIDITY_EXECUTION_ENABLED,
     // DEC-0251: the pool's permanent fee terms (v1 = created before liquidity terms v2).
     termsVersion:s.terms?2:s.registered?1:null,buyTaxBps:s.router?.buyTaxBps??null,sellTaxBps:s.router?.sellTaxBps??null,holderShareBps:s.terms?.holderShareBps??0,basketFeedUsdcRaw:s.feedBalance,basketFedUsdcRaw:s.terms?.totalFed??0n,
+    // DEC-0255: the split (0 = all to backing) and what it has locked in the pool.
+    poolShareBps:s.split?.poolShareBps??0,poolFedUsdcRaw:s.split?.poolFed??0n,poolLpLockedRaw:s.split?.lpLocked??0n,
     // Which terms a NEW pool would get right now (v1 until the DEC-0251 upgrade executes).
-    termsV2Available:s.registered?undefined:await isLiquidityTermsV2Live(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false)};}
-  else if(input.action==='create'){const payer=loadPoolPayer();const prepared=await prepareCreateLiquidity({...deps,prices:fetchJupiterPrices},{reserve:input.reserve,actor:input.actor,usdcRaw:input.maximumUsdcRaw??0n,maximumSolRaw:input.maximumSolRaw,buyTaxBps:input.buyTaxBps,sellTaxBps:input.sellTaxBps,holderShareBps:input.holderShareBps,lock:input.lock,lookupTables:input.lookupTables});
+    termsV2Available:s.registered?undefined:await isLiquidityTermsV2Live(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false),
+    splitAvailable:s.registered?undefined:await isLiquiditySplitLive(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false)};}
+  else if(input.action==='create'){const payer=loadPoolPayer();const prepared=await prepareCreateLiquidity({...deps,prices:fetchJupiterPrices},{reserve:input.reserve,actor:input.actor,usdcRaw:input.maximumUsdcRaw??0n,maximumSolRaw:input.maximumSolRaw,buyTaxBps:input.buyTaxBps,sellTaxBps:input.sellTaxBps,holderShareBps:input.holderShareBps,poolShareBps:input.poolShareBps,lock:input.lock,lookupTables:input.lookupTables});
    result={...prepared,transactionBase64:coSignPoolPayer(prepared.transactionBase64,payer,BigInt(prepared.payerNetCostLamports))};}
   else result=await prepareLiquidityLifecycle(deps,input);
   res.status(200).json(JSON.parse(JSON.stringify(result,(_k,v)=>typeof v==='bigint'?v.toString():v)));

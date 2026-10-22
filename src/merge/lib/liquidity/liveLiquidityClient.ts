@@ -19,9 +19,13 @@ export interface LiveLiquidityState{
  tranches:LiveTranche[];
  /** DEC-0251: the pool's permanent fee terms; 1 = created before liquidity terms v2, null = no pool. */
  termsVersion?:1|2|null;buyTaxBps?:number|null;sellTaxBps?:number|null;holderShareBps?:number;
+ /** DEC-0255: share of the holder share added to the pool (0 = all to backing), and what it has locked so far. */
+ poolShareBps?:number;poolFedUsdcRaw?:string;poolLpLockedRaw?:string;
  basketFeedUsdcRaw?:string;basketFedUsdcRaw?:string;
  /** Terms a new pool gets now: false until the DEC-0251 upgrade executes. */
  termsV2Available?:boolean;
+ /** DEC-0255: whether a NEW pool can choose the backing/pool split yet. */
+ splitAvailable?:boolean;
 }
 export type LiveAction='create'|'add'|'withdraw'|'collect'|'lock'|'extend'|'unlock'|'permanent';
 export type LockTerm='unlocked'|'1-month'|'3-month'|'6-month'|'12-month'|'permanent';
@@ -50,8 +54,9 @@ export function checkLiveState(value:any,expected:{reserve:string;creator:string
  if(!value||value.reserve!==expected.reserve||value.creator!==expected.creator||value.treasury!==expected.treasury||!Array.isArray(value.tranches))throw new Error('Liquidity identity changed; refresh the Reserve.');
  for(const n of [value.reserveDecimals,value.lpDecimals])if(!Number.isInteger(n)||n<0||n>18)throw new Error('Unsupported token precision.');
  for(const k of ['usdcBalanceRaw','reserveBalanceRaw','lpBalanceRaw','nativeEarningsUsdcRaw','stagedEarningsUsdcRaw','poolUsdcRaw','poolReserveRaw','lpSupplyRaw'])if(!RAW.test(String(value[k])))throw new Error('Invalid liquidity balance.');
- for(const k of ['basketFeedUsdcRaw','basketFedUsdcRaw'])if(value[k]!==undefined&&!RAW.test(String(value[k])))throw new Error('Invalid liquidity balance.');
+ for(const k of ['basketFeedUsdcRaw','basketFedUsdcRaw','poolFedUsdcRaw','poolLpLockedRaw'])if(value[k]!==undefined&&!RAW.test(String(value[k])))throw new Error('Invalid liquidity balance.');
  if(value.holderShareBps!==undefined&&(!Number.isInteger(value.holderShareBps)||value.holderShareBps<0||value.holderShareBps>10000))throw new Error('Invalid holder share.');
+ if(value.poolShareBps!==undefined&&(!Number.isInteger(value.poolShareBps)||value.poolShareBps<0||value.poolShareBps>10000))throw new Error('Invalid pool share.');
  for(const t of value.tranches)if(typeof t?.address!=='string'||!RAW.test(String(t.lpRaw))||!/^-?\d{1,20}$/.test(String(t.unlockTs)))throw new Error('Invalid liquidity lock.');
  return {...value,hasPool:!!value.hasPool,paused:!!value.paused,executionEnabled:value.executionEnabled===true};
 }

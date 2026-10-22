@@ -20,6 +20,11 @@ export function buildCpmmWithdraw(a:CpmmAccounts,owner:PublicKey,lpAmount:bigint
  if(lpAmount<=0n||minimum0<=0n||minimum1<=0n)throw new Error('Withdrawal minima must be positive');
  return new TransactionInstruction({programId:CPMM_PROGRAM,keys:[...liquidityKeys(a,owner),meta(new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'))],data:Buffer.concat([Buffer.from([183,18,70,156,148,109,161,34]),amount(lpAmount),amount(minimum0),amount(minimum1)])});
 }
+/** Native swap_base_input: spend exactly `amountIn` of `inputMint`, receive at least `minimumOut`. */
+export function buildCpmmSwapBaseInput(a:CpmmAccounts,owner:PublicKey,config:PublicKey,inputMint:PublicKey,amountIn:bigint,minimumOut:bigint){
+ if(amountIn<=0n||minimumOut<=0n)throw new Error('Swap amount and minimum output must be positive');
+ return new TransactionInstruction({programId:CPMM_PROGRAM,keys:cpmmSwapAccounts(a,owner,config,inputMint),data:Buffer.concat([Buffer.from([143,190,90,218,196,30,51,222]),amount(amountIn),amount(minimumOut)])});
+}
 export function cpmmSwapAccounts(a:CpmmAccounts,owner:PublicKey,config:PublicKey,inputMint:PublicKey):AccountMeta[]{
  const zero=inputMint.equals(a.mint0);if(!zero&&!inputMint.equals(a.mint1))throw new Error('Input mint is not in this pool');
  return [meta(owner,false,true),meta(cpmmAuthority()),meta(config),meta(a.pool,true),

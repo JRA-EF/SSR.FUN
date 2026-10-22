@@ -9,7 +9,7 @@ export const RAYDIUM_CPMM = new PublicKey("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQ
 export const SSR_POOL_PAYER = new PublicKey("6smLxV5X1n7wYPGN4F6EsFNHTPizmUNQkdBBHMCFoqAS");
 export const SSR_CPMM_CONFIG = new PublicKey("LNmHRmMvk9kmtepfTSr98kqGLThd61kH1DPWf2cVRaC");
 export const LIQUIDITY_USDC = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-import { findLiquidityRevenue, buildConfigureLiquidityRevenue, buildConfigureLiquidityRevenueV2, buildDistributeLiquidityRevenue, buildDistributeLiquidityRevenueV2 } from "@ssr/sdk";
+import { findLiquidityRevenue, buildConfigureLiquidityRevenue, buildConfigureLiquidityRevenueV2, buildConfigureLiquiditySplit, buildDistributeLiquidityRevenue, buildDistributeLiquidityRevenueV2 } from "@ssr/sdk";
 
 const DENOMINATOR = 1_000_000n;
 const DISCRIMINATORS = {
@@ -125,6 +125,8 @@ export async function prepareRevenuePool(input: {
   openTime: bigint; buyTaxBps: number; sellTaxBps: number; holderShareBps: number;
   /** DEC-0251: false only while the deployed program predates liquidity terms v2. */
   termsV2?: boolean;
+  /** DEC-0255: share of the holder share added to the pool as locked liquidity (0 = all to backing). */
+  poolShareBps?: number;
 }) {
   if(!input.payer.equals(SSR_POOL_PAYER)) throw new Error('Pool creation requires the Raydium-approved payer (OPEN-14)');
   if(input.reserveAmountRaw<=0n||input.usdcAmountRaw<=0n||input.openTime<0n)throw new Error('Invalid initial liquidity');
@@ -152,7 +154,11 @@ export async function prepareRevenuePool(input: {
   if(input.termsV2===false&&input.holderShareBps!==0)throw new Error('Sharing pool earnings with holders becomes available after the next protocol upgrade');
   const configure=input.termsV2===false?buildConfigureLiquidityRevenue({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)})
     :buildConfigureLiquidityRevenueV2({...input,pool,ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)});
-  return {instructions:[initialize,configure],pool,revenue,lpMint:lp,initialLpOwner:input.payer,
+  // DEC-0255: the split must sit in the same transaction as the terms (the program refuses it otherwise).
+  const poolShareBps=input.poolShareBps??0;
+  if(poolShareBps>0&&(input.termsV2===false||input.holderShareBps===0))throw new Error('Adding holder earnings to the pool needs a holder share');
+  const split=poolShareBps>0?[buildConfigureLiquiditySplit({programId:input.programId,manager:input.manager,reserve:input.reserve,poolShareBps})]:[];
+  return {instructions:[initialize,configure,...split],pool,revenue,lpMint:lp,initialLpOwner:input.payer,
     requiresSigners:[input.payer,input.manager],compoundAvailable:false as const,blockers:['LIVE_COMPOUND_EXECUTOR','OPEN-14'] as const};
 }
 
