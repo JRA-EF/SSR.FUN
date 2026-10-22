@@ -1,4 +1,6 @@
-import {prepareCreateLiquidity,isLiquidityTermsV2Live,isLiquiditySplitLive} from '../../lib/mainnet/createLiquidity';
+import {prepareCreateLiquidity,isLiquidityTermsV2Live,isLiquiditySplitLive,LAUNCH_PRICE_MAX_AGE_SLOTS} from '../../lib/mainnet/createLiquidity';
+import {fetchLaunchPrices} from '../../lib/mainnet/launchPrices';
+import {fetchJupiterQuoteWithRetry} from '../../lib/mainnet/jupiter';
 import {SSR_POOL_PAYER} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {loadPoolPayer,coSignPoolPayer,PoolPayerUnavailable} from '../../lib/mainnet/poolPayer';
 import {LIQUIDITY_EXECUTION_ENABLED} from '../../lib/mainnet/liquidityRelease';
@@ -52,7 +54,7 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
     // Which terms a NEW pool would get right now (v1 until the DEC-0251 upgrade executes).
     termsV2Available:s.registered?undefined:await isLiquidityTermsV2Live(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false),
     splitAvailable:s.registered?undefined:await isLiquiditySplitLive(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false)};}
-  else if(input.action==='create'){const payer=loadPoolPayer();const prepared=await prepareCreateLiquidity({...deps,prices:fetchJupiterPrices},{reserve:input.reserve,actor:input.actor,usdcRaw:input.maximumUsdcRaw??0n,maximumSolRaw:input.maximumSolRaw,buyTaxBps:input.buyTaxBps,sellTaxBps:input.sellTaxBps,holderShareBps:input.holderShareBps,poolShareBps:input.poolShareBps,lock:input.lock,lookupTables:input.lookupTables});
+  else if(input.action==='create'){const payer=loadPoolPayer();const launchPrices=(mints:string[])=>fetchLaunchPrices({prices:fetchJupiterPrices,quote:p=>fetchJupiterQuoteWithRetry({...p,apiKey:process.env.JUPITER_API_KEY??''}),currentSlot:()=>connection.getSlot('confirmed'),maxAgeSlots:LAUNCH_PRICE_MAX_AGE_SLOTS},mints);const prepared=await prepareCreateLiquidity({...deps,prices:launchPrices},{reserve:input.reserve,actor:input.actor,usdcRaw:input.maximumUsdcRaw??0n,maximumSolRaw:input.maximumSolRaw,buyTaxBps:input.buyTaxBps,sellTaxBps:input.sellTaxBps,holderShareBps:input.holderShareBps,poolShareBps:input.poolShareBps,lock:input.lock,lookupTables:input.lookupTables});
    result={...prepared,transactionBase64:coSignPoolPayer(prepared.transactionBase64,payer,BigInt(prepared.payerNetCostLamports))};}
   else result=await prepareLiquidityLifecycle(deps,input);
   res.status(200).json(JSON.parse(JSON.stringify(result,(_k,v)=>typeof v==='bigint'?v.toString():v)));
