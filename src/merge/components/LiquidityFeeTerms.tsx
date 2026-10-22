@@ -67,13 +67,13 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
    </div>
    {value.shareWithHolders&&<div className="space-y-3 pt-2">
     <Label htmlFor="liquidity-holder-share" className="flex justify-between"><span>Share of your 80% for holders</span><span className="font-merge-mono text-primary">{value.holderSharePct.toFixed(0)}%</span></Label>
-    <Slider id="liquidity-holder-share" value={[value.holderSharePct]} min={5} max={100} step={5} disabled={disabled} onValueChange={v=>set({holderSharePct:v[0]})}/>
+    <Slider id="liquidity-holder-share" value={[value.holderSharePct]} min={1} max={100} step={1} disabled={disabled} onValueChange={v=>set({holderSharePct:v[0]})}/>
     <p className="text-xs text-muted-foreground">It is released a little every hour over 24 hours. Choose below where it goes.</p>
    </div>}
    {value.shareWithHolders&&<div className="space-y-3 pt-2">
     <Label htmlFor="liquidity-pool-share" className="flex justify-between"><span>Where the holders' share goes</span>
      <span className="font-merge-mono text-primary">{(100-value.poolSharePct).toFixed(0)}% backing · {value.poolSharePct.toFixed(0)}% pool</span></Label>
-    <Slider id="liquidity-pool-share" aria-label="Share added to the pool" value={[value.poolSharePct]} min={0} max={100} step={5} disabled={disabled||!split} onValueChange={v=>set({poolSharePct:v[0]})}/>
+    <Slider id="liquidity-pool-share" aria-label="Share added to the pool" value={[value.poolSharePct]} min={0} max={100} step={1} disabled={disabled||!split} onValueChange={v=>set({poolSharePct:v[0]})}/>
     <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
      <p><span className="text-foreground">Backing:</span> swapped into the Reserve's assets at their target weights and added to the vaults. No new tokens are created, so the backing per token grows.</p>
      <p className="text-right"><span className="text-foreground">Pool:</span> added to your Reserve Token's pool as liquidity that is locked for good, for deeper and steadier trading. Added only while the pool price is within 1% of backing value; otherwise that part goes to backing.</p>
