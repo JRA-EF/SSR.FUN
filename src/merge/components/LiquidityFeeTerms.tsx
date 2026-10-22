@@ -53,14 +53,14 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
   </div>
 
   <div className="space-y-2">
-   <Label className="text-xs uppercase tracking-wider text-muted-foreground">Share earnings with holders?</Label>
-   <div role="radiogroup" aria-label="Share earnings with holders" className="grid grid-cols-1 md:grid-cols-2 gap-3">
+   <Label className="text-xs uppercase tracking-wider text-muted-foreground">Share earnings?</Label>
+   <div role="radiogroup" aria-label="Share earnings" className="grid grid-cols-1 md:grid-cols-2 gap-3">
     <button type="button" role="radio" aria-checked={!value.shareWithHolders} disabled={disabled} onClick={()=>set({shareWithHolders:false})} className={choice(!value.shareWithHolders)}>
      <p className="text-sm font-medium">No, I keep my 80%</p>
      <p className="text-xs text-muted-foreground mt-1">All of your share goes to your creator treasury.</p>
     </button>
     <button type="button" role="radio" aria-checked={value.shareWithHolders} disabled={disabled} onClick={()=>set({shareWithHolders:true})} className={choice(value.shareWithHolders)}>
-     <p className="text-sm font-medium">Yes, share part of it with holders</p>
+     <p className="text-sm font-medium">{split?'Yes, share with holders and/or add as locked liquidity':'Yes, share part of it with holders'}</p>
      <p className="text-xs text-muted-foreground mt-1">{split
       ?"Over 24 hours, that part goes into the Reserve's backing, into your pool as locked liquidity, or both. You choose the mix below."
       :"That part is added to the Reserve's backing over 24 hours, so every Reserve Token is backed by a little more."}</p>
