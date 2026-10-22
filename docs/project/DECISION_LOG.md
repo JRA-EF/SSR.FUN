@@ -7602,6 +7602,42 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
 }
 ```
 
+## DEC-0249
+
+```json
+{
+  "id": "DEC-0249",
+  "date": "2026-10-18",
+  "title": "Create Reserve: route check before launch, exact-100% gate, swaps before the Reserve exists, 20-minute price lock, slippage accepted",
+  "status": "built on feat/create-preflight; not deployed",
+  "decision": "Five changes to Launch a Reserve, from the Creator's request of 2026-10-15. (1) Leaving Basket Composition runs a read-only route check (new POST /api/mainnet/launch-preflight): for every non-USDC, non-SOL asset, a Jupiter quote of USDC into it for the exact amount the launch will spend, plus a quote back to USDC, plus the Token-2022 compatibility read. Each asset is Ready, Risky (price impact over 3%, or no route back to USDC: can continue), Must remove (no route, or price impact over the 15% the swap proxy refuses), or Could not check (Jupiter busy: never blocks). Must-remove assets block Next until removed; removed assets stay listed with a 'replace it' note. The check re-runs at Launch if the basket or seed changed or it is over 3 minutes old. (2) Next is disabled unless the weights total exactly 100% (bps), with a message saying how much to add or take off; the old 'Unallocated USDC Reserve' row is gone. (3) createReserveOnChain now funds (swaps) BEFORE create-and-register. A swap that fails because of one asset's route throws SeedAssetFundingError with that mint; nothing exists on-chain, so the page returns to Basket Composition with the asset flagged 'Must remove', every field kept, and the assets already swapped for reused from the wallet on the next attempt. (4) Prices are locked for 20 minutes (LAUNCH_PRICE_LOCK_MS) from the first launch attempt: inside the window, retries, relaunches after removing an asset, and Resume reuse already-quoted targets and keep what earlier swaps really delivered, never re-pricing. (5) Slippage is accepted instead of stopping: a swap that does not land is re-quoted at 1.5%, then 3%, then 5% (the proxy's MAX_SLIPPAGE_BPS); the received-vs-quoted gap is shown under each asset in the Wallet Cost Summary and in a footer warning. The whole Create form is saved per wallet (ssr_create_draft_v1, pictures excluded) and restored on return; cleared on launch.",
+  "context": "Creator, 2026-10-15: check every asset for liquidity or route problems before a Reserve is created; on a failure caused by an asset, go back, show which asset, let the user remove it without redoing the whole Reserve; never continue unless the allocation is exactly 100%; ignore price changes for 20 minutes from the start of creation; accept slippage and warn in the wallet summary. Before this, a swap failure happened after create-and-register, leaving a half-built Reserve whose only way forward was Resume with the same broken asset.",
+  "rationale": "Moving the swaps ahead of creation is what makes 'remove the asset and continue' possible: the asset list is written on-chain at registration and cannot be changed while the Reserve is initialising. The route check uses quotes only (no transaction build), sized at the real launch amount, so its verdict matches what the launch will meet. Slippage is capped at the proxy's existing 5% ceiling rather than unlimited, so a sandwiched or broken route still stops instead of losing most of an asset's value.",
+  "alternativesConsidered": [
+    "Keep create-first and add on-chain asset removal for an initialising Reserve -- needs a program upgrade.",
+    "Unlimited slippage -- rejected: exposes the creator to sandwich losses; 5% is the existing proxy ceiling.",
+    "Route check through the existing jupiter-swap proxy -- rejected: it builds a transaction per call and is paced 1.5s per call."
+  ],
+  "impact": "Wallet approval order at launch changes: swaps (and the SOL set-aside) come first, then create-and-register, then seed. A creator who abandons a launch after some swaps keeps those assets in the wallet; /recover does not yet list them (it only knows Reserves that were created). New endpoint /api/mainnet/launch-preflight (quotes only, 12 calls/min per IP). The jupiter-swap proxy now adds a 'reason' field to errors. No program change, no env change.",
+  "affectedAreas": [
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/launchPreflight.ts, createDraft.ts, launchFunding.ts, jupiterSwapClient.ts, basketAllocation.ts",
+    "src/merge/components/LaunchCheckPanel.tsx",
+    "api/mainnet/launch-preflight.ts, api/mainnet/jupiter-swap.ts, lib/mainnet/launchPreflight.ts"
+  ],
+  "supersedes": "DEC-0151's create-then-fund order inside createReserveOnChain (its per-asset funding state machine is kept)",
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_create_preflight.ts: 23 passing.",
+    "Full offline suite: 1577 passing, 5 failing (the 4 known UI-contract failures, plus the deployed-IDL pin test that needs target/idl, absent in a fresh worktree; it fails identically on the unmodified base).",
+    "tsc -b clean; api/mainnet tsconfig clean; vite build OK; oxlint clean on changed files.",
+    "Live read-only run of runLaunchPreflight against Jupiter's lite API: BONK and JUP came back ok with routes; a non-token mint came back blocked with Jupiter's 'is not tradable'.",
+    "Not yet exercised with a real wallet launch."
+  ]
+}
+```
+
 ## DEC-0250
 
 ```json
@@ -7708,6 +7744,77 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
     "Reserve LIQUIDITY 2026-10-20: 10 LIQUID covered at most ~9.6 USDC at NAV 0.98; 9.8 and 9.9 USDC launches failed 'insufficient Reserve Tokens'.",
     "Offline suite 1610 passing / 4 known failing; tsc -b; vite build with VITE_ENABLE_LIQUIDITY=true and VITE_SOLANA_CLUSTER=mainnet-beta contains the step.",
     "Not yet exercised: a real mint-then-launch or mint-then-add with a wallet."
+  ]
+}
+```
+
+## DEC-0253
+
+```json
+{
+  "id": "DEC-0253",
+  "date": "2026-10-21",
+  "title": "Add liquidity warns and asks for acknowledgement when the pool is more than 1% from backing value; after a mint the review is flagged as the one step left",
+  "status": "Committed 2026-10-21 (frontend only, no program change); prod liquidity stays off (DEC-0245).",
+  "decision": "The Add liquidity form compares the pool price with the Reserve Token's backing value (NAV). Beyond 1% either way it shows a plain warning naming the pool price, the backing value, the gap and who loses it, and both the review button and the mint-missing-tokens step stay disabled until the creator ticks an acknowledgement. Within 1%, or with no pool price, nothing changes. Separately, when the launch or add form has just minted the missing Reserve Tokens (DEC-0252), the prepared review is announced as the one step left: a toast, and a notice above the review naming the confirmation word and linking the mint; if preparing fails, the error says the minted tokens are safe in the treasury. Closing the review clears the notice.",
+  "context": "Live test on Reserve LIQUID (mint Ewm6...GzBS), 2026-10-21: the canonical pool sat at ~$8.89 per token while NAV was ~$1.06 (a 5.66-token redemption returned ~$6.01 of reserve assets). The add form showed nothing, so 19.90 USDC went in at ~8.4x NAV, and DEC-0252's mint step minted at NAV only to deposit at the pool price. Spec 4.3 (price = NAV, hard warning beyond 1%) only covered pool launch.",
+  "rationale": "Adding at the pool's ratio is mechanically correct, but when the pool is off NAV the gap is free money for the first arbitrageur (mint at NAV and swap into the pool, or take tokens out cheaply and redeem), paid by the liquidity just added. Friction is warranted here for the same reason spec 4.3 gives for launch. An acknowledgement rather than a hard block keeps the creator able to add when they mean to (for example to deepen a pool they will rebalance).",
+  "alternativesConsidered": [
+    "Hard-block additions beyond 1% -- rejected: the creator may knowingly add, and a block cannot be overridden when NAV data lags.",
+    "Server-side refusal in the prepare endpoint -- deferred: NAV is computed client-side from the same data the form shows; the review still states the funding amounts.",
+    "Offer to rebalance the pool to NAV first -- out of scope; needs an executor and its own decision."
+  ],
+  "impact": "Creators see the gap before funding. No change for pools within 1% of NAV. Launch is unchanged (it already opens at NAV).",
+  "affectedAreas": [
+    "src/merge/lib/liquidity/liveLiquidityClient.ts: NAV_DEVIATION_LIMIT_PCT, navDeviation() on the existing summary premiumPct",
+    "src/merge/components/LiveLiquidityActions.tsx: AddLiquidityForm warning, acknowledgement, gating of review and mint step",
+    "tests/phase_liquidity_nav_guard.ts (new)",
+    "src/merge/components/LiquidityMintStep.tsx, LiveLiquiditySection.tsx: MintedHandoff from the mint step through the form to the review notice",
+    "tests/phase_liquidity_mint_handoff.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "DEC-0252 exercised live on staging 2026-10-21: mint of the 2.1546 LIQUID shortfall confirmed (2HZqrzZv...), estimate ~$2.37 vs actual ~$2.35. The liquidity review was prepared (POST /api/mainnet/liquidity 200 at 10:13:50) but never signed: the release check that runs right after wallet approval never fired, and a further liquidity call followed at 10:14:12, inside the 45 s review window. The mint box disappears once the treasury holds enough, so nothing said the review was the one step left. Server logs cannot show which button cleared it, so the fix makes the hand-off explicit rather than guessing.",
+    "Add uxHHiRfu... (19.90 USDC + 2.2457 LIQUID) and withdraw 3t716nNB... both confirmed; 0.15% transfer fee withheld as expected.",
+    "Offline suite 1623 passing / 5 known failing (chart range selector x2, native-control reset x2, deployed-binary IDL pinning); tsc -b clean."
+  ]
+}
+```
+
+## DEC-0254
+
+```json
+{
+  "id": "DEC-0254",
+  "date": "2026-10-21",
+  "title": "Protocol KPIs count DEX volume and pool-priced market cap, kept separate in the backend",
+  "status": "Committed 2026-10-21; Neon tables applied and first sweep run (2 pools, $196.87 all-time DEX volume). Production deploy pending coordination with the in-flight liquidity prod deploy.",
+  "decision": "Swaps in every SSR-created Raydium CPMM pool are indexed once a day into new tables (dex_pools, dex_pool_swaps), valued by their USDC leg (exact USD; every SSR pool is USDC-paired). The landing-stats API reports DEX volume (dexVolumeAllTimeUsd) separately from SSR's mint/redeem volume (volumeAllTimeUsd) and returns each pool's current reserves; /internal/kpis shows DEX volume as its own tile, never added into mint + redeem. Only the homepage combines them: All-Time Volume = mint/redeem + DEX, and Total Reserve Market Cap = per Reserve, tokens outside its SSR pool at NAV plus tokens inside the pool at the pool price (equal to the pool's USDC side in a constant-product pool), so no token is counted twice.",
+  "context": "Creator, 2026-10-21: log all DEX volume from these LPs into the homepage all-time volume and total Reserve market cap, but keep the distinction in the protocol KPI backend; market cap = 'nav in the protocol side + in the pool the market cap of the tokens there'.",
+  "rationale": "The USDC leg is exact and needs no price feed. Pools are found from the on-chain LiquidityRevenue registrations (the marker that SSR created the pool). Swaps are told apart from deposits, withdrawals and fee collections by the two vaults moving in opposite directions. The sweep runs daily (03:30 UTC) off the hot path: one program-account scan plus a signature walk per pool, under the shared Helius cap and without keeping Neon awake (DEC-0209). The homepage reads pool reserves with one batched account read over the registered pools.",
+  "alternativesConsidered": [
+    "Index ProjectTaxCharged events -- rejected: no gross amount, and only swaps routed through SSR emit it.",
+    "Value pooled tokens at NAV -- rejected by the Creator's definition; pool price is the market's price for those tokens.",
+    "Supply x pool price for the whole supply -- rejected: most tokens are not in the pool and redeem at NAV; it would inflate thin pools (LIQUID ~8x NAV)."
+  ],
+  "impact": "Homepage All-Time Volume and Total Reserve Market Cap now include SSR DEX pools. DEX volume lags by up to a day (daily sweep). Per-Reserve cards and pages still show NAV-based market cap and mint/redeem volume. web3.js 1.98 rejects Mainnet's new version-1 transactions, so the index fetches transactions with raw JSON-RPC; the activity log, 24h volume, ledger ingest and fee-payout readers still use getTransaction with version 0 and may error on a version-1 transaction (follow-up).",
+  "affectedAreas": [
+    "lib/dex-volume/ (new): schema.sql, classify.ts, indexer.ts, read.ts",
+    "api/kpis/dex-volume-cron.ts (new) + vercel.json cron 30 3 * * *",
+    "api/mainnet/landing-stats.ts: dexVolumeAllTimeUsd, pools",
+    "lib/reserve-activity/kpis.ts + src/internal-kpis/Dashboard.tsx: totalDexVolumeUsd, separate tile",
+    "src/pages/Home.tsx, src/merge/lib/protocolKpis.ts, src/merge/hooks/useLandingStats.ts",
+    "scripts/migrate-dex-volume.mjs, scripts/verify_dex_volume.ts, scripts/run_dex_volume_sweep.ts",
+    "tests/phase_dex_volume_kpis.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live read-only check (scripts/verify_dex_volume.ts): 2 SSR pools discovered; LIQUID sell JmwfG35c... classified 'out 1.236804 USDC'; add uxHHiRfu..., withdraw 3t716nNB... and fee collection wHn9wEjr... skipped; version-1 transaction FeBKDT71... read correctly.",
+    "First sweep into Neon: LIQUID pool 72 swaps / $139.80, Reserve 6Jih... pool 44 swaps / $57.07; second run scanned 0 (cursor).",
+    "LIQUID pool reserves 14.44 USDC + 1.6456 tokens after accrued fees (price ~$8.78).",
+    "Offline suite 1622 passing / 5 known failing; tsc -b, api/kpis and api/mainnet tsc, oxlint, vite build clean."
   ]
 }
 ```

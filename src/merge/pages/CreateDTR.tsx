@@ -33,6 +33,8 @@ import {
   estimateNetSeedReserveTokens,
   savePendingAssetFunding,
   CreateReserveStepError,
+  SeedAssetFundingError,
+  LAUNCH_PRICE_LOCK_MS,
   type AssetFundingProgressEvent,
   type CreateReserveStep,
   type CreateReserveResult,
@@ -42,7 +44,11 @@ import {
   type ReserveOnChainStatus,
 } from "@/lib/createReserveClient";
 import { assessLaunchFeasibility, DEFAULT_FEE_BUFFER_FRACTION, formatAllocationUsd, type LaunchAssetPlan } from "@/lib/launchFunding";
-import { apportionBps, assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
+import { allocationGateMessage, apportionBps, assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/basketAllocation";
+import { blockedAssets, checkLaunchRoutes, isLaunchCheckFresh, launchCheckFingerprint, markLaunchFailure, type LaunchCheck, type LaunchCheckAsset, type RemovedLaunchAsset } from "@/lib/launchPreflight";
+import { clearCreateDraft, readCreateDraft, saveCreateDraft, type LaunchSession } from "@/lib/createDraft";
+import { LaunchCheckPanel } from "@/components/LaunchCheckPanel";
+import type { PersistedAssetFunding } from "@/lib/launchFunding";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
 import { requestReserveSnapshotRefresh } from "@/lib/reserveSnapshotClient";
@@ -101,9 +107,9 @@ const MAINNET_USDC_ASSET = { symbol: "USDC", name: "USD Coin", real: true as con
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
 const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
-  "create-and-register": "Step 1/2: Creating Reserve + registering assets...",
+  "create-and-register": "Creating Reserve + registering assets...",
   "fund-seed-assets": `Funding seed assets (${CLUSTER_LABEL})...`,
-  seed: "Step 2/2: Seeding Reserve...",
+  seed: "Seeding Reserve...",
   done: "Done",
 };
 
@@ -369,6 +375,7 @@ export function CreateDTR({
   }
 
   function handleJupiterSwapShortfall(info: { mint: string; targetRaw: bigint; actualRaw: bigint; shortfallPct: number }) {
+    setSwapResults((prev) => ({ ...prev, [info.mint]: { quotedOutRaw: info.targetRaw, receivedRaw: info.actualRaw, slippageBps: prev[info.mint]?.slippageBps ?? 0 } }));
     const meta = SELECTABLE_ASSETS.find((a) => a.mint === info.mint);
     const symbol = meta?.symbol ?? `${info.mint.slice(0, 4)}...${info.mint.slice(-4)}`;
     const decimals = meta?.decimals ?? 0;
@@ -382,8 +389,7 @@ export function CreateDTR({
     // way, never claiming a swap happened when one didn't.
     toast({
       title: `${symbol} funded slightly below target`,
-      description: `${symbol} ended up seeded with ${actual} instead of the ~${target} targeted (${(info.shortfallPct * 100).toFixed(1)}% short) -- likely price movement or a remaining gap too small to swap for. Your Reserve was still created/seeded with the real amount held.`,
-      variant: "destructive",
+      description: `${symbol} will be seeded with ${actual} instead of the ~${target} targeted (${(info.shortfallPct * 100).toFixed(1)}% short) -- price movement or slippage during the swap. Accepted: the launch continues with the amount received, and the Wallet Cost Summary shows it under ${symbol}.`,
     });
   }
   // Set by handleResumeDeployment's catch block when a Resume attempt fails
@@ -509,6 +515,83 @@ export function CreateDTR({
   const [metadataUri, setMetadataUri] = useState<string | null>(null);
   const [metadataUriError, setMetadataUriError] = useState<string | null>(null);
   const [metadataUploading, setMetadataUploading] = useState(false);
+
+  // DEC-0249: route check, removed assets, swap results and the launch
+  // session (see createDraft.ts and launchPreflight.ts).
+  const [launchCheck, setLaunchCheck] = useState<LaunchCheck | null>(null);
+  const [launchChecking, setLaunchChecking] = useState(false);
+  const [removedAssets, setRemovedAssets] = useState<RemovedLaunchAsset[]>([]);
+  // Per asset (by mint): what its launch swap was quoted vs really received,
+  // and the slippage it took. Shown under the asset in the Wallet Cost Summary.
+  const [swapResults, setSwapResults] = useState<Record<string, { quotedOutRaw: bigint; receivedRaw: bigint; slippageBps: number }>>({});
+  const [launchSession, setLaunchSession] = useState<LaunchSession | null>(null);
+  const launchFundingRef = useRef<Record<string, PersistedAssetFunding>>({});
+  const draftRestoredRef = useRef(false);
+  // Set once the Reserve launched, so a late debounced save cannot bring the cleared draft back.
+  const launchedRef = useRef(false);
+
+  // Restore the creator's unfinished work once the wallet is known, unless a
+  // deployment is already pending (the Resume panel owns the page then).
+  useEffect(() => {
+    if (!wallet.address || draftRestoredRef.current) return;
+    draftRestoredRef.current = true;
+    if (readPendingReserveDeploy(wallet.address)) return;
+    const d = readCreateDraft(wallet.address);
+    if (!d) return;
+    setStep(Math.min(4, Math.max(1, d.step)));
+    setName(d.name);
+    setTicker(d.ticker);
+    setDescription(d.description);
+    setCategory(d.category || DEFAULT_RESERVE_CATEGORY);
+    setYoutubeChannel(d.youtubeChannel);
+    setYoutubeFeatured(d.youtubeFeatured);
+    setAssets(d.assets);
+    setRemovedAssets(d.removedAssets ?? []);
+    setInitialSeedUsdc(d.initialSeedUsdc);
+    setMintFeePct(d.mintFeePct);
+    setTvlFeePct(d.tvlFeePct);
+    if (d.feeDestination) {
+      feeDestinationUserEditedRef.current = true;
+      setFeeDestination(d.feeDestination);
+    }
+    setFeeRecipients(d.feeRecipients ?? []);
+    setAdditionalManagers(d.additionalManagers ?? []);
+    if (d.launchSession) {
+      setLaunchSession(d.launchSession);
+      launchFundingRef.current = d.launchSession.funding ?? {};
+    }
+    toast({ title: "Picked up where you left off", description: `Your unfinished Reserve${d.name ? ` "${d.name}"` : ""} was restored. Pictures need to be added again.` });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.address]);
+
+  // Save on every change (debounced). Never before the restore above ran, so
+  // an empty first render cannot overwrite a saved draft.
+  useEffect(() => {
+    if (!wallet.address || !draftRestoredRef.current || launchedRef.current) return;
+    const handle = setTimeout(() => {
+      saveCreateDraft({
+        wallet: wallet.address!,
+        savedAt: Date.now(),
+        step,
+        name,
+        ticker,
+        description,
+        category,
+        youtubeChannel,
+        youtubeFeatured,
+        assets,
+        removedAssets,
+        initialSeedUsdc,
+        mintFeePct,
+        tvlFeePct,
+        feeDestination: feeDestinationUserEditedRef.current ? feeDestination : "",
+        feeRecipients,
+        additionalManagers,
+        launchSession: launchSession ? { ...launchSession, funding: launchFundingRef.current } : null,
+      });
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [wallet.address, step, name, ticker, description, category, youtubeChannel, youtubeFeatured, assets, removedAssets, initialSeedUsdc, mintFeePct, tvlFeePct, feeDestination, feeRecipients, additionalManagers, launchSession]);
 
   // Computed here (not after the early wallet-connected return below) so
   // this effect's dependency array stays valid across every render --
@@ -991,12 +1074,71 @@ export function CreateDTR({
     if (assets.length >= MAX_ASSETS_PER_RESERVE) return;
     if (!assets.some(a => a.symbol === symbol)) {
       setAssets([...assets, { symbol, name: assetName, weight: 0.1 }]);
+      setRemovedAssets((prev) => prev.filter((r) => r.symbol !== symbol));
     }
   };
   const atAssetLimit = assets.length >= MAX_ASSETS_PER_RESERVE;
 
   const removeAsset = (symbol: string) => {
     setAssets(assets.filter(a => a.symbol !== symbol));
+  };
+
+  // DEC-0249: what the route check is asked about -- every selected asset
+  // and the USDC the launch will swap into it (the same split the funding
+  // code uses: seed total x this asset's share).
+  const launchCheckAssets = (forAssets: CreateDTRAssetInput[] = assets): LaunchCheckAsset[] => {
+    const seedUsd = parseFloat(initialSeedUsdc) || 10;
+    const total = forAssets.reduce((s, a) => s + a.weight, 0);
+    return forAssets
+      .filter((a) => REAL_ASSET_BY_SYMBOL.has(a.symbol))
+      .map((a) => {
+        const meta = REAL_ASSET_BY_SYMBOL.get(a.symbol)!;
+        return {
+          symbol: a.symbol,
+          mint: meta.mint,
+          usdcBudgetUsd: total > 0 ? seedUsd * (a.weight / total) : 0,
+          needsSwap: meta.mint !== MAINNET_USDC_MINT && meta.mint !== WRAPPED_SOL_MINT.toBase58(),
+        };
+      });
+  };
+
+  const runLaunchCheck = async (): Promise<LaunchCheck | null> => {
+    const checkAssets = launchCheckAssets();
+    if (checkAssets.length === 0) return null;
+    setLaunchChecking(true);
+    try {
+      const check = await checkLaunchRoutes({ connection, assets: checkAssets, isMainnet: IS_MAINNET, origin: window.location.origin });
+      // An asset that already failed during a launch stays flagged until it is
+      // removed, even if a fresh quote happens to come back.
+      const failedEarlier = (launchCheck?.results ?? []).filter((r) => r.failedDuringLaunch && check.results.some((c) => c.mint === r.mint && c.status !== "blocked"));
+      const merged = failedEarlier.length > 0 ? { ...check, results: check.results.map((r) => failedEarlier.find((f) => f.mint === r.mint) ?? r) } : check;
+      setLaunchCheck(merged);
+      return merged;
+    } finally {
+      setLaunchChecking(false);
+    }
+  };
+
+  /** Removes an asset the route check (or a failed launch) flagged, remembering why so the creator is reminded to replace it. */
+  const removeFlaggedAsset = (symbol: string) => {
+    const asset = assets.find((a) => a.symbol === symbol);
+    if (!asset) return;
+    const reason = launchCheck?.results.find((r) => r.symbol === symbol)?.failedDuringLaunch ? "Removed after its swap failed during launch." : "Removed by the route check.";
+    setAssets((prev) => prev.filter((a) => a.symbol !== symbol));
+    setRemovedAssets((prev) => [...prev.filter((r) => r.symbol !== symbol), { symbol, name: asset.name, reason }]);
+  };
+  const removeAllFlaggedAssets = () => {
+    for (const r of blockedAssets(launchCheck)) removeFlaggedAsset(r.symbol);
+  };
+
+  // Gate for leaving the basket step: exactly 100%, then the route check.
+  const allocationProblem = allocationGateMessage(assets.map((a) => a.weight));
+  const basketBlockers = blockedAssets(launchCheck).filter((r) => assets.some((a) => a.symbol === r.symbol));
+  const handleBasketNext = async () => {
+    if (allocationProblem || assets.length === 0) return;
+    const check = isLaunchCheckFresh(launchCheck, launchCheckAssets()) ? launchCheck : await runLaunchCheck();
+    if (check && blockedAssets(check).length > 0) return; // the panel says what to do
+    handleNext();
   };
 
   const updateWeight = (symbol: string, newWeight: number) => {
@@ -1124,6 +1266,41 @@ export function CreateDTR({
       toast({ variant: "destructive", title: "Metadata URL rejected", description: e instanceof Error ? e.message : "Invalid metadata URL." });
       return;
     }
+    // DEC-0249: never launch a basket that is not exactly 100%, or one with
+    // an asset whose route is known to be broken. The check is re-run when
+    // the basket or seed changed since it ran, or it is a few minutes old.
+    if (allocationProblem) {
+      setStep(2);
+      toast({ variant: "destructive", title: "Allocations must total 100%", description: allocationProblem });
+      return;
+    }
+    if (launchChecking) return;
+    // Taken before the (async) route check so a fast second click cannot
+    // start a second launch while the first is still checking.
+    submittingRef.current = true;
+    let freshCheck: LaunchCheck | null;
+    try {
+      freshCheck = isLaunchCheckFresh(launchCheck, launchCheckAssets()) ? launchCheck : await runLaunchCheck();
+    } finally {
+      submittingRef.current = false;
+    }
+    const stillBlocked = blockedAssets(freshCheck);
+    if (stillBlocked.length > 0) {
+      setStep(2);
+      toast({
+        variant: "destructive",
+        title: `${stillBlocked.map((r) => r.symbol).join(", ")} would make the launch fail`,
+        description: "Nothing was created. You're back on the basket step: remove or replace the flagged asset, bring the total to 100%, and launch again. Everything else you entered is kept.",
+      });
+      return;
+    }
+    // DEC-0249: the 20-minute price lock starts with the first attempt and
+    // covers every retry inside it (a relaunch after removing an asset, a
+    // Resume). Funding progress is kept across attempts either way.
+    const launchStartedAt = Date.now();
+    const session: LaunchSession =
+      launchSession && launchStartedAt - launchSession.startedAt < LAUNCH_PRICE_LOCK_MS ? launchSession : { startedAt: launchStartedAt, funding: launchFundingRef.current };
+    if (session !== launchSession) setLaunchSession(session);
     submittingRef.current = true;
     setIsSubmitting(true);
     setCreateStep("create-and-register");
@@ -1227,7 +1404,9 @@ export function CreateDTR({
         seedTotalUsd,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
-        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
+        jupiterSwap: IS_MAINNET
+          ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall, onSwapSettled: (info) => setSwapResults((prev) => ({ ...prev, [info.mint]: info })) }
+          : undefined,
         // 0 (never the DevNet SOL_TEST_PRICE_USD default) when the real price
         // hasn't loaded yet -- seedRawAmountForAsset throws its own clear
         // error rather than silently wrapping the wrong amount of real SOL.
@@ -1236,11 +1415,20 @@ export function CreateDTR({
         usdcMintFee: IS_MAINNET,
         onProgress: setCreateStep,
         onAssetProgress: setFundingProgress,
+        // DEC-0249: what earlier attempts of this launch already funded, and
+        // the price lock they started.
+        persistedFunding: session.funding,
+        priceLockUntil: session.startedAt + LAUNCH_PRICE_LOCK_MS,
         // Persist per-asset funding progress on every transition so a
         // refresh/reconnect resumes from the first genuinely unresolved
         // asset, reconciling any submitted swap signature instead of
-        // re-swapping (launchFunding.ts, DEC-0151).
-        onFundingStateChange: (record) => savePendingAssetFunding(walletCtx.publicKey!.toBase58(), record),
+        // re-swapping (launchFunding.ts, DEC-0151). Funding now runs before
+        // the Reserve exists (DEC-0249), so it is also kept in the draft.
+        onFundingStateChange: (record) => {
+          launchFundingRef.current = record;
+          setLaunchSession({ startedAt: session.startedAt, funding: record });
+          savePendingAssetFunding(walletCtx.publicKey!.toBase58(), record);
+        },
         // Persisted immediately -- if the page reloads (or the user leaves
         // and comes back later) anywhere after this fires, the mount-time
         // recovery effect above can reconcile THIS exact Reserve PDA against
@@ -1255,7 +1443,9 @@ export function CreateDTR({
             reserveId: addresses.reserveId.toString(),
             name,
             ticker: ticker.toUpperCase(),
-            startedAt: Date.now(),
+            // DEC-0249: the launch's start, so a Resume keeps the same price lock.
+            startedAt: session.startedAt,
+            assetFunding: launchFundingRef.current,
             assets: realAssets.map((a) => ({
               mint: a.mint,
               decimals: a.decimals,
@@ -1268,6 +1458,11 @@ export function CreateDTR({
         },
       });
       clearPendingReserveDeploy();
+      // DEC-0249: launched -- the draft and its session are done.
+      launchedRef.current = true;
+      clearCreateDraft();
+      launchFundingRef.current = {};
+      setLaunchSession(null);
 
       // Point the new Reserve's mutable picture pointer at the Step-1
       // picture so later signature-free edits and the pointer-map display
@@ -1426,6 +1621,28 @@ export function CreateDTR({
         // submission, so there is nothing to reconcile and nothing was ever
         // saved to resume. Never treated as ambiguous.
         toast({ title: "Cancelled in wallet", description: "Nothing was submitted -- safe to try again whenever you're ready." });
+      } else if (e instanceof CreateReserveStepError && e.step === "fund-seed-assets" && e.addresses === null) {
+        // DEC-0249: funding runs BEFORE the Reserve is created, so this
+        // failure created nothing on-chain. Keep everything the creator
+        // entered; when one asset's route is the cause, take them back to the
+        // basket with that asset flagged for removal or replacement.
+        const cause = e.cause;
+        if (cause instanceof SeedAssetFundingError) {
+          const symbol = SELECTABLE_ASSETS.find((a) => a.mint === cause.mint)?.symbol ?? `${cause.mint.slice(0, 4)}...${cause.mint.slice(-4)}`;
+          setLaunchCheck((prev) => markLaunchFailure(prev, { symbol, mint: cause.mint }, cause.message, launchCheckFingerprint(launchCheckAssets())));
+          setStep(2);
+          toast({
+            variant: "destructive",
+            title: `${symbol} could not be swapped -- nothing was created`,
+            description: `You're back on the basket step with ${symbol} flagged. Remove or replace it, bring the total to 100%, and launch again. Everything you entered is kept, and the assets already swapped for stay in your wallet and are reused.`,
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Launch stopped before anything was created",
+            description: `${msg} Nothing was created on-chain and everything you entered is kept. Assets already swapped for stay in your wallet and are reused when you launch again.`,
+          });
+        }
       } else if (e instanceof CreateReserveStepError && e.step !== "create-and-register") {
         // A failure in fund-seed-assets/seed means create-and-register
         // already succeeded -- the Reserve definitely exists on-chain, just
@@ -1703,7 +1920,7 @@ export function CreateDTR({
           <>
             <CardHeader>
               <CardTitle className="text-2xl font-merge-display">Basket Composition</CardTitle>
-              <CardDescription>Select assets and set their target weights (must sum to ≤ 100%).</CardDescription>
+              <CardDescription>Select assets and set their target weights. They must add up to exactly 100%; when you continue, every asset is checked for a working swap route first.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-8">
               
@@ -1841,26 +2058,26 @@ export function CreateDTR({
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                            title="Set every asset to 0% and leave the basket in USDC"
+                            title="Set every asset to 0% and start the weights over"
                             onClick={() => applyWeights(clearAll(assets.length))}
                           >
                             Clear
                           </Button>
                         </div>
                       )}
-                      <span className={`font-merge-mono font-bold ${totalWeight > 1.0001 ? 'text-destructive' : 'text-primary'}`}>
+                      <span className={`font-merge-mono font-bold ${assets.length > 0 && allocationProblem ? 'text-destructive' : 'text-primary'}`}>
                         {(totalWeight * 100).toFixed(1)}%
                       </span>
                     </div>
                   </div>
-                  
-                  {unallocatedWeight > 0 && totalWeight <= 1.0001 && (
-                    <div className="flex justify-between items-center p-3 rounded-lg border border-dashed border-border/80 text-sm">
+
+                  {unallocatedWeight > 0 && totalWeight <= 1.0001 && assets.length > 0 && (
+                    <div className="flex justify-between items-center p-3 rounded-lg border border-dashed border-destructive/50 text-sm">
                       <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-muted-foreground/30"></div>
-                        <span className="text-muted-foreground italic">Unallocated USDC Reserve</span>
+                        <div className="w-3 h-3 rounded-full bg-destructive/40"></div>
+                        <span className="text-muted-foreground italic">Still to allocate</span>
                       </div>
-                      <span className="font-merge-mono text-muted-foreground">{(unallocatedWeight * 100).toFixed(1)}%</span>
+                      <span className="font-merge-mono text-destructive">{(unallocatedWeight * 100).toFixed(1)}%</span>
                     </div>
                   )}
 
@@ -1922,22 +2139,51 @@ export function CreateDTR({
                     )}
                   </div>
                   
-                  {totalWeight > 1.0001 && (
+                  {assets.length > 0 && allocationProblem && (
                     <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
                       <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                      <p>Total weight exceeds 100%. Please adjust allocations.</p>
+                      <p>{allocationProblem}</p>
                     </div>
                   )}
                 </div>
               </div>
+
+              {/* DEC-0249: the route check's answer, and any asset a failed
+                  launch stopped on. */}
+              <LaunchCheckPanel
+                assets={assets}
+                check={launchCheck}
+                checking={launchChecking}
+                removed={removedAssets}
+                onRemove={removeFlaggedAsset}
+                onRemoveAllBlocked={removeAllFlaggedAssets}
+                onRecheck={() => void runLaunchCheck()}
+                onClearRemoved={() => setRemovedAssets([])}
+              />
 
             </CardContent>
             <CardFooter className="justify-between border-t border-border/40 pt-6">
               <Button variant="ghost" onClick={handleBack} className="gap-2">
                 <ChevronLeft className="w-4 h-4" /> Back
               </Button>
-              <Button onClick={handleNext} disabled={assets.length === 0 || totalWeight > 1.0001} className="font-bold gap-2">
-                Next <ChevronRight className="w-4 h-4" />
+              <Button
+                onClick={() => void handleBasketNext()}
+                disabled={assets.length === 0 || allocationProblem !== null || launchChecking || basketBlockers.length > 0}
+                title={
+                  allocationProblem ??
+                  (basketBlockers.length > 0 ? `Remove or replace ${basketBlockers.map((r) => r.symbol).join(", ")} first -- see the route check below.` : undefined)
+                }
+                className="font-bold gap-2"
+              >
+                {launchChecking ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Checking routes...
+                  </>
+                ) : (
+                  <>
+                    Next <ChevronRight className="w-4 h-4" />
+                  </>
+                )}
               </Button>
             </CardFooter>
           </>
@@ -2399,18 +2645,37 @@ export function CreateDTR({
                             // seedTotalUsd x this asset's share of total weight.
                             const assetUsd = totalWeight > 0 ? seedTotalUsdUi * (a.weight / totalWeight) : 0;
                             const isSol = a.symbol === "SOL";
-                            const isUsdc = REAL_ASSET_BY_SYMBOL.get(a.symbol)?.mint === MAINNET_USDC_MINT;
+                            const mint = REAL_ASSET_BY_SYMBOL.get(a.symbol)?.mint;
+                            const isUsdc = mint === MAINNET_USDC_MINT;
+                            // DEC-0249: slippage is accepted, never a reason to
+                            // stop -- but the creator sees it, right under the
+                            // asset it happened to.
+                            const settled = mint ? swapResults[mint] : undefined;
+                            const shortPct = settled && settled.quotedOutRaw > 0n && settled.receivedRaw < settled.quotedOutRaw ? Number(((settled.quotedOutRaw - settled.receivedRaw) * 10_000n) / settled.quotedOutRaw) / 100 : 0;
+                            const checked = launchCheck?.results.find((r) => r.symbol === a.symbol);
+                            const assetNote = settled
+                              ? shortPct >= 0.1
+                                ? `Swapped: received ${shortPct.toFixed(2)}% less than quoted${settled.slippageBps > 150 ? ` (needed ${settled.slippageBps / 100}% slippage)` : ""} -- accepted, the launch continues.`
+                                : "Swapped at the quoted amount."
+                              : checked?.status === "warning" && checked.priceImpactPct !== null && checked.priceImpactPct > 0
+                                ? `Thin liquidity: expect about ${checked.priceImpactPct.toFixed(1)}% less than its weight suggests. Slippage is accepted up to 5%.`
+                                : null;
                             return (
-                              <div key={a.symbol} className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">{a.symbol}</span>
-                                <span className="font-merge-mono">
-                                  {fmtUsd(assetUsd)}
-                                  {isSol ? (
-                                    <span className="text-muted-foreground"> ({(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL from your wallet)</span>
-                                  ) : (
-                                    <span className="text-muted-foreground"> ({isUsdc ? "your USDC, deposited directly" : "swapped from your USDC"})</span>
-                                  )}
-                                </span>
+                              <div key={a.symbol} className="text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">{a.symbol}</span>
+                                  <span className="font-merge-mono">
+                                    {fmtUsd(assetUsd)}
+                                    {isSol ? (
+                                      <span className="text-muted-foreground"> ({(Number(costEstimate.solSeedFundingLamports) / 1e9).toFixed(5)} SOL from your wallet)</span>
+                                    ) : (
+                                      <span className="text-muted-foreground"> ({isUsdc ? "your USDC, deposited directly" : "swapped from your USDC"})</span>
+                                    )}
+                                  </span>
+                                </div>
+                                {assetNote && (
+                                  <p className={`text-xs mt-0.5 text-right ${shortPct >= 0.1 || !settled ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>{assetNote}</p>
+                                )}
                               </div>
                             );
                           })}
@@ -2473,6 +2738,15 @@ export function CreateDTR({
                               {usdcToHoldUsd > 0 ? <> plus &asymp; {fmtUsd(usdcToHoldUsd)} of your USDC</> : null}, across {costEstimate.numTransactions} transactions -- each Phantom popup asks for only its own share, never the full amount at once.
                             </p>
                           </div>
+                          {/* DEC-0249: the slippage warning, in the summary itself. */}
+                          {assets.some((a) => { const m = REAL_ASSET_BY_SYMBOL.get(a.symbol)?.mint; return m !== undefined && m !== MAINNET_USDC_MINT && a.symbol !== "SOL"; }) && (
+                            <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs text-amber-700 dark:text-amber-400">
+                              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                              <p>
+                                Prices can move while your Reserve is being created. Swaps accept slippage (retried with up to 5%) instead of stopping, so an asset can end up slightly below its weight -- each asset above shows what it really received. Prices are locked for 20 minutes from the moment you launch: a retry inside that window keeps every swap already made instead of re-pricing it.
+                              </p>
+                            </div>
+                          )}
                         </>
                       );
                     })()}
@@ -2498,6 +2772,18 @@ export function CreateDTR({
                         const approvals = costEstimate ? costEstimate.numTransactions : expectedApprovalCount(assets) + swapCount;
                         let step = 1;
                         const lines: ReactNode[] = [];
+                        // DEC-0249: funding runs first, so a broken route stops
+                        // the launch before the Reserve exists.
+                        if (needsSolWrap) lines.push(<p key="wrap">{step++}. Set aside the SOL from your wallet that becomes the Reserve's SOL holding</p>);
+                        if (swapCount > 0) {
+                          lines.push(
+                            <p key="swaps">
+                              {swapCount > 1 ? `${step}-${step + swapCount - 1}` : step}. Swap your USDC for {swapCount === 1 ? "the other reserve asset" : `each of the other ${swapCount} reserve assets`} (one approval per
+                              swap; an asset your wallet already holds enough of is skipped). If a swap fails, nothing has been created yet -- you go back to the basket to replace that asset.
+                            </p>,
+                          );
+                          step += swapCount;
+                        }
                         if (registerBatches === 1) {
                           lines.push(
                             <p key="register">
@@ -2510,16 +2796,6 @@ export function CreateDTR({
                               {step++}. Create the Reserve, then register {assets.length} reserve assets across {registerBatches} transactions -- Solana limits how many can fit in one
                             </p>,
                           );
-                        }
-                        if (needsSolWrap) lines.push(<p key="wrap">{step++}. Set aside the SOL from your wallet that becomes the Reserve's SOL holding</p>);
-                        if (swapCount > 0) {
-                          lines.push(
-                            <p key="swaps">
-                              {swapCount > 1 ? `${step}-${step + swapCount - 1}` : step}. Swap your USDC for {swapCount === 1 ? "the other reserve asset" : `each of the other ${swapCount} reserve assets`} (one approval per
-                              swap; an asset your wallet already holds enough of is skipped)
-                            </p>,
-                          );
-                          step += swapCount;
                         }
                         lines.push(<p key="seed">{step++}. Seed the Reserve (deposits the assets, {IS_MAINNET ? "pays the mint fee in USDC to the SSR Treasury and the Manager, " : ""}mints your initial Reserve Tokens)</p>);
                         return (
@@ -2565,7 +2841,7 @@ export function CreateDTR({
               <div>
                 <p className="text-sm font-semibold text-muted-foreground mb-3">Target Composition</p>
                 <div className="space-y-2">
-                  {assets.sort((a,b) => b.weight - a.weight).map(asset => (
+                  {[...assets].sort((a,b) => b.weight - a.weight).map(asset => (
                     <div key={asset.symbol} className="flex justify-between items-center p-2 rounded bg-muted/30 border border-border/50 text-sm">
                       <div className="flex items-center gap-2">
                         <span className="font-bold">{asset.symbol}</span>
@@ -2574,10 +2850,10 @@ export function CreateDTR({
                       <span className="font-merge-mono font-bold">{(asset.weight * 100).toFixed(1)}%</span>
                     </div>
                   ))}
-                  {unallocatedWeight > 0 && (
-                    <div className="flex justify-between items-center p-2 rounded border border-dashed border-border/80 text-sm">
-                      <span className="text-muted-foreground italic">Unallocated USDC Reserve</span>
-                      <span className="font-merge-mono text-muted-foreground">{(unallocatedWeight * 100).toFixed(1)}%</span>
+                  {allocationProblem && (
+                    <div className="flex items-start gap-2 p-2 rounded bg-destructive/10 text-destructive text-sm">
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <span>{allocationProblem} Go back to Basket Composition to fix it.</span>
                     </div>
                   )}
                 </div>
@@ -2636,7 +2912,7 @@ export function CreateDTR({
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={isSubmitting || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri || identityProfane}
+                disabled={isSubmitting || launchChecking || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri || identityProfane}
                 title={
                   !isRealDeployment
                     ? `Every selected asset must be a supported real ${CLUSTER_LABEL} asset.`
@@ -2652,6 +2928,8 @@ export function CreateDTR({
               >
                 {isSubmitting ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> {stepLabel(createStep, "Deploying...")}</>
+                ) : launchChecking ? (
+                  <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Checking routes...</>
                 ) : !costEstimate && !costEstimateError ? (
                   <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> Calculating cost...</>
                 ) : metadataUploading ? (

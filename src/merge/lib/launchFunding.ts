@@ -67,6 +67,8 @@ export interface PersistedAssetFunding {
   targetRaw?: string;
   /** Cumulative raw amount THIS flow's own confirmed swaps acquired of this asset, reconciled from the recorded signatures' real on-chain token deltas (DEC-0155) -- the buy path's purchase-scoped accounting; unset for flows that don't track it. */
   acquiredRaw?: string;
+  /** DEC-0249: the USDC budget (raw) `targetRaw` was quoted for. A target is only reused for the same budget -- a basket edited after a failed launch re-quotes the assets whose share changed. */
+  budgetUsdcRaw?: string;
 }
 
 /**
@@ -86,7 +88,7 @@ export function advanceAssetFunding(
   record: Record<string, PersistedAssetFunding>,
   mint: string,
   to: AssetFundingStatus,
-  extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw" | "acquiredRaw">>,
+  extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw" | "acquiredRaw" | "budgetUsdcRaw">>,
 ): Record<string, PersistedAssetFunding> {
   const current = record[mint] ?? { mint, status: "not_started" as AssetFundingStatus };
   if (current.status !== to && !isLegalFundingTransition(current.status, to)) return record;

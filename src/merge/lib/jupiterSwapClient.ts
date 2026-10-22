@@ -64,6 +64,24 @@ export function describeJupiterSwapError(rawErrorJson: string): string {
   return `The Jupiter swap was rejected on-chain (${rawErrorJson}) -- most likely the price moved beyond the accepted slippage between quote and execution. Try again: a fresh quote is fetched automatically on retry.`;
 }
 
+/** Why the swap proxy refused a quote (api/mainnet/jupiter-swap.ts `reason`). "unavailable" is Jupiter being busy; the other three are about the asset's own route. */
+export type JupiterQuoteFailureReason = "no_route" | "price_impact" | "route_broken" | "unavailable";
+
+export class JupiterQuoteError extends Error {
+  readonly status: number;
+  readonly reason: JupiterQuoteFailureReason | null;
+  constructor(message: string, status: number, reason: JupiterQuoteFailureReason | null) {
+    super(message);
+    this.name = "JupiterQuoteError";
+    this.status = status;
+    this.reason = reason;
+  }
+  /** True when the failure is the asset's route itself, so removing or replacing the asset is the fix (DEC-0249). */
+  get isAssetRouteProblem(): boolean {
+    return this.reason === "no_route" || this.reason === "price_impact" || this.reason === "route_broken";
+  }
+}
+
 export interface JupiterSwapQuote {
   swapTransaction: string;
   lastValidBlockHeight: number;
@@ -128,7 +146,8 @@ async function postJupiterSwapProxy(payload: Record<string, unknown>): Promise<{
 export async function fetchJupiterSwapQuote(outputMint: string, amountRaw: bigint, userPublicKey: string, slippageBps?: number, receiveWrappedSol?: boolean, inputMint?: string): Promise<JupiterSwapQuote> {
   const { res, body } = await postJupiterSwapProxy({ outputMint, amountRaw: amountRaw.toString(), userPublicKey, slippageBps, receiveWrappedSol, ...(inputMint ? { inputMint } : {}) });
   if (!res.ok || !body) {
-    throw new Error((body && typeof body.error === "string" && body.error) || `Jupiter swap quote failed (HTTP ${res.status}).`);
+    const reason = body && typeof body.reason === "string" ? (body.reason as JupiterQuoteFailureReason) : null;
+    throw new JupiterQuoteError((body && typeof body.error === "string" && body.error) || `Jupiter swap quote failed (HTTP ${res.status}).`, res.status, reason);
   }
   return {
     swapTransaction: body.swapTransaction as string,

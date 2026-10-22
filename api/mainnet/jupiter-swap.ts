@@ -142,19 +142,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (quoteResult.kind === "specific-error") {
     // DEC-0199: name the amount, the asset and the excluded venues rather
     // than passing Jupiter's bare string through with no context.
-    res.status(502).json({ error: describeSwapFailure({ stage: "quote", inputMint, outputMint, amountRaw: amount, message: quoteResult.message }) });
+    res.status(502).json({ error: describeSwapFailure({ stage: "quote", inputMint, outputMint, amountRaw: amount, message: quoteResult.message }), reason: "no_route" });
     return;
   }
   if (quoteResult.kind === "exhausted") {
     const r = jupiterExhaustedResponse("quote", quoteResult.lastStatus);
     if (r.retryAfterSeconds) res.setHeader("Retry-After", String(r.retryAfterSeconds));
-    res.status(r.status).json({ error: r.error });
+    res.status(r.status).json({ error: r.error, reason: "unavailable" });
     return;
   }
   const quote = quoteResult.value;
 
   if (!isPriceImpactAcceptable(quote)) {
-    res.status(422).json({ error: `This swap's price impact (${Number(quote.priceImpactPct).toFixed(1)}%) is too high to execute automatically -- this asset's on-chain liquidity is too thin right now.` });
+    res.status(422).json({ error: `This swap's price impact (${Number(quote.priceImpactPct).toFixed(1)}%) is too high to execute automatically -- this asset's on-chain liquidity is too thin right now.`, reason: "price_impact" });
     return;
   }
   void MAX_PRICE_IMPACT_PCT;
@@ -163,13 +163,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     ? await buildJupiterSwapInstructionsWithRetry({ quote, userPublicKey, apiKey })
     : await buildJupiterSwapTransactionWithRetry({ quote, userPublicKey, apiKey });
   if (built.kind === "specific-error") {
-    res.status(502).json({ error: describeSwapFailure({ stage: "build", inputMint, outputMint, amountRaw: amount, quote, message: built.message }), routeLabels: routeLabelsOf(quote) });
+    res.status(502).json({ error: describeSwapFailure({ stage: "build", inputMint, outputMint, amountRaw: amount, quote, message: built.message }), routeLabels: routeLabelsOf(quote), reason: "route_broken" });
     return;
   }
   if (built.kind === "exhausted") {
     const r = jupiterExhaustedResponse("transaction", built.lastStatus);
     if (r.retryAfterSeconds) res.setHeader("Retry-After", String(r.retryAfterSeconds));
-    res.status(r.status).json({ error: r.error });
+    res.status(r.status).json({ error: r.error, reason: "unavailable" });
     return;
   }
 
