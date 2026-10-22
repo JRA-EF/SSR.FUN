@@ -3,7 +3,7 @@
 - **Date:** 2026-10-22
 - **Author:** Joao via Claude Code (Opus 5.5)
 - **Branch / commits:** `fix/launch-stale-price` -> `main`
-- **Deployed to:** see the follow-up line below
+- **Deployed to:** production (ssr-i66ep0grc-ssr14.vercel.app, aliased ssr.fun + www.ssr.fun, built from main e169d03); staging not yet
 - **Decision log:** none (Creator rule 2026-10-22, recorded here and in `lib/mainnet/launchPrices.ts`)
 
 ## What shipped
