@@ -15,6 +15,7 @@ import idl from "../packages/sdk/idl/ssr_protocol.json";
 import { planPoolLeg, poolNavDeviationPct, zapSwapAmount, POOL_INPUT_FEE_PPM } from "../lib/mainnet/poolFeed";
 import { feeTermsToBps, exampleSplit, DEFAULT_FEE_TERMS } from "../src/merge/lib/liquidity/feeTerms";
 import { parseLifecycleRequest } from "../api/mainnet/liquidity";
+import { isLiquiditySplitLive } from "../lib/mainnet/createLiquidity";
 
 const PROGRAM = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
 const k = () => Keypair.generate().publicKey;
@@ -129,6 +130,13 @@ describe("DEC-0255 holder share split: launch form, API and keeper", () => {
     expect(create).to.contain("poolShareBps===0||await isLiquiditySplitLive(");
     const form = readFileSync("src/merge/components/LiveLiquidityActions.tsx", "utf8");
     expect(form).to.contain("split=v2&&state.splitAvailable===true");
+  });
+  it("the split probe: unknown instruction (custom 101) means not live yet; account errors mean it exists", async () => {
+    const sim = (err: unknown) => ({ simulateTransaction: async () => ({ value: { err } }) }) as any;
+    expect(await isLiquiditySplitLive(sim({ InstructionError: [0, { Custom: 101 }] }), k(), PROGRAM)).to.equal(false);
+    expect(await isLiquiditySplitLive(sim({ InstructionError: [0, { Custom: 3005 }] }), k(), PROGRAM)).to.equal(true);
+    expect(await isLiquiditySplitLive(sim({ InstructionError: [0, { Custom: 1010 }] }), k(), PROGRAM)).to.equal(true);
+    expect(/[\x00-\x08]/.test(readFileSync("lib/mainnet/createLiquidity.ts", "utf8")), "no control characters in the probe source").to.equal(false);
   });
   it("the keeper runs the pool leg before backing, only within 1% of NAV, and passes prices", () => {
     const feed = readFileSync("lib/mainnet/basketFeed.ts", "utf8");

@@ -61,7 +61,7 @@ export async function isLiquiditySplitLive(connection:Pick<Connection,'simulateT
  const data=createHash('sha256').update('global:configure_liquidity_split').digest().subarray(0,8);
  const tx=compileV0(payer,'11111111111111111111111111111111',[new TransactionInstruction({programId,keys:[],data:Buffer.from(data)})],[]);
  const {value}=await connection.simulateTransaction(tx,{sigVerify:false,replaceRecentBlockhash:true});
- return !/"Custom":101/.test(JSON.stringify(value.err??null));
+ return !/"Custom":101\b/.test(JSON.stringify(value.err??null));
 }
 export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionEnabled:boolean;prices:(mints:string[])=>Promise<Map<string,Price>>},p:{reserve:PublicKey;actor:PublicKey;usdcRaw:bigint;maximumSolRaw:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;poolShareBps?:number;lock:TrancheChoice;lookupTables?:PublicKey[]}){
  // Preparation (reads, pricing, two simulations) gets its own deadline; the 45 s signing window starts when it ends.
