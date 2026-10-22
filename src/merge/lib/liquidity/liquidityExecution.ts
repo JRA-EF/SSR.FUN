@@ -171,6 +171,8 @@ export async function submitLiquidityPlan(p:{connection:Pick<Connection,'getSign
   const rejection=definiteRejection(e);
   if(rejection===null)return {signature,state:'pending' as const,message:'Submission outcome is unknown. Check the saved transaction before trying again.'};
   p.storage.setItem(key(p.plan),JSON.stringify({...record,state:'rejected',error:rejection}));
+  // Raydium ExceededSlippage: the pool moved past the 1% tolerance between preparation and submission.
+  if(/ExceededSlippage/.test(rejection))return {signature,state:'rejected' as const,message:`The pool price moved by more than 1% while you were signing, so the network refused the transaction and nothing was spent. Prepare it again.\n${rejection}`};
   return {signature,state:'rejected' as const,message:`The network rejected this transaction before broadcasting it, so nothing was spent. Prepare it again.\n${rejection}`};
  }
  if(returned!==signature)return {signature,state:'pending' as const,message:'Submission outcome is unknown. Check the saved transaction before trying again.'};

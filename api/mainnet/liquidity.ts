@@ -16,7 +16,7 @@ const locks=['unlocked','1-month','3-month','6-month','12-month','permanent'];
 function amount(v:unknown,required=false){if(v===undefined&&!required)return undefined;if(typeof v!=='string'||!/^\d{1,20}$/.test(v)||BigInt(v)>0xffffffffffffffffn)throw new Error('Invalid raw token amount');return BigInt(v);}
 export function parseLifecycleRequest(body:any):LifecycleInput & {buyTaxBps:number;sellTaxBps:number;holderShareBps:number;poolShareBps:number}{
  if(!body||JSON.stringify(body).length>4000||!actions.includes(body.action))throw new Error('Invalid liquidity action');
- const lock=body.lock??'unlocked',slippageBps=body.slippageBps??50;
+ const lock=body.lock??'unlocked',slippageBps=body.slippageBps??100;
  if(!locks.includes(lock)||!Number.isInteger(slippageBps)||slippageBps<0||slippageBps>100)throw new Error('Invalid lock or slippage');
  const maximumSolRaw=amount(body.maximumSolRaw,true)!;if(maximumSolRaw<=0n||maximumSolRaw>1_000_000_000n)throw new Error('Choose a positive SOL cost cap of at most one SOL');
  const unlockTs=amount(body.unlockTs);if(unlockTs!==undefined&&unlockTs>0x7fffffffffffffffn)throw new Error('Invalid lock expiry');

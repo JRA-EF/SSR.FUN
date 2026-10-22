@@ -58,7 +58,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
   const current=++generation.current;lastRequest.current={action,extras};setBusy(true);setError('');setNotice(null);setPrepared(null);setSetupAddresses([]);
   try{
    const actor=wallet.publicKey.toBase58(),maximumSolRaw=toRaw(solCap.trim()||defaultSolCap(action),9);
-   const result=checkPrepared(await postLiquidity({action,reserve:chain.reserve,actor,lock:'unlocked',slippageBps:50,maximumSolRaw,lookupTables:savedLiquidityTables(chain.reserve),...extras}),{action,reserve:chain.reserve,creator:chain.manager,treasury:chain.feeDestination,maximumSolRaw});
+   const result=checkPrepared(await postLiquidity({action,reserve:chain.reserve,actor,lock:'unlocked',slippageBps:100,maximumSolRaw,lookupTables:savedLiquidityTables(chain.reserve),...extras}),{action,reserve:chain.reserve,creator:chain.manager,treasury:chain.feeDestination,maximumSolRaw});
    const tx=await checkLiquidityMessage(result);
    // Only pool launch arrives pre-signed, and only by SSR's Raydium payer.
    const signerKeys=tx.message.staticAccountKeys;
