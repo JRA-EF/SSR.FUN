@@ -21,3 +21,5 @@ Follow-up 2026-10-23 (Creator: "make sure this doesnt happen, or the user is inf
 - Resume: a saved signature still in flight is waited for (up to ~2 minutes) instead of stopping the flow; one past its expiry is treated as never landed. Applies to the redeem, its swaps, the mint, the mint's swaps and the /recover check. The mint path no longer resets a not-yet-found swap and buys it again while it may still land.
 - Inform: if the network still does not include the redeem, the message says nothing was redeemed or moved and to press Redeem again; if Solana cannot answer in time, it says nothing new was submitted, to wait a minute, and that the earlier transaction is checked first and never repeated.
 Test: `tests/phase_sell_expired_signature.ts` (9). Suite 1681 passing / 5 pre-existing failures.
+
+Follow-up 2026-10-23: deployed to staging too (ssr-fun-staging-h3wh918wb from main ae795ca; staging was on 1dea6ea, already in main).
