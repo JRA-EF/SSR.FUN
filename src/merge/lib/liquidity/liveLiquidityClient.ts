@@ -6,6 +6,7 @@
  * mocha suite can load it directly.
  */
 import type {PreparedLiquidity} from '../../../../lib/mainnet/prepareCompound';
+import type {LiquidityLock,LiquidityPoolPreview} from '../liquidityPreview';
 import {throwLiquidityResponse} from './liquiditySetupClient';
 import {onLocalClock} from './liquidityExecution';
 
@@ -127,4 +128,31 @@ export function summarizeLiquidity(s:LiveLiquidityState,navPerToken:number,nowMs
   nextUnlockMs:activeTimed.length?Math.min(...activeTimed.map(t=>Number(t.unlockTs)*1000)):null,
   positionLp,sharePct:share*100,positionUsdc:poolUsdc*share,positionTokens:poolTokens*share,
  };
+}
+
+/** A Reserve created minutes ago is not readable or priceable everywhere yet; say so instead of showing a raw error first. */
+export const FRESH_RESERVE_HINT='If you just created this Reserve, please wait 2-3 minutes while Solana and our price feeds catch up, then try again.';
+/** Launch errors the creator fixes themselves (funds, wallet, inputs); waiting would not help, so no fresh-Reserve hint. */
+const ACTIONABLE_LAUNCH_ERROR=/insufficient|connect the creator|sol cost|sol limit|cap\b|enter a valid|decimal places|declined|holder|already exists|paused|multisig/i;
+/** The pool-launch error shown to the creator: the fresh-Reserve hint first, unless the error is theirs to fix. */
+export function launchErrorText(message:string):string{
+ return ACTIONABLE_LAUNCH_ERROR.test(message)?message:`${FRESH_RESERVE_HINT} Details: ${message}`;
+}
+
+/**
+ * The Reserve page's liquidity trust badges (DEC-0218) for a LIVE pool, in the
+ * shape LiquidityBadges already renders. Lock state is the creator treasury's
+ * position: any LP it can withdraw now (held, or in an expired lock) reads as
+ * unlocked; otherwise the earliest active timed lock; otherwise permanent.
+ * LP added by third parties is not counted. Null when there is no pool.
+ */
+export function livePoolBadgeSource(s:LiveLiquidityState,nowMs=Date.now()):LiquidityPoolPreview|null{
+ if(!s.hasPool)return null;
+ const sum=summarizeLiquidity(s,0,nowMs);
+ const withdrawable=sum.unlockedLp+sum.expiredTimed.reduce((a,t)=>a+BigInt(t.lpRaw),0n);
+ const lock:LiquidityLock=withdrawable>0n?{mode:'none'}
+  :sum.nextUnlockMs!==null?{mode:'timed',unlockTs:sum.nextUnlockMs}
+  :sum.permanentCount>0?{mode:'permanent'}:{mode:'none'};
+ return {poolAddress:s.pool,chain:'solana',quoteSymbol:'USDC',baseTokens:sum.poolTokens,quoteUsd:sum.poolUsdc,lock,
+  createdTs:0,collectedTotalUsd:0,compoundedTotalUsd:0,collectedThroughTs:nowMs};
 }

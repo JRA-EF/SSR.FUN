@@ -18,7 +18,7 @@ import {solscanUrl} from '@/lib/solana-config';
 import {SSR_POOL_PAYER} from '../lib/liquidity/raydiumCpmm';
 import {LiquiditySetupNeeded,savedLiquidityTables} from '../lib/liquidity/liquiditySetupClient';
 import {checkLiquidityMessage} from '../lib/liquidity/liquidityExecution';
-import {checkLiveState,checkPrepared,defaultSolCap,fromRaw,postLiquidity,summarizeLiquidity,toRaw,LOCK_TERM_DAYS,type LiveAction,type LiveLiquidityState,type LiveTranche,type PreparedLiveLiquidity} from '../lib/liquidity/liveLiquidityClient';
+import {checkLiveState,checkPrepared,defaultSolCap,FRESH_RESERVE_HINT,launchErrorText,fromRaw,postLiquidity,summarizeLiquidity,toRaw,LOCK_TERM_DAYS,type LiveAction,type LiveLiquidityState,type LiveTranche,type PreparedLiveLiquidity} from '../lib/liquidity/liveLiquidityClient';
 import {AddLiquidityForm,CreatePoolForm,LockForm,WithdrawForm,type MintedHandoff} from './LiveLiquidityActions';
 import {LiquidityLookupSetup} from './LiquidityLookupSetup';
 import {LiquidityTransactionReview} from './LiquidityTransactionReview';
@@ -69,7 +69,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
    if(current===generation.current){setPrepared(result);
     if(minted){setNotice({title:`Minted ${minted.amount} ${dtr.ticker}. One step left: type ${result.confirmationText} in the review below and approve, or the liquidity is not added.`,signature:minted.signature});
      toast({title:'Mint confirmed. One step left',description:`Approve the ${ACTION_TITLES[action].toLowerCase()} review below to finish.`});}}
-  }catch(e){if(current===generation.current){const text=(minted?`The ${dtr.ticker} was minted and is in the treasury, but the liquidity review could not be prepared. `:'')+(e instanceof Error?e.message:'Could not prepare this transaction.');
+  }catch(e){if(current===generation.current){const text=(minted?`The ${dtr.ticker} was minted and is in the treasury, but the liquidity review could not be prepared. `:'')+(()=>{const message=e instanceof Error?e.message:'Could not prepare this transaction.';return action==='create'&&!minted?launchErrorText(message):message;})();
    if(e instanceof LiquiditySetupNeeded){setSetupAddresses(e.addresses);toast({title:'One-time setup needed',description:'Approve the setup step below first. It only pays account rent and network fees.'});}
    else toast({variant:'destructive',title:`${ACTION_TITLES[action]} could not be prepared`,description:text});
    setError(text);}}
@@ -84,7 +84,10 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
  </div>;
 
  if(!state)return <div className="space-y-6">{header(false)}
-  <Card><CardContent className="pt-6 text-sm">{loading?<p className="text-muted-foreground">Reading pool state from Solana…</p>:<div className="space-y-3"><p role="alert" className="text-destructive">{loadError}</p><Button variant="outline" size="sm" onClick={()=>void load()}>Try again</Button></div>}</CardContent></Card>
+  <Card><CardContent className="pt-6 text-sm">{loading?<p className="text-muted-foreground">Reading pool state from Solana…</p>:<div className="space-y-3">
+   <div role="alert" className="space-y-1"><p className="font-semibold">Liquidity isn't ready for this Reserve yet.</p><p className="text-muted-foreground">{FRESH_RESERVE_HINT}</p></div>
+   {loadError&&<p className="text-xs text-muted-foreground/80">Details: {loadError}</p>}
+   <Button variant="outline" size="sm" onClick={()=>void load()}>Try again</Button></div>}</CardContent></Card>
  </div>;
 
  const notices=<>

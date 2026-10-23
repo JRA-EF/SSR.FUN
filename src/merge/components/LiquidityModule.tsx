@@ -23,7 +23,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { LiveLiquiditySection } from "./LiveLiquiditySection";
-import { postLiquidity } from "@/lib/liquidity/liveLiquidityClient";
+import { livePoolBadgeSource, postLiquidity, type LiveLiquidityState } from "@/lib/liquidity/liveLiquidityClient";
 import { IS_MAINNET } from "@/lib/solana-config";
 import { CompoundRouteReview } from "./CompoundRouteReview";
 import { useAppStore } from "@/store/useAppStore";
@@ -590,38 +590,73 @@ export function LiquiditySection({ dtr }: { dtr: DTR }) {
   );
 }
 
-/** Split-layout prompt on the Reserve page after the root Manager's own first mint, while no pool exists. */
 /**
- * Whether a live Mainnet Reserve has no pool yet: true / false once known,
- * null while loading or when the read fails (the banner then stays hidden --
- * never nag about a pool that may well exist). One server read per Reserve
- * page view, and only for the connected root Manager.
+ * One live pool read per Reserve page view, shared by the launch banner and
+ * the trust badges (the liquidity endpoint is rate-limited per visitor).
+ * Reads are kept for a minute, so both callers reuse the same request.
  */
-function useLiveHasNoPool(dtr: DTR, enabled: boolean): boolean | null {
-  const reserve = dtr.onChain?.reserve;
-  const [noPool, setNoPool] = useState<boolean | null>(null);
+const LIVE_READ_TTL_MS = 60_000;
+const liveReads = new Map<string, { at: number; read: Promise<LiveLiquidityState> }>();
+function readLivePool(reserve: string): Promise<LiveLiquidityState> {
+  const cached = liveReads.get(reserve);
+  if (cached && Date.now() - cached.at < LIVE_READ_TTL_MS) return cached.read;
+  const read = postLiquidity({ action: "read", reserve }) as Promise<LiveLiquidityState>;
+  liveReads.set(reserve, { at: Date.now(), read });
+  read.catch(() => liveReads.delete(reserve));
+  return read;
+}
+
+/** A live Mainnet Solana Reserve's pool state: the state once read, null while loading or when the read fails. */
+function useLivePoolState(dtr: DTR): LiveLiquidityState | null {
+  const live = IS_MAINNET && !!dtr.onChain && reserveChain(dtr) === "solana";
+  const reserve = live ? dtr.onChain?.reserve : undefined;
+  const [state, setState] = useState<LiveLiquidityState | null>(null);
   useEffect(() => {
-    setNoPool(null);
-    if (!enabled || !reserve) return;
+    setState(null);
+    if (!reserve) return;
     let cancelled = false;
-    postLiquidity({ action: "read", reserve })
-      .then((s: { hasPool?: unknown }) => {
-        if (!cancelled && typeof s?.hasPool === "boolean") setNoPool(!s.hasPool);
+    readLivePool(reserve)
+      .then((s) => {
+        if (!cancelled && typeof s?.hasPool === "boolean") setState(s);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [enabled, reserve]);
-  return noPool;
+  }, [reserve]);
+  return state;
+}
+
+/**
+ * Badges for the Reserve page header: the live pool's on Mainnet, the design
+ * preview's elsewhere. Null while there is no pool (or it is still loading).
+ */
+export function useLiquidityBadgePool(dtr: DTR): LiquidityPoolPreview | null {
+  const live = IS_MAINNET && !!dtr.onChain && reserveChain(dtr) === "solana";
+  const liveState = useLivePoolState(dtr);
+  const previewPool = useAppStore((s) => s.liquidityPreviews[dtr.id]);
+  if (!live) return previewPool ?? null;
+  return liveState ? livePoolBadgeSource(liveState) : null;
+}
+
+/** The Reserve page's trust badges + pool link, for every viewer once the Reserve has a pool. */
+export function ReserveLiquidityBadges({ dtr, className }: { dtr: DTR; className?: string }) {
+  const pool = useLiquidityBadgePool(dtr);
+  if (!pool) return null;
+  return (
+    <div className={className}>
+      <LiquidityBadges pool={pool} dtr={dtr} withPoolLink />
+    </div>
+  );
 }
 
 /** Reserve page banner for the root Manager while the Reserve has no pool. */
 export function LiquidityLaunchNudge({ dtr, onDismiss }: { dtr: DTR; onDismiss: () => void }) {
   const live = IS_MAINNET && !!dtr.onChain && reserveChain(dtr) === "solana";
-  const liveNoPool = useLiveHasNoPool(dtr, live);
+  // Hidden until the read says there is no pool: never nag about a pool that may well exist.
+  const liveState = useLivePoolState(dtr);
   const previewPool = useAppStore((s) => s.liquidityPreviews[dtr.id]);
-  if (live ? liveNoPool !== true : !!previewPool) return null;
+  if (live ? liveState?.hasPool !== false : !!previewPool) return null;
   const dex = dexInfoFor(reserveChain(dtr));
   return (
     <div role="status" className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">

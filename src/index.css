@@ -172,14 +172,20 @@ img, svg {
   max-width: 100%;
 }
 
-a {
-  color: var(--accent-ink);
-  text-decoration: none;
-}
+/* In the `base` layer for the same reason as the heading reset above: unlayered,
+   this colour beat every Tailwind text utility on a link, so a <Button asChild>
+   wrapping a <Link> lost text-action-foreground and rendered link-blue on the
+   indigo pill ("Launch liquidity", 2026-10-23). Plain links keep the accent. */
+@layer base {
+  a {
+    color: var(--accent-ink);
+    text-decoration: none;
+  }
 
-a:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  a:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
 }
 
 /* Button-shaped links (Trade, Launch Reserve, …) are buttons, not prose links —

@@ -29,7 +29,7 @@ import { executeMultiAssetSellMainnet, readPendingSell } from "@/lib/multiAssetS
 import { describeBatchBuyWalletPrompt, describeBatchSellWalletPrompt } from "@/lib/walletPromptCopy";
 import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
-import { LiquidityBadges, LiquidityLaunchNudge } from "@/components/LiquidityModule";
+import { LiquidityLaunchNudge, ReserveLiquidityBadges } from "@/components/LiquidityModule";
 import {
   AmbiguousConfirmationError,
   BALANCE_CACHE_TTL_MS,
@@ -589,7 +589,7 @@ function resolveBuyAsset(_onChain: OnChainReserveMeta | undefined): { mint: Publ
 
 export function DTRDetail() {
   const { dtrId } = useParams();
-  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade, setWalletModalOpen, liquidityPreviews } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, mergeOnChainReserve, setOnChainDelegates, syncRealHolding, syncWalletFromChain, recordConfirmedTrade, setWalletModalOpen } = useAppStore();
   const pageState = resolveDtrPageState(dtrId, dtrs, quarantinedReserves, chainDiscoveryStatus);
   const dtr = pageState.kind === "found" ? pageState.dtr : undefined;
   const quarantined = pageState.kind === "quarantined" ? pageState.info : undefined;
@@ -2187,11 +2187,7 @@ export function DTRDetail() {
                     {/* Liquidity trust badges + pool link -- public signal for
                         every viewer once this Reserve has a pool. Same 45px
                         indent as the CA line so the row sits under the name. */}
-                    {liquidityPreviews[dtr.id] && (
-                      <div className="pl-[45px] pt-1.5">
-                        <LiquidityBadges pool={liquidityPreviews[dtr.id]} dtr={dtr} withPoolLink />
-                      </div>
-                    )}
+                    <ReserveLiquidityBadges dtr={dtr} className="pl-[45px] pt-1.5" />
                   </div>
                   <div className="flex items-start gap-3 shrink-0 max-sm:w-full max-sm:justify-between">
                   <div className="text-right max-sm:text-left shrink-0">
