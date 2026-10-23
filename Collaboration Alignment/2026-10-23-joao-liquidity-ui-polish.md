@@ -3,7 +3,7 @@
 - **Date:** 2026-10-23
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `fix/liquidity-ui-polish` -> `main`
-- **Deployed to:** production (ssr.fun) -- deploy id in the commit that follows this note
+- **Deployed to:** production `dpl_JAv9inJ83WLDKPbDcYL7xziidHPR` (ssr.fun, main 7411420); staging not redeployed
 - **Decision log:** none (UI fixes; badges are DEC-0218's, now fed by live data)
 
 ## What shipped
