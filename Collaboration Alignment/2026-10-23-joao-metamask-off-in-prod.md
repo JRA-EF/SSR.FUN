@@ -3,7 +3,7 @@
 - **Date:** 2026-10-23
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `fix/metamask-off` -> `main`
-- **Deployed to:** production (ssr.fun) -- see the deploy line below
+- **Deployed to:** production `dpl_9svA1wuVmPXJPSLWcooTHcVAYirX` (ssr.fun, main a37734f; an identical first build `ssr-9gjkjsimx` also exists); staging not redeployed
 - **Decision log:** none (feature switch, same pattern as DEC-0245)
 
 ## What shipped
