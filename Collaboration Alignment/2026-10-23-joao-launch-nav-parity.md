@@ -3,7 +3,7 @@
 - **Date:** 2026-10-23
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `fix/launch-nav-parity` -> `main`
-- **Deployed to:** production + staging -- deploy ids in the commit that follows this note
+- **Deployed to:** production `dpl_3tkxRZm4HfkzRHrVf5ydQxAMKZ6j` (ssr.fun) and staging `dpl_BMw3EYbmBpqpbGDitGQjDC1j2mM2` (strategic-super-reserve.fun), both main 5db1aae
 - **Decision log:** none (bug fix to DEC-0151/DEC-0249 funding; no program change)
 
 ## What happened
