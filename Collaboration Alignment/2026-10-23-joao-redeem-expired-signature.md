@@ -3,7 +3,7 @@
 - **Date:** 2026-10-23
 - **Author:** Joao via Claude Code (Opus 5.5)
 - **Branch / commits:** `fix/launch-stale-price` -> `main`
-- **Deployed to:** production (ssr.fun)
+- **Deployed to:** production (ssr.fun), ssr-ly9z50td6 from main a90cc60 on 2026-10-23
 - **Decision log:** none (bug fix)
 
 ## What happened
