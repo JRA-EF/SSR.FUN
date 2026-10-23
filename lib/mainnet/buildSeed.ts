@@ -47,6 +47,23 @@ export type BuildSeedResult =
     }
   | { status: "needsLookupTable"; addresses: string[]; usdcMintFeeRaw: string; seedValueUsdcRaw: string };
 
+/** Reserve Token decimals (programs/ssr_protocol constants.rs RESERVE_TOKEN_DECIMALS). */
+const RESERVE_TOKEN_DECIMALS = 6;
+
+/**
+ * The initial Reserve Token count: one token per dollar the seeded basket is
+ * really worth at SSR's prices (the same value the mint fee is charged on), so
+ * NAV starts at exactly $1.00 whatever the swaps delivered. The creator's own
+ * figure (one token per committed dollar) is kept when the value is missing or
+ * more than 2x off it, i.e. a broken price rather than ordinary swap costs.
+ * 2026-10-23: SSRES committed $500, deposited $469.47, minted 500 -> NAV $0.939.
+ */
+export function initialTokensForSeedValue(depositValueUsdcRaw: bigint, requested: bigint): bigint {
+  const valued = (depositValueUsdcRaw * 10n ** BigInt(RESERVE_TOKEN_DECIMALS)) / 1_000_000n;
+  if (valued <= 0n || requested <= 0n) return requested;
+  return valued * 2n < requested || valued > requested * 2n ? requested : valued;
+}
+
 export async function buildSeedTransaction(deps: BuildSeedDeps, input: BuildSeedInput): Promise<BuildSeedResult> {
   if (!deps.feeQuoteSigner) {
     throw new BuildError(503, "Launching is temporarily unavailable: the USDC mint-fee signer is not configured on this deployment. Nothing was submitted.");
@@ -77,6 +94,7 @@ export async function buildSeedTransaction(deps: BuildSeedDeps, input: BuildSeed
     legs: read.orderedAssets.map((a, i) => ({ mint: a.mint, decimals: a.decimals, amountRaw: seedAmountsRaw[i], priceUsd: prices.get(a.mint)?.usdPrice ?? null })),
     mintFeeBps: Number(reserveAccount.feeConfig.mintFeeBps),
   });
+  const initialReserveTokens = initialTokensForSeedValue(depositValueUsdcRaw, input.initialReserveTokens);
   // The fee is paid from the creator's USDC, on top of the seed's assets.
   const usdcSeedLegIndex = read.orderedAssets.findIndex((a) => a.mint === MAINNET_USDC_MINT);
   const usdcNeeded = usdcFeeRaw + (usdcSeedLegIndex >= 0 ? seedAmountsRaw[usdcSeedLegIndex] : 0n);
@@ -110,7 +128,7 @@ export async function buildSeedTransaction(deps: BuildSeedDeps, input: BuildSeed
       assets,
       manager: input.manager,
       seedAmounts: seedAmountsRaw,
-      initialReserveTokens: input.initialReserveTokens,
+      initialReserveTokens,
       usdcFeeRaw,
       usdcMint: new PublicKey(MAINNET_USDC_MINT),
       feeQuoteSigner: feeQuoteSigner.publicKey,
@@ -159,6 +177,6 @@ export async function buildSeedTransaction(deps: BuildSeedDeps, input: BuildSeed
     lastValidBlockHeight,
     usdcMintFeeRaw: usdcFeeRaw.toString(),
     seedValueUsdcRaw: depositValueUsdcRaw.toString(),
-    initialReserveTokens: input.initialReserveTokens.toString(),
+    initialReserveTokens: initialReserveTokens.toString(),
   };
 }

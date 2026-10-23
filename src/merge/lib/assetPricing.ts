@@ -32,3 +32,9 @@ export async function fetchAssetPricesUsd(assets: PriceRequestAsset[]): Promise<
   const body = (await res.json()) as { prices?: Record<string, AssetPriceInfo> };
   return body.prices ?? {};
 }
+
+/** One asset's validated mid-market USD price, or null when unpriced or the request fails. */
+export async function fetchMidPriceUsd(mint: string, decimals: number): Promise<number | null> {
+  const prices = await fetchAssetPricesUsd([{ mint, decimals }]).catch(() => ({}) as Record<string, AssetPriceInfo>);
+  return prices[mint]?.usdPrice ?? null;
+}

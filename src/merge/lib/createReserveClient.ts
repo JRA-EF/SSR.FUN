@@ -1140,6 +1140,23 @@ export interface JupiterSwapFundingOptions {
   onSwapShortfall?: (info: { mint: string; targetRaw: bigint; actualRaw: bigint; shortfallPct: number }) => void;
   /** DEC-0249: every executed swap's quoted vs really received amount and the slippage it needed -- shown under that asset in the Wallet Cost Summary. */
   onSwapSettled?: (info: { mint: string; quotedOutRaw: bigint; receivedRaw: bigint; slippageBps: number }) => void;
+  /**
+   * The asset's mid-market USD price (null when unknown). For an asset the
+   * creator already holds, the target is its budget at this price rather
+   * than what a buy of the full budget would return, which nets out swap
+   * fees and price impact the creator never pays on tokens they own
+   * (2026-10-23, SSRES: held $SSR sized at the buy quote seeded ~$30 short).
+   */
+  midPriceUsd?: (mint: string, decimals: number) => Promise<number | null>;
+}
+
+/** Raw amount of an asset worth `usdcBudgetRaw` at `priceUsd`, or 0 when unpriced. */
+export function midPriceTargetRaw(usdcBudgetRaw: bigint, priceUsd: number | null, decimals: number): bigint {
+  if (priceUsd === null || !Number.isFinite(priceUsd) || priceUsd <= 0) return 0n;
+  // Price as an integer ratio with 12 significant micro-digits keeps the math in bigint.
+  const scaledPrice = BigInt(Math.round(priceUsd * 1e12));
+  if (scaledPrice <= 0n) return 0n;
+  return (usdcBudgetRaw * 10n ** BigInt(decimals) * 1_000_000n) / scaledPrice;
 }
 
 /**
@@ -1386,6 +1403,12 @@ async function fundSeedAssetsIdempotent(
           fetchJupiterSwapQuote(asset.mint, usdcBudgetRaw, owner.toBase58()),
         );
         targetRaw = fullQuote.outAmount;
+        // Already held (any amount): aim for the budget's full mid-price
+        // value. Only the missing part is bought below, so only it pays fees.
+        if (balances[i] > 0n && jupiterSwap.midPriceUsd) {
+          const midTargetRaw = midPriceTargetRaw(usdcBudgetRaw, await jupiterSwap.midPriceUsd(asset.mint, asset.decimals).catch(() => null), asset.decimals);
+          if (midTargetRaw > targetRaw) targetRaw = midTargetRaw;
+        }
       }
       finalSeedAmounts[i] = targetRaw;
 
@@ -1420,9 +1443,14 @@ async function fundSeedAssetsIdempotent(
       const deficitRaw = computeFundingShortfall(targetRaw, existingRaw);
       const scaledDeficitUsdcRaw = scaleUsdcBudgetForDeficit(usdcBudgetRaw, deficitRaw, targetRaw);
 
+      // The 5% tolerance is only for an asset this launch already bought (a
+      // swap that landed a little short, or a target that moved since). For
+      // tokens the creator simply held beforehand, any non-dust gap is bought,
+      // so the Reserve is seeded with the full value of its budget.
+      const boughtByThisLaunch = persistedTarget?.status === "ready_to_seed";
       if (
         isDustDeficit(existingRaw, scaledDeficitUsdcRaw, DUST_DEFICIT_USDC_RAW) ||
-        isWithinAcceptableShortfallTolerance(existingRaw, targetRaw, SHORTFALL_WARN_PCT)
+        (boughtByThisLaunch && isWithinAcceptableShortfallTolerance(existingRaw, targetRaw, SHORTFALL_WARN_PCT))
       ) {
         // Either an absolute-dollar dust deficit (DUST_DEFICIT_USDC_RAW's
         // own header) or a real, already-adequate balance that only looks

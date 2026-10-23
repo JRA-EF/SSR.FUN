@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, containsProfanity, PROFANITY_MESSAGE, type RecipientInput } from "@ssr/sdk";
-import { fetchAssetPricesUsd } from "@/lib/assetPricing";
+import { fetchAssetPricesUsd, fetchMidPriceUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { matchesAssetSearch } from "@/lib/assetSearch";
 import { launchpadBadgeText, matchesLaunchpadFilter, LAUNCHPAD_FILTER_OPTIONS, type LaunchpadFilter } from "@/lib/launchpadLabels";
@@ -790,7 +790,7 @@ export function CreateDTR({
         onAssetProgress: setFundingProgress,
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
-        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: pendingAtStart.seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall } : undefined,
+        jupiterSwap: IS_MAINNET ? { enabled: true, seedTotalUsd: pendingAtStart.seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall, midPriceUsd: fetchMidPriceUsd } : undefined,
         // 0 (never the DevNet SOL_TEST_PRICE_USD default) when the real price
         // hasn't loaded yet -- seedRawAmountForAsset throws its own clear
         // error rather than silently wrapping the wrong amount of real SOL.
@@ -1415,7 +1415,7 @@ export function CreateDTR({
         programId: SSR_PROGRAM_ID,
         allowFaucet: !IS_MAINNET,
         jupiterSwap: IS_MAINNET
-          ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall, onSwapSettled: (info) => setSwapResults((prev) => ({ ...prev, [info.mint]: info })) }
+          ? { enabled: true, seedTotalUsd, onSwapStart: setJupiterSwapMint, onSwapShortfall: handleJupiterSwapShortfall, onSwapSettled: (info) => setSwapResults((prev) => ({ ...prev, [info.mint]: info })), midPriceUsd: fetchMidPriceUsd }
           : undefined,
         // 0 (never the DevNet SOL_TEST_PRICE_USD default) when the real price
         // hasn't loaded yet -- seedRawAmountForAsset throws its own clear
