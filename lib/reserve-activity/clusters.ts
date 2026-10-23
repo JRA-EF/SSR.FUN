@@ -56,11 +56,13 @@ export interface ClusterTarget {
    * failure yields null and events index unvalued rather than blocking.
    */
   buildValuations?(reserves: DiscoveredReserve[]): Promise<Map<string, ActivityValuation> | null>;
+  /** Live USD price source (Mainnet only) for valuing rows that were indexed unvalued (volumeUsd.ts). */
+  fetchPricesUsd?(mints: string[]): Promise<Map<string, { usdPrice?: number | null; decimals?: number | null }>>;
 }
 
 export interface ClusterTargetOptions {
   /** Live USD price source for Mainnet asset mints (the caller passes api/mainnet/asset-prices.ts's fetchJupiterPrices -- lib/ must not import api/). */
-  fetchPricesUsd?(mints: string[]): Promise<Map<string, { usdPrice?: number | null }>>;
+  fetchPricesUsd?(mints: string[]): Promise<Map<string, { usdPrice?: number | null; decimals?: number | null }>>;
 }
 
 /**
@@ -117,6 +119,7 @@ export function buildClusterTargets(clusters: ActivityCluster[], options: Cluste
           const known = await enumerateReserveAssetMintsOnChain(connection).catch(() => [] as string[]);
           return [new PublicKey(MAINNET_USDC_MINT), ...known.filter((m) => m !== MAINNET_USDC_MINT).map((m) => new PublicKey(m))];
         },
+        fetchPricesUsd: options.fetchPricesUsd,
         buildValuations: options.fetchPricesUsd
           ? async (reserves) => {
               try {

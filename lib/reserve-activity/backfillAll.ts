@@ -17,6 +17,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { buildReadOnlyProgram, discoverAllReserves } from "@ssr/sdk";
 import { syncReserveActivity } from "./indexer";
+import { healMissingVolumeUsd } from "./volumeUsd";
 import { getSql } from "./db";
 import type { ActivityCluster, ClusterTarget } from "./clusters";
 
@@ -126,6 +127,12 @@ export async function backfillAllReserveActivity(
           errors.push(`${target.cluster}: ${r.reserve}: ${syncError}`);
           break;
         }
+      }
+      // Value any mint/redeem/seed rows this Reserve's own page indexed
+      // without a price (volumeUsd.ts) -- the top-up above never revisits them.
+      if (target.fetchPricesUsd && Date.now() - startedAt <= budgetMs) {
+        const volume = await healMissingVolumeUsd(target.connection, program, r.reserve, target.cluster, target.fetchPricesUsd, 12);
+        if (volume.error) errors.push(`${target.cluster}: ${r.reserve}: volume valuation: ${volume.error}`);
       }
       // Cheap re-read of just this Reserve's cursor to see if the loop above
       // actually reached backfill_complete -- syncReserveActivity doesn't

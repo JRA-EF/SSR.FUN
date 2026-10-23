@@ -24,6 +24,7 @@ import { buildReadOnlyProgram } from "@ssr/sdk";
 import { syncReserveActivity } from "./indexer";
 import { getSql } from "./db";
 import { healMissingFeePayouts, readFeePayoutTotals, type FeePayoutTotals } from "./feePayouts";
+import { healMissingVolumeUsd, type FetchPricesUsd } from "./volumeUsd";
 import type { ActivityCluster } from "./clusters";
 
 export interface ActivityRouteRequest {
@@ -45,6 +46,8 @@ export interface ActivityRouteConfig {
   redact: (message: string) => string;
   /** Per-IP throttle hook (api/devnet/_lib/rateLimit.ts); returns false when the caller should get a 429. */
   allowRequest: (clientIp: string) => boolean;
+  /** Live USD price source (Mainnet only): when present, unvalued mint/redeem/seed rows are valued on read so All-Time Volume counts them (volumeUsd.ts). */
+  fetchPricesUsd?: FetchPricesUsd;
 }
 
 interface ActivityRow {
@@ -110,6 +113,10 @@ export async function handleReserveActivityRequest(req: ActivityRouteRequest, re
     syncError = result.syncError ? config.redact(result.syncError) : null;
     const heal = await healMissingFeePayouts(connection, program, reserve, config.cluster);
     if (heal.error && !syncError) syncError = config.redact(heal.error);
+    if (config.fetchPricesUsd) {
+      const volume = await healMissingVolumeUsd(connection, program, reserve, config.cluster, config.fetchPricesUsd, 4);
+      if (volume.error && !syncError) syncError = config.redact(volume.error);
+    }
   } catch (e) {
     // syncReserveActivity itself never throws, but guard the connection/
     // program construction above too -- a sync failure must never prevent

@@ -8,6 +8,7 @@
 // Configuration panel shows (`?scope=fees` for just those).
 import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
+import { fetchJupiterPrices } from "./asset-prices";
 import { handleReserveActivityRequest, type ActivityRouteRequest, type ActivityRouteResponse } from "../../lib/reserve-activity/activityRoute";
 
 const RPC_URL = resolveRpcUrl();
@@ -18,5 +19,6 @@ export default async function handler(req: ActivityRouteRequest, res: ActivityRo
     rpcUrl: RPC_URL,
     redact: redactRpcSecrets,
     allowRequest: (ip) => checkRateWindow(`mainnet-reserve-activity:${ip}`, 1_000, 5),
+    fetchPricesUsd: fetchJupiterPrices,
   });
 }

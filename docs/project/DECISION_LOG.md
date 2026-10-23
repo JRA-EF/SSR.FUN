@@ -7858,3 +7858,35 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0256
+
+```json
+{
+  "id": "DEC-0256",
+  "date": "2026-10-23",
+  "title": "All-Time Volume counts every mint, redemption and creation seed: rows indexed without a USD value are valued afterwards",
+  "status": "LIVE 2026-10-23 (prod + staging); the 28 Mainnet rows that had no value were valued once by hand the same day.",
+  "decision": "A Reserve's creation seed (reserveSeeded, the initial mint) already counted as mint volume, but only when its row carried a USD value. New lib/reserve-activity/volumeUsd.ts healMissingVolumeUsd finds a Reserve's mint/redeem/seed rows with amount_usd null, re-decodes each row's own transaction, and values the event's asset legs at the live Jupiter price (USDC $1; Jupiter also gives decimals, so no extra chain read). It runs on the Mainnet Manage activity read (up to 4 rows per read, newest first) and in the nightly KPI sweep (up to 12 per Reserve). It only fills a null, so an existing value is never re-priced (DEC-0176); a row where no leg can be priced stays null and is retried later instead of freezing a false $0.",
+  "context": "Creator, 2026-10-23: 'all time volume of a reserve needs to count the reserve creation initial mint too'. Live check: 14 of 40 Mainnet reserveSeeded rows (and 14 mint/redeem rows) had amount_usd null. Cause: the Manage page's activity read indexes new events with no valuation (it has no price source), and the sweep's top-up stops at signatures it already holds, so it never came back to value them. A creator opening their Reserve right after launch therefore froze the seed at $0.",
+  "rationale": "Valuing the event's own asset legs is exact for USDC and uses the same leg math the indexer uses; the price is the one at valuation time, the same frozen-at-first-valuation contract the indexer already has. Fixing it at the source (the read path) means a fresh launch's seed counts on its creator's first visit, not the next day.",
+  "alternativesConsidered": [
+    "Count seeds from raw Reserve Token amounts at current NAV -- rejected: different method from every other volume row, and NAV moves.",
+    "Give the Manage read a full valuation context -- rejected: needs a Reserve discovery read (extra RPC on a hot path); the leg valuation only needs prices.",
+    "Only rely on the nightly sweep -- rejected: up to a day with the seed missing."
+  ],
+  "impact": "Mainnet seed volume $467 -> $1,096; mint+redeem+seed volume about $1,100 -> $1,816; no row left unvalued. Each unvalued row costs one getTransaction, once.",
+  "affectedAreas": [
+    "lib/reserve-activity/volumeUsd.ts (new), activityRoute.ts, backfillAll.ts, clusters.ts",
+    "api/mainnet/reserve-activity.ts (passes fetchJupiterPrices)",
+    "tests/phase_seed_volume_valuation.ts (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Before: reserveSeeded 40 rows / 25 valued / $467.47; minted 28/21/$135.21; redeemed 35/29/$497.21.",
+    "After the one-off run: 40/40 $1,096.06; 28/28 $167.82; 35/35 $552.45. First pass valued 11 rows, the rest came back empty from Jupiter (rate limit) and were valued on a paced second pass.",
+    "Offline suite 1674 passing / 4 known failing; tsc clean (node + api projects)."
+  ]
+}
+```
