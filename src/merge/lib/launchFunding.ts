@@ -61,6 +61,8 @@ export interface PersistedAssetFunding {
   status: AssetFundingStatus;
   /** The last swap signature submitted for this asset, if any -- reconciled against real signature status on resume BEFORE any new swap is attempted. */
   lastSignature?: string;
+  /** lastSignature's blockhash expiry: past this block height a signature the chain does not know can never land. */
+  lastValidBlockHeight?: number;
   /** The real, settled post-funding balance once verified. */
   verifiedBalanceRaw?: string;
   /** The live-quoted target amount this asset was being funded toward. */

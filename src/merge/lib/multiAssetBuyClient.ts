@@ -41,7 +41,7 @@ import { computeSwapShortfallPct } from "./createReserveResume";
 import { advanceAssetFunding, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
 import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 import { shouldSubmitMint, buildBuyStateReport, countableAcquiredRaw, computeOwnerTokenDeltaRaw, type BuyStateReport, type TokenBalanceEntry } from "./multiAssetBuyPlan";
-import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
+import { AmbiguousConfirmationError, resolveSubmittedSignature, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
 import { recordMintDust } from "./recoveryRecords";
 
@@ -108,6 +108,8 @@ export interface PendingBuyState {
   preMintReserveTokenRaw: string;
   expectedNetReserveTokensRaw: string;
   lastMintSignature?: string;
+  /** lastMintSignature's blockhash expiry (see PersistedAssetFunding.lastValidBlockHeight). */
+  lastMintLastValidBlockHeight?: number;
 }
 
 const pendingBuyMapKey = (wallet: string, reserve: string) => `${wallet}:${reserve}`;
@@ -259,7 +261,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   } else {
     log("resuming a previously-started purchase", { startedAt: new Date(pending.startedAt).toISOString(), lastMintSignature: pending.lastMintSignature ?? null });
   }
-  const advanceLeg = (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw" | "acquiredRaw">>) => {
+  const advanceLeg = (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "lastValidBlockHeight" | "verifiedBalanceRaw" | "targetRaw" | "acquiredRaw">>) => {
     pending!.legFunding = advanceAssetFunding(pending!.legFunding, mint, to, extra);
     savePendingBuy(pending!);
   };
@@ -276,10 +278,12 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
 
   // Reconcile a previously-submitted mint signature whose confirmation was never seen.
   if (pending.lastMintSignature) {
-    const { value } = await withRateLimitRetry(() => params.connection.getSignatureStatuses([pending!.lastMintSignature!], { searchTransactionHistory: true }), 3, 500);
-    const st = value[0];
-    log("reconciling previously-submitted mint signature", { signature: pending.lastMintSignature, status: st?.confirmationStatus ?? "not-found", err: st?.err ?? null });
-    if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
+    const status = await resolveSubmittedSignature(params.connection, pending.lastMintSignature, pending.lastMintLastValidBlockHeight, pending.startedAt);
+    log("reconciling previously-submitted mint signature", { signature: pending.lastMintSignature, status });
+    if (status === "unknown") {
+      throw new MultiAssetBuyError(`Solana has not answered yet for your earlier mint (signature ${pending.lastMintSignature}), so nothing new was submitted. Wait a minute and press Mint again -- the earlier one is checked first and never repeated.`, null);
+    }
+    if (status === "confirmed") {
       await fetchOwnedBalanceRawSettled(params.connection, params.reserveTokenMint, owner, preMintBaseline);
       clearPendingBuy(ownerBase58, reserveBase58);
       return { signature: pending.lastMintSignature, reserveTokensRequested: params.reserveTokensRequested, requiredAmountsRaw: [], alreadyMinted: true };
@@ -293,10 +297,14 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     const persisted = pending.legFunding[asset.mint];
     if (!persisted?.lastSignature || !(persisted.status === "submitted" || persisted.status === "awaiting_signature")) continue;
     const signature = persisted.lastSignature;
-    const { value } = await withRateLimitRetry(() => params.connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), 3, 500);
-    const st = value[0];
-    log("reconciling previous swap signature", { mint: asset.mint, signature, status: st?.confirmationStatus ?? "not-found", err: st?.err ?? null });
-    if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
+    // Before 2026-10-23 a swap not found yet was reset and bought again even
+    // while still in flight; now it is waited for until it lands or expires.
+    const status = await resolveSubmittedSignature(params.connection, signature, persisted.lastValidBlockHeight, pending.startedAt);
+    log("reconciling previous swap signature", { mint: asset.mint, signature, status });
+    if (status === "unknown") {
+      throw new MultiAssetBuyError(`Solana has not answered yet for an earlier swap of this mint (signature ${signature}), so nothing new was submitted. Wait a minute and press Mint again -- the earlier swap is checked first and never repeated.`, null);
+    }
+    if (status === "confirmed") {
       const parsedTx = await withRateLimitRetry(() => params.connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }), 3, 750);
       if (!parsedTx?.meta) {
         throw new MultiAssetBuyError(
@@ -308,11 +316,11 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const newAcquired = acquiredRawOf(asset.mint) + (delta > 0n ? delta : 0n);
       log("previous swap reconciled as confirmed -- output counted, never repeated", { mint: asset.mint, signature, totalAcquiredRaw: newAcquired.toString() });
       advanceLeg(asset.mint, "confirmed", { acquiredRaw: newAcquired.toString() });
-    } else if (st?.err) {
-      log("previous swap definitively failed on-chain -- leg reset for a clean retry", { mint: asset.mint, signature, err: st.err });
+    } else if (status === "failed") {
+      log("previous swap definitively failed on-chain -- leg reset for a clean retry", { mint: asset.mint, signature });
       advanceLeg(asset.mint, "not_started");
     } else {
-      log("previous swap signature not found on-chain -- leg reset for a clean retry", { mint: asset.mint, signature });
+      log("previous swap expired without landing -- leg reset for a clean retry", { mint: asset.mint, signature });
       advanceLeg(asset.mint, "not_started");
     }
   }
@@ -443,6 +451,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const t = build.transactions[singleIdx];
       const { signature, outcome } = await submit(signedOf(singleIdx), t.lastValidBlockHeight, "your mint transaction", (sig) => {
         pending!.lastMintSignature = sig;
+        pending!.lastMintLastValidBlockHeight = t.lastValidBlockHeight;
         savePendingBuy(pending!);
       });
       throwOutcome(outcome, signature, "The mint transaction", " The mint was ONE atomic transaction, so nothing was swapped, deposited, or minted -- only the network fee was spent.");
@@ -471,7 +480,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
           if (s > 0) await new Promise((r) => setTimeout(r, 150 * s)); // stagger broadcasts
           advanceLeg(job.mint, "quoted", { targetRaw: (requiredAmountsRaw[job.legIndex] ?? 0n).toString() });
           advanceLeg(job.mint, "awaiting_signature");
-          const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `the swap for ${job.mint.slice(0, 4)}...${job.mint.slice(-4)}`, (sig) => advanceLeg(job.mint, "submitted", { lastSignature: sig }));
+          const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `the swap for ${job.mint.slice(0, 4)}...${job.mint.slice(-4)}`, (sig) => advanceLeg(job.mint, "submitted", { lastSignature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight }));
           if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
           if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
           if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
@@ -559,6 +568,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     for (let attempt = 0; ; attempt++) {
       const sent = await submit(mintSigned!, mintTx!.lastValidBlockHeight, "the mint that delivers your Reserve Tokens", (sig) => {
         pending!.lastMintSignature = sig;
+        pending!.lastMintLastValidBlockHeight = mintTx!.lastValidBlockHeight;
         savePendingBuy(pending!);
       });
       signature = sent.signature;

@@ -263,7 +263,10 @@ export async function sendAndConfirmWithRebroadcast(
 ): Promise<{ signature: string; outcome: ConfirmationOutcome }> {
   const rebroadcastEveryMs = opts.rebroadcastEveryMs ?? 3000;
   const intervalMs = opts.intervalMs ?? 1500;
-  const maxAttempts = opts.maxAttempts ?? 40;
+  // ~150 s+ of polling: always past a blockhash's ~60-90 s lifetime, so a
+  // healthy RPC ends in confirmed / failed / expired, never "unknown"
+  // (a transaction that simply outlived 40 polls was reported as unverifiable).
+  const maxAttempts = opts.maxAttempts ?? 100;
   const send = () => connection.sendRawTransaction(rawTransaction, { skipPreflight: true, maxRetries: 0 });
   const signature = await withRateLimitRetry(send, 4, 500);
   opts.onSubmitted?.(signature);
@@ -289,6 +292,58 @@ export async function sendAndConfirmWithRebroadcast(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return { signature, outcome: { status: "unknown" } };
+}
+
+// --- Resuming a previously-submitted transaction ----------------------------
+
+// A submitted transaction the chain has no record of is either still in flight
+// or expired: getSignatureStatuses answers null for both, forever for the
+// latter. Without telling them apart a redeem that expired unlanded was stuck
+// on "could not be verified yet" for good (live 2026-10-23, ALPHA). Records
+// saved before the expiry height was stored fall back to their age.
+export const LEGACY_PENDING_EXPIRY_MS = 10 * 60_000;
+
+/** Pure: whether a transaction unknown to the chain can no longer land. */
+export function unknownSignatureExpired(currentBlockHeight: number, lastValidBlockHeight: number | undefined, startedAt: number, now: number): boolean {
+  if (typeof lastValidBlockHeight === "number") return currentBlockHeight > lastValidBlockHeight;
+  return now - startedAt > LEGACY_PENDING_EXPIRY_MS;
+}
+
+export type SubmittedSignatureStatus = "confirmed" | "failed" | "expired" | "unknown";
+
+/**
+ * The status of a signature submitted in an earlier attempt (history
+ * searched). One the chain does not know is "expired" once it can no longer
+ * land (unknownSignatureExpired). Until then it is polled -- at most
+ * `maxWaitMs`, enough for any blockhash to run out -- so a resume waits for
+ * a transaction still in flight instead of stopping or resetting it. Returns
+ * "unknown" only when the RPC cannot answer in that time.
+ */
+export async function resolveSubmittedSignature(
+  connection: Connection,
+  signature: string,
+  lastValidBlockHeight: number | undefined,
+  startedAt: number,
+  opts: { maxWaitMs?: number; intervalMs?: number } = {},
+): Promise<SubmittedSignatureStatus> {
+  const maxWaitMs = opts.maxWaitMs ?? 120_000;
+  const intervalMs = opts.intervalMs ?? 2000;
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      // Height first: past the expiry, any landing sits in a block the status read below already covers.
+      const height = await withRateLimitRetry(() => connection.getBlockHeight("confirmed"), 3, 500);
+      const { value } = await withRateLimitRetry(() => connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), 3, 500);
+      const st = value[0];
+      if (st?.err) return "failed";
+      if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return "confirmed";
+      if (!st && unknownSignatureExpired(height, lastValidBlockHeight, startedAt, Date.now())) return "expired";
+    } catch {
+      // Inconclusive (transport / rate limit) -- keep going within the bound.
+    }
+    if (Date.now() - t0 >= maxWaitMs) return "unknown";
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 // --- Duplicate-submission gating (pure, unit-testable) ----------------------

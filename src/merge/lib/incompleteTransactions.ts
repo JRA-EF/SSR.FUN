@@ -37,7 +37,7 @@ import { clearPendingBuy, type PendingBuyState } from "./multiAssetBuyClient";
 import { clearPendingSell, type PendingSellState } from "./multiAssetSellClient";
 import { computeOwnerTokenDeltaRaw, type TokenBalanceEntry } from "./multiAssetBuyPlan";
 import { fetchJupiterSwapQuote, JupiterSwapNotLandedError, submitSignedJupiterSwap, type JupiterSwapQuote } from "./jupiterSwapClient";
-import { withRateLimitRetry } from "./rpcResilience";
+import { resolveSubmittedSignature, withRateLimitRetry } from "./rpcResilience";
 import { buildUnwrapSolInstructions } from "./singleTxBuy";
 import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 
@@ -231,7 +231,7 @@ function readAllPending<T extends { wallet: string; reserve: string }>(key: stri
 
 async function inspectRedeem(connection: Connection, p: PendingSellState, held: Record<string, { raw: bigint; decimals: number }>): Promise<IncompleteTransaction | null> {
   let redeemLanded = p.redeemConfirmed === true;
-  if (p.redeemSignature && !redeemLanded) redeemLanded = (await signatureStatus(connection, p.redeemSignature)) === "confirmed";
+  if (p.redeemSignature && !redeemLanded) redeemLanded = (await resolveSubmittedSignature(connection, p.redeemSignature, p.redeemLastValidBlockHeight, p.startedAt)) === "confirmed";
   // A redeem that never landed moved nothing: there is nothing to recover.
   if (!redeemLanded || !p.redeemSignature) return null;
   const payout = await ownerDeltasFromSignature(connection, p.redeemSignature, p.wallet);
@@ -240,9 +240,9 @@ async function inspectRedeem(connection: Connection, p: PendingSellState, held: 
   const legSwaps = { ...p.legSwaps };
   for (const [mint, leg] of Object.entries(legSwaps)) {
     if (leg.confirmed || !leg.signature) continue;
-    const st = await signatureStatus(connection, leg.signature);
+    const st = await resolveSubmittedSignature(connection, leg.signature, leg.lastValidBlockHeight, p.startedAt);
     if (st === "confirmed") legSwaps[mint] = { ...leg, confirmed: true };
-    else if (st === "unknown") throw new Error(`A swap from this redemption could not be verified yet (${leg.signature}). Try again in a moment.`);
+    else if (st === "unknown") throw new Error(`Solana has not answered yet for a swap from this redemption (${leg.signature}). Wait a minute and try again.`);
   }
   const attributed = redeemAttribution(payout, legSwaps);
   const left = computeLeftovers(attributed, sweptByMint(readSweep("redeem", p.wallet, p.reserve)), Object.fromEntries(Object.entries(held).map(([m, h]) => [m, h.raw])));

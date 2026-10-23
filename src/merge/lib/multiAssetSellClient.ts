@@ -26,7 +26,7 @@ import type { WalletContextState } from "@solana/wallet-adapter-react";
 import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, TOKEN_PROGRAM_ID, type ZapAssetLeg } from "@ssr/sdk";
 import { JupiterSwapNotLandedError, partitionSwapOutcomes, SWAP_AUTO_RETRY_LIMIT } from "./jupiterSwapClient";
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
-import { AmbiguousConfirmationError, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
+import { AmbiguousConfirmationError, resolveSubmittedSignature, sendAndConfirmWithRebroadcast, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
 import { waitForLookupTable, type BuiltTransaction } from "./multiAssetBuyClient";
 import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
@@ -54,17 +54,12 @@ export interface MultiAssetSellResult {
   usdcReceivedRaw: bigint;
 }
 
-// A submitted transaction the chain has no record of is either still in flight
-// or expired: getSignatureStatuses answers null for both, forever for the
-// latter. Without telling them apart a sale whose redeem expired unlanded was
-// stuck on "could not be verified yet" for good (live 2026-10-23, ALPHA).
-// Records saved before the expiry height was stored fall back to the sale's age.
-export const LEGACY_PENDING_EXPIRY_MS = 10 * 60_000;
+/** A redeem that expired unlanded (nothing moved) is rebuilt and re-signed this many times before the redemption stops. */
+export const REDEEM_AUTO_RETRY_LIMIT = 1;
 
-/** Pure: whether a transaction unknown to the chain can no longer land. */
-export function unknownSignatureExpired(currentBlockHeight: number, lastValidBlockHeight: number | undefined, startedAt: number, now: number): boolean {
-  if (typeof lastValidBlockHeight === "number") return currentBlockHeight > lastValidBlockHeight;
-  return now - startedAt > LEGACY_PENDING_EXPIRY_MS;
+/** The message for a redeem the network never included: nothing moved, pressing Redeem again is safe. */
+export function redeemExpiredMessage(signature: string): string {
+  return `The network did not include your redemption in time (it expired after about a minute -- usually a slow wallet approval or a busy network). Nothing was redeemed or moved. Press Redeem again. Signature: ${signature}.`;
 }
 
 // --- Per-sale persistence ----------------------------------------------------
@@ -242,29 +237,28 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     return { signature, reserveTokensRedeemed: reserveTokensToRedeem, usdcReceivedRaw: gained };
   };
 
-  const reconcileSignature = async (signature: string, lastValidBlockHeight: number | undefined): Promise<"confirmed" | "failed" | "expired" | "unknown"> => {
-    // Height first: past the expiry, any landing sits in a block the status read below already covers.
-    const height = await withRateLimitRetry(() => params.connection.getBlockHeight("confirmed"), 3, 500);
-    const { value } = await withRateLimitRetry(() => params.connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), 3, 500);
-    const st = value[0];
-    if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return "confirmed";
-    if (st?.err) return "failed";
-    if (!st && unknownSignatureExpired(height, lastValidBlockHeight, pending!.startedAt, Date.now())) return "expired";
-    return "unknown";
+  // A signature from an earlier attempt still in flight is waited for (about
+  // a minute at most) rather than stopping the redemption; one that expired
+  // unlanded is dropped and the step rebuilt.
+  const reconcileSignature = (signature: string, lastValidBlockHeight: number | undefined, what: string) => {
+    params.onProgress?.({ phase: "confirming", what, signature });
+    return resolveSubmittedSignature(params.connection, signature, lastValidBlockHeight, pending!.startedAt);
+  };
+  const forgetRedeemSignature = () => {
+    delete pending!.redeemSignature;
+    delete pending!.redeemLastValidBlockHeight;
+    savePendingSell(pending!);
   };
 
   // --- The redeem: exactly once. ---
   let redeemDone = pending.redeemConfirmed === true;
   if (!redeemDone && pending.redeemSignature) {
-    const status = await reconcileSignature(pending.redeemSignature, pending.redeemLastValidBlockHeight);
+    const status = await reconcileSignature(pending.redeemSignature, pending.redeemLastValidBlockHeight, "your earlier redeem");
     log("reconciling previous redeem signature", { signature: pending.redeemSignature, status });
     if (status === "confirmed") redeemDone = true;
-    else if (status === "expired") {
-      delete pending.redeemSignature;
-      delete pending.redeemLastValidBlockHeight;
-      savePendingSell(pending);
-    } else if (status === "unknown") {
-      throw new Error(`A previous redeem transaction for this redemption could not be verified yet (signature ${pending.redeemSignature}). Nothing was submitted -- try again in a moment; a landed redeem will be counted, never repeated.`);
+    else if (status === "expired") forgetRedeemSignature();
+    else if (status === "unknown") {
+      throw new Error(`Solana has not answered yet for your earlier redeem (signature ${pending.redeemSignature}), so nothing new was submitted. Wait a minute and press Redeem again -- the earlier one is checked first and never repeated.`);
     }
   }
   if (!redeemDone && BigInt(pending.preRedeemRtRaw) - preRedeemRtRaw >= reserveTokensToRedeem) {
@@ -293,7 +287,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     const persisted = pending.legSwaps[mint];
     if (persisted?.confirmed) continue;
     if (persisted?.signature) {
-      const status = await reconcileSignature(persisted.signature, persisted.lastValidBlockHeight);
+      const status = await reconcileSignature(persisted.signature, persisted.lastValidBlockHeight, "an earlier swap into USDC");
       log("reconciling previous sell-swap signature", { mint, signature: persisted.signature, status });
       if (status === "confirmed") {
         pending.legSwaps[mint] = { ...persisted, confirmed: true };
@@ -301,7 +295,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
         continue;
       }
       if (status === "unknown") {
-        throw new Error(`A previous swap for this redemption could not be verified yet (signature ${persisted.signature}). Nothing was submitted -- try again in a moment; a landed swap will be counted, never repeated.`);
+        throw new Error(`Solana has not answered yet for an earlier swap of this redemption (signature ${persisted.signature}), so nothing new was submitted. Wait a minute and press Redeem again -- the earlier swap is checked first and never repeated.`);
       }
     }
     remainingLegs.push(mint);
@@ -337,13 +331,12 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     });
   const throwOutcome = (outcome: ConfirmationOutcome, signature: string, what: string, note: string) => {
     if (outcome.status === "failed") throw new Error(`${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))}${note} Signature: ${signature}.`);
-    if (outcome.status === "expired") throw new Error(`${what} expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+    if (outcome.status === "expired") throw new Error(what === "redeem" ? redeemExpiredMessage(signature) : `${what} expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
     if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
   };
   const decode = (t: BuiltTransaction) => VersionedTransaction.deserialize(Buffer.from(t.base64, "base64"));
 
-  // --- ONE server build. ---
-  params.onProgress?.({ phase: "building" });
+  // --- ONE server build (rebuilt if the redeem expires unlanded). ---
   const buildRequest = (extra: Partial<BuildSellRequest> = {}): BuildSellRequest => ({
     reserve: reserveBase58,
     wallet: ownerBase58,
@@ -353,61 +346,80 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     ...(redeemDone && remainingLegs.length < nonUsdcMints.length ? { legsOnly: remainingLegs } : {}),
     ...extra,
   });
-  const build = await requestSellBuild(buildRequest());
-  log("server build", { mode: build.mode, transactions: build.transactions.map((t) => ({ kind: t.kind, mint: t.mint, bytes: t.bytes })), timings: build.timings, quotedUsdcOutRaw: build.plan.quotedUsdcOutRaw });
+  // A redeem the network never included moved nothing -- usually the wallet
+  // approval outlived the blockhash, or the transaction was dropped. Rather
+  // than end the redemption (and, before 2026-10-23, leave a dead signature
+  // that blocked every retry), it is rebuilt and re-signed.
+  const redeemExpired = (outcome: ConfirmationOutcome, signature: string, attempt: number): boolean => {
+    if (outcome.status !== "expired") return false;
+    forgetRedeemSignature();
+    if (attempt >= REDEEM_AUTO_RETRY_LIMIT) return false;
+    log("redeem expired before landing -- rebuilding and re-signing", { signature, attempt: attempt + 1 });
+    return true;
+  };
+  let build!: BuildSellResponse;
+  let signed!: VersionedTransaction[];
+  for (let attempt = 0; ; attempt++) {
+    params.onProgress?.({ phase: "building" });
+    build = await requestSellBuild(buildRequest());
+    log("server build", { mode: build.mode, transactions: build.transactions.map((t) => ({ kind: t.kind, mint: t.mint, bytes: t.bytes })), timings: build.timings, quotedUsdcOutRaw: build.plan.quotedUsdcOutRaw });
 
-  if (build.mode === "single") params.onProgress?.({ phase: "single-transaction" });
-  else
-    params.onProgress?.({
-      phase: "signing-batch",
-      swaps: build.transactions.filter((t) => t.kind === "swap").length,
-      setup: build.transactions.filter((t) => t.kind === "alt-create" || t.kind === "alt-extend").length,
-      total: build.transactions.length,
-    });
-  const signed = await signMany(build.transactions.map(decode));
+    if (build.mode === "single") params.onProgress?.({ phase: "single-transaction" });
+    else
+      params.onProgress?.({
+        phase: "signing-batch",
+        swaps: build.transactions.filter((t) => t.kind === "swap").length,
+        setup: build.transactions.filter((t) => t.kind === "alt-create" || t.kind === "alt-extend").length,
+        total: build.transactions.length,
+      });
+    signed = await signMany(build.transactions.map(decode));
 
-  // Table setup first (if prepended).
-  const altIdx = build.transactions.map((t, i) => (t.kind === "alt-create" || t.kind === "alt-extend" ? i : -1)).filter((i) => i >= 0);
-  for (const i of altIdx) {
-    const t = build.transactions[i];
-    const { signature, outcome } = await submit(signed[i], t.lastValidBlockHeight, t.kind === "alt-create" ? "the lookup table creation" : "the lookup table extension");
-    throwOutcome(outcome, signature, "The lookup-table setup", "");
-  }
-  if (altIdx.length > 0 && build.altToRegister) {
-    await waitForLookupTable(params.connection, new PublicKey(build.altToRegister));
-    await registerReserveAlt(reserveBase58, build.altToRegister).catch((e) => log("trading table registration deferred (not fatal)", { error: String(e) }));
-  }
+    // Table setup first (if prepended).
+    const altIdx = build.transactions.map((t, i) => (t.kind === "alt-create" || t.kind === "alt-extend" ? i : -1)).filter((i) => i >= 0);
+    for (const i of altIdx) {
+      const t = build.transactions[i];
+      const { signature, outcome } = await submit(signed[i], t.lastValidBlockHeight, t.kind === "alt-create" ? "the lookup table creation" : "the lookup table extension");
+      throwOutcome(outcome, signature, "The lookup-table setup", "");
+    }
+    if (altIdx.length > 0 && build.altToRegister) {
+      await waitForLookupTable(params.connection, new PublicKey(build.altToRegister));
+      await registerReserveAlt(reserveBase58, build.altToRegister).catch((e) => log("trading table registration deferred (not fatal)", { error: String(e) }));
+    }
 
-  // Mode "single": one atomic transaction.
-  const singleIdx = build.transactions.findIndex((t) => t.kind === "single");
-  if (build.mode === "single" && singleIdx >= 0) {
-    const t = build.transactions[singleIdx];
-    const { signature, outcome } = await submit(signed[singleIdx], t.lastValidBlockHeight, "your redemption transaction", (sig) => {
-      pending!.redeemSignature = sig;
-      pending!.redeemLastValidBlockHeight = t.lastValidBlockHeight;
-      savePendingSell(pending!);
-    });
-    throwOutcome(outcome, signature, "The redemption transaction", " The redemption was ONE atomic transaction, so nothing was redeemed or swapped -- only the network fee was spent.");
-    return await verifyDelivery(signature);
-  }
+    // Mode "single": one atomic transaction.
+    const singleIdx = build.transactions.findIndex((t) => t.kind === "single");
+    if (build.mode === "single" && singleIdx >= 0) {
+      const t = build.transactions[singleIdx];
+      const { signature, outcome } = await submit(signed[singleIdx], t.lastValidBlockHeight, "your redemption transaction", (sig) => {
+        pending!.redeemSignature = sig;
+        pending!.redeemLastValidBlockHeight = t.lastValidBlockHeight;
+        savePendingSell(pending!);
+      });
+      if (redeemExpired(outcome, signature, attempt)) continue;
+      throwOutcome(outcome, signature, "redeem", " The redemption was ONE atomic transaction, so nothing was redeemed or swapped -- only the network fee was spent.");
+      return await verifyDelivery(signature);
+    }
 
-  // Mode "batch": the redeem first, confirmed; then every swap in parallel.
-  const redeemIdx = build.transactions.findIndex((t) => t.kind === "redeem");
-  if (!redeemDone && redeemIdx >= 0) {
-    params.onProgress?.({ phase: "redeeming" });
-    const t = build.transactions[redeemIdx];
-    const { signature, outcome } = await submit(signed[redeemIdx], t.lastValidBlockHeight, "the redeem of your Reserve Tokens", (sig) => {
-      pending!.redeemSignature = sig;
-      pending!.redeemLastValidBlockHeight = t.lastValidBlockHeight;
-      savePendingSell(pending!);
-    });
-    throwOutcome(outcome, signature, "The redeem", "");
-    pending.redeemConfirmed = true;
-    savePendingSell(pending);
-    lastSignature = signature;
-    redeemDone = true;
-  } else if (!redeemDone) {
-    throw new Error("The server did not return a redeem transaction for a redemption whose redeem has not landed yet.");
+    // Mode "batch": the redeem first, confirmed; then every swap in parallel.
+    const redeemIdx = build.transactions.findIndex((t) => t.kind === "redeem");
+    if (!redeemDone && redeemIdx >= 0) {
+      params.onProgress?.({ phase: "redeeming" });
+      const t = build.transactions[redeemIdx];
+      const { signature, outcome } = await submit(signed[redeemIdx], t.lastValidBlockHeight, "the redeem of your Reserve Tokens", (sig) => {
+        pending!.redeemSignature = sig;
+        pending!.redeemLastValidBlockHeight = t.lastValidBlockHeight;
+        savePendingSell(pending!);
+      });
+      if (redeemExpired(outcome, signature, attempt)) continue;
+      throwOutcome(outcome, signature, "redeem", "");
+      pending.redeemConfirmed = true;
+      savePendingSell(pending);
+      lastSignature = signature;
+      redeemDone = true;
+    } else if (!redeemDone) {
+      throw new Error("The server did not return a redeem transaction for a redemption whose redeem has not landed yet.");
+    }
+    break;
   }
 
   type SwapJob = { tx: BuiltTransaction; signed: VersionedTransaction; mint: string };
