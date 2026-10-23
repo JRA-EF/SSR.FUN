@@ -54,6 +54,19 @@ export interface MultiAssetSellResult {
   usdcReceivedRaw: bigint;
 }
 
+// A submitted transaction the chain has no record of is either still in flight
+// or expired: getSignatureStatuses answers null for both, forever for the
+// latter. Without telling them apart a sale whose redeem expired unlanded was
+// stuck on "could not be verified yet" for good (live 2026-10-23, ALPHA).
+// Records saved before the expiry height was stored fall back to the sale's age.
+export const LEGACY_PENDING_EXPIRY_MS = 10 * 60_000;
+
+/** Pure: whether a transaction unknown to the chain can no longer land. */
+export function unknownSignatureExpired(currentBlockHeight: number, lastValidBlockHeight: number | undefined, startedAt: number, now: number): boolean {
+  if (typeof lastValidBlockHeight === "number") return currentBlockHeight > lastValidBlockHeight;
+  return now - startedAt > LEGACY_PENDING_EXPIRY_MS;
+}
+
 // --- Per-sale persistence ----------------------------------------------------
 const PENDING_SELL_KEY = "ssr_pending_sells_v1";
 
@@ -67,9 +80,11 @@ export interface PendingSellState {
   /** The seller's USDC balance when the sale began -- the final received figure is measured against this. */
   preSaleUsdcRaw: string;
   redeemSignature?: string;
+  /** The redeem transaction's blockhash expiry: past this block height a signature the chain does not know can never land. */
+  redeemLastValidBlockHeight?: number;
   redeemConfirmed?: boolean;
-  /** Per-leg swap progress: mint -> last submitted signature + whether it confirmed. */
-  legSwaps: Record<string, { signature?: string; confirmed?: boolean }>;
+  /** Per-leg swap progress: mint -> last submitted signature (+ its blockhash expiry) + whether it confirmed. */
+  legSwaps: Record<string, { signature?: string; lastValidBlockHeight?: number; confirmed?: boolean }>;
   // Records written by app versions before DEC-0229 may carry extra fields
   // from the removed manager tax step. Nothing reads them; they ride along
   // untouched until the sale's record is cleared.
@@ -227,21 +242,28 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     return { signature, reserveTokensRedeemed: reserveTokensToRedeem, usdcReceivedRaw: gained };
   };
 
-  const reconcileSignature = async (signature: string): Promise<"confirmed" | "failed" | "unknown"> => {
+  const reconcileSignature = async (signature: string, lastValidBlockHeight: number | undefined): Promise<"confirmed" | "failed" | "expired" | "unknown"> => {
+    // Height first: past the expiry, any landing sits in a block the status read below already covers.
+    const height = await withRateLimitRetry(() => params.connection.getBlockHeight("confirmed"), 3, 500);
     const { value } = await withRateLimitRetry(() => params.connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), 3, 500);
     const st = value[0];
     if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return "confirmed";
     if (st?.err) return "failed";
+    if (!st && unknownSignatureExpired(height, lastValidBlockHeight, pending!.startedAt, Date.now())) return "expired";
     return "unknown";
   };
 
   // --- The redeem: exactly once. ---
   let redeemDone = pending.redeemConfirmed === true;
   if (!redeemDone && pending.redeemSignature) {
-    const status = await reconcileSignature(pending.redeemSignature);
+    const status = await reconcileSignature(pending.redeemSignature, pending.redeemLastValidBlockHeight);
     log("reconciling previous redeem signature", { signature: pending.redeemSignature, status });
     if (status === "confirmed") redeemDone = true;
-    else if (status === "unknown") {
+    else if (status === "expired") {
+      delete pending.redeemSignature;
+      delete pending.redeemLastValidBlockHeight;
+      savePendingSell(pending);
+    } else if (status === "unknown") {
       throw new Error(`A previous redeem transaction for this redemption could not be verified yet (signature ${pending.redeemSignature}). Nothing was submitted -- try again in a moment; a landed redeem will be counted, never repeated.`);
     }
   }
@@ -271,7 +293,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     const persisted = pending.legSwaps[mint];
     if (persisted?.confirmed) continue;
     if (persisted?.signature) {
-      const status = await reconcileSignature(persisted.signature);
+      const status = await reconcileSignature(persisted.signature, persisted.lastValidBlockHeight);
       log("reconciling previous sell-swap signature", { mint, signature: persisted.signature, status });
       if (status === "confirmed") {
         pending.legSwaps[mint] = { ...persisted, confirmed: true };
@@ -362,6 +384,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     const t = build.transactions[singleIdx];
     const { signature, outcome } = await submit(signed[singleIdx], t.lastValidBlockHeight, "your redemption transaction", (sig) => {
       pending!.redeemSignature = sig;
+      pending!.redeemLastValidBlockHeight = t.lastValidBlockHeight;
       savePendingSell(pending!);
     });
     throwOutcome(outcome, signature, "The redemption transaction", " The redemption was ONE atomic transaction, so nothing was redeemed or swapped -- only the network fee was spent.");
@@ -375,6 +398,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
     const t = build.transactions[redeemIdx];
     const { signature, outcome } = await submit(signed[redeemIdx], t.lastValidBlockHeight, "the redeem of your Reserve Tokens", (sig) => {
       pending!.redeemSignature = sig;
+      pending!.redeemLastValidBlockHeight = t.lastValidBlockHeight;
       savePendingSell(pending!);
     });
     throwOutcome(outcome, signature, "The redeem", "");
@@ -395,7 +419,7 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
         params.onProgress?.({ phase: "swapping", mint: job.mint, index: s, total: jobs.length });
         if (s > 0) await new Promise((r) => setTimeout(r, 150 * s));
         const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `swapping ${job.mint.slice(0, 4)}...${job.mint.slice(-4)} into USDC`, (sig) => {
-          pending!.legSwaps[job.mint] = { signature: sig };
+          pending!.legSwaps[job.mint] = { signature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight };
           savePendingSell(pending!);
         });
         if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
