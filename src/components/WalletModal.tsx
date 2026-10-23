@@ -7,6 +7,7 @@ import type { WalletProviderId } from '@/lib/types'
 import { useStore } from '../state/store'
 import { IS_MAINNET } from '@/lib/solana-config'
 import { DEMO_WALLET_ADDRESS, isDesignDemoEnabled, setDemoWalletConnected } from '@/lib/designDemo'
+import { METAMASK_ENABLED } from '@/lib/metamaskFeature'
 
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
@@ -35,13 +36,14 @@ interface WalletOption {
  *  - Backpack: Backpack-Icon.svg, Backpack Media Kit linked from backpack.app/media-kit (their store icon is this red mark on white)
  *  - MetaMask: MetaMask-icon-fox.svg, metamask.io/assets */
 
-// Alphabetical order.
-const WALLET_OPTIONS: WalletOption[] = [
+// Alphabetical order. MetaMask only when METAMASK_ENABLED (off on production).
+const ALL_WALLET_OPTIONS: WalletOption[] = [
   { id: 'backpack', name: 'Backpack', color: '#FFFFFF', logo: '/wallets/backpack.svg', logoFit: 'mark', installUrl: 'https://backpack.app/' },
   { id: 'metamask', name: 'MetaMask', color: '#FFFFFF', logo: '/wallets/metamask.svg', logoFit: 'mark', installUrl: 'https://metamask.io/' },
   { id: 'phantom', name: 'Phantom', color: '#AB9FF2', logo: '/wallets/phantom.svg', logoFit: 'bleed', installUrl: 'https://phantom.app/' },
   { id: 'solflare', name: 'Solflare', color: '#FFEF46', logo: '/wallets/solflare.svg', logoFit: 'bleed', installUrl: 'https://solflare.com/' },
 ]
+const WALLET_OPTIONS = ALL_WALLET_OPTIONS.filter(opt => METAMASK_ENABLED || opt.id !== 'metamask')
 
 /** Wallet tile: the company's official logo, the same whether or not the
  *  extension is installed. */

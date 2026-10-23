@@ -4,6 +4,10 @@ import type { WalletError } from "@solana/wallet-adapter-base";
 import { SOLANA_RPC_URL } from "./solana-config";
 import { coalescingRpcFetch } from "./clientRpcCache";
 import { useAppStore } from "@/store/useAppStore";
+import { WALLET_NAME_STORAGE_KEY, forgetDisabledWalletChoice } from "./metamaskFeature";
+
+// Before the provider mounts, so autoConnect never sees a disabled wallet.
+forgetDisabledWalletChoice();
 
 /**
  * Real Solana wallet connectivity for the DevNet testing phase. `wallets={[]}`
@@ -36,7 +40,7 @@ export function SolanaProviders({ children }: { children: ReactNode }) {
           installed wallet matches first -- the most plausible in-browser
           explanation for the 2026-09-11 "Solflare connected, Phantom opened"
           report, since no code in this repo picks a provider itself. */}
-      <WalletProvider wallets={wallets} autoConnect onError={onError} localStorageKey="ssr.fun:walletName">
+      <WalletProvider wallets={wallets} autoConnect onError={onError} localStorageKey={WALLET_NAME_STORAGE_KEY}>
         {children}
       </WalletProvider>
     </ConnectionProvider>
