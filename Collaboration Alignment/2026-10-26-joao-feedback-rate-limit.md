@@ -3,7 +3,7 @@
 - **Date:** 2026-10-26
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `main` (follow-up to the in-app feedback entry of the same day)
-- **Deployed to:** production (deploy id in the commit that follows). Staging has feedback switched off, so nothing changes there.
+- **Deployed to:** production `dpl_HCqAdtWumjFCiuRiC6i5N8pGE7Ke` (ssr.fun, main ea593e9). Staging has feedback switched off, so nothing changes there.
 - **Decision log:** DEC-0260
 
 ## What shipped
