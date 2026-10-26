@@ -11,7 +11,7 @@
 // Deploy -> New deployment -> Web app, and put the /exec URL in the Vercel
 // env FEEDBACK_SHEET_WEBHOOK_URL. See tools/feedback-sheet/README.md.
 
-var SHEET_ID = '1cUIdeTSDXWCrr-2ueiq0AvjXN0hAYc-T0cp6N71Zf3U';
+var SHEET_ID = '1CcPwOu3bZqECxNbE4neOkEeBY0mX1UD70SvBnB08Ygc'; // 'SSR.FUN feedback sheet'
 var SNAPSHOT_FOLDER_ID = '1jYSgFDtBzItcoSdnSlaxJgZ4asVxWo98';
 var HEADERS = ['Received (UTC)', 'Rating', 'Trigger', 'After action', 'Explanation', 'Snapshot', 'Page', 'Site', 'Wallet', 'Browser', 'ID'];
 var IMAGE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
@@ -26,6 +26,12 @@ function safe(v) {
   return /^[=+\-@]/.test(s) ? "'" + s : s;
 }
 
+// Opening the /exec URL in a browser: a health check, and how the owner grants
+// the script its Sheets/Drive permission the first time.
+function doGet() {
+  return reply({ ok: true, service: 'ssr-fun-feedback' });
+}
+
 function doPost(e) {
   var body;
   try {
@@ -33,7 +39,10 @@ function doPost(e) {
   } catch (err) {
     return reply({ ok: false, error: 'bad json' });
   }
-  var secret = PropertiesService.getScriptProperties().getProperty('FEEDBACK_SECRET');
+  // Script Property FEEDBACK_SECRET; a deploy-time Secret.gs (never committed)
+  // may define FEEDBACK_SECRET_INLINE instead.
+  var secret = PropertiesService.getScriptProperties().getProperty('FEEDBACK_SECRET') ||
+    (typeof FEEDBACK_SECRET_INLINE === 'string' ? FEEDBACK_SECRET_INLINE : '');
   if (!secret || body.secret !== secret) return reply({ ok: false, error: 'unauthorized' });
 
   var rating = Number(body.rating);
