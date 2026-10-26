@@ -50,7 +50,8 @@ export default async function handler(req: Req, res: Res) {
   }
 
   const parsed = parseExperience(parseBody(req))
-  if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return }
+  // Explicit `=== false`: Vercel's build typecheck does not narrow on `!parsed.ok`.
+  if (parsed.ok === false) { res.status(400).json({ error: parsed.error }); return }
   const fb = parsed.value
 
   const ip = header(req, 'x-forwarded-for').split(',')[0].trim() || 'unknown'
