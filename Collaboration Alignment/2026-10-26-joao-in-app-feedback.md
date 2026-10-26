@@ -3,7 +3,7 @@
 - **Date:** 2026-10-26
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `feat/user-feedback` (cut from main 15e59c8), not merged into main yet
-- **Deployed to:** staging (strategic-super-reserve.fun), deploy id in the follow-up commit. Not production.
+- **Deployed to:** staging `dpl_8jW8KbkfcGguLnWK2HoKdv4ENscz` (strategic-super-reserve.fun, bundle assets/main-BwvjRTNI.js), branch @ 5276d46. Not production.
 - **Decision log:** DEC-0258
 
 ## What shipped
