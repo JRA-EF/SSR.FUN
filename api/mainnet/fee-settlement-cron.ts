@@ -111,7 +111,7 @@ import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience
 import { findSharingPools, runBasketFeedForPool, type BasketFeedResult } from "../../lib/mainnet/basketFeed";
 import { fetchJupiterPrices } from "./asset-prices";
 import { recordAlert } from "../../lib/ops-alerts/alerts";
-import { KEEPER_LOW_SOL } from "../../lib/ops-alerts/alertsPure";
+import { isTransientRpcError, KEEPER_LOW_SOL } from "../../lib/ops-alerts/alertsPure";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -562,6 +562,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           results.push(result);
           continue;
         }
+        // DEC-0262: a few September Reserves have a FeeSettlement account that was
+        // never filled in (reserve and bump all zero), so distribute fails its seeds
+        // check every run (live 17:15 UTC 2026-10-26, Reserve …cWD7z, 0.00009 USDC).
+        // Nothing can settle there; skip instead of failing (and alerting) hourly.
+        const feeSettlementInfo = await connection.getAccountInfo(findFeeSettlement(reservePk, PROGRAM_ID)[0]);
+        if (!feeSettlementInfo || !feeSettlementInfo.data.subarray(9, 41).equals(reservePk.toBuffer())) {
+          result.distributeSkipped = "FeeSettlement account not linked to this Reserve (legacy, cannot settle)";
+          results.push(result);
+          continue;
+        }
         const [managerFeeRecipientsAddr] = findManagerFeeRecipients(reservePk, PROGRAM_ID);
         const recipientsAccount = await program.account.managerFeeRecipients.fetchNullable(managerFeeRecipientsAddr);
         const managerRecipients = recipientsAccount
@@ -709,13 +719,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   // DEC-0261: every job failure is logged and alerted (repeats grouped by lib/ops-alerts).
+  // DEC-0262: one-off RPC hiccups retry next run and are not alerted; a repeat of
+  // the same keeper failure posts at most every 6 hours (the job runs hourly).
   const failures = [
     ...results.filter((r) => r.error).map((r) => ({ step: "settlement", reserve: r.reserve, message: r.error! })),
     ...accruals.filter((r) => r.error).map((r) => ({ step: "accrual", reserve: r.reserve, message: r.error! })),
     ...transferFeeResults.filter((r) => r.error).map((r) => ({ step: "transfer-fees", reserve: r.reserve, message: r.error! })),
     ...basketFeedResults.filter((r) => r.error).map((r) => ({ step: "basket-feed", reserve: r.reserve, message: r.error! })),
   ];
-  for (const f of failures) await recordAlert({ source: "keeper", ...f });
+  for (const f of failures) if (!isTransientRpcError(f.message)) await recordAlert({ source: "keeper", ...f }, { quietMinutes: 360 });
 
   res.status(200).json({
     dryRun: false,

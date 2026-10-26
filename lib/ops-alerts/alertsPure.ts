@@ -43,6 +43,14 @@ export function isUserCancel(message: string): boolean {
     || m.includes("transaction cancelled") || m.includes("approval denied") || m.includes("cancelled in wallet");
 }
 
+/** RPC hiccups that the next hourly keeper run retries on its own (DEC-0262): logged in the run result, never alerted. */
+export function isTransientRpcError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("block not available") || m.includes("failed to get block time") || /\b429\b/.test(m) || m.includes("too many requests")
+    || m.includes("fetch failed") || m.includes("econnreset") || m.includes("etimedout") || m.includes("socket hang up")
+    || m.includes("blockhash not found") || m.includes("block height exceeded") || m.includes("503 service unavailable") || m.includes("502 bad gateway");
+}
+
 /** Strip what varies between otherwise identical failures (numbers, addresses, signatures) so repeats group together. */
 export function normalizeMessage(message: string): string {
   return message

@@ -8054,3 +8054,20 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0262
+
+```json
+{
+  "id": "DEC-0262",
+  "date": "2026-10-26",
+  "title": "Keeper alert noise: skip legacy unlinked FeeSettlement accounts, keeper repeats every 6 h, one-off RPC errors not alerted",
+  "status": "Staging then production 2026-10-26.",
+  "decision": "fee-settlement-cron: before distribute_fee_usdc, read the Reserve's FeeSettlement account and skip (distributeSkipped) when its reserve field is not this Reserve. Keeper job failures alert with a 6-hour quiet window (the job runs hourly). isTransientRpcError (block not available, 429, fetch failed, connection resets, blockhash expiry, 502/503) keeps one-off RPC hiccups out of Telegram; they stay in the run result and retry next run.",
+  "context": "First live alerts, 17:15 UTC 2026-10-26: Reserve uA3s...cWD7z (September) has a FeeSettlement account with reserve and bump all zero, so distribute fails ConstraintSeeds (2006) every hour over 0.00009 USDC staged -- it had failed silently since at least 2026-10-21 and would post ~24 times a day. Same run: a one-off 'Block not available' from the basket feed. Not caused by DEC-0257. Creator: \"fix what needs fixing\".",
+  "rationale": "Nothing can settle on an unlinked account without a program change, and the dust is not worth one; alerts should mean action is needed.",
+  "verification": [
+    "tests/phase_ops_alerts.ts 10/10."
+  ]
+}
+```

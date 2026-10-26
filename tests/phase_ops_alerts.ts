@@ -4,7 +4,7 @@
 import { expect } from "chai";
 import { readFileSync } from "node:fs";
 import {
-  fingerprint, formatAlert, isUserCancel, normalizeMessage, parseClientReport, parseHeliusFailures, KEEPER_LOW_SOL, type AlertEvent,
+  fingerprint, formatAlert, isTransientRpcError, isUserCancel, normalizeMessage, parseClientReport, parseHeliusFailures, KEEPER_LOW_SOL, type AlertEvent,
 } from "../lib/ops-alerts/alertsPure";
 
 const W = "CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8";
@@ -14,6 +14,10 @@ describe("DEC-0261 ops alerts: rules", () => {
   it("wallet cancellations are never alerts", () => {
     for (const m of ["User rejected the request.", "Transaction cancelled", "Approval denied by user"]) expect(isUserCancel(m), m).to.equal(true);
     expect(isUserCancel("Simulation failed: custom program error: 0x1")).to.equal(false);
+  });
+  it("one-off RPC hiccups are not alerted; program errors are (DEC-0262)", () => {
+    for (const m of ["failed to get block time for slot 461745941: Block not available for slot 461745941", "429 Too Many Requests", "TypeError: fetch failed", "Blockhash not found"]) expect(isTransientRpcError(m), m).to.equal(true);
+    for (const m of ["custom program error: 0x7d6", "Error Number: 6429. Error Message: x", "distribute_fee_usdc: simulation failed"]) expect(isTransientRpcError(m), m).to.equal(false);
   });
   it("the same failure with different amounts, addresses or signatures groups as one", () => {
     const a: AlertEvent = { source: "app", step: "mint", message: `Swap of 12.5 USDC for ${W} failed at slot 461726335` };
@@ -61,7 +65,10 @@ describe("DEC-0261 ops alerts: wiring", () => {
   });
   it("the keeper alerts on job failures, a missing keeper role and low SOL", () => {
     const cron = src("api/mainnet/fee-settlement-cron.ts");
-    expect(cron).to.match(/step: "keeper-config"/).and.match(/step: "keeper-balance"/).and.match(/for \(const f of failures\) await recordAlert/);
+    expect(cron).to.match(/step: "keeper-config"/).and.match(/step: "keeper-balance"/)
+      .and.match(/for \(const f of failures\) if \(!isTransientRpcError\(f\.message\)\) await recordAlert\(\{ source: "keeper", \.\.\.f \}, \{ quietMinutes: 360 \}\)/);
+    // A FeeSettlement account not linked to its Reserve is skipped, not retried (and alerted) every hour.
+    expect(cron).to.match(/feeSettlementInfo\.data\.subarray\(9, 41\)\.equals\(reservePk\.toBuffer\(\)\)/);
     expect(KEEPER_LOW_SOL).to.equal(0.05);
   });
   it("the Helius webhook passes the site gate and checks its own secret", () => {
