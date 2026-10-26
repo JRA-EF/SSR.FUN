@@ -459,4 +459,13 @@ pub mod ssr_protocol {
         instructions::liquidity_split::split_feed_end(ctx)
     }
 
+    // DEC-0257: the creator's trade tax, carried by the Reserve Token's
+    // transfer fee so every route pays it; set once at launch.
+    pub fn enable_trade_tax(ctx: Context<EnableTradeTax>) -> Result<()> {
+        instructions::trade_tax::enable(ctx)
+    }
+    pub fn collect_trade_tax<'info>(ctx: Context<'info, CollectTradeTax<'info>>) -> Result<()> {
+        instructions::trade_tax::collect(ctx)
+    }
+
 }

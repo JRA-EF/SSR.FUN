@@ -53,6 +53,9 @@ function Warning({children}:{children:ReactNode}){
  return <div className="bg-destructive/10 text-destructive p-3 rounded text-sm flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0"/>{children}</div>;
 }
 
+/** DEC-0257: the token charges one rate both ways, so the launch sends it as both sides. */
+const withTradeTax=(t:FeeTermsValue,tradeTax:boolean):FeeTermsValue=>tradeTax?{...t,sellTaxPct:t.buyTaxPct}:t;
+
 const mintFeeBps=(dtr:DTR)=>Number(dtr.onChain?.effectiveMintFeeTotalBps??dtr.onChain?.mintFeeBps??0);
 
 /** No pool yet: launch the canonical Raydium pool at the Reserve Token's backing value. */
@@ -60,13 +63,13 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare,refresh}:{dtr:DTR;s
  const [total,setTotal]=useState(RECOMMENDED_LIQUIDITY_USD),[customOpen,setCustomOpen]=useState(false),[custom,setCustom]=useState('');
  const [lock,setLock]=useState<LockTerm>('12-month'),[terms,setTerms]=useState<FeeTermsValue>(DEFAULT_FEE_TERMS);
  const [error,setError]=useState('');
- const v2=state.termsV2Available!==false,split=v2&&state.splitAvailable===true;
+ const v2=state.termsV2Available!==false,split=v2&&state.splitAvailable===true,tradeTax=v2&&state.tradeTaxAvailable===true;
  const effective=customOpen?Math.max(0,Number(custom)||0):total,usdcSide=effective/2,tokens=nav>0?usdcSide/nav:0;
  const usdcHeld=rawToNumber(state.usdcBalanceRaw,6);
  const mint=planLiquidityMint({neededRaw:launchTokensNeededRaw(usdcSide,nav,state.reserveDecimals),heldRaw:BigInt(state.reserveBalanceRaw),usdcSide,usdcHeld,decimals:state.reserveDecimals,nav,mintFeeBps:mintFeeBps(dtr)});
  const short=mint.mintRaw===0n&&usdcSide>usdcHeld;
  const submit=(minted?:MintedHandoff)=>{setError('');try{
-  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),...feeTermsToBps(v2?(split?terms:{...terms,poolSharePct:0}):{...terms,shareWithHolders:false}),lock},minted);
+  onPrepare('create',{maximumUsdcRaw:toRaw(usdcSide.toFixed(6),6),...feeTermsToBps(v2?(split?withTradeTax(terms,tradeTax):{...withTradeTax(terms,tradeTax),poolSharePct:0}):{...terms,shareWithHolders:false}),lock},minted);
  }catch(e){setError(e instanceof Error?e.message:'Check the amounts.');}};
  return <div className="space-y-5">
   <div className="space-y-2">
@@ -87,7 +90,7 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare,refresh}:{dtr:DTR;s
   <p className="text-xs text-muted-foreground -mt-3">Both sides are balanced at the Reserve Token's current backing value ({formatUsdc(nav)} per token), so the pool opens at fair value instead of gifting an instant profit to arbitrage bots. The exact token amount is fixed in the review.</p>
   <TreasuryLine dtr={dtr} state={state}/>
   <div className="space-y-2"><Label className="text-xs uppercase tracking-wider text-muted-foreground">Lock your liquidity</Label><LockChoice value={lock} onChange={setLock} disabled={busy}/></div>
-  <div className="border-t border-border pt-5"><LiquidityFeeTerms value={terms} onChange={setTerms} disabled={busy} v2={v2} split={split}/></div>
+  <div className="border-t border-border pt-5"><LiquidityFeeTerms value={terms} onChange={setTerms} disabled={busy} v2={v2} split={split} tradeTax={tradeTax}/></div>
   {effective>0&&effective<MIN_LIQUIDITY_USD&&<Warning>Pools under {formatUsdc(MIN_LIQUIDITY_USD,{compact:true})} produce unstable pricing and a poor chart. We recommend at least {formatUsdc(RECOMMENDED_LIQUIDITY_USD,{compact:true})} in total.</Warning>}
   {short&&<Warning>The creator treasury does not hold enough USDC for this amount yet.</Warning>}
   {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy} onMinted={m=>void refresh().then(()=>submit(m))}/>}

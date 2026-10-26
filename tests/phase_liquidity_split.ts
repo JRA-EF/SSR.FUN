@@ -63,7 +63,8 @@ describe("DEC-0255 holder share split: builders match the IDL", () => {
     data.writeUInt16LE(3_000, 40); data.writeBigUInt64LE(120_000n, 42); data.writeBigUInt64LE(1_090n, 50);
     expect(decodeLiquiditySplit(data)).to.deep.equal({ terms, poolShareBps: 3_000, poolFed: 120_000n, lpLocked: 1_090n });
     expect(() => decodeLiquiditySplit(Buffer.alloc(LIQUIDITY_SPLIT_SIZE))).to.throw();
-    const errors = (idl as any).errors.filter((x: any) => x.code >= 6082).map((x: any) => `${x.code} ${x.name}`);
+    // DEC-0257 appends 6088+ (phase_trade_tax.ts pins those).
+    const errors = (idl as any).errors.filter((x: any) => x.code >= 6082 && x.code <= 6087).map((x: any) => `${x.code} ${x.name}`);
     expect(errors).to.deep.equal(["6082 BasketFeedExceedsReleased", "6083 LiquiditySplitInvalid", "6084 LiquiditySplitNotAtLaunch", "6085 PoolFeedExceedsShare", "6086 PoolFeedEndMissing", "6087 PoolFeedMinimumNotMet"]);
   });
 });
@@ -124,7 +125,7 @@ describe("DEC-0255 holder share split: launch form, API and keeper", () => {
   });
   it("the launch puts the split in the same transaction as the terms, and only once the program has it", () => {
     const cpmm = readFileSync("src/merge/lib/liquidity/raydiumCpmm.ts", "utf8");
-    expect(cpmm).to.contain("instructions:[initialize,configure,...split]");
+    expect(cpmm).to.contain("instructions:[initialize,configure,...split,...tradeTax]");
     const create = readFileSync("lib/mainnet/createLiquidity.ts", "utf8");
     expect(create).to.contain("global:configure_liquidity_split");
     expect(create).to.contain("poolShareBps===0||await isLiquiditySplitLive(");

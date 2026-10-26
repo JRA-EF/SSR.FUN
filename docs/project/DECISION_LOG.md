@@ -7891,6 +7891,47 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
 }
 ```
 
+## DEC-0257
+
+```json
+{
+  "id": "DEC-0257",
+  "date": "2026-10-26",
+  "title": "The creator's trade tax is charged by the Reserve Token itself (Token-2022 transfer fee), so Jupiter, bots and direct Raydium swaps pay it; one rate, set once at pool launch",
+  "status": "LIVE on Mainnet 2026-10-26 (Squads #17, slot 461726335; ExtendProgram +77,104 B top-level; on-chain sha256 3811d0b3...9f3e == build). Frontend: staging then production.",
+  "decision": "(1) New enable_trade_tax: only in the pool launch transaction after configure_liquidity_revenue_v2 (instructions-sysvar check, as DEC-0255's split), signed by the Reserve's manager, refused for a 0% tax (6088), outside launch (6089) or on a mint already carrying one. Sets the mint's transfer fee (via the transfer_fee_authority PDA, maximum_fee unchanged) to its pending protocol rate (0.15%) plus the larger of the pool's Buy/Sell rates; records TradeTax (PDA [\"trade_tax\", reserve]: revenue, creator treasury = LiquidityRevenue.treasury, tax_bps, protocol_bps, holder_share_bps from LiquidityTerms, lifetime totals); zeroes LiquidityRevenue.buy_tax_bps/sell_tax_bps so swap_with_project_tax_v2 adds nothing on top. Token-2022 applies it two epochs later. (2) New collect_trade_tax: permissionless; harvests withheld fees from remaining accounts into the mint, withdraws them to a staging ATA owned by the TradeTax PDA, splits by the mint's current-epoch rate R: protocol part floor(W*protocol/R) plus 20% of the tax part to the Protocol treasury's ATA, 80% of the tax part to the creator treasury's ATA minus the holder share, which is burned (supply falls, vault balances stay, so NAV per token rises). Before the switch (R <= protocol) all goes to SSR. Payouts are Token-2022 transfers and pay the fee themselves; that is withheld again and split next run. (3) collect_transfer_fees and update_transfer_fee refuse any mint whose current or pending rate exceeds the 0.25% protocol ceiling (6090 TradeTaxActive): only enable_trade_tax can put it there, and the protocol-only sweep would take the creator's part. (4) Keeper job C uses collect_trade_tax when a TradeTax account exists; scripts/update_reserve_transfer_fee.ts skips such mints. (5) Launch form: once the deployed program has it (custom-101 probe, like DEC-0251/0255), one \"Trade tax\" slider (0-2%, sent as both sides); review and pool card say it is charged on every trade and transfer on any venue, starting about 2-5 days after launch.",
+  "context": "Creator, 2026-10-26, before open beta: 'the buy and sell tax should be working. and live'; 'we need trades that go through raydium jupiter etc. to be taxed by us IF the liquidity was launched in app'; 'we did a program upgrade previously just for this'; then 'ok go then lets push this'; on existing pools: 'the previous ones dont matter'. On-chain check that day: five LiquidityRevenue accounts carry taxes (100/100, 85/100, 100/100, 200/200, 95/0 bps) but 0 of the last 153 pool swaps went through swap_with_project_tax_v2 (Jupiter about 40%, the rest bots and other routers, all straight into Raydium). Simulations proved the wrapper itself exact (ALPHA 1%/1%, 20% holder share). Records: DEC-0229 (the 'upgrade for this', live since slot 454528266) built the every-route Token-2022 fee as 100% SSR with no creator share; DEC-0240/0251 gave creators Buy/Sell rates explicitly as 'direct external swaps bypass'. Nothing was reverted; the creator part on every route was never built.",
+  "rationale": "The only charge Jupiter and bots cannot route around is one the token program applies: Raydium CPMM supports TransferFeeConfig, and SSR's program already holds every Reserve Token's fee authority (maximum_fee u64::MAX), so existing mints can carry it with no migration. A transfer hook could tell buys from sells but cannot be added to an existing mint and Raydium CPMM refuses hook mints; an SSR AMM would need Jupiter to integrate it. Hence one rate both ways (the larger slider value, so no creator earns less on the side they chose higher). Launch-only and manager-signed because pool terms are fixed at launch (DEC-0251) and traders see them then. Burning the holder share is the in-kind equivalent of DEC-0251's USDC basket feed with no swaps or keeper role. Paying in Reserve Tokens keeps the split atomic on-chain; converting to USDC would need the keeper's redeem + swap path.",
+  "alternativesConsidered": [
+    "Keep separate buy/sell rates via an SSR Buy/Sell screen using the wrapper -- rejected by the Creator: Jupiter and bots would still skip it.",
+    "Transfer hook -- impossible: extensions are fixed at mint creation and Raydium CPMM refuses TransferHook mints.",
+    "Own AMM with the tax inside, listed on Jupiter -- months of work and depends on Jupiter integrating it.",
+    "Higher Raydium creator-fee tier -- fixed tiers, needs Raydium to grant another config, cannot follow each creator's rate.",
+    "Applying it to the five existing pools -- not wanted (Creator) and their terms were fixed at launch.",
+    "Letting the creator enable it after launch -- rejected: changes a live pool's terms under its traders."
+  ],
+  "impact": "New pools launched with a tax pay it on every route from two epochs after launch, plus 0.15% to SSR. Creators receive Reserve Tokens. Wallet transfers of those tokens are taxed too. The 0.15% part can no longer be changed by an admin on those mints. Existing pools and Reserves without a pool are unchanged. Program 1,684,776 -> 1,761,880 bytes.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/trade_tax.rs (new), collect_transfer_fees.rs, update_transfer_fee.rs, lib.rs, errors.rs (6088-6090), instructions/mod.rs",
+    "tools/rebalance-litesvm/src/tradetax.rs (new) + main.rs",
+    "packages/sdk/src/tradeTax.ts (new), index.ts, idl/",
+    "api/mainnet/fee-settlement-cron.ts (job C), api/mainnet/liquidity.ts (tradeTaxBps, tradeTaxAvailable), lib/mainnet/createLiquidity.ts (probe + launch), atomicPool.ts",
+    "src/merge/lib/liquidity/raydiumCpmm.ts, liveLiquidityClient.ts; src/merge/components/LiquidityFeeTerms.tsx, LiveLiquidityActions.tsx, LiveLiquiditySection.tsx",
+    "scripts/update_reserve_transfer_fee.ts; tests/phase_trade_tax.ts (new), phase_liquidity_split.ts, phase_reserve_deploy_resumability.ts (error range 6000-6090)",
+    "CLAUDE.md, docs/protocol/FEE_MODEL.md, docs/protocol/TERMINOLOGY.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Live program before this change = main 15e59c8 program source (feat/holder-pool-split build sha 8957bec2...7739 == on-chain, slot 460059707).",
+    "cargo-build-sbf: 1,761,880 bytes, sha256 3811d0b3...9f3e. Program unit tests 45/45 (5 new).",
+    "LiteSVM (real compiled program): 0% tax 6088; after launch 6089; set twice refused; collect_transfer_fees + update_transfer_fee 6090; before the switch 1,500 withheld all to SSR; after (1.15%, 50% holder share) 11,500 -> SSR 3,500, creator 4,000 (received 3,954, 46 re-withheld), 4,000 burned (supply -4,000), staging empty; second run re-splits the payouts' fees. All DEC-0250/0251/0255 scenarios still pass.",
+    "Regenerated IDL = committed IDL + 2 instructions, 1 account, 2 events, 3 errors (structural compare: nothing removed or changed).",
+    "Offline suite 1718 passing / 4 known failing (chart range selector x2, native-control reset x2); tsc -b and api/mainnet clean; oxlint clean on changed files; vite build OK."
+  ]
+}
+```
+
 ## DEC-0258
 
 ```json

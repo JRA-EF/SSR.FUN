@@ -95,6 +95,10 @@ import {
   findWithheldFeeAccounts,
   fetchReserveTokenTransferFee,
   MAX_HARVEST_SOURCES_PER_TX,
+  buildCollectTradeTax,
+  decodeTradeTax,
+  findTradeTax,
+  MAX_TRADE_TAX_HARVEST_SOURCES,
 } from "@ssr/sdk";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { resolveRpcUrl } from "./_lib/rpc";
@@ -647,14 +651,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           transferFeeResults.push(result);
           continue;
         }
-        // Each chunk harvests up to MAX_HARVEST_SOURCES_PER_TX accounts and sweeps
-        // the mint; an empty source list still sweeps what is already on the mint.
+        // DEC-0257: a mint carrying a creator trade tax is split by
+        // collect_trade_tax (collect_transfer_fees refuses it on-chain).
+        const tradeTaxAccount = await connection.getAccountInfo(findTradeTax(reservePk, PROGRAM_ID), "confirmed");
+        const tradeTax = tradeTaxAccount ? decodeTradeTax(tradeTaxAccount.data) : null;
+        // Each chunk harvests a batch of accounts and sweeps the mint; an
+        // empty source list still sweeps what is already on the mint.
+        const perTx = tradeTax ? MAX_TRADE_TAX_HARVEST_SOURCES : MAX_HARVEST_SOURCES_PER_TX;
         const chunks: PublicKey[][] = [];
-        for (let i = 0; i < sources.length; i += MAX_HARVEST_SOURCES_PER_TX) chunks.push(sources.slice(i, i + MAX_HARVEST_SOURCES_PER_TX).map((s) => s.address));
+        for (let i = 0; i < sources.length; i += perTx) chunks.push(sources.slice(i, i + perTx).map((s) => s.address));
         if (chunks.length === 0) chunks.push([]);
         for (const chunk of chunks) {
           if (Date.now() > deadline) break;
-          const ix = await buildCollectTransferFeesInstruction({ program: readOnly as never, programId: PROGRAM_ID, reserve: reservePk, treasury: protocolFeeDestination, payer: keeper.publicKey, harvestSources: chunk });
+          const ix = tradeTax
+            ? buildCollectTradeTax({ programId: PROGRAM_ID, reserve: reservePk, protocolTreasury: protocolFeeDestination, creatorTreasury: tradeTax.treasury, payer: keeper.publicKey, harvestSources: chunk })
+            : await buildCollectTransferFeesInstruction({ program: readOnly as never, programId: PROGRAM_ID, reserve: reservePk, treasury: protocolFeeDestination, payer: keeper.publicKey, harvestSources: chunk });
           const tx = new Transaction().add(ix);
           tx.feePayer = keeper.publicKey;
           result.signatures.push(await sendAndConfirmTransaction(connection, tx, [keeper], { commitment: "confirmed" }));

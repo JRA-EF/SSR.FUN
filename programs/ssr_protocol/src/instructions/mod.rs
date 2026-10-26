@@ -116,5 +116,8 @@ pub use liquidity_terms::*;
 pub mod liquidity_split;
 pub use liquidity_split::*;
 
+pub mod trade_tax;
+pub use trade_tax::*;
+
 pub mod liquidity_lock;
 pub use liquidity_lock::*;

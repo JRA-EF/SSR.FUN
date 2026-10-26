@@ -2178,6 +2178,365 @@ export type SsrProtocol = {
       "args": []
     },
     {
+      "name": "collectTradeTax",
+      "discriminator": [
+        201,
+        9,
+        105,
+        77,
+        200,
+        221,
+        136,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tradeTax",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  101,
+                  95,
+                  116,
+                  97,
+                  120
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "transferFeeAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  102,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "staging",
+          "docs": [
+            "Withheld fees land here before the split; owned by the `trade_tax` PDA."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "tradeTax"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "protocolTreasury"
+        },
+        {
+          "name": "protocolTokenAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "protocolTreasury"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "creatorTreasury"
+        },
+        {
+          "name": "creatorTokenAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "creatorTreasury"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "reserveTokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "collectTransferFees",
       "docs": [
         "Harvests and sweeps a Reserve Token mint's withheld transfer fees",
@@ -3922,6 +4281,253 @@ export type SsrProtocol = {
         {
           "name": "tokenProgram",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "enableTradeTax",
+      "discriminator": [
+        189,
+        133,
+        54,
+        242,
+        77,
+        43,
+        176,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "manager",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "protocolConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserve",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve.reserveId",
+                "account": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "revenue",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  114,
+                  101,
+                  118,
+                  101,
+                  110,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "terms",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  105,
+                  113,
+                  117,
+                  105,
+                  100,
+                  105,
+                  116,
+                  121,
+                  95,
+                  116,
+                  101,
+                  114,
+                  109,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "revenue"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tradeTax",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  101,
+                  95,
+                  116,
+                  97,
+                  120
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reserveTokenMint",
+          "docs": [
+            "its fee extension is parsed in the handler."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  115,
+                  101,
+                  114,
+                  118,
+                  101,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reserve"
+              }
+            ]
+          }
+        },
+        {
+          "name": "transferFeeAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  102,
+                  101,
+                  114,
+                  95,
+                  102,
+                  101,
+                  101,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructionsSysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -10423,6 +11029,19 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "tradeTax",
+      "discriminator": [
+        207,
+        216,
+        73,
+        70,
+        44,
+        28,
+        233,
+        84
+      ]
+    },
+    {
       "name": "tvlAccrual",
       "discriminator": [
         107,
@@ -11088,6 +11707,32 @@ export type SsrProtocol = {
       ]
     },
     {
+      "name": "tradeTaxCollected",
+      "discriminator": [
+        19,
+        105,
+        7,
+        245,
+        111,
+        146,
+        251,
+        229
+      ]
+    },
+    {
+      "name": "tradeTaxEnabled",
+      "discriminator": [
+        228,
+        164,
+        38,
+        224,
+        6,
+        46,
+        209,
+        65
+      ]
+    },
+    {
       "name": "tvlFeeSettled",
       "discriminator": [
         236,
@@ -11554,6 +12199,21 @@ export type SsrProtocol = {
       "code": 6087,
       "name": "poolFeedMinimumNotMet",
       "msg": "Adding holder earnings to the pool created fewer pool shares than the minimum SSR quoted."
+    },
+    {
+      "code": 6088,
+      "name": "tradeTaxInvalid",
+      "msg": "The trade tax must be between 0.01% and 2%, set once on a Reserve Token that does not carry one yet."
+    },
+    {
+      "code": 6089,
+      "name": "tradeTaxNotAtLaunch",
+      "msg": "The trade tax can only be set when the pool is launched."
+    },
+    {
+      "code": 6090,
+      "name": "tradeTaxActive",
+      "msg": "This Reserve Token carries a creator trade tax: collect its fees with collect_trade_tax; its rate cannot be changed."
     }
   ],
   "types": [
@@ -14297,6 +14957,150 @@ export type SsrProtocol = {
           },
           {
             "name": "token2022"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tradeTax",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "revenue",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "The creator's fixed treasury (the pool's `LiquidityRevenue.treasury`)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "taxBps",
+            "type": "u16"
+          },
+          {
+            "name": "protocolBps",
+            "docs": [
+              "The protocol part of the combined rate when the tax was set."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "holderShareBps",
+            "docs": [
+              "Share of the creator's 80% that is burned for holders. Set once."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "totalProtocol",
+            "docs": [
+              "Lifetime Reserve Token amounts paid out by `collect_trade_tax`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "totalCreator",
+            "type": "u64"
+          },
+          {
+            "name": "totalBurned",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tradeTaxCollected",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserveTokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "withheld",
+            "type": "u64"
+          },
+          {
+            "name": "feeBps",
+            "type": "u16"
+          },
+          {
+            "name": "protocolAmount",
+            "type": "u64"
+          },
+          {
+            "name": "creatorAmount",
+            "type": "u64"
+          },
+          {
+            "name": "burnedAmount",
+            "type": "u64"
+          },
+          {
+            "name": "harvestedAccounts",
+            "type": "u16"
+          },
+          {
+            "name": "collectedBy",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tradeTaxEnabled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reserve",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserveTokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "taxBps",
+            "type": "u16"
+          },
+          {
+            "name": "protocolBps",
+            "type": "u16"
+          },
+          {
+            "name": "newTransferFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "holderShareBps",
+            "type": "u16"
+          },
+          {
+            "name": "effectiveEpoch",
+            "type": "u64"
           }
         ]
       }

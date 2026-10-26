@@ -76,6 +76,9 @@ pub fn handler<'info>(
     );
 
     let mint_info = ctx.accounts.reserve_token_mint.to_account_info();
+    // DEC-0257: a creator trade tax is part of the rate and is set once.
+    let (current_bps, newer_bps, _) = super::trade_tax::mint_transfer_fee(&mint_info)?;
+    require!(!super::trade_tax::trade_tax_active(current_bps, newer_bps), SsrError::TradeTaxActive);
     let epoch = Clock::get()?.epoch;
     let old_transfer_fee_bps: u16 = {
         let data = mint_info.try_borrow_data()?;

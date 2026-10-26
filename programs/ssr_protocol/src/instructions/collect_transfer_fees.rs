@@ -101,6 +101,10 @@ pub fn handler<'info>(ctx: Context<'info, CollectTransferFees<'info>>) -> Result
     let token_program_info = ctx.accounts.token_program.to_account_info();
     // Refuses a mint with no fee extension before any CPI.
     withheld_on_mint(&mint_info)?;
+    // DEC-0257: a mint carrying a creator trade tax is split by
+    // collect_trade_tax; this protocol-only sweep would take the creator's part.
+    let (current_bps, newer_bps, _) = super::trade_tax::mint_transfer_fee(&mint_info)?;
+    require!(!super::trade_tax::trade_tax_active(current_bps, newer_bps), SsrError::TradeTaxActive);
 
     let sources = ctx.remaining_accounts;
     if !sources.is_empty() {

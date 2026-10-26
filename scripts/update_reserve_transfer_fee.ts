@@ -99,6 +99,12 @@ async function main() {
     const fee = getTransferFeeConfig(unpackMint(mints[i], info, TOKEN_2022_PROGRAM_ID));
     if (!fee) return;
     const pending = fee.newerTransferFee.transferFeeBasisPoints;
+    // DEC-0257: a rate above the protocol ceiling carries a creator trade tax,
+    // set once at launch; update_transfer_fee refuses it on-chain.
+    if (pending > MAX_RESERVE_TOKEN_TRANSFER_FEE_BPS) {
+      console.log(`skip ${reserve.toBase58()} -- carries a creator trade tax (${pending} bps)`);
+      return;
+    }
     if (pending === bps) {
       console.log(`skip ${reserve.toBase58()} -- already ${bps} bps`);
       return;

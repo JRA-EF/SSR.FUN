@@ -22,6 +22,7 @@ use ssr_protocol::state::{RebalanceTicket, Reserve, ReserveAsset};
 
 mod feed;
 mod split;
+mod tradetax;
 
 const PID: Pubkey = ssr_protocol::ID;
 const TOKEN: Pubkey = anchor_spl::token::ID;
@@ -396,6 +397,7 @@ fn main() {
 
     feed::run(&mut env);
     split::run();
+    tradetax::run();
 
     println!("ALL PASS");
 }

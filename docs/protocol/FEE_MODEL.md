@@ -1,4 +1,6 @@
-# SSR.fun fee model (DEC-0240, live; DEC-0251 liquidity terms v2)
+# SSR.fun fee model (DEC-0240, live; DEC-0251 liquidity terms v2; DEC-0257 trade tax)
+
+> **DEC-0257 (2026-10-26):** pools launched after its program upgrade charge the creator's tax through the Reserve Token's transfer fee, so every route pays it. See "Trade tax on every route" below.
 
 > **DEC-0251 (2026-10-19, Creator ruling):** pools created after the DEC-0251 program upgrade use **liquidity terms v2**: SSR takes 20% of everything the creator earns from the pool (collected creator fee and Buy/Sell tax), and the creator may share part of the remaining 80% with holders, chosen once at launch. See "Liquidity terms v2" below. The two pool rows in the table describe pools created before that upgrade, which keep their recorded terms.
 
@@ -38,6 +40,22 @@ A new on-chain swap wrapper invokes Raydium atomically. Buy tax is charged on gr
 - **Holder share ("feed the basket"):** paid in USDC to the basket feed (the `LiquidityTerms` PDA's USDC ATA). The program releases it linearly over 24 hours (a new deposit spreads together with whatever is still locked over a fresh 24 hours). Each hour the keeper (fee-settlement-cron job D) collects the pool's creator fees, then splits the released USDC across the Reserve's assets by target weight and runs one atomic transaction per asset: `basket_feed_begin` (keeper-signed; lends the released USDC) -> Jupiter route -> `rebalance_swap_end` (deposits what arrived into the vault, refusing below the quoted minimum). A USDC asset needs no route. Nothing is minted, and mint/redeem price every token from live vault balances, so the backing behind every Reserve Token grows. This mirrors MAG7's "fees go back into the basket" on Robinhood Chain.
 - **Rounding:** SSR's 20% of collected fees carries remainders like v1; the holder part rounds down in the creator's favour; tax total rounds up as in v1.
 - **Unchanged:** the 0.15% transfer fee (100% SSR), mint/redeem/TVL fees, the 0.25% pool trade fee.
+
+## Trade tax on every route (DEC-0257)
+
+The wrapper tax above only reaches trades routed through SSR; on 2026-10-26 none of the 153 swaps in the five SSR pools were. For pools launched after the DEC-0257 upgrade the tax is carried by the token:
+
+- **At launch** (`enable_trade_tax`, same transaction as `configure_liquidity_revenue_v2`, manager-signed): the mint's transfer fee becomes 0.15% + the larger of the Buy/Sell rates (one rate both ways; Token-2022 cannot tell a buy from a sell), effective two epochs later. Recorded in `TradeTax` (PDA ["trade_tax", reserve]); the pool's wrapper rates are zeroed so an SSR-routed trade is not taxed twice. Set once.
+- **Collection** (`collect_trade_tax`, permissionless, keeper job C daily): harvests withheld fees and splits them by the mint's current rate.
+
+| Withheld at 0.15% + T | SSR receives | Creator receives | Holders |
+|---|---|---|---|
+| Protocol part (0.15 / (0.15 + T)) | 100% | -- | -- |
+| Tax part (T / (0.15 + T)) | 20% | 80% minus the holder share | Holder share of the 80%, burned (supply falls, backing stays) |
+
+- Paid in Reserve Tokens to each treasury's Token-2022 ATA. The payouts are ordinary transfers, so they pay the fee too; that is withheld again and split on the next run.
+- Before the new rate takes effect everything collected is protocol fee. `collect_transfer_fees` and `update_transfer_fee` refuse a mint carrying a trade tax (6090).
+- Also charged on wallet-to-wallet sends, exchange deposits and liquidity adds/withdrawals of that token; never on a mint or a redemption (mint/burn, not transfers).
 
 ## Deployment
 

@@ -6,6 +6,8 @@
  * creator's 80% released to holders over 24 hours, and (DEC-0255) how that
  * holder share divides between Reserve backing and locked pool liquidity.
  * Secondary-market (DEX) trades only -- never a mint or a redemption.
+ * DEC-0257: once the program carries it, the tax is one "Trade tax" charged by
+ * the Reserve Token itself on every trade and transfer, any venue.
  */
 import {AlertCircle} from 'lucide-react';
 import {formatUsdc} from '@/lib/calculations';
@@ -25,8 +27,9 @@ function TaxSlider({id,label,value,onChange,disabled,note}:{id:string;label:stri
 }
 
 /** `v2` is false only while the deployed program predates DEC-0251: the old terms apply and holder sharing is not offered.
- * `split` is false while it predates DEC-0255: the holder share goes to backing only. */
-export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{value:FeeTermsValue;onChange:(v:FeeTermsValue)=>void;disabled?:boolean;v2?:boolean;split?:boolean}){
+ * `split` is false while it predates DEC-0255: the holder share goes to backing only.
+ * `tradeTax` is true once it carries DEC-0257: one rate, charged by the token on every route. */
+export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true,tradeTax=false}:{value:FeeTermsValue;onChange:(v:FeeTermsValue)=>void;disabled?:boolean;v2?:boolean;split?:boolean;tradeTax?:boolean}){
  const set=(patch:Partial<FeeTermsValue>)=>onChange({...value,...patch});
  if(!v2)return <div className="space-y-5">
   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -37,20 +40,22 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
   </div>
   <p className="text-xs text-muted-foreground">SSR receives 25% of each tax and 0.05% of pool volume from the creator fee; the rest is yours. These terms are permanent once the pool launches.</p>
  </div>;
- const onBuys=exampleSplit(value.buyTaxPct,value),onSells=exampleSplit(value.sellTaxPct,value);
+ const onBuys=exampleSplit(value.buyTaxPct,value),onSells=exampleSplit(tradeTax?value.buyTaxPct:value.sellTaxPct,value);
  const cell=(n:number)=><td className="py-1.5 text-right font-merge-mono">{formatUsdc(n)}</td>;
  return <div className="space-y-5">
   <div className="space-y-1">
    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Your pool earnings</Label>
    <p className="text-xs text-muted-foreground">You earn the pool's 0.75% creator fee (Raydium keeps 5% of it) plus any tax you set below. SSR takes 20% of what you earn; the rest is yours.</p>
   </div>
-  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+  {tradeTax?<TaxSlider id="liquidity-trade-tax" label="Trade tax" value={value.buyTaxPct} disabled={disabled} onChange={v=>set({buyTaxPct:v,sellTaxPct:v})}
+    note="Charged by your Reserve Token itself on every trade into or out of it on any venue (Jupiter, Raydium, bots) and on wallet-to-wallet transfers, never on a mint or redemption. Paid in Reserve Tokens. Starts about 2 to 5 days after launch. Default 0%."/>
+  :<div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
    {/* DEC-0240/0251: secondary-market (DEX) project tax only -- never on a mint or redemption. */}
    <TaxSlider id="liquidity-buy-tax" label="Buy tax" value={value.buyTaxPct} disabled={disabled} onChange={v=>set({buyTaxPct:v})}
     note="Charged on DEX trades into your Reserve Token routed through SSR. Default 0%."/>
    <TaxSlider id="liquidity-sell-tax" label="Sell tax" value={value.sellTaxPct} disabled={disabled} onChange={v=>set({sellTaxPct:v})}
     note="Charged on DEX trades out of your Reserve Token routed through SSR. Default 0%."/>
-  </div>
+  </div>}
 
   <div className="space-y-2">
    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Share earnings?</Label>
@@ -86,7 +91,7 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
   <div className="rounded-lg border border-border p-3">
    <p className="text-xs text-muted-foreground mb-2">Example: what one {formatUsdc(EXAMPLE_USD)} trade earns</p>
    <table className="w-full text-sm">
-    <thead><tr className="text-xs text-muted-foreground"><th className="text-left font-normal"></th><th className="text-right font-normal">Into {pct(value.buyTaxPct)} tax</th><th className="text-right font-normal">Out of {pct(value.sellTaxPct)} tax</th></tr></thead>
+    <thead><tr className="text-xs text-muted-foreground"><th className="text-left font-normal"></th><th className="text-right font-normal">Into {pct(value.buyTaxPct)} tax</th><th className="text-right font-normal">Out of {pct(tradeTax?value.buyTaxPct:value.sellTaxPct)} tax</th></tr></thead>
     <tbody>
      <tr><td className="py-1.5">You</td>{cell(onBuys.creator)}{cell(onSells.creator)}</tr>
      {value.shareWithHolders&&<tr><td className="py-1.5">Holders' backing</td>{cell(onBuys.backing)}{cell(onSells.backing)}</tr>}
@@ -94,7 +99,7 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true}:{
      <tr><td className="py-1.5">SSR</td>{cell(onBuys.ssr)}{cell(onSells.ssr)}</tr>
     </tbody>
    </table>
-   <p className="text-xs text-muted-foreground mt-2">Taxes apply only to trades routed through SSR. Every trade on any venue also pays the 0.15% Reserve Token transfer fee to SSR, and the pool's 0.25% trading fee goes to liquidity providers.</p>
+   <p className="text-xs text-muted-foreground mt-2">{tradeTax?"The trade tax is charged by the token, so it applies to every trade on any venue; your share and the holders' share are paid in Reserve Tokens (the holders' share is burned, which raises the backing per token). Every trade":'Taxes apply only to trades routed through SSR. Every trade'} on any venue also pays the 0.15% Reserve Token transfer fee to SSR, and the pool's 0.25% trading fee goes to liquidity providers.</p>
   </div>
 
   <div className="bg-primary/10 text-foreground p-3 rounded text-sm flex items-start gap-2">

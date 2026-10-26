@@ -27,6 +27,10 @@ export interface LiveLiquidityState{
  termsV2Available?:boolean;
  /** DEC-0255: whether a NEW pool can choose the backing/pool split yet. */
  splitAvailable?:boolean;
+ /** DEC-0257: the tax this pool's Reserve Token charges on every route (null = wrapper-only terms). */
+ tradeTaxBps?:number|null;
+ /** DEC-0257: whether a NEW pool's tax is charged by the Reserve Token itself yet. */
+ tradeTaxAvailable?:boolean;
 }
 export type LiveAction='create'|'add'|'withdraw'|'collect'|'lock'|'extend'|'unlock'|'permanent';
 export type LockTerm='unlocked'|'1-month'|'3-month'|'6-month'|'12-month'|'permanent';

@@ -63,6 +63,13 @@ export async function isLiquiditySplitLive(connection:Pick<Connection,'simulateT
  const {value}=await connection.simulateTransaction(tx,{sigVerify:false,replaceRecentBlockhash:true});
  return !/"Custom":101\b/.test(JSON.stringify(value.err??null));
 }
+/** DEC-0257: does the DEPLOYED program carry the trade tax in the transfer fee yet? Same probe as above. */
+export async function isTradeTaxLive(connection:Pick<Connection,'simulateTransaction'>,payer:PublicKey,programId:PublicKey):Promise<boolean>{
+ const data=createHash('sha256').update('global:enable_trade_tax').digest().subarray(0,8);
+ const tx=compileV0(payer,'11111111111111111111111111111111',[new TransactionInstruction({programId,keys:[],data:Buffer.from(data)})],[]);
+ const {value}=await connection.simulateTransaction(tx,{sigVerify:false,replaceRecentBlockhash:true});
+ return !/"Custom":101\b/.test(JSON.stringify(value.err??null));
+}
 export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionEnabled:boolean;prices:(mints:string[])=>Promise<Map<string,Price>>},p:{reserve:PublicKey;actor:PublicKey;usdcRaw:bigint;maximumSolRaw:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;poolShareBps?:number;lock:TrancheChoice;lookupTables?:PublicKey[]}){
  // Preparation (reads, pricing, two simulations) gets its own deadline; the 45 s signing window starts when it ends.
  const now=deps.now??Date.now,expiresAtMs=now()+30000,s=await readLiquidityState(deps,p.reserve);
@@ -77,7 +84,9 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
  const poolShareBps=p.poolShareBps??0;
  check(poolShareBps===0||p.holderShareBps>0,'Adding holder earnings to the pool needs a holder share');
  check(poolShareBps===0||await isLiquiditySplitLive(deps.connection as any,SSR_POOL_PAYER,deps.programId),'Adding holder earnings to the pool becomes available after the next protocol upgrade');
- const built=await prepareAtomicRevenuePool({connection:deps.connection,program:deps.program,programId:deps.programId,reserve:s.reserve,reserveMint:s.mint,manager:s.creator,treasury:s.treasury,protocolConfig:s.protocolConfig,reserveAmountRaw,usdcAmountRaw:p.usdcRaw,maximumReserveDebitRaw,minimumLpRaw,openTime:0n,buyTaxBps:p.buyTaxBps,sellTaxBps:p.sellTaxBps,holderShareBps:p.holderShareBps,termsV2,poolShareBps});
+ // DEC-0257: once live, the tax is charged by the Reserve Token on every route (one rate: the larger side).
+ const tradeTax=termsV2&&Math.max(p.buyTaxBps,p.sellTaxBps)>0&&await isTradeTaxLive(deps.connection as any,SSR_POOL_PAYER,deps.programId);
+ const built=await prepareAtomicRevenuePool({connection:deps.connection,program:deps.program,programId:deps.programId,reserve:s.reserve,reserveMint:s.mint,manager:s.creator,treasury:s.treasury,protocolConfig:s.protocolConfig,reserveAmountRaw,usdcAmountRaw:p.usdcRaw,maximumReserveDebitRaw,minimumLpRaw,openTime:0n,buyTaxBps:p.buyTaxBps,sellTaxBps:p.sellTaxBps,holderShareBps:p.holderShareBps,termsV2,poolShareBps,tradeTax});
  const [m0,m1]=[s.mint,LIQUIDITY_USDC].sort((a,b)=>Buffer.compare(a.toBuffer(),b.toBuffer()));const vault=(mint:PublicKey)=>PublicKey.findProgramAddressSync([Buffer.from('pool_vault'),s.pool.toBuffer(),mint.toBuffer()],RAYDIUM_CPMM)[0];
  const locked=await appendTrancheLock(deps,{...s,registered:{vault0:vault(m0),vault1:vault(m1)}},built.instructions,built.expectedLpRaw,p.lock);
  const tables:AddressLookupTableAccount[]=await loadLiquidityTables(deps.connection,s.reserve,p.lookupTables);
@@ -97,5 +106,5 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
  const prepared=await simulate(measured);
  const payerNetCostLamports=payerCost(prepared);
  check(payerNetCostLamports<=0n,'Pool launch refund does not cover the pool payer; nothing was submitted');
- return {...prepared,payerNetCostLamports:payerNetCostLamports.toString(),review:{navUsdc:nav.navUsdc.toString(),usdcDebitRaw:p.usdcRaw.toString(),reserveDebitRaw:maximumReserveDebitRaw.toString(),lpAddedRaw:built.expectedLpRaw.toString(),lock:p.lock,buyTaxBps:String(p.buyTaxBps),sellTaxBps:String(p.sellTaxBps),holderShareBps:String(p.holderShareBps),poolShareBps:String(poolShareBps),termsVersion:termsV2?'2':'1',initialLpOwner:s.treasury.toBase58()},tranche:locked?.tranche.toBase58()};
+ return {...prepared,payerNetCostLamports:payerNetCostLamports.toString(),review:{navUsdc:nav.navUsdc.toString(),usdcDebitRaw:p.usdcRaw.toString(),reserveDebitRaw:maximumReserveDebitRaw.toString(),lpAddedRaw:built.expectedLpRaw.toString(),lock:p.lock,buyTaxBps:String(p.buyTaxBps),sellTaxBps:String(p.sellTaxBps),holderShareBps:String(p.holderShareBps),poolShareBps:String(poolShareBps),tradeTaxBps:String(tradeTax?Math.max(p.buyTaxBps,p.sellTaxBps):0),termsVersion:termsV2?'2':'1',initialLpOwner:s.treasury.toBase58()},tranche:locked?.tranche.toBase58()};
 }

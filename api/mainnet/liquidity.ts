@@ -1,4 +1,4 @@
-import {prepareCreateLiquidity,isLiquidityTermsV2Live,isLiquiditySplitLive,LAUNCH_PRICE_MAX_AGE_SLOTS} from '../../lib/mainnet/createLiquidity';
+import {prepareCreateLiquidity,isLiquidityTermsV2Live,isLiquiditySplitLive,isTradeTaxLive,LAUNCH_PRICE_MAX_AGE_SLOTS} from '../../lib/mainnet/createLiquidity';
 import {fetchLaunchPrices} from '../../lib/mainnet/launchPrices';
 import {fetchJupiterQuoteWithRetry} from '../../lib/mainnet/jupiter';
 import {SSR_POOL_PAYER} from '../../src/merge/lib/liquidity/raydiumCpmm';
@@ -7,7 +7,7 @@ import {LIQUIDITY_EXECUTION_ENABLED} from '../../lib/mainnet/liquidityRelease';
 import {fetchJupiterPrices} from './asset-prices';
 import {LiquidityLookupRequired} from '../../lib/mainnet/liquidityLookup';
 import {Connection,PublicKey} from '@solana/web3.js';
-import {buildReadOnlyProgram,findLiquidityTranche} from '@ssr/sdk';
+import {buildReadOnlyProgram,findLiquidityTranche,findTradeTax,decodeTradeTax} from '@ssr/sdk';
 import {getAssociatedTokenAddressSync,unpackAccount,TOKEN_PROGRAM_ID} from '@solana/spl-token';
 import {type ApiRequest,type ApiResponse,parseJsonBody} from '../devnet/_lib/apiTypes';
 import {checkRateWindow} from '../devnet/_lib/rateLimit';
@@ -50,10 +50,13 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
     // DEC-0251: the pool's permanent fee terms (v1 = created before liquidity terms v2).
     termsVersion:s.terms?2:s.registered?1:null,buyTaxBps:s.router?.buyTaxBps??null,sellTaxBps:s.router?.sellTaxBps??null,holderShareBps:s.terms?.holderShareBps??0,basketFeedUsdcRaw:s.feedBalance,basketFedUsdcRaw:s.terms?.totalFed??0n,
     // DEC-0255: the split (0 = all to backing) and what it has locked in the pool.
-    poolShareBps:s.split?.poolShareBps??0,poolFedUsdcRaw:s.split?.poolFed??0n,poolLpLockedRaw:s.split?.lpLocked??0n,
+    poolShareBps:s.split?.poolShareBps??0,
+    // DEC-0257: the tax this pool's Reserve Token charges on every route (null = wrapper-only terms).
+    tradeTaxBps:await connection.getAccountInfo(findTradeTax(reserve,deps.programId),'confirmed').then(a=>a?decodeTradeTax(a.data).taxBps:null).catch(()=>null),poolFedUsdcRaw:s.split?.poolFed??0n,poolLpLockedRaw:s.split?.lpLocked??0n,
     // Which terms a NEW pool would get right now (v1 until the DEC-0251 upgrade executes).
     termsV2Available:s.registered?undefined:await isLiquidityTermsV2Live(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false),
-    splitAvailable:s.registered?undefined:await isLiquiditySplitLive(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false)};}
+    splitAvailable:s.registered?undefined:await isLiquiditySplitLive(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false),
+    tradeTaxAvailable:s.registered?undefined:await isTradeTaxLive(connection,SSR_POOL_PAYER,deps.programId).catch(()=>false)};}
   else if(input.action==='create'){const payer=loadPoolPayer();const launchPrices=(mints:string[])=>fetchLaunchPrices({prices:fetchJupiterPrices,quote:p=>fetchJupiterQuoteWithRetry({...p,apiKey:process.env.JUPITER_API_KEY??''}),currentSlot:()=>connection.getSlot('confirmed'),maxAgeSlots:LAUNCH_PRICE_MAX_AGE_SLOTS},mints);const prepared=await prepareCreateLiquidity({...deps,prices:launchPrices},{reserve:input.reserve,actor:input.actor,usdcRaw:input.maximumUsdcRaw??0n,maximumSolRaw:input.maximumSolRaw,buyTaxBps:input.buyTaxBps,sellTaxBps:input.sellTaxBps,holderShareBps:input.holderShareBps,poolShareBps:input.poolShareBps,lock:input.lock,lookupTables:input.lookupTables});
    result={...prepared,transactionBase64:coSignPoolPayer(prepared.transactionBase64,payer,BigInt(prepared.payerNetCostLamports))};}
   else result=await prepareLiquidityLifecycle(deps,input);

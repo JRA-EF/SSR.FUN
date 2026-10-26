@@ -252,4 +252,12 @@ pub enum SsrError {
     PoolFeedEndMissing,
     #[msg("Adding holder earnings to the pool created fewer pool shares than the minimum SSR quoted.")]
     PoolFeedMinimumNotMet,
+
+    // DEC-0257: trade tax carried by the Reserve Token's transfer fee (append only).
+    #[msg("The trade tax must be between 0.01% and 2%, set once on a Reserve Token that does not carry one yet.")]
+    TradeTaxInvalid,
+    #[msg("The trade tax can only be set when the pool is launched.")]
+    TradeTaxNotAtLaunch,
+    #[msg("This Reserve Token carries a creator trade tax: collect its fees with collect_trade_tax; its rate cannot be changed.")]
+    TradeTaxActive,
 }
