@@ -7890,3 +7890,34 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0258
+
+```json
+{
+  "id": "DEC-0258",
+  "date": "2026-10-26",
+  "title": "In-app user feedback: corner Feedback button, a 'How did we do?' prompt after core actions, and a #/feedback page, stored in a Google Sheet with Drive snapshots",
+  "status": "Staging 2026-10-26. Sheet writes need the owner's one-time Apps Script deployment (tools/feedback-sheet/README.md). Not on production.",
+  "decision": "Every app page shows a Feedback button in the bottom-right corner; its x hides it for 7 days. After a confirmed mint, redemption, rebalance, Reserve launch or liquidity action, a centered 'How did we do?' card with 5 stars appears (at most once per 24 hours per browser). Picking a star, or the corner button, opens #/feedback: a 1-5 rating (required), an optional explanation capped at 500 characters, an optional screenshot (downscaled in the browser to 1600 px JPEG), then a thank-you screen that returns the user to where they were. The page posts to api/feedback/experience.ts, which forwards each submission to a Google Apps Script web app running as joao@enigma-fund.com: it saves the screenshot to Drive (SSR.FUN / SSR.FUN User Feedback / Snapshots) and appends a row with a link to it in the Sheet 'SSR.FUN User Feedback Log'.",
+  "context": "Creator, 2026-10-26: a dismissable corner button and a mid-screen prompt after core actions, rating 1-5, short capped explanation, snapshot upload, thank-you; backend a Google Drive folder + Google Sheet with links to the snapshots, under joao@enigma-fund.com; ship to staging.",
+  "rationale": "Apps Script runs as the Sheet's owner, so no Google service account or key lives in Vercel or the public repo and the files are owned by the Creator's account. The endpoint sits behind the closed-beta gate (not in the middleware public list), so only beta users reach it; the existing durable rate limits (lib/agent-feedback/rateLimit.ts) bound a noisy session. The existing public /feedback form and its Telegram fixer pipeline (DEC-0197) are separate and unchanged.",
+  "alternativesConsidered": [
+    "Google service account + Sheets/Drive API from Vercel -- rejected: needs a GCP project and a private key in Vercel, and service accounts cannot own files in a personal My Drive.",
+    "Store in Neon (agent_feedback) -- rejected: the Creator asked for a Sheet, and that table feeds the Telegram fixer daemon.",
+    "Vercel BotID on the endpoint -- not needed: the route is already behind the beta gate."
+  ],
+  "impact": "New route #/feedback, new endpoint POST /api/feedback/experience, two new env vars (FEEDBACK_SHEET_WEBHOOK_URL, FEEDBACK_SHEET_SECRET). Without them the endpoint answers 503 and the page says feedback is unavailable. Rows include the page the user came from, the connected wallet address (the page says so) and the browser string.",
+  "affectedAreas": [
+    "src/merge/lib/feedback.ts, src/merge/components/feedback/{FeedbackLauncher,StarRating}.tsx, src/merge/pages/Feedback.tsx (new)",
+    "src/App.tsx (route + launcher); DTRDetail.tsx, ManageDTR.tsx, CreateDTR.tsx, LiveLiquiditySection.tsx (prompt on success)",
+    "api/feedback/experience.ts, lib/agent-feedback/experiencePure.ts (new)",
+    "tools/feedback-sheet/Code.gs + README.md (new)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b clean, vite build clean; validation checks for rating, length cap, snapshot type/size and formula-safe cells pass; headless Chrome renders of the corner button, the prompt and the page."
+  ]
+}
+```

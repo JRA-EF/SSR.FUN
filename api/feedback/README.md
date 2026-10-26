@@ -6,6 +6,7 @@ Full design, the permanent-record table, and daemon setup live in
 | route | auth | purpose |
 |---|---|---|
 | `POST /api/feedback/submit` | public (BotID + rate limits) | store one submission, status `new` |
+| `POST /api/feedback/experience` | beta session (site gate) + rate limits | in-app rating + snapshot -> Google Sheet via Apps Script (`tools/feedback-sheet/`, DEC-0258) |
 | `GET  /api/feedback/form` | public | legacy URL, 302 → `/feedback` |
 | `GET  /api/feedback/pending` | Bearer `FEEDBACK_DAEMON_SECRET` | daemon claims `new` items → `raised` |
 | `POST /api/feedback/ack` | Bearer | `dispatched` / `dismissed` + `handledBy` |

@@ -16,6 +16,8 @@ import { Manage } from './merge/pages/Manage'
 import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
 import { CreateReserve } from './merge/pages/CreateReserve'
+import { Feedback } from './merge/pages/Feedback'
+import { FeedbackLauncher } from './merge/components/feedback/FeedbackLauncher'
 import { rhAddressFromId } from './merge/lib/evmReserveId'
 import { EVM_ENABLED } from './merge/lib/evmFeature'
 // Robinhood Chain reserve pages pull in viem, which the Solana app never
@@ -105,6 +107,13 @@ function Routes() {
       </MergeLayout>
     )
   }
+  if (matchPath('/feedback', path)) {
+    return (
+      <MergeLayout>
+        <Feedback />
+      </MergeLayout>
+    )
+  }
   if (matchPath('/manage', path)) {
     return (
       <MergeLayout>
@@ -127,6 +136,7 @@ export default function App() {
           <Shell>
             <Routes />
           </Shell>
+          <FeedbackLauncher />
         </RouterProvider>
       </StoreProvider>
     </SolanaProviders>

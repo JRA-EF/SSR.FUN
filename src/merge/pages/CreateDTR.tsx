@@ -69,6 +69,7 @@ import { ChevronRight, ChevronLeft, Plus, X, Search, AlertCircle, Rocket } from 
 import { useToast } from "@/hooks/use-toast";
 import { InfoTip } from "@/components/InfoTip";
 import { formatBpsAsPct, formatUsdc, RESERVE_TOKEN_TRANSFER_FEE_BPS, RESERVE_TOKEN_TRANSFER_FEE_NOTE, TICKER_MAX_LENGTH } from "@/lib/calculations";
+import { requestActionFeedback } from "@/lib/feedback";
 import { type CreateDTRAssetInput, type FeeRecipient, type OnChainReserveMeta, type DTR, RESERVE_CATEGORIES, DEFAULT_RESERVE_CATEGORY } from "@/lib/types";
 
 // Real, genuinely supported DevNet assets -- the real devUSDC settlement
@@ -308,6 +309,7 @@ export function CreateDTR({
     setResumePending(null);
     syncRealHolding(dtrId, "0", 1); // Placeholder holding entry -- RealReserveSync's next poll (or DTRDetail's own on-chain read) fills in the real balance/composition immediately; this just avoids a blank flash.
     if (IS_MAINNET) addKnownAssetMints(result.assets.map((a) => a.mint));
+    requestActionFeedback("create-reserve");
     toast({
       title: "Reserve deployment resumed and completed",
       description: (
@@ -1588,6 +1590,7 @@ export function CreateDTR({
       // at the cron's next 10-minute tick. Fire-and-forget.
       if (IS_MAINNET) void requestReserveSnapshotRefresh(window.location.origin);
 
+      requestActionFeedback("create-reserve");
       toast({
         title: `Reserve deployed on Solana ${IS_MAINNET ? "Mainnet" : "DevNet"}`,
         description: (

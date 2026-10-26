@@ -90,6 +90,7 @@ import { parseYouTubeVideoId, youTubeThumbnailUrl } from "@/lib/youtube";
 import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
 import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
 import { LIQUIDITY_ENABLED } from "@/lib/liquidityFeature";
+import { requestActionFeedback } from "@/lib/feedback";
 
 /* Candlestick glyph for the Recharts range-Bar: the bar's y/height map the
    candle's [low, high] band, so open/close are interpolated inside it. A
@@ -694,6 +695,9 @@ export function DTRDetail() {
   const [multiAssetBuyStep, setMultiAssetBuyStep] = useState<string | null>(null);
 
   const [sellPhase, setSellPhase] = useState<TxPhase>("idle");
+  // Every mint/redeem path (direct, multi-asset, reconciled) ends in "confirmed".
+  useEffect(() => { if (buyPhase === "confirmed") requestActionFeedback("mint"); }, [buyPhase]);
+  useEffect(() => { if (sellPhase === "confirmed") requestActionFeedback("redeem"); }, [sellPhase]);
   const [sellPendingSignature, setSellPendingSignature] = useState<string | null>(null);
   const sellPreRtRawRef = useRef<bigint>(0n);
   // Fine-grained step label for a USDC-settled multi-asset Sell -- same

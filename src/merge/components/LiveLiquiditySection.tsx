@@ -15,6 +15,7 @@ import type {DTR} from '@/lib/types';
 import {formatUsdc} from '@/lib/calculations';
 import {shortenAddress} from '@/lib/delegateLabels';
 import {solscanUrl} from '@/lib/solana-config';
+import {requestActionFeedback} from '@/lib/feedback';
 import {SSR_POOL_PAYER} from '../lib/liquidity/raydiumCpmm';
 import {LiquiditySetupNeeded,savedLiquidityTables} from '../lib/liquidity/liquiditySetupClient';
 import {checkLiquidityMessage} from '../lib/liquidity/liquidityExecution';
@@ -111,7 +112,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
     {prepared.solCostsByWallet?.map(c=><p key={c.wallet} className="text-xs text-muted-foreground">…{c.wallet.slice(-4)} pays {fromRaw(c.lamports,9)} SOL.</p>)}
     <LiquidityTransactionReview plan={prepared} onSettled={(state,signature)=>{if(state!=='confirmed')return;
       // Close the review and show the outcome above it, with fresh pool numbers.
-      setNotice({title:`${ACTION_TITLES[prepared.action as LiveAction]??'Liquidity action'} confirmed on Solana.`,signature});setPrepared(null);setPanel(null);void load();}}
+      setNotice({title:`${ACTION_TITLES[prepared.action as LiveAction]??'Liquidity action'} confirmed on Solana.`,signature});requestActionFeedback('liquidity');setPrepared(null);setPanel(null);void load();}}
      onRetry={()=>{const last=lastRequest.current;if(last)void prepare(last.action,last.extras);}}/>
     <Button variant="ghost" size="sm" onClick={()=>{setPrepared(null);setNotice(null);void load();}}>Close review</Button>
    </CardContent></Card>}

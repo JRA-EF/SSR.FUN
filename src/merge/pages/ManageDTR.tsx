@@ -70,6 +70,7 @@ import { addableAssetsForRebalance, type AddableAsset } from "@/lib/rebalanceAdd
 import { issuerBadgeText, issuerBadgeTitle, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
 import { MAX_ASSETS_PER_RESERVE } from "@/lib/createReserveClient";
 import { LIQUIDITY_ENABLED } from "@/lib/liquidityFeature";
+import { requestActionFeedback } from "@/lib/feedback";
 
 /**
  * Real DevNet SPL mints eligible to be added as a new Reserve Asset -- the
@@ -1042,6 +1043,7 @@ export function ManageDTR() {
     const res = rebalanceDTR(dtr.id, rebalanceEdits, adjustRemaining);
     if (res.success) {
       toast({ title: "Rebalance Executed", description: res.message });
+      requestActionFeedback("rebalance");
       setRebalanceEdits({});
     } else {
       toast({ variant: "destructive", title: "Rebalance Failed", description: res.message });
@@ -1286,6 +1288,7 @@ export function ManageDTR() {
       setRebalanceResult(result);
       const swaps = result.steps.filter((s) => s.tx.kind === "swap");
       const failed = result.steps.filter((s) => s.status === "failed").length + result.build.skipped.length;
+      if (failed === 0) requestActionFeedback("rebalance");
       toast(
         failed === 0
           ? { title: "Rebalance complete", description: `${swaps.length} swap${swaps.length === 1 ? "" : "s"} moved your Reserve's holdings to the new weights.` }
