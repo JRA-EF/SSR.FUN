@@ -7954,3 +7954,30 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0260
+
+```json
+{
+  "id": "DEC-0260",
+  "date": "2026-10-26",
+  "title": "In-app feedback is capped per IP: 1 submission per 5 minutes and 3 per 24 hours",
+  "status": "LIVE on production 2026-10-26.",
+  "decision": "api/feedback/experience.ts accepts at most one submission per IP address per 5 minutes and three per 24 hours (fixed windows in the shared Neon rate_limit_window table, plus an in-memory 5-minute check on each warm instance). The site-wide ceiling of 200 per hour stays. The checks run shortest window first, so a refused attempt never uses one of the day's three slots, and a request that fails validation uses none. Refusals return 429 with Retry-After and a plain message the page shows: 'once every 5 minutes' or 'up to 3 pieces of feedback a day'. Replaces DEC-0258's 5 per 10 minutes (in memory) and 10 per hour per IP.",
+  "context": "Creator, 2026-10-26: cap the feedback a single user can send to 3 in 24 hours and 1 per 5 minutes so bots cannot spam the Sheet.",
+  "rationale": "The IP is the only identifier a visitor cannot change freely: the wallet is optional and comes from the client, and the beta key is shared. Vercel sets x-forwarded-for itself. A submission that reaches the Sheet step but fails there still counts, which keeps the limiter simple; at worst a user waits 5 minutes to retry.",
+  "alternativesConsidered": [
+    "Key on the wallet address -- rejected: optional and client-supplied, so a bot would just omit or rotate it.",
+    "Rolling 24-hour window -- rejected: needs per-request history; a fixed window on the existing table is enough at this volume."
+  ],
+  "impact": "Users behind one shared IP (an office, a VPN exit) share the 3 per day.",
+  "affectedAreas": [
+    "api/feedback/experience.ts"
+  ],
+  "supersedes": "DEC-0258 (rate limits only)",
+  "supersededBy": null,
+  "evidence": [
+    "Ran the real handler against Neon with a stub in place of the Sheet: 1st 201; immediate 2nd 429 (Retry-After 300); invalid body 400 with no slot spent; daily counter at 1 after the refused attempt, and a 4th request in the window was refused. tsc -b clean."
+  ]
+}
+```

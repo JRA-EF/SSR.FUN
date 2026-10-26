@@ -7,9 +7,10 @@
 // URL) and FEEDBACK_SHEET_SECRET (shared with the script's Script Properties).
 //
 // Unlike api/feedback/submit.ts this path is NOT in the middleware's public
-// list, so only visitors with a redeemed beta key reach it; the same burst +
-// durable rate limits as the public form bound a noisy session.
-import { checkBurstWindow, checkDurableWindow, rateLimitVerdict } from '../../lib/agent-feedback/rateLimit.js'
+// list, so only visitors with a redeemed beta key reach it. Each IP may send
+// one submission per 5 minutes and three per 24 hours (DEC-0260), under a
+// site-wide hourly ceiling.
+import { checkBurstWindow, checkDurableWindow } from '../../lib/agent-feedback/rateLimit.js'
 import { parseExperience, sheetSafe } from '../../lib/agent-feedback/experiencePure.js'
 
 interface Req { method?: string; body?: unknown; headers?: Record<string, string | string[] | undefined> }
@@ -20,12 +21,14 @@ interface Res {
   end: () => void
 }
 
-const BURST_WINDOW_MS = 10 * 60_000
-const BURST_MAX = 5
-const IP_WINDOW_MS = 60 * 60_000
-const IP_MAX = 10
+const IP_SHORT_WINDOW_MS = 5 * 60_000
+const IP_SHORT_MAX = 1
+const IP_DAY_WINDOW_MS = 24 * 60 * 60_000
+const IP_DAY_MAX = 3
 const GLOBAL_WINDOW_MS = 60 * 60_000
 const GLOBAL_MAX = 200
+const TOO_SOON = 'You can send feedback once every 5 minutes. Please try again shortly.'
+const DAY_CAP = 'You can send up to 3 pieces of feedback a day. Please try again tomorrow.'
 
 function parseBody(req: Req): Record<string, unknown> {
   if (req.body && typeof req.body === 'object') return req.body as Record<string, unknown>
@@ -55,21 +58,19 @@ export default async function handler(req: Req, res: Res) {
   const fb = parsed.value
 
   const ip = header(req, 'x-forwarded-for').split(',')[0].trim() || 'unknown'
-  const burstOk = checkBurstWindow(`feedback-experience:${ip}`, BURST_WINDOW_MS, BURST_MAX)
-  let ipOk = true
-  let globalOk = true
-  if (burstOk) {
-    const [ipWin, globalWin] = await Promise.all([
-      checkDurableWindow(`feedback-experience:ip:${ip}`, IP_WINDOW_MS, IP_MAX),
-      checkDurableWindow('feedback-experience:global', GLOBAL_WINDOW_MS, GLOBAL_MAX),
-    ])
-    ipOk = ipWin.allowed
-    globalOk = globalWin.allowed
+  const refuse = (retryAfterS: number, error: string) => {
+    res.setHeader('Retry-After', String(retryAfterS))
+    res.status(429).json({ error })
   }
-  if (rateLimitVerdict(burstOk, ipOk, globalOk) !== 'ok') {
-    res.setHeader('Retry-After', '600')
-    res.status(429).json({ error: 'You have sent a lot of feedback in a short time. Please try again in a few minutes.' })
-    return
+  // Checked one after another, shortest window first, so a refused attempt
+  // never spends one of the day's three slots. The in-memory check catches a
+  // rapid repeat on a warm instance without a database round trip; the Neon
+  // windows hold across instances (and fail open if Neon is unreachable).
+  if (!checkBurstWindow(`feedback-experience:${ip}`, IP_SHORT_WINDOW_MS, IP_SHORT_MAX)) return refuse(300, TOO_SOON)
+  if (!(await checkDurableWindow(`feedback-experience:ip5m:${ip}`, IP_SHORT_WINDOW_MS, IP_SHORT_MAX)).allowed) return refuse(300, TOO_SOON)
+  if (!(await checkDurableWindow(`feedback-experience:ipday:${ip}`, IP_DAY_WINDOW_MS, IP_DAY_MAX)).allowed) return refuse(86_400, DAY_CAP)
+  if (!(await checkDurableWindow('feedback-experience:global', GLOBAL_WINDOW_MS, GLOBAL_MAX)).allowed) {
+    return refuse(3600, 'Feedback is receiving a lot of submissions right now. Please try again later.')
   }
 
   const id = crypto.randomUUID()
