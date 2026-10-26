@@ -85,11 +85,14 @@ function esc(s: string): string {
 export function formatAlert(e: AlertEvent, opts: { site: string; repeats: number }): string {
   const title = STEP_TITLES[e.step] ?? `${e.step} failed`;
   const lines = [`🔴 <b>${esc(title)}</b>${opts.repeats > 1 ? ` (×${opts.repeats} since last alert)` : ""} · ${esc(opts.site)}`];
-  if (e.ticker || e.reserve) lines.push(`Reserve: ${esc([e.ticker, tail(e.reserve)].filter(Boolean).join(" "))}`);
+  // DEC-0263: app reports are free text from a browser -- label them, and keep every
+  // browser-supplied field inside <code> so Telegram never turns it into a link.
+  if (e.source === "app") lines.push("<i>Unverified report from a browser</i>");
+  if (e.ticker || e.reserve) lines.push(`Reserve: <code>${esc([e.ticker, tail(e.reserve)].filter(Boolean).join(" "))}</code>`);
   lines.push(`Error: <code>${esc(clip(e.message, 500) ?? "")}</code>`);
   if (e.wallet) lines.push(`Wallet: ${esc(tail(e.wallet) ?? "")}`);
   if (e.signature) lines.push(`Tx: <a href="https://solscan.io/tx/${encodeURIComponent(e.signature)}">${esc(tail(e.signature, 8) ?? "")}</a>`);
-  if (e.page) lines.push(`Page: ${esc(clip(e.page, 120) ?? "")}`);
+  if (e.page) lines.push(`Page: <code>${esc(clip(e.page, 120) ?? "")}</code>`);
   return lines.join("\n");
 }
 

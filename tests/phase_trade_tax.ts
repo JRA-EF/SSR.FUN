@@ -13,6 +13,7 @@ import {
 } from "@ssr/sdk";
 import idl from "../packages/sdk/idl/ssr_protocol.json";
 import { isTradeTaxLive } from "../lib/mainnet/createLiquidity";
+import { MIN_TRADE_TAX_BPS, snapTradeTaxPct } from "../src/merge/lib/liquidity/raydiumCpmm";
 
 const PROGRAM = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
 const k = () => Keypair.generate().publicKey;
@@ -109,8 +110,14 @@ describe("DEC-0257 trade tax: launch, keeper and UI wiring", () => {
   });
   it("the launch form offers one Trade tax and sends it as both sides", () => {
     const form = src("src/merge/components/LiquidityFeeTerms.tsx");
-    expect(form).to.match(/label="Trade tax"[^>]*onChange=\{v=>set\(\{buyTaxPct:v,sellTaxPct:v\}\)\}/);
+    expect(form).to.include("label=\"Trade tax\" value={value.buyTaxPct} disabled={disabled} onChange={v=>{const t=snapTradeTaxPct(v);set({buyTaxPct:t,sellTaxPct:t});}}");
     expect(form).to.match(/on any venue \(Jupiter, Raydium, bots\)/);
     expect(src("src/merge/components/LiveLiquidityActions.tsx")).to.match(/tradeTax\?\{\.\.\.t,sellTaxPct:t\.buyTaxPct\}:t/);
+  });
+  it("a trade tax is 0 or at least 0.15%, so the token rate clears the program's 25 bps active line (DEC-0263)", () => {
+    expect(MIN_TRADE_TAX_BPS).to.equal(15);
+    expect(15 + MIN_TRADE_TAX_BPS).to.be.greaterThan(25);
+    expect([0, 0.05, 0.1, 0.15, 0.2, 2].map(snapTradeTaxPct)).to.deep.equal([0, 0.15, 0.15, 0.15, 0.2, 2]);
+    expect(src("lib/mainnet/createLiquidity.ts")).to.include("check(tax>=MIN_TRADE_TAX_BPS&&(s.fee?.transferFeeBasisPoints??0)+tax>25");
   });
 });

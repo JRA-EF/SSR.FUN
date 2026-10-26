@@ -33,6 +33,9 @@ describe("DEC-0261 ops alerts: rules", () => {
     expect(html).to.include("Mint failed").and.include("×3").and.include("ssr.fun").and.include("ALPHA …WgpyLP").and.include("…Hg4Rw8");
     expect(html).to.include("Bad &lt;thing&gt; &amp; more").and.include("https://solscan.io/tx/5kiZ");
     expect(html).to.not.include(W);
+    // DEC-0263: browser reports are labelled and their free-text fields cannot become links.
+    expect(html).to.include("Unverified report from a browser").and.include("<code>ALPHA …WgpyLP</code>");
+    expect(formatAlert({ source: "chain", step: "on-chain", message: "x" }, { site: "s", repeats: 1 })).to.not.include("Unverified");
   });
   it("client reports accept only known steps and real addresses", () => {
     expect(parseClientReport({ step: "drop-table", message: "x" }).ok).to.equal(false);
@@ -74,7 +77,8 @@ describe("DEC-0261 ops alerts: wiring", () => {
   it("the Helius webhook passes the site gate and checks its own secret", () => {
     expect(src("middleware.ts")).to.include("'/api/mainnet/alert-helius'");
     expect(src("api/mainnet/alert-helius.ts")).to.match(/HELIUS_ALERT_WEBHOOK_SECRET/);
-    expect(src("api/mainnet/alert-report.ts")).to.match(/checkDurableRateWindow/);
+    expect(src("api/mainnet/alert-report.ts")).to.match(/checkDurableRateWindow/).and.match(/"ops-alert:global"/);
+    expect(src("api/mainnet/alert-helius.ts")).to.match(/timingSafeEqual/).and.not.match(/!== secret/);
   });
   it("no alert credential is committed", () => {
     for (const f of ["lib/ops-alerts/alerts.ts", "api/mainnet/alert-helius.ts", "api/mainnet/alert-report.ts"]) expect(src(f)).to.not.match(/\d{9,}:AA[\w-]{30,}/);

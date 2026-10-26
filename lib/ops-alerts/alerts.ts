@@ -97,7 +97,10 @@ export async function recordAlert(event: AlertEvent, opts: { quietMinutes?: numb
     const claimed = (await sql`UPDATE ops_alerts SET last_sent_at = now(), unsent = 0
       WHERE fingerprint = ${fp} AND (last_sent_at IS NULL OR last_sent_at < now() - make_interval(mins => ${quiet}))
       RETURNING fingerprint`) as unknown[];
-    if (Math.random() < 0.01) await sql`DELETE FROM ops_alert_events WHERE at < now() - interval '90 days'`;
+    if (Math.random() < 0.01) {
+      await sql`DELETE FROM ops_alert_events WHERE at < now() - interval '90 days'`;
+      await sql`DELETE FROM ops_alerts WHERE last_seen < now() - interval '90 days'`;
+    }
     if (claimed.length === 0) return false;
     return await sendTelegram(formatAlert(event, { site, repeats: row?.unsent ?? 1 }));
   } catch (e) {

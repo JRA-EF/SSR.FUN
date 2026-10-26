@@ -8071,3 +8071,24 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0263
+
+```json
+{
+  "id": "DEC-0263",
+  "date": "2026-10-26",
+  "title": "Review hardening: trade tax at least 0.15% while the program's active check is rate-based; browser alert reports labelled, globally capped and never linked; constant-time webhook secret",
+  "status": "Staging then production 2026-10-26. On-chain follow-up owed at the next upgrade.",
+  "decision": "(1) trade_tax_active() treats a tax as active only when the token's rate is above MAX_RESERVE_TOKEN_TRANSFER_FEE_BPS (25); with the 15 bps protocol fee a 5 or 10 bps tax gives 20 or 25 and is not protected, so collect_transfer_fees could sweep it to SSR and update_transfer_fee could overwrite it. Off-chain: MIN_TRADE_TAX_BPS = 15 (src/merge/lib/liquidity/raydiumCpmm.ts); prepareCreateLiquidity refuses a trade tax under it or with protocol + tax <= 25; the launch slider snaps 0.05-0.10% to 0.15%. On-chain (next upgrade): key both guards on the TradeTax PDA existing, or require new_bps > 25 in enable_trade_tax. (2) alert-report: 60 reports per 10 minutes across all browsers on top of 20 per IP. Telegram: app reports carry 'Unverified report from a browser', and ticker and page sit in <code> like the error, so browser text never becomes a link. (3) alert-helius compares the secret with timingSafeEqual over SHA-256. ops_alerts rows unseen for 90 days are pruned with the events.",
+  "context": "Second review by a peer session the same day, at the creator's request ('4 eyes'). 0 TradeTax accounts on Mainnet at review time, so nothing was exposed.",
+  "openItems": [
+    "Program: trade-tax guards keyed on the TradeTax PDA (or enable requires new_bps > 25).",
+    "Program (low): collect_trade_tax splits everything at the current rate, so 0.15%-era withheld fees harvested after activation are partly paid to the creator.",
+    "Rotate the Telegram bot token (it was pasted in chat) and update TELEGRAM_ALERT_BOT_TOKEN on ssr-fun and ssr-fun-staging."
+  ],
+  "verification": [
+    "tests/phase_ops_alerts.ts + tests/phase_trade_tax.ts 22/22; tsc -b and api/mainnet tsc clean."
+  ]
+}
+```

@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {compileV0} from './buildCommon';
 import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,unpackAccount,unpackMint} from '@solana/spl-token';
 import {findReserveAsset,findReserveVault,findVaultAuthority} from '@ssr/sdk';
-import {LIQUIDITY_USDC,SSR_POOL_PAYER,RAYDIUM_CPMM} from '../../src/merge/lib/liquidity/raydiumCpmm';
+import {LIQUIDITY_USDC,SSR_POOL_PAYER,RAYDIUM_CPMM,MIN_TRADE_TAX_BPS} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {type CompoundReadDeps,transferGross} from './compoundQuotes';
 import {readLiquidityState,type LiquidityState} from './liquidityLifecycle';
 import {prepareAtomicRevenuePool,integerSqrt} from './atomicPool';
@@ -86,6 +86,9 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
  check(poolShareBps===0||await isLiquiditySplitLive(deps.connection as any,SSR_POOL_PAYER,deps.programId),'Adding holder earnings to the pool becomes available after the next protocol upgrade');
  // DEC-0257: once live, the tax is charged by the Reserve Token on every route (one rate: the larger side).
  const tradeTax=termsV2&&Math.max(p.buyTaxBps,p.sellTaxBps)>0&&await isTradeTaxLive(deps.connection as any,SSR_POOL_PAYER,deps.programId);
+ // DEC-0263: the program counts the tax as active only while the token's rate (protocol fee + tax) is above 25 bps;
+ // at or below it the tax could be swept to SSR or overwritten. Refuse such a small tax until the program keys on the TradeTax account.
+ if(tradeTax){const tax=Math.max(p.buyTaxBps,p.sellTaxBps);check(tax>=MIN_TRADE_TAX_BPS&&(s.fee?.transferFeeBasisPoints??0)+tax>25,`Trade tax must be 0 or at least ${MIN_TRADE_TAX_BPS/100}%`);}
  const built=await prepareAtomicRevenuePool({connection:deps.connection,program:deps.program,programId:deps.programId,reserve:s.reserve,reserveMint:s.mint,manager:s.creator,treasury:s.treasury,protocolConfig:s.protocolConfig,reserveAmountRaw,usdcAmountRaw:p.usdcRaw,maximumReserveDebitRaw,minimumLpRaw,openTime:0n,buyTaxBps:p.buyTaxBps,sellTaxBps:p.sellTaxBps,holderShareBps:p.holderShareBps,termsV2,poolShareBps,tradeTax});
  const [m0,m1]=[s.mint,LIQUIDITY_USDC].sort((a,b)=>Buffer.compare(a.toBuffer(),b.toBuffer()));const vault=(mint:PublicKey)=>PublicKey.findProgramAddressSync([Buffer.from('pool_vault'),s.pool.toBuffer(),mint.toBuffer()],RAYDIUM_CPMM)[0];
  const locked=await appendTrancheLock(deps,{...s,registered:{vault0:vault(m0),vault1:vault(m1)}},built.instructions,built.expectedLpRaw,p.lock);

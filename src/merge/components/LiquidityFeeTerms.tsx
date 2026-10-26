@@ -14,6 +14,7 @@ import {formatUsdc} from '@/lib/calculations';
 import {EXAMPLE_TRADE_USD as EXAMPLE_USD,exampleSplit,type FeeTermsValue} from '../lib/liquidity/feeTerms';
 import {Label} from './ui/label';
 import {Slider} from './ui/slider';
+import {snapTradeTaxPct} from '../lib/liquidity/raydiumCpmm';
 
 const pct=(n:number)=>`${n.toFixed(2)}%`;
 const choice=(active:boolean)=>`text-left rounded-lg border p-3 transition-colors ${active?'border-primary/50 bg-primary/10':'border-border hover:bg-muted'}`;
@@ -47,8 +48,8 @@ export function LiquidityFeeTerms({value,onChange,disabled,v2=true,split=true,tr
    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Your pool earnings</Label>
    <p className="text-xs text-muted-foreground">You earn the pool's 0.75% creator fee (Raydium keeps 5% of it) plus any tax you set below. SSR takes 20% of what you earn; the rest is yours.</p>
   </div>
-  {tradeTax?<TaxSlider id="liquidity-trade-tax" label="Trade tax" value={value.buyTaxPct} disabled={disabled} onChange={v=>set({buyTaxPct:v,sellTaxPct:v})}
-    note="Charged by your Reserve Token itself on every trade into or out of it on any venue (Jupiter, Raydium, bots) and on wallet-to-wallet transfers, never on a mint or redemption. Paid in Reserve Tokens. Starts about 2 to 5 days after launch. Default 0%."/>
+  {tradeTax?<TaxSlider id="liquidity-trade-tax" label="Trade tax" value={value.buyTaxPct} disabled={disabled} onChange={v=>{const t=snapTradeTaxPct(v);set({buyTaxPct:t,sellTaxPct:t});}}
+    note="Charged by your Reserve Token itself on every trade into or out of it on any venue (Jupiter, Raydium, bots) and on wallet-to-wallet transfers, never on a mint or redemption. Paid in Reserve Tokens. Starts about 2 to 5 days after launch. Default 0%; when on, at least 0.15%."/>
   :<div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
    {/* DEC-0240/0251: secondary-market (DEX) project tax only -- never on a mint or redemption. */}
    <TaxSlider id="liquidity-buy-tax" label="Buy tax" value={value.buyTaxPct} disabled={disabled} onChange={v=>set({buyTaxPct:v})}

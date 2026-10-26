@@ -190,3 +190,9 @@ export async function prepareRevenueCollect(input: {
  instructions.push((input.termsV2?buildDistributeLiquidityRevenueV2:buildDistributeLiquidityRevenue)({...input,staging:ata(revenue),protocolDestination:ata(input.protocolTreasury),creatorDestination:ata(input.creatorTreasury),ammConfig:SSR_CPMM_CONFIG,creatorFeeShare:creatorShareAddress(revenue)}));
  return {instructions,revenue,grossUsdcRaw:collected.grossUsdcRaw,netUsdcRaw:collected.netUsdcRaw+staged};
 }
+
+/** Smallest trade tax offered (DEC-0263): with the 0.15% protocol fee the token's rate is then 0.30%, above the 0.25%
+ * line at which the program counts the tax as active (smaller taxes could be swept to SSR or overwritten). */
+export const MIN_TRADE_TAX_BPS=15;
+/** The launch form's trade tax is 0 or at least MIN_TRADE_TAX_BPS, so 0.05-0.10% snap up to 0.15%. */
+export const snapTradeTaxPct=(v:number)=>v>0&&v<MIN_TRADE_TAX_BPS/100?MIN_TRADE_TAX_BPS/100:v;
