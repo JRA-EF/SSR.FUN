@@ -12,6 +12,7 @@ import {
   feedbackHref,
   hideLauncher,
   isLauncherHidden,
+  FEEDBACK_ENABLED,
   markPrompted,
   onActionFeedbackRequest,
   type FeedbackAction,
@@ -20,6 +21,10 @@ import {
 const PROMPT_DELAY_MS = 1500;
 
 export function FeedbackLauncher() {
+  return FEEDBACK_ENABLED ? <FeedbackLauncherInner /> : null;
+}
+
+function FeedbackLauncherInner() {
   const path = usePath();
   const onFeedbackPage = path.split("?")[0] === "/feedback";
   const [launcherHidden, setLauncherHidden] = useState(isLauncherHidden);

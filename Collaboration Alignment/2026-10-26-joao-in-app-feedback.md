@@ -32,3 +32,5 @@
 
 ## Verification
 `tsc -b` clean, `vite build` clean, validation checks pass (rating range, 500-character cap, screenshot type and size, formula-safe cells). Headless Chrome renders of the corner button, the prompt and the page.
+
+- **Follow-up 2026-10-26 (DEC-0259):** the page now has a required one-line summary ("What stood out?", 150 characters) and an optional "Tell us more" (1,000 characters). Everything sits behind the build flag `VITE_ENABLE_FEEDBACK=true`, which is set ONLY on the production project `ssr-fun` along with `FEEDBACK_SHEET_WEBHOOK_URL` and `FEEDBACK_SHEET_SECRET`. Staging has none of them and shows no feedback UI. Rows go to the Sheet "SSR.FUN feedback sheet" (1CcPwOu3...), and screenshots go to "SSR.FUN feedback snapshots". Merged into main; production and staging deploy ids are in the commit that follows.

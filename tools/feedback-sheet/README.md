@@ -40,5 +40,6 @@ version** so the `/exec` URL stays the same.
 |---|---|---|
 | `FEEDBACK_SHEET_WEBHOOK_URL` | Vercel (per project) | the script's `/exec` URL |
 | `FEEDBACK_SHEET_SECRET` | Vercel (per project) + Script Properties | a random string, same in both places |
+| `VITE_ENABLE_FEEDBACK` | Vercel `ssr-fun` Production ONLY | `true` (build-time; shows the button, prompt and page) |
 
 Without both, the endpoint answers 503 and the page shows "Feedback is temporarily unavailable".

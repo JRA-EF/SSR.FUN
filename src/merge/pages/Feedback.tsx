@@ -6,12 +6,14 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { AlertCircle, CheckCircle2, ImagePlus, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StarRating } from "@/components/feedback/StarRating";
 import {
   FEEDBACK_ACTION_LABELS,
-  FEEDBACK_MESSAGE_MAX,
+  FEEDBACK_DETAILS_MAX,
+  FEEDBACK_SUBJECT_MAX,
   prepareSnapshot,
   submitFeedback,
   type FeedbackAction,
@@ -41,7 +43,8 @@ export function Feedback() {
   const [initial] = useState(() => readQuery(path));
   const { publicKey } = useWallet();
   const [rating, setRating] = useState(initial.rating);
-  const [message, setMessage] = useState("");
+  const [subject, setSubject] = useState("");
+  const [details, setDetails] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,12 +71,17 @@ export function Feedback() {
       setError("Pick a rating from 1 to 5 stars.");
       return;
     }
+    if (!subject.trim()) {
+      setError("Add a short summary of your feedback.");
+      return;
+    }
     setError(null);
     setSending(true);
     try {
       await submitFeedback({
         rating,
-        message: message.trim(),
+        subject: subject.trim(),
+        details: details.trim(),
         trigger: initial.trigger,
         action: initial.action,
         pageUrl: `${location.origin}/#${initial.from}`,
@@ -105,7 +113,8 @@ export function Feedback() {
     );
   }
 
-  const remaining = FEEDBACK_MESSAGE_MAX - message.length;
+  const subjectLeft = FEEDBACK_SUBJECT_MAX - subject.length;
+  const detailsLeft = FEEDBACK_DETAILS_MAX - details.length;
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-xl space-y-6">
@@ -126,18 +135,38 @@ export function Feedback() {
 
           <div className="space-y-2">
             <div className="flex items-baseline justify-between">
-              <Label htmlFor="feedback-message">What stood out? (optional)</Label>
-              <span className={`text-xs tabular-nums ${remaining < 50 ? "text-foreground" : "text-muted-foreground"}`}>
-                {remaining} left
+              <Label htmlFor="feedback-subject">What stood out?</Label>
+              <span className={`text-xs tabular-nums ${subjectLeft < 20 ? "text-foreground" : "text-muted-foreground"}`}>
+                {subjectLeft} left
+              </span>
+            </div>
+            <Input
+              id="feedback-subject"
+              value={subject}
+              maxLength={FEEDBACK_SUBJECT_MAX}
+              required
+              onChange={(e) => {
+                setSubject(e.target.value.slice(0, FEEDBACK_SUBJECT_MAX));
+                setError(null);
+              }}
+              placeholder="One line, e.g. Minting was quick but the fee was unclear"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <Label htmlFor="feedback-details">Tell us more (optional)</Label>
+              <span className={`text-xs tabular-nums ${detailsLeft < 100 ? "text-foreground" : "text-muted-foreground"}`}>
+                {detailsLeft} left
               </span>
             </div>
             <Textarea
-              id="feedback-message"
-              value={message}
-              maxLength={FEEDBACK_MESSAGE_MAX}
-              onChange={(e) => setMessage(e.target.value.slice(0, FEEDBACK_MESSAGE_MAX))}
-              placeholder="What worked, what didn't, or what you expected to happen."
-              className="min-h-[110px] resize-y"
+              id="feedback-details"
+              value={details}
+              maxLength={FEEDBACK_DETAILS_MAX}
+              onChange={(e) => setDetails(e.target.value.slice(0, FEEDBACK_DETAILS_MAX))}
+              placeholder="Go in depth: what you were trying to do, what happened, and what you expected instead."
+              className="min-h-[130px] resize-y"
             />
           </div>
 
@@ -192,7 +221,7 @@ export function Feedback() {
             <Button variant="ghost" onClick={() => navigate(initial.from)} disabled={sending}>
               Cancel
             </Button>
-            <Button onClick={() => void send()} disabled={sending || snapshotBusy || !rating}>
+            <Button onClick={() => void send()} disabled={sending || snapshotBusy || !rating || !subject.trim()}>
               {sending && <Loader2 className="w-4 h-4 animate-spin" />}
               {sending ? "Sending…" : "Send feedback"}
             </Button>

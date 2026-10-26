@@ -13,7 +13,7 @@
 
 var SHEET_ID = '1CcPwOu3bZqECxNbE4neOkEeBY0mX1UD70SvBnB08Ygc'; // 'SSR.FUN feedback sheet'
 var SNAPSHOT_FOLDER_ID = '1jYSgFDtBzItcoSdnSlaxJgZ4asVxWo98';
-var HEADERS = ['Received (UTC)', 'Rating', 'Trigger', 'After action', 'Explanation', 'Snapshot', 'Page', 'Site', 'Wallet', 'Browser', 'ID'];
+var HEADERS = ['Received (UTC)', 'Rating', 'Subject', 'Details', 'Snapshot', 'Trigger', 'After action', 'Page', 'Site', 'Wallet', 'Browser', 'ID'];
 var IMAGE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 function reply(obj) {
@@ -61,18 +61,20 @@ function doPost(e) {
   lock.waitLock(20000);
   try {
     var sheet = SpreadsheetApp.openById(SHEET_ID).getSheets()[0];
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(HEADERS);
+    // Keep row 1 in step with HEADERS (also rewrites an older header layout).
+    var head = sheet.getRange(1, 1, 1, HEADERS.length);
+    if (head.getValues()[0].join('|') !== HEADERS.join('|')) {
+      head.setValues([HEADERS]).setFontWeight('bold');
       sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');
     }
     sheet.appendRow([
       safe(body.receivedAt),
       rating,
+      safe(body.subject),
+      safe(body.details),
+      snapshotUrl,
       safe(body.trigger),
       safe(body.action),
-      safe(body.message),
-      snapshotUrl,
       safe(body.pageUrl),
       safe(body.site),
       safe(body.wallet),

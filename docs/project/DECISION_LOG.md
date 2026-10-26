@@ -7921,3 +7921,36 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0259
+
+```json
+{
+  "id": "DEC-0259",
+  "date": "2026-10-26",
+  "title": "In-app feedback: required one-line summary plus optional details; production (ssr.fun) only",
+  "status": "LIVE on production 2026-10-26; removed from staging the same day.",
+  "decision": "The feedback page now asks for a required one-line summary under 'What stood out?' (150 characters max) and an optional 'Tell us more' text (1,000 characters max), replacing DEC-0258's single optional 500-character explanation. The Sheet columns are Received, Rating, Subject, Details, Snapshot, Trigger, After action, Page, Site, Wallet, Browser, ID; the script rewrites row 1 to match. The whole surface (corner button, post-action prompt, #/feedback route) is behind VITE_ENABLE_FEEDBACK=true at build time, set only on the production project ssr-fun with FEEDBACK_SHEET_WEBHOOK_URL and FEEDBACK_SHEET_SECRET. Staging has neither, so it shows no feedback UI and its endpoint answers 503: the Sheet only receives feedback from ssr.fun.",
+  "context": "Creator, 2026-10-26, after reviewing staging: 'What stood out' should be a capped, mandatory subject (100-200 characters) with an optional in-depth field after it; ship to main and remove the feedback hook from staging, it needs to be inflow from prod ssr.fun only.",
+  "rationale": "A required short subject makes the Sheet scannable; details stay optional so a rating takes seconds. A build flag, the same mechanism as VITE_ENABLE_LIQUIDITY, keeps staging (which deploys from main too) from writing test feedback into the production Sheet.",
+  "alternativesConsidered": [
+    "Hide by hostname -- rejected: a build flag is the repo's existing pattern and also removes the route.",
+    "Keep staging writing to a separate tab -- rejected: the Creator wants production feedback only."
+  ],
+  "impact": "New env VITE_ENABLE_FEEDBACK (ssr-fun Production only). ssr-fun-staging no longer has FEEDBACK_SHEET_*.",
+  "affectedAreas": [
+    "src/merge/lib/feedback.ts (FEEDBACK_ENABLED, limits)",
+    "src/merge/pages/Feedback.tsx",
+    "src/merge/components/feedback/FeedbackLauncher.tsx",
+    "src/App.tsx",
+    "lib/agent-feedback/experiencePure.ts",
+    "api/feedback/experience.ts",
+    "tools/feedback-sheet/Code.gs (Apps Script deployment version 3)"
+  ],
+  "supersedes": "DEC-0258 (explanation field and staging deployment only)",
+  "supersededBy": null,
+  "evidence": [
+    "tsc -b clean; validation checks for required subject, 150/1,000 caps, trimming; live Apps Script v3 call wrote a row in the new layout; headless render of the page."
+  ]
+}
+```

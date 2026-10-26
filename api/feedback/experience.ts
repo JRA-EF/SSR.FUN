@@ -1,6 +1,6 @@
 // POST /api/feedback/experience -- the in-app "How did we do?" feedback
 // (src/merge/components/feedback/*, page #/feedback). Stores a 1-5 rating, a
-// short explanation and an optional snapshot in the team's Google Sheet: the
+// required short summary, optional details and an optional snapshot in the team's Google Sheet: the
 // row and the image are written by a Google Apps Script web app that runs as
 // the sheet's owner (tools/feedback-sheet/Code.gs), so no Google credential
 // lives in this project. Env: FEEDBACK_SHEET_WEBHOOK_URL (the script's /exec
@@ -79,7 +79,8 @@ export default async function handler(req: Req, res: Res) {
     rating: fb.rating,
     trigger: fb.trigger,
     action: fb.action ?? '',
-    message: sheetSafe(fb.message),
+    subject: sheetSafe(fb.subject),
+    details: sheetSafe(fb.details),
     pageUrl: sheetSafe(fb.pageUrl ?? ''),
     site: header(req, 'host'),
     wallet: fb.wallet ?? '',

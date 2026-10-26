@@ -1,11 +1,17 @@
 // In-app user feedback: the "How did we do?" prompt that follows a core
 // action, the corner Feedback button, and the #/feedback page. Submissions go
 // to api/feedback/experience.ts, which writes them to the team's Google Sheet.
+//
+// Off unless VITE_ENABLE_FEEDBACK=true at BUILD time (set on the production
+// project only, so the Sheet receives feedback from ssr.fun and never from
+// staging). Off means no corner button, no prompt and no #/feedback route.
+export const FEEDBACK_ENABLED = (import.meta.env.VITE_ENABLE_FEEDBACK as string | undefined) === "true";
 
 export type FeedbackAction = "mint" | "redeem" | "rebalance" | "create-reserve" | "liquidity";
 export type FeedbackTrigger = "button" | "prompt";
 
-export const FEEDBACK_MESSAGE_MAX = 500;
+export const FEEDBACK_SUBJECT_MAX = 150;
+export const FEEDBACK_DETAILS_MAX = 1000;
 const SNAPSHOT_MAX_INPUT_BYTES = 15 * 1024 * 1024;
 const SNAPSHOT_MAX_SIDE = 1600;
 
@@ -40,6 +46,7 @@ function writeNumber(key: string, value: number): void {
 
 /** Ask the user how a confirmed core action went. At most one prompt per day. */
 export function requestActionFeedback(action: FeedbackAction): void {
+  if (!FEEDBACK_ENABLED) return;
   if (Date.now() - readNumber(PROMPTED_AT_KEY) < PROMPT_COOLDOWN_MS) return;
   window.dispatchEvent(new CustomEvent<FeedbackAction>(PROMPT_EVENT, { detail: action }));
 }
@@ -106,7 +113,8 @@ export async function prepareSnapshot(file: File): Promise<Snapshot> {
 
 export async function submitFeedback(body: {
   rating: number;
-  message: string;
+  subject: string;
+  details: string;
   trigger: FeedbackTrigger;
   action: FeedbackAction | null;
   pageUrl: string;
@@ -119,7 +127,8 @@ export async function submitFeedback(body: {
     credentials: "same-origin",
     body: JSON.stringify({
       rating: body.rating,
-      message: body.message,
+      subject: body.subject,
+      details: body.details,
       trigger: body.trigger,
       action: body.action,
       pageUrl: body.pageUrl,

@@ -1,7 +1,8 @@
 // Validation for the in-app "How did we do?" feedback (api/feedback/experience.ts).
-// Pure, no imports, so it is unit-tested directly (tests/phase_user_feedback.ts).
+// Pure, no imports, so the API handler stays a thin wrapper around it.
 
-export const EXPERIENCE_MESSAGE_MAX = 500
+export const EXPERIENCE_SUBJECT_MAX = 150
+export const EXPERIENCE_DETAILS_MAX = 1000
 export const EXPERIENCE_SCREENSHOT_MAX_BASE64 = 3_000_000 // ~2.2 MB image; the client downscales first
 export const EXPERIENCE_SCREENSHOT_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
 export const EXPERIENCE_TRIGGERS = ['button', 'prompt'] as const
@@ -13,7 +14,8 @@ export type ExperienceAction = (typeof EXPERIENCE_ACTIONS)[number]
 
 export interface ExperienceSubmission {
   rating: number
-  message: string
+  subject: string
+  details: string
   trigger: (typeof EXPERIENCE_TRIGGERS)[number]
   action: ExperienceAction | null
   pageUrl: string | null
@@ -32,8 +34,11 @@ export function parseExperience(body: Record<string, unknown>): { ok: true; valu
   const rating = typeof body.rating === 'number' ? body.rating : Number(body.rating)
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return { ok: false, error: 'Pick a rating from 1 to 5 stars.' }
 
-  const rawMessage = typeof body.message === 'string' ? body.message.trim() : ''
-  if (rawMessage.length > EXPERIENCE_MESSAGE_MAX) return { ok: false, error: `Keep the explanation under ${EXPERIENCE_MESSAGE_MAX} characters.` }
+  const subject = typeof body.subject === 'string' ? body.subject.trim() : ''
+  if (!subject) return { ok: false, error: 'Add a short summary of your feedback.' }
+  if (subject.length > EXPERIENCE_SUBJECT_MAX) return { ok: false, error: `Keep the summary under ${EXPERIENCE_SUBJECT_MAX} characters.` }
+  const details = typeof body.details === 'string' ? body.details.trim() : ''
+  if (details.length > EXPERIENCE_DETAILS_MAX) return { ok: false, error: `Keep the details under ${EXPERIENCE_DETAILS_MAX} characters.` }
 
   const trigger = EXPERIENCE_TRIGGERS.includes(body.trigger as never) ? (body.trigger as ExperienceSubmission['trigger']) : 'button'
   const action = EXPERIENCE_ACTIONS.includes(body.action as never) ? (body.action as ExperienceAction) : null
@@ -52,7 +57,8 @@ export function parseExperience(body: Record<string, unknown>): { ok: true; valu
     ok: true,
     value: {
       rating,
-      message: rawMessage,
+      subject,
+      details,
       trigger,
       action,
       pageUrl: str(body.pageUrl, 400),
