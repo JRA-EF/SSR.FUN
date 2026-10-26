@@ -9,6 +9,7 @@ import { resolveDtrPageState, parseOnChainReserveId, TEST_ASSET_PRICES_USD, onCh
 import { fetchAssetPricesUsd } from "@/lib/assetPricing";
 import { buildDelegateCandidateWallets, rememberDelegateWallet, forgetDelegateWallet } from "@/lib/delegateDiscoveryCandidates";
 import { explorerUrl, SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
+import { reportFailure } from "@/lib/opsAlert";
 import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
 import { executeRealRebalance, type RebalanceRunResult } from "@/lib/rebalanceClient";
 import { LiquiditySection } from "@/components/LiquidityModule";
@@ -574,6 +575,7 @@ export function ManageDTR() {
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
       console.error("Collect Manager Fee Share failed:", raw);
+      if (IS_MAINNET) reportFailure("manage", e, { reserve: dtr?.onChain?.reserve ?? null, ticker: dtr?.ticker ?? null, wallet: walletCtx.publicKey?.toBase58() ?? null });
       toast({ variant: "destructive", title: "Collect failed", description: raw });
     } finally {
       setCollectingRecipient(null);
@@ -627,6 +629,7 @@ export function ManageDTR() {
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
       console.error("Update Fee Routing failed:", raw);
+      if (IS_MAINNET) reportFailure("manage", e, { reserve: dtr?.onChain?.reserve ?? null, ticker: dtr?.ticker ?? null, wallet: walletCtx.publicKey?.toBase58() ?? null });
       toast({
         variant: "destructive",
         title: "Could not update fee routing",
@@ -784,6 +787,7 @@ export function ManageDTR() {
       await refreshRealReserveNow(extraCandidateMints);
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
+      if (IS_MAINNET) reportFailure("manage", e, { reserve: dtr?.onChain?.reserve ?? null, ticker: dtr?.ticker ?? null, wallet: walletCtx.publicKey?.toBase58() ?? null });
       // Full technical detail (decoded ssr_protocol/Anchor error name + raw
       // message, via describeOnChainError inside managementClient.ts's own
       // throw) always goes to the console -- only a plain-language summary
@@ -1301,6 +1305,7 @@ export function ManageDTR() {
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
       console.error("Rebalance failed:", raw);
+      if (IS_MAINNET) reportFailure("rebalance", e, { reserve: dtr?.onChain?.reserve ?? null, ticker: dtr?.ticker ?? null, wallet: walletCtx.publicKey?.toBase58() ?? null });
       toast({ variant: "destructive", title: "Rebalance failed", description: raw });
     } finally {
       setRebalanceProgress(null);

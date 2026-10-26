@@ -51,6 +51,7 @@ import { LaunchCheckPanel } from "@/components/LaunchCheckPanel";
 import type { PersistedAssetFunding } from "@/lib/launchFunding";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
+import { reportFailure } from "@/lib/opsAlert";
 import { requestReserveSnapshotRefresh } from "@/lib/reserveSnapshotClient";
 import { RESERVE_VISIBILITY_NOTE } from "@/lib/walletPromptCopy";
 import { recordAbandonedCreate } from "@/lib/recoveryRecords";
@@ -803,6 +804,7 @@ export function CreateDTR({
       await finalizeResumedReserve(result, pendingAtStart);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (IS_MAINNET) reportFailure("create-resume", e, { wallet: walletCtx.publicKey?.toBase58() ?? null });
       if (isWalletRejectionError(e)) {
         toast({ title: "Cancelled in wallet", description: "Nothing was submitted -- safe to try Resume again whenever you're ready." });
       } else if (e instanceof CreateReserveStepError && (await reconcileAlreadyCompleteReserve(resumePending))) {
@@ -1628,6 +1630,7 @@ export function CreateDTR({
       setLocation(`/dtr/${dtrId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (IS_MAINNET) reportFailure("create", e, { wallet: walletCtx.publicKey?.toBase58() ?? null });
 
       if (isWalletRejectionError(e)) {
         // Rejected in the wallet popup itself -- strictly before any

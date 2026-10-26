@@ -70,6 +70,9 @@ const CRON_PATHS = new Set([
   // checks both credentials itself and rejects everything else with 401.
   '/api/feedback/board',
   '/api/feedback/agent-requests',
+  // DEC-0261: Helius failed-transaction webhook, authenticated by
+  // HELIUS_ALERT_WEBHOOK_SECRET inside the handler.
+  '/api/mainnet/alert-helius',
 ])
 
 const SITE_LOGIN_PATH = '/api/site/login'

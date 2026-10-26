@@ -29,6 +29,7 @@ import {Button} from './ui/button';
 import {Card,CardContent,CardDescription,CardHeader,CardTitle} from './ui/card';
 import {Input} from './ui/input';
 import {Label} from './ui/label';
+import {reportFailure} from '@/lib/opsAlert';
 
 const ACTION_TITLES:Record<LiveAction,string>={create:'Launch pool',add:'Add liquidity',withdraw:'Withdraw liquidity',collect:'Collect DEX earnings',lock:'Lock liquidity',extend:'Extend lock',unlock:'Release expired lock',permanent:'Lock forever'};
 const kpiLabel='text-[10px] uppercase tracking-wider font-semibold text-muted-foreground';
@@ -72,7 +73,7 @@ export function LiveLiquiditySection({dtr}:{dtr:DTR}){
      toast({title:'Mint confirmed. One step left',description:`Approve the ${ACTION_TITLES[action].toLowerCase()} review below to finish.`});}}
   }catch(e){if(current===generation.current){const text=(minted?`The ${dtr.ticker} was minted and is in the treasury, but the liquidity review could not be prepared. `:'')+(()=>{const message=e instanceof Error?e.message:'Could not prepare this transaction.';return action==='create'&&!minted?launchErrorText(message):message;})();
    if(e instanceof LiquiditySetupNeeded){setSetupAddresses(e.addresses);toast({title:'One-time setup needed',description:'Approve the setup step below first. It only pays account rent and network fees.'});}
-   else toast({variant:'destructive',title:`${ACTION_TITLES[action]} could not be prepared`,description:text});
+   else{toast({variant:'destructive',title:`${ACTION_TITLES[action]} could not be prepared`,description:text});reportFailure(action==='create'?'launch':'liquidity',e,{reserve:chain.reserve,ticker:dtr.ticker,wallet:wallet.publicKey?.toBase58()??null});}
    setError(text);}}
   finally{if(current===generation.current)setBusy(false);}
  };

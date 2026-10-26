@@ -8022,3 +8022,35 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0261
+
+```json
+{
+  "id": "DEC-0261",
+  "date": "2026-10-26",
+  "title": "Ops alerts: failed Mint/Redeem/create/launch/manage actions, failed on-chain transactions and keeper problems are logged in Neon and posted to the team Telegram group, repeats grouped",
+  "status": "Staging then production 2026-10-26.",
+  "decision": "lib/ops-alerts: recordAlert(event) logs every failure in ops_alert_events (90-day retention) and keeps one ops_alerts row per failure kind (fingerprint = source + step + message with amounts/addresses/signatures stripped, error codes kept). A Telegram message (bot @SSRFUNWATCHERBOT -> group SSR.FUN ERRORS) goes out at most once per kind per quiet window (10 min; keeper balance/config 6 h), carrying the count since the last one; the send is claimed atomically in Neon so instances never double-post; if Neon is down it still alerts with per-instance grouping. Wallet cancellations are never alerts. Sources: (1) the app, via src/merge/lib/opsAlert.ts reportFailure() from the Mainnet failure branches of mint and redeem (DTRDetail), create and resume (CreateDTR), liquidity prepare and sign/send (LiveLiquiditySection, LiquidityTransactionReview; create = launch), rebalance and manage actions (ManageDTR) -> POST /api/mainnet/alert-report (site-gated, 20 per IP per 10 min); (2) Helius raw webhook, txnStatus failed, on program 8hTW... -> POST /api/mainnet/alert-helius (passes the site gate, checks HELIUS_ALERT_WEBHOOK_SECRET; scripts/ops_alert_webhook.ts registers it); (3) the fee keeper cron: each job error, keeper role missing, keeper SOL under 0.05. Messages show the site, Reserve, error, wallet and signature by last characters, and a Solscan link.",
+  "context": "Creator, 2026-10-26: \"create a program that will be notified whenever there was an error detected in SSR.FUN - ex. mint not successful etc. and logs it and alerts us via Telegram\"; \"keep things tight and efficient\". Most failures never reach the chain (simulation, wallet, RPC, Jupiter), so an on-chain program could not see them, and a Solana program cannot call Telegram: no program upgrade.",
+  "rationale": "One small module and two endpoints on the existing Vercel + Neon stack; grouping prevents a broken Reserve from flooding the group; the Helius webhook catches failures from any client (bots, other frontends) with no polling.",
+  "alternativesConsidered": [
+    "On-chain program/event -- cannot see off-chain failures or call Telegram.",
+    "Polling getSignaturesForAddress from a cron -- slower and spends RPC credits; the Helius webhook pushes.",
+    "Sentry or similar -- another paid service and account; the team already lives in Telegram."
+  ],
+  "impact": "New env on ssr-fun and ssr-fun-staging: TELEGRAM_ALERT_BOT_TOKEN, TELEGRAM_ALERT_CHAT_ID, HELIUS_ALERT_WEBHOOK_SECRET. New Neon tables ops_alerts, ops_alert_events (created on first use). If the group becomes a supergroup its id changes: the logs say the new TELEGRAM_ALERT_CHAT_ID and the alert follows it once.",
+  "affectedAreas": [
+    "lib/ops-alerts/{alerts,alertsPure}.ts (new)",
+    "api/mainnet/alert-report.ts, alert-helius.ts (new); middleware.ts (webhook path); api/mainnet/fee-settlement-cron.ts",
+    "src/merge/lib/opsAlert.ts (new); DTRDetail.tsx, CreateDTR.tsx, ManageDTR.tsx, LiveLiquiditySection.tsx, LiquidityTransactionReview.tsx",
+    "scripts/ops_alert_webhook.ts (new); tests/phase_ops_alerts.ts (new); tsconfig.node.json"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_ops_alerts.ts 9/9; offline suite 1727 passing / 4 known failing; tsc -b and api/mainnet clean; vite build OK.",
+    "Live run against Neon + the group: first alert posted, the same failure with a different slot grouped (not posted), a wallet cancellation ignored."
+  ]
+}
+```

@@ -110,6 +110,8 @@ import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstru
 import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience";
 import { findSharingPools, runBasketFeedForPool, type BasketFeedResult } from "../../lib/mainnet/basketFeed";
 import { fetchJupiterPrices } from "./asset-prices";
+import { recordAlert } from "../../lib/ops-alerts/alerts";
+import { KEEPER_LOW_SOL } from "../../lib/ops-alerts/alertsPure";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -402,6 +404,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
+  // DEC-0261: page the team when the keeper cannot run or is about to run dry (at most every 6 hours each).
+  if (!keeperMatchesOnChain) await recordAlert({ source: "keeper", step: "keeper-config", message: status.settlementBlockedBy ?? keeperEnvError ?? "Keeper not running." }, { quietMinutes: 360 });
+  if (status.keeperSolBalance !== null && status.keeperSolBalance < KEEPER_LOW_SOL) {
+    await recordAlert({ source: "keeper", step: "keeper-balance", message: `Keeper has ${status.keeperSolBalance.toFixed(4)} SOL (alert below ${KEEPER_LOW_SOL}). Top it up or settlement stops.`, wallet: status.keeperWallet }, { quietMinutes: 360 });
+  }
   if (!keeper) {
     res.status(500).json({ error: keeperEnvError ?? "Keeper wallet not configured." });
     return;
@@ -700,6 +707,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       catch (e) { basketFeedResults.push({ reserve: p.terms.reserve.toBase58(), holderShareBps: p.terms.holderShareBps, releasedUsdcRaw: "0", legs: [], error: e instanceof Error ? e.message : String(e) }); }
     }
   }
+
+  // DEC-0261: every job failure is logged and alerted (repeats grouped by lib/ops-alerts).
+  const failures = [
+    ...results.filter((r) => r.error).map((r) => ({ step: "settlement", reserve: r.reserve, message: r.error! })),
+    ...accruals.filter((r) => r.error).map((r) => ({ step: "accrual", reserve: r.reserve, message: r.error! })),
+    ...transferFeeResults.filter((r) => r.error).map((r) => ({ step: "transfer-fees", reserve: r.reserve, message: r.error! })),
+    ...basketFeedResults.filter((r) => r.error).map((r) => ({ step: "basket-feed", reserve: r.reserve, message: r.error! })),
+  ];
+  for (const f of failures) await recordAlert({ source: "keeper", ...f });
 
   res.status(200).json({
     dryRun: false,

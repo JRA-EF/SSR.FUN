@@ -91,6 +91,7 @@ import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
 import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
 import { LIQUIDITY_ENABLED } from "@/lib/liquidityFeature";
 import { requestActionFeedback } from "@/lib/feedback";
+import { reportFailure } from "@/lib/opsAlert";
 
 /* Candlestick glyph for the Recharts range-Bar: the bar's y/height map the
    candle's [low, high] band, so open/close are interpolated inside it. A
@@ -1502,6 +1503,7 @@ export function DTRDetail() {
         setBuyPhase("failed");
         const raw = e instanceof Error ? e.message : "The mint failed.";
         console.error("Buy failed:", raw);
+        reportFailure("mint", e, { reserve: dtr?.onChain?.reserve ?? null, ticker: dtr?.ticker ?? null, wallet: walletCtx.publicKey?.toBase58() ?? null });
         // onBuyClick only ever routes here for a genuinely single-asset
         // Reserve (see isMultiAssetMainnetReserve/handleBuyMultiAssetMainnet
         // below) -- this specific failure should be unreachable from the UI;
@@ -1642,6 +1644,7 @@ export function DTRDetail() {
         setBuyPhase("failed");
         const raw = e instanceof Error ? e.message : "The mint failed.";
         console.error("Multi-asset Buy failed:", raw);
+        reportFailure("mint", e, { reserve: dtr?.onChain?.reserve ?? null, ticker: dtr?.ticker ?? null, wallet: walletCtx.publicKey?.toBase58() ?? null });
         // The on-chain-verified state report (multiAssetBuyPlan.ts's
         // buildBuyStateReport) -- what succeeded, what is held, whether
         // the Reserve Token was minted, and what retry will actually do.
@@ -1920,6 +1923,7 @@ export function DTRDetail() {
         setSellPhase("failed");
         const raw = e instanceof Error ? e.message : "The redemption failed.";
         console.error("Sell failed:", raw);
+        reportFailure("redeem", e, { reserve: dtr?.onChain?.reserve ?? null, ticker: dtr?.ticker ?? null, wallet: walletCtx.publicKey?.toBase58() ?? null });
         // DEC-0241: a batch redemption can fail AFTER the redeem landed --
         // the Reserve Tokens are gone and some assets sit in the wallet.
         // Never say "no funds were moved" then; send the user to /recover.

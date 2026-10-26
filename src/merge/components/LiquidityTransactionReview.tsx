@@ -5,6 +5,7 @@ import {CheckCircle2,Loader2} from 'lucide-react';
 import type {PreparedLiquidity} from '../../../lib/mainnet/prepareCompound';
 import {signLiquidityPlan,submitLiquidityPlan,reconcileLiquidity,readPendingLiquidity,walletErrorText,type LookupTableLoader,type PendingLiquidity} from '../lib/liquidity/liquidityExecution';
 import {useToast} from '@/hooks/use-toast';
+import {reportFailure} from '@/lib/opsAlert';
 import {transactionConfirmedToast} from './TransactionConfirmation';
 import {Button} from './ui/button';
 import {Input} from './ui/input';
@@ -60,7 +61,7 @@ export function LiquidityTransactionReview({plan,onSettled,onRetry}:{plan:Prepar
   }catch(e){setMessage(e instanceof Error?e.message:'Saved transaction could not be read.');}
  // eslint-disable-next-line react-hooks/exhaustive-deps
  },[plan]);
- const run=async(work:()=>Promise<void>)=>{if(busy)return;setBusy(true);try{await work();}catch(e){const text=walletErrorText(e);setMessage(text);toast({variant:'destructive',title:`${name} not completed`,description:text});}finally{setBusy(false);}};
+ const run=async(work:()=>Promise<void>)=>{if(busy)return;setBusy(true);try{await work();}catch(e){const text=walletErrorText(e);reportFailure(plan.action==='create'?'launch':'liquidity',e,{reserve:plan.reserve,wallet:wallet.publicKey?.toBase58()??null});setMessage(text);toast({variant:'destructive',title:`${name} not completed`,description:text});}finally{setBusy(false);}};
  const send=async(transactionBase64:string)=>{const current=generation.current;
   const result=await submitLiquidityPlan({connection,storage:localStorage,plan,transactionBase64,loadTables,releaseCheck:async()=>{const response=await fetch('/api/mainnet/liquidity-release',{cache:'no-store'});if(!response.ok)return false;const release=await response.json();return release.executionEnabled===true;}});
   if(current!==generation.current)return;setSignature(result.signature);
