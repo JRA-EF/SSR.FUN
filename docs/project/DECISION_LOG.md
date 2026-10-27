@@ -8133,3 +8133,45 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0266
+
+```json
+{
+  "id": "DEC-0266",
+  "date": "2026-10-27",
+  "title": "Command center v2: protocol wallets in USDC, feedback and error-review counts, unpushed work, and a watch list",
+  "status": "LIVE on production and the test site 2026-10-27.",
+  "decision": "/internal/commandcenter (DEC-0264) gains: (1) protocol wallets as bubbles valued in USDC (SOL and tokens at Jupiter prices; SSR Reserve Tokens without a market price at their latest NAV from reserve_nav_history): the treasury and both protocol admins read live from the on-chain ProtocolConfig (5dhE…ud88), plus the Squads vault and each signer's SOL, the fee keeper and the pool payer. The header total counts protocol money only; the second admin (the Boss's own wallet) is shown but not counted. (2) Feedback: the in-app feedback Sheet gets a Status column (dropdown; empty = open) and the Apps Script answers an authenticated stats request (open, open with 1-2 stars, last 7 days, 7-day average, newest open); the team feedback board shows unresolved items by status and priority. (3) The error watcher shows each kind of ops alert not yet reviewed by Claude since it last happened; scripts/review_ops_alerts.mjs lists, shows and marks them (Neon ops_alert_reviews, separate from lib/ops-alerts' own tables). (4) GitHub shows commits that exist only on the dev PC (local branches and detached worktrees), worktrees with uncommitted changes, and GitHub branches not merged into main, from a snapshot that scripts/command_center_git_snapshot.mjs writes to Neon hourly (Windows scheduled task 'SSR.FUN command center git snapshot' on the dev PC, running a copy in ~/.ssr-fun). (5) A watch list: live problems (clear when fixed), open items from decision-log entries of the last 60 days, and notes the team adds; decision and team items can be marked done. Also: Observability Plus disabled on ssr-fun-staging (production unchanged).",
+  "context": "Creator, 2026-10-27: turn off Observability on staging; add feedback-sheet numbers (how many unresolved), error reports the watcher raised that Claude has not checked, commits still to be pushed to GitHub, things to look out for, the treasury wallet and every relevant protocol wallet with its balance, in USDC.",
+  "rationale": "Staging produced 70% of the Observability Events bill ($13.80 of $19.62 this cycle) for data nobody reads. Every other addition answers a question that previously needed someone to open four tools. Production cannot see a developer PC, so unpushed work is published from it; NAV is what a Reserve Token is redeemable for, so it is the honest USDC value when no market price exists.",
+  "alternativesConsidered": [
+    "Mark alerts reviewed from the page -- rejected: the Creator asked for errors Claude has not checked, so the review is recorded by the session that investigated (with a note).",
+    "Count the second admin in the protocol total -- rejected: it is a person's own wallet with personal holdings (about 6.8k USDC).",
+    "GitHub API for unmerged branches from production -- rejected: unauthenticated rate limits; the local snapshot already has it."
+  ],
+  "impact": "New Neon tables: command_center_watch, command_center_dismissed, command_center_snapshots, ops_alert_reviews. Feedback Sheet: new Status column (13th). Apps Script must be redeployed (clasp login expired; the Creator re-authenticates once); until then the sheet counts show as unavailable. A scheduled task on the dev PC.",
+  "affectedAreas": [
+    "lib/command-center/model.ts",
+    "lib/command-center/probes.ts",
+    "api/dashboard/commandcenter.ts",
+    "public/internal-commandcenter.html",
+    "scripts/command_center_git_snapshot.mjs",
+    "scripts/review_ops_alerts.mjs",
+    "tools/feedback-sheet/Code.gs",
+    "vercel.json (DECISION_LOG.md bundled with the endpoint)",
+    "tests/phase_command_center.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "openItems": [
+    "Creator: run `npx @google/clasp@2.4.2 login` once so the Apps Script with the Status column and stats can be pushed.",
+    "Investigate the two unreviewed user failures from 2026-10-26: a redeem (SPL Token InsufficientFunds) and a mint (SsrError::ZeroValue 6001)."
+  ],
+  "evidence": [
+    "Local probe run against production data: protocol wallets 920.13 USDC (treasury 8.40, authority 906.72, pool payer 5.01, Squads vault 0); second admin 6,827.04 USDC shown, not counted; 6 unresolved feedback-board items (oldest 48 days); 20 commits only on the dev PC (17 in the staging-0253 worktree); 17 unmerged GitHub branches. Four of six alert kinds reviewed with notes (two setup tests, one fixed by DEC-0262, one transient RPC error).",
+    "Observability Plus: GET /v1/observability/manage/configuration/projects lists ssr-fun-staging as disabled.",
+    "tests/phase_command_center.ts 6/6 + cron gate 1/1; tsc -b clean."
+  ]
+}
+```

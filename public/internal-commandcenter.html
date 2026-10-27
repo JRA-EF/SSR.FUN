@@ -309,6 +309,30 @@
   .links a:hover { color: var(--text); border-color: var(--accent); }
   .dr-foot { padding: 10px 22px; border-top: 1px solid var(--line); font: 10.5px var(--mono); color: var(--text-3); }
 
+  /* ---------- drawer lists + watch list ---------- */
+  .list { display: grid; gap: 1px; border-radius: 12px; overflow: hidden; background: var(--line); }
+  .li { display: grid; grid-template-columns: 8px 1fr; gap: 10px; align-items: start; padding: 9px 12px; background: var(--surface); font-size: 12.5px; line-height: 1.4; text-decoration: none; color: inherit; }
+  a.li:hover { background: var(--surface-2); }
+  .li i { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--line-strong); }
+  .li i.ok { background: var(--ok); } .li i.warn { background: var(--warn); } .li i.down { background: var(--down); } .li i.unknown { background: var(--unknown); }
+  .li .pri { color: var(--text); overflow-wrap: anywhere; }
+  .li .sec { color: var(--text-3); font: 11px var(--mono); margin-top: 2px; overflow-wrap: anywhere; }
+  .list-note { margin: 6px 2px 0; font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
+  .list-empty { padding: 10px 12px; border-radius: 12px; background: var(--surface); font-size: 12.5px; color: var(--text-3); }
+  .w-item { display: grid; grid-template-columns: 8px 1fr auto; gap: 10px; align-items: start; padding: 10px 12px; background: var(--surface); font-size: 12.5px; line-height: 1.45; }
+  .w-item i { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--unknown); }
+  .w-item i.warn { background: var(--warn); } .w-item i.down { background: var(--down); }
+  .w-item .pri { color: var(--text); cursor: default; }
+  .w-item .pri.go { cursor: pointer; } .w-item .pri.go:hover { color: var(--accent-ink, #ccd6f9); text-decoration: underline; }
+  .w-item .sec { color: var(--text-3); font: 11px var(--mono); margin-top: 2px; }
+  .w-x { border: 1px solid var(--line); background: transparent; color: var(--text-3); border-radius: 999px; padding: 3px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .w-x:hover { color: var(--text); border-color: var(--line-strong); }
+  form.watch-add { display: flex; gap: 8px; margin-top: 10px; }
+  form.watch-add input { flex: 1; min-width: 0; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-raise); color: var(--text); font: 13px var(--sans); outline: none; }
+  form.watch-add input:focus { border-color: var(--accent); }
+  .usd-big { margin: 14px 0 0; font: 600 26px var(--mono); letter-spacing: -.01em; }
+  .usd-big small { font: 400 12px var(--sans); color: var(--text-3); margin-left: 6px; }
+
   /* ---------- states ---------- */
   #state {
     position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 10;
@@ -352,6 +376,8 @@
     <span class="pill" id="sumOk" hidden><span class="d" style="background:var(--ok)"></span><b>0</b> healthy</span>
     <span class="pill" id="sumWarn" hidden><span class="d" style="background:var(--warn)"></span><b>0</b> to watch</span>
     <span class="pill" id="sumDown" hidden><span class="d" style="background:var(--down)"></span><b>0</b> failing</span>
+    <button class="pill" id="watchPill" hidden type="button"></button>
+    <button class="pill" id="walletsPill" hidden type="button"></button>
     <button class="pill" id="alertsPill" hidden type="button"></button>
     <button class="pill" id="refresh" type="button" aria-label="Refresh now">
       <svg id="refreshIc" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
@@ -400,26 +426,32 @@
     neon: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
     helius: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
     jupiter: '<path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/>',
-    telegram: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>',
+    telegram: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     sheets: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8M12 11v8"/>',
     program: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>',
     squads: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
     raydium: '<path d="M12 2.7 17.66 8.34a8 8 0 1 1-11.31 0z"/>',
     keeper: '<path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/>',
     'pool-payer': '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/>',
+    treasury: '<path d="M3 22h18"/><path d="M6 18v-7M10 18v-7M14 18v-7M18 18v-7"/><path d="m12 2 9 5H3z"/>',
+    authority: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8"/><path d="m17 6 3 3"/><path d="m14 9 2 2"/>',
+    'admin-2': '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    'feedback-board': '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7v7M12 7v4M16 7v10"/>',
+    watch: '<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H5"/>',
   };
   const iconFor = (id) => ICONS[id] || (id.startsWith('domain') ? ICONS.domain : ICONS.site);
 
   // Layout: fractions of the stage, grouped into clusters around the hub.
   const LAYOUT = {
-    site: [0.50, 0.47],
-    vercel: [0.27, 0.36], github: [0.10, 0.20], 'domain-ssr': [0.08, 0.52], 'domain-test': [0.15, 0.80],
-    neon: [0.40, 0.15], sheets: [0.60, 0.13], telegram: [0.87, 0.17],
-    helius: [0.75, 0.37], jupiter: [0.83, 0.68],
-    keeper: [0.62, 0.72], program: [0.40, 0.75], squads: [0.27, 0.92], raydium: [0.53, 0.93], 'pool-payer': [0.73, 0.92],
+    site: [0.45, 0.42],
+    vercel: [0.24, 0.32], github: [0.08, 0.16], 'domain-ssr': [0.06, 0.48], 'domain-test': [0.12, 0.76],
+    neon: [0.33, 0.08], sheets: [0.50, 0.06], 'feedback-board': [0.66, 0.10], telegram: [0.86, 0.12],
+    helius: [0.70, 0.33], jupiter: [0.92, 0.40],
+    program: [0.42, 0.72], squads: [0.26, 0.90], raydium: [0.50, 0.95],
+    treasury: [0.62, 0.62], keeper: [0.78, 0.66], 'pool-payer': [0.66, 0.92], authority: [0.82, 0.92], 'admin-2': [0.96, 0.78],
   };
-  const CLUSTERS = [['Hosting', 0.17, 0.08], ['Data & alerts', 0.75, 0.05], ['On-chain', 0.40, 0.995], ['Routing', 0.90, 0.50]];
-  const SIZE = { hub: 178, service: 128, chain: 114, wallet: 114, domain: 106 };
+  const CLUSTERS = [['Hosting', 0.15, 0.0], ['Data, feedback & alerts', 0.60, -0.03], ['On-chain', 0.30, 1.0], ['Protocol wallets', 0.80, 1.02], ['Routing', 0.96, 0.24]];
+  const SIZE = { hub: 168, service: 116, chain: 104, wallet: 102, domain: 96 };
   // Short names on the bubbles; the drawer shows the full label.
   const SHORT = { 'domain-ssr': 'ssr.fun domain', 'domain-test': 'Test-site domain' };
 
@@ -445,7 +477,7 @@
       state = body; lastOk = Date.now();
       render();
       // Deep link: /internal/commandcenter#helius opens that service.
-      if (first && location.hash.length > 1) openDrawer(decodeURIComponent(location.hash.slice(1)));
+      if (first && location.hash.length > 1) { const h = decodeURIComponent(location.hash.slice(1)); openDrawer(h === 'watch' ? '__watch' : h); }
     } catch (e) {
       if (!state) showState('Could not load the command center: ' + esc(e.message), true);
       else $('#updated').textContent = 'Refresh failed (' + e.message + '). Showing the last good read.';
@@ -465,7 +497,7 @@
     const w = innerWidth;
     let h;
     if (narrow) {
-      const n = state ? state.nodes.length : 15;
+      const n = state ? state.nodes.length : 19;
       h = 190 + Math.ceil((n - 1) / 2) * 150 + 40;
       stage.style.height = h + 'px';
       stage.style.top = '190px';
@@ -479,7 +511,7 @@
   }
 
   // Phone order: neighbours on the map sit next to each other, so lines stay short.
-  const NARROW_ORDER = ['site', 'vercel', 'github', 'domain-ssr', 'domain-test', 'neon', 'sheets', 'helius', 'telegram', 'jupiter', 'keeper', 'program', 'squads', 'raydium', 'pool-payer'];
+  const NARROW_ORDER = ['site', 'vercel', 'github', 'domain-ssr', 'domain-test', 'neon', 'sheets', 'feedback-board', 'telegram', 'helius', 'jupiter', 'program', 'squads', 'raydium', 'treasury', 'keeper', 'pool-payer', 'authority', 'admin-2'];
 
   function homeFor(id, idx) {
     if (dims.narrow) {
@@ -521,6 +553,15 @@
     ap.hidden = !a;
     ap.innerHTML = '<span class="d" style="background:' + (total ? 'var(--warn)' : 'var(--ok)') + '"></span><b>' + total + '</b> alerts · 24 h';
     ap.onclick = () => openDrawer('telegram');
+    const wp = $('#walletsPill');
+    wp.hidden = state.walletsUsd == null;
+    wp.innerHTML = '<span class="d" style="background:var(--action)"></span>Protocol wallets <b>' + fmtUsdc(state.walletsUsd) + '</b>';
+    wp.onclick = () => openDrawer('treasury');
+    const watchN = (state.watch || []).length, watchBad = (state.watch || []).filter((w) => w.tone === 'down').length;
+    const wl = $('#watchPill');
+    wl.hidden = false;
+    wl.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + ICONS.watch + '</svg>Watch list <b>' + watchN + '</b>' + (watchBad ? ' <span class="d" style="background:var(--down)"></span>' : '');
+    wl.onclick = () => openDrawer('__watch');
     $('#liveDot').classList.remove('stale');
     tickUpdated();
 
@@ -553,7 +594,8 @@
       v.node = n;
       const el = v.el;
       el.className = 'bubble kind-' + n.kind + ' status-' + n.status;
-      const size = Math.round((SIZE[n.kind] || 100) * dims.scale);
+      const grow = n.kind === 'wallet' && n.usd > 0 ? Math.min(0.3, Math.log10(n.usd + 1) / 14) : 0;
+      const size = Math.round((SIZE[n.kind] || 100) * (1 + grow) * dims.scale);
       el.style.setProperty('--size', size + 'px');
       el.setAttribute('aria-label', n.label + ': ' + statusWord(n.status) + (n.problems.length ? '. ' + n.problems[0] : ''));
       $('svg.ic', el).innerHTML = iconFor(n.id);
@@ -594,6 +636,16 @@
   }
 
   const RANK = { ok: 0, unknown: 1, warn: 2, down: 3 };
+  function fmtUsdc(n) { return n == null ? 'unpriced' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDC'; }
+  function renderLists(lists) {
+    return (lists || []).map((l) => '<h3>' + esc(l.title) + '</h3>' + (l.items.length
+      ? '<div class="list">' + l.items.map((it) => {
+          const tag = it.url ? 'a' : 'div';
+          const href = it.url ? ' href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer"' : '';
+          return '<' + tag + ' class="li"' + href + '><i class="' + (it.tone || '') + '"></i><div><div class="pri">' + esc(it.primary) + '</div>' + (it.secondary ? '<div class="sec">' + esc(it.secondary) + '</div>' : '') + '</div></' + tag + '>';
+        }).join('') + '</div>'
+      : '<div class="list-empty">' + esc(l.empty || 'Nothing here.') + '</div>') + (l.note ? '<p class="list-note">' + esc(l.note) + '</p>' : '')).join('');
+  }
   function worstOf(a, b) { return RANK[a] >= RANK[b] ? a : b; }
   function statusWord(s) { return { ok: 'healthy', warn: 'needs attention', down: 'failing', unknown: 'unknown' }[s] || s; }
 
@@ -677,6 +729,7 @@
 
   // ---------------------------------------------------------- drawer
   function openDrawer(id, refreshOnly) {
+    if (id === '__watch') return openWatch(refreshOnly);
     const n = state && state.nodes.find((x) => x.id === id);
     if (!n) return;
     if (refreshOnly && document.activeElement && drawer.contains(document.activeElement) && document.activeElement.matches('input,textarea')) return;
@@ -710,10 +763,12 @@
       '<div class="dr-head"><div class="dr-ic"><svg viewBox="0 0 24 24">' + iconFor(n.id) + '</svg></div><div><h2 id="drTitle">' + esc(n.label) + '</h2><div class="st">' + statusWord(n.status) + ' · ' + esc(n.headline) + '</div></div>' +
       '<button class="dr-close" type="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
       '<div class="dr-body">' +
-      '<p class="impact"><b>If this fails:</b> ' + esc(n.impact) + '</p>' +
+      (n.kind === 'wallet' || n.id === 'squads' ? '<div class="usd-big">' + fmtUsdc(n.usd) + '<small>' + (n.id === 'squads' ? 'in the vault' : n.id === 'admin-2' ? 'not counted in the protocol total' : 'SOL and tokens at live prices') + '</small></div>' : '') +
+      '<p class="impact"><b>' + (n.kind === 'wallet' ? 'What it is:' : 'If this fails:') + '</b> ' + esc(n.impact) + '</p>' +
       (problems ? '<h3>Needs attention</h3><ul class="problems">' + problems + '</ul>' : '') +
       (metrics ? '<h3>Live readings</h3><div class="metrics">' + metrics + '</div>' : '') +
       (keys ? '<h3>Keys on ssr.fun</h3>' + keys : '') +
+      renderLists(n.lists) +
       (alerts ? '<h3>Latest alerts</h3><div class="alerts">' + alerts + '</div>' : '') +
       form +
       (n.links.length ? '<h3>Open</h3><div class="links">' + n.links.map((l) => '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(l.label) + ' ↗</a>').join('') + '</div>' : '') +
@@ -725,11 +780,57 @@
     if (!refreshOnly) $('.dr-close', drawer).focus({ preventScroll: true });
   }
 
+  function openWatch(refreshOnly) {
+    if (refreshOnly && document.activeElement && drawer.contains(document.activeElement) && document.activeElement.matches('input')) return;
+    openId = '__watch'; hideTip(); focusOn(null);
+    if (location.hash !== '#watch') history.replaceState(null, '', '#watch');
+    drawer.style.setProperty('--c', 'var(--action)');
+    const items = state.watch || [];
+    const group = (src, title, note) => {
+      const list = items.filter((w) => w.source === src);
+      if (!list.length) return '';
+      return '<h3>' + title + '</h3><div class="list">' + list.map((w) =>
+        '<div class="w-item"><i class="' + w.tone + '"></i><div><div class="pri' + (w.nodeId ? ' go" data-node="' + esc(w.nodeId) : '') + '">' + esc(w.text) + '</div>' + (w.detail ? '<div class="sec">' + esc(w.detail) + '</div>' : '') + '</div>' +
+        (w.source === 'live' ? '<span></span>' : '<button class="w-x" type="button" data-key="' + esc(w.id) + '">Done</button>') + '</div>').join('') + '</div>' + (note ? '<p class="list-note">' + note + '</p>' : '');
+    };
+    drawer.innerHTML =
+      '<div class="dr-head"><div class="dr-ic"><svg viewBox="0 0 24 24">' + ICONS.watch + '</svg></div><div><h2 id="drTitle">Watch list</h2><div class="st">' + items.length + ' things to look out for</div></div>' +
+      '<button class="dr-close" type="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
+      '<div class="dr-body">' +
+      group('live', 'Live problems', 'These clear by themselves once fixed. Click one to open its service.') +
+      group('decision', 'Open items from the decision log') +
+      group('team', 'Added by the team') +
+      '<h3>Add something to watch</h3><form class="watch-add" id="watchForm"><input name="text" maxlength="280" placeholder="e.g. Helius plan renews on the 3rd, check usage first" required><button class="btn" type="submit">Add</button></form>' +
+      '<p class="list-note" id="watchMsg">Visible to everyone with internal access. Never paste keys or passwords.</p>' +
+      '</div><div class="dr-foot">Read from ssr.fun production · ' + new Date(state.generatedAt).toLocaleString() + '</div>';
+    drawer.classList.add('on'); scrim.classList.add('on');
+    $('.dr-close', drawer).onclick = closeDrawer;
+    drawer.querySelectorAll('.pri.go').forEach((el) => el.addEventListener('click', () => openDrawer(el.dataset.node)));
+    drawer.querySelectorAll('.w-x').forEach((b) => b.addEventListener('click', () => postAction({ action: 'watch-dismiss', key: b.dataset.key }, b)));
+    $('#watchForm', drawer).onsubmit = (e) => { e.preventDefault(); const f = e.target; postAction({ action: 'watch-add', text: f.text.value }, $('button', f)); };
+    if (!refreshOnly) $('.dr-close', drawer).focus({ preventScroll: true });
+  }
+
+  async function postAction(body, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch(API, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out.error || ('HTTP ' + r.status));
+      state = out; lastOk = Date.now();
+      document.activeElement && document.activeElement.blur();
+      render();
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      const msg = $('#watchMsg', drawer); if (msg) { msg.textContent = err.message; msg.style.color = '#ffb3bb'; }
+    }
+  }
+
   function closeDrawer() {
     const id = openId;
     openId = null; drawer.classList.remove('on'); scrim.classList.remove('on'); focusOn(null);
     history.replaceState(null, '', location.pathname + location.search);
-    if (id && views.get(id)) views.get(id).el.focus({ preventScroll: true });
+    if (id && id !== '__watch' && views.get(id)) views.get(id).el.focus({ preventScroll: true });
   }
   scrim.addEventListener('click', closeDrawer);
   addEventListener('keydown', (e) => { if (e.key === 'Escape' && openId) closeDrawer(); });

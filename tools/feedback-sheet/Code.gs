@@ -13,7 +13,11 @@
 
 var SHEET_ID = '1CcPwOu3bZqECxNbE4neOkEeBY0mX1UD70SvBnB08Ygc'; // 'SSR.FUN feedback sheet'
 var SNAPSHOT_FOLDER_ID = '1jYSgFDtBzItcoSdnSlaxJgZ4asVxWo98';
-var HEADERS = ['Received (UTC)', 'Rating', 'Subject', 'Details', 'Snapshot', 'Trigger', 'After action', 'Page', 'Site', 'Wallet', 'Browser', 'ID'];
+var HEADERS = ['Received (UTC)', 'Rating', 'Subject', 'Details', 'Snapshot', 'Trigger', 'After action', 'Page', 'Site', 'Wallet', 'Browser', 'ID', 'Status'];
+// The team sets Status by hand; empty means open. /internal/commandcenter counts open rows.
+var STATUS_COL = 13;
+var STATUS_CHOICES = ['Open', 'In progress', 'Resolved', "Won't fix", 'Duplicate', 'Test'];
+var CLOSED = ['resolved', 'done', 'fixed', 'closed', "won't fix", 'wont fix', 'duplicate', 'test'];
 var IMAGE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 function reply(obj) {
@@ -32,6 +36,43 @@ function doGet() {
   return reply({ ok: true, service: 'ssr-fun-feedback' });
 }
 
+// Row 1 matches HEADERS, and the Status column offers a dropdown (free text is still allowed).
+function ensureHeader(sheet) {
+  var head = sheet.getRange(1, 1, 1, HEADERS.length);
+  if (head.getValues()[0].join('|') !== HEADERS.join('|')) {
+    head.setValues([HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    var rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUS_CHOICES, true).setAllowInvalid(true).build();
+    sheet.getRange(2, STATUS_COL, sheet.getMaxRows() - 1, 1).setDataValidation(rule);
+  }
+}
+
+// Counts for /internal/commandcenter: open = Status empty, Open or In progress (anything not in CLOSED).
+function stats() {
+  var sheet = SpreadsheetApp.openById(SHEET_ID).getSheets()[0];
+  ensureHeader(sheet);
+  var last = sheet.getLastRow();
+  var rows = last > 1 ? sheet.getRange(2, 1, last - 1, HEADERS.length).getValues() : [];
+  var now = Date.now(), week = 7 * 86400000;
+  var total = 0, last7d = 0, sum7d = 0, open = 0, openLow = 0, openRows = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var rating = Number(r[1]);
+    if (!(rating >= 1 && rating <= 5)) continue;
+    total++;
+    var at = r[0] instanceof Date ? r[0].getTime() : Date.parse(String(r[0]).replace(/^'/, ''));
+    if (at && now - at < week) { last7d++; sum7d += rating; }
+    var status = String(r[STATUS_COL - 1] || '').trim();
+    if (CLOSED.indexOf(status.toLowerCase()) === -1) {
+      open++;
+      if (rating <= 2) openLow++;
+      openRows.push({ at: at ? new Date(at).toISOString() : '', rating: rating, subject: String(r[2] || '').replace(/^'/, '').slice(0, 150), status: status });
+    }
+  }
+  openRows.sort(function (a, b) { return a.at < b.at ? 1 : -1; });
+  return { ok: true, total: total, last7d: last7d, avgRating7d: last7d ? sum7d / last7d : null, open: open, openLow: openLow, newestOpen: openRows.slice(0, 8) };
+}
+
 function doPost(e) {
   var body;
   try {
@@ -44,6 +85,7 @@ function doPost(e) {
   var secret = PropertiesService.getScriptProperties().getProperty('FEEDBACK_SECRET') ||
     (typeof FEEDBACK_SECRET_INLINE === 'string' ? FEEDBACK_SECRET_INLINE : '');
   if (!secret || body.secret !== secret) return reply({ ok: false, error: 'unauthorized' });
+  if (body.action === 'stats') return reply(stats());
 
   var rating = Number(body.rating);
   if (!(rating >= 1 && rating <= 5)) return reply({ ok: false, error: 'bad rating' });
@@ -62,11 +104,7 @@ function doPost(e) {
   try {
     var sheet = SpreadsheetApp.openById(SHEET_ID).getSheets()[0];
     // Keep row 1 in step with HEADERS (also rewrites an older header layout).
-    var head = sheet.getRange(1, 1, 1, HEADERS.length);
-    if (head.getValues()[0].join('|') !== HEADERS.join('|')) {
-      head.setValues([HEADERS]).setFontWeight('bold');
-      sheet.setFrozenRows(1);
-    }
+    ensureHeader(sheet);
     sheet.appendRow([
       safe(body.receivedAt),
       rating,
@@ -80,6 +118,7 @@ function doPost(e) {
       safe(body.wallet),
       safe(body.userAgent),
       safe(body.id),
+      '',
     ]);
   } finally {
     lock.releaseLock();

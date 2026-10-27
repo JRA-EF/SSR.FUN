@@ -11,6 +11,7 @@
       "includeFiles": "docs/project/*.{md,json}"
     },
     "api/dashboard/commandcenter.ts": {
+      "includeFiles": "docs/project/DECISION_LOG.md",
       "maxDuration": 60
     },
     "api/devnet/*.ts": {

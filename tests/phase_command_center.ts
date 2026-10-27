@@ -36,6 +36,18 @@ describe("command center wiring", () => {
     expect(handler).to.include("x-command-center-forwarded");
   });
 
+  it("the protocol wallet total leaves out the second admin's own wallet", () => {
+    const probes = read("lib/command-center/probes.ts");
+    const totals = probes.slice(probes.indexOf("const walletIds"), probes.indexOf("const walletIds") + 120);
+    expect(totals).to.include("'treasury'");
+    expect(totals).not.to.include("'admin-2'");
+  });
+
+  it("only decision-log and team items can be dismissed; live problems clear when fixed", () => {
+    const model = read("lib/command-center/model.ts");
+    expect(model).to.include(String.raw`/^(team:\d+|dec:DEC-\d{4}:[0-9a-f]{10})$/`);
+  });
+
   it("probes report keys by name and age, never by value", () => {
     const probes = read("lib/command-center/probes.ts");
     expect(probes).to.include("decrypt=false");

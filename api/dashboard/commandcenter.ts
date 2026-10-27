@@ -15,8 +15,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { DashboardRequest, DashboardResponse } from '../../lib/dashboard/http.js'
 import { parseCookie, SESSION_COOKIE_NAME, verifySessionCookie } from '../../lib/dashboard/session.js'
-import { parseFactsEdit } from '../../lib/command-center/model.js'
-import { collectCommandCenter, NODE_IDS, saveFacts } from '../../lib/command-center/probes.js'
+import { parseAction } from '../../lib/command-center/model.js'
+import { addWatch, collectCommandCenter, dismissWatch, NODE_IDS, saveFacts } from '../../lib/command-center/probes.js'
 
 const PRODUCTION_ORIGIN = 'https://ssr.fun'
 const CACHE_MS = 60_000
@@ -89,10 +89,13 @@ export default async function handler(req: DashboardRequest & { url?: string }, 
   res.setHeader('Cache-Control', 'no-store')
   if (req.method === 'POST') {
     const body = typeof req.body === 'string' ? (() => { try { return JSON.parse(req.body as string) } catch { return null } })() : req.body
-    const parsed = parseFactsEdit(body, NODE_IDS)
+    const parsed = parseAction(body, NODE_IDS)
     if (parsed.ok === false) { res.status(400).json({ error: parsed.error }); return }
+    const a = parsed.action
     try {
-      await saveFacts(parsed.node, parsed.facts)
+      if (a.kind === 'facts') await saveFacts(a.node, a.facts)
+      else if (a.kind === 'watch-add') await addWatch(a.text)
+      else await dismissWatch(a.key)
     } catch (e) {
       res.status(502).json({ error: `Could not save: ${e instanceof Error ? e.message : String(e)}` })
       return

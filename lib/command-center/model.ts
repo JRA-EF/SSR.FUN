@@ -8,6 +8,10 @@
 export type Tone = 'ok' | 'warn' | 'down' | 'unknown'
 
 export interface Metric { label: string; value: string; tone?: Tone }
+
+/** A titled list in the drawer (open feedback, unreviewed alerts, unpushed commits, wallet tokens). */
+export interface ListItem { primary: string; secondary?: string; tone?: Tone; url?: string }
+export interface DrawerList { title: string; items: ListItem[]; empty?: string; note?: string }
 export interface Link { label: string; url: string }
 
 export interface SecretInfo {
@@ -55,14 +59,29 @@ export interface CcNode {
   manual: ManualFacts
   /** Whether the page offers the plan/renewal editor for this node. */
   editable: boolean
+  lists: DrawerList[]
+  /** USDC value of a wallet (SOL and tokens at live prices); null for non-wallets or when unpriced. */
+  usd: number | null
 }
 
 export interface CcEdge { from: string; to: string; label: string }
+
+/** Something to keep an eye on: a live problem, an open decision-log item, or a note the team added. */
+export interface WatchItem {
+  id: string
+  text: string
+  tone: Tone
+  source: 'live' | 'decision' | 'team'
+  nodeId?: string
+  detail?: string
+}
 
 export interface CommandCenterState {
   generatedAt: string
   source: 'ssr.fun'
   nodes: CcNode[]
+  watch: WatchItem[]
+  walletsUsd: number | null
   edges: CcEdge[]
   renewals: Renewal[]
   summary: { ok: number; warn: number; down: number; unknown: number }
@@ -149,4 +168,44 @@ export function summarize(nodes: CcNode[]): CommandCenterState['summary'] {
   const s = { ok: 0, warn: 0, down: 0, unknown: 0 }
   for (const n of nodes) s[n.status]++
   return s
+}
+
+/** POST bodies: a facts edit (default), or a watch-list add / dismiss. */
+export type CcAction =
+  | { kind: 'facts'; node: string; facts: ManualFacts }
+  | { kind: 'watch-add'; text: string }
+  /** key = a WatchItem id: 'team:<n>' or 'dec:<DEC>:<hash>'. Live problems cannot be dismissed; they clear when fixed. */
+  | { kind: 'watch-dismiss'; key: string }
+
+export function parseAction(body: unknown, nodeIds: readonly string[]): { ok: true; action: CcAction } | { ok: false; error: string } {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>
+  if (b.action === 'watch-add') {
+    const text = typeof b.text === 'string' ? b.text.trim() : ''
+    if (!text) return { ok: false, error: 'Write what to watch.' }
+    if (text.length > 280) return { ok: false, error: 'Keep it under 280 characters.' }
+    return { ok: true, action: { kind: 'watch-add', text } }
+  }
+  if (b.action === 'watch-dismiss') {
+    const key = typeof b.key === 'string' ? b.key : ''
+    if (!/^(team:\d+|dec:DEC-\d{4}:[0-9a-f]{10})$/.test(key)) return { ok: false, error: 'This item clears by itself once it is fixed.' }
+    return { ok: true, action: { kind: 'watch-dismiss', key } }
+  }
+  const parsed = parseFactsEdit(body, nodeIds)
+  return parsed.ok ? { ok: true, action: { kind: 'facts', node: parsed.node, facts: parsed.facts } } : parsed
+}
+
+/** Values a person types in the feedback Sheet's Status column that close a row; anything else, or empty, is open. */
+export const CLOSED_FEEDBACK = ['resolved', 'done', 'fixed', 'closed', "won't fix", 'wont fix', 'duplicate', 'test']
+
+/** The feedback board's rule (lib/agent-feedback/boardPure.ts deriveBoardStatus), restated so this module stays dependency-free. */
+export function boardStatusOf(pipelineStatus: string | null, boardStatus: string | null): string {
+  if (boardStatus) return boardStatus
+  if (pipelineStatus === 'dismissed') return 'rejected'
+  if (pipelineStatus === 'dispatched' || pipelineStatus === 'resolved') return 'in_progress'
+  return 'reported'
+}
+
+export function formatUsdc(n: number | null): string {
+  if (n === null) return 'unpriced'
+  return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`
 }
