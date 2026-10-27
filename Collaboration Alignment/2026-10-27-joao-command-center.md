@@ -3,7 +3,7 @@
 - **Date:** 2026-10-27
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `feat/command-center`, merged into `main`
-- **Deployed to:** production and staging (deploy ids in the commit that follows)
+- **Deployed to:** production `dpl_J8oReYeotVxXGGkLp6ovn8AX2pMK`, staging `dpl_6e4dxZnBjh6zumW4KTnDyZQSWgZY` (both f773606)
 - **Decision log:** DEC-0264
 
 ## What shipped
