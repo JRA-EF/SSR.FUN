@@ -13,9 +13,9 @@ use ssr_protocol::instructions::trade_tax::{TradeTax, TRADE_TAX_SEED};
 
 const SYSVAR_IX: Pubkey = anchor_lang::pubkey!("Sysvar1nstructions1111111111111111111111111");
 
-struct Ctx { revenue: Pubkey, terms: Pubkey, trade_tax: Pubkey, pool: Pubkey, creator_fee_share: Pubkey }
+pub(crate) struct Ctx { pub(crate) revenue: Pubkey, pub(crate) terms: Pubkey, pub(crate) trade_tax: Pubkey, pub(crate) pool: Pubkey, pub(crate) creator_fee_share: Pubkey }
 
-fn ctx(env: &mut Env) -> Ctx {
+pub(crate) fn ctx(env: &mut Env) -> Ctx {
     let revenue = pda(&[ROUTER_SEED, env.reserve.as_ref()]);
     feed::install_usdc(env);
     let pool = feed::install_pool(env, &revenue);
@@ -25,7 +25,7 @@ fn ctx(env: &mut Env) -> Ctx {
     }
 }
 
-fn configure_v2(env: &Env, c: &Ctx, buy: u16, sell: u16, holder_share_bps: u16) -> Instruction {
+pub(crate) fn configure_v2(env: &Env, c: &Ctx, buy: u16, sell: u16, holder_share_bps: u16) -> Instruction {
     Instruction {
         program_id: PID,
         accounts: ssr_protocol::accounts::ConfigureLiquidityRevenueV2 {
@@ -38,7 +38,7 @@ fn configure_v2(env: &Env, c: &Ctx, buy: u16, sell: u16, holder_share_bps: u16) 
     }
 }
 
-fn enable(env: &Env, c: &Ctx) -> Instruction {
+pub(crate) fn enable(env: &Env, c: &Ctx) -> Instruction {
     Instruction {
         program_id: PID,
         accounts: ssr_protocol::accounts::EnableTradeTax {
@@ -50,7 +50,7 @@ fn enable(env: &Env, c: &Ctx) -> Instruction {
     }
 }
 
-fn collect(env: &Env, c: &Ctx, creator: &Pubkey, sources: &[Pubkey]) -> Instruction {
+pub(crate) fn collect(env: &Env, c: &Ctx, creator: &Pubkey, sources: &[Pubkey]) -> Instruction {
     let admin = env.admin.pubkey();
     let mut accounts = ssr_protocol::accounts::CollectTradeTax {
         protocol_config: pda(&[PROTOCOL_CONFIG_SEED]), reserve: env.reserve, trade_tax: c.trade_tax, reserve_token_mint: env.rt_mint,
@@ -64,7 +64,7 @@ fn collect(env: &Env, c: &Ctx, creator: &Pubkey, sources: &[Pubkey]) -> Instruct
     Instruction { program_id: PID, accounts, data: ssr_protocol::instruction::CollectTradeTax {}.data() }
 }
 
-fn collect_v1(env: &Env) -> Instruction {
+pub(crate) fn collect_v1(env: &Env) -> Instruction {
     let admin = env.admin.pubkey();
     Instruction {
         program_id: PID,
@@ -78,7 +78,7 @@ fn collect_v1(env: &Env) -> Instruction {
     }
 }
 
-fn update_fee(env: &Env, bps: u16) -> Instruction {
+pub(crate) fn update_fee(env: &Env, bps: u16) -> Instruction {
     Instruction {
         program_id: PID,
         accounts: ssr_protocol::accounts::UpdateTransferFee {
@@ -90,7 +90,7 @@ fn update_fee(env: &Env, bps: u16) -> Instruction {
 }
 
 /// A trade, as the token sees it: `amount` Reserve Tokens from the admin to `to`.
-fn trade(env: &Env, to: &Pubkey, amount: u64) -> Vec<Instruction> {
+pub(crate) fn trade(env: &Env, to: &Pubkey, amount: u64) -> Vec<Instruction> {
     let admin = env.admin.pubkey();
     vec![
         anchor_spl::associated_token::spl_associated_token_account::instruction::create_associated_token_account_idempotent(&admin, to, &env.rt_mint, &TOKEN22),
@@ -98,7 +98,7 @@ fn trade(env: &Env, to: &Pubkey, amount: u64) -> Vec<Instruction> {
     ]
 }
 
-fn mint_fee(env: &Env) -> (u16, u16, u64, u64) {
+pub(crate) fn mint_fee(env: &Env) -> (u16, u16, u64, u64) {
     let acct = env.svm.get_account(&env.rt_mint).unwrap();
     let mint = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&acct.data).unwrap();
     let fee = mint.get_extension::<TransferFeeConfig>().unwrap();
@@ -107,7 +107,7 @@ fn mint_fee(env: &Env) -> (u16, u16, u64, u64) {
         u64::from(fee.withheld_amount), mint.base.supply)
 }
 
-fn rt_balance(env: &Env, owner: &Pubkey) -> u64 {
+pub(crate) fn rt_balance(env: &Env, owner: &Pubkey) -> u64 {
     env.svm.get_account(&ata(owner, &env.rt_mint, &TOKEN22))
         .map(|a| StateWithExtensions::<spl_token_2022::state::Account>::unpack(&a.data).unwrap().base.amount).unwrap_or(0)
 }
@@ -194,4 +194,48 @@ pub fn run() {
     let t2: TradeTax = env.read(&c.trade_tax).unwrap();
     assert!(t2.total_creator > t.total_creator && t2.total_burned > t.total_burned, "re-withheld payout fees are split too");
     println!("PASS the payouts' own fees are collected and split on the next run ({} more to the creator)", t2.total_creator - t.total_creator);
+}
+
+/// DEC-0268: a trade tax under 0.15%. Before the guard, 0.05% or 0.10% gave a
+/// combined rate of 0.20% / 0.25%, not above the 0.25% protocol ceiling, so the
+/// rate-based check saw no tax: the permissionless collect_transfer_fees swept
+/// the creator's part to SSR and the admin's update_transfer_fee could
+/// overwrite it. SSR_EXPECT_GUARD=0 runs it against a pre-DEC-0268 binary and
+/// requires the hole to show; otherwise enable_trade_tax must refuse it.
+pub fn guard() {
+    let custom = |n: u32| format!("Custom({n})");
+    let patched = std::env::var("SSR_EXPECT_GUARD").map(|v| v != "0").unwrap_or(true);
+    for tax in [5u16, 10] {
+        let mut env = setup();
+        let c = ctx(&mut env);
+        let a = env.admin.insecure_clone();
+        let k = env.keeper.insecure_clone();
+        let r = env.send(&[configure_v2(&env, &c, tax, tax, 0), enable(&env, &c)], &[&a]);
+        if patched {
+            expect_err(r, &custom(6088), &format!("a {:.2}% trade tax (below the 0.15% minimum)", tax as f64 / 100.0));
+            continue;
+        }
+        r.expect("pre-guard binary accepts a tax under 0.15%");
+        let (_, newer, _, _) = mint_fee(&env);
+        let t: TradeTax = env.read(&c.trade_tax).unwrap();
+        assert_eq!((t.tax_bps, newer), (tax, 15 + tax));
+        let swept = env.send(&[collect_v1(&env)], &[&k]).is_ok();
+        let overwritten = env.send(&[update_fee(&env, 15)], &[&a]).is_ok();
+        let (_, newer_after, _, _) = mint_fee(&env);
+        assert!(swept && overwritten && newer_after == 15, "the hole is expected on the pre-guard binary");
+        println!("HOLE CONFIRMED on the live binary at {:.2}%: the mint fee became {:.2}%, the protocol-only sweep was allowed and the admin reset the fee to 0.15% (tax recorded {} bps, now never charged)",
+            tax as f64 / 100.0, (15 + tax) as f64 / 100.0, t.tax_bps);
+    }
+    if patched {
+        // The minimum itself is accepted and then protected.
+        let mut env = setup();
+        let c = ctx(&mut env);
+        let a = env.admin.insecure_clone();
+        let k = env.keeper.insecure_clone();
+        env.send(&[configure_v2(&env, &c, 15, 0, 0), enable(&env, &c)], &[&a]).expect("FAIL a 0.15% trade tax is the minimum and must be accepted");
+        assert_eq!(mint_fee(&env).1, 30);
+        expect_err(env.send(&[collect_v1(&env)], &[&k]), &custom(6090), "collect_transfer_fees on a 0.15% trade-taxed mint");
+        expect_err(env.send(&[update_fee(&env, 25)], &[&a]), &custom(6090), "update_transfer_fee on a 0.15% trade-taxed mint");
+        println!("PASS the 0.15% minimum: accepted (fee 0.30%), and the protocol-only sweep and fee update refuse it");
+    }
 }

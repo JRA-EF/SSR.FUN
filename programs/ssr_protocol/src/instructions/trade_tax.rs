@@ -46,6 +46,10 @@ use crate::state::{ProtocolConfig, Reserve};
 pub const TRADE_TAX_SEED: &[u8] = b"trade_tax";
 /// Same 0-2% range as the Buy/Sell sliders.
 pub const MAX_TRADE_TAX_BPS: u16 = 200;
+/// DEC-0268: the smallest trade tax. Below it the combined rate (protocol +
+/// tax) can stay at or under the 0.25% protocol ceiling, where
+/// `trade_tax_active` cannot see it (same floor as the app, DEC-0263).
+pub const MIN_TRADE_TAX_BPS: u16 = 15;
 
 #[account]
 pub struct TradeTax {
@@ -149,7 +153,7 @@ pub struct EnableTradeTax<'info> {
 pub fn enable(ctx: Context<EnableTradeTax>) -> Result<()> {
     require!(!ctx.accounts.protocol_config.paused, SsrError::ProtocolPaused);
     let tax_bps = ctx.accounts.revenue.buy_tax_bps.max(ctx.accounts.revenue.sell_tax_bps);
-    require!(tax_bps > 0 && tax_bps <= MAX_TRADE_TAX_BPS, SsrError::TradeTaxInvalid);
+    require!(tax_bps >= MIN_TRADE_TAX_BPS && tax_bps <= MAX_TRADE_TAX_BPS, SsrError::TradeTaxInvalid);
     // Only at launch: the terms must be created by this same transaction.
     let terms_key = ctx.accounts.terms.key();
     let ixs = ctx.accounts.instructions_sysvar.to_account_info();
@@ -171,6 +175,13 @@ pub fn enable(ctx: Context<EnableTradeTax>) -> Result<()> {
     require!(!trade_tax_active(current_bps, newer_bps), SsrError::TradeTaxInvalid);
     let protocol_bps = newer_bps;
     let new_bps = protocol_bps + tax_bps;
+    // DEC-0268: the combined rate must sit above the protocol ceiling, so
+    // `trade_tax_active` -- the guard of the protocol-only sweep and fee update,
+    // which cannot see this account -- holds for as long as TradeTax exists.
+    // Only this instruction can raise a rate past the ceiling and nothing
+    // lowers it afterwards, so "rate above the ceiling" and "TradeTax exists"
+    // are the same thing. (Was: a 0.05% or 0.10% tax gave 0.20% / 0.25%.)
+    require!(new_bps > MAX_RESERVE_TOKEN_TRANSFER_FEE_BPS, SsrError::TradeTaxInvalid);
     let authority_bump = [ctx.bumps.transfer_fee_authority];
     let authority_seeds: &[&[u8]] = &[TRANSFER_FEE_AUTHORITY_SEED, &authority_bump];
     let ix = spl_token_2022::extension::transfer_fee::instruction::set_transfer_fee(
@@ -312,6 +323,12 @@ mod tests {
                 assert_eq!(a as u128 + b as u128 + c as u128, w as u128);
             }
         }
+    }
+    #[test] fn the_minimum_tax_always_clears_the_ceiling() {
+        // At the live 0.15% protocol rate the smallest allowed tax gives 0.30%.
+        assert!(trade_tax_active(15, 15 + MIN_TRADE_TAX_BPS));
+        // The two rates the minimum shuts out were invisible to the guard.
+        assert!(!trade_tax_active(15, 15 + 5) && !trade_tax_active(15, 15 + 10));
     }
     #[test] fn active_only_above_the_protocol_ceiling() {
         assert!(!trade_tax_active(15, 25));

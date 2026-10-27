@@ -23,6 +23,7 @@ use ssr_protocol::state::{RebalanceTicket, Reserve, ReserveAsset};
 mod feed;
 mod split;
 mod tradetax;
+mod raydium_tax;
 
 const PID: Pubkey = ssr_protocol::ID;
 const TOKEN: Pubkey = anchor_spl::token::ID;
@@ -45,7 +46,7 @@ struct Env {
 impl Env {
     fn send(&mut self, ixs: &[Instruction], signers: &[&Keypair]) -> Result<(), String> {
         let tx = Transaction::new_signed_with_payer(ixs, Some(&signers[0].pubkey()), signers, self.svm.latest_blockhash());
-        let r = self.svm.send_transaction(tx).map(|_| ()).map_err(|e| format!("{:?} | {}", e.err, e.meta.logs.iter().filter(|l| l.contains("Error") || l.contains("failed")).cloned().collect::<Vec<_>>().join(" / ")));
+        let r = self.svm.send_transaction(tx).map(|_| ()).map_err(|e| format!("{:?} | {}", e.err, e.meta.logs.iter().filter(|l| std::env::var("SSR_ALL_LOGS").is_ok() || l.contains("Error") || l.contains("failed")).cloned().collect::<Vec<_>>().join(" / ")));
         self.svm.expire_blockhash();
         r
     }
@@ -130,7 +131,7 @@ impl Env {
 
 fn setup() -> Env {
     let mut svm = LiteSVM::new();
-    svm.add_program_from_file(PID, "../../target/deploy/ssr_protocol.so").expect("build the program first (cargo-build-sbf)");
+    svm.add_program_from_file(PID, std::env::var("SSR_PROGRAM_SO").unwrap_or_else(|_| "../../target/deploy/ssr_protocol.so".into())).expect("build the program first (cargo-build-sbf)");
     let admin = Keypair::new();
     let keeper = Keypair::new();
     let market = Keypair::new();
@@ -398,6 +399,8 @@ fn main() {
     feed::run(&mut env);
     split::run();
     tradetax::run();
+    raydium_tax::run();
+    tradetax::guard();
 
     println!("ALL PASS");
 }
