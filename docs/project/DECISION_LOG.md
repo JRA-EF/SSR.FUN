@@ -8092,3 +8092,44 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0264
+
+```json
+{
+  "id": "DEC-0264",
+  "date": "2026-10-27",
+  "title": "Command center: /internal/commandcenter maps every integration ssr.fun depends on, live from production only",
+  "status": "Built 2026-10-27; deployed to production and the test site the same day.",
+  "decision": "A static internal page (public/internal-commandcenter.html, route /internal/commandcenter, behind SSR_DASHBOARD_PASSWORD like every internal page) draws ssr.fun's integrations as floating, draggable bubbles linked by animated dependency lines: Vercel, both domains, GitHub, Neon, Helius, Jupiter, the Telegram alert bot, the feedback Sheet, the SSR program, Squads, Raydium, the fee keeper and the pool payer. Each bubble is coloured by a live check and carries its keys as small orbiting dots (name and age only). A drawer shows what breaks if it fails, live readings, key ages against a rotation age, links, and an editor for facts no API exposes (plan, cost, renewal date, owning login, notes), saved in Neon table command_center_facts. A bottom timeline shows renewals and expiries for the next 12 months. Data: api/dashboard/commandcenter.ts + lib/command-center/. Only the production deployment of ssr-fun (VERCEL_ENV=production and VERCEL_PROJECT_PRODUCTION_URL=ssr.fun) runs the probes; every other deployment, including strategic-super-reserve.fun, forwards server-to-server to https://ssr.fun with the shared COMMAND_CENTER_TOKEN, so the page always shows ssr.fun data. The endpoint is listed with the cron paths in middleware.ts and checks the dashboard session or that bearer itself; a forwarded request never forwards again.",
+  "context": "Creator, 2026-10-27: a permanent page at strategic-super-reserve.fun/internal/commandcenter that reports exclusively from ssr.fun data, with a visual picture of all integrations and failure points (Vercel and its billing and next invoice, API keys, the Helius billing date, and the rest), connected where needed, as floating bubbles rather than stacked cards.",
+  "rationale": "Each failure the team hit had a single owner nobody was watching: the keeper out of SOL (Sept), Neon over quota (DEC-0208), a 68-day-old Jupiter key rate limited on ssr.fun while staging had a newer one (2026-10-26). One live map with renewal dates puts them in one place. Probing only on production keeps staging's different keys from ever being shown as ssr.fun's.",
+  "alternativesConsidered": [
+    "Probe from the test site with its own env -- rejected: its Jupiter key, Helius URL and env ages differ from ssr.fun's, which is exactly the mismatch the page must expose.",
+    "Hard-code plans and renewal dates in the repo -- rejected: public repo, and dates go stale; the team edits them on the page instead.",
+    "Cards in a grid -- rejected by the Creator's brief."
+  ],
+  "impact": "New env: COMMAND_CENTER_TOKEN (Sensitive, Production) on ssr-fun and ssr-fun-staging. VERCEL_API_TOKEN (Production, ssr-fun) is still to be created by the Creator in the Vercel dashboard (the CLI login may not create tokens: 403 'Cannot create tokens for this app'); until then the Vercel bubble shows 'connect API token' and key ages are unknown. New Neon table command_center_facts. Each probe run makes one Jupiter test quote, one Telegram getMe and one Apps Script GET (cached 60 s).",
+  "affectedAreas": [
+    "public/internal-commandcenter.html",
+    "api/dashboard/commandcenter.ts",
+    "lib/command-center/model.ts",
+    "lib/command-center/probes.ts",
+    "middleware.ts (CRON_PATHS + INTERNAL_PAGE_PATHS)",
+    "vercel.json (rewrite, maxDuration 60)",
+    "tests/phase_command_center.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "openItems": [
+    "Creator: create a Vercel token (vercel.com/account/settings/tokens, scope team ssr14) and add it as VERCEL_API_TOKEN (Sensitive, Production) on ssr-fun, then redeploy.",
+    "Enter the Helius and Jupiter plans and renewal dates on the page (no API exposes them)."
+  ],
+  "evidence": [
+    "Probes run locally against production services: Vercel Pro, next invoice 2026-11-10, $48.47 this cycle (Observability Events $20.77 the largest line); ssr.fun expires 2027-07-30 (GoDaddy), strategic-super-reserve.fun 2027-07-15 (Name.com); program upgrade authority = Squads vault; Squads threshold 1 of 3 (flagged); Raydium permission present; 8 ops alerts in 24 h. Output scanned for key-shaped strings: none.",
+    "publicKeyFromSecret matches web3.js on 200 random keypairs (JSON and base64).",
+    "tests/phase_command_center.ts 4/4, tests/phase_cron_gate_exempt.ts 1/1; tsc -b clean.",
+    "Headless Chrome screenshots at 1600x940 and 520 px wide."
+  ]
+}
+```

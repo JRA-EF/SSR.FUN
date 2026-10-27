@@ -73,6 +73,10 @@ const CRON_PATHS = new Set([
   // DEC-0261: Helius failed-transaction webhook, authenticated by
   // HELIUS_ALERT_WEBHOOK_SECRET inside the handler.
   '/api/mainnet/alert-helius',
+  // DEC-0264: command center data. Checks the internal dashboard session OR
+  // the COMMAND_CENTER_TOKEN bearer (the test site forwards to ssr.fun with
+  // it, carrying no cookie) inside the handler; 401 for everything else.
+  '/api/dashboard/commandcenter',
 ])
 
 const SITE_LOGIN_PATH = '/api/site/login'
@@ -359,6 +363,8 @@ const INTERNAL_PAGE_PATHS = new Set([
   // password required on top of the beta key, like every other internal page.
   '/internal/set-keeper',
   '/internal-set-keeper.html',
+  '/internal/commandcenter',
+  '/internal-commandcenter.html',
 ])
 
 export default async function middleware(request: Request): Promise<Response> {

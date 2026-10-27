@@ -10,6 +10,9 @@
     "api/dashboard/content.ts": {
       "includeFiles": "docs/project/*.{md,json}"
     },
+    "api/dashboard/commandcenter.ts": {
+      "maxDuration": 60
+    },
     "api/devnet/*.ts": {
       "includeFiles": "packages/sdk/**"
     },
@@ -113,6 +116,10 @@
     {
       "source": "/internal/feedback-board",
       "destination": "/internal-feedback-board.html"
+    },
+    {
+      "source": "/internal/commandcenter",
+      "destination": "/internal-commandcenter.html"
     },
     {
       "source": "/internal/kpis",
