@@ -52,6 +52,13 @@ export function describeJupiterSwapError(rawErrorJson: string): string {
         if (code === 6024) {
           return `The Jupiter swap was rejected on-chain because this wallet does not hold enough to fund it (Jupiter error 6024: insufficient funds for the swap amount, network fees, or account rent). Add more USDC (and keep a little SOL for fees) to this wallet before trying again -- retrying without adding funds will fail the same way every time.`;
         }
+        // Custom 1 is SPL Token's InsufficientFunds raised INSIDE the route: a token transfer in one of
+        // the DEX pools came up short. Live 2026-10-26 (Reserve #61 redeem, 17 attempts): every
+        // attempt routed through an Invariant pool that failed this way, so "try again" alone
+        // fails again; the venue is now excluded (DEC-0267).
+        if (code === 1) {
+          return `A token transfer inside the swap route came up short (SPL Token error 1: insufficient funds). Either this wallet no longer holds the full amount being swapped, or one of the trading pools in the route could not pay out. Retrying fetches a new route; if it keeps failing for the same asset, that asset's route is broken -- tell the SSR team.`;
+        }
         if (code === 6001) {
           return `The Jupiter swap was rejected on-chain because the price moved beyond the accepted slippage between fetching the quote and the swap executing (Jupiter error 6001) -- routine for a lower-liquidity token. Try again: a fresh quote is fetched automatically on retry.`;
         }

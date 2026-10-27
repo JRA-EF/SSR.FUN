@@ -24,7 +24,7 @@
 import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, TOKEN_PROGRAM_ID, type ZapAssetLeg } from "@ssr/sdk";
-import { JupiterSwapNotLandedError, partitionSwapOutcomes, SWAP_AUTO_RETRY_LIMIT } from "./jupiterSwapClient";
+import { JupiterSwapNotLandedError, partitionSwapOutcomes, SWAP_AUTO_RETRY_LIMIT, describeJupiterSwapError } from "./jupiterSwapClient";
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { AmbiguousConfirmationError, resolveSubmittedSignature, sendAndConfirmWithRebroadcast, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
@@ -434,7 +434,8 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
           pending!.legSwaps[job.mint] = { signature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight };
           savePendingSell(pending!);
         });
-        if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
+        // Jupiter-only transaction: decode as Jupiter's error, never ssr_protocol's (DEC-0267).
+        if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
         if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
         if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
         pending!.legSwaps[job.mint] = { signature, confirmed: true };

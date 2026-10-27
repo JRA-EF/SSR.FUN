@@ -119,10 +119,12 @@ export interface JupiterQuoteParams {
  * error 0xd after ~13k CU (6 of 6), every leg via Raydium CLMM / Orca landed
  * (2 of 2) -- a broken venue, not slippage. Same morning, the tester's GOLF
  * Buy failed inside "Quantum" (program QuaNtZsg...) with custom error 0xe at
- * ~4k CU (sig 48hDBgg3...). Override with JUPITER_EXCLUDE_DEXES
+ * ~4k CU (sig 48hDBgg3...). 2026-10-26: a Reserve #61 redeem failed 17 times
+ * in a row inside "Invariant" (program HyaB3W9q...) with SPL Token
+ * insufficient funds raised by the pool itself (DEC-0267). Override with JUPITER_EXCLUDE_DEXES
  * (comma-separated) without a deploy; empty string disables the default.
  */
-export const DEFAULT_EXCLUDED_DEXES = ["ZeroFi", "Quantum"];
+export const DEFAULT_EXCLUDED_DEXES = ["ZeroFi", "Quantum", "Invariant"];
 export function excludedDexesParam(): string {
   const raw = process.env.JUPITER_EXCLUDE_DEXES;
   const list = raw === undefined ? DEFAULT_EXCLUDED_DEXES : raw.split(",").map((s) => s.trim()).filter(Boolean);
@@ -215,7 +217,7 @@ export function describeSwapFailure(p: SwapFailureContext): string {
   const amount = isUsdcIn ? formatUsdcRaw(p.amountRaw) : `${p.amountRaw.toString()} raw units of ${shortMint(p.inputMint)}`;
   const target = shortMint(isUsdcIn ? p.outputMint : p.inputMint);
   const said = p.message ? ` Jupiter said: "${p.message}".` : "";
-  const excluded = DEFAULT_EXCLUDED_DEXES.length ? ` (${DEFAULT_EXCLUDED_DEXES.join(" and ")} are excluded on purpose -- they returned broken routes.)` : "";
+  const excluded = DEFAULT_EXCLUDED_DEXES.length ? ` (${DEFAULT_EXCLUDED_DEXES.length > 1 ? `${DEFAULT_EXCLUDED_DEXES.slice(0, -1).join(", ")} and ${DEFAULT_EXCLUDED_DEXES.at(-1)}` : DEFAULT_EXCLUDED_DEXES[0]} are excluded on purpose -- they returned broken routes.)` : "";
   const tiny = isUsdcIn && p.amountRaw > 0n && p.amountRaw < 1_000n ? ` ${amount} is also smaller than this swap's own network fee, so it is worth raising the amount for this asset regardless.` : "";
 
   if (p.stage === "build") {

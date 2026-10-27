@@ -6,7 +6,11 @@
 //
 //   node scripts/review_ops_alerts.mjs                 list what is waiting, newest first
 //   node scripts/review_ops_alerts.mjs --show <n>      full recent events of item n
-//   node scripts/review_ops_alerts.mjs --ack <n|all> --note "what it was, what was done" [--by name]
+//   node scripts/review_ops_alerts.mjs --ack <n|all> --outcome <fixed|false_positive|user_error|not_fixed> --note "what it was, what was done" [--by name]
+//
+// Outcomes: fixed (a code or config change stops it), false_positive (a test, a transient blip,
+// nothing wrong), user_error (the user's own wallet or input; the app explained it), not_fixed
+// (a real problem still open: it stays on the command center's watch list until fixed).
 //
 // Needs DATABASE_URL (read from the repo's .env.local when not set).
 import { execFileSync } from 'node:child_process'
@@ -33,6 +37,8 @@ const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? pro
 
 await sql`CREATE TABLE IF NOT EXISTS ops_alert_reviews (
   fingerprint text PRIMARY KEY, reviewed_at timestamptz NOT NULL DEFAULT now(), reviewed_by text NOT NULL, note text)`
+await sql`ALTER TABLE ops_alert_reviews ADD COLUMN IF NOT EXISTS outcome text`
+const OUTCOMES = ['fixed', 'false_positive', 'user_error', 'not_fixed']
 const queue = await sql`
   SELECT a.fingerprint, a.source, a.step, a.first_seen, a.last_seen,
     (SELECT count(*) FROM ops_alert_events e WHERE e.fingerprint = a.fingerprint AND (r.reviewed_at IS NULL OR e.at > r.reviewed_at))::int AS since,
@@ -53,14 +59,16 @@ if (show) {
 } else if (ack) {
   const note = arg('--note')
   if (!note) { console.error('--note is required: say what it was and what was done.'); process.exit(1) }
+  const outcome = arg('--outcome')
+  if (!OUTCOMES.includes(outcome)) { console.error(`--outcome is required: one of ${OUTCOMES.join(', ')}.`); process.exit(1) }
   const by = arg('--by') ?? 'Claude'
   const targets = ack === 'all' ? queue : [queue[Number(ack) - 1]].filter(Boolean)
   if (!targets.length) { console.error('Nothing to mark.'); process.exit(1) }
   for (const q of targets) {
-    await sql`INSERT INTO ops_alert_reviews (fingerprint, reviewed_at, reviewed_by, note) VALUES (${q.fingerprint}, now(), ${by}, ${note})
-      ON CONFLICT (fingerprint) DO UPDATE SET reviewed_at = now(), reviewed_by = EXCLUDED.reviewed_by, note = EXCLUDED.note`
+    await sql`INSERT INTO ops_alert_reviews (fingerprint, reviewed_at, reviewed_by, note, outcome) VALUES (${q.fingerprint}, now(), ${by}, ${note}, ${outcome})
+      ON CONFLICT (fingerprint) DO UPDATE SET reviewed_at = now(), reviewed_by = EXCLUDED.reviewed_by, note = EXCLUDED.note, outcome = EXCLUDED.outcome`
   }
-  console.log(`Marked ${targets.length} reviewed by ${by}.`)
+  console.log(`Marked ${targets.length} reviewed by ${by}: ${outcome}.`)
 } else {
   if (!queue.length) console.log('Nothing waiting: every error kind has been reviewed since it last happened.')
   queue.forEach((q, i) => {

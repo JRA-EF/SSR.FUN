@@ -8175,3 +8175,38 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0267
+
+```json
+{
+  "id": "DEC-0267",
+  "date": "2026-10-27",
+  "title": "Swap-leg failures are described as Jupiter's errors; Invariant excluded from routes; reviewed ops alerts carry an outcome",
+  "status": "LIVE on production and the test site 2026-10-27.",
+  "decision": "(1) In mint and redeem (multiAssetBuyClient / multiAssetSellClient), a failed Jupiter swap leg is described with describeJupiterSwapError, never the ssr_protocol decoder: a swap leg is a Jupiter-only transaction, so its custom codes belong to Jupiter or a DEX. (2) describeJupiterSwapError explains SPL Token error 1 (insufficient funds inside the route) as a short transfer, the wallet or a pool, instead of 'slippage, try again'. (3) 'Invariant' joins ZeroFi and Quantum in DEFAULT_EXCLUDED_DEXES (override: JUPITER_EXCLUDE_DEXES). (4) ops_alert_reviews gets an outcome: fixed, false_positive, user_error or not_fixed (scripts/review_ops_alerts.mjs --outcome is required). The command center lists reviewed errors with their outcome, and not_fixed ones stay on the watch list until fixed.",
+  "context": "Command center review of the two unreviewed alerts from 2026-10-26, both from one wallet testing Mainnet Reserve #61 (TESTR) on the test site. The mint's swap (sig 3HGtXCAv...) failed with Jupiter custom error 0x1771 = 6001, SlippageToleranceExceeded, in SwapV3Dyn; the app and the Telegram alert called it 'SsrError::ZeroValue (6001)' because the SDK decoder maps any 6001 to ssr_protocol. The redeem failed 17 times between 20:25 and 20:27 UTC; every attempt routed a leg through an Invariant pool (program HyaB3W9q...) whose own token transfer failed with 'insufficient funds', and the app said 'slippage, try again' each time. Creator, 2026-10-27: fix them and mark them clean, with a column to tell fixed / false positive / not fixed apart.",
+  "rationale": "A wrong error name sends the team after a protocol bug that does not exist; 'try again' on a broken pool burns the user's fees in a loop. Excluding a venue that fails deterministically follows the ZeroFi/Quantum precedent (DEC-0199).",
+  "alternativesConsidered": [
+    "Exclude only the failing DEX on the retry -- deferred: needs the program-id-to-label map client-side; the default list is the existing mechanism.",
+    "Make describeOnChainError program-aware everywhere -- deferred: the swap legs were the only path mixing Jupiter codes into the SSR decoder."
+  ],
+  "impact": "Routes through Invariant are no longer offered for mint, redeem, rebalance or keeper swaps. At the time of the fix, quotes for Reserve #61's assets did not use Invariant either way, so the exclusion guards the next occurrence rather than changing today's prices.",
+  "affectedAreas": [
+    "src/merge/lib/multiAssetBuyClient.ts",
+    "src/merge/lib/multiAssetSellClient.ts",
+    "src/merge/lib/jupiterSwapClient.ts",
+    "lib/mainnet/jupiter.ts",
+    "scripts/review_ops_alerts.mjs",
+    "lib/command-center/probes.ts",
+    "tests/phase_swap_leg_errors.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "On-chain logs of 3HGtXCAv... (JUP6... failed: custom program error: 0x1771) and UR71bgtt..., 5ePwrebg..., 2GuxvoWG..., ... (HyaB3W9q... 'INVARIANT: SWAP' -> 'Error: insufficient funds' -> Token program 0x1).",
+    "tests/phase_swap_leg_errors.ts 4/4 with phase_swap_failure_messages, phase_mainnet_production_fixes and phase_reserve_deploy_resumability: 176 passing; tsc -b clean.",
+    "Local-only branch fix/keeper-accrual-drain (586103d, an earlier draft of fd7cf21) deleted with the Creator's approval; the git snapshot now shows 0 commits that exist only on the dev PC."
+  ]
+}
+```

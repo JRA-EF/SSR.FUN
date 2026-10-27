@@ -442,6 +442,7 @@ export async function ensureTables(db: Sql): Promise<void> {
     kind text PRIMARY KEY, data jsonb NOT NULL, taken_at timestamptz NOT NULL DEFAULT now())`
   await db`CREATE TABLE IF NOT EXISTS ops_alert_reviews (
     fingerprint text PRIMARY KEY, reviewed_at timestamptz NOT NULL DEFAULT now(), reviewed_by text NOT NULL, note text)`
+  await db`ALTER TABLE ops_alert_reviews ADD COLUMN IF NOT EXISTS outcome text`
   schemaReady = true
 }
 
@@ -484,7 +485,7 @@ async function probeNeon() {
   const ping = await timed(async () => { await db`SELECT 1`; return true })
   if (!ping.ok) return { configured: true as const, ok: false, ms: ping.ms, error: ping.error }
   await ensureTables(db).catch(() => undefined)
-  const [size, facts, alerts, unreviewed, board, watch, git, dismissed, reserveTokens] = await Promise.all([
+  const [size, facts, alerts, unreviewed, board, watch, git, dismissed, reserveTokens, reviewed] = await Promise.all([
     timed(async () => ((await db`SELECT pg_database_size(current_database())::bigint AS b`) as { b: string }[])[0]?.b),
     timed(async () => {
       const rows = (await db`SELECT node, facts, updated_at FROM command_center_facts`) as { node: string; facts: ManualFacts; updated_at: string }[]
@@ -523,6 +524,14 @@ async function probeNeon() {
       for (const r of snap?.reserves ?? []) out.set(r.reserveTokenMint, { ticker: snap?.meta?.[r.reserve]?.ticker ?? null, nav: navBy.get(r.reserve) ?? null })
       return out
     }),
+    // Reviews still in force (the error has not happened again since), newest first.
+    timed(async () => (await db`
+      SELECT r.reviewed_at, r.reviewed_by, r.note, r.outcome, a.source, a.step, a.count,
+        (SELECT message FROM ops_alert_events e WHERE e.fingerprint = a.fingerprint ORDER BY e.at DESC LIMIT 1) AS message
+      FROM ops_alert_reviews r JOIN ops_alerts a ON a.fingerprint = r.fingerprint
+      WHERE a.last_seen <= r.reviewed_at
+      ORDER BY (r.outcome = 'not_fixed') DESC, r.reviewed_at DESC LIMIT 25`) as
+      { reviewed_at: string; reviewed_by: string; note: string | null; outcome: string | null; source: string; step: string; count: number; message: string | null }[]),
   ])
   return {
     configured: true as const, ok: true, ms: ping.ms,
@@ -535,6 +544,7 @@ async function probeNeon() {
     git: git.ok ? git.value ?? null : null,
     dismissed: dismissed.value ?? new Set<string>(),
     reserveTokens: reserveTokens.value ?? (new Map() as ReserveTokenInfo),
+    reviewed: reviewed.ok ? reviewed.value ?? [] : [],
   }
 }
 
@@ -761,6 +771,25 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
       title: 'Errors not yet reviewed by Claude', empty: 'Every error has been looked into.',
       note: 'Claude marks a kind of error reviewed after investigating it (scripts/review_ops_alerts.mjs). If it happens again later, it comes back here.',
       items: unreviewed.map((u) => ({ primary: scrub(u.message ?? u.step).slice(0, 150), secondary: `${u.source} · ${u.step} · ${u.since}× since last review · last ${ago(new Date(u.last_seen).toISOString(), now)}`, tone: (u.source === 'keeper' || u.source === 'chain' ? 'warn' : 'unknown') as Tone })),
+    })
+  }
+  const reviewed = (db.configured && db.ok ? db.reviewed : null) ?? []
+  const notFixed = reviewed.filter((r) => r.outcome === 'not_fixed')
+  if (notFixed.length) {
+    t.metrics.push(m('Known, not fixed yet', String(notFixed.length), 'warn'))
+    for (const r of notFixed) flag(t, 'warn', `Known error, not fixed yet: ${r.source}/${r.step}${r.note ? ` -- ${r.note.slice(0, 120)}` : ''}`)
+  }
+  if (reviewed.length) {
+    const label: Record<string, string> = { fixed: 'Fixed', false_positive: 'False positive', user_error: 'User error', not_fixed: 'NOT FIXED' }
+    const tone: Record<string, Tone> = { fixed: 'ok', false_positive: 'unknown', user_error: 'unknown', not_fixed: 'warn' }
+    t.lists.push({
+      title: 'Reviewed errors',
+      note: 'Each kind of error Claude looked into, with the outcome. Fixed, false positive and user error drop off this list if the error happens again (it goes back to "not yet reviewed").',
+      items: reviewed.map((r) => ({
+        primary: `${label[r.outcome ?? ''] ?? 'Reviewed'} · ${r.note ?? scrub(r.message ?? r.step).slice(0, 140)}`,
+        secondary: `${r.source} · ${r.step} · ${r.count}× total · by ${r.reviewed_by} ${ago(new Date(r.reviewed_at).toISOString(), now)}`,
+        tone: tone[r.outcome ?? ''] ?? 'ok',
+      })),
     })
   }
 

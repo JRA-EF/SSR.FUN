@@ -35,7 +35,7 @@
 import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import { fetchTokenBalanceRaw, describeOnChainError, MAINNET_USDC_MINT, type ZapAssetLeg } from "@ssr/sdk";
-import { partitionSwapOutcomes, JupiterSwapNotLandedError, SWAP_AUTO_RETRY_LIMIT } from "./jupiterSwapClient";
+import { partitionSwapOutcomes, JupiterSwapNotLandedError, SWAP_AUTO_RETRY_LIMIT, describeJupiterSwapError } from "./jupiterSwapClient";
 import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { computeSwapShortfallPct } from "./createReserveResume";
 import { advanceAssetFunding, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
@@ -481,7 +481,9 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
           advanceLeg(job.mint, "quoted", { targetRaw: (requiredAmountsRaw[job.legIndex] ?? 0n).toString() });
           advanceLeg(job.mint, "awaiting_signature");
           const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `the swap for ${job.mint.slice(0, 4)}...${job.mint.slice(-4)}`, (sig) => advanceLeg(job.mint, "submitted", { lastSignature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight }));
-          if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}).`))} Signature: ${signature}.`);
+          // A swap leg is a Jupiter-only transaction: its custom codes are Jupiter's or a DEX's, never ssr_protocol's
+          // (Jupiter 6001 = slippage was reported as SsrError::ZeroValue, 2026-10-26, DEC-0267).
+          if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
           if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
           if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
           await reconcileSwappedLeg(job);
