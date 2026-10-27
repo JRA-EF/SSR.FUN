@@ -73,6 +73,25 @@ function stats() {
   return { ok: true, total: total, last7d: last7d, avgRating7d: last7d ? sum7d / last7d : null, open: open, openLow: openLow, newestOpen: openRows.slice(0, 8) };
 }
 
+// Sets Status on rows given as [{row, at}]. A row is only written when its Received
+// cell still matches `at`, so a sorted or edited sheet never gets the wrong row marked.
+function setStatus(rows, status) {
+  if (STATUS_CHOICES.indexOf(status) === -1 || !Array.isArray(rows) || rows.length > 100) return { ok: false, error: 'bad request' };
+  var sheet = SpreadsheetApp.openById(SHEET_ID).getSheets()[0];
+  ensureHeader(sheet);
+  var done = [], skipped = [];
+  for (var i = 0; i < rows.length; i++) {
+    var n = Number(rows[i] && rows[i].row);
+    if (!(n >= 2 && n <= sheet.getLastRow())) { skipped.push(n); continue; }
+    var cell = sheet.getRange(n, 1).getValue();
+    var at = cell instanceof Date ? cell.toISOString() : String(cell).replace(/^'/, '');
+    if (Date.parse(at) !== Date.parse(String(rows[i].at))) { skipped.push(n); continue; }
+    sheet.getRange(n, STATUS_COL).setValue(status);
+    done.push(n);
+  }
+  return { ok: true, done: done, skipped: skipped };
+}
+
 function doPost(e) {
   var body;
   try {
@@ -86,6 +105,7 @@ function doPost(e) {
     (typeof FEEDBACK_SECRET_INLINE === 'string' ? FEEDBACK_SECRET_INLINE : '');
   if (!secret || body.secret !== secret) return reply({ ok: false, error: 'unauthorized' });
   if (body.action === 'stats') return reply(stats());
+  if (body.action === 'set-status') return reply(setStatus(body.rows, body.status));
 
   var rating = Number(body.rating);
   if (!(rating >= 1 && rating <= 5)) return reply({ ok: false, error: 'bad rating' });

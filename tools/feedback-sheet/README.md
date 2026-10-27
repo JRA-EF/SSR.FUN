@@ -21,6 +21,10 @@ The web app deployment id is `AKfycbwu1Q2WVwTLvzvPjexjUjEsyT6Y1tkpzNIhS6gw3GXosT
 ## Updating the deployed script (how it was set up on 2026-10-26)
 With `npx @google/clasp@2.4.2` logged in as the owner (Apps Script API switched on at script.google.com/home/usersettings): put `Code.gs`, a `Secret.gs` holding `var FEEDBACK_SECRET_INLINE = "<FEEDBACK_SHEET_SECRET>";` (never commit it) and an `appsscript.json` with scopes `spreadsheets` + `drive` and `webapp: {executeAs: USER_DEPLOYING, access: ANYONE_ANONYMOUS}` in a folder with `.clasp.json` = `{"scriptId":"1kl5ED_G-..."}`, then `clasp push --force` and `clasp deploy -i <deployment id>` (keeps the same URL). Opening the `/exec` URL once as the owner grants the Sheets/Drive permission.
 
+## Other actions (same secret)
+- `{action: "stats"}` returns the counts the command center shows.
+- `{action: "set-status", status, rows: [{row, at}]}` sets the Status column. `status` must be one of the dropdown choices, and a row is written only when its Received cell still equals `at`. Live as version 5, 2026-10-27; the 5 setup and test rows were marked Test with it.
+
 ## Manual alternative (no clasp, from the Sheet)
 
 1. Open the Sheet, then **Extensions -> Apps Script**. Replace the editor's contents with `Code.gs` and save.
