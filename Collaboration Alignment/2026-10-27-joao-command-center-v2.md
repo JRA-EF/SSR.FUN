@@ -3,7 +3,7 @@
 - **Date:** 2026-10-27
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `feat/command-center`, merged into `main`
-- **Deployed to:** production and staging (deploy ids in the commit that follows)
+- **Deployed to:** production `dpl_9vM156QLUes37TDKGFGgiPA46YDb`, staging `dpl_vuSJQKeBNDK3jv67ucLAQuV32GNU` (both 0ff7358)
 - **Decision log:** DEC-0266 (builds on DEC-0264)
 
 ## What shipped
@@ -35,3 +35,5 @@
 - **After investigating an alert,** mark it: `node scripts/review_ops_alerts.mjs --ack <n> --note "..."`. Otherwise it stays on the watch list.
 - **Commits that only exist locally show up on the page.** Push them, or delete them if they are throwaway staging merges.
 - **In the feedback Sheet,** set Status to Resolved, Won't fix, Duplicate or Test to close a row.
+
+- **Follow-up 2026-10-27:** the git snapshot now counts only work that would really be lost: non-merge commits on no GitHub branch whose patch is not already in main (`git cherry`). Staging deploy merges no longer count. The peer confirmed the staging-0253, staging-profanity and staging-chains heads are throwaway. One commit remains flagged: 586103d on `fix/keeper-accrual-drain` (main-clean), an earlier draft of fd7cf21 that the Creator can delete.

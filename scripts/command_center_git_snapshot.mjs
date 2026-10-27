@@ -57,23 +57,33 @@ for (const w of worktrees) {
   } catch { /* a broken worktree */ }
 }
 
-// Local branches with commits GitHub does not have.
+// Work that would be lost with this PC: non-merge commits on no GitHub branch whose change is not
+// already in main under another hash (git cherry). Staging deploy merges and cherry-picked
+// patches are therefore not counted.
+function realWork(tip, cwd = repo) {
+  const notOnGithub = lines(git(['log', '--no-merges', '--format=%H%x09%cI%x09%s', tip, '--not', '--remotes=origin'], cwd)).map((l) => {
+    const [sha, date, ...rest] = l.split('\t')
+    return { sha, date, subject: rest.join('\t').slice(0, 160) }
+  })
+  if (!notOnGithub.length) return []
+  const newPatches = new Set(lines(git(['cherry', 'refs/remotes/origin/main', tip], cwd)).filter((l) => l.startsWith('+ ')).map((l) => l.slice(2)))
+  return notOnGithub.filter((c) => newPatches.has(c.sha))
+}
+
 const unpushed = []
 // Full ref names: a branch may itself be called heads/..., which the short form makes ambiguous.
 for (const ref of lines(git(['for-each-ref', '--format=%(refname)', 'refs/heads']))) {
   const b = ref.slice('refs/heads/'.length)
-  const commits = commitsOf(ref, '--not', '--remotes=origin')
+  const commits = realWork(ref)
   if (!commits.length) continue
   unpushed.push({ branch: b, worktree: branchWorktree.get(b), ahead: commits.length, commits: commits.slice(0, 10) })
 }
 // Detached worktrees (deploy and staging checkouts) can hold commits that are on no branch at all.
+const onBranches = new Set(lines(git(['log', '--format=%H', '--branches', '--not', '--remotes=origin'])))
 for (const w of worktrees) {
   if (w.branch || !fs.existsSync(w.path)) continue
   try {
-    const here = lines(git(['log', '--format=%H%x09%cI%x09%s', 'HEAD', '--not', '--remotes=origin', '--branches'], w.path)).map((l) => {
-      const [sha, date, ...rest] = l.split('\t')
-      return { sha, date, subject: rest.join('\t').slice(0, 160) }
-    })
+    const here = realWork('HEAD', w.path).filter((c) => !onBranches.has(c.sha))
     if (here.length) unpushed.push({ branch: '(detached)', worktree: path.basename(w.path), ahead: here.length, commits: here.slice(0, 10) })
   } catch { /* a broken worktree */ }
 }
