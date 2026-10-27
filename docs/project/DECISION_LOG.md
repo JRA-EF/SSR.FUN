@@ -8210,3 +8210,36 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0268
+
+```json
+{
+  "id": "DEC-0268",
+  "date": "2026-10-27",
+  "title": "Trade tax: on-chain 0.15% minimum; buy and sell verified against the live program",
+  "status": "LIVE on Mainnet 2026-10-27: Squads #18, slot 462115394, program sha256 5fa3ec1e...7283 (1,762,080 bytes).",
+  "decision": "enable_trade_tax refuses a trade tax under 15 bps (MIN_TRADE_TAX_BPS, the same floor the app has enforced since DEC-0263) and any combined rate (protocol + tax) at or under the 0.25% protocol ceiling. A rate above the ceiling can only be set by enable_trade_tax and nothing lowers it afterwards, so the existing rate-based guard of collect_transfer_fees and update_transfer_fee now always sees a trade-tax mint. No interface change, no new error codes (refusals are TradeTaxInvalid 6088; the guards keep 6090).",
+  "context": "The 2026-10-26 review of DEC-0257 found that trade_tax_active = rate above 25 bps, so a 0.05% or 0.10% tax (combined 0.20% / 0.25%) was invisible to the guards: the permissionless collect_transfer_fees could sweep the creator's share to the SSR treasury and the admin's update_transfer_fee could reset it. The app blocked those rates, a direct program call did not. Creator, 2026-10-27: add the 0.15% minimum on-chain, but first make sure the last upgrade charges buy and sell tax correctly.",
+  "rationale": "Closes the hole where it lives instead of relying on the app. Keying the two guards on the TradeTax PDA was the first plan; it would change both instructions' accounts plus the keeper and a script, and with the minimum in place the two conditions are equivalent.",
+  "alternativesConsidered": [
+    "Pass the TradeTax PDA to collect_transfer_fees / update_transfer_fee -- rejected: interface change for the keeper and scripts with no extra protection once the minimum holds.",
+    "Fix the epoch-split (fees withheld at 0.15% before the tax activates but collected after are split as taxed) -- deferred: Token-2022 does not record the rate a fee was withheld at; amounts are tiny (26 units in the test) and the daily keeper collects most of them before the switch."
+  ],
+  "impact": "No live pool had a trade tax (0 TradeTax accounts at the time), so nothing existing changes. New launches behave exactly as before at 0.15%-2%; 0.05%/0.10% are refused on-chain as they already were in the app. Cost: ExtendProgram +10,240 bytes (Mainnet minimum, about 0.071 SOL, tx Cpg8Nd3F...) paid by the deployer; buffer B2bgpMCg... refunded to CgHF...4Rw8.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/instructions/trade_tax.rs",
+    "tools/rebalance-litesvm/src/raydium_tax.rs",
+    "tools/rebalance-litesvm/src/tradetax.rs",
+    "tools/rebalance-litesvm/src/main.rs",
+    "tools/rebalance-litesvm/fetch_raydium_fixtures.mjs"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Before the upgrade, the live binary (sha256 3811d0b3..., slot 461726335) was byte-identical to origin/main. Run in LiteSVM with Mainnet's Raydium CPMM program, 1% tax, 25% holder share: buy 0.15% then 1.15% withheld; sell 0.15% then 1.15% withheld; the collect split 2,950 SSR / 5,058 creator / 1,685 burned of 9,693 matched the formula to the unit.",
+    "The same harness reproduced the hole on the live binary at 0.05%/0.10%; on the patched build both are refused (6088), 0.15% gives 0.30% and the sweep/update refuse that mint (6090). Program unit tests 46/46; the full LiteSVM suite passes.",
+    "Upgrade: Squads proposal #18 create 4qi8AUqt..., approve 38t3pxPj..., execute 3wP5DYVp... (Creator member key). Programdata after: slot 462115394, code sha256 5fa3ec1e...7283 == buffer == local build."
+  ]
+}
+```
