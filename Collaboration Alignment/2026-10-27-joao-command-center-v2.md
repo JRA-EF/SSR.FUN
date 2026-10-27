@@ -37,3 +37,4 @@
 - **In the feedback Sheet,** set Status to Resolved, Won't fix, Duplicate or Test to close a row.
 
 - **Follow-up 2026-10-27:** the git snapshot now counts only work that would really be lost: non-merge commits on no GitHub branch whose patch is not already in main (`git cherry`). Staging deploy merges no longer count. The peer confirmed the staging-0253, staging-profanity and staging-chains heads are throwaway. One commit remains flagged: 586103d on `fix/keeper-accrual-drain` (main-clean), an earlier draft of fd7cf21 that the Creator can delete.
+- **Follow-up 2026-10-27:** the Apps Script with the Status column and stats is live as version 4, at the same deployment URL. Checked: 5 rows, all open (none have a Status yet); a wrong secret gets "unauthorized".
