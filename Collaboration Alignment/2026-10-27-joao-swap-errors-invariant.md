@@ -3,7 +3,7 @@
 - **Date:** 2026-10-27
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `feat/command-center`, merged into `main`
-- **Deployed to:** production and staging (deploy ids in the commit that follows)
+- **Deployed to:** production `dpl_6DJAHy1dyuLYGQ7zuDcknKwUr4Vu`, staging `dpl_FUYdhLbNjpr93UWP23J7TmpNWUoX` (both 49b4a86)
 - **Decision log:** DEC-0267
 
 ## What shipped
@@ -16,3 +16,5 @@
 - **When you ack an alert you must now pass `--outcome`.**
 - **To route through Invariant again,** set JUPITER_EXCLUDE_DEXES. Leaving it unset keeps the default list.
 - **The local branch `fix/keeper-accrual-drain` (586103d) was deleted.** It was an earlier draft of fd7cf21, deleted with the Creator's approval.
+
+- **Follow-up 2026-10-27:** both 2026-10-26 alerts are marked `fixed`, with notes. The review queue is empty: 6 kinds reviewed (3 fixed, 3 false positive).
