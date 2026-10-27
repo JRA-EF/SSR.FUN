@@ -38,3 +38,4 @@ A timeline along the bottom shows renewals and expiries. Deep links work: `/inte
 - **Adding a new integration or secret:** add it to `SECRETS` / `NODE_IDS` in `lib/command-center/probes.ts` so it shows up.
 - **Never put keys or passwords in the plan/notes editor.** It is plain text in Neon.
 - **Load:** each probe run makes one Jupiter quote, one Telegram getMe and one Apps Script GET. Runs are cached for 60 s.
+- **Follow-up 2026-10-27:** `VERCEL_API_TOKEN` (Sensitive, Production) is now set on ssr-fun. It is a 1-year token created by the Creator, and the Vercel bubble now shows billing, spend, the latest deploy and key ages. Prod was redeployed from 418d85b (dpl at ssr-4cllffgod).
