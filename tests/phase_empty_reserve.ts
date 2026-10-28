@@ -70,12 +70,12 @@ describe("DEC-0246 empty Reserves (every Reserve Token redeemed)", () => {
     expect(quarantined.map((q) => q.id)).to.deep.equal(["draft"]);
   });
 
-  it("the card carries the warning, shows no price and offers View instead of Mint", () => {
+  it("the card carries the warning, shows $0.00 (Creator, 2026-10-28) and offers View instead of Mint", () => {
     const card = buildReserveCardProps(makeOnChainDtr("salami", "active", "0"), true);
     expect(card.emptyWarning).to.match(/possibly abandoned/i);
     expect(card.ctaLabel).to.equal("View");
-    expect(card.priceFormatted).to.equal("Price unavailable");
-    expect(card.metrics.find((m) => m.key === "price")?.value).to.equal("Price unavailable");
+    expect(card.priceFormatted).to.equal("$0.00");
+    expect(card.metrics.find((m) => m.key === "price")?.value).to.equal("$0.00");
   });
 
   it("a Reserve with supply has no warning and the normal Mint button", () => {

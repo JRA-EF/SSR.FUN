@@ -22,6 +22,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { formatPct, formatUsdc, formatUsdcOrUnavailable } from "@/lib/calculations";
+import { isNearlyEmptyReserve } from "@/lib/reserveCardProps";
 import { type ManagerPermissions, emptyPermissions } from "@/lib/types";
 import { ChevronLeft, Shield, Users, Sliders, Save, Plus, X, Trash2, Edit2, AlertCircle, Tag, PowerOff, XCircle, Coins, History, ExternalLink, Search, Droplets } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -1618,12 +1619,12 @@ export function ManageDTR() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
                       <p className="text-xs text-muted-foreground mb-1">AUM</p>
-                      <p className="font-merge-mono font-bold text-lg">{formatUsdcOrUnavailable(dtr.aum, !(IS_MAINNET && dtr.onChain?.priceSource === "unavailable"), { compact: true })}</p>
+                      <p className="font-merge-mono font-bold text-lg">{isNearlyEmptyReserve(dtr.onChain) && dtr.onChain?.priceSource === "unavailable" ? formatUsdc(0, { compact: true }) : formatUsdcOrUnavailable(dtr.aum, !(IS_MAINNET && dtr.onChain?.priceSource === "unavailable"), { compact: true })}</p>
                     </div>
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
                       <p className="text-xs text-muted-foreground mb-1">Market Cap</p>
                       <p className="font-merge-mono font-bold text-lg">
-                        {formatUsdcOrUnavailable(computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice), !(IS_MAINNET && dtr.onChain?.priceSource === "unavailable"), { compact: true })}
+                        {isNearlyEmptyReserve(dtr.onChain) && dtr.onChain?.priceSource === "unavailable" ? formatUsdc(0, { compact: true }) : formatUsdcOrUnavailable(computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice), !(IS_MAINNET && dtr.onChain?.priceSource === "unavailable"), { compact: true })}
                       </p>
                     </div>
                     <div className="p-4 bg-muted/30 rounded-lg border border-border/50">

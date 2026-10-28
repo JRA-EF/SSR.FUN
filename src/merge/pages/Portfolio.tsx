@@ -25,7 +25,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { DevnetOnboarding } from "../components/DevnetOnboarding";
 import { IS_MAINNET } from "@/lib/solana-config";
-import { isDesignDemoEnabled } from "@/lib/designDemo";
+import { isDesignDemoEnabled, DEMO_WALLET_ADDRESS } from "@/lib/designDemo";
 
 /** Categorical swatches for allocation slices -- softened, Apple-style pastel
  * steps of the SSR family (dominant slice = periwinkle), assigned in fixed
@@ -263,7 +263,7 @@ function SortableHead({
 }
 
 export function Portfolio() {
-  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, txInFlight, setWalletModalOpen } = useAppStore();
+  const { wallet, holdings, dtrs, quarantinedReserves, chainDiscoveryStatus, txInFlight, holdingsReadFor, setWalletModalOpen } = useAppStore();
   // Reserve Holdings column sort (null = the table's natural order). Declared
   // before the not-connected early return so the hook order never changes.
   const [holdingsSort, setHoldingsSort] = useState<HoldingsSort | null>(null);
@@ -273,7 +273,12 @@ export function Portfolio() {
   // discovery pass that failed and is showing last-known state (see
   // Discover.tsx's identical reasoning) all mean holdings.length === 0 is
   // NOT yet a trustworthy "this wallet owns nothing" signal.
-  const holdingsMayBeStale = chainDiscoveryStatus === "loading" || chainDiscoveryStatus === "error" || txInFlight;
+  // Holdings are read in one batch as soon as the Reserves are known (RealReserveSync),
+  // so "this wallet's balances were read" -- not the discovery pass -- is what makes
+  // an empty list trustworthy; before that it is "syncing".
+  // (A DevNet design-preview wallet is simulated: nothing is ever read for it.)
+  const simulatedWallet = !IS_MAINNET && wallet.address === DEMO_WALLET_ADDRESS;
+  const holdingsMayBeStale = (!simulatedWallet && holdingsReadFor !== wallet.address) || txInFlight;
 
   const isConnected = wallet.connected;
 

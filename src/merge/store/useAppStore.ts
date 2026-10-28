@@ -167,6 +167,10 @@ interface AppState {
   setReserveHeaderImage: (dtrId: string, headerImageUrl: string | null) => void;
   /** Mirrors the connected wallet's REAL Reserve Token balance for an on-chain DTR into `holdings` -- see RealReserveSync.tsx. */
   syncRealHolding: (dtrId: string, tokenBalanceRaw: string, nav: number) => void;
+  /** syncRealHolding for many Reserves in one store update, then marks `wallet`'s holdings as read (see walletReserveBalances.ts). */
+  syncRealHoldings: (wallet: string, entries: { dtrId: string; tokenBalanceRaw: string; nav: number }[]) => void;
+  /** The wallet whose Reserve Token balances were last read from the chain this session; until it matches the connected wallet, an empty Portfolio means "not read yet", not "holds nothing". Never persisted. */
+  holdingsReadFor: string | null;
   /**
    * Appends one genuine post-transaction data point after a Buy/Sell this
    * wallet itself just confirmed -- called once, right after
@@ -397,6 +401,27 @@ export const useAppStore = create<AppState>()(
         });
       },
 
+      holdingsReadFor: null,
+      syncRealHoldings: (wallet, entries) => {
+        const RESERVE_TOKEN_DECIMALS = 6;
+        set((state) => {
+          let holdings = state.holdings;
+          for (const { dtrId, tokenBalanceRaw, nav } of entries) {
+            const tokenBalance = Number(tokenBalanceRaw) / 10 ** RESERVE_TOKEN_DECIMALS;
+            const existing = holdings.find((h) => h.dtrId === dtrId);
+            if (tokenBalance <= 0) {
+              if (existing) holdings = holdings.filter((h) => h.dtrId !== dtrId);
+            } else if (!existing) {
+              holdings = [...holdings, { dtrId, tokenBalance, avgPurchasePrice: nav }];
+            } else if (existing.tokenBalance !== tokenBalance) {
+              // Balance only, never the cost basis (same rule as syncRealHolding).
+              holdings = holdings.map((h) => (h.dtrId === dtrId ? { ...h, tokenBalance } : h));
+            }
+          }
+          return { holdings, holdingsReadFor: wallet };
+        });
+      },
+
       recordConfirmedTrade: (dtrId, side, tokenAmount, usdcAmount) => {
         set((state) => {
           const now = Date.now();
@@ -546,7 +571,7 @@ export const useAppStore = create<AppState>()(
       // `true`, or a tab closed mid-transaction would permanently wedge
       // background polling on next load with nothing left to ever clear it.
       partialize: (state) => {
-        const { txInFlight: _txInFlight, ...rest } = state;
+        const { txInFlight: _txInFlight, holdingsReadFor: _holdingsReadFor, ...rest } = state;
         // On Mainnet, NEVER persist on-chain-discovered Reserves. They are
         // always re-derived fresh from the warm-cache snapshot (pass-0 in
         // RealReserveSync) plus the live poll, so a persisted -- and possibly

@@ -29,8 +29,8 @@
 // into the same request instead of doubling it.
 import { useEffect, useMemo } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { PublicKey } from "@solana/web3.js";
-import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, fetchTokenBalanceRaw, registerDynamicSupportedAssetMints, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
+import { PublicKey, type Connection } from "@solana/web3.js";
+import { discoverAllReserves, discoverDelegatesForReserve, resolveReserveMetadata, registerDynamicSupportedAssetMints, DEVNET_FIXTURES, WRAPPED_SOL_MINT, DEVUSDC_MINT } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { buildDtrFromDiscoveredReserve, type AssetPriceInfo } from "./onChainReserve";
 import { fetchReserveImagePointers } from "./reserveImageClient";
@@ -38,7 +38,9 @@ import { ensureReserveEntryPrices, fetchReserveEntryPrices } from "./entryPriceC
 import { fetchReserveNavHistory, NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, type ServerPriceHistory } from "./navHistoryClient";
 import { fetchAssetPricesUsd } from "./assetPricing";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
-import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
+import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
+import { readReserveTokenBalances } from "./walletReserveBalances";
+import type { DTR } from "./types";
 import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from "./solana-config";
 import { useMainnetKnownAssetMints } from "../hooks/useMainnetKnownAssetMints";
 import { useMainnetAssetCatalogue } from "../hooks/useMainnetAssetCatalogue";
@@ -82,11 +84,24 @@ const DEVNET_CANDIDATE_ASSET_MINTS = [WRAPPED_SOL_MINT, DEVUSDC_MINT, ...Object.
 
 const CLUSTER_LABEL = IS_MAINNET ? "Mainnet" : "DevNet";
 
+/** The wallet's balance in every on-chain Reserve in `dtrs`, in one batched read, written to the store in one update. Throws on a failed read (the store keeps what it had). */
+async function syncWalletHoldings(connection: Connection, owner: PublicKey, dtrs: DTR[]) {
+  const live = dtrs.filter((d) => d.onChain);
+  const mints = live.map((d) => d.onChain!.reserveTokenMint);
+  const wallet = owner.toBase58();
+  const balances = await getCached(`reserve-balances:${connection.rpcEndpoint}:${wallet}:${[...mints].sort().join(",")}`, BALANCE_CACHE_TTL_MS, () =>
+    readReserveTokenBalances(connection, owner, mints),
+  );
+  useAppStore.getState().syncRealHoldings(
+    wallet,
+    live.map((d) => ({ dtrId: d.id, tokenBalanceRaw: (balances.get(d.onChain!.reserveTokenMint) ?? 0n).toString(), nav: d.nav })),
+  );
+}
+
 export function RealReserveSync() {
   const { connection } = useConnection();
   const { publicKey, connected } = useWallet();
   const applyDiscoveredReserves = useAppStore((s) => s.applyDiscoveredReserves);
-  const syncRealHolding = useAppStore((s) => s.syncRealHolding);
   const setChainDiscoveryStatus = useAppStore((s) => s.setChainDiscoveryStatus);
   const mainnetLocalKnownMints = useAppStore((s) => s.mainnetKnownAssetMints);
   const mainnetLedgerKnownMints = useMainnetKnownAssetMints(IS_MAINNET);
@@ -103,6 +118,24 @@ export function RealReserveSync() {
   );
 
   const walletKey = connected && publicKey ? publicKey.toBase58() : null;
+
+  // Holdings first (2026-10-28, Creator: "portfolio fetching is taking AGES"): the
+  // moment the warm-cache snapshot (ReserveSnapshotHydrator) or a discovery pass puts
+  // the Reserves in the store, read the wallet's balance in all of them at once --
+  // never wait for the ~250-read discovery pass. Re-runs only when the wallet or the
+  // set of Reserve Token mints changes; a failed read is left to the discovery pass.
+  const liveMintKey = useAppStore((s) =>
+    s.dtrs
+      .filter((d) => d.onChain)
+      .map((d) => d.onChain!.reserveTokenMint)
+      .sort()
+      .join(","),
+  );
+  useEffect(() => {
+    if (!walletKey || !publicKey || !liveMintKey) return;
+    void syncWalletHoldings(connection, publicKey, useAppStore.getState().dtrs).catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection, walletKey, liveMintKey]);
 
   const mergedMainnetMints = useMemo(
     () => (IS_MAINNET ? [...new Set<string>([MAINNET_USDC_MINT, ...mainnetLedgerKnownMints, ...mainnetLocalKnownMints])] : []),
@@ -300,19 +333,12 @@ export function RealReserveSync() {
         setChainDiscoveryStatus("ready");
 
         if (walletKey && publicKey) {
-          for (const dtr of dtrs) {
-            if (!dtr.onChain) continue;
-            try {
-              const balanceRaw = await getCached(
-                tokenBalanceCacheKey(connection.rpcEndpoint, dtr.onChain.reserveTokenMint, walletKey),
-                BALANCE_CACHE_TTL_MS,
-                () => withReadConcurrencyLimit(() => fetchTokenBalanceRaw(connection, new PublicKey(dtr.onChain!.reserveTokenMint), publicKey)),
-              );
-              syncRealHolding(dtr.id, balanceRaw, dtr.nav);
-            } catch (e) {
-              if (isRateLimitError(e)) hitRateLimit = true;
-              // Transient RPC failure on one balance read -- next poll tick retries; don't fail the whole pass.
-            }
+          // Every Reserve the store now holds (the snapshot's plus this pass's), one batched read.
+          try {
+            await syncWalletHoldings(connection, publicKey, useAppStore.getState().dtrs);
+          } catch (e) {
+            if (isRateLimitError(e)) hitRateLimit = true;
+            else failed = true; // Retried with the pass's backoff below.
           }
         }
       } catch (e) {
@@ -348,7 +374,7 @@ export function RealReserveSync() {
       document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection, walletKey, applyDiscoveredReserves, syncRealHolding, setChainDiscoveryStatus, publicKey, candidateAssetMints, mainnetMintMeta]);
+  }, [connection, walletKey, applyDiscoveredReserves, setChainDiscoveryStatus, publicKey, candidateAssetMints, mainnetMintMeta]);
 
   return null;
 }

@@ -9,6 +9,24 @@ import { isDeepLiquidity, liquidityBadgeKind, lockRemainingDays, poolTvlUsd, typ
 import { normalizeReserveCategory, type DTR } from "./types";
 import { isEmptyReserve } from "@ssr/sdk";
 
+/** Fewer Reserve Tokens than this (1 whole token, 6 decimals) in circulation counts as "nearly empty". */
+export const NEARLY_EMPTY_SUPPLY_RAW = 1_000_000n;
+
+/**
+ * Empty (DEC-0246) or with under one whole Reserve Token left. Such a Reserve shows $0.00 where
+ * it would otherwise show "Price unavailable" (Creator, 2026-10-28): leftover dust in its vaults
+ * often has no price feed, and there is next to nothing there to price anyway.
+ */
+export function isNearlyEmptyReserve(r: { status: string; reserveTokenSupplyRaw: string } | null | undefined): boolean {
+  if (!r) return false;
+  if (isEmptyReserve(r)) return true;
+  try {
+    return BigInt(r.reserveTokenSupplyRaw) < NEARLY_EMPTY_SUPPLY_RAW;
+  } catch {
+    return false;
+  }
+}
+
 export interface ReserveCardData {
   name: string;
   ticker: string;
@@ -108,6 +126,8 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, stat
   // (the NAV fallback of 1 is a 0/0 guard, not a price).
   const empty = isEmptyReserve(dtr.onChain);
   const pricingUnavailable = (isMainnet && dtr.onChain?.priceSource === "unavailable") || empty;
+  // An empty or nearly-empty Reserve reads $0.00, not "Price unavailable" (Creator, 2026-10-28).
+  const showZero = pricingUnavailable && isNearlyEmptyReserve(dtr.onChain);
   const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
   // All-time PNL (%): the same figure (and the same guards) as DTRDetail's
   // stats band -- current Token Price vs. the earliest point of the history.
@@ -141,7 +161,7 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, stat
     sourceBadge: dtr.onChain
       ? { label: `Live on Solana ${clusterLabel}`, tone: "onchain" }
       : { label: "Simulated Demo", tone: "simulated" },
-    priceFormatted: formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable),
+    priceFormatted: showZero ? formatUsdc(0) : formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable),
     changePct: change24h,
     changeFormatted: `${change24h >= 0 ? "+" : ""}${change24h.toFixed(2)}%`,
     sparkline: recentHistory.unavailable ? [] : recentHistory.points.map((p) => p.price),
@@ -154,8 +174,8 @@ export function buildReserveCardProps(dtr: DTR, isMainnet: boolean = false, stat
     // Prem/Discount chips are gone (Prem/Discount is always ~0% while every
     // Buy/Sell executes at NAV; see DTRDetail's stats-grid comment).
     metrics: [
-      { key: "price", label: "Price", value: formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable) },
-      { key: "mcap", label: "Market Cap", value: formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true }) },
+      { key: "price", label: "Price", value: showZero ? formatUsdc(0) : formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable) },
+      { key: "mcap", label: "Market Cap", value: showZero ? formatUsdc(0, { compact: true }) : formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true }) },
       {
         key: "pnl",
         label: "All-Time PNL (%)",

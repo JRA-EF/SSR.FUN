@@ -87,6 +87,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLandingStats } from "@/hooks/useLandingStats";
 import { ChartTimeframeSelector, DEFAULT_CHART_TIMEFRAME } from "@/components/ChartTimeframeSelector";
 import { applyDesignDemo, demoPriceHistory, isDesignDemoEnabled } from "@/lib/designDemo";
+import { isNearlyEmptyReserve } from "@/lib/reserveCardProps";
 import { parseYouTubeVideoId, youTubeThumbnailUrl } from "@/lib/youtube";
 import { buildCandleSeries, ema, type Candle } from "@/lib/candles";
 import { WeightPill, SSR_TILE_COLORS } from "@/components/WeightTreemap";
@@ -1116,6 +1117,8 @@ export function DTRDetail() {
   // simulated DTR or a DevNet Reserve (neither ever go through the real
   // pricing pipeline -- see onChainReserve.ts's computeAumFromPrices).
   const pricingUnavailable = (isOnChain && IS_MAINNET && dtr.onChain?.priceSource === "unavailable") || isEmpty;
+  // An empty or nearly-empty Reserve reads $0.00, not "Price unavailable" (Creator, 2026-10-28).
+  const showZeroPrice = pricingUnavailable && isOnChain && isNearlyEmptyReserve(dtr.onChain);
   const marketCap = computeMarketCap(dtr.onChain?.reserveTokenSupplyRaw ?? "0", dtr.tokenPrice);
   const priceSourceLabel = dtr.onChain?.priceSource === "pyth" ? "Pyth" : dtr.onChain?.priceSource === "jupiter" ? "Jupiter" : dtr.onChain?.priceSource === "mixed" ? "Pyth + Jupiter" : null;
   const priceAgeLabel = (() => {
@@ -2208,8 +2211,8 @@ export function DTRDetail() {
                   <div className="text-right max-sm:text-left shrink-0">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Token Price</p>
                     <div className="flex items-baseline justify-end max-sm:justify-start gap-1.5">
-                      <span className={`font-merge-mono font-semibold text-foreground ${pricingUnavailable ? "text-sm" : "text-base"}`}>
-                        {formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable)}
+                      <span className={`font-merge-mono font-semibold text-foreground ${pricingUnavailable && !showZeroPrice ? "text-sm" : "text-base"}`}>
+                        {showZeroPrice ? formatUsdc(0) : formatUsdcOrUnavailable(dtr.tokenPrice, !pricingUnavailable)}
                       </span>
                       {!pricingUnavailable && (
                         <span
@@ -2226,7 +2229,7 @@ export function DTRDetail() {
                         {dtr.onChain?.priceSource === "mixed" && " (per-asset)"}
                       </p>
                     )}
-                    {pricingUnavailable && dtr.onChain?.unpricedAssetMints && dtr.onChain.unpricedAssetMints.length > 0 && (
+                    {pricingUnavailable && !showZeroPrice && dtr.onChain?.unpricedAssetMints && dtr.onChain.unpricedAssetMints.length > 0 && (
                       <p className="text-[11px] text-muted-foreground/70 mt-1">
                         No verified Pyth or Jupiter price for {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "this Reserve's asset"} right now.
                       </p>
@@ -2458,7 +2461,7 @@ export function DTRDetail() {
                     Market Cap
                     <InfoTip label="More information about Market Cap">Circulating Reserve Token supply x Token Price. Token Price here IS this protocol's internal NAV -- there's no secondary market yet, every mint and redemption executes at NAV.</InfoTip>
                   </div>
-                  <p className={`font-merge-mono font-semibold ${pricingUnavailable ? 'text-sm' : 'text-lg'}`}>{formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true })}</p>
+                  <p className={`font-merge-mono font-semibold ${pricingUnavailable && !showZeroPrice ? 'text-sm' : 'text-lg'}`}>{showZeroPrice ? formatUsdc(0, { compact: true }) : formatUsdcOrUnavailable(marketCap, !pricingUnavailable, { compact: true })}</p>
                 </div>
                 <div className="md:px-6">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1.5">
