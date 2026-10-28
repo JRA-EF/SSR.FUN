@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { neon } from '@neondatabase/serverless'
 import {
-  CLOSED_FEEDBACK, boardStatusOf, daysBetween, daysUntil, formatAge, formatUsd, formatUsdc, latencyTone, renewalTone,
+  CLOSED_FEEDBACK, daysBetween, daysUntil, formatAge, formatUsd, formatUsdc, latencyTone, renewalTone,
   secretTone, solTone, summarize, worst,
   type CcEdge, type CcNode, type CommandCenterState, type DrawerList, type ListItem, type ManualFacts, type Metric, type Renewal,
   type SecretInfo, type Tone, type WatchItem,
@@ -42,7 +42,7 @@ const KNOWN_SIGNERS: Record<string, string> = {
 const GIT_SNAPSHOT_STALE_H = 3
 
 export const NODE_IDS = [
-  'site', 'vercel', 'domain-ssr', 'domain-test', 'github', 'neon', 'helius', 'jupiter', 'telegram', 'sheets', 'feedback-board',
+  'site', 'vercel', 'domain-ssr', 'domain-test', 'github', 'neon', 'helius', 'jupiter', 'telegram', 'sheets',
   'program', 'squads', 'raydium', 'treasury', 'authority', 'admin-2', 'keeper', 'pool-payer',
 ] as const
 
@@ -58,7 +58,7 @@ const SECRETS: { name: string; node: string; rotateAfterDays: number }[] = [
   { name: 'TELEGRAM_ALERT_BOT_TOKEN', node: 'telegram', rotateAfterDays: 180 },
   { name: 'FEEDBACK_SHEET_WEBHOOK_URL', node: 'sheets', rotateAfterDays: 365 },
   { name: 'FEEDBACK_SHEET_SECRET', node: 'sheets', rotateAfterDays: 180 },
-  { name: 'FEEDBACK_DAEMON_SECRET', node: 'feedback-board', rotateAfterDays: 180 },
+  { name: 'FEEDBACK_DAEMON_SECRET', node: 'vercel', rotateAfterDays: 180 },
   { name: 'DATABASE_URL', node: 'neon', rotateAfterDays: 365 },
   { name: 'CRON_SECRET', node: 'vercel', rotateAfterDays: 180 },
   { name: 'VERCEL_API_TOKEN', node: 'vercel', rotateAfterDays: 180 },
@@ -485,7 +485,7 @@ async function probeNeon() {
   const ping = await timed(async () => { await db`SELECT 1`; return true })
   if (!ping.ok) return { configured: true as const, ok: false, ms: ping.ms, error: ping.error }
   await ensureTables(db).catch(() => undefined)
-  const [size, facts, alerts, unreviewed, board, watch, git, dismissed, reserveTokens, reviewed] = await Promise.all([
+  const [size, facts, alerts, unreviewed, watch, git, dismissed, reserveTokens, reviewed] = await Promise.all([
     timed(async () => ((await db`SELECT pg_database_size(current_database())::bigint AS b`) as { b: string }[])[0]?.b),
     timed(async () => {
       const rows = (await db`SELECT node, facts, updated_at FROM command_center_facts`) as { node: string; facts: ManualFacts; updated_at: string }[]
@@ -507,9 +507,6 @@ async function probeNeon() {
       FROM ops_alerts a LEFT JOIN ops_alert_reviews r ON r.fingerprint = a.fingerprint
       WHERE r.reviewed_at IS NULL OR a.last_seen > r.reviewed_at
       ORDER BY a.last_seen DESC LIMIT 30`) as { fingerprint: string; source: string; step: string; last_seen: string; since: number; message: string | null }[]),
-    timed(async () => (await db`
-      SELECT id, created_at, category, message, status, board_status, priority FROM agent_feedback ORDER BY created_at DESC LIMIT 500`) as
-      { id: string; created_at: string; category: string; message: string; status: string | null; board_status: string | null; priority: string | null }[]),
     timed(async () => (await db`SELECT id, text, added_by, added_at FROM command_center_watch WHERE dismissed_at IS NULL ORDER BY added_at DESC LIMIT 40`) as
       { id: number; text: string; added_by: string; added_at: string }[]),
     timed(async () => ((await db`SELECT data, taken_at FROM command_center_snapshots WHERE kind = 'git'`) as { data: GitSnapshot; taken_at: string }[])[0] ?? null),
@@ -539,7 +536,6 @@ async function probeNeon() {
     facts: facts.value ?? new Map<string, ManualFacts>(),
     alerts: alerts.ok ? alerts.value ?? null : null,
     unreviewed: unreviewed.ok ? unreviewed.value ?? [] : null,
-    board: board.ok ? board.value ?? [] : null,
     watch: watch.ok ? watch.value ?? [] : [],
     git: git.ok ? git.value ?? null : null,
     dismissed: dismissed.value ?? new Set<string>(),
@@ -816,25 +812,6 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
     })
   } else if (sheets.configured && sheets.statsError) sh.metrics.push(m('Counts', `unavailable (${sheets.statsError})`, 'unknown'))
 
-  // Team feedback board (Neon, /internal/feedback-board)
-  const fb = add(node('feedback-board', 'Feedback board', 'service', 'Bug reports and requests from the team and testers, worked through on /internal/feedback-board.'))
-  fb.links.push({ label: 'Open board', url: 'https://strategic-super-reserve.fun/internal/feedback-board' })
-  const board = db.configured && db.ok ? db.board : null
-  if (!board) { fb.headline = 'unavailable'; flag(fb, 'unknown') }
-  else {
-    const counts: Record<string, number> = {}
-    const open = board.filter((r) => { const st = boardStatusOf(r.status, r.board_status); counts[st] = (counts[st] ?? 0) + 1; return !['live', 'rejected'].includes(st) })
-    const urgent = open.filter((r) => r.priority === 'urgent' || r.priority === 'high').length
-    fb.headline = `${open.length} unresolved`
-    fb.metrics.push(m('Unresolved', String(open.length), open.length ? 'warn' : 'ok'))
-    for (const st of ['reported', 'in_progress', 'blocked', 'testing', 'live', 'rejected']) if (counts[st]) fb.metrics.push(m(`· ${st.replace('_', ' ')}`, String(counts[st]), st === 'blocked' ? 'warn' : undefined))
-    if (urgent) { fb.metrics.push(m('Urgent or high', String(urgent), 'down')); flag(fb, 'warn', `${urgent} urgent/high item${urgent === 1 ? '' : 's'} unresolved`) }
-    if (counts.blocked) flag(fb, 'warn', `${counts.blocked} item${counts.blocked === 1 ? ' is' : 's are'} blocked`)
-    const oldest = open.at(-1)
-    if (oldest && now - Date.parse(oldest.created_at) > 14 * 86_400_000) flag(fb, 'warn', `Oldest unresolved item is ${daysBetween(Date.parse(oldest.created_at), now)} days old`)
-    fb.lists.push({ title: 'Unresolved', empty: 'Nothing open.', items: open.slice(0, 10).map((r) => ({ primary: r.message.replace(/\s+/g, ' ').slice(0, 140), secondary: `${boardStatusOf(r.status, r.board_status).replace('_', ' ')} · ${r.priority ?? 'normal'} · ${r.category} · ${ago(new Date(r.created_at).toISOString(), now)}`, tone: (r.priority === 'urgent' || r.priority === 'high' ? 'down' : 'warn') as Tone })) })
-  }
-
   // Program + Squads + Raydium
   const p = add(node('program', 'SSR program', 'chain', 'The Mainnet program holding every Reserve.'))
   p.links.push({ label: 'Solscan', url: `https://solscan.io/account/${PROGRAM_ID}` })
@@ -931,7 +908,6 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
     { from: 'site', to: 'helius', label: 'RPC' },
     { from: 'site', to: 'jupiter', label: 'swap routes' },
     { from: 'site', to: 'sheets', label: 'feedback' },
-    { from: 'neon', to: 'feedback-board', label: 'stores' },
     { from: 'site', to: 'program', label: 'transactions' },
     { from: 'site', to: 'telegram', label: 'alerts' },
     { from: 'helius', to: 'telegram', label: 'failed-tx webhook' },

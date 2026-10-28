@@ -436,7 +436,6 @@
     treasury: '<path d="M3 22h18"/><path d="M6 18v-7M10 18v-7M14 18v-7M18 18v-7"/><path d="m12 2 9 5H3z"/>',
     authority: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8"/><path d="m17 6 3 3"/><path d="m14 9 2 2"/>',
     'admin-2': '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-    'feedback-board': '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7v7M12 7v4M16 7v10"/>',
     watch: '<path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H5"/>',
   };
   const iconFor = (id) => ICONS[id] || (id.startsWith('domain') ? ICONS.domain : ICONS.site);
@@ -445,7 +444,7 @@
   const LAYOUT = {
     site: [0.45, 0.42],
     vercel: [0.24, 0.32], github: [0.08, 0.16], 'domain-ssr': [0.06, 0.48], 'domain-test': [0.12, 0.76],
-    neon: [0.33, 0.08], sheets: [0.50, 0.06], 'feedback-board': [0.66, 0.10], telegram: [0.86, 0.12],
+    neon: [0.33, 0.08], sheets: [0.50, 0.06], telegram: [0.86, 0.12],
     helius: [0.70, 0.33], jupiter: [0.92, 0.40],
     program: [0.42, 0.72], squads: [0.26, 0.90], raydium: [0.50, 0.95],
     treasury: [0.62, 0.62], keeper: [0.78, 0.66], 'pool-payer': [0.66, 0.92], authority: [0.82, 0.92], 'admin-2': [0.96, 0.78],
@@ -511,7 +510,7 @@
   }
 
   // Phone order: neighbours on the map sit next to each other, so lines stay short.
-  const NARROW_ORDER = ['site', 'vercel', 'github', 'domain-ssr', 'domain-test', 'neon', 'sheets', 'feedback-board', 'telegram', 'helius', 'jupiter', 'program', 'squads', 'raydium', 'treasury', 'keeper', 'pool-payer', 'authority', 'admin-2'];
+  const NARROW_ORDER = ['site', 'vercel', 'github', 'domain-ssr', 'domain-test', 'neon', 'sheets', 'telegram', 'helius', 'jupiter', 'program', 'squads', 'raydium', 'treasury', 'keeper', 'pool-payer', 'authority', 'admin-2'];
 
   function homeFor(id, idx) {
     if (dims.narrow) {
