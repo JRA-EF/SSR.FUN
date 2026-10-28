@@ -8244,6 +8244,44 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
 }
 ```
 
+## DEC-0269
+
+```json
+{
+  "id": "DEC-0269",
+  "date": "2026-10-28",
+  "title": "Protocol 0.5% minimum applies to a configured 0% mint fee and 0% TVL fee",
+  "status": "Program built and tested (sha256 53cd71e3...bd1a, 1,761,912 bytes, fits the live ProgramData, no extend); Mainnet upgrade via Squads pending the deposit for the ~8.95 SOL buffer. App change on branch feat/fee-min-zero, to ship right after the upgrade.",
+  "decision": "fee_math::split_configured_bps drops its zero exemption: a configured 0% now yields (protocol_min_bps, 0), so a 0% mint fee (including the seed) pays SSR 0.5% of the mint and a 0% annual TVL fee accrues SSR 0.5% a year, the Manager nothing. Every nonzero rate is unchanged (SSR = max(0.5%, half)). The redemption fee keeps its own rule (split_redemption_bps: never above the configured total, 0% stays 0%). The SDK mirror computeEffectiveFeeSplit, the server USDC mint-fee quote (lib/mainnet/usdcMintFee.ts: every mint now pays a nonzero fee) and the Create page copy follow.",
+  "context": "2026-10-28 on-chain fee audit: TVL fees were exact to the unit on every Reserve, but three Reserves configured at 0% TVL (#0, #63, #64) paid SSR nothing, and the program also gave SSR nothing on a 0% mint fee (Reserve #34). Creator, 2026-10-28: '0% TVL fee reserves need to be applied the protocol minimum (.50%), same as the mint fee'; asked whether the mint floor should ship in the same upgrade: 'Yes, mint too'. This supersedes the 2026-10-13 ruling recorded in tests/phase_liquidity_revenue.ts ('configured zero stays zero; the DEC-0232 floor was not adopted') for mint and TVL; redeem is unchanged.",
+  "rationale": "One line in the shared split function covers mint, seed and TVL on every path (share-fee and USDC-fee); the program already floors nonzero rates the same way, so a 0% configuration was the only way around the protocol minimum.",
+  "alternativesConsidered": [
+    "App-only (force the sliders to 0.5%) -- rejected: a direct program call could still create a 0% Reserve, and existing 0% Reserves would never pay.",
+    "Also floor the redemption fee (full DEC-0232) -- not chosen by the Creator; every Reserve has a 0% redeem fee today."
+  ],
+  "impact": "Existing 0% Reserves start paying: #0, #63, #64 (TVL) and #34 (mint). The first accrual after the upgrade bills the period since the last accrual at 0.5% (at most about a day, since the keeper accrues daily). Between the upgrade and the app deploy a mint on a 0%-mint Reserve is refused (the old app quotes no USDC fee); only #34 (empty) is affected, so the app ships within minutes of the upgrade. If the app shipped first the reverse would hold, so the order is upgrade, then app.",
+  "affectedAreas": [
+    "programs/ssr_protocol/src/fee_math.rs",
+    "packages/sdk/src/feeMath.ts",
+    "lib/mainnet/usdcMintFee.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "tools/rebalance-litesvm/src/feemin.rs",
+    "tools/rebalance-litesvm/src/main.rs",
+    "tests/phase_liquidity_revenue.ts",
+    "tests/phase_manager_fee_recipients.ts",
+    "tests/phase_protocol_fee_auto_deposit.ts",
+    "tests/phase_usdc_mint_fee.ts",
+    "tests/phase_compound_snapshot.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Unchanged origin/main rebuilds byte-identical to the live program (5fa3ec1e...7283); the patched build is 53cd71e3...bd1a.",
+    "LiteSVM (real compiled program): a Reserve at 0% mint / 0% TVL seeded with 10,000,000 tokens put 50,000 fee shares to SSR and 0 to the Manager; one day later accrue_fees credited SSR 137 (= ceil(1e7 x 86,400 x 50 / (1e4 x 31,536,000))). The same scenario fails on the live binary. Full LiteSVM suite ALL PASS; program unit tests 46/46; app phase tests 1748 passing (the 5 failures also fail on main or need target/idl)."
+  ]
+}
+```
+
 ## DEC-0270
 
 ```json
