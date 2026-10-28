@@ -55,7 +55,9 @@ describe("command center burn rate", () => {
 
   it("the keeper's balance sample can never stop or stall settlement", () => {
     const cron = readFileSync(join(__dirname, "..", "api/mainnet/fee-settlement-cron.ts"), "utf8");
-    expect(cron).to.match(/Promise\.resolve\(\)\.then\(\(\) => recordSolSample\([^;]*\.catch\(\(\) => undefined\)/);
+    expect(cron).to.match(/Promise\.resolve\(\)\.then\(\(\) => getSql\(\)`INSERT INTO command_center_balances[^;]*\.catch\(\(\) => undefined\)/);
+    // lib/command-center is an ES module folder; the CommonJS keeper cannot load it.
+    expect(cron).not.to.match(/from\s+["'][^"']*lib\/command-center/);
     expect(cron).to.match(/await Promise\.race\(\[sample, new Promise\(\(resolve\) => setTimeout\(resolve, 3_000\)\)\]\)/);
   });
 });

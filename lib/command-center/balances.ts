@@ -1,8 +1,8 @@
 // SOL balance samples of the protocol's fee-paying wallets, for the command
-// center's burn rate (model.ts solBurnPerDay). The fee keeper records its own
-// balance once per hourly run; the command center adds one per wallet at most
-// hourly while the page is open. No imports on purpose: the keeper cron uses
-// this file too.
+// center's burn rate (model.ts solBurnPerDay). The command center adds one per
+// wallet at most hourly while the page is open; the fee keeper writes its own
+// balance once per hourly run with an inline copy of recordSolSample's INSERT
+// (api/mainnet is CommonJS and cannot import this ES module folder).
 type Db = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>
 
 let tableReady = false

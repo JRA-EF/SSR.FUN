@@ -112,7 +112,6 @@ import { findSharingPools, runBasketFeedForPool, type BasketFeedResult } from ".
 import { fetchJupiterPrices } from "./asset-prices";
 import { recordAlert } from "../../lib/ops-alerts/alerts";
 import { isTransientRpcError, KEEPER_LOW_SOL } from "../../lib/ops-alerts/alertsPure";
-import { recordSolSample } from "../../lib/command-center/balances";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -410,11 +409,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (status.keeperSolBalance !== null && status.keeperSolBalance < KEEPER_LOW_SOL) {
     await recordAlert({ source: "keeper", step: "keeper-balance", message: `Keeper has ${status.keeperSolBalance.toFixed(4)} SOL (alert below ${KEEPER_LOW_SOL}). Top it up or settlement stops.`, wallet: status.keeperWallet }, { quietMinutes: 360 });
   }
-  // Command center burn rate: one balance sample per run. Never fails settlement and
-  // waits at most 3 s, so a cold database cannot eat the run's time budget.
+  // Command center burn rate: one balance sample per run (lib/command-center/balances.ts
+  // owns the table and reads it). Inlined on purpose: lib/command-center is an ES module
+  // folder this CommonJS function cannot load (that import crashed the 12:15 run on
+  // 2026-10-28). Never fails settlement and waits at most 3 s.
   if (keeper && status.keeperSolBalance !== null) {
     const sol = status.keeperSolBalance;
-    const sample = Promise.resolve().then(() => recordSolSample(getSql(), keeper.publicKey.toBase58(), sol)).catch(() => undefined);
+    const wallet = keeper.publicKey.toBase58();
+    const sample = Promise.resolve().then(() => getSql()`INSERT INTO command_center_balances (wallet, sol)
+      SELECT ${wallet}, ${sol} WHERE NOT EXISTS (
+        SELECT 1 FROM command_center_balances WHERE wallet = ${wallet} AND at > now() - interval '50 minutes')`).catch(() => undefined);
     await Promise.race([sample, new Promise((resolve) => setTimeout(resolve, 3_000))]);
   }
   if (!keeper) {
