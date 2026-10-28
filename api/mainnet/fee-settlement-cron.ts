@@ -410,8 +410,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (status.keeperSolBalance !== null && status.keeperSolBalance < KEEPER_LOW_SOL) {
     await recordAlert({ source: "keeper", step: "keeper-balance", message: `Keeper has ${status.keeperSolBalance.toFixed(4)} SOL (alert below ${KEEPER_LOW_SOL}). Top it up or settlement stops.`, wallet: status.keeperWallet }, { quietMinutes: 360 });
   }
-  // Command center burn rate: one balance sample per run. Never blocks settlement.
-  if (keeper && status.keeperSolBalance !== null) { const sol = status.keeperSolBalance; await Promise.resolve().then(() => recordSolSample(getSql(), keeper.publicKey.toBase58(), sol)).catch(() => undefined); }
+  // Command center burn rate: one balance sample per run. Never fails settlement and
+  // waits at most 3 s, so a cold database cannot eat the run's time budget.
+  if (keeper && status.keeperSolBalance !== null) {
+    const sol = status.keeperSolBalance;
+    const sample = Promise.resolve().then(() => recordSolSample(getSql(), keeper.publicKey.toBase58(), sol)).catch(() => undefined);
+    await Promise.race([sample, new Promise((resolve) => setTimeout(resolve, 3_000))]);
+  }
   if (!keeper) {
     res.status(500).json({ error: keeperEnvError ?? "Keeper wallet not configured." });
     return;

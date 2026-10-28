@@ -3,7 +3,7 @@
 - **Date:** 2026-10-28
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `main` (this commit)
-- **Deployed to:** production (deploy id in the follow-up line once live)
+- **Deployed to:** production `dpl_74Xg3vWRUhA2JRmFZTkrawoALKAH` (a897263), then redeployed with the 3 s cap below
 - **Decision log:** none (internal page; the keeper change only stores a balance sample)
 
 ## What shipped
@@ -31,3 +31,5 @@
 ## Verification
 - `tests/phase_command_center.ts`, `phase_command_center_burn.ts`, `phase_ops_alerts.ts`: 20 passing. `tsc -p tsconfig.node.json` clean, oxlint clean.
 - Local run of `collectCommandCenter` against production data, and headless-Chrome screenshots of the open dropdown at 1440 px and 600 px.
+
+- Follow-up 2026-10-28: a peer review noted the awaited keeper sample could still delay settlement on a cold database. It now waits at most 3 s (Promise.race with a timer); the test pins this.

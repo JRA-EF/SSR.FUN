@@ -53,8 +53,9 @@ describe("command center burn rate", () => {
     expect(b.solPerDay).to.be.closeTo(0.15, 1e-9);
   });
 
-  it("the keeper's balance sample can never stop settlement", () => {
+  it("the keeper's balance sample can never stop or stall settlement", () => {
     const cron = readFileSync(join(__dirname, "..", "api/mainnet/fee-settlement-cron.ts"), "utf8");
     expect(cron).to.match(/Promise\.resolve\(\)\.then\(\(\) => recordSolSample\([^;]*\.catch\(\(\) => undefined\)/);
+    expect(cron).to.match(/await Promise\.race\(\[sample, new Promise\(\(resolve\) => setTimeout\(resolve, 3_000\)\)\]\)/);
   });
 });
