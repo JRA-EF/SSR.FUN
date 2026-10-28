@@ -25,22 +25,20 @@ export interface EffectiveFeeSplit {
  * `protocolBps = max(protocolMinBps, configuredBps / 2)`
  * `managerBps  = max(configuredBps - protocolBps, 0)`
  *
- * Whenever a manager configures a NONZERO fee, the Protocol's share is
- * floored at `protocolMinBps` (the effective total can then exceed
- * `configuredBps` when it's below the floor). A manager who genuinely
- * configures 0% pays no floor at all -- `configuredBps === 0n` always
- * yields `{protocolBps: 0n, managerBps: 0n}`, a real zero-fee mint/TVL
- * accrual. There is no forced minimum fee; the floor only governs how a
- * NONZERO fee splits.
+ * The Protocol's share is always floored at `protocolMinBps` (the
+ * effective total can then exceed `configuredBps` when it's below the
+ * floor). DEC-0269: that includes a configured 0% -- `configuredBps === 0n`
+ * yields `{protocolBps: protocolMinBps, managerBps: 0n}`, mirroring the
+ * program's `split_configured_bps` (before DEC-0269 it was a real zero-fee
+ * mint/TVL accrual).
  *
  * Floor division for the "50% of configured" half -- matches every example
  * in the task's own table exactly (all even bps values); for an odd
  * `configuredBps` the extra basis point goes to the Manager, not the
  * Protocol (an arbitrary but deterministic tie-break, not a rounding bug --
- * `protocolBps` is always still >= `protocolMinBps` when `configuredBps > 0`).
+ * `protocolBps` is always still >= `protocolMinBps`).
  */
 export function computeEffectiveFeeSplit(configuredBps: bigint, protocolMinBps: bigint): EffectiveFeeSplit {
-  if (configuredBps === 0n) return { protocolBps: 0n, managerBps: 0n, effectiveTotalBps: 0n };
   const half = configuredBps / 2n;
   const protocolBps = protocolMinBps > half ? protocolMinBps : half;
   const managerBps = configuredBps > protocolBps ? configuredBps - protocolBps : 0n;

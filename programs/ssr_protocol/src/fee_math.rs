@@ -5,12 +5,12 @@
 //!
 //! 1. [`split_configured_bps`] -- derive `(protocol_bps, manager_bps)` from
 //!    the Reserve's configured fee rate and the Protocol's minimum.
-//!    Whenever a manager configures a NONZERO fee, the Protocol's share is
-//!    floored at `protocol_min_bps` (`protocol_bps + manager_bps` can then
-//!    exceed `configured_bps` when it's below the floor). A manager who
-//!    genuinely configures 0% pays no floor at all -- `configured_bps == 0`
-//!    always yields `(0, 0)`, a real zero-fee mint/TVL-accrual. There is no
-//!    forced minimum fee; the floor only governs how a NONZERO fee splits.
+//!    The Protocol's share is always floored at `protocol_min_bps`
+//!    (`protocol_bps + manager_bps` can then exceed `configured_bps` when
+//!    it's below the floor). DEC-0269: that includes a configured 0% -- a
+//!    0% mint or TVL fee still pays the Protocol its 0.5% minimum and the
+//!    Manager nothing (before DEC-0269 it was a real zero-fee mint/accrual).
+//!    The redemption fee keeps its own rule, see [`split_redemption_bps`].
 //! 2. [`split_total_fee`] -- given the total fee shares already computed
 //!    from the effective total bps, split into `(protocol_total,
 //!    manager_total)` via floor+exact-remainder (protocol-favored rounding,
@@ -39,10 +39,10 @@ use crate::state::FeeRecipientSlot;
 /// `configured_bps` simply leaves the extra basis point with the Manager
 /// rather than the Protocol -- an arbitrary but deterministic tie-break,
 /// not a rounding bug (`protocol_bps` is always still >= `protocol_min_bps`).
+///
+/// DEC-0269: no zero exemption -- `configured_bps == 0` yields
+/// `(protocol_min_bps, 0)`.
 pub fn split_configured_bps(configured_bps: u16, protocol_min_bps: u16) -> (u16, u16) {
-    if configured_bps == 0 {
-        return (0, 0);
-    }
     let half = configured_bps / 2;
     let protocol_bps = protocol_min_bps.max(half);
     let manager_bps = configured_bps.saturating_sub(protocol_bps);
@@ -58,9 +58,9 @@ pub fn split_configured_bps(configured_bps: u16, protocol_min_bps: u16) -> (u16,
 /// is the exact remainder, so the two always sum to `total_fee_shares`
 /// exactly, with zero rounding dust ever silently unallocated.
 ///
-/// `effective_total_bps` (`protocol_bps + manager_bps`) is zero exactly when
-/// `configured_bps` was genuinely 0 (see `split_configured_bps`'s zero-fee
-/// case) -- handled explicitly below (both shares 0, no division at all)
+/// `effective_total_bps` (`protocol_bps + manager_bps`) is zero only for a
+/// 0% redemption fee (`split_redemption_bps`) or a zero protocol minimum --
+/// since DEC-0269 `split_configured_bps` never returns it -- handled explicitly below (both shares 0, no division at all)
 /// rather than relying on `mul_div_floor`'s zero-divisor guard, since that
 /// guard would otherwise turn a legitimate 0%-fee mint/accrual into a
 /// spurious `DivisionByZero` failure.
@@ -202,11 +202,10 @@ mod tests {
 
     #[test]
     fn table_from_task_mint_and_tvl() {
-        // (configured_bps, expected_protocol_bps, expected_manager_bps). A
-        // genuine 0% configuration yields a genuine 0% effective fee -- no
-        // forced minimum -- while any NONZERO configuration still floors
-        // the Protocol's share at 50bps (0.5%).
-        let cases = [(0u16, 0u16, 0u16), (50, 50, 0), (100, 50, 50), (200, 100, 100), (500, 250, 250)];
+        // (configured_bps, expected_protocol_bps, expected_manager_bps). The
+        // Protocol's share is floored at 50bps (0.5%) for every configuration,
+        // a configured 0% included (DEC-0269).
+        let cases = [(0u16, 50u16, 0u16), (10, 50, 0), (50, 50, 0), (100, 50, 50), (200, 100, 100), (500, 250, 250)];
         for (configured, expected_protocol, expected_manager) in cases {
             let (protocol_bps, manager_bps) = split_configured_bps(configured, 50);
             assert_eq!(protocol_bps, expected_protocol, "configured={configured}");

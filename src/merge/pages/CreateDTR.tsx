@@ -2321,7 +2321,7 @@ export function CreateDTR({
                       step={0.05}
                       onValueChange={(v) => setMintFeePct(v[0])}
                     />
-                    <p className="text-xs text-muted-foreground">Charged on new issuance. Protocol default is 0.50%.</p>
+                    <p className="text-xs text-muted-foreground">Charged on new issuance. The Protocol always takes at least 0.50%, even at 0%.</p>
                     {realDeploymentCandidate && (() => {
                       const split = computeEffectiveFeeSplit(BigInt(Math.round(mintFeePct * 100)), PROTOCOL_MIN_MINT_FEE_BPS);
                       return (
@@ -2343,7 +2343,7 @@ export function CreateDTR({
                       step={0.05}
                       onValueChange={(v) => setTvlFeePct(v[0])}
                     />
-                    <p className="text-xs text-muted-foreground">Accrues to Manager. Protocol default is 1.00%.</p>
+                    <p className="text-xs text-muted-foreground">Charged daily on the Reserve's value. The Protocol always takes at least 0.50% a year, even at 0%.</p>
                     {realDeploymentCandidate && (() => {
                       const split = computeEffectiveFeeSplit(BigInt(Math.round(tvlFeePct * 100)), PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS);
                       return (

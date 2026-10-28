@@ -49,7 +49,7 @@ async function fails(f:()=>Promise<any>,text:string){let err='';try{await f();}c
 describe('Compound contextual account snapshot',()=>{
   it('decodes actual account layouts, excludes accrued fees and binds all reads to one financial snapshot',async()=>{
     const f=await fixture(),s=await f.run();expect(f.batches()).eq(1);expect(s.epoch).eq(100n);expect(s.context.snapshotSlot).eq(1000);
-    expect([s.usdc,s.tokens]).contain(999_999_400n);expect(s.mintFeeBps).eq(0n); /* fixture configures 0%; DEC-0240 keeps a configured 0% mint fee at 0 (no DEC-0232 floor) */expect(s.mintAllowed).eq(true);expect(s.assets[0].balance).eq(1_000_000_000n);
+    expect([s.usdc,s.tokens]).contain(999_999_400n);expect(s.mintFeeBps).eq(50n); /* fixture configures 0%; DEC-0269: the Protocol 0.5% floor applies to a configured 0% */expect(s.mintAllowed).eq(true);expect(s.assets[0].balance).eq(1_000_000_000n);
     const hash=s.context.stateFingerprint;
     const clock=f.map.get(SYSVAR_CLOCK_PUBKEY.toBase58())!.data;clock.writeBigUInt64LE(1001n,0);clock.writeBigInt64LE(1800000001n,32);expect((await f.run()).context.stateFingerprint).eq(hash);
     clock.writeBigUInt64LE(101n,16);expect((await f.run()).context.stateFingerprint).not.eq(hash);clock.writeBigUInt64LE(100n,16);

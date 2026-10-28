@@ -38,7 +38,8 @@ export function quoteUsdcMintFee(params: {
     throw new BuildError(422, `${e instanceof Error ? e.message : String(e)} Try again in a moment. Nothing was submitted.`);
   }
   const usdcFeeRaw = computeUsdcMintFeeRaw(depositValueUsdcRaw, params.mintFeeBps);
-  if (params.mintFeeBps > 0 && usdcFeeRaw === 0n) {
+  // DEC-0269: every mint pays at least the Protocol's 0.5%, a 0% mint fee included.
+  if (usdcFeeRaw === 0n) {
     throw new BuildError(422, "This mint is too small for its mint fee to be charged in USDC (under $0.000001). Enter a larger amount. Nothing was submitted.");
   }
   return { depositValueUsdcRaw, usdcFeeRaw };

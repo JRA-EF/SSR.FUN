@@ -6,8 +6,8 @@ import { computeRedemptionEntitlements } from '../packages/sdk/src/calculations'
 import { splitNativeCreatorRevenue, splitProjectTax, buildConfigureLiquidityRevenue, findLiquidityRevenue } from '../packages/sdk/src/liquidityRevenue';
 const key=(n:number)=>new PublicKey(Uint8Array.from({length:32},()=>n));
 describe('SSR revenue policy',()=>{
- it('keeps live mint/redeem fees: configured zero stays zero (Creator ruling 2026-10-13; the DEC-0232 floor was not adopted)',()=>{
-  expect(computeEffectiveFeeSplit(0n,50n).effectiveTotalBps).eq(0n);
+ it('mint/TVL fees: the protocol 0.5% floor applies to a configured zero too (DEC-0269); redeem keeps its configured fee',()=>{
+  expect(computeEffectiveFeeSplit(0n,50n)).to.deep.equal({protocolBps:50n,managerBps:0n,effectiveTotalBps:50n});
   expect(computeEffectiveFeeSplit(30n,50n).effectiveTotalBps).eq(50n);
   expect(computeEffectiveFeeSplit(200n,50n).protocolBps).eq(100n);
   const [r]=computeRedemptionEntitlements(1_000_000n,0n,1_000_000n,[{mint:'asset',vaultBalance:1_000_000n}]);

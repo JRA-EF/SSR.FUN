@@ -78,7 +78,7 @@ describe("DEC-0238 -- fee math", () => {
     expect(computeUsdcMintFeeRaw(10_000_000n, 100)).to.equal(100_000n); // $10 at 1% = $0.10
     expect(computeUsdcMintFeeRaw(10_000_000n, 40)).to.equal(50_000n); // configured 0.4% is below the floor: the protocol half is raised to 0.5%
     expect(computeUsdcMintFeeRaw(10_000_000n, 60)).to.equal(60_000n); // configured 0.6% -> 0.5% protocol (floor) + 0.1% manager
-    expect(computeUsdcMintFeeRaw(10_000_000n, 0)).to.equal(0n); // a 0% Reserve pays nothing
+    expect(computeUsdcMintFeeRaw(10_000_000n, 0)).to.equal(50_000n); // DEC-0269: a 0% Reserve still pays the Protocol 0.5%
     expect(computeUsdcMintFeeRaw(1n, 100)).to.equal(1n); // rounds up in the protocol's favor
     expect(effectiveMintFeeFraction(100)).to.equal(0.01);
   });

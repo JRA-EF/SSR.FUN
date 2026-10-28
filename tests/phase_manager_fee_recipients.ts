@@ -21,7 +21,7 @@ import { mulDivCeil, BPS_DENOMINATOR } from "../packages/sdk/src/calculations";
 // A genuinely configured 0% is a real 0% effective fee -- no forced minimum
 // (the 0.5% floor only governs how a NONZERO configured fee splits).
 const TASK_TABLE: { configuredPct: number; protocolPct: number; managerPct: number; effectiveTotalPct: number }[] = [
-  { configuredPct: 0, protocolPct: 0, managerPct: 0, effectiveTotalPct: 0 },
+  { configuredPct: 0, protocolPct: 0.5, managerPct: 0, effectiveTotalPct: 0.5 }, // DEC-0269: no zero exemption
   { configuredPct: 0.5, protocolPct: 0.5, managerPct: 0, effectiveTotalPct: 0.5 },
   { configuredPct: 1, protocolPct: 0.5, managerPct: 0.5, effectiveTotalPct: 1 },
   { configuredPct: 2, protocolPct: 1, managerPct: 1, effectiveTotalPct: 2 },
@@ -46,16 +46,11 @@ describe("computeEffectiveFeeSplit (packages/sdk/src/feeMath.ts) -- DEC-0094 for
         });
       }
 
-      it("effective total never falls below the Protocol minimum for any NONZERO configured rate up to 10% -- a genuine 0% stays 0%, no forced minimum fee", () => {
+      it("effective total never falls below the Protocol minimum for any configured rate up to 10%, a configured 0% included (DEC-0269)", () => {
         for (let bps = 0n; bps <= 1000n; bps += 7n) {
           const split = computeEffectiveFeeSplit(bps, floorBps);
-          if (bps === 0n) {
-            expect(split.effectiveTotalBps).to.equal(0n);
-            expect(split.protocolBps).to.equal(0n);
-          } else {
-            expect(split.effectiveTotalBps).to.be.at.least(floorBps);
-            expect(split.protocolBps).to.be.at.least(floorBps);
-          }
+          expect(split.effectiveTotalBps).to.be.at.least(floorBps);
+          expect(split.protocolBps).to.be.at.least(floorBps);
           expect(split.protocolBps + split.managerBps).to.equal(split.effectiveTotalBps);
         }
       });

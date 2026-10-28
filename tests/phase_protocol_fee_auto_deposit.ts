@@ -22,8 +22,8 @@ import { summarizeActivityEvent } from "../packages/sdk/src/activityLog";
 import idl from "../packages/sdk/idl/ssr_protocol.json";
 
 describe("estimateNetSeedReserveTokens -- root-cause regression: the initial seed mint is fee-charged like any other mint", () => {
-  it("deducts nothing for a genuinely 0% configured mint fee", () => {
-    expect(estimateNetSeedReserveTokens(1000, 0)).to.equal(1000);
+  it("a 0% configured mint fee still deducts the Protocol 0.5% minimum (DEC-0269)", () => {
+    expect(estimateNetSeedReserveTokens(1000, 0)).to.equal(995);
   });
 
   it("LIVE-DEVNET-MATCHED REGRESSION: a $10 seed at 2% mint fee nets exactly 9.8 tokens -- the exact figures confirmed live in scripts/verify_protocol_fee_auto_deposit_devnet.ts (creator received 9,800,000 raw units of 10,000,000 requested)", () => {

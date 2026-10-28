@@ -24,6 +24,7 @@ mod feed;
 mod split;
 mod tradetax;
 mod raydium_tax;
+mod feemin;
 
 const PID: Pubkey = ssr_protocol::ID;
 const TOKEN: Pubkey = anchor_spl::token::ID;
@@ -130,6 +131,11 @@ impl Env {
 }
 
 fn setup() -> Env {
+    setup_with_fees(50, 100)
+}
+
+/// DEC-0269: the same Reserve with any configured mint/TVL fee (feemin.rs runs it at 0%).
+pub(crate) fn setup_with_fees(mint_fee_bps: u16, annual_tvl_fee_bps: u16) -> Env {
     let mut svm = LiteSVM::new();
     svm.add_program_from_file(PID, std::env::var("SSR_PROGRAM_SO").unwrap_or_else(|_| "../../target/deploy/ssr_protocol.so".into())).expect("build the program first (cargo-build-sbf)");
     let admin = Keypair::new();
@@ -170,7 +176,7 @@ fn setup() -> Env {
                 system_program: anchor_lang::system_program::ID,
             }
             .to_account_metas(None),
-            data: ssr_protocol::instruction::CreateReserve { metadata_uri: "https://ssr.fun/test".into(), mint_fee_bps: 50, redemption_fee_bps: 0, annual_tvl_fee_bps: 100, fee_destination: admin_pk }.data(),
+            data: ssr_protocol::instruction::CreateReserve { metadata_uri: "https://ssr.fun/test".into(), mint_fee_bps, redemption_fee_bps: 0, annual_tvl_fee_bps, fee_destination: admin_pk }.data(),
         }],
         &[&a],
     )
@@ -400,6 +406,7 @@ fn main() {
     split::run();
     tradetax::run();
     raydium_tax::run();
+    feemin::run();
     tradetax::guard();
 
     println!("ALL PASS");
