@@ -10,10 +10,11 @@ import { useEffect } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { registerDynamicSupportedAssetMints } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
-import { IS_MAINNET } from "./solana-config";
+import { IS_MAINNET, SOLANA_CLUSTER } from "./solana-config";
 import { fetchReserveSnapshot, buildDtrsFromSnapshot } from "./reserveSnapshotClient";
 import { fetchReserveNavHistory, NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, type ServerPriceHistory } from "./navHistoryClient";
 import { fetchReserveEntryPrices } from "./entryPriceClient";
+import { fetchReserveImagePointers } from "./reserveImageClient";
 import { getCached } from "./rpcResilience";
 
 export function ReserveSnapshotHydrator() {
@@ -35,13 +36,22 @@ export function ReserveSnapshotHydrator() {
       // card's top performers stayed empty until the first live poll landed
       // (reported 2026-09-14 as "top performers are gone"). Best-effort: {}
       // on failure, the poll fills it in later exactly as before.
-      const [snapshot, navHistory, entryPrices] = await Promise.all([
+      // The profile-picture pointer map rides along as well (same cache key +
+      // TTL as RealReserveSync, so the poll reuses this fetch): the snapshot
+      // only carries each Reserve's metadata picture, so a Reserve whose
+      // picture was changed via the pointer flow showed no picture (or its
+      // old one) for seconds, until the first live poll landed (reported
+      // 2026-10-28 on Reserve 59). Best-effort: {} keeps the metadata picture.
+      const [snapshot, navHistory, entryPrices, imagePointers] = await Promise.all([
         fetchReserveSnapshot(window.location.origin),
         getCached(NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, () => fetchReserveNavHistory(window.location.origin)).catch(
           () => ({}) as Record<string, ServerPriceHistory>,
         ),
         getCached("reserve-entry-prices", 5_000, () => fetchReserveEntryPrices(window.location.origin)).catch(
           () => ({}) as Record<string, Record<string, number>>,
+        ),
+        getCached(`reserve-image-pointers:${SOLANA_CLUSTER}`, 5_000, () => fetchReserveImagePointers(window.location.origin, "mainnet")).catch(
+          () => ({}) as Record<string, string>,
         ),
       ]);
       if (cancelled || !snapshot) return;
@@ -57,7 +67,10 @@ export function ReserveSnapshotHydrator() {
       if (snapshotMints.length > 0) registerDynamicSupportedAssetMints(snapshotMints);
       let dtrs;
       try {
-        dtrs = buildDtrsFromSnapshot(snapshot, publicKey ? publicKey.toBase58() : null, entryPrices);
+        dtrs = buildDtrsFromSnapshot(snapshot, publicKey ? publicKey.toBase58() : null, entryPrices).map((dtr) => {
+          const pointedImageUrl = dtr.onChain ? imagePointers[dtr.onChain.reserve] : undefined;
+          return pointedImageUrl ? { ...dtr, logoUrl: pointedImageUrl } : dtr;
+        });
       } catch {
         return; // Malformed snapshot -- fall back silently to the live poll.
       }
