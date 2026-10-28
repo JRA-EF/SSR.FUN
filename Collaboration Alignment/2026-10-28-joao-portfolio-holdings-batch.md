@@ -2,8 +2,8 @@
 
 - **Date:** 2026-10-28
 - **Author:** Joao via Claude (Opus 5.5)
-- **Branch / commits:** `main` (this commit)
-- **Deployed to:** not yet
+- **Branch / commits:** `main` @ `b0f3d0f`
+- **Deployed to:** production `dpl_CnoVm71A54fQ8e97rPnJ7G2sZSiR` (promoted 2026-10-28 after a `--skip-domain` build: cron dry run 200, command center 401). Rollback: `vercel promote dpl_7XY3dwKLHwm7vxMcYYiZMYaBNRgh`.
 - **Decision log:** none (UI behaviour and copy)
 
 ## What was wrong
