@@ -218,7 +218,6 @@ export function LiquidityPanel({ dtr, onDone }: { dtr: DTR; onDone?: () => void 
                 }`}
               >
                 {formatUsdc(amt, { compact: true })}
-                {amt === RECOMMENDED_LIQUIDITY_USD && <span className="text-[9px] uppercase tracking-wider text-primary">Recommended</span>}
               </button>
             ))}
             <button
@@ -235,7 +234,7 @@ export function LiquidityPanel({ dtr, onDone }: { dtr: DTR; onDone?: () => void 
             <Input
               type="number"
               min={0}
-              placeholder={`Total in USD (recommended ${formatUsdc(RECOMMENDED_LIQUIDITY_USD, { compact: true })})`}
+              placeholder="Total in USD"
               value={customValue}
               onChange={(e) => setCustomValue(e.target.value)}
               className="max-w-[240px] font-merge-mono"

@@ -76,7 +76,7 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare,refresh}:{dtr:DTR;s
    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Total liquidity</Label>
    <div className="flex flex-wrap gap-2">
     {QUICK_AMOUNTS_USD.map(amt=><button key={amt} type="button" onClick={()=>{setTotal(amt);setCustomOpen(false);}} className={`${pill(!customOpen&&total===amt)} font-merge-mono inline-flex items-center gap-2`}>
-     {formatUsdc(amt,{compact:true})}{amt===RECOMMENDED_LIQUIDITY_USD&&<span className="text-[9px] uppercase tracking-wider text-primary">Recommended</span>}</button>)}
+     {formatUsdc(amt,{compact:true})}</button>)}
     <button type="button" onClick={()=>setCustomOpen(true)} className={pill(customOpen)}>Custom</button>
    </div>
    {customOpen&&<Input type="number" min={0} placeholder="Total in USD" value={custom} onChange={e=>setCustom(e.target.value)} className="max-w-[240px] font-merge-mono"/>}
