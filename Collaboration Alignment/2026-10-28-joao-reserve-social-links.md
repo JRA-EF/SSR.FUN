@@ -3,7 +3,7 @@
 - **Date:** 2026-10-28
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `main` (this commit)
-- **Deployed to:** production (see the follow-up line once the deploy id is known)
+- **Deployed to:** production (`dpl_7XY3dwKLHwm7vxMcYYiZMYaBNRgh`, promoted 2026-10-28 ~15:40 UTC; also ships 13dcc54 + 8acd964)
 - **Decision log:** DEC-0271
 
 ## What shipped
@@ -28,3 +28,5 @@
 
 ## Verification
 - `tsc -b` clean; full offline suite 1,772 passing with the 5 known baseline failures; new socials test 6 passing; headless Chrome render of the icon row.
+
+- Follow-up 2026-10-28: live on ssr.fun as dpl_7XY3dwKLHwm7vxMcYYiZMYaBNRgh after a --skip-domain load check (fee-settlement-cron dryRun 200). Keeper DEC-0270 runs at 14:16 and 15:16 confirmed by system32-9f before shipping. Rollback: vercel promote dpl_C8SRsQ4oonnmLpscNfNs2RojhZTm.
