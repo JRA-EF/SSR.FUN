@@ -461,7 +461,14 @@ export interface ParsedReserveMetadata {
    * <img src>).
    */
   imageUrl?: string;
+  /** Creator links set at launch (lib/reserve-metadata/payload.ts). Same https-only rule as imageUrl; absent when not set. */
+  youtubeChannelUrl?: string;
+  youtubeFeaturedVideoUrl?: string;
+  xUrl?: string;
+  telegramUrl?: string;
 }
+
+const CREATOR_LINK_KEYS = ["youtubeChannelUrl", "youtubeFeaturedVideoUrl", "xUrl", "telegramUrl"] as const;
 
 /** Shared by parseReserveMetadataUri (inline data: URI) and resolveReserveMetadata (a fetched HTTPS payload) -- the ONE place a raw JSON value becomes a ParsedReserveMetadata, so the two never drift. Returns null -- never a fabricated guess -- when neither name nor ticker is present. */
 function metadataFromJson(json: unknown): ParsedReserveMetadata | null {
@@ -471,6 +478,11 @@ function metadataFromJson(json: unknown): ParsedReserveMetadata | null {
   const ticker = typeof j.ticker === "string" ? j.ticker : "";
   if (!name && !ticker) return null;
   const imageUrl = typeof j.imageUrl === "string" && /^https:\/\//i.test(j.imageUrl) ? j.imageUrl : undefined;
+  const links: Partial<Record<(typeof CREATOR_LINK_KEYS)[number], string>> = {};
+  for (const key of CREATOR_LINK_KEYS) {
+    const v = j[key];
+    if (typeof v === "string" && /^https:\/\//i.test(v)) links[key] = v;
+  }
   return {
     name,
     ticker,
@@ -479,6 +491,7 @@ function metadataFromJson(json: unknown): ParsedReserveMetadata | null {
     buyTaxPct: typeof j.buyTaxPct === "number" && Number.isFinite(j.buyTaxPct) ? j.buyTaxPct : 0,
     sellTaxPct: typeof j.sellTaxPct === "number" && Number.isFinite(j.sellTaxPct) ? j.sellTaxPct : 0,
     ...(imageUrl ? { imageUrl } : {}),
+    ...links,
   };
 }
 

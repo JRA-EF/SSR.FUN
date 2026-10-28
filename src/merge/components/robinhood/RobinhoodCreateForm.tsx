@@ -47,6 +47,7 @@ import { assignRemainder, clearAll, splitEvenly, unallocatedBps } from "@/lib/ba
 import { fileToHeaderImageDataUrl, fileToProfileImageDataUrl, fitHeaderImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { uploadReserveMetadata, type ReserveMetadataInput } from "@/lib/createReserveClient";
 import { normalizeYouTubeChannelUrl, parseYouTubeVideoId } from "@/lib/youtube";
+import { normalizeTelegramUrl, normalizeXUrl } from "@/lib/reserveSocials";
 import {
   RH_MAX_ASSETS_PER_RESERVE,
   coManagersForChain,
@@ -119,6 +120,12 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
   const [description, setDescription] = useState("");
   const [youtubeChannel, setYoutubeChannel] = useState("");
   const [youtubeFeatured, setYoutubeFeatured] = useState("");
+  const [xLink, setXLink] = useState("");
+  const [telegramLink, setTelegramLink] = useState("");
+  const xUrl = normalizeXUrl(xLink);
+  const telegramUrl = normalizeTelegramUrl(telegramLink);
+  const xLinkInvalid = xLink.trim() !== "" && !xUrl;
+  const telegramLinkInvalid = telegramLink.trim() !== "" && !telegramUrl;
   const headerImageInputRef = useRef<HTMLInputElement | null>(null);
   const [headerImage, setHeaderImage] = useState<string | null>(null);
   const [headerImageError, setHeaderImageError] = useState<string | null>(null);
@@ -262,6 +269,8 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
       if (!name.trim()) return "Give the reserve a name.";
       if (!symbol.trim()) return "Give the reserve a ticker.";
       if (nameProfane || symbolProfane || descriptionProfane) return PROFANITY_MESSAGE;
+      if (xLinkInvalid) return "Enter an X handle or an x.com link.";
+      if (telegramLinkInvalid) return "Enter a Telegram handle or a t.me link.";
     }
     if (atStep === 2) {
       if (assets.length === 0) return "Add at least one asset.";
@@ -353,13 +362,15 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
       ...(headerImageUrl ? { headerImageUrl } : {}),
       ...(channelUrl ? { youtubeChannelUrl: channelUrl } : {}),
       ...(featuredUrl ? { youtubeFeaturedVideoUrl: featuredUrl } : {}),
+      ...(xUrl ? { xUrl } : {}),
+      ...(telegramUrl ? { telegramUrl } : {}),
     };
     return uploadReserveMetadata(origin, input, "robinhood");
   }
 
   // Entering Review: store the profile (so the metadata URL can be shown,
   // as on Solana), quote every swap leg live, and read the gas price.
-  const identityKey = [name, symbol, category, description, youtubeChannel, youtubeFeatured, profileImageDataUrl ?? "", headerImage ?? ""].join("\u0001");
+  const identityKey = [name, symbol, category, description, youtubeChannel, youtubeFeatured, xUrl ?? "", telegramUrl ?? "", profileImageDataUrl ?? "", headerImage ?? ""].join("\u0001");
   useEffect(() => {
     if (step !== 4) return;
     let cancelled = false;
@@ -590,6 +601,32 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                   <p className="text-xs text-muted-foreground">Plays at the top of the video panel on your Reserve's page.</p>
                 </div>
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="rhc-x-link">X <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Input
+                    id="rhc-x-link"
+                    placeholder="e.g. @yourhandle or x.com/yourhandle"
+                    value={xLink}
+                    onChange={(e) => setXLink(e.target.value)}
+                    aria-invalid={xLinkInvalid}
+                  />
+                  {xLinkInvalid && <p className="text-xs text-destructive">Enter an X handle or an x.com link.</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="rhc-telegram-link">Telegram <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Input
+                    id="rhc-telegram-link"
+                    placeholder="e.g. @yourgroup or t.me/yourgroup"
+                    value={telegramLink}
+                    onChange={(e) => setTelegramLink(e.target.value)}
+                    aria-invalid={telegramLinkInvalid}
+                  />
+                  {telegramLinkInvalid && <p className="text-xs text-destructive">Enter a Telegram handle or a t.me link.</p>}
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground -mt-2">Your X, Telegram and YouTube links appear as icons next to your Reserve's ticker. They are saved with the Reserve when it launches.</p>
 
               <div className="space-y-2">
                 <Label>Header image <span className="text-muted-foreground font-normal">(optional)</span></Label>
@@ -1027,6 +1064,12 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                       <p className="text-sm font-semibold text-muted-foreground mb-2">Description</p>
                       <p className="text-sm whitespace-pre-line">{description || "No description provided."}</p>
                     </div>
+                    {(xUrl || telegramUrl) && (
+                      <div className="text-xs space-y-1">
+                        {xUrl && <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">X</span><span className="font-medium text-right break-all">{xUrl}</span></div>}
+                        {telegramUrl && <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">Telegram</span><span className="font-medium text-right break-all">{telegramUrl}</span></div>}
+                      </div>
+                    )}
                     {(youtubeChannel.trim() || youtubeFeatured.trim()) && (
                       <div className="text-xs space-y-1">
                         <div className="flex justify-between gap-6"><span className="text-muted-foreground shrink-0">YouTube channel</span><span className="font-medium text-right break-all">{youtubeChannel.trim() ? normalizeYouTubeChannelUrl(youtubeChannel) : "—"}</span></div>

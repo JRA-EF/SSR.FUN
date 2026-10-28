@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ReserveSocialLinks } from "@/components/ReserveSocialLinks";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { avatarStyle } from "../../../lib/avatarStyle";
@@ -286,6 +287,7 @@ export function RobinhoodReserveDetail({ address }: { address: Address }) {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h1 className="text-2xl font-merge-display font-bold truncate">{snap.name}</h1>
                       <Badge variant="secondary">{snap.symbol}</Badge>
+                      <ReserveSocialLinks xUrl={meta?.xUrl} telegramUrl={meta?.telegramUrl} youtubeUrl={meta?.youtube?.channelUrl} contractAddress={address} />
                       {categoryLabel && <Badge variant="outline">{categoryLabel}</Badge>}
                       <span className="badge-verified">Live on Robinhood Chain</span>
                     </div>

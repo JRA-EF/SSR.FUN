@@ -43,6 +43,10 @@ export interface ReserveMetadataPayload {
   youtubeChannelUrl?: string;
   /** Optional HTTPS link to the video featured at the top of that panel. Omitted when absent. */
   youtubeFeaturedVideoUrl?: string;
+  /** Optional HTTPS link to the creator's X account (icon beside the ticker on the Reserve page). Omitted when absent. */
+  xUrl?: string;
+  /** Optional HTTPS link to the creator's Telegram channel or group (same icon row). Omitted when absent. */
+  telegramUrl?: string;
 }
 
 /**
@@ -145,11 +149,14 @@ export function validateReserveMetadataPayload(body: unknown): ReserveMetadataPa
   // same key-order reason. Each is a bounded permanent HTTPS URL. The two
   // YouTube links get the same scheme check as the pictures (a wallet or
   // explorer may render them as links); the app's own youtube.ts decides
-  // what to embed from them at render time.
-  const optionalLinks: ["headerImageUrl" | "youtubeChannelUrl" | "youtubeFeaturedVideoUrl", string][] = [
+  // what to embed from them at render time. The X and Telegram links come
+  // last, so payloads minted before they existed keep their bytes and ids.
+  const optionalLinks: ["headerImageUrl" | "youtubeChannelUrl" | "youtubeFeaturedVideoUrl" | "xUrl" | "telegramUrl", string][] = [
     ["headerImageUrl", "header image"],
     ["youtubeChannelUrl", "YouTube channel"],
     ["youtubeFeaturedVideoUrl", "featured video"],
+    ["xUrl", "X"],
+    ["telegramUrl", "Telegram"],
   ];
   for (const [key, label] of optionalLinks) {
     const raw = typeof p[key] === "string" ? (p[key] as string).trim() : "";

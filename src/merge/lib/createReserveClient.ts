@@ -300,6 +300,10 @@ export interface ReserveMetadataInput {
   youtubeChannelUrl?: string;
   /** Optional HTTPS link to the featured video. Same omit-when-absent rule. */
   youtubeFeaturedVideoUrl?: string;
+  /** Optional HTTPS link to the creator's X account. Same omit-when-absent rule. */
+  xUrl?: string;
+  /** Optional HTTPS link to the creator's Telegram. Same omit-when-absent rule. */
+  telegramUrl?: string;
 }
 
 /** Which metadata/image store route pair a payload is minted under: the two Solana clusters, or Robinhood Chain. */

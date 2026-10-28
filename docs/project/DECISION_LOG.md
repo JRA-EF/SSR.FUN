@@ -8280,3 +8280,47 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0271
+
+```json
+{
+  "id": "DEC-0271",
+  "date": "2026-10-28",
+  "title": "Reserve social links: X, Telegram, YouTube and DexScreener icons beside the ticker",
+  "status": "Shipped to ssr.fun 2026-10-28 (see PROJECT_STATUS).",
+  "decision": "Launch step 1 (Identity) gains two optional fields, X and Telegram, next to the existing YouTube channel (Solana CreateDTR and the Robinhood create form). They accept a handle or a link and are normalized to https://x.com/... and https://t.me/... (src/merge/lib/reserveSocials.ts); anything else blocks Next with an inline message. The links are stored in the Reserve's content-addressed metadata payload as two new optional keys, xUrl and telegramUrl, appended AFTER youtubeFeaturedVideoUrl and omitted when empty (lib/reserve-metadata/payload.ts, https-only, same 500-byte cap), so every existing payload keeps its bytes and id. Solana launches now also put the YouTube channel and featured video into that payload (previously they were only kept in the creator's own browser). The SDK reader (metadataFromJson) and parseEvmReserveMeta pass the four links through, https only. The Reserve page (DTRDetail, RobinhoodReserveDetail) shows small round icons right of the ticker: X, Telegram and YouTube when set, and DexScreener always once the token address is known, opening https://dexscreener.com/search?q=<CA> (empty results when there is no pool). The DexScreener mark is bundled as public/logo-dexscreener.png.",
+  "context": "Creator request 2026-10-28: socials on top of the Reserve page like other launchpads, entered optionally in the creation flow's Identity step, plus a DexScreener shortcut that searches the contract address.",
+  "rationale": "The metadata payload is the only per-Reserve record every visitor reads, so it is where the links must live to be public. Appending keys and omitting empty ones keeps content-addressed ids stable. A search link (rather than a pair URL) works before and after a pool exists.",
+  "alternativesConsidered": [
+    "Keep socials in the local app store like the Solana YouTube links were -- rejected: only the creator's browser would see them.",
+    "Editable socials on Manage Reserve -- deferred: the metadata record is immutable once launched; editing needs a mutable pointer like the profile picture's. Not requested yet.",
+    "Link DexScreener's token page (dexscreener.com/solana/<mint>) -- rejected: the Creator asked for the search, which also works on Robinhood Chain."
+  ],
+  "impact": "New Reserves show their creator links to every visitor; Reserves launched before this show only the DexScreener icon. Solana Reserves launched from now on also show the YouTube panel to visitors. Merge keeps a locally saved YouTube link when the metadata has none.",
+  "affectedAreas": [
+    "lib/reserve-metadata/payload.ts",
+    "packages/sdk/src/discovery.ts",
+    "src/merge/lib/reserveSocials.ts",
+    "src/merge/components/ReserveSocialLinks.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/lib/onChainReserve.ts",
+    "src/merge/lib/types.ts",
+    "src/merge/lib/createDraft.ts",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/evmReserveMeta.ts",
+    "src/merge/components/robinhood/RobinhoodCreateForm.tsx",
+    "src/merge/components/robinhood/RobinhoodReserveDetail.tsx",
+    "public/logo-dexscreener.png",
+    "tests/phase_reserve_socials.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_reserve_socials.ts: 6 passing (normalizers, payload key order and unchanged ids for empty links, https-only readback on both chains, icon row placement).",
+    "Full offline suite 1,772 passing with the 5 known baseline failures; tsc -b clean.",
+    "Headless Chrome render of the icon row in the merge design system."
+  ]
+}
+```

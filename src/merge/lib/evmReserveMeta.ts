@@ -31,6 +31,9 @@ export interface EvmReserveMeta {
   /** Wide header banner, permanent HTTPS URL. */
   headerImageUrl?: string;
   youtube?: EvmReserveYoutube;
+  /** Creator's X / Telegram links, permanent HTTPS URLs. */
+  xUrl?: string;
+  telegramUrl?: string;
 }
 
 const ID_RE = /^[0-9a-f]{16}$/i;
@@ -86,6 +89,8 @@ export function parseEvmReserveMeta(json: unknown): EvmReserveMeta | null {
     meta.youtube = { channelUrl: p.youtubeChannelUrl.trim() };
     if (isHttps(p.youtubeFeaturedVideoUrl)) meta.youtube.featuredVideoUrl = p.youtubeFeaturedVideoUrl.trim();
   }
+  if (isHttps(p.xUrl)) meta.xUrl = p.xUrl.trim();
+  if (isHttps(p.telegramUrl)) meta.telegramUrl = p.telegramUrl.trim();
   return meta;
 }
 

@@ -29,6 +29,9 @@ export interface CreateDraft {
   category: string;
   youtubeChannel: string;
   youtubeFeatured: string;
+  /** Optional; absent in drafts saved before the X / Telegram fields existed. */
+  xLink?: string;
+  telegramLink?: string;
   assets: CreateDTRAssetInput[];
   removedAssets: RemovedLaunchAsset[];
   initialSeedUsdc: string;

@@ -12,7 +12,8 @@ import type { CatalogueAssetLaunchpad } from "@/hooks/useMainnetAssetCatalogue";
 import type { TokenIssuerId } from "@ssr/sdk";
 import { useAppStore } from "@/store/useAppStore";
 import { LaunchShell } from "@/components/LaunchHero";
-import { normalizeYouTubeChannelUrl } from "@/lib/youtube";
+import { normalizeYouTubeChannelUrl, parseYouTubeVideoId } from "@/lib/youtube";
+import { normalizeTelegramUrl, normalizeXUrl } from "@/lib/reserveSocials";
 import { fileToHeaderImageDataUrl } from "@/lib/reserveImageClient";
 import {
   createReserveOnChain,
@@ -424,6 +425,17 @@ export function CreateDTR({
   // shown in the Reserve page's "From the Creator" video panel.
   const [youtubeChannel, setYoutubeChannel] = useState("");
   const [youtubeFeatured, setYoutubeFeatured] = useState("");
+  // Optional X / Telegram links -- stored in the Reserve's metadata with the
+  // YouTube channel and shown as icons beside the ticker on its page.
+  const [xLink, setXLink] = useState("");
+  const [telegramLink, setTelegramLink] = useState("");
+  const xUrl = normalizeXUrl(xLink);
+  const telegramUrl = normalizeTelegramUrl(telegramLink);
+  const youtubeChannelUrl = youtubeChannel.trim() ? normalizeYouTubeChannelUrl(youtubeChannel) : "";
+  const youtubeFeaturedUrl = youtubeChannelUrl && parseYouTubeVideoId(youtubeFeatured) ? `https://www.youtube.com/watch?v=${parseYouTubeVideoId(youtubeFeatured)}` : "";
+  const xLinkInvalid = xLink.trim() !== "" && !xUrl;
+  const telegramLinkInvalid = telegramLink.trim() !== "" && !telegramUrl;
+  const socialLinksInvalid = xLinkInvalid || telegramLinkInvalid;
   // Optional header banner (full-width art across the top of the Reserve's
   // page) -- picked in step 1, attached after a successful deploy.
   const headerImageInputRef = useRef<HTMLInputElement>(null);
@@ -548,6 +560,8 @@ export function CreateDTR({
     setCategory(d.category || DEFAULT_RESERVE_CATEGORY);
     setYoutubeChannel(d.youtubeChannel);
     setYoutubeFeatured(d.youtubeFeatured);
+    setXLink(d.xLink ?? "");
+    setTelegramLink(d.telegramLink ?? "");
     setAssets(d.assets);
     setRemovedAssets(d.removedAssets ?? []);
     setInitialSeedUsdc(d.initialSeedUsdc);
@@ -582,6 +596,8 @@ export function CreateDTR({
         category,
         youtubeChannel,
         youtubeFeatured,
+        xLink,
+        telegramLink,
         assets,
         removedAssets,
         initialSeedUsdc,
@@ -594,7 +610,7 @@ export function CreateDTR({
       });
     }, 500);
     return () => clearTimeout(handle);
-  }, [wallet.address, step, name, ticker, description, category, youtubeChannel, youtubeFeatured, assets, removedAssets, initialSeedUsdc, mintFeePct, tvlFeePct, feeDestination, feeRecipients, additionalManagers, launchSession]);
+  }, [wallet.address, step, name, ticker, description, category, youtubeChannel, youtubeFeatured, xLink, telegramLink, assets, removedAssets, initialSeedUsdc, mintFeePct, tvlFeePct, feeDestination, feeRecipients, additionalManagers, launchSession]);
 
   // Computed here (not after the early wallet-connected return below) so
   // this effect's dependency array stays valid across every render --
@@ -666,7 +682,7 @@ export function CreateDTR({
   // (see uploadReserveMetadata), so a debounced re-upload of unchanged
   // content is a safe no-op, never a duplicate.
   useEffect(() => {
-    if (!realDeploymentCandidate || !name.trim() || !ticker.trim() || identityProfane) {
+    if (!realDeploymentCandidate || !name.trim() || !ticker.trim() || identityProfane || socialLinksInvalid) {
       setMetadataUri(null);
       setMetadataUriError(null);
       setMetadataUploading(false);
@@ -692,6 +708,10 @@ export function CreateDTR({
             description,
             category,
             ...(imageUrl ? { imageUrl } : {}),
+            ...(youtubeChannelUrl ? { youtubeChannelUrl } : {}),
+            ...(youtubeFeaturedUrl ? { youtubeFeaturedVideoUrl: youtubeFeaturedUrl } : {}),
+            ...(xUrl ? { xUrl } : {}),
+            ...(telegramUrl ? { telegramUrl } : {}),
           },
           cluster,
         );
@@ -714,7 +734,7 @@ export function CreateDTR({
       cancelled = true;
       clearTimeout(debounceHandle);
     };
-  }, [realDeploymentCandidate, name, ticker, description, category, profileImageDataUrl, identityProfane]);
+  }, [realDeploymentCandidate, name, ticker, description, category, profileImageDataUrl, identityProfane, socialLinksInvalid, youtubeChannelUrl, youtubeFeaturedUrl, xUrl, telegramUrl]);
 
   // Recovers from a page reload (or a return visit, hours or days later --
   // see PendingReserveDeploy's no-expiry note) that happened mid-deployment:
@@ -1886,6 +1906,32 @@ export function CreateDTR({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="x-link">X <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Input
+                    id="x-link"
+                    placeholder="e.g. @yourhandle or x.com/yourhandle"
+                    value={xLink}
+                    onChange={(e) => setXLink(e.target.value)}
+                    aria-invalid={xLinkInvalid}
+                  />
+                  {xLinkInvalid && <p className="text-xs text-destructive">Enter an X handle or an x.com link.</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="telegram-link">Telegram <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Input
+                    id="telegram-link"
+                    placeholder="e.g. @yourgroup or t.me/yourgroup"
+                    value={telegramLink}
+                    onChange={(e) => setTelegramLink(e.target.value)}
+                    aria-invalid={telegramLinkInvalid}
+                  />
+                  {telegramLinkInvalid && <p className="text-xs text-destructive">Enter a Telegram handle or a t.me link.</p>}
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground -mt-2">Your X, Telegram and YouTube links appear as icons next to your Reserve's ticker. They are saved with the Reserve when it launches.</p>
+
               <div className="space-y-2">
                 <Label>Header image <span className="text-muted-foreground font-normal">(optional)</span></Label>
                 {headerImage && (
@@ -1925,7 +1971,7 @@ export function CreateDTR({
               </div>
             </CardContent>
             <CardFooter className="justify-end border-t border-border/40 pt-6">
-              <Button onClick={handleNext} disabled={!name || !ticker || identityProfane} className="font-bold gap-2">
+              <Button onClick={handleNext} disabled={!name || !ticker || identityProfane || socialLinksInvalid} className="font-bold gap-2">
                 Next <ChevronRight className="w-4 h-4" />
               </Button>
             </CardFooter>

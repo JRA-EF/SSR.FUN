@@ -556,6 +556,14 @@ export function buildDtrFromDiscoveredReserve(
     // project -- an absolute URL would fetch the image cross-origin from the
     // wrong site (and 401). Same rewrite as the metadata JSON fetch.
     logoUrl: parsedMetadata?.imageUrl ? rewriteAppMetadataUriToCurrentOrigin(parsedMetadata.imageUrl) : undefined,
+    // Creator links from the same metadata (Launch step 1). Keys are only
+    // set when present, so a Reserve without them carries none.
+    ...(parsedMetadata?.youtubeChannelUrl
+      ? { youtube: { channelUrl: parsedMetadata.youtubeChannelUrl, ...(parsedMetadata.youtubeFeaturedVideoUrl ? { featuredVideoUrl: parsedMetadata.youtubeFeaturedVideoUrl } : {}) } }
+      : {}),
+    ...(parsedMetadata?.xUrl || parsedMetadata?.telegramUrl
+      ? { socials: { ...(parsedMetadata.xUrl ? { xUrl: parsedMetadata.xUrl } : {}), ...(parsedMetadata.telegramUrl ? { telegramUrl: parsedMetadata.telegramUrl } : {}) } }
+      : {}),
     dtrAddress: discovered.reserve,
     managerAddress: discovered.manager,
     // Locally-simulated delegate CRUD (see useAppStore's addDelegate/etc) is
@@ -698,6 +706,9 @@ export function mergeDiscoveredReserves(
       // the old `existing ?? fresh` order made a stale local value mask
       // every later metadata change forever.
       logoUrl: fresh.logoUrl ?? existing.logoUrl,
+      // Metadata links first; otherwise keep the creator's locally saved
+      // YouTube links (Manage page) instead of dropping them on every pass.
+      youtube: fresh.youtube ?? existing.youtube,
       // Entry prices are a write-once server map (DEC-0172): a pass whose
       // entry-price fetch failed (or a seed that didn't carry them) must not
       // wipe the map an earlier pass already resolved -- otherwise the

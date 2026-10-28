@@ -72,6 +72,7 @@ import {
 import { format } from "date-fns";
 import { ChevronLeft, Layers, BarChart3, Activity, PenLine, Play, Share2, Send, Link2, Check, Copy, Download } from "lucide-react";
 import { ReservePnlCardTrigger, ReservePnlCardModal } from "@/components/ReservePnlCard";
+import { ReserveSocialLinks } from "@/components/ReserveSocialLinks";
 import { truncateWallet, type PnlCardData, type PnlCardTopAsset } from "@/lib/pnlCard";
 
 import { Button } from "@/components/ui/button";
@@ -2148,7 +2149,7 @@ export function DTRDetail() {
                     the chart leads the page, in line with the Mint/Redeem panel. */}
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5">
                   <div className="flex flex-col gap-1 min-w-0">
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
                       <Avatar className="h-8 w-8 border border-border">
                         {dtr.logoUrl && <AvatarImage src={dtr.logoUrl} alt={dtr.ticker} />}
                         <AvatarFallback className="bg-primary/10 text-primary text-xs font-merge-display font-bold">
@@ -2157,6 +2158,12 @@ export function DTRDetail() {
                       </Avatar>
                       <h1 className="text-2xl max-sm:text-lg font-merge-display font-bold tracking-tight">{dtr.name}</h1>
                       <Badge variant="secondary" className="font-merge-mono text-sm">{dtr.ticker}</Badge>
+                      <ReserveSocialLinks
+                        xUrl={dtr.socials?.xUrl}
+                        telegramUrl={dtr.socials?.telegramUrl}
+                        youtubeUrl={dtr.youtube?.channelUrl}
+                        contractAddress={dtr.onChain?.reserveTokenMint}
+                      />
                     </div>
                     {/* Reserve Token mint address -- same size/color as the
                         "Token Price" label. No uppercase transform: base58 is

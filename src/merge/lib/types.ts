@@ -135,6 +135,12 @@ export interface ReserveYoutube {
   featuredVideoUrl?: string;
 }
 
+/** Creator's social links set at launch (see lib/reserveSocials.ts). */
+export interface ReserveSocials {
+  xUrl?: string;
+  telegramUrl?: string;
+}
+
 export interface DTR {
   id: string;
   name: string;
@@ -186,6 +192,8 @@ export interface DTR {
   trades: Trade[];
   /** Creator-supplied YouTube links shown in the Reserve page's video panel. */
   youtube?: ReserveYoutube;
+  /** Creator's X / Telegram links (HTTPS), shown as icons beside the ticker. From the Reserve's metadata. */
+  socials?: ReserveSocials;
   /** Creator-uploaded wide banner (data/HTTPS URL) shown full-width across the top of this Reserve's page. */
   headerImageUrl?: string;
   /** Present only for a Reserve backed by a real deployed SSR Protocol account on Solana DevNet -- see src/merge/lib/onChainReserve.ts. Absent for the fully-simulated seed DTRs. */
