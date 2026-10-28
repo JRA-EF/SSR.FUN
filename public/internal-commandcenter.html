@@ -333,6 +333,28 @@
   .usd-big { margin: 14px 0 0; font: 600 26px var(--mono); letter-spacing: -.01em; }
   .usd-big small { font: 400 12px var(--sans); color: var(--text-3); margin-left: 6px; }
 
+  /* ---------- burn-rate dropdown ---------- */
+  #burnPanel {
+    position: fixed; z-index: 26; width: min(420px, calc(100vw - 32px)); max-height: min(72vh, 620px); overflow-y: auto;
+    padding: 16px; border-radius: 18px;
+    background: linear-gradient(170deg, rgba(28, 20, 101, .97), rgba(10, 8, 54, .98));
+    border: 1px solid var(--line-strong); box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  }
+  .burn-total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .burn-total span { font-size: 12.5px; color: var(--text-2); }
+  .burn-total b { font: 600 22px var(--mono); color: var(--text); white-space: nowrap; }
+  .burn-total b small { font: 400 12px var(--sans); color: var(--text-3); margin-left: 4px; }
+  #burnPanel h3 { display: flex; justify-content: space-between; margin: 16px 0 8px; font: 500 10.5px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--text-3); }
+  #burnPanel h3 b { font-weight: 500; letter-spacing: 0; color: var(--text-2); }
+  .bl { display: block; width: 100%; text-align: left; padding: 9px 12px; border: none; background: var(--surface); font-size: 12.5px; line-height: 1.4; cursor: pointer; }
+  .bl:hover { background: var(--surface-2); }
+  .bl-top { display: flex; justify-content: space-between; gap: 12px; }
+  .bl-top span { color: var(--text); } .bl-top b { font: 500 12.5px var(--mono); color: var(--text); white-space: nowrap; }
+  .bl-sub { margin-top: 2px; font: 11px var(--mono); color: var(--text-3); overflow-wrap: anywhere; }
+  .bl-sub em { font-style: normal; color: var(--text-2); }
+  .bl.muted .bl-top span { color: var(--text-2); }
+  .burn-note { margin: 12px 2px 0; font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
+
   /* ---------- states ---------- */
   #state {
     position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 10;
@@ -378,6 +400,7 @@
     <span class="pill" id="sumDown" hidden><span class="d" style="background:var(--down)"></span><b>0</b> failing</span>
     <button class="pill" id="watchPill" hidden type="button"></button>
     <button class="pill" id="walletsPill" hidden type="button"></button>
+    <button class="pill" id="burnPill" hidden type="button" aria-haspopup="true" aria-expanded="false" aria-controls="burnPanel"></button>
     <button class="pill" id="alertsPill" hidden type="button"></button>
     <button class="pill" id="refresh" type="button" aria-label="Refresh now">
       <svg id="refreshIc" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
@@ -406,6 +429,7 @@
   <div class="track" id="track"></div>
 </section>
 
+<div id="burnPanel" role="region" aria-label="Monthly burn breakdown" hidden></div>
 <div id="tip" role="tooltip"></div>
 <div id="scrim"></div>
 <aside id="drawer" aria-modal="true" role="dialog" aria-labelledby="drTitle"></aside>
@@ -556,6 +580,11 @@
     wp.hidden = state.walletsUsd == null;
     wp.innerHTML = '<span class="d" style="background:var(--action)"></span>Protocol wallets <b>' + fmtUsdc(state.walletsUsd) + '</b>';
     wp.onclick = () => openDrawer('treasury');
+    const bp = $('#burnPill');
+    bp.hidden = !state.burn;
+    if (state.burn) bp.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-6 1-9.5z"/></svg>Burn rate <b>' + fmtUsdc(state.burn.monthlyUsd) + '</b> / month';
+    bp.onclick = (e) => { e.stopPropagation(); burnOpen ? closeBurn() : openBurn(); };
+    if (burnOpen) renderBurn();
     const watchN = (state.watch || []).length, watchBad = (state.watch || []).filter((w) => w.tone === 'down').length;
     const wl = $('#watchPill');
     wl.hidden = false;
@@ -725,6 +754,41 @@
     tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.classList.add('on');
   }
   function hideTip() { tip.classList.remove('on'); }
+
+  // ---------------------------------------------------------- burn rate dropdown
+  const burnPanel = $('#burnPanel');
+  let burnOpen = false;
+  function renderBurn() {
+    const b = state && state.burn;
+    if (!b) return;
+    const line = (l, muted) => '<button type="button" class="bl' + (muted ? ' muted' : '') + '"' + (l.nodeId ? ' data-node="' + esc(l.nodeId) + '"' : '') + '>'
+      + '<div class="bl-top"><span>' + esc(l.label) + '</span>' + (l.usd != null ? '<b>' + fmtUsdc(l.usd) + '</b>' : '') + '</div>'
+      + '<div class="bl-sub">' + (l.tag ? '<em>' + esc(l.tag) + '</em> · ' : '') + esc(l.detail) + '</div></button>';
+    const TAG = { live: 'live', entered: 'entered on its card', measured: 'measured' };
+    let html = '<div class="burn-total"><span>Monthly burn, all counted costs</span><b>' + fmtUsdc(b.monthlyUsd) + '<small>/ month</small></b></div>';
+    for (const g of b.groups) {
+      html += '<h3>' + esc(g.title) + '<b>' + fmtUsdc(g.usd) + '</b></h3><div class="list">' + g.lines.map((l) => line({ ...l, tag: TAG[l.source] })).join('') + '</div>';
+    }
+    if (b.notCounted.length) {
+      html += '<h3>Not in the total yet</h3><div class="list">' + b.notCounted.map((n) => line({ label: n.label, detail: n.why, nodeId: n.nodeId }, true)).join('') + '</div>';
+    }
+    html += '<p class="burn-note">Click a line to open its card. Subscription costs are typed on each card (Edit); Vercel comes from its billing API; fees are the SOL the keeper and pool payer actually spend, at the current SOL price.</p>';
+    burnPanel.innerHTML = html;
+    burnPanel.querySelectorAll('[data-node]').forEach((el) => { el.onclick = () => { closeBurn(); openDrawer(el.dataset.node); }; });
+    placeBurn();
+  }
+  function placeBurn() {
+    const r = $('#burnPill').getBoundingClientRect();
+    const w = burnPanel.offsetWidth;
+    burnPanel.style.top = Math.round(r.bottom + 8) + 'px';
+    burnPanel.style.left = Math.round(Math.max(16, Math.min(r.right - w, innerWidth - w - 16))) + 'px';
+  }
+  function openBurn() { burnOpen = true; burnPanel.hidden = false; $('#burnPill').setAttribute('aria-expanded', 'true'); renderBurn(); }
+  function closeBurn() { burnOpen = false; burnPanel.hidden = true; $('#burnPill').setAttribute('aria-expanded', 'false'); }
+  document.addEventListener('click', (e) => { if (burnOpen && !burnPanel.contains(e.target)) closeBurn(); });
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && burnOpen) closeBurn(); });
+  addEventListener('resize', () => { if (burnOpen) placeBurn(); });
+  addEventListener('scroll', () => { if (burnOpen) placeBurn(); }, { passive: true });
 
   // ---------------------------------------------------------- drawer
   function openDrawer(id, refreshOnly) {

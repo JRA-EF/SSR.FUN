@@ -84,6 +84,7 @@ export interface CommandCenterState {
   walletsUsd: number | null
   edges: CcEdge[]
   renewals: Renewal[]
+  burn: BurnRate
   summary: { ok: number; warn: number; down: number; unknown: number }
   alerts: { last24h: Record<string, number>; recent: { at: string; source: string; step: string; message: string }[] } | null
 }
@@ -203,6 +204,56 @@ export function boardStatusOf(pipelineStatus: string | null, boardStatus: string
   if (pipelineStatus === 'dismissed') return 'rejected'
   if (pipelineStatus === 'dispatched' || pipelineStatus === 'resolved') return 'in_progress'
   return 'reported'
+}
+
+/** What running ssr.fun costs per month, in USDC: subscriptions, Vercel usage and on-chain gas. */
+export interface BurnLine { label: string; usd: number; detail: string; source: 'live' | 'entered' | 'measured'; nodeId?: string }
+export interface BurnGroup { title: string; usd: number; lines: BurnLine[] }
+export interface BurnRate {
+  monthlyUsd: number
+  groups: BurnGroup[]
+  /** Costs that exist but are not in the total yet, and why. */
+  notCounted: { label: string; why: string; nodeId?: string }[]
+}
+
+export const DAYS_PER_MONTH = 30.44
+
+/** A cost typed on a card ("$25/month", "$300/yr", "free") as USD per month; null when there is no amount to read. */
+export function parseMonthlyCost(text: string | undefined): number | null {
+  if (!text) return null
+  const t = text.toLowerCase()
+  if (/\bfree\b/.test(t)) return 0
+  const n = t.match(/(\d[\d,]*(?:\.\d+)?)/)
+  if (!n) return null
+  const amount = Number(n[1].replace(/,/g, ''))
+  if (!Number.isFinite(amount)) return null
+  if (/\b(year|yr|annual|annually|yearly)\b|\/\s*y\b/.test(t)) return amount / 12
+  if (/\b(week|wk|weekly)\b/.test(t)) return (amount * 52) / 12
+  if (/\b(day|daily)\b/.test(t)) return amount * DAYS_PER_MONTH
+  return amount
+}
+
+/** A billing cycle's spend so far, scaled to the whole cycle. Null in the cycle's first hours, when one day would dominate. */
+export function projectToMonth(spend: number, periodStartMs: number, periodEndMs: number, nowMs: number): number | null {
+  const elapsed = nowMs - periodStartMs
+  const length = periodEndMs - periodStartMs
+  if (length <= 0 || elapsed < 12 * 3_600_000) return null
+  return (spend * length) / Math.min(elapsed, length)
+}
+
+/**
+ * SOL a wallet spends per day, from balance samples. Only drops count, so a top-up is not
+ * read as negative spend (a top-up between two samples hides that interval's spending).
+ * Null until the samples span six hours.
+ */
+export function solBurnPerDay(samples: { at: number; sol: number }[]): { solPerDay: number; spanDays: number } | null {
+  const s = [...samples].sort((a, b) => a.at - b.at)
+  if (s.length < 2) return null
+  const spanDays = (s[s.length - 1].at - s[0].at) / 86_400_000
+  if (spanDays < 0.25) return null
+  let spent = 0
+  for (let i = 1; i < s.length; i++) spent += Math.max(0, s[i - 1].sol - s[i].sol)
+  return { solPerDay: spent / spanDays, spanDays }
 }
 
 export function formatUsdc(n: number | null): string {

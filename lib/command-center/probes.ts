@@ -11,11 +11,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { neon } from '@neondatabase/serverless'
 import {
-  CLOSED_FEEDBACK, daysBetween, daysUntil, formatAge, formatUsd, formatUsdc, latencyTone, renewalTone,
-  secretTone, solTone, summarize, worst,
-  type CcEdge, type CcNode, type CommandCenterState, type DrawerList, type ListItem, type ManualFacts, type Metric, type Renewal,
+  CLOSED_FEEDBACK, DAYS_PER_MONTH, daysBetween, daysUntil, formatAge, formatUsd, formatUsdc, latencyTone, parseMonthlyCost, projectToMonth, renewalTone,
+  secretTone, solBurnPerDay, solTone, summarize, worst,
+  type BurnGroup, type BurnRate, type CcEdge, type CcNode, type CommandCenterState, type DrawerList, type ListItem, type ManualFacts, type Metric, type Renewal,
   type SecretInfo, type Tone, type WatchItem,
 } from './model.js'
+import { readSolSamples, recordSolSample } from './balances.js'
 
 const TIMEOUT_MS = 8_000
 const VERCEL_TEAM_SLUG = 'ssr14'
@@ -210,7 +211,7 @@ interface WalletValue { lamports: number | null; sol: number | null; usd: number
 const symbolCache = new Map<string, string>()
 
 /** SOL plus every token account of each wallet, valued in USDC at Jupiter prices (USDC itself at 1). */
-async function valueWallets(owners: string[], tokenOwners: Set<string>, reserveTokens: ReserveTokenInfo): Promise<Map<string, WalletValue>> {
+async function valueWallets(owners: string[], tokenOwners: Set<string>, reserveTokens: ReserveTokenInfo): Promise<{ values: Map<string, WalletValue>; solPrice: number | null }> {
   const out = new Map<string, WalletValue>()
   const uniq = [...new Set(owners)]
   const lamports = await timed(async (signal) => {
@@ -260,7 +261,7 @@ async function valueWallets(owners: string[], tokenOwners: Set<string>, reserveT
     const usd = sol === null || solPrice === null ? null : sol * solPrice + priced
     out.set(owner, { lamports: lam, sol, usd, tokens, unpriced: tokens.filter((t) => t.usd === null).length })
   }
-  return out
+  return { values: out, solPrice }
 }
 
 async function probeJupiter() {
@@ -609,7 +610,8 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
   const pw = chain.wallets
   const fullWallets = [pw.treasury, pw.authority, pw.admin2, SQUADS_VAULT, keeper, POOL_PAYER].filter((a): a is string => !!a)
   const reserveTokens = (db.configured && db.ok ? db.reserveTokens : null) ?? (new Map() as ReserveTokenInfo)
-  const values = await valueWallets([...fullWallets, ...chain.members], new Set(fullWallets), reserveTokens).catch(() => new Map<string, WalletValue>())
+  const { values, solPrice } = await valueWallets([...fullWallets, ...chain.members], new Set(fullWallets), reserveTokens)
+    .catch(() => ({ values: new Map<string, WalletValue>(), solPrice: null }))
   const vd = vercel.connected && vercel.ok ? vercel.data ?? null : null
   const facts = (db.configured && db.ok && db.facts) || new Map<string, ManualFacts>()
   const renewals: Renewal[] = []
@@ -946,6 +948,73 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
   const walletVals = walletIds.map((id) => N[id]?.usd ?? null)
   const walletsUsd = walletVals.every((x) => x === null) ? null : walletVals.reduce<number>((a, b) => a + (b ?? 0), 0)
 
+  const burn = await burnRate({ N, facts, vd, values, solPrice, keeper, now })
+
   renewals.sort((a, b) => a.date.localeCompare(b.date))
-  return { generatedAt: new Date(now).toISOString(), source: 'ssr.fun', nodes, edges, renewals, summary: summarize(nodes), alerts, watch, walletsUsd }
+  return { generatedAt: new Date(now).toISOString(), source: 'ssr.fun', nodes, edges, renewals, burn, summary: summarize(nodes), alerts, watch, walletsUsd }
+}
+
+/** Services whose cost is entered on their card (Vercel's comes live from its billing API when connected). */
+const SUBSCRIPTION_NODES = ['vercel', 'helius', 'jupiter', 'neon', 'github', 'domain-ssr', 'domain-test', 'telegram', 'sheets']
+/** Free by nature (Telegram's bot API, a Google Sheet): not listed as missing unless a cost is typed on the card. */
+const FREE_UNLESS_ENTERED = new Set(['telegram', 'sheets'])
+
+/** Monthly running cost: subscriptions typed on the cards, Vercel usage, and SOL the keeper and pool payer spend on fees. */
+async function burnRate(i: {
+  N: Record<string, CcNode>; facts: Map<string, ManualFacts>; vd: VercelData | null
+  values: Map<string, WalletValue>; solPrice: number | null; keeper: string | null; now: number
+}): Promise<BurnRate> {
+  const groups: BurnGroup[] = []
+  const notCounted: BurnRate['notCounted'] = []
+  const label = (id: string) => i.N[id]?.label ?? id
+
+  const subs: BurnGroup = { title: 'Subscriptions', usd: 0, lines: [] }
+  for (const id of SUBSCRIPTION_NODES) {
+    const cost = i.facts.get(id)?.cost
+    if (id === 'vercel' && i.vd?.spend != null) {
+      const { spend, periodStart, periodEnd } = i.vd
+      const projected = periodStart && periodEnd ? projectToMonth(spend, periodStart, periodEnd, i.now) : null
+      const top = i.vd.topSpend.map((t) => `${t.name} ${formatUsd(t.usd)}`).join(', ')
+      subs.lines.push({
+        label: 'Vercel', nodeId: id, source: 'live', usd: projected ?? spend,
+        detail: `${formatUsd(spend)} so far this cycle${projected !== null ? `, on pace for ${formatUsd(projected)}` : ''}${top ? ` · ${top}` : ''}`,
+      })
+      continue
+    }
+    const monthly = parseMonthlyCost(cost)
+    if (monthly === null && !cost && FREE_UNLESS_ENTERED.has(id)) continue
+    if (monthly === null) {
+      notCounted.push({ label: label(id), nodeId: id, why: cost ? `cost "${cost}" has no amount to read` : 'no cost entered on its card (type "free" if it costs nothing)' })
+      continue
+    }
+    if (monthly > 0) subs.lines.push({ label: label(id), nodeId: id, source: 'entered', usd: monthly, detail: cost! })
+  }
+  groups.push(subs)
+
+  const gas: BurnGroup = { title: 'On-chain fees (SOL)', usd: 0, lines: [] }
+  const payers = [{ id: 'keeper', addr: i.keeper }, { id: 'pool-payer', addr: POOL_PAYER }].filter((w): w is { id: string; addr: string } => !!w.addr)
+  const db = sql()
+  let samples = new Map<string, { at: number; sol: number }[]>()
+  if (db) {
+    try {
+      for (const w of payers) { const sol = i.values.get(w.addr)?.sol; if (sol != null) await recordSolSample(db, w.addr, sol) }
+      samples = await readSolSamples(db, payers.map((w) => w.addr))
+    } catch (e) { console.error('[command-center] balance samples failed:', (e as Error).message) }
+  }
+  for (const w of payers) {
+    const b = solBurnPerDay(samples.get(w.addr) ?? [])
+    if (!b) { notCounted.push({ label: label(w.id), nodeId: w.id, why: 'measuring: needs six hours of balance history first' }); continue }
+    if (i.solPrice === null) { notCounted.push({ label: label(w.id), nodeId: w.id, why: 'no SOL price right now' }); continue }
+    const solMonth = b.solPerDay * DAYS_PER_MONTH
+    const left = i.values.get(w.addr)?.sol
+    const runway = left != null && b.solPerDay > 0 ? ` · its ${left.toFixed(3)} SOL lasts ~${Math.floor(left / b.solPerDay)} days` : ''
+    gas.lines.push({
+      label: label(w.id), nodeId: w.id, source: 'measured', usd: solMonth * i.solPrice,
+      detail: `${b.solPerDay.toFixed(4)} SOL/day (${solMonth.toFixed(3)} SOL/month), measured over ${b.spanDays < 2 ? `${Math.round(b.spanDays * 24)} h` : `${b.spanDays.toFixed(1)} days`}${runway}`,
+    })
+  }
+  groups.push(gas)
+
+  for (const g of groups) { g.lines.sort((a, b) => b.usd - a.usd); g.usd = g.lines.reduce((s, l) => s + l.usd, 0) }
+  return { monthlyUsd: groups.reduce((s, g) => s + g.usd, 0), groups: groups.filter((g) => g.lines.length), notCounted }
 }

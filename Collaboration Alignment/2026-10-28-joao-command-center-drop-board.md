@@ -3,7 +3,7 @@
 - **Date:** 2026-10-28
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `main` (this commit)
-- **Deployed to:** none yet (production deploy pending a peer check, see below)
+- **Deployed to:** production `dpl_GBqCp45DytxZPgNwDj6poXy49vH2` (shipped together with 4a7fdb4, Creator OK)
 - **Decision log:** none (internal page only)
 
 ## What shipped

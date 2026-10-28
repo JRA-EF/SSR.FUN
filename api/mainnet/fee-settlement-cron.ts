@@ -112,6 +112,7 @@ import { findSharingPools, runBasketFeedForPool, type BasketFeedResult } from ".
 import { fetchJupiterPrices } from "./asset-prices";
 import { recordAlert } from "../../lib/ops-alerts/alerts";
 import { isTransientRpcError, KEEPER_LOW_SOL } from "../../lib/ops-alerts/alertsPure";
+import { recordSolSample } from "../../lib/command-center/balances";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -409,6 +410,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (status.keeperSolBalance !== null && status.keeperSolBalance < KEEPER_LOW_SOL) {
     await recordAlert({ source: "keeper", step: "keeper-balance", message: `Keeper has ${status.keeperSolBalance.toFixed(4)} SOL (alert below ${KEEPER_LOW_SOL}). Top it up or settlement stops.`, wallet: status.keeperWallet }, { quietMinutes: 360 });
   }
+  // Command center burn rate: one balance sample per run. Never blocks settlement.
+  if (keeper && status.keeperSolBalance !== null) { const sol = status.keeperSolBalance; await Promise.resolve().then(() => recordSolSample(getSql(), keeper.publicKey.toBase58(), sol)).catch(() => undefined); }
   if (!keeper) {
     res.status(500).json({ error: keeperEnvError ?? "Keeper wallet not configured." });
     return;
