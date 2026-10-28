@@ -10,7 +10,10 @@ import type { WalletProviderId } from "@/lib/types";
 import { DEMO_WALLET_ADDRESS, getDemoWalletProvider, isDemoWalletConnected } from "@/lib/designDemo";
 import { IS_MAINNET } from "@/lib/solana-config";
 
-const BALANCE_POLL_MS = 20_000;
+// No polling timer (2026-10-28, same rule as RealReserveSync): the SOL balance is read
+// on connect, after the user's own transaction finishes, and when the user returns to a
+// tab hidden for STALE_AFTER_MS or more. An open tab sends nothing in between.
+const STALE_AFTER_MS = 5 * 60_000;
 
 function normalizeProviderName(name: string | undefined): WalletProviderId | null {
   if (!name) return null;
@@ -60,8 +63,10 @@ export function WalletSync() {
   useEffect(() => {
     if (!connected || !publicKey) return;
     let cancelled = false;
+    let lastReadAt = 0;
 
     async function refreshBalance() {
+      lastReadAt = Date.now();
       try {
         const lamports = await connection.getBalance(publicKey!, "confirmed");
         if (!cancelled) {
@@ -75,15 +80,22 @@ export function WalletSync() {
         }
       } catch {
         // Transient RPC failure (rate limit, etc.) -- keep the last known
-        // balance rather than clobbering it with 0; the next poll retries.
+        // balance rather than clobbering it with 0; the next trigger retries.
       }
     }
 
-    refreshBalance();
-    const id = setInterval(refreshBalance, BALANCE_POLL_MS);
+    void refreshBalance();
+    const unsubscribeTx = useAppStore.subscribe((state, prev) => {
+      if (prev.txInFlight && !state.txInFlight) void refreshBalance();
+    });
+    const onVisible = () => {
+      if (!document.hidden && Date.now() - lastReadAt >= STALE_AFTER_MS) void refreshBalance();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      unsubscribeTx();
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [connected, publicKey, connection, wallet, syncWalletFromChain]);
 

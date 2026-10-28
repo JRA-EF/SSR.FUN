@@ -38,13 +38,23 @@ import { ensureReserveEntryPrices, fetchReserveEntryPrices } from "./entryPriceC
 import { fetchReserveNavHistory, NAV_HISTORY_CACHE_KEY, NAV_HISTORY_CACHE_TTL_MS, type ServerPriceHistory } from "./navHistoryClient";
 import { fetchAssetPricesUsd } from "./assetPricing";
 import { buildDelegateCandidateWallets } from "./delegateDiscoveryCandidates";
-import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, nextPollDelay, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
+import { BALANCE_CACHE_TTL_MS, getCached, isRateLimitError, tokenBalanceCacheKey, withRateLimitRetry, withReadConcurrencyLimit } from "./rpcResilience";
 import { SSR_PROGRAM_ID, IS_MAINNET, MAINNET_USDC_MINT, SOLANA_CLUSTER } from "./solana-config";
 import { useMainnetKnownAssetMints } from "../hooks/useMainnetKnownAssetMints";
 import { useMainnetAssetCatalogue } from "../hooks/useMainnetAssetCatalogue";
 
-const BASE_POLL_MS = 30_000; // was 15_000 -- reserve data changes rarely; halves steady-state discovery load (see rpcResilience rate-limit fix)
-const MAX_POLL_MS = 120_000;
+// Refresh model (2026-10-28, Creator: an open tab must never keep draining RPC calls).
+// There is no polling timer. A pass runs on load and whenever this component's inputs
+// change (wallet connected or switched, candidate mints arriving); once after the
+// user's own transaction finishes (txInFlight true -> false); and once when the user
+// returns to a tab that was hidden for STALE_AFTER_MS or more. Between those, the tab
+// shows what it has: the server's warm-cache snapshot is the authoritative list of
+// Reserves on Mainnet anyway (ReserveSnapshotHydrator). One forgotten open tab used
+// to send ~38,000 Helius calls an hour through /api/mainnet/rpc-proxy.
+const STALE_AFTER_MS = 5 * 60_000;
+/** A failed pass (RPC error or 429) retries a few times with backoff, then waits for the next trigger. */
+const RETRY_BASE_MS = 5_000;
+const MAX_RETRIES = 3;
 /** Bounded so a manual "refresh now" moments after a poll tick reuses that tick's result instead of re-asking the RPC -- see refreshRealReserveNow in DTRDetail.tsx, which reads through the same cache key space for the balance half of this. */
 const DISCOVERY_CACHE_TTL_MS = 5_000;
 /** Mainnet only: how long a batch of real Pyth/Jupiter USD prices is reused across poll ticks -- short enough that displayed AUM/Token Price/Market Cap never lag genuinely-moving prices by more than a few ticks, long enough to avoid re-pricing every asset on every 15s poll. Matches api/mainnet/asset-prices.ts's own server-side cache window. */
@@ -128,31 +138,32 @@ export function RealReserveSync() {
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let running = false; // Overlap guard: a slow pass must never be joined by a second concurrent one.
-    let currentDelay = BASE_POLL_MS;
+    let rerunAfter = false; // A trigger that lands mid-pass runs one more pass afterwards, never a concurrent one.
+    let lastPassAt = 0;
+    let retries = 0;
     const programId = SSR_PROGRAM_ID;
 
-    function scheduleNext(delayMs: number) {
-      if (cancelled) return;
-      timeoutId = setTimeout(runDiscovery, delayMs);
+    function scheduleRetry() {
+      if (cancelled || retries >= MAX_RETRIES) return;
+      retries++;
+      timeoutId = setTimeout(runDiscovery, RETRY_BASE_MS * 2 ** (retries - 1));
     }
 
     async function runDiscovery() {
+      if (cancelled) return;
       if (running) {
-        // A previous cycle is still in flight (e.g. slow under RPC
-        // congestion) -- skip this tick entirely rather than overlapping it.
-        scheduleNext(currentDelay);
+        rerunAfter = true;
         return;
       }
-      // Defer entirely while any wallet transaction (Buy/Sell/launch) is
+      // Defer entirely while any wallet transaction (mint/redeem/launch) is
       // being prepared, signed, submitted, confirmed, or reconciled --
-      // never race this background poll's reads against that RPC traffic.
-      if (useAppStore.getState().txInFlight) {
-        scheduleNext(BASE_POLL_MS);
-        return;
-      }
+      // never race these reads against that RPC traffic. The transaction
+      // finishing (txInFlight -> false) triggers the pass instead.
+      if (useAppStore.getState().txInFlight) return;
 
       running = true;
       let hitRateLimit = false;
+      let failed = false;
       setChainDiscoveryStatus("loading");
       try {
         // withRateLimitRetry here specifically: discoverAllReserves's very
@@ -305,19 +316,36 @@ export function RealReserveSync() {
           }
         }
       } catch (e) {
+        failed = true;
         if (isRateLimitError(e)) hitRateLimit = true;
         if (!cancelled) setChainDiscoveryStatus("error", e instanceof Error ? e.message : `${CLUSTER_LABEL} discovery failed.`);
       } finally {
         running = false;
-        currentDelay = nextPollDelay(currentDelay, hitRateLimit, BASE_POLL_MS, MAX_POLL_MS);
-        scheduleNext(currentDelay);
+        lastPassAt = Date.now();
+        if (failed || hitRateLimit) scheduleRetry();
+        else retries = 0;
+        if (rerunAfter) {
+          rerunAfter = false;
+          void runDiscovery();
+        }
       }
     }
 
-    runDiscovery();
+    void runDiscovery();
+    // The user's own transaction just finished: show its result.
+    const unsubscribeTx = useAppStore.subscribe((state, prev) => {
+      if (prev.txInFlight && !state.txInFlight) void runDiscovery();
+    });
+    // The user came back to a tab left in the background for a while.
+    const onVisible = () => {
+      if (!document.hidden && Date.now() - lastPassAt >= STALE_AFTER_MS) void runDiscovery();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
+      unsubscribeTx();
+      document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, walletKey, applyDiscoveredReserves, syncRealHolding, setChainDiscoveryStatus, publicKey, candidateAssetMints, mainnetMintMeta]);
