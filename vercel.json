@@ -72,6 +72,10 @@
     {
       "path": "/api/mainnet/fee-settlement-cron",
       "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/mainnet/keeper-watchdog",
+      "schedule": "*/15 * * * *"
     }
   ],
   "headers": [

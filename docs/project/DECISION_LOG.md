@@ -8243,3 +8243,40 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0270
+
+```json
+{
+  "id": "DEC-0270",
+  "date": "2026-10-28",
+  "title": "Fee keeper: TVL accruals first, dust waits, heartbeat watchdog pages on a missed run",
+  "status": "Shipped to ssr.fun 2026-10-28 (see PROJECT_STATUS).",
+  "decision": "(1) api/mainnet/fee-settlement-cron.ts runs Job B (accrue_fees, permissionless, no Jupiter) FIRST, 4 at a time, then settlement, transfer fees and basket feed with the remaining budget; BUDGET_MS 270s -> 240s under the 300s maxDuration so one in-flight confirmation, the alerts and the heartbeat still fit. (2) Dust waits instead of being retried every hour (lib/mainnet/keeperDust.ts, pure): a staged non-USDC leg is swapped only when worth >= $0.05, staged USDC is distributed only from $0.02, fee vault shares are redeemed only when worth >= $0.05 at the Reserve's NAV (vault balances x Jupiter price / supply); a leg or vault the keeper cannot price is tried once a day (00:xx UTC run) instead of hourly; keeper-held legs (split approve+transfer leftovers) always move. Reserves with nothing worth moving are skipped before any RPC work and listed as dustSkipped / reservesWaitingAsDust. Prices: one Jupiter Price call per 50 mints, 3 tries. (3) Every completed run writes a heartbeat row (Neon keeper_heartbeat, per site, lib/ops-alerts/keeperHeartbeat.ts) and one '[keeper] ...' summary log line; a run that throws pages at once (step keeper-crash, transient RPC errors excepted). (4) New cron api/mainnet/keeper-watchdog.ts every 15 minutes (CRON_SECRET, allowlisted in middleware CRON_PATHS) alerts 'Keeper missed its hourly run' (step keeper-stale, quiet 60 min) when the last completed run is older than 75 minutes; it imports only lib/ops-alerts so a broken keeper bundle cannot take it down.",
+  "context": "2026-10-28: 31 Reserves had fee leftovers to settle, almost all worth under a cent (pump.fun tokens, xStocks, USDC crumbs). Every hourly run quoted them through Jupiter, hit the free-tier rate limit (431 429s in six hours), and spent the time budget; TVL accruals ran last and were skipped, so Reserve 61 went 41 h without one (simulating its accrue_fees showed nothing wrong with the instruction). Separately the 12:15 UTC run crashed on load (ERR_REQUIRE_ESM, fixed in 99d5c76) and nothing alerted, because the alert code never loaded.",
+  "rationale": "Accruals are the only thing that crystallizes the TVL fee and cost one small transaction each, so they must not queue behind swaps. A keeper transaction costs ~65,000 lamports (~$0.013) and a Jupiter call is rate-limited, so moving a $0.001 leftover loses money and starves real work; leaving it to accumulate loses nothing (the tokens stay in the Reserve's own staging account or fee vault). Only an outside check can catch a run that never starts, so the watchdog is a separate function with no shared imports.",
+  "alternativesConsidered": [
+    "Raise maxDuration further -- rejected: already 300s; the problem was ordering and wasted calls, not total time.",
+    "Per-leg failure backoff (remember failed routes) -- deferred: after the dust rules only 3 of 31 Reserves have legs worth moving; revisit if those keep failing.",
+    "Use the command-center balance sample as the heartbeat -- rejected: it is written before the jobs run, so a run that dies mid-way would still look healthy."
+  ],
+  "impact": "Local dry run against Mainnet: 27 accruals due all run first; 28 of 31 settlement candidates now wait as dust, 3 (Reserves 26, 36, 38) still move legs worth over $0.05. Small TVL fee amounts (e.g. Reserve 59's $0.015/day) now sit in the fee vault until they reach $0.05 before being paid out in USDC; nothing is lost. The team is paged within ~75 minutes of any missed keeper run.",
+  "affectedAreas": [
+    "api/mainnet/fee-settlement-cron.ts",
+    "api/mainnet/keeper-watchdog.ts",
+    "lib/mainnet/keeperDust.ts",
+    "lib/ops-alerts/keeperHeartbeat.ts",
+    "lib/ops-alerts/alertsPure.ts",
+    "middleware.ts",
+    "vercel.json",
+    "tests/phase_keeper_dust_watchdog.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Keeper dry run 2026-10-28 ~13:50 UTC: accrueDue 27 incl. Reserve 61 at 1.73 days; 31 settlement candidates with staged amounts such as 60 raw USDC, 9 raw SOL, 4 raw JUP.",
+    "accrue_fees simulated OK for Reserves 59, 61, 62 against the live program (keeper as payer).",
+    "Vercel logs 12:15 and 12:37 UTC: ERR_REQUIRE_ESM at load, no alert recorded."
+  ]
+}
+```

@@ -32,6 +32,9 @@ export const STEP_TITLES: Record<string, string> = {
   "basket-feed": "Keeper: basket feed failed",
   "keeper-balance": "Keeper wallet low on SOL",
   "keeper-config": "Keeper not running",
+  // DEC-0270: a missed hourly run (watchdog) and a run that threw.
+  "keeper-stale": "Keeper missed its hourly run",
+  "keeper-crash": "Keeper run crashed",
 };
 
 const MAX_FIELD = 600;

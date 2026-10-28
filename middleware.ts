@@ -56,6 +56,7 @@ const CRON_PATHS = new Set([
   '/api/ledger/launchpad-classify-cron',
   '/api/mainnet/warm-cache-cron',
   '/api/mainnet/fee-settlement-cron',
+  '/api/mainnet/keeper-watchdog',
   // Agent-feedback daemon endpoints: machine-to-machine, authenticated by
   // their own FEEDBACK_DAEMON_SECRET bearer inside the handler (no browser,
   // no session cookie) -- gating them here returned 401 before the handler

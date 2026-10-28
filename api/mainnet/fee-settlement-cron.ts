@@ -57,8 +57,13 @@
 //
 // Scheduled in vercel.json, allowlisted in middleware.ts CRON_PATHS. Same
 // CRON_SECRET / `?dryRun=true` conventions as every other cron here. Time
-// budgeted (api/mainnet/* maxDuration is 60s): settlement first, accruals with
-// the leftover budget; anything unprocessed is reported and picked up next run.
+// budgeted (BUDGET_MS under the 300s maxDuration). DEC-0270: TVL accruals run
+// FIRST (cheap, no Jupiter), then settlement, transfer fees and basket feed
+// with what is left; anything unprocessed is reported and picked up next run.
+// Settlement skips dust (lib/mainnet/keeperDust.ts): legs, USDC and vault
+// shares worth too little to move wait and accumulate instead of being
+// retried every hour. Every completed run writes a heartbeat that
+// api/mainnet/keeper-watchdog.ts checks; a run that throws pages at once.
 // Jupiter goes through lib/mainnet/jupiter.ts (shared venue exclusions,
 // retry policy, JUPITER_API_BASE override for the test site).
 //
@@ -110,8 +115,10 @@ import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstru
 import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience";
 import { findSharingPools, runBasketFeedForPool, type BasketFeedResult } from "../../lib/mainnet/basketFeed";
 import { fetchJupiterPrices } from "./asset-prices";
-import { recordAlert } from "../../lib/ops-alerts/alerts";
+import { recordAlert, siteLabel } from "../../lib/ops-alerts/alerts";
 import { isTransientRpcError, KEEPER_LOW_SOL } from "../../lib/ops-alerts/alertsPure";
+import { writeKeeperHeartbeat } from "../../lib/ops-alerts/keeperHeartbeat";
+import { navPerReserveTokenUsd, stagedLegDecision, stagedUsdcWorthDistributing, vaultDecision, type DustDecision } from "../../lib/mainnet/keeperDust";
 
 const RPC_URL = resolveRpcUrl();
 const PROGRAM_ID = new PublicKey("8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9");
@@ -119,8 +126,11 @@ const MAINNET_USDC_MINT = new PublicKey(USDC_MINT_STR);
 const TREASURY = new PublicKey(MAINNET_TREASURY_VAULT);
 
 // Under this route's own maxDuration (vercel.json: 300s for fee-settlement-cron;
-// each Reserve needs several sequential confirmations, ~20-60s).
-const BUDGET_MS = 270_000;
+// each Reserve needs several sequential confirmations, ~20-60s). DEC-0270: 240s
+// leaves room for one in-flight confirmation, the alerts and the heartbeat.
+const BUDGET_MS = 240_000;
+/** DEC-0270: accrue_fees calls in flight at once (each is one small permissionless transaction). */
+const ACCRUAL_CONCURRENCY = 4;
 const ACCRUE_MIN_ELAPSED_S = 24 * 60 * 60;
 /** Job C runs on the hourly cron's run in this UTC hour only (one scan per fee-carrying mint per day). */
 const TRANSFER_FEE_COLLECT_UTC_HOUR = 0;
@@ -179,6 +189,22 @@ async function loadKnownAssetMints(): Promise<string[]> {
   return rows.map((r) => r.mint);
 }
 
+/** DEC-0270: USD prices for the dust rules, 50 mints per Jupiter Price request, a few retries on a rate-limited or failed call. A mint left out is "unpriced". */
+async function fetchUsdPrices(mints: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>([[USDC_MINT_STR, 1]]);
+  const wanted = [...new Set(mints)].filter((m) => m !== USDC_MINT_STR);
+  for (let i = 0; i < wanted.length; i += 50) {
+    const chunk = wanted.slice(i, i + 50);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const got = await fetchJupiterPrices(chunk).catch(() => new Map());
+      for (const [mint, p] of got) if (typeof p.usdPrice === "number") out.set(mint, p.usdPrice);
+      if (got.size > 0) break;
+      await new Promise((r) => setTimeout(r, 1_500 * (attempt + 1)));
+    }
+  }
+  return out;
+}
+
 /** Compile a v0 transaction for the keeper, simulate it read-only (throwing with the program logs on failure), sign, send, confirm, and verify the on-chain status. */
 async function sendV0(connection: Connection, keeper: Keypair, label: string, ixs: TransactionInstruction[], tables: AddressLookupTableAccount[]): Promise<string> {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
@@ -206,7 +232,7 @@ const budgetIxs = (units: number) => [
 interface AssetSettlementResult {
   mint: string;
   stagedAmount: string;
-  status: "swapped" | "skipped-price-impact" | "skipped-no-route" | "skipped-error";
+  status: "swapped" | "skipped-price-impact" | "skipped-no-route" | "skipped-error" | "skipped-dust" | "skipped-unpriced";
   detail?: string;
   swapSignature?: string;
   /** When the atomic composition did not fit one transaction, the delegate-transfer went in its own transaction first. */
@@ -242,7 +268,7 @@ interface TransferFeeCollectResult {
   error?: string;
 }
 
-export default async function handler(req: ApiRequest, res: ApiResponse) {
+async function runKeeper(req: ApiRequest, res: ApiResponse) {
   if (req.method !== "GET" && req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
@@ -304,7 +330,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   });
 
   // --- Job A candidates: anything in the fee vault, pending, or staged. ---
-  const candidates: { reserve: string; reserveTokenMint: string; assetsResolved: boolean; feeSettlement: Awaited<ReturnType<typeof fetchFeeSettlement>>; staged: { mint: string; amount: string }[] }[] = [];
+  const candidates: { reserve: string; reserveTokenMint: string; assetsResolved: boolean; feeSettlement: Awaited<ReturnType<typeof fetchFeeSettlement>>; staged: { mint: string; amount: string }[]; keeperHeld: boolean }[] = [];
   for (const r of reserves) {
     const feeSettlement = await fetchFeeSettlement(connection, PROGRAM_ID, new PublicKey(r.reserve)).catch(() => null);
     if (!feeSettlement) continue;
@@ -334,7 +360,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       if (m.toBase58() !== USDC_MINT_STR && k && k.data.length >= 72 && k.data.readBigUInt64LE(64) > 0n) keeperHeldAny = true;
     });
     if (vaultTotal === 0n && pendingTotal === 0n && staged.length === 0 && !keeperHeldAny) continue;
-    candidates.push({ reserve: r.reserve, reserveTokenMint: r.reserveTokenMint, assetsResolved: r.resolvedAssetCount === r.assetCount, feeSettlement, staged });
+    candidates.push({ reserve: r.reserve, reserveTokenMint: r.reserveTokenMint, assetsResolved: r.resolvedAssetCount === r.assetCount, feeSettlement, staged, keeperHeld: keeperHeldAny });
   }
 
   // --- Job B candidates: accrual overdue, judged by the accumulator itself (see DEC-0186/0192). ---
@@ -368,6 +394,29 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const transferFeeReserves = reserves.filter((r) => r.reserveTokenProgram === "token-2022");
   const transferFeeDue = forceTransferFees || new Date(startedAt).getUTCHours() === TRANSFER_FEE_COLLECT_UTC_HOUR;
 
+  // --- DEC-0270: dust plan for Job A. One price read for every asset the candidates hold. ---
+  const utcHour = new Date(startedAt).getUTCHours();
+  const reserveByAddr = new Map(reserves.map((r) => [r.reserve, r]));
+  const prices = candidates.length ? await fetchUsdPrices(candidates.flatMap((c) => reserveByAddr.get(c.reserve)?.assets.map((a) => a.assetMint) ?? [])) : new Map<string, number>();
+  const settlementPlan = candidates.map((c) => {
+    const r = reserveByAddr.get(c.reserve);
+    const decimalsOf = new Map((r?.assets ?? []).map((a) => [a.assetMint, a.decimals]));
+    const vaultShares = BigInt(c.feeSettlement.protocolSharesInVault) + BigInt(c.feeSettlement.managerSharesInVault);
+    const nav = r ? navPerReserveTokenUsd(r.assets, r.reserveTokenSupplyRaw, (m) => prices.get(m)) : null;
+    const vault: DustDecision = vaultDecision(vaultShares, nav, utcHour);
+    // Staging lists USDC once per leg that is USDC plus the appended USDC staging account (same account): count it once.
+    const usdcStaged = c.staged.find((s) => s.mint === USDC_MINT_STR);
+    const usdc = usdcStaged && stagedUsdcWorthDistributing(BigInt(usdcStaged.amount)) ? "move" : "dust";
+    const legs = c.staged
+      .filter((s) => s.mint !== USDC_MINT_STR)
+      .map((s) => ({ mint: s.mint, amount: s.amount, decision: stagedLegDecision(BigInt(s.amount), decimalsOf.get(s.mint) ?? 0, prices.get(s.mint), utcHour) }));
+    // Keeper-held legs (left by a split approve+transfer whose swap failed) are always worked: that asset sits outside the Reserve.
+    const actionable = vault === "move" || usdc === "move" || legs.some((l) => l.decision === "move") || c.keeperHeld;
+    return { reserve: c.reserve, vault, usdc, legs, actionable };
+  });
+  const dustSkipped = settlementPlan.filter((p) => !p.actionable);
+  const planOf = new Map(settlementPlan.map((p) => [p.reserve, p]));
+
   // --- Job D candidates (DEC-0251): v2 pools whose creator shares earnings with holders. ---
   const sharingPools = await findSharingPools(connection, PROGRAM_ID).catch(() => [] as Awaited<ReturnType<typeof findSharingPools>>);
 
@@ -386,6 +435,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           : "on-chain keeper differs from this deployment's keeper wallet",
     totalReserves: reserves.length,
     reservesWithSomethingToSettle: candidates.length,
+    reservesWaitingAsDust: dustSkipped.length,
     accrualsDue: accrueDue.length,
     transferFeeReserves: transferFeeReserves.length,
     transferFeeCollectionDue: transferFeeDue,
@@ -398,6 +448,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       basketFeed: sharingPools.map((p) => ({ reserve: p.terms.reserve.toBase58(), holderShareBps: p.terms.holderShareBps, lockedRaw: p.terms.locked.toString(), unlockedRaw: p.terms.unlocked.toString(), totalFedRaw: p.terms.totalFed.toString() })),
       ...status,
       candidates: candidates.map((c) => ({ reserve: c.reserve, assetsResolved: c.assetsResolved, feeSettlement: c.feeSettlement, staged: c.staged })),
+      settlementPlan,
       accrueDue,
       transferFeeReserves: transferFeeReserves.map((r) => ({ reserveId: r.reserveId, reserve: r.reserve, reserveTokenMint: r.reserveTokenMint })),
     });
@@ -430,12 +481,65 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const deps = { connection, program, ssrProgramId: PROGRAM_ID, lookupReserveAlt };
 
   // ---------------------------------------------------------------------
+  // Job B: TVL accrual FIRST (DEC-0270; permissionless, keeper pays). Cheap and
+  // Jupiter-free, so settlement retries can no longer starve it (Reserve 61 went
+  // 41 h without an accrual on 2026-10-28 while settlement used the budget).
+  // ---------------------------------------------------------------------
+  const accruals: AccrualResult[] = [];
+  const accrualsSkippedForBudget: string[] = [];
+  const protocolConfigAddress = findProtocolConfig(PROGRAM_ID)[0];
+  const accrueOne = async (r: (typeof accrueDue)[number]) => {
+    if (Date.now() > deadline) {
+      accrualsSkippedForBudget.push(r.reserve);
+      return;
+    }
+    try {
+      const reservePk = new PublicKey(r.reserve);
+      const reserveTokenMintPk = new PublicKey(r.reserveTokenMint);
+      // DEC-0229: classic for pre-DEC-0229 Reserves, Token-2022 after (from discovery's mint read).
+      const reserveTokenProgram = r.reserveTokenProgram === "token-2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+      const ix = await program.methods
+        .accrueFees()
+        .accounts({
+          protocolConfig: protocolConfigAddress,
+          reserve: reservePk,
+          reserveTokenMint: reserveTokenMintPk,
+          mintAuthority: findMintAuthority(reservePk, PROGRAM_ID)[0],
+          tvlAccrual: findTvlAccrual(reservePk, PROGRAM_ID)[0],
+          feeSettlement: findFeeSettlement(reservePk, PROGRAM_ID)[0],
+          feeVault: findFeeVaultAta(reservePk, reserveTokenMintPk, PROGRAM_ID, reserveTokenProgram),
+          feeVaultAuthority: findFeeVaultAuthority(reservePk, PROGRAM_ID)[0],
+          payer: keeper.publicKey,
+          tokenProgram: reserveTokenProgram,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction();
+      // DEPLOYED-PROGRAM BUG (DEC-0192): AccrueFees declares reserve_token_mint
+      // without `mut`; the mint_to CPI needs it writable. Passing it writable
+      // from here is the complete fix against the deployed binary.
+      for (const k of ix.keys) if (k.pubkey.equals(reserveTokenMintPk)) k.isWritable = true;
+      const tx = new Transaction().add(ix);
+      tx.feePayer = keeper.publicKey;
+      const signature = await sendAndConfirmTransaction(connection, tx, [keeper], { commitment: "confirmed" });
+      accruals.push({ reserveId: r.reserveId, reserve: r.reserve, elapsedDays: r.elapsedDays, signature });
+    } catch (e) {
+      accruals.push({ reserveId: r.reserveId, reserve: r.reserve, elapsedDays: r.elapsedDays, error: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  const accrualQueue = [...accrueDue];
+  await Promise.all(Array.from({ length: Math.min(ACCRUAL_CONCURRENCY, accrualQueue.length) }, async () => {
+    for (let r = accrualQueue.shift(); r; r = accrualQueue.shift()) await accrueOne(r);
+  }));
+
+  // ---------------------------------------------------------------------
   // Job A: settlement (only when the on-chain keeper is THIS wallet).
   // ---------------------------------------------------------------------
   const results: ReserveSettlementResult[] = [];
   const skippedForBudget: string[] = [];
   if (keeperMatchesOnChain) {
-    for (const c of candidates) {
+    // DEC-0270: a Reserve with only dust to move waits (listed in dustSkipped).
+    for (const c of candidates.filter((c) => planOf.get(c.reserve)?.actionable)) {
       if (Date.now() > deadline) {
         skippedForBudget.push(c.reserve);
         continue;
@@ -457,9 +561,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, usdcStaging, settlementAuthority, MAINNET_USDC_MINT),
         ];
 
-        // Step 1: redeem the full current vault balance (if any).
+        // Step 1: redeem the full current vault balance (if any, and worth moving -- DEC-0270).
         const vaultTotal = BigInt(c.feeSettlement.protocolSharesInVault) + BigInt(c.feeSettlement.managerSharesInVault);
-        if (vaultTotal > 0n) {
+        if (vaultTotal > 0n && planOf.get(c.reserve)?.vault === "move") {
           const redeemIx = await buildRedeemFeeVaultSharesInstruction({
             program,
             programId: PROGRAM_ID,
@@ -506,6 +610,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           const keeperHeld = amountOf(keeperInfos[i]);
           const toSwap = stagedAmount + keeperHeld;
           if (toSwap === 0n) continue;
+          // DEC-0270: dust waits and accumulates; an unpriced leg is tried once a day. Keeper-held legs always move.
+          const dust = keeperHeld > 0n ? "move" : stagedLegDecision(toSwap, leg.decimals, prices.get(leg.mint), utcHour);
+          if (dust !== "move") {
+            result.assets.push({ mint: leg.mint, stagedAmount: stagedAmount.toString(), status: dust === "dust" ? "skipped-dust" : "skipped-unpriced" });
+            continue;
+          }
           const mint = new PublicKey(leg.mint);
           const assetResult: AssetSettlementResult = { mint: leg.mint, stagedAmount: stagedAmount.toString(), status: "skipped-no-route", ...(keeperHeld > 0n ? { detail: `includes ${keeperHeld.toString()} already held by the keeper from an earlier partial run` } : {}) };
           try {
@@ -569,8 +679,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         // nothing (DEC-0221). Read the real balance first and skip when it is zero.
         const stagedUsdcInfo = await connection.getAccountInfo(usdcStaging);
         const stagedUsdc = stagedUsdcInfo && stagedUsdcInfo.data.length >= 72 ? stagedUsdcInfo.data.readBigUInt64LE(64) : 0n;
-        if (stagedUsdc === 0n) {
-          result.distributeSkipped = "no USDC staged";
+        if (!stagedUsdcWorthDistributing(stagedUsdc)) {
+          result.distributeSkipped = stagedUsdc === 0n ? "no USDC staged" : `dust: ${stagedUsdc.toString()} raw USDC staged, waits until worth a transaction`;
           results.push(result);
           continue;
         }
@@ -607,52 +717,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         result.error = e instanceof Error ? e.message : String(e);
       }
       results.push(result);
-    }
-  }
-
-  // ---------------------------------------------------------------------
-  // Job B: TVL accrual with the remaining budget (permissionless, keeper pays).
-  // ---------------------------------------------------------------------
-  const accruals: AccrualResult[] = [];
-  const accrualsSkippedForBudget: string[] = [];
-  const protocolConfigAddress = findProtocolConfig(PROGRAM_ID)[0];
-  for (const r of accrueDue) {
-    if (Date.now() > deadline) {
-      accrualsSkippedForBudget.push(r.reserve);
-      continue;
-    }
-    try {
-      const reservePk = new PublicKey(r.reserve);
-      const reserveTokenMintPk = new PublicKey(r.reserveTokenMint);
-      // DEC-0229: classic for pre-DEC-0229 Reserves, Token-2022 after (from discovery's mint read).
-      const reserveTokenProgram = r.reserveTokenProgram === "token-2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-      const ix = await program.methods
-        .accrueFees()
-        .accounts({
-          protocolConfig: protocolConfigAddress,
-          reserve: reservePk,
-          reserveTokenMint: reserveTokenMintPk,
-          mintAuthority: findMintAuthority(reservePk, PROGRAM_ID)[0],
-          tvlAccrual: findTvlAccrual(reservePk, PROGRAM_ID)[0],
-          feeSettlement: findFeeSettlement(reservePk, PROGRAM_ID)[0],
-          feeVault: findFeeVaultAta(reservePk, reserveTokenMintPk, PROGRAM_ID, reserveTokenProgram),
-          feeVaultAuthority: findFeeVaultAuthority(reservePk, PROGRAM_ID)[0],
-          payer: keeper.publicKey,
-          tokenProgram: reserveTokenProgram,
-          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-        })
-        .instruction();
-      // DEPLOYED-PROGRAM BUG (DEC-0192): AccrueFees declares reserve_token_mint
-      // without `mut`; the mint_to CPI needs it writable. Passing it writable
-      // from here is the complete fix against the deployed binary.
-      for (const k of ix.keys) if (k.pubkey.equals(reserveTokenMintPk)) k.isWritable = true;
-      const tx = new Transaction().add(ix);
-      tx.feePayer = keeper.publicKey;
-      const signature = await sendAndConfirmTransaction(connection, tx, [keeper], { commitment: "confirmed" });
-      accruals.push({ reserveId: r.reserveId, reserve: r.reserve, elapsedDays: r.elapsedDays, signature });
-    } catch (e) {
-      accruals.push({ reserveId: r.reserveId, reserve: r.reserve, elapsedDays: r.elapsedDays, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -741,15 +805,40 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   ];
   for (const f of failures) if (!isTransientRpcError(f.message)) await recordAlert({ source: "keeper", ...f }, { quietMinutes: 360 });
 
+  // DEC-0270: one line per run in the Vercel logs (the JSON response is not
+  // logged), and the heartbeat the watchdog checks. Neither can fail the run.
+  const summary = `accruals ${accruals.filter((a) => a.signature).length}/${accrueDue.length} (skipped ${accrualsSkippedForBudget.length}), settled ${results.length}/${candidates.length} (dust ${dustSkipped.length}, budget ${skippedForBudget.length}), failures ${failures.length}, ${Math.round((Date.now() - startedAt) / 1000)}s`;
+  console.info(`[keeper] ${summary}`);
+  await Promise.race([
+    Promise.resolve().then(() => writeKeeperHeartbeat(getSql(), siteLabel(), summary)).catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, 3_000)),
+  ]);
+
   res.status(200).json({
     dryRun: false,
     ...status,
     elapsedMs: Date.now() - startedAt,
-    settlement: { reservesProcessed: results.length, results, skippedForBudget },
+    settlement: { reservesProcessed: results.length, results, skippedForBudget, dustSkipped },
     accrual: { processed: accruals.length, results: accruals, skippedForBudget: accrualsSkippedForBudget },
     transferFees: { ran: transferFeeDue, results: transferFeeResults, skippedForBudget: transferFeeSkippedForBudget },
     basketFeed: { ran: keeperMatchesOnChain, results: basketFeedResults, skippedForBudget: basketFeedSkippedForBudget },
   });
+}
+
+/**
+ * DEC-0270: a run that throws (discovery failed, an RPC outage mid-run) pages the
+ * team at once instead of returning a bare 500 nobody sees. A one-off RPC hiccup is
+ * left to the next hourly run; if runs keep failing, the watchdog reports it.
+ */
+export default async function handler(req: ApiRequest, res: ApiResponse) {
+  try {
+    await runKeeper(req, res);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`[keeper] run crashed: ${message}`);
+    if (!isTransientRpcError(message)) await recordAlert({ source: "keeper", step: "keeper-crash", message }, { quietMinutes: 60 }).catch(() => undefined);
+    try { res.status(500).json({ error: message }); } catch { /* response already sent */ }
+  }
 }
 
 // Referenced for type-completeness of the v0 path; VersionedTransaction is what compileV0 returns.
