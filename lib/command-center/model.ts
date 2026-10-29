@@ -233,6 +233,23 @@ export function parseMonthlyCost(text: string | undefined): number | null {
   return amount
 }
 
+/**
+ * Helius credits: down once the plan's credits are gone with no prepaid credits left
+ * (requests then fail with 429), warn at 80% used or when this cycle's pace would run
+ * out before the reset.
+ */
+export function creditTone(used: number, limit: number, projected: number | null, prepaidRemaining: number): Tone {
+  if (limit <= 0) return 'unknown'
+  if (used >= limit && prepaidRemaining <= 0) return 'down'
+  return used >= limit * 0.8 || (projected !== null && projected > limit) ? 'warn' : 'ok'
+}
+
+export function formatCredits(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2)}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`
+  return String(Math.round(n))
+}
+
 /** A billing cycle's spend so far, scaled to the whole cycle. Null in the cycle's first hours, when one day would dominate. */
 export function projectToMonth(spend: number, periodStartMs: number, periodEndMs: number, nowMs: number): number | null {
   const elapsed = nowMs - periodStartMs

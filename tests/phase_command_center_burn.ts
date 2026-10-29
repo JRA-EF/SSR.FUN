@@ -16,7 +16,7 @@ const model = (() => {
   new Function("exports", "module", js)(mod.exports, mod);
   return mod.exports;
 })();
-const { parseMonthlyCost, projectToMonth, solBurnPerDay } = model;
+const { parseMonthlyCost, projectToMonth, solBurnPerDay, creditTone, formatCredits } = model;
 
 const H = 3_600_000;
 const D = 24 * H;
@@ -39,6 +39,23 @@ describe("command center burn rate", () => {
     expect(projectToMonth(10, start, end, 10 * D)).to.equal(30);
     expect(projectToMonth(10, start, end, 6 * H)).to.equal(null);
     expect(projectToMonth(30, start, end, 40 * D)).to.equal(30);
+  });
+
+  it("Helius credits warn at 80% or when the pace runs out before the reset, down once used up", () => {
+    expect(creditTone(5e6, 10e6, 9e6, 0)).to.equal("ok");
+    expect(creditTone(8e6, 10e6, null, 0)).to.equal("warn");
+    expect(creditTone(4e6, 10e6, 12e6, 0)).to.equal("warn");
+    expect(creditTone(10e6, 10e6, null, 0)).to.equal("down");
+    expect(creditTone(10e6, 10e6, null, 500_000)).to.equal("warn");
+    expect(creditTone(1, 0, null, 0)).to.equal("unknown");
+    expect([formatCredits(950), formatCredits(1_500), formatCredits(42_000), formatCredits(1_234_567), formatCredits(12_300_000)]).to.deep.equal(["950", "1.5k", "42k", "1.23M", "12.3M"]);
+  });
+
+  it("the Helius usage probe sends the key in a header, never in the URL or a metric", () => {
+    const probes = readFileSync(join(__dirname, "..", "lib/command-center/probes.ts"), "utf8");
+    const probe = probes.slice(probes.indexOf("async function probeHeliusUsage"), probes.indexOf("async function probeSite"));
+    expect(probe).to.include("headers: { 'X-Api-Key': key }");
+    expect(probe).not.to.match(/api-key=${key}/);
   });
 
   it("counts only balance drops, per day, once samples span six hours", () => {

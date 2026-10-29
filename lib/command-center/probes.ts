@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { neon } from '@neondatabase/serverless'
 import {
-  CLOSED_FEEDBACK, DAYS_PER_MONTH, daysBetween, daysUntil, formatAge, formatUsd, formatUsdc, latencyTone, parseMonthlyCost, projectToMonth, renewalTone,
+  CLOSED_FEEDBACK, DAYS_PER_MONTH, creditTone, formatCredits, daysBetween, daysUntil, formatAge, formatUsd, formatUsdc, latencyTone, parseMonthlyCost, projectToMonth, renewalTone,
   secretTone, solBurnPerDay, solTone, summarize, worst,
   type BurnGroup, type BurnRate, type CcEdge, type CcNode, type CommandCenterState, type DrawerList, type ListItem, type ManualFacts, type Metric, type Renewal,
   type SecretInfo, type Tone, type WatchItem,
@@ -325,6 +325,25 @@ async function probeHeliusWebhook() {
   return { known: true as const, ok: true, registered: !!hook, pointsAt: hook ? new URL(hook.webhookURL).host : null, watchesProgram: !!hook?.accountAddresses?.includes(PROGRAM_ID) }
 }
 
+interface HeliusUsage {
+  creditsUsed: number; creditsRemaining: number; prepaidCreditsRemaining: number; prepaidCreditsUsed: number
+  creditCycle: { start: string; end: string }
+  subscriptionDetails: { billingCycle: { start: string; end: string } | null; creditsLimit: number; plan: string }
+  credits: Record<string, number>
+}
+
+/** Credit usage this cycle from Helius's Admin API: the RPC key plus HELIUS_PROJECT_ID (the dashboard's project id). */
+async function probeHeliusUsage() {
+  const url = rpcUrl()
+  const key = url ? new URL(url).searchParams.get('api-key') : null
+  const project = process.env.HELIUS_PROJECT_ID?.trim()
+  if (!key || !project) return { configured: false as const }
+  const r = await timed((signal) => getJson<HeliusUsage>(
+    `https://admin-api.helius.xyz/v0/admin/projects/${encodeURIComponent(project)}/usage`, { signal, headers: { 'X-Api-Key': key } }))
+  if (!r.ok || typeof r.value?.creditsUsed !== 'number') return { configured: true as const, ok: false as const, error: r.error ?? 'unexpected answer', status: r.status }
+  return { configured: true as const, ok: true as const, value: r.value }
+}
+
 async function probeSite() {
   return timed(async (signal) => {
     const r = await fetch('https://ssr.fun/', { signal, redirect: 'manual' })
@@ -610,9 +629,9 @@ function walletList(v: WalletValue | undefined): DrawerList | null {
 
 export async function collectCommandCenter(now = Date.now()): Promise<CommandCenterState> {
   const keeper = publicKeyFromSecret(process.env.SSR_FEE_SETTLEMENT_KEEPER_SECRET)
-  const [chain, jup, tg, sheets, hook, site, dSsr, dTest, gh, vercel, db] = await Promise.all([
+  const [chain, jup, tg, sheets, hook, site, dSsr, dTest, gh, vercel, db, hUsage] = await Promise.all([
     probeChain(), probeJupiter(), probeTelegram(), probeSheets(), probeHeliusWebhook(), probeSite(),
-    probeDomain('ssr.fun'), probeDomain('strategic-super-reserve.fun'), probeGithub(), probeVercel(), probeNeon(),
+    probeDomain('ssr.fun'), probeDomain('strategic-super-reserve.fun'), probeGithub(), probeVercel(), probeNeon(), probeHeliusUsage(),
   ])
   const pw = chain.wallets
   const fullWallets = [pw.treasury, pw.authority, pw.admin2, SQUADS_VAULT, keeper, POOL_PAYER].filter((a): a is string => !!a)
@@ -736,6 +755,30 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
       h.metrics.push(m('Failed-tx webhook', hook.registered ? `→ ${hook.pointsAt}${hook.watchesProgram ? '' : ' (not watching the program)'}` : 'not registered', tone))
       flag(h, tone, 'Failed-transaction alerts webhook is missing')
     }
+  }
+
+  if (!hUsage.configured) h.problems.push('Add HELIUS_PROJECT_ID (the project id in the Helius dashboard URL) to track credit usage.')
+  else if (!hUsage.ok) {
+    h.metrics.push(m('Credits this cycle', `unavailable (${hUsage.error})`, 'unknown'))
+    if (hUsage.status === 400) flag(h, 'warn', 'HELIUS_PROJECT_ID does not match the project of the RPC key')
+  } else {
+    const u = hUsage.value
+    const limit = u.subscriptionDetails?.creditsLimit ?? 0
+    const start = Date.parse(u.creditCycle.start), end = Date.parse(u.creditCycle.end) + 86_400_000
+    const projected = projectToMonth(u.creditsUsed, start, end, now)
+    const tone = creditTone(u.creditsUsed, limit, projected, u.prepaidCreditsRemaining ?? 0)
+    const pct = limit > 0 ? ` (${Math.round((u.creditsUsed / limit) * 100)}%)` : ''
+    h.metrics.push(m('Credits this cycle', `${formatCredits(u.creditsUsed)} / ${formatCredits(limit)}${pct}`, tone))
+    if (projected !== null) h.metrics.push(m('At this pace by reset', formatCredits(projected), projected > limit ? 'warn' : 'ok'))
+    h.metrics.push(m('Credits reset', `${u.creditCycle.end} (in ${daysUntil(u.creditCycle.end, now)} d)`))
+    if (u.prepaidCreditsRemaining || u.prepaidCreditsUsed) h.metrics.push(m('Prepaid credits left', formatCredits(u.prepaidCreditsRemaining)))
+    const top = Object.entries(u.credits ?? {}).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 4)
+    for (const [name, n] of top) h.metrics.push(m(`· ${name}`, formatCredits(n)))
+    if (!h.manual.plan && u.subscriptionDetails?.plan) h.metrics.unshift(m('Plan', u.subscriptionDetails.plan))
+    flag(h, tone, tone === 'down' ? 'Helius credits are used up: RPC calls fail with 429 until the reset or a top-up'
+      : u.creditsUsed >= limit * 0.8 ? `Helius credits ${pct.trim()} used this cycle` : 'At this pace Helius credits run out before the reset')
+    const bill = u.subscriptionDetails?.billingCycle?.end
+    if (bill && !h.manual.renewsOn) renewals.push({ nodeId: 'helius', label: 'Helius plan', date: bill.slice(0, 10), source: 'live', amount: h.manual.cost ?? null })
   }
 
   // Jupiter
@@ -905,7 +948,7 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
       n.metrics.push(m('Renews', `${n.manual.renewsOn} (in ${days} d)`, tone))
       flag(n, tone, days < 0 ? 'Renewal date has passed: update it' : `Renews in ${days} days`)
       renewals.push({ nodeId: n.id, label: n.label, date: n.manual.renewsOn, source: 'manual', amount: n.manual.cost ?? null })
-    } else if (n.id === 'helius' || n.id === 'jupiter') {
+    } else if ((n.id === 'helius' && !(hUsage.configured && hUsage.ok && hUsage.value.subscriptionDetails?.billingCycle)) || n.id === 'jupiter') {
       n.problems.push('Add the plan and renewal date so the team sees it coming.')
     }
   }
@@ -939,7 +982,7 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
   for (const n of nodes) {
     if (n.status === 'ok') continue
     n.problems.forEach((pr, i) => {
-      if (/^Add the plan|^Add VERCEL_API_TOKEN/.test(pr)) return
+      if (/^Add the plan|^Add VERCEL_API_TOKEN|^Add HELIUS_PROJECT_ID/.test(pr)) return
       watch.push({ id: `live:${n.id}:${i}`, text: pr, tone: n.status, source: 'live', nodeId: n.id, detail: n.label })
     })
   }
