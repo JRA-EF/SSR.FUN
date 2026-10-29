@@ -2,8 +2,8 @@
 
 - **Date:** 2026-10-29
 - **Author:** Joao via Claude (Opus 5.5)
-- **Branch / commits:** `main` (this commit)
-- **Deployed to:** see follow-up line
+- **Branch / commits:** `main` @ `9f4d4e5`
+- **Deployed to:** production `dpl_7C69sX7boWtWLnJBhVjubmfpCEmd` (2026-10-29; `--skip-domain` checks: cron dry run 200, command center 401). Rollback: `vercel promote dpl_CnoVm71A54fQ8e97rPnJ7G2sZSiR`.
 - **Decision log:** none
 
 ## Why
