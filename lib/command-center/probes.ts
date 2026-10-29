@@ -264,6 +264,9 @@ async function valueWallets(owners: string[], tokenOwners: Set<string>, reserveT
   return { values: out, solPrice }
 }
 
+/** Jupiter's rate-limit ceiling for a call with no key (measured 2026-10-29: remaining 4 + current 1). */
+export const KEYLESS_JUPITER_LIMIT = 5
+
 async function probeJupiter() {
   const key = process.env.JUPITER_API_KEY
   if (!key) return { configured: false as const }
@@ -272,8 +275,12 @@ async function probeJupiter() {
     const r = await fetch(`${jupiterBase()}/swap/v1/quote?inputMint=${SOL_MINT}&outputMint=${USDC_MINT}&amount=10000000&slippageBps=50`, {
       headers: { 'x-api-key': key }, signal: AbortSignal.timeout(TIMEOUT_MS),
     })
+    // Jupiter sends x-ratelimit-remaining and x-ratelimit-current (no -limit header): the
+    // key's ceiling per window is their sum. A key-less call gets 5; a paid plan gets more,
+    // so this shows whether the production key is really on the paid plan.
     const remaining = r.headers.get('x-ratelimit-remaining')
-    const limit = r.headers.get('x-ratelimit-limit')
+    const current = r.headers.get('x-ratelimit-current')
+    const limit = remaining !== null && current !== null && Number.isFinite(Number(remaining) + Number(current)) ? String(Number(remaining) + Number(current)) : null
     return { configured: true as const, status: r.status, ms: Date.now() - t0, remaining, limit }
   } catch (e) {
     return { configured: true as const, status: 0, ms: Date.now() - t0, error: scrub((e as Error).message) }
@@ -742,6 +749,8 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
       const tone: Tone = Number(jup.remaining) < Number(jup.limit) * 0.1 ? 'warn' : 'ok'
       j.metrics.push(m('Rate limit left', `${jup.remaining} / ${jup.limit}`, tone))
       flag(j, tone, 'Close to the Jupiter rate limit')
+      // 5 per window is what Jupiter gives a call with no key at all: a key at that ceiling is not on the paid plan.
+      if (Number(jup.limit) <= KEYLESS_JUPITER_LIMIT) { j.metrics.push(m('Plan', `key limit ${jup.limit} = free tier, not the paid plan`, 'warn')); flag(j, 'warn', 'The production Jupiter key gets the free-tier rate limit: it is not on the paid plan') }
     }
   } else if (jup.status === 429) { j.headline = 'RATE LIMITED'; flag(j, 'down', 'Jupiter answered 429 Too Many Requests: swaps and keeper fee swaps fail') }
   else if (jup.status === 401 || jup.status === 403) { j.headline = 'key rejected'; flag(j, 'down', `Jupiter rejected the key (HTTP ${jup.status})`) }
