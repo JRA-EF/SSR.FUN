@@ -66,7 +66,7 @@ function stats() {
     if (CLOSED.indexOf(status.toLowerCase()) === -1) {
       open++;
       if (rating <= 2) openLow++;
-      openRows.push({ at: at ? new Date(at).toISOString() : '', rating: rating, subject: String(r[2] || '').replace(/^'/, '').slice(0, 150), status: status });
+      openRows.push({ at: at ? new Date(at).toISOString() : '', rating: rating, subject: String(r[2] || '').replace(/^'/, '').slice(0, 150), status: status, row: i + 2 });
     }
   }
   openRows.sort(function (a, b) { return a.at < b.at ? 1 : -1; });

@@ -14,7 +14,7 @@ import {
   CLOSED_FEEDBACK, DAYS_PER_MONTH, creditTone, formatCredits, daysBetween, daysUntil, formatAge, formatUsd, formatUsdc, latencyTone, parseMonthlyCost, projectToMonth, renewalTone,
   secretTone, solBurnPerDay, solTone, summarize, worst,
   type BurnGroup, type BurnRate, type CcEdge, type CcNode, type CommandCenterState, type DrawerList, type ListItem, type ManualFacts, type Metric, type Renewal,
-  type SecretInfo, type Tone, type WatchItem,
+  type SecretInfo, type Tone, type WatchItem, type AlertOutcome, type FeedbackStatus,
 } from './model.js'
 import { readSolSamples, recordSolSample } from './balances.js'
 
@@ -296,7 +296,8 @@ async function probeTelegram() {
 
 interface SheetStats {
   total: number; last7d: number; avgRating7d: number | null; open: number; openLow: number
-  newestOpen: { at: string; rating: number; subject: string; status: string }[]
+  /** `row` is the Sheet row (Code.gs v6+), needed by the Resolve button. */
+  newestOpen: { at: string; rating: number; subject: string; status: string; row?: number }[]
 }
 
 async function probeSheets() {
@@ -492,6 +493,34 @@ export async function addWatch(text: string): Promise<void> {
   await db`INSERT INTO command_center_watch (text) VALUES (${text})`
 }
 
+/** Short, non-reversible id for an ops alert fingerprint, so the page never receives the raw fingerprint text. */
+export function alertKey(fingerprint: string): string {
+  return createHash('sha256').update(fingerprint).digest('hex').slice(0, 20)
+}
+
+/** Resolve button on an ops alert: the same review row scripts/review_ops_alerts.mjs writes. It comes back if the error happens again. */
+export async function reviewAlert(key: string, outcome: AlertOutcome): Promise<void> {
+  const db = requireSql()
+  await ensureTables(db)
+  const rows = (await db`SELECT fingerprint FROM ops_alerts WHERE last_seen > now() - interval '180 days'`) as { fingerprint: string }[]
+  const fp = rows.find((r) => alertKey(r.fingerprint) === key)?.fingerprint
+  if (!fp) throw new Error('This alert is no longer listed. Refresh the page.')
+  await db`INSERT INTO ops_alert_reviews (fingerprint, reviewed_at, reviewed_by, note, outcome) VALUES (${fp}, now(), 'team (command center)', null, ${outcome})
+    ON CONFLICT (fingerprint) DO UPDATE SET reviewed_at = now(), reviewed_by = EXCLUDED.reviewed_by, note = EXCLUDED.note, outcome = EXCLUDED.outcome`
+}
+
+/** Resolve button on a feedback row: Code.gs set-status, which only writes the row if its Received cell still matches. */
+export async function setFeedbackStatus(row: number, at: string, status: FeedbackStatus): Promise<void> {
+  const url = process.env.FEEDBACK_SHEET_WEBHOOK_URL
+  const secret = process.env.FEEDBACK_SHEET_SECRET
+  if (!url || !secret) throw new Error('The feedback Sheet webhook is not configured.')
+  const r = await timed((signal) => getJson<{ ok?: boolean; error?: string; done?: number[] }>(url, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ secret, action: 'set-status', status, rows: [{ row, at }] }), signal, redirect: 'follow',
+  }), 15_000)
+  if (!r.ok || !r.value?.ok) throw new Error(`The Sheet did not answer: ${r.error ?? r.value?.error ?? 'no reply'}`)
+  if (!r.value.done?.includes(row)) throw new Error('That row moved in the Sheet (sorted or edited). Refresh and try again.')
+}
+
 export async function dismissWatch(key: string): Promise<void> {
   const db = requireSql()
   await ensureTables(db)
@@ -550,12 +579,12 @@ async function probeNeon() {
     }),
     // Reviews still in force (the error has not happened again since), newest first.
     timed(async () => (await db`
-      SELECT r.reviewed_at, r.reviewed_by, r.note, r.outcome, a.source, a.step, a.count,
+      SELECT r.fingerprint, r.reviewed_at, r.reviewed_by, r.note, r.outcome, a.source, a.step, a.count,
         (SELECT message FROM ops_alert_events e WHERE e.fingerprint = a.fingerprint ORDER BY e.at DESC LIMIT 1) AS message
       FROM ops_alert_reviews r JOIN ops_alerts a ON a.fingerprint = r.fingerprint
       WHERE a.last_seen <= r.reviewed_at
       ORDER BY (r.outcome = 'not_fixed') DESC, r.reviewed_at DESC LIMIT 25`) as
-      { reviewed_at: string; reviewed_by: string; note: string | null; outcome: string | null; source: string; step: string; count: number; message: string | null }[]),
+      { fingerprint: string; reviewed_at: string; reviewed_by: string; note: string | null; outcome: string | null; source: string; step: string; count: number; message: string | null }[]),
   ])
   return {
     configured: true as const, ok: true, ms: ping.ms,
@@ -812,15 +841,15 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
   const unreviewed = db.configured && db.ok ? db.unreviewed : null
   if (unreviewed) {
     const events = unreviewed.reduce((a, b) => a + b.since, 0)
-    t.metrics.push(m('Not yet reviewed by Claude', unreviewed.length ? `${unreviewed.length} kind${unreviewed.length === 1 ? '' : 's'} · ${events} event${events === 1 ? '' : 's'}` : 'all reviewed', unreviewed.length ? 'warn' : 'ok'))
+    t.metrics.push(m('Not yet reviewed', unreviewed.length ? `${unreviewed.length} kind${unreviewed.length === 1 ? '' : 's'} · ${events} event${events === 1 ? '' : 's'}` : 'all reviewed', unreviewed.length ? 'warn' : 'ok'))
     if (unreviewed.length) {
       t.headline = `${unreviewed.length} to review`
-      flag(t, 'warn', `${unreviewed.length} kind${unreviewed.length === 1 ? '' : 's'} of error not reviewed yet: ask Claude to run scripts/review_ops_alerts.mjs`)
+      flag(t, 'warn', `${unreviewed.length} kind${unreviewed.length === 1 ? '' : 's'} of error not reviewed yet: resolve them in this drawer or ask Claude to run scripts/review_ops_alerts.mjs`)
     }
     t.lists.push({
-      title: 'Errors not yet reviewed by Claude', empty: 'Every error has been looked into.',
-      note: 'Claude marks a kind of error reviewed after investigating it (scripts/review_ops_alerts.mjs). If it happens again later, it comes back here.',
-      items: unreviewed.map((u) => ({ primary: scrub(u.message ?? u.step).slice(0, 150), secondary: `${u.source} · ${u.step} · ${u.since}× since last review · last ${ago(new Date(u.last_seen).toISOString(), now)}`, tone: (u.source === 'keeper' || u.source === 'chain' ? 'warn' : 'unknown') as Tone })),
+      title: 'Errors not yet reviewed', empty: 'Every error has been looked into.',
+      note: 'Mark one resolved here, or Claude marks it after investigating (scripts/review_ops_alerts.mjs). If it happens again later, it comes back here.',
+      items: unreviewed.map((u) => ({ primary: scrub(u.message ?? u.step).slice(0, 150), secondary: `${u.source} · ${u.step} · ${u.since}× since last review · last ${ago(new Date(u.last_seen).toISOString(), now)}`, tone: (u.source === 'keeper' || u.source === 'chain' ? 'warn' : 'unknown') as Tone, resolve: { kind: 'alert' as const, key: alertKey(u.fingerprint) } })),
     })
   }
   const reviewed = (db.configured && db.ok ? db.reviewed : null) ?? []
@@ -839,6 +868,7 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
         primary: `${label[r.outcome ?? ''] ?? 'Reviewed'} · ${r.note ?? scrub(r.message ?? r.step).slice(0, 140)}`,
         secondary: `${r.source} · ${r.step} · ${r.count}× total · by ${r.reviewed_by} ${ago(new Date(r.reviewed_at).toISOString(), now)}`,
         tone: tone[r.outcome ?? ''] ?? 'ok',
+        ...(r.outcome === 'not_fixed' ? { resolve: { kind: 'alert' as const, key: alertKey(r.fingerprint) } } : {}),
       })),
     })
   }
@@ -861,8 +891,8 @@ export async function collectCommandCenter(now = Date.now()): Promise<CommandCen
     )
     if (st.openLow) flag(sh, 'warn', `${st.openLow} open low rating${st.openLow === 1 ? '' : 's'} (1-2 stars) waiting for a reply`)
     sh.lists.push({
-      title: 'Newest open feedback', empty: 'Nothing open.', note: 'Mark a row done by typing resolved, done, fixed or won\'t fix in the sheet\'s Status column.',
-      items: st.newestOpen.map((f) => ({ primary: f.subject || '(no summary)', secondary: `${'★'.repeat(f.rating)}${'☆'.repeat(5 - f.rating)} · ${f.at.slice(0, 10)}${f.status ? ` · ${f.status}` : ''}`, tone: (f.rating <= 2 ? 'down' : f.rating === 3 ? 'warn' : 'ok') as Tone })),
+      title: 'Newest open feedback', empty: 'Nothing open.', note: 'Resolve a row here, or type resolved, done, fixed or won\'t fix in the sheet\'s Status column.',
+      items: st.newestOpen.map((f) => ({ primary: f.subject || '(no summary)', secondary: `${'★'.repeat(f.rating)}${'☆'.repeat(5 - f.rating)} · ${f.at.slice(0, 10)}${f.status ? ` · ${f.status}` : ''}`, tone: (f.rating <= 2 ? 'down' : f.rating === 3 ? 'warn' : 'ok') as Tone, ...(f.row ? { resolve: { kind: 'feedback' as const, row: f.row, at: f.at } } : {}) })),
     })
   } else if (sheets.configured && sheets.statsError) sh.metrics.push(m('Counts', `unavailable (${sheets.statsError})`, 'unknown'))
 

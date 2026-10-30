@@ -317,6 +317,12 @@
   .li i.ok { background: var(--ok); } .li i.warn { background: var(--warn); } .li i.down { background: var(--down); } .li i.unknown { background: var(--unknown); }
   .li .pri { color: var(--text); overflow-wrap: anywhere; }
   .li .sec { color: var(--text-3); font: 11px var(--mono); margin-top: 2px; overflow-wrap: anywhere; }
+  .li.act { grid-template-columns: 8px 1fr auto; }
+  .r-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .r-btn { border: 1px solid var(--line); background: transparent; color: var(--text-2); border-radius: 999px; padding: 3px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .r-btn:hover { color: var(--text); border-color: var(--ok); }
+  .r-btn.alt:hover { border-color: var(--line-strong); }
+  .r-btn:disabled { opacity: .5; cursor: progress; }
   .list-note { margin: 6px 2px 0; font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
   .list-empty { padding: 10px 12px; border-radius: 12px; background: var(--surface); font-size: 12.5px; color: var(--text-3); }
   .w-item { display: grid; grid-template-columns: 8px 1fr auto; gap: 10px; align-items: start; padding: 10px 12px; background: var(--surface); font-size: 12.5px; line-height: 1.45; }
@@ -670,9 +676,23 @@
       ? '<div class="list">' + l.items.map((it) => {
           const tag = it.url ? 'a' : 'div';
           const href = it.url ? ' href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer"' : '';
-          return '<' + tag + ' class="li"' + href + '><i class="' + (it.tone || '') + '"></i><div><div class="pri">' + esc(it.primary) + '</div>' + (it.secondary ? '<div class="sec">' + esc(it.secondary) + '</div>' : '') + '</div></' + tag + '>';
+          const acts = !it.url && it.resolve ? resolveButtons(it.resolve) : '';
+          return '<' + tag + ' class="li' + (acts ? ' act' : '') + '"' + href + '><i class="' + (it.tone || '') + '"></i><div><div class="pri">' + esc(it.primary) + '</div>' + (it.secondary ? '<div class="sec">' + esc(it.secondary) + '</div>' : '') + '</div>' + acts + '</' + tag + '>';
         }).join('') + '</div>'
       : '<div class="list-empty">' + esc(l.empty || 'Nothing here.') + '</div>') + (l.note ? '<p class="list-note">' + esc(l.note) + '</p>' : '')).join('');
+  }
+  // Resolve buttons (feedback rows and ops alerts); the POST answers with the refreshed state, so the item drops off.
+  function resolveButtons(r) {
+    const btn = (label, body, alt) => '<button type="button" class="r-btn' + (alt ? ' alt' : '') + '" data-body="' + esc(JSON.stringify(body)) + '">' + esc(label) + '</button>';
+    if (r.kind === 'feedback') {
+      const base = { action: 'feedback-status', row: r.row, at: r.at };
+      return '<div class="r-acts">' + btn('Resolved', { ...base, status: 'Resolved' }) + btn("Won't fix", { ...base, status: "Won't fix" }, true) + '</div>';
+    }
+    if (r.kind === 'alert') {
+      const base = { action: 'alert-review', key: r.key };
+      return '<div class="r-acts">' + btn('Resolved', { ...base, outcome: 'fixed' }) + btn('False alarm', { ...base, outcome: 'false_positive' }, true) + '</div>';
+    }
+    return '';
   }
   function worstOf(a, b) { return RANK[a] >= RANK[b] ? a : b; }
   function statusWord(s) { return { ok: 'healthy', warn: 'needs attention', down: 'failing', unknown: 'unknown' }[s] || s; }
@@ -832,6 +852,7 @@
       (metrics ? '<h3>Live readings</h3><div class="metrics">' + metrics + '</div>' : '') +
       (keys ? '<h3>Keys on ssr.fun</h3>' + keys : '') +
       renderLists(n.lists) +
+      (n.lists.some((l) => l.items.some((it) => it.resolve)) ? '<p class="list-note" id="actMsg"></p>' : '') +
       (alerts ? '<h3>Latest alerts</h3><div class="alerts">' + alerts + '</div>' : '') +
       form +
       (n.links.length ? '<h3>Open</h3><div class="links">' + n.links.map((l) => '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(l.label) + ' ↗</a>').join('') + '</div>' : '') +
@@ -840,6 +861,7 @@
     $('.dr-close', drawer).onclick = closeDrawer;
     const fm = $('#factsForm', drawer);
     if (fm) fm.onsubmit = (e) => saveFacts(e, n.id, fm);
+    drawer.querySelectorAll('.r-btn').forEach((b) => b.addEventListener('click', () => postAction(JSON.parse(b.dataset.body), b)));
     if (!refreshOnly) $('.dr-close', drawer).focus({ preventScroll: true });
   }
 
@@ -885,7 +907,7 @@
       render();
     } catch (err) {
       if (btn) btn.disabled = false;
-      const msg = $('#watchMsg', drawer); if (msg) { msg.textContent = err.message; msg.style.color = '#ffb3bb'; }
+      const msg = $('#actMsg', drawer) || $('#watchMsg', drawer); if (msg) { msg.textContent = err.message; msg.style.color = '#ffb3bb'; }
     }
   }
 
