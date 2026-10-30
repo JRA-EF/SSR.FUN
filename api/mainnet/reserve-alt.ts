@@ -107,6 +107,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         res.status(422).json({ error: "That address is not an existing address lookup table on Mainnet." });
         return;
       }
+      if (!table.value.isActive()) {
+        res.status(422).json({ error: "That lookup table is deactivated -- it can't be used for trading." });
+        return;
+      }
       const containsReserve = table.value.state.addresses.some((a) => a.toBase58() === reserve);
       if (!containsReserve) {
         res.status(422).json({ error: "That lookup table does not contain this Reserve's address -- it is not this Reserve's trading table." });

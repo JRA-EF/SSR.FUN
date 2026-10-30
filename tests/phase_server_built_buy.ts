@@ -265,6 +265,24 @@ describe("buildBuy.ts -- full build (fakes for RPC/program reads/Jupiter; real b
     expect(r.transactions[r.transactions.length - 1].kind).to.equal("mint");
   });
 
+  it("2026-10-29: a registered table that was deactivated or closed is ignored -- the build makes a new one (registering it replaces the stale row)", async () => {
+    const { AddressLookupTableAccount } = await import("@solana/web3.js");
+    for (const registered of ["deactivated", "closed"] as const) {
+      const w = world(10, { reserveAlt: Keypair.generate().publicKey.toBase58() });
+      const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+      const deps = makeDeps(w, spies);
+      const deactivated = new AddressLookupTableAccount({
+        key: new PublicKey(w.reserveAlt!),
+        state: { deactivationSlot: 123n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: [RESERVE] },
+      });
+      (deps.connection as any).getAddressLookupTable = async () => ({ context: { slot: 1 }, value: registered === "deactivated" ? deactivated : null });
+      const r = await buildBuyTransactions(deps, baseInput(w));
+      expect(r.reserveAlt, registered).to.equal(null);
+      expect(r.transactions.map((t) => t.kind), registered).to.include("alt-create");
+      expect(r.altToRegister, registered).to.be.a("string");
+    }
+  });
+
   it("a small Reserve attempts the single composition (instruction builds, not transaction builds) and returns mode single with ONE transaction when it fits", async () => {
     const w = world(2);
     const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };

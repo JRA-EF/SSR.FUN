@@ -14,7 +14,7 @@ import {
   findVaultAuthority,
   type ZapAssetLeg,
 } from "@ssr/sdk";
-import { compileSingleBuyTransaction, fetchLookupTables, SingleTxTooLargeError } from "../../src/merge/lib/singleTxBuy";
+import { compileSingleBuyTransaction, SingleTxTooLargeError } from "../../src/merge/lib/singleTxBuy";
 import { buildReserveAltAddresses, chunkAltAddresses } from "../../src/merge/lib/reserveAltClient";
 import { MAINNET_USDC_MINT, describeSwapFailure, jupiterExhaustedResponse, type JupiterCallResult, type JupiterQuote } from "./jupiter";
 
@@ -155,8 +155,25 @@ export interface ReserveReadResult {
   walletUsdcRaw: bigint;
   walletReserveTokenRaw: bigint;
   walletSolLamports: bigint;
+  /** The registered trading table, only while it is usable (exists and not deactivated); null otherwise. */
   reserveAlt: string | null;
+  /** The loaded table behind `reserveAlt`. */
+  reserveAltTable: AddressLookupTableAccount | null;
   readsMs: number;
+}
+
+/**
+ * The registered table, loaded, or null when it can't be used: closed, or
+ * deactivated (a deactivating table stops resolving once its cooldown ends,
+ * and every trade compiled against it fails -- 2026-10-29 campaign). Null
+ * sends the build down the create path, and registering the new table
+ * replaces the stale registry row. An RPC failure still throws: a flaky read
+ * must not make the user pay for a second table.
+ */
+export async function loadUsableReserveAlt(connection: Connection, alt: string | null): Promise<AddressLookupTableAccount | null> {
+  if (!alt) return null;
+  const res = await connection.getAddressLookupTable(new PublicKey(alt));
+  return res.value && res.value.isActive() ? res.value : null;
 }
 
 /**
@@ -198,7 +215,7 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
     connection.getMultipleAccountsInfo(vaultPdas),
     connection.getMultipleAccountsInfo([...walletAtasClassic, ...walletAtas2022, walletUsdcAta, walletRtAtaClassic, walletRtAta2022, reserveTokenMint]),
     connection.getBalance(wallet, "confirmed"),
-    deps.lookupReserveAlt(reserve.toBase58()).catch(() => null),
+    deps.lookupReserveAlt(reserve.toBase58()).catch(() => null).then(async (alt) => ({ alt, table: await loadUsableReserveAlt(connection, alt) })),
   ]);
   const n = candidateMints.length;
   const mintInfo = walletInfos[n * 2 + 3];
@@ -255,7 +272,8 @@ export async function readReserveAndWallet(deps: ReadDeps, reserve: PublicKey, w
       ? tokenAmountFromInfo(walletRtAta2022, walletInfos[n * 2 + 2])
       : tokenAmountFromInfo(walletRtAtaClassic, walletInfos[n * 2 + 1]),
     walletSolLamports: BigInt(walletSolLamports),
-    reserveAlt,
+    reserveAlt: reserveAlt.table ? reserveAlt.alt : null,
+    reserveAltTable: reserveAlt.table,
     readsMs: Date.now() - t0,
   };
 }
@@ -283,8 +301,8 @@ export async function planAlt(connection: Connection, wallet: PublicKey, read: R
     protocolFeeDestination: new PublicKey(MAINNET_TREASURY_VAULT),
     assets: read.orderedAssets.map((a) => ({ mint: a.mint, reserveAsset: a.reserveAsset, vault: a.vault })),
   });
-  if (read.reserveAlt) {
-    return { altAddresses, existingTables: await fetchLookupTables(connection, [read.reserveAlt]), wouldBeAlt: null, altCreateIx: null, wouldBeTable: null };
+  if (read.reserveAltTable) {
+    return { altAddresses, existingTables: [read.reserveAltTable], wouldBeAlt: null, altCreateIx: null, wouldBeTable: null };
   }
   const recentSlot = await connection.getSlot("finalized");
   const [altCreateIx, wouldBeAlt] = AddressLookupTableProgram.createLookupTable({ authority: wallet, payer: wallet, recentSlot });

@@ -13,7 +13,8 @@ import { buildReadOnlyProgram } from "../packages/sdk/src/readOnly";
 import { findManagerFeeRecipients, findReserveAsset, findReserveVault, findSettlementKeeperConfig } from "../packages/sdk/src/pda";
 import { buildUsdcFeeDestinationAtaInstructions, computeUsdcMintFeeRaw, effectiveMintFeeFraction, valueAssetAmountsUsdcRaw } from "../packages/sdk/src/usdcMintFee";
 import { quoteUsdcMintFee } from "../lib/mainnet/usdcMintFee";
-import { buildSeedTransaction } from "../lib/mainnet/buildSeed";
+import { buildSeedTransaction, preflightSeed } from "../lib/mainnet/buildSeed";
+import { MAX_ASSETS_PER_NEW_RESERVE, launchFitsSeed, seedAccountLockEstimate } from "../src/merge/lib/createReserveClient";
 import { BuildError } from "../lib/mainnet/buildCommon";
 import { assessLaunchFeasibility } from "../src/merge/lib/launchFunding";
 
@@ -167,6 +168,8 @@ function seedDeps(w: SeedWorld, feeQuoteSigner: Keypair | null) {
         if (k.equals(getAssociatedTokenAddressSync(USDC, w.manager))) return tokenAccountInfo(USDC, w.manager, w.walletUsdcRaw);
         if (k.equals(getAssociatedTokenAddressSync(USDC, TREASURY, true))) return tokenAccountInfo(USDC, TREASURY, 0n);
         for (const l of w.legs) if (k.equals(findReserveVault(reserve, l.mint, PROGRAM_ID)[0])) return tokenAccountInfo(l.mint, reserve, 0n);
+        // The pre-creation check reads each asset's mint for its decimals and token program.
+        for (const l of w.legs) if (k.equals(l.mint)) return mintAccountInfo(0n, TOKEN_PROGRAM_ID);
         return null;
       }),
     getBalance: async () => 1_000_000_000,
@@ -270,15 +273,128 @@ describe("DEC-0238 -- lib/mainnet/buildSeed.ts (server-built, co-signed seed)", 
     await expectStatus(buildSeedTransaction(s.deps, seedInput(w, s.reserve, [5_000_000n, 2_500_000n])), 422);
   });
 
-  it("a 12-asset seed that cannot fit asks for a lookup table (signers excluded) instead of building", async () => {
-    const legs = Array.from({ length: 12 }, () => ({ mint: Keypair.generate().publicKey, decimals: 6, price: 1 }));
-    const w = base({ legs, recipients: [Keypair.generate().publicKey, Keypair.generate().publicKey] });
+  it("a 10-asset seed that is too large in bytes asks for a lookup table (signers excluded) instead of building", async () => {
+    const legs = Array.from({ length: 10 }, () => ({ mint: Keypair.generate().publicKey, decimals: 6, price: 1 }));
+    const w = base({ legs, recipients: [Keypair.generate().publicKey] });
     const { deps, reserve } = seedDeps(w, signer);
     const r = await buildSeedTransaction(deps, seedInput(w, reserve, legs.map(() => 1_000_000n)));
     expect(r.status).to.equal("needsLookupTable");
     if (r.status !== "needsLookupTable") return;
     expect(r.addresses).to.not.include(w.manager.toBase58());
     expect(r.addresses).to.not.include(signer.publicKey.toBase58());
-    expect(r.usdcMintFeeRaw).to.equal("120000");
+    expect(r.usdcMintFeeRaw).to.equal("100000");
+  });
+
+  it("2026-10-29 #69: a 12-asset seed is refused for the 64-account limit, not sent off to build a lookup table that can't help", async () => {
+    const legs = Array.from({ length: 12 }, () => ({ mint: Keypair.generate().publicKey, decimals: 6, price: 1 }));
+    const w = base({ legs, recipients: [Keypair.generate().publicKey, Keypair.generate().publicKey] });
+    const { deps, reserve } = seedDeps(w, signer);
+    try {
+      await buildSeedTransaction(deps, seedInput(w, reserve, legs.map(() => 1_000_000n)));
+      expect.fail("expected a 422");
+    } catch (e) {
+      expect(e).to.be.instanceOf(BuildError);
+      expect((e as BuildError).status).to.equal(422);
+      expect((e as BuildError).message).to.match(/at most 64/);
+    }
+  });
+
+  it("a price API failure is a retryable 503, not 'this asset has no price' (2026-10-29 run 5)", async () => {
+    const w = base();
+    const { deps, reserve } = seedDeps(w, signer);
+    deps.fetchPrices = async () => {
+      throw new Error("429");
+    };
+    try {
+      await buildSeedTransaction(deps, seedInput(w, reserve, [5_000_000n, 2_500_000n]));
+      expect.fail("expected a 503");
+    } catch (e) {
+      expect((e as BuildError).status).to.equal(503);
+      expect((e as BuildError).message).to.match(/busy/);
+    }
+  });
+});
+
+describe("2026-10-29 campaign -- the seed is checked before the Reserve exists (preflightSeed)", () => {
+  const signer = Keypair.generate();
+  const world = (legCount: number, o: Partial<SeedWorld> = {}): SeedWorld => ({
+    legs: [{ mint: USDC, decimals: 6, price: 1 }, ...Array.from({ length: legCount - 1 }, () => ({ mint: Keypair.generate().publicKey, decimals: 6, price: 2 }))],
+    manager: Keypair.generate().publicKey,
+    walletUsdcRaw: 20_000_000n,
+    status: { assetsInitializing: {} },
+    recipients: null,
+    ...o,
+  });
+  const input = (w: SeedWorld, recipients: PublicKey[] = []) => ({
+    manager: w.manager,
+    assetMints: w.legs.map((l) => l.mint),
+    seedAmountsRaw: w.legs.map(() => 1_000_000n),
+    mintFeeBps: 100,
+    feeRecipients: recipients,
+    feeDestination: w.manager,
+  });
+  const expectRefusal = async (p: Promise<unknown>, status: number, re: RegExp) => {
+    try {
+      await p;
+      expect.fail(`expected ${status}`);
+    } catch (e) {
+      expect(e).to.be.instanceOf(BuildError);
+      expect((e as BuildError).status).to.equal(status);
+      expect((e as BuildError).message).to.match(re);
+    }
+  };
+
+  it("passes a launchable basket and reports the fee and the account count", async () => {
+    const w = world(2);
+    const { deps } = seedDeps(w, signer);
+    const r = await preflightSeed(deps, input(w));
+    expect(r.status).to.equal("ok");
+    expect(r.seedValueUsdcRaw).to.equal("3000000"); // 1 USDC + 1 unit at $2
+    expect(r.usdcMintFeeRaw).to.equal("30000");
+    expect(r.accountLocks).to.be.at.most(64);
+  });
+
+  it("refuses an unpriced asset (#72), a failed price request (503), too little USDC, and a 12-asset basket", async () => {
+    let w = world(2);
+    w.legs[1].price = null;
+    await expectRefusal(preflightSeed(seedDeps(w, signer).deps, input(w)), 422, /no current USD price/);
+
+    w = world(2);
+    const s = seedDeps(w, signer);
+    s.deps.fetchPrices = async () => {
+      throw new Error("429");
+    };
+    await expectRefusal(preflightSeed(s.deps, input(w)), 503, /busy/);
+
+    w = world(2, { walletUsdcRaw: 1_010_000n }); // the 1 USDC seed leg but not the 0.03 fee
+    await expectRefusal(preflightSeed(seedDeps(w, signer).deps, input(w)), 422, /mint fee/);
+
+    w = world(12);
+    await expectRefusal(preflightSeed(seedDeps(w, signer).deps, input(w, [Keypair.generate().publicKey, Keypair.generate().publicKey])), 422, /at most 64/);
+  });
+
+  it("the client's estimate tracks the real seed: never under it with existing recipient accounts, at most one more per recipient without", async () => {
+    for (const [assets, recipients] of [[1, 0], [6, 3], [10, 2], [8, 6]] as const) {
+      const w = world(assets);
+      const r = await preflightSeed(seedDeps(w, signer).deps, input(w, Array.from({ length: recipients }, () => Keypair.generate().publicKey))).catch((e) => e as BuildError);
+      const estimate = seedAccountLockEstimate(assets, recipients);
+      // In this mock no recipient has a USDC account yet, so each adds its owner for the account-create.
+      const worst = estimate + recipients;
+      if (r instanceof BuildError) {
+        expect(worst, `${assets} assets / ${recipients} recipients`).to.be.greaterThan(64);
+      } else {
+        // A USDC asset shares its mint and the creator's USDC account with the fee accounts, so the estimate runs up to 3 high.
+        expect(r.accountLocks, `${assets} assets / ${recipients} recipients`).to.be.within(estimate - 3, worst);
+      }
+    }
+  });
+
+  it("the Create flow's limits: 10 assets max, fewer with many fee recipients", () => {
+    expect(MAX_ASSETS_PER_NEW_RESERVE).to.equal(10);
+    expect(launchFitsSeed(10, 2)).to.equal(true);
+    expect(launchFitsSeed(11, 1)).to.equal(false);
+    expect(launchFitsSeed(12, 2)).to.equal(false);
+    expect(launchFitsSeed(10, 5)).to.equal(false);
+    expect(launchFitsSeed(9, 8)).to.equal(true);
   });
 });

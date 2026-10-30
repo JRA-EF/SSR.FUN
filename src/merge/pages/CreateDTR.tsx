@@ -28,7 +28,8 @@ import {
   isWalletRejectionError,
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
-  MAX_ASSETS_PER_RESERVE,
+  MAX_ASSETS_PER_NEW_RESERVE,
+  launchFitsSeed,
   rawToUiAmount,
   uploadReserveMetadata,
   estimateNetSeedReserveTokens,
@@ -1091,19 +1092,20 @@ export function CreateDTR({
   const handleNext = () => setStep((s) => Math.min(4, s + 1));
   const handleBack = () => setStep((s) => Math.max(1, s - 1));
 
+  // The seed must fit one Solana transaction (64 accounts): at most
+  // MAX_ASSETS_PER_NEW_RESERVE assets, fewer with many fee recipients.
+  // Refused here, before anything is submitted (2026-10-29: a 12-asset
+  // Reserve was created and could never be seeded).
+  const recipientCountForSeed = feeRecipients.length + 1;
+  const atAssetLimit = !launchFitsSeed(assets.length + 1, recipientCountForSeed);
+
   const addAsset = (symbol: string, assetName: string) => {
-    // Mirrors the deployed program's own per-Reserve asset limit (see
-    // MAX_ASSETS_PER_RESERVE) -- refusing here, before anything is
-    // submitted, is what keeps an over-limit basket from starting a
-    // deployment the program would reject partway through registration.
-    if (assets.length >= MAX_ASSETS_PER_RESERVE) return;
+    if (atAssetLimit) return;
     if (!assets.some(a => a.symbol === symbol)) {
       setAssets([...assets, { symbol, name: assetName, weight: 0.1 }]);
       setRemovedAssets((prev) => prev.filter((r) => r.symbol !== symbol));
     }
   };
-  const atAssetLimit = assets.length >= MAX_ASSETS_PER_RESERVE;
-
   const removeAsset = (symbol: string) => {
     setAssets(assets.filter(a => a.symbol !== symbol));
   };
@@ -1222,6 +1224,10 @@ export function CreateDTR({
     }
     if (feeRecipients.length + 1 >= 10) {
       setFeeRecipientAddError("Maximum of 10 recipients reached, including the Primary Fee Destination.");
+      return;
+    }
+    if (!launchFitsSeed(assets.length, feeRecipients.length + 2)) {
+      setFeeRecipientAddError(`With ${assets.length} assets, this Reserve can't take another fee recipient: the launch must fit one Solana transaction. Remove an asset to add one.`);
       return;
     }
     if (feeRecipients.some((r) => r.address === address)) {
@@ -2069,7 +2075,9 @@ export function CreateDTR({
                       ))}
                       {atAssetLimit && (
                         <div className="p-3 text-center text-sm text-muted-foreground">
-                          This Reserve holds the maximum of {MAX_ASSETS_PER_RESERVE} assets. Remove one to add a different asset.
+                          {assets.length >= MAX_ASSETS_PER_NEW_RESERVE
+                            ? `A new Reserve can launch with at most ${MAX_ASSETS_PER_NEW_RESERVE} assets. Remove one to add a different asset.`
+                            : `With ${recipientCountForSeed} fee recipients, this Reserve can launch with at most ${assets.length} assets (the launch must fit one Solana transaction). Remove an asset or a fee recipient to add another.`}
                         </div>
                       )}
                       {(() => {

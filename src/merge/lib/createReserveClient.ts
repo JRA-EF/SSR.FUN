@@ -669,6 +669,33 @@ import { seedComputeUnitLimit } from "./seedBudget";
  */
 export const MAX_ASSETS_PER_RESERVE = 12;
 
+/** Solana's per-transaction account-lock limit; a lookup table does not raise it. */
+const SEED_MAX_ACCOUNT_LOCKS = 64;
+
+/**
+ * Accounts the seed transaction locks: about 20 fixed (programs, Reserve PDAs,
+ * fee accounts), 4 per asset (registration, vault, the creator's account, the
+ * mint) and 1 per fee recipient (its USDC account; one more if that account
+ * doesn't exist yet, which the server's pre-creation check counts exactly).
+ * Measured 2026-10-29: 12 assets + 2 recipients = ~70 (Reserve #69 can't be
+ * seeded); 10 assets + 2 recipients fit.
+ */
+export function seedAccountLockEstimate(assetCount: number, feeRecipientCount: number): number {
+  return 20 + 4 * assetCount + Math.max(1, feeRecipientCount);
+}
+
+/**
+ * The most assets a NEW Reserve can launch with. The program allows 12
+ * (MAX_ASSETS_PER_RESERVE, still the limit for rebalances), but a 12-asset
+ * seed never fits one transaction.
+ */
+export const MAX_ASSETS_PER_NEW_RESERVE = 10;
+
+/** Can a launch with this many assets and fee recipients (Primary included) be seeded in one transaction? */
+export function launchFitsSeed(assetCount: number, feeRecipientCount: number): boolean {
+  return assetCount <= MAX_ASSETS_PER_NEW_RESERVE && seedAccountLockEstimate(assetCount, feeRecipientCount) <= SEED_MAX_ACCOUNT_LOCKS;
+}
+
 /**
  * Submits already-signed transaction bytes and keeps re-sending them every
  * few seconds while the bounded status poll runs -- the direct fix for the
@@ -996,6 +1023,22 @@ async function signAndSendPossiblyOverLimit(
 export type BuildSeedResponse =
   | { status: "ready"; transactionBase64: string; lastValidBlockHeight: number; usdcMintFeeRaw: string; seedValueUsdcRaw: string; initialReserveTokens: string }
   | { status: "needsLookupTable"; addresses: string[]; usdcMintFeeRaw: string; seedValueUsdcRaw: string };
+
+/**
+ * The server's pre-creation seed check (POST /api/mainnet/build-seed with
+ * `preflight: true`): every asset priced, enough USDC for the fee, and a seed
+ * that fits Solana's account limit. Throws the server's plain message.
+ */
+export async function requestSeedPreflight(
+  body: { manager: string; assetMints: string[]; seedAmountsRaw: string[]; mintFeeBps: number; feeRecipients: string[]; feeDestination: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const res = await fetchImpl("/api/mainnet/build-seed", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ preflight: true, ...body }), credentials: "same-origin" });
+  const json = (await res.json().catch(() => null)) as { status?: string; error?: string } | null;
+  if (!res.ok || !json || json.status !== "ok") {
+    throw new Error((json && typeof json.error === "string" && json.error) || `Could not check the seed before launching (HTTP ${res.status}).`);
+  }
+}
 
 export async function requestSeedBuild(
   body: { reserve: string; manager: string; assetMints: string[]; seedAmountsRaw: string[]; initialReserveTokens: string; lookupTable: string | null },
@@ -1754,6 +1797,12 @@ export async function createReserveOnChain(params: {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   validateCreateReserveAssets(params.assets);
+  const feeRecipientCount = params.feeRecipients && params.feeRecipients.length > 1 ? params.feeRecipients.length : 1;
+  if (!launchFitsSeed(params.assets.length, feeRecipientCount)) {
+    throw new Error(
+      `A new Reserve can launch with at most ${MAX_ASSETS_PER_NEW_RESERVE} assets, fewer with many fee recipients: the seed must fit one Solana transaction. Remove an asset or a fee recipient.`,
+    );
+  }
   // DEC-0205: the chain's own answer on every selected mint, before a single
   // instruction is built or the wallet is opened.
   await assertSelectedMintsAreSupported(connection, params.assets);
@@ -1800,6 +1849,29 @@ export async function createReserveOnChain(params: {
     fundingStates = fundResult.fundingStates;
   } catch (e) {
     // addresses null: the Reserve was never created (see CreateDTR.tsx).
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", null, e);
+  }
+
+  // Everything the seed will check, checked while the Reserve doesn't exist
+  // yet: a failure here costs nothing on-chain and the swapped assets stay in
+  // the wallet for the next attempt. 2026-10-29: a seed under the minimum (#68)
+  // and an unpriced asset (#72) both failed AFTER create-and-register, leaving
+  // a Reserve stuck initialising until Resume.
+  const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
+  try {
+    assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
+    validateSeedPlan(finalSeedAmounts, initialReserveTokens);
+    if (params.usdcMintFee) {
+      await requestSeedPreflight({
+        manager: wallet.publicKey.toBase58(),
+        assetMints: params.assets.map((a) => a.mint),
+        seedAmountsRaw: finalSeedAmounts.map((a) => a.toString()),
+        mintFeeBps: params.mintFeeBps,
+        feeRecipients: params.feeRecipients && params.feeRecipients.length > 1 ? params.feeRecipients.map((r) => r.wallet.toString()) : [],
+        feeDestination: params.feeDestination.toBase58(),
+      });
+    }
+  } catch (e) {
     throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", null, e);
   }
 
@@ -1917,15 +1989,8 @@ export async function createReserveOnChain(params: {
     if (!canEnterSeeding(fundingStates)) {
       throw new Error(`Refusing to seed: only ${countReadyToSeed(fundingStates)} of ${fundingStates.length} assets are verified as fully funded.`);
     }
-    const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
-    // Fail fast, client-side, before ever asking for a signature -- the
-    // program rejects any per-asset seed amount below its own real floor
-    // (SsrError::SeedAmountTooLow) and submitting anyway just wastes a
-    // transaction on a guaranteed revert. Named per-asset here (mint +
-    // decimals-aware amount) since validateSeedPlan's own message doesn't
-    // know which asset is which.
-    assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
-    validateSeedPlan(finalSeedAmounts, initialReserveTokens);
+    // assertSeedAmountsMeetMinimum / validateSeedPlan already ran before
+    // create-and-register, on these same amounts.
     if (params.usdcMintFee) {
       seedSig = await seedWithUsdcMintFee(connection, wallet, { reserve: addresses.reserve, assetMints: assetAddresses.map((a) => a.mint), seedAmounts: finalSeedAmounts, initialReserveTokens }, clusterLabel);
     } else {

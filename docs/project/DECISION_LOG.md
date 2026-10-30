@@ -8362,3 +8362,41 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0272
+
+```json
+{
+  "id": "DEC-0272",
+  "date": "2026-10-30",
+  "title": "Campaign hardening: stale lookup tables ignored, launches capped at what a seed fits, seed checked before the Reserve is created",
+  "status": "Built and tested on branch fix/campaign-hardening; not deployed.",
+  "decision": "(1) The server only uses a Reserve's registered trading table while it exists and is active (loadUsableReserveAlt in lib/mainnet/buildCommon.ts); otherwise Buy/Sell build a new table and registering it replaces the stale reserve_alts row. The registry refuses a deactivated table and the keeper skips one. (2) A new Reserve launches with at most 10 assets (MAX_ASSETS_PER_NEW_RESERVE), fewer with many fee recipients: seedAccountLockEstimate = 20 + 4 per asset + 1 per recipient must stay within Solana's 64 account locks. MAX_ASSETS_PER_RESERVE stays 12 for rebalances. The server refuses an over-limit seed with a plain 422 instead of asking for a lookup table that can't help. (3) After the swaps and before create-and-register, the Create flow checks the seed minimum and calls POST /api/mainnet/build-seed with preflight: true (every asset priced, USDC for the fee, exact account count of the real seed transaction). A price API failure is now a retryable 503 ('price service is busy') instead of 'no current price'.",
+  "context": "2026-10-29 Mainnet test campaign: a cleanup deactivated 9 shared reserve_alts tables, and planAlt used a registered table without checking it, so every trade on those Reserves would have failed; a 12-asset seed touched ~70 accounts and Reserve #69 is stuck in assetsInitializing; #68 (seed under minimum) and #72 (price API rate-limited, reported as 'no current price') were created and then failed at the seed.",
+  "rationale": "Each failure now happens before anything is spent, with a message that names the real cause. Measured lock counts (tests): 20 fixed, 4 per non-USDC asset, 1 per recipient with a USDC account, 2 without; a USDC asset shares 2 accounts, so the estimate is exact or up to 3 high.",
+  "alternativesConsidered": [
+    "Split the seed over several transactions -- rejected for now: seed_reserve_usdc_fee is one instruction that takes every asset; splitting needs a program change.",
+    "Delete the stale reserve_alts row server-side -- unnecessary: the new table's registration upserts over it."
+  ],
+  "impact": "Creators can no longer pick 11-12 assets at launch; existing Reserves are unchanged. A launch that would fail at the seed now stops after the swaps with nothing created (swapped assets stay in the wallet and count toward the next attempt). If fee recipients have no USDC account yet, the preflight's exact count can refuse a basket the UI estimate allowed (up to 1 extra account per recipient).",
+  "affectedAreas": [
+    "lib/mainnet/buildCommon.ts",
+    "lib/mainnet/buildSeed.ts",
+    "api/mainnet/build-seed.ts",
+    "api/mainnet/asset-prices.ts",
+    "api/mainnet/reserve-alt.ts",
+    "api/mainnet/fee-settlement-cron.ts",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "tests/phase_usdc_mint_fee.ts",
+    "tests/phase_server_built_buy.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_usdc_mint_fee.ts: 12-asset seed refused at 64 locks, price failure 503, preflight refusals (unpriced, 503, USDC, 12 assets), estimate vs real seed for 1/6/8/10 assets, launch limits.",
+    "tests/phase_server_built_buy.ts: deactivated and closed registered tables both lead to alt-create + altToRegister.",
+    "Full offline suite 1,786 passing with the 5 known baseline failures (same 5 on origin/main); tsc -b clean."
+  ]
+}
+```
