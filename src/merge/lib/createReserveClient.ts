@@ -76,7 +76,8 @@ import {
   type ReserveOnChain,
   type RecipientInput,
 } from "@ssr/sdk";
-import { fetchJupiterSwapQuote, executeJupiterSwap, JupiterQuoteError, JupiterSwapNotLandedError } from "./jupiterSwapClient";
+import { fetchJupiterSwapQuote, executeJupiterSwap, JupiterQuoteError, JupiterSwapNotLandedError, submitSignedJupiterSwap, partitionSwapOutcomes, type JupiterSwapQuote } from "./jupiterSwapClient";
+import { createLaunchBatchSigner, buildLaunchLookupTableTxs, compileLaunchTx, fitsOneTransaction, launchLookupAddresses, registerReserveTradingTable, waitForLaunchTable, type LaunchBatchSigner, type PrebuiltLaunchTx } from "./oneApprovalLaunch";
 import { isRateLimitError, withRateLimitRetry, AmbiguousConfirmationError, confirmSignatureBounded, getCached } from "./rpcResilience";
 import {
   computeFundingShortfall,
@@ -87,7 +88,7 @@ import {
   isWithinAcceptableShortfallTolerance,
   type ReserveOnChainStatus,
 } from "./createReserveResume";
-import { assertSignedBy, assertSignerReady } from "./assertSigner";
+import { assertAllSignedBy, assertSignedBy, assertSignerReady } from "./assertSigner";
 import { advanceAssetFunding, canEnterSeeding, countReadyToSeed, type AssetFundingStatus, type PersistedAssetFunding } from "./launchFunding";
 import { PERMISSION_FLAGS } from "./onChainPermissions";
 
@@ -1022,8 +1023,29 @@ async function seedWithUsdcMintFee(
   params: { reserve: PublicKey; assetMints: PublicKey[]; seedAmounts: bigint[]; initialReserveTokens: bigint },
   clusterLabel: string,
   fetchImpl: typeof fetch = fetch,
+  /** One-approval launch: a lookup table already created for this Reserve. */
+  prebuiltTable: PublicKey | null = null,
+  onFallbackPrompt?: () => void,
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
+  if (prebuiltTable) {
+    const base = {
+      reserve: params.reserve.toBase58(),
+      manager: wallet.publicKey.toBase58(),
+      assetMints: params.assetMints.map((m) => m.toBase58()),
+      seedAmountsRaw: params.seedAmounts.map((a) => a.toString()),
+      initialReserveTokens: params.initialReserveTokens.toString(),
+      lookupTable: prebuiltTable.toBase58(),
+    };
+    const built = await requestSeedBuild(base, fetchImpl).catch(() => null);
+    if (built?.status === "ready") {
+      const tx = VersionedTransaction.deserialize(Buffer.from(built.transactionBase64, "base64"));
+      return signSubmitConfirmVersioned(connection, wallet, tx, built.lastValidBlockHeight, clusterLabel);
+    }
+    // The prebuilt table could not carry this seed: fall through to the
+    // per-step path, which builds a table of its own (extra prompts).
+    onFallbackPrompt?.();
+  }
   const body = {
     reserve: params.reserve.toBase58(),
     manager: wallet.publicKey.toBase58(),
@@ -1279,6 +1301,113 @@ export interface FundSeedAssetsOptions {
   onFundingStateChange?: (record: Record<string, PersistedAssetFunding>) => void;
   /** DEC-0249: epoch ms until which already-quoted targets and already-swapped amounts are kept regardless of price (launch start + LAUNCH_PRICE_LOCK_MS). */
   priceLockUntil?: number;
+  /**
+   * One-approval launch (oneApprovalLaunch.ts): when set, every funding swap
+   * is quoted first and then signed in ONE wallet prompt (together with the
+   * launch's pre-built transactions), instead of one prompt per swap. Swaps
+   * still each confirm and are balance-verified before seeding; legs that
+   * definitively did not land are re-quoted with more slippage and signed
+   * together in one further prompt.
+   */
+  batchSigner?: LaunchBatchSigner;
+}
+
+/** A funding swap the batch path still has to perform (one-approval launch). */
+interface PendingFundingSwap {
+  i: number;
+  asset: Pick<CreateReserveAssetInput, "mint" | "decimals" | "seedWeightFraction">;
+  swapInRaw: bigint;
+  targetRaw: bigint;
+  usdcBudgetRaw: bigint;
+  existingRaw: bigint;
+}
+
+/**
+ * The one-approval funding phase: quote every queued leg, sign them all in ONE
+ * prompt, submit them in parallel, then verify each leg's real balance exactly
+ * as the per-swap path does. Legs that definitively did not land (slippage,
+ * expiry) are re-quoted at the next slippage step and signed together in one
+ * more prompt; anything ambiguous stops the launch, never retried blind.
+ */
+async function runBatchedFundingSwaps(
+  connection: Connection,
+  wallet: WalletContextState,
+  owner: PublicKey,
+  jobs: PendingFundingSwap[],
+  signer: LaunchBatchSigner,
+  jupiterSwap: JupiterSwapFundingOptions,
+  finalSeedAmounts: bigint[],
+  advance: (mint: string, to: AssetFundingStatus, extra?: Partial<Pick<PersistedAssetFunding, "lastSignature" | "verifiedBalanceRaw" | "targetRaw" | "budgetUsdcRaw">>) => void,
+  resetForRetry: (mint: string) => void,
+): Promise<string | null> {
+  // One USDC preflight for the whole batch (the per-swap path checks each
+  // swap; here they are all signed at once, so check their sum).
+  const usdcHeldRaw = await fetchOwnedBalanceRaw(connection, new PublicKey(MAINNET_USDC_MINT), owner, TOKEN_PROGRAM_ID);
+  const neededRaw = (jobs.reduce((sum, j) => sum + j.swapInRaw, 0n) * 102n) / 100n;
+  if (usdcHeldRaw < neededRaw) {
+    throw new Error(
+      `This wallet holds ${(Number(usdcHeldRaw) / 1e6).toFixed(2)} USDC, but this launch's swaps need ~${(Number(neededRaw) / 1e6).toFixed(2)} USDC. Send this wallet more USDC, then try again -- nothing was swapped.`,
+    );
+  }
+  let pending = jobs;
+  let lastSig: string | null = null;
+  for (let attempt = 0; pending.length > 0; attempt++) {
+    const slippageBps: number = LAUNCH_SWAP_SLIPPAGE_STEPS_BPS[attempt];
+    // Quotes are fetched one at a time: the proxy paces Jupiter calls, and a
+    // burst is exactly what trips its rate limit.
+    const quotes: JupiterSwapQuote[] = [];
+    for (const job of pending) {
+      try {
+        quotes.push(await fetchJupiterSwapQuote(job.asset.mint, job.swapInRaw, owner.toBase58(), slippageBps));
+      } catch (e) {
+        resetForRetry(job.asset.mint);
+        if (e instanceof JupiterQuoteError && e.isAssetRouteProblem) throw new SeedAssetFundingError(job.asset.mint, e.message, e);
+        throw e;
+      }
+    }
+    pending.forEach((job) => {
+      jupiterSwap.onSwapStart?.(job.asset.mint);
+      advance(job.asset.mint, "awaiting_signature");
+    });
+    const signed = await signer.sign(quotes.map((q) => VersionedTransaction.deserialize(Buffer.from(q.swapTransaction, "base64"))));
+    assertAllSignedBy(signed, owner, wallet, (i) => `the swap for ${pending[i].asset.mint}`);
+    const outcomes = await Promise.allSettled(
+      signed.map((tx, k) => submitSignedJupiterSwap(connection, tx, quotes[k].lastValidBlockHeight, (sig) => advance(pending[k].asset.mint, "submitted", { lastSignature: sig }))),
+    );
+    const { retryable, fatal } = partitionSwapOutcomes(pending, outcomes);
+    // Verify every leg that landed BEFORE deciding anything else, so a later
+    // stop still leaves each landed leg recorded as funded.
+    for (let k = 0; k < pending.length; k++) {
+      const o = outcomes[k];
+      if (o.status !== "fulfilled") continue;
+      const job = pending[k];
+      lastSig = o.value as string;
+      advance(job.asset.mint, "confirmed");
+      const newBalance = await fetchOwnedBalanceRawSettled(connection, new PublicKey(job.asset.mint), owner, job.existingRaw, {
+        tokenProgram: (job.asset as { tokenProgram?: string }).tokenProgram ?? null,
+      });
+      finalSeedAmounts[job.i] = newBalance;
+      advance(job.asset.mint, "balance_verified", { verifiedBalanceRaw: newBalance.toString() });
+      jupiterSwap.onSwapSettled?.({ mint: job.asset.mint, quotedOutRaw: quotes[k].outAmount, receivedRaw: newBalance > job.existingRaw ? newBalance - job.existingRaw : 0n, slippageBps });
+      const shortfallPct = computeSwapShortfallPct(job.targetRaw, newBalance);
+      if (shortfallPct > SHORTFALL_WARN_PCT) jupiterSwap.onSwapShortfall?.({ mint: job.asset.mint, targetRaw: job.targetRaw, actualRaw: newBalance, shortfallPct });
+      advance(job.asset.mint, "ready_to_seed");
+    }
+    if (fatal) throw fatal;
+    if (retryable.length > 0 && attempt + 1 >= LAUNCH_SWAP_SLIPPAGE_STEPS_BPS.length) {
+      const first = retryable[0];
+      retryable.forEach((j) => resetForRetry(j.asset.mint));
+      const err = outcomes[pending.indexOf(first)];
+      const msg = err.status === "rejected" && err.reason instanceof Error ? err.reason.message : "The swap did not land.";
+      throw new SeedAssetFundingError(first.asset.mint, `${msg} It failed at every slippage setting up to ${slippageBps / 100}%.`, err.status === "rejected" ? err.reason : undefined);
+    }
+    retryable.forEach((j) => {
+      resetForRetry(j.asset.mint);
+      advance(j.asset.mint, "quoted", { targetRaw: j.targetRaw.toString(), budgetUsdcRaw: j.usdcBudgetRaw.toString() });
+    });
+    pending = retryable;
+  }
+  return lastSig;
 }
 
 async function fundSeedAssetsIdempotent(
@@ -1323,6 +1452,7 @@ async function fundSeedAssetsIdempotent(
   };
 
   let jupiterSwapSig: string | null = null;
+  const pendingSwaps: PendingFundingSwap[] = [];
   if (jupiterSwap?.enabled) {
     for (let i = 0; i < assets.length; i++) {
       const asset = assets[i];
@@ -1476,6 +1606,14 @@ async function fundSeedAssetsIdempotent(
         continue;
       }
 
+      if (opts.batchSigner) {
+        // One-approval launch: queue the swap; the batch phase below quotes
+        // every queued leg, then signs them all in one prompt.
+        advance(asset.mint, "quoted", { targetRaw: targetRaw.toString(), budgetUsdcRaw: usdcBudgetRaw.toString() });
+        pendingSwaps.push({ i, asset, swapInRaw: existingRaw <= 0n ? usdcBudgetRaw : scaledDeficitUsdcRaw, targetRaw, usdcBudgetRaw, existingRaw });
+        continue;
+      }
+
       // USDC preflight, per swap, IMMEDIATELY before requesting a signature
       // -- the direct guard against the confirmed live disaster (2026-08-25,
       // Reserve 11's USD1 swap: wallet held 0.490579 USDC against a ~$2
@@ -1559,6 +1697,10 @@ async function fundSeedAssetsIdempotent(
       }
       advance(asset.mint, "ready_to_seed");
     }
+  }
+
+  if (opts.batchSigner && jupiterSwap?.enabled && pendingSwaps.length > 0) {
+    jupiterSwapSig = await runBatchedFundingSwaps(connection, wallet, owner, pendingSwaps, opts.batchSigner, jupiterSwap, finalSeedAmounts, advance, resetForRetry);
   }
 
   const shortfalls = assets.map((a, i) => ({ asset: a, amount: computeFundingShortfall(finalSeedAmounts[i], balances[i]) }));
@@ -1686,138 +1828,18 @@ export class CreateReserveStepError extends Error {
   }
 }
 
-export async function createReserveOnChain(params: {
-  connection: Connection;
-  wallet: WalletContextState;
-  metadataUri: string;
-  /**
-   * The Reserve Token's on-chain (Metaplex) name and symbol, already fitted
-   * to Metaplex's 32/10-byte limits (fitTokenMetadataName/Symbol). When
-   * given, set_reserve_token_metadata is bundled into the create-and-register
-   * batch so the token shows its name, symbol and picture in wallets and
-   * DEXes from the moment it exists. Omitted only when the metadata URI is
-   * not this app's record (nothing standard-format to point at).
-   */
-  tokenMetadata?: { name: string; symbol: string };
-  mintFeeBps: number;
-  tvlFeeBps: number;
-  feeDestination: PublicKey;
-  /**
-   * Manager fee recipients beyond the Primary Fee Destination (DEC-0094).
-   * When omitted or containing only the Primary at 100%, no extra
-   * instruction is needed -- `feeDestination` alone already covers that
-   * case. When >1 entries, `initializeManagerFeeRecipients` is bundled into
-   * the SAME create-and-register transaction. If provided, MUST include the
-   * Primary (`feeDestination`) as one entry and allocations must sum to
-   * exactly 100%.
-   */
-  feeRecipients?: RecipientInput[];
-  /**
-   * Wallets to grant as restricted delegates (see ADDITIONAL_MANAGER_PERMISSIONS
-   * above) in the SAME create-and-register transaction -- CreateDTR.tsx's
-   * "Co-Managers" step. Bundled here, not as separate post-creation
-   * transactions, for the same reason feeRecipients is (DEC-0031): it shares
-   * the reserve/signer/systemProgram accounts already in this transaction,
-   * so no extra wallet approval is needed. Was previously collected by the
-   * UI and silently discarded -- confirmed root cause of "add delegate on
-   * reserve creation doesn't do anything" (a delegate added via ManageDTR.tsx
-   * after creation worked correctly; one entered during CreateDTR.tsx never
-   * reached the chain at all).
-   */
-  additionalManagers?: string[];
-  assets: CreateReserveAssetInput[];
-  seedTotalUsd: number;
-  onProgress: (step: CreateReserveStep) => void;
-  /** Fired the instant the target Reserve's addresses are derived (one ProtocolConfig read) -- lets the caller track exactly which Reserve this attempt targets (for reconciliation) without a second, redundant ProtocolConfig fetch of its own. */
-  onAddressesResolved?: (addresses: NewReserveAddresses) => void;
-  /** Cluster-aware program to deploy against -- defaults to the DevNet program (DEVNET_FIXTURES.programId) so every pre-existing caller/test is unaffected. CreateDTR.tsx passes SSR_PROGRAM_ID (cluster-aware) explicitly. */
-  programId?: PublicKey;
-  /** See fundSeedAssetsIdempotent's own header -- false on Mainnet (no faucet exists there). Defaults to true, matching every pre-existing DevNet caller. */
-  allowFaucet?: boolean;
-  /** See JupiterSwapFundingOptions -- Mainnet only, undefined/disabled everywhere else. */
-  jupiterSwap?: JupiterSwapFundingOptions;
-  /** See seedRawAmountForAsset's header -- REQUIRED to be a real, live SOL/USD price on Mainnet if `assets` includes wrapped SOL (never the DevNet test peg there); defaults to SOL_TEST_PRICE_USD so every pre-existing DevNet caller/test is unaffected. */
-  solPriceUsd?: number;
-  /** See signAndSend's header -- shown in an AmbiguousConfirmationError if RPC confirmation times out. Defaults to "DevNet" so every pre-existing caller/test is unaffected; CreateDTR.tsx passes its own real CLUSTER_LABEL. */
-  clusterLabel?: string;
-  /** DEC-0238: seed through the server with the mint fee paid in USDC (Mainnet). */
-  usdcMintFee?: boolean;
-  /** Per-asset funding progress -- see FundSeedAssetsOptions (launchFunding.ts's state machine, DEC-0151). */
-  onAssetProgress?: (event: AssetFundingProgressEvent) => void;
-  /** Persist per-asset funding state on every transition (see savePendingAssetFunding) so progress survives refresh/reconnect. */
-  onFundingStateChange?: (record: Record<string, PersistedAssetFunding>) => void;
-  /** DEC-0249: funding progress from an earlier attempt of THIS launch (one that stopped on a bad asset before the Reserve existed). */
-  persistedFunding?: Record<string, PersistedAssetFunding>;
-  /** DEC-0249: launch start + LAUNCH_PRICE_LOCK_MS -- see FundSeedAssetsOptions.priceLockUntil. */
-  priceLockUntil?: number;
-}): Promise<CreateReserveResult> {
-  const { connection, wallet } = params;
-  if (!wallet.publicKey) throw new Error("Connect a wallet first.");
-  validateCreateReserveAssets(params.assets);
-  // DEC-0205: the chain's own answer on every selected mint, before a single
-  // instruction is built or the wallet is opened.
-  await assertSelectedMintsAreSupported(connection, params.assets);
-  // The ONE choke point every caller of createReserveOnChain goes through
-  // for metadataUri, same rationale as validateCreateReserveAssets above --
-  // this is what makes "blocked before Phantom opens" true even if a future
-  // caller (a script, a different UI path) somehow skips CreateDTR.tsx's own
-  // upload-then-validate flow. See packages/sdk/src/metadataUri.ts's header
-  // for the full MetadataUriTooLong root-cause writeup this guards against:
-  // a data:/blob: URI, an unsupported scheme, or anything over the on-chain
-  // byte limit throws HERE, before deriveNewReserveAddresses or any signing.
-  validateMetadataUri(params.metadataUri);
-  // Same single-choke-point rationale as above -- validated here regardless
-  // of whether CreateDTR.tsx already validated its own input.
-  const additionalManagerWallets = validateAdditionalManagers(params.additionalManagers ?? [], wallet.publicKey);
-  const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
-  const allowFaucet = params.allowFaucet ?? true;
-  const solPriceUsd = params.solPriceUsd ?? SOL_TEST_PRICE_USD;
-  const clusterLabel = params.clusterLabel ?? "DevNet";
-  const program = buildReadOnlyProgram(connection) as any;
-
-  // DEC-0249: fund FIRST, create second. Every swap runs before the Reserve
-  // exists, so an asset whose route fails stops the launch with nothing
-  // created on-chain: the creator removes or replaces that asset and launches
-  // again, and the assets already swapped for stay in the wallet and count
-  // toward the next attempt (fundSeedAssetsIdempotent reads real balances).
-  // Before this, a route failure left a half-built Reserve whose only way
-  // forward was Resume with the same broken asset.
-  params.onProgress("fund-seed-assets");
-  const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction, solPriceUsd));
-
-  let fundSeedAssetsSig: string | null = null;
-  let finalSeedAmounts = seedAmounts;
-  let fundingStates: PersistedAssetFunding[] = [];
-  try {
-    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel, {
-      onAssetProgress: params.onAssetProgress,
-      onFundingStateChange: params.onFundingStateChange,
-      persistedFunding: params.persistedFunding,
-      priceLockUntil: params.priceLockUntil,
-    });
-    fundSeedAssetsSig = fundResult.signature;
-    finalSeedAmounts = fundResult.finalSeedAmounts;
-    fundingStates = fundResult.fundingStates;
-  } catch (e) {
-    // addresses null: the Reserve was never created (see CreateDTR.tsx).
-    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", null, e);
-  }
-
-  params.onProgress("create-and-register");
-  const addresses: NewReserveAddresses = await deriveNewReserveAddresses(program, programId);
-  params.onAddressesResolved?.(addresses);
-  const assetAddresses: ReserveAssetAddresses[] = params.assets.map((a) =>
-    deriveReserveAssetAddresses(addresses.reserve, new PublicKey(a.mint), programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),
-  );
-
-  let createAndRegisterSig: string;
-  try {
-    // DEC-0094: the Protocol/Manager fee split is no longer set here -- it's
-    // always derived on-chain, fresh at every mint/accrual, from
-    // mintFeeBps/tvlFeeBps alone (see packages/sdk/src/feeMath.ts and
-    // fee_math.rs). feeDestination is the Primary Fee Destination, the sole
-    // implicit Manager fee recipient unless additional recipients are
-    // configured below.
+/** Every instruction of the create-and-register step, in order (shared by the per-step and one-approval launch paths). */
+async function buildCreateAndRegisterInstructions(
+  program: any,
+  programId: PublicKey,
+  owner: PublicKey,
+  addresses: NewReserveAddresses,
+  assetAddresses: ReserveAssetAddresses[],
+  additionalManagerWallets: PublicKey[],
+  clusterLabel: string,
+  params: Pick<Parameters<typeof createReserveOnChain>[0], "metadataUri" | "mintFeeBps" | "tvlFeeBps" | "feeDestination" | "assets" | "tokenMetadata" | "feeRecipients">,
+): Promise<TransactionInstruction[]> {
+  const wallet = { publicKey: owner };
     const createIx = await buildCreateReserveInstruction(program, addresses, wallet.publicKey, {
       metadataUri: params.metadataUri,
       mintFeeBps: params.mintFeeBps,
@@ -1896,6 +1918,164 @@ export async function createReserveOnChain(params: {
     // batch 0), each requiring its own wallet approval -- exactly what the
     // on-chain Created -> AssetsInitializing status machine was already
     // designed to support (see packInstructionsBySize's own header).
+  return ixs;
+}
+
+export async function createReserveOnChain(params: {
+  connection: Connection;
+  wallet: WalletContextState;
+  metadataUri: string;
+  /**
+   * The Reserve Token's on-chain (Metaplex) name and symbol, already fitted
+   * to Metaplex's 32/10-byte limits (fitTokenMetadataName/Symbol). When
+   * given, set_reserve_token_metadata is bundled into the create-and-register
+   * batch so the token shows its name, symbol and picture in wallets and
+   * DEXes from the moment it exists. Omitted only when the metadata URI is
+   * not this app's record (nothing standard-format to point at).
+   */
+  tokenMetadata?: { name: string; symbol: string };
+  mintFeeBps: number;
+  tvlFeeBps: number;
+  feeDestination: PublicKey;
+  /**
+   * Manager fee recipients beyond the Primary Fee Destination (DEC-0094).
+   * When omitted or containing only the Primary at 100%, no extra
+   * instruction is needed -- `feeDestination` alone already covers that
+   * case. When >1 entries, `initializeManagerFeeRecipients` is bundled into
+   * the SAME create-and-register transaction. If provided, MUST include the
+   * Primary (`feeDestination`) as one entry and allocations must sum to
+   * exactly 100%.
+   */
+  feeRecipients?: RecipientInput[];
+  /**
+   * Wallets to grant as restricted delegates (see ADDITIONAL_MANAGER_PERMISSIONS
+   * above) in the SAME create-and-register transaction -- CreateDTR.tsx's
+   * "Co-Managers" step. Bundled here, not as separate post-creation
+   * transactions, for the same reason feeRecipients is (DEC-0031): it shares
+   * the reserve/signer/systemProgram accounts already in this transaction,
+   * so no extra wallet approval is needed. Was previously collected by the
+   * UI and silently discarded -- confirmed root cause of "add delegate on
+   * reserve creation doesn't do anything" (a delegate added via ManageDTR.tsx
+   * after creation worked correctly; one entered during CreateDTR.tsx never
+   * reached the chain at all).
+   */
+  additionalManagers?: string[];
+  assets: CreateReserveAssetInput[];
+  seedTotalUsd: number;
+  onProgress: (step: CreateReserveStep) => void;
+  /** Fired the instant the target Reserve's addresses are derived (one ProtocolConfig read) -- lets the caller track exactly which Reserve this attempt targets (for reconciliation) without a second, redundant ProtocolConfig fetch of its own. */
+  onAddressesResolved?: (addresses: NewReserveAddresses) => void;
+  /** Cluster-aware program to deploy against -- defaults to the DevNet program (DEVNET_FIXTURES.programId) so every pre-existing caller/test is unaffected. CreateDTR.tsx passes SSR_PROGRAM_ID (cluster-aware) explicitly. */
+  programId?: PublicKey;
+  /** See fundSeedAssetsIdempotent's own header -- false on Mainnet (no faucet exists there). Defaults to true, matching every pre-existing DevNet caller. */
+  allowFaucet?: boolean;
+  /** See JupiterSwapFundingOptions -- Mainnet only, undefined/disabled everywhere else. */
+  jupiterSwap?: JupiterSwapFundingOptions;
+  /** See seedRawAmountForAsset's header -- REQUIRED to be a real, live SOL/USD price on Mainnet if `assets` includes wrapped SOL (never the DevNet test peg there); defaults to SOL_TEST_PRICE_USD so every pre-existing DevNet caller/test is unaffected. */
+  solPriceUsd?: number;
+  /** See signAndSend's header -- shown in an AmbiguousConfirmationError if RPC confirmation times out. Defaults to "DevNet" so every pre-existing caller/test is unaffected; CreateDTR.tsx passes its own real CLUSTER_LABEL. */
+  clusterLabel?: string;
+  /** DEC-0238: seed through the server with the mint fee paid in USDC (Mainnet). */
+  usdcMintFee?: boolean;
+  /** Per-asset funding progress -- see FundSeedAssetsOptions (launchFunding.ts's state machine, DEC-0151). */
+  onAssetProgress?: (event: AssetFundingProgressEvent) => void;
+  /** Persist per-asset funding state on every transition (see savePendingAssetFunding) so progress survives refresh/reconnect. */
+  onFundingStateChange?: (record: Record<string, PersistedAssetFunding>) => void;
+  /** DEC-0249: funding progress from an earlier attempt of THIS launch (one that stopped on a bad asset before the Reserve existed). */
+  persistedFunding?: Record<string, PersistedAssetFunding>;
+  /** DEC-0249: launch start + LAUNCH_PRICE_LOCK_MS -- see FundSeedAssetsOptions.priceLockUntil. */
+  priceLockUntil?: number;
+  /**
+   * One-approval launch (oneApprovalLaunch.ts). Requires usdcMintFee. The
+   * funding swaps, the create-and-register batches and a lookup table for
+   * this Reserve are signed in ONE wallet prompt; the seed is the second.
+   * Falls back to the per-step path if anything cannot be pre-built.
+   */
+  oneApproval?: boolean;
+  /** Fired with the number of wallet prompts once the launch completes (one-approval path only). */
+  onWalletPrompts?: (count: number) => void;
+}): Promise<CreateReserveResult> {
+  const { connection, wallet } = params;
+  if (!wallet.publicKey) throw new Error("Connect a wallet first.");
+  validateCreateReserveAssets(params.assets);
+  // DEC-0205: the chain's own answer on every selected mint, before a single
+  // instruction is built or the wallet is opened.
+  await assertSelectedMintsAreSupported(connection, params.assets);
+  // The ONE choke point every caller of createReserveOnChain goes through
+  // for metadataUri, same rationale as validateCreateReserveAssets above --
+  // this is what makes "blocked before Phantom opens" true even if a future
+  // caller (a script, a different UI path) somehow skips CreateDTR.tsx's own
+  // upload-then-validate flow. See packages/sdk/src/metadataUri.ts's header
+  // for the full MetadataUriTooLong root-cause writeup this guards against:
+  // a data:/blob: URI, an unsupported scheme, or anything over the on-chain
+  // byte limit throws HERE, before deriveNewReserveAddresses or any signing.
+  validateMetadataUri(params.metadataUri);
+  // Same single-choke-point rationale as above -- validated here regardless
+  // of whether CreateDTR.tsx already validated its own input.
+  const additionalManagerWallets = validateAdditionalManagers(params.additionalManagers ?? [], wallet.publicKey);
+  const programId = params.programId ?? new PublicKey(DEVNET_FIXTURES.programId);
+  const allowFaucet = params.allowFaucet ?? true;
+  const solPriceUsd = params.solPriceUsd ?? SOL_TEST_PRICE_USD;
+  const clusterLabel = params.clusterLabel ?? "DevNet";
+  const program = buildReadOnlyProgram(connection) as any;
+
+  // DEC-0249: fund FIRST, create second. Every swap runs before the Reserve
+  // exists, so an asset whose route fails stops the launch with nothing
+  // created on-chain: the creator removes or replaces that asset and launches
+  // again, and the assets already swapped for stay in the wallet and count
+  // toward the next attempt (fundSeedAssetsIdempotent reads real balances).
+  // Before this, a route failure left a half-built Reserve whose only way
+  // forward was Resume with the same broken asset.
+  params.onProgress("fund-seed-assets");
+  const seedAmounts = params.assets.map((a) => seedRawAmountForAsset(a, params.seedTotalUsd * a.seedWeightFraction, solPriceUsd));
+
+  // One-approval launch: build everything that does not depend on the swap
+  // results NOW, so it is signed in the same prompt as the swaps.
+  const prepared = params.oneApproval && params.usdcMintFee ? await prepareOneApprovalLaunch(connection, wallet, program, programId, additionalManagerWallets, clusterLabel, params).catch(() => null) : null;
+  if (prepared) params.onAddressesResolved?.(prepared.addresses);
+
+  let fundSeedAssetsSig: string | null = null;
+  let finalSeedAmounts = seedAmounts;
+  let fundingStates: PersistedAssetFunding[] = [];
+  try {
+    const fundResult = await fundSeedAssetsIdempotent(connection, wallet, params.assets, seedAmounts, allowFaucet, params.jupiterSwap, clusterLabel, {
+      onAssetProgress: params.onAssetProgress,
+      onFundingStateChange: params.onFundingStateChange,
+      persistedFunding: params.persistedFunding,
+      priceLockUntil: params.priceLockUntil,
+      batchSigner: prepared?.signer,
+    });
+    fundSeedAssetsSig = fundResult.signature;
+    finalSeedAmounts = fundResult.finalSeedAmounts;
+    fundingStates = fundResult.fundingStates;
+  } catch (e) {
+    // addresses null: the Reserve was never created (see CreateDTR.tsx).
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", null, e);
+  }
+
+  if (prepared) {
+    const result = await finishOneApprovalLaunch(connection, wallet, prepared, params, fundingStates, finalSeedAmounts, fundSeedAssetsSig, clusterLabel);
+    params.onWalletPrompts?.(prepared.signer.prompts + prepared.extraPrompts());
+    return result;
+  }
+
+  params.onProgress("create-and-register");
+  const addresses: NewReserveAddresses = await deriveNewReserveAddresses(program, programId);
+  params.onAddressesResolved?.(addresses);
+  const assetAddresses: ReserveAssetAddresses[] = params.assets.map((a) =>
+    deriveReserveAssetAddresses(addresses.reserve, new PublicKey(a.mint), programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),
+  );
+
+  let createAndRegisterSig: string;
+  try {
+    // DEC-0094: the Protocol/Manager fee split is no longer set here -- it's
+    // always derived on-chain, fresh at every mint/accrual, from
+    // mintFeeBps/tvlFeeBps alone (see packages/sdk/src/feeMath.ts and
+    // fee_math.rs). feeDestination is the Primary Fee Destination, the sole
+    // implicit Manager fee recipient unless additional recipients are
+    // configured below.
+    const ixs = await buildCreateAndRegisterInstructions(program, programId, wallet.publicKey, addresses, assetAddresses, additionalManagerWallets, clusterLabel, params);
+
     const batches = packInstructionsBySize(wallet.publicKey, ixs);
     const batchSigs: string[] = [];
     for (const batch of batches) {
@@ -1938,6 +2118,216 @@ export async function createReserveOnChain(params: {
 
   params.onProgress("done");
 
+  return {
+    reserveId: addresses.reserveId.toString(),
+    reserve: addresses.reserve.toBase58(),
+    reserveTokenMint: addresses.reserveTokenMint.toBase58(),
+    mintAuthority: addresses.mintAuthority.toBase58(),
+    vaultAuthority: addresses.vaultAuthority.toBase58(),
+    assets: params.assets.map((a, i) => ({
+      mint: a.mint,
+      reserveAsset: assetAddresses[i].reserveAsset.toBase58(),
+      vault: assetAddresses[i].vault.toBase58(),
+      weightBps: a.weightBps,
+      decimals: a.decimals,
+    })),
+    transactions: { createAndRegister: createAndRegisterSig, fundSeedAssets: fundSeedAssetsSig, seed: seedSig },
+  };
+}
+
+// --- One-approval launch (oneApprovalLaunch.ts) ----------------------------
+
+interface PreparedOneApprovalLaunch {
+  program: any;
+  programId: PublicKey;
+  additionalManagerWallets: PublicKey[];
+  addresses: NewReserveAddresses;
+  assetAddresses: ReserveAssetAddresses[];
+  table: PublicKey;
+  lookupCount: number;
+  tableTxs: PrebuiltLaunchTx[];
+  createTxs: PrebuiltLaunchTx[];
+  signer: LaunchBatchSigner;
+  /** Prompts spent re-signing an expired pre-signed transaction, or on a fallback seed table. */
+  extraPrompts: () => number;
+  bumpPrompts: () => void;
+}
+
+async function prepareOneApprovalLaunch(
+  connection: Connection,
+  wallet: WalletContextState,
+  program: any,
+  programId: PublicKey,
+  additionalManagerWallets: PublicKey[],
+  clusterLabel: string,
+  params: Parameters<typeof createReserveOnChain>[0],
+): Promise<PreparedOneApprovalLaunch | null> {
+  const owner = wallet.publicKey!;
+  const addresses = await deriveNewReserveAddresses(program, programId);
+  const assetAddresses = params.assets.map((a) =>
+    deriveReserveAssetAddresses(addresses.reserve, new PublicKey(a.mint), programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),
+  );
+  const ixs = await buildCreateAndRegisterInstructions(program, programId, owner, addresses, assetAddresses, additionalManagerWallets, clusterLabel, params);
+  const [microLamports, { blockhash, lastValidBlockHeight }, recentSlot] = await Promise.all([
+    fetchPriorityFeeMicroLamports(connection),
+    connection.getLatestBlockhash("confirmed"),
+    connection.getSlot("finalized"),
+  ]);
+  const createTxs: PrebuiltLaunchTx[] = packInstructionsBySize(owner, ixs).map((batch) => ({
+    kind: "create-and-register" as const,
+    tx: compileLaunchTx(owner, blockhash, batch, microLamports),
+    lastValidBlockHeight,
+    rebuild: (bh: string) => compileLaunchTx(owner, bh, batch, microLamports),
+  }));
+  if (createTxs.some((t) => !fitsOneTransaction(t.tx))) return null;
+  const lookupAddresses = launchLookupAddresses({ ssrProgramId: programId, owner, addresses, assets: assetAddresses });
+  const { table, txs: tableTxs } = buildLaunchLookupTableTxs({ owner, recentSlot, blockhash, lastValidBlockHeight, microLamports, lookupAddresses });
+  if (tableTxs.some((t) => !fitsOneTransaction(t.tx))) return null;
+  let extra = 0;
+  return {
+    program,
+    programId,
+    additionalManagerWallets,
+    addresses,
+    assetAddresses,
+    table,
+    lookupCount: lookupAddresses.length,
+    tableTxs,
+    createTxs,
+    // The table goes first: its create must land before its extends, and it
+    // is submitted while the Reserve is still being created, so it is warm by
+    // the time the seed needs it.
+    signer: createLaunchBatchSigner(wallet, [...tableTxs, ...createTxs], connection),
+    extraPrompts: () => extra,
+    bumpPrompts: () => {
+      extra++;
+    },
+  };
+}
+
+/** Submits one pre-signed launch transaction; an expired one is rebuilt with a fresh blockhash and re-signed once (one extra prompt). */
+async function submitPrebuilt(connection: Connection, wallet: WalletContextState, p: PrebuiltLaunchTx, signed: VersionedTransaction, clusterLabel: string, onResign: () => void): Promise<string> {
+  const first = await submitAndConfirmWithRebroadcast(connection, signed.serialize(), p.lastValidBlockHeight);
+  let { signature, outcome } = first;
+  if (outcome.status === "expired") {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    onResign();
+    const resigned = await wallet.signTransaction!(p.rebuild(blockhash));
+    assertSignedBy(resigned, wallet.publicKey!, wallet, "this Reserve launch step");
+    ({ signature, outcome } = await submitAndConfirmWithRebroadcast(connection, resigned.serialize(), lastValidBlockHeight));
+  }
+  if (outcome.status === "confirmed") return signature;
+  if (outcome.status === "failed") throw new Error(describeOnChainError(new Error(`Transaction failed on-chain (${outcome.error}). Signature: ${signature}.`)));
+  if (outcome.status === "expired") throw new Error(`Transaction expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+  throw new AmbiguousConfirmationError(signature, clusterLabel);
+}
+
+async function finishOneApprovalLaunch(
+  connection: Connection,
+  wallet: WalletContextState,
+  prep: PreparedOneApprovalLaunch,
+  params: Parameters<typeof createReserveOnChain>[0],
+  fundingStates: PersistedAssetFunding[],
+  finalSeedAmounts: bigint[],
+  fundSeedAssetsSig: string | null,
+  clusterLabel: string,
+): Promise<CreateReserveResult> {
+  const { addresses } = prep;
+  // Nothing is created unless every asset is verified funded -- the same gate
+  // the per-step path applies before seeding, moved before creation.
+  if (!canEnterSeeding(fundingStates)) {
+    throw new CreateReserveStepError(`Refusing to launch: only ${countReadyToSeed(fundingStates)} of ${fundingStates.length} assets are verified as fully funded.`, "fund-seed-assets", null);
+  }
+  const initialReserveTokens = BigInt(Math.max(1, Math.floor(params.seedTotalUsd)) * 1_000_000);
+  try {
+    assertSeedAmountsMeetMinimum(params.assets, finalSeedAmounts);
+    validateSeedPlan(finalSeedAmounts, initialReserveTokens);
+  } catch (e) {
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "fund-seed-assets", null, e);
+  }
+
+  params.onProgress("create-and-register");
+  const signed = await prep.signer.signedPrebuilt();
+  const nTable = prep.tableTxs.length;
+  // The lookup table: create first, then its extends (independent of each other).
+  const tableReady = (async () => {
+    try {
+      await submitPrebuilt(connection, wallet, prep.tableTxs[0], signed[0], clusterLabel, prep.bumpPrompts);
+      await Promise.all(prep.tableTxs.slice(1).map((t, k) => submitPrebuilt(connection, wallet, t, signed[1 + k], clusterLabel, prep.bumpPrompts)));
+      return true;
+    } catch {
+      return false; // the seed falls back to a table of its own; the launch does not depend on this one
+    }
+  })();
+  let createAndRegisterSig: string;
+  let tableMatchesReserve = true;
+  try {
+    const sigs: string[] = [];
+    for (let k = 0; k < prep.createTxs.length; k++) {
+      try {
+        sigs.push(await submitPrebuilt(connection, wallet, prep.createTxs[k], signed[nTable + k], clusterLabel, prep.bumpPrompts));
+      } catch (e) {
+        // The Reserve id was reserved before the swaps ran. If another launch
+        // took it meanwhile, our create fails on-chain without creating
+        // anything: re-derive the next id and create the per-step way.
+        if (k !== 0 || e instanceof AmbiguousConfirmationError) throw e;
+        const fresh = await deriveNewReserveAddresses(prep.program, prep.programId);
+        if (fresh.reserve.equals(addresses.reserve)) throw e;
+        params.onAddressesResolved?.(fresh);
+        const freshAssets = params.assets.map((a) =>
+          deriveReserveAssetAddresses(fresh.reserve, new PublicKey(a.mint), prep.programId, a.tokenProgram ? new PublicKey(a.tokenProgram) : undefined),
+        );
+        const ixs = await buildCreateAndRegisterInstructions(prep.program, prep.programId, wallet.publicKey!, fresh, freshAssets, prep.additionalManagerWallets, clusterLabel, params);
+        for (const batch of packInstructionsBySize(wallet.publicKey!, ixs)) {
+          prep.bumpPrompts();
+          sigs.push(await signAndSend(connection, wallet, batch, clusterLabel));
+        }
+        prep.addresses = fresh;
+        prep.assetAddresses = freshAssets;
+        tableMatchesReserve = false;
+        break;
+      }
+    }
+    createAndRegisterSig = sigs[0];
+  } catch (e) {
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "create-and-register", prep.addresses, e);
+  }
+  return finishSeed(connection, wallet, prep, params, finalSeedAmounts, initialReserveTokens, fundSeedAssetsSig, createAndRegisterSig, clusterLabel, tableMatchesReserve ? tableReady : Promise.resolve(false));
+}
+
+async function finishSeed(
+  connection: Connection,
+  wallet: WalletContextState,
+  prep: PreparedOneApprovalLaunch,
+  params: Parameters<typeof createReserveOnChain>[0],
+  finalSeedAmounts: bigint[],
+  initialReserveTokens: bigint,
+  fundSeedAssetsSig: string | null,
+  createAndRegisterSig: string,
+  clusterLabel: string,
+  tableReady: Promise<boolean>,
+): Promise<CreateReserveResult> {
+  const { addresses, assetAddresses } = prep;
+
+  params.onProgress("seed");
+  let seedSig: string;
+  try {
+    const haveTable = (await tableReady) && (await waitForLaunchTable(connection, prep.table, prep.lookupCount));
+    if (haveTable) void registerReserveTradingTable(addresses.reserve, prep.table);
+    prep.bumpPrompts(); // the seed is the launch's second approval
+    seedSig = await seedWithUsdcMintFee(
+      connection,
+      wallet,
+      { reserve: addresses.reserve, assetMints: assetAddresses.map((a) => a.mint), seedAmounts: finalSeedAmounts, initialReserveTokens },
+      clusterLabel,
+      fetch,
+      haveTable ? prep.table : null,
+      prep.bumpPrompts,
+    );
+  } catch (e) {
+    throw new CreateReserveStepError(e instanceof Error ? e.message : String(e), "seed", addresses, e);
+  }
+  params.onProgress("done");
   return {
     reserveId: addresses.reserveId.toString(),
     reserve: addresses.reserve.toBase58(),

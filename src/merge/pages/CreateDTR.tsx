@@ -1447,6 +1447,9 @@ export function CreateDTR({
         solPriceUsd: IS_MAINNET ? (solPriceUsd ?? 0) : SOL_TEST_PRICE_USD,
         clusterLabel: CLUSTER_LABEL,
         usdcMintFee: IS_MAINNET,
+        // Swaps, creation and the Reserve's lookup table in ONE wallet
+        // approval; the seed is the second (oneApprovalLaunch.ts).
+        oneApproval: IS_MAINNET,
         onProgress: setCreateStep,
         onAssetProgress: setFundingProgress,
         // DEC-0249: what earlier attempts of this launch already funded, and
