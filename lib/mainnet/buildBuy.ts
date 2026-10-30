@@ -39,8 +39,9 @@ import { AddressLookupTableAccount, ComputeBudgetProgram, Keypair, PublicKey, Tr
 import { buildMintWithUsdcFeeInstructions, computeMintRequirements, describeOnChainError } from "@ssr/sdk";
 import { coSignFee, missingFeeDestinationAtaInstructions, quoteUsdcMintFee, resolveUsdcFeeRouting } from "./usdcMintFee";
 import { loadFeeLookupTable } from "./feeLookupTable";
+import { packContents, packFits, packSwapLegs, type PackableLeg } from "./swapPacking";
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
-import { assembleSingleBuyInstructions, buildUnwrapSolInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
+import { assembleSingleBuyInstructions, deserializeJupiterInstruction, isComputeBudgetInstruction, buildUnwrapSolInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
 import {
   BuildError,
@@ -237,8 +238,11 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   const quotes = await Promise.all(
     swapActions.map(async (action) => {
       const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: action.usdcBudgetRaw, slippageBps: input.slippageBps, apiKey: deps.jupiterApiKey };
-      let r = await deps.jupiterQuote({ ...base, maxAccounts: attemptSingle ? SINGLE_TX_SWAP_MAX_ACCOUNTS : null });
-      if (r.kind !== "ok" && attemptSingle) r = await deps.jupiterQuote({ ...base, maxAccounts: null });
+      // Capped routes are what let legs share a transaction (single mode, or
+      // swap packing in batch mode); an uncapped route is the fallback.
+      const capped = attemptSingle || swapActions.length > 1;
+      let r = await deps.jupiterQuote({ ...base, maxAccounts: capped ? SINGLE_TX_SWAP_MAX_ACCOUNTS : null });
+      if (r.kind !== "ok" && capped) r = await deps.jupiterQuote({ ...base, maxAccounts: null });
       if (r.kind !== "ok") throw jupiterFailure("quote", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw });
       if (!isPriceImpactAcceptable(r.value)) {
         throw new BuildError(422, `The swap for ${action.mint} has a price impact of ${Number(r.value.priceImpactPct).toFixed(1)}% -- too high to execute automatically; its on-chain liquidity is too thin right now.`, { mint: action.mint });
@@ -340,17 +344,10 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     }
     transactions.push({ kind: "single", ...toBase64(coSignFee(tx, feeQuoteSigner)), lastValidBlockHeight });
   } else {
-    // Batch: every swap's transaction built in parallel, re-stamped with the shared blockhash.
-    const swapTxs = await Promise.all(
-      quotes.map(async ({ action, quote }) => {
-        const r = await deps.jupiterBuildTransaction({ quote, userPublicKey: wallet.toBase58(), apiKey: deps.jupiterApiKey });
-        if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw, quote });
-        const tx = VersionedTransaction.deserialize(Buffer.from(r.value.swapTransaction, "base64"));
-        tx.message.recentBlockhash = blockhash;
-        return { kind: "swap" as const, mint: action.mint, legIndex: legIndexOf(action.mint), ...toBase64(tx), lastValidBlockHeight };
-      }),
-    );
-    transactions.push(...swapTxs);
+    // Batch: swap legs PACKED into as few transactions as fit (swapPacking.ts),
+    // each pack atomic. A leg that fits nowhere but alone is built as
+    // Jupiter's own full transaction, exactly as before.
+    transactions.push(...(await buildPackedSwapTransactions(deps, wallet, quotes, blockhash, lastValidBlockHeight, legIndexOf)));
     if (!input.legsOnly) {
       const mintIxs = fitsV0(wallet, mintFull, reserveTables) ? mintFull : mintLean;
       const mintTx = compileV0(wallet, blockhash, mintIxs, reserveTables);
@@ -398,4 +395,53 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     generatedAt: new Date().toISOString(),
     timings,
   };
+}
+
+/**
+ * Builds the batch-mode swap transactions, packing legs together where they
+ * fit (bytes, account locks, compute). Each returned swap transaction names
+ * every mint it buys (`mints`); `mint`/`legIndex` stay the first leg's so
+ * older clients keep working.
+ */
+async function buildPackedSwapTransactions(
+  deps: BuildBuyDeps,
+  wallet: PublicKey,
+  quotes: { action: Extract<BuyFundingAction, { kind: "jupiter-swap" }>; quote: JupiterQuote }[],
+  blockhash: string,
+  lastValidBlockHeight: number,
+  legIndexOf: (mint: string) => number,
+): Promise<BuiltTransaction[]> {
+  const single = async ({ action, quote }: (typeof quotes)[number]): Promise<BuiltTransaction> => {
+    const r = await deps.jupiterBuildTransaction({ quote, userPublicKey: wallet.toBase58(), apiKey: deps.jupiterApiKey });
+    if (r.kind !== "ok") throw jupiterFailure("transaction", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw, quote });
+    const tx = VersionedTransaction.deserialize(Buffer.from(r.value.swapTransaction, "base64"));
+    tx.message.recentBlockhash = blockhash;
+    return { kind: "swap" as const, mint: action.mint, mints: [action.mint], legIndex: legIndexOf(action.mint), ...toBase64(tx), lastValidBlockHeight };
+  };
+  if (quotes.length < 2) return Promise.all(quotes.map(single));
+  // Instruction form of every leg (parallel); a leg whose instructions cannot
+  // be fetched is simply built whole.
+  const sets = await Promise.all(
+    quotes.map(async ({ quote }) => {
+      const r = await deps.jupiterBuildInstructions({ quote, userPublicKey: wallet.toBase58(), apiKey: deps.jupiterApiKey }).catch(() => null);
+      return r && r.kind === "ok" ? r.value : null;
+    }),
+  );
+  const tables = await fetchLookupTables(deps.connection, sets.flatMap((s) => s?.addressLookupTableAddresses ?? [])).catch(() => null);
+  if (!tables || sets.some((s) => s === null)) return Promise.all(quotes.map(single));
+  const tableByKey = new Map(tables.map((t) => [t.key.toBase58(), t]));
+  const legs: PackableLeg[] = sets.map((set) => ({
+    instructions: [...set!.setupInstructions, set!.swapInstruction].map(deserializeJupiterInstruction).filter((ix) => !isComputeBudgetInstruction(ix)),
+    tables: set!.addressLookupTableAddresses.map((a) => tableByKey.get(a)!).filter(Boolean),
+  }));
+  const packs = packSwapLegs(wallet, legs);
+  return Promise.all(
+    packs.map(async (pack) => {
+      if (pack.length === 1 && !packFits(wallet, [legs[pack[0]]])) return single(quotes[pack[0]]);
+      const { instructions, tables: packTables } = packContents(pack.map((i) => legs[i]));
+      const tx = compileV0(wallet, blockhash, instructions, packTables);
+      const mints = pack.map((i) => quotes[i].action.mint);
+      return { kind: "swap" as const, mint: mints[0], mints, legIndex: legIndexOf(mints[0]), ...toBase64(tx), lastValidBlockHeight };
+    }),
+  );
 }

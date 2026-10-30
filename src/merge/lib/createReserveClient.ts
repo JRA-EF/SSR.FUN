@@ -1921,6 +1921,15 @@ async function buildCreateAndRegisterInstructions(
   return ixs;
 }
 
+/** Fills `tokenProgram` from each mint's on-chain owner wherever the caller left it blank (one batched read). */
+export async function withResolvedTokenPrograms(connection: Connection, assets: CreateReserveAssetInput[]): Promise<CreateReserveAssetInput[]> {
+  const missing = assets.filter((a) => !a.tokenProgram);
+  if (missing.length === 0) return assets;
+  const infos = await connection.getMultipleAccountsInfo(missing.map((a) => new PublicKey(a.mint)));
+  const byMint = new Map(missing.map((a, i) => [a.mint, infos[i]?.owner?.toBase58() ?? null]));
+  return assets.map((a) => (a.tokenProgram || !byMint.get(a.mint) ? a : { ...a, tokenProgram: byMint.get(a.mint)! }));
+}
+
 export async function createReserveOnChain(params: {
   connection: Connection;
   wallet: WalletContextState;
@@ -2001,6 +2010,11 @@ export async function createReserveOnChain(params: {
   // DEC-0205: the chain's own answer on every selected mint, before a single
   // instruction is built or the wallet is opened.
   await assertSelectedMintsAreSupported(connection, params.assets);
+  // A Token-2022 asset registered under the classic program fails inside a
+  // LATER create-and-register batch, after create_reserve already landed --
+  // leaving a half-registered Reserve (found live 2026-10-30, #90, PUMP).
+  // Read the program from the chain for any asset the caller left blank.
+  params = { ...params, assets: await withResolvedTokenPrograms(connection, params.assets) };
   // The ONE choke point every caller of createReserveOnChain goes through
   // for metadataUri, same rationale as validateCreateReserveAssets above --
   // this is what makes "blocked before Phantom opens" true even if a future

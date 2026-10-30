@@ -223,11 +223,17 @@ describe("buildBuy.ts -- full build (fakes for RPC/program reads/Jupiter; real b
     const r = await buildBuyTransactions(makeDeps(w, spies), baseInput(w));
     expect(r.mode).to.equal("batch");
     expect(spies.quotes).to.have.length(9); // every non-USDC leg, exactly once
-    expect(spies.instructionBuilds).to.have.length(0); // single attempt skipped outright above SINGLE_TX_MAX_SWAP_LEGS
-    expect(spies.builds).to.have.length(9);
+    // Swap packing (swapPacking.ts): the single attempt is still skipped above
+    // SINGLE_TX_MAX_SWAP_LEGS, but every leg's instructions are fetched once so
+    // legs can share transactions; whole-transaction builds are only fallbacks.
+    expect(spies.instructionBuilds).to.have.length(9);
     const kinds = r.transactions.map((t) => t.kind);
     expect(kinds[0]).to.equal("alt-create");
-    expect(kinds.filter((k) => k === "swap")).to.have.length(9);
+    const swaps = r.transactions.filter((t) => t.kind === "swap");
+    expect(swaps.length).to.be.within(1, 9);
+    const covered = swaps.flatMap((t) => t.mints ?? [t.mint!]);
+    expect(new Set(covered).size, "every deficient leg bought exactly once").to.equal(9);
+    expect(covered).to.have.length(9);
     expect(kinds[kinds.length - 1]).to.equal("mint");
     expect(r.altToRegister).to.be.a("string");
     for (const t of r.transactions) {

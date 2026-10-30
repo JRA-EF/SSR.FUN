@@ -160,6 +160,8 @@ export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redee
 export interface BuiltTransaction {
   kind: BuiltTxKind;
   mint?: string;
+  /** A packed swap: every mint this one atomic transaction buys (server swapPacking.ts). Absent = just `mint`. */
+  mints?: string[];
   legIndex?: number;
   base64: string;
   bytes: number;
@@ -462,8 +464,12 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // Mode "batch": swaps in parallel (staggered, re-broadcast, measured),
     // one automatic rebuild+re-sign for legs that provably did not land.
     // ---------------------------------------------------------------------
-    type SwapJob = { tx: BuiltTransaction; signed: VersionedTransaction; mint: string; legIndex: number; preSwapRaw: bigint };
-    const reconcileSwappedLeg = async (job: SwapJob) => {
+    // One job per swap TRANSACTION; a packed transaction carries several
+    // legs, all landing or none (it is atomic), so each leg is advanced and
+    // measured individually but submitted, confirmed and retried together.
+    type SwapLeg = { mint: string; legIndex: number; preSwapRaw: bigint };
+    type SwapJob = { tx: BuiltTransaction; signed: VersionedTransaction; mint: string; legs: SwapLeg[] };
+    const reconcileSwappedLeg = async (job: SwapLeg) => {
       advanceLeg(job.mint, "confirmed");
       const newBalance = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(job.mint), owner, job.preSwapRaw);
       const gained = newBalance > job.preSwapRaw ? newBalance - job.preSwapRaw : 0n;
@@ -476,24 +482,34 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     const submitSwaps = (jobs: SwapJob[]) =>
       Promise.allSettled(
         jobs.map(async (job, s) => {
-          params.onProgress?.({ phase: "swapping", mint: job.mint, index: s, total: jobs.length });
+          for (const leg of job.legs) params.onProgress?.({ phase: "swapping", mint: leg.mint, index: s, total: jobs.length });
           if (s > 0) await new Promise((r) => setTimeout(r, 150 * s)); // stagger broadcasts
-          advanceLeg(job.mint, "quoted", { targetRaw: (requiredAmountsRaw[job.legIndex] ?? 0n).toString() });
-          advanceLeg(job.mint, "awaiting_signature");
-          const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `the swap for ${job.mint.slice(0, 4)}...${job.mint.slice(-4)}`, (sig) => advanceLeg(job.mint, "submitted", { lastSignature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight }));
+          for (const leg of job.legs) {
+            advanceLeg(leg.mint, "quoted", { targetRaw: (requiredAmountsRaw[leg.legIndex] ?? 0n).toString() });
+            advanceLeg(leg.mint, "awaiting_signature");
+          }
+          const label = job.legs.map((l) => `${l.mint.slice(0, 4)}...${l.mint.slice(-4)}`).join(" + ");
+          const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `the swap for ${label}`, (sig) => {
+            for (const leg of job.legs) advanceLeg(leg.mint, "submitted", { lastSignature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight });
+          });
           // A swap leg is a Jupiter-only transaction: its custom codes are Jupiter's or a DEX's, never ssr_protocol's
           // (Jupiter 6001 = slippage was reported as SsrError::ZeroValue, 2026-10-26, DEC-0267).
           if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
           if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
           if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
-          await reconcileSwappedLeg(job);
+          for (const leg of job.legs) await reconcileSwappedLeg(leg);
         }),
       );
     const toJobs = (b: BuildBuyResponse, signedTxs: VersionedTransaction[]): SwapJob[] =>
       b.transactions
         .map((tx, i) => ({ tx, i }))
         .filter(({ tx }) => tx.kind === "swap" && tx.mint)
-        .map(({ tx, i }) => ({ tx, signed: signedTxs[i], mint: tx.mint!, legIndex: legIndexOf(tx.mint!), preSwapRaw: heldBefore.get(tx.mint!) ?? 0n }));
+        .map(({ tx, i }) => ({
+          tx,
+          signed: signedTxs[i],
+          mint: tx.mint!,
+          legs: (tx.mints && tx.mints.length > 0 ? tx.mints : [tx.mint!]).map((m) => ({ mint: m, legIndex: legIndexOf(m), preSwapRaw: heldBefore.get(m) ?? 0n })),
+        }));
 
     let jobs = toJobs(build, signed);
     currentStage = "submitting all of the Reserve's asset swaps";
@@ -502,11 +518,12 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const { retryable, fatal } = partitionSwapOutcomes(jobs, outcomes);
       if (fatal !== null) throw fatal;
       if (retryable.length === 0) break;
-      log("swap leg(s) did not land -- rebuilding just those legs and re-signing once", { attempt: attempt + 1, mints: retryable.map((j) => j.mint) });
+      const retryMints = retryable.flatMap((j) => j.legs.map((l) => l.mint));
+      log("swap leg(s) did not land -- rebuilding just those legs and re-signing once", { attempt: attempt + 1, mints: retryMints });
       currentStage = "rebuilding the Reserve asset swap(s) that did not land, for one more approval";
-      for (const j of retryable) advanceLeg(j.mint, "not_started");
+      for (const m of retryMints) advanceLeg(m, "not_started");
       params.onProgress?.({ phase: "building" });
-      const rebuild = await requestBuyBuild(buildRequest({ legsOnly: retryable.map((j) => j.mint) }));
+      const rebuild = await requestBuyBuild(buildRequest({ legsOnly: retryMints }));
       const resigned = await signMany(rebuild.transactions.map(decode));
       for (const l of rebuild.plan.legs) heldBefore.set(l.mint, BigInt(l.walletHeldRaw));
       jobs = toJobs(rebuild, resigned);

@@ -40,6 +40,8 @@ export class BuildError extends Error {
 export type BuiltTxKind = "alt-create" | "alt-extend" | "swap" | "mint" | "redeem" | "single";
 
 export interface BuiltTransaction {
+  /** A packed swap (swapPacking.ts): every mint this one atomic transaction buys. `mint` is the first. */
+  mints?: string[];
   kind: BuiltTxKind;
   /** The Reserve asset this swap funds/sells (kind "swap" only). */
   mint?: string;
