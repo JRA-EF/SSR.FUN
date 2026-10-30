@@ -20,3 +20,6 @@ export function seedComputeUnitLimit(assetCount: number): number {
   const count = Math.max(1, Math.ceil(assetCount));
   return Math.min(1_400_000, 100_000 + 40_000 * count);
 }
+
+/** DEC-0274: the app's cap for every Reserve, at launch and when adding assets in a rebalance (the program still allows 12). */
+export const APP_MAX_RESERVE_ASSETS = 10;

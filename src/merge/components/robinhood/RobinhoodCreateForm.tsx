@@ -21,6 +21,7 @@
 // shares equal to the USDG put in -- one Reserve Token per dollar, as on
 // Solana; afterwards the contract mints and redeems against NAV. The
 // sequencing is lib/evmLaunch.ts; the arithmetic lib/evmLaunchPlan.ts.
+import { reserveNameProblem } from "@/lib/reserveNameRules";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
 import { zeroAddress } from "viem";
@@ -269,6 +270,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
       if (!name.trim()) return "Give the reserve a name.";
       if (!symbol.trim()) return "Give the reserve a ticker.";
       if (nameProfane || symbolProfane || descriptionProfane) return PROFANITY_MESSAGE;
+      if (reserveNameProblem(name)) return reserveNameProblem(name);
       if (xLinkInvalid) return "Enter an X handle or an x.com link.";
       if (telegramLinkInvalid) return "Enter a Telegram handle or a t.me link.";
     }
@@ -531,7 +533,7 @@ export function RobinhoodCreateForm({ chainPicker }: { chainPicker?: ReactNode }
                 <div className="space-y-2">
                   <Label htmlFor="rhc-name">Reserve Name</Label>
                   <Input id="rhc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Strategic Tech Reserve" aria-invalid={nameProfane} />
-                  {nameProfane && <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>}
+                  {nameProfane ? <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p> : reserveNameProblem(name) && <p className="text-xs text-destructive">{reserveNameProblem(name)}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="rhc-symbol">Ticker</Label>

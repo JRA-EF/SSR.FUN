@@ -30,6 +30,7 @@ import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstru
 import { BuildError, compileV0, fitsV0, readReserveAndWallet, toBase64, type ReadDeps } from "./buildCommon";
 import { MAINNET_USDC_MINT, routeLabelsOf, type JupiterCallResult, type JupiterQuote } from "./jupiter";
 import { coSignFee } from "./usdcMintFee";
+import { APP_MAX_RESERVE_ASSETS } from "../../src/merge/lib/seedBudget";
 import { compactRemovalSteps, planRebalance, type PlanAsset, type PlannedLeg } from "./rebalancePlan";
 
 /** A leg that would lose more than this against SSR's prices is not built (thin route, bad quote). */
@@ -99,6 +100,9 @@ export async function buildRebalanceTransactions(deps: BuildRebalanceDeps, input
   const existing = read.orderedAssets; // on-chain order
   const existingSet = new Set(existing.map((a) => a.mint));
   const newTargets = input.targets.filter((t) => !existingSet.has(t.mint));
+  // DEC-0274: Reserves hold at most APP_MAX_RESERVE_ASSETS assets (the program still allows 12).
+  const heldAfter = input.targets.filter((t) => t.targetBps > 0).length;
+  if (newTargets.length > 0 && heldAfter > APP_MAX_RESERVE_ASSETS) throw new BuildError(422, `A Reserve can hold at most ${APP_MAX_RESERVE_ASSETS} assets; this rebalance would leave ${heldAfter}. Remove an asset first. Nothing was submitted.`);
 
   // New assets: decimals and token program from the mint, refused if the
   // program cannot hold them (same check as Create Reserve, DEC-0205).
@@ -263,9 +267,12 @@ async function buildLeg(
   const fairOut = (leg.usd / (ctx.priceOf(leg.buyMint) as number)) * 10 ** ctx.decimalsOf.get(leg.buyMint)!;
 
   let lastReason = "";
+  // DEC-0274: a rate-limited attempt wins over the reason of a later, smaller attempt (it used to read "route too large" when Jupiter had answered 429).
+  let jupiterBusy = false;
   for (const maxAccounts of LEG_MAX_ACCOUNTS) {
     const q = await deps.jupiterQuote({ inputMint: leg.sellMint, outputMint: leg.buyMint, amount: leg.amountInRaw, slippageBps: REBALANCE_SLIPPAGE_BPS, maxAccounts });
     if (q.kind !== "ok") {
+      if (q.kind !== "specific-error") jupiterBusy = true;
       lastReason = q.kind === "specific-error" ? `Jupiter found no route: ${q.message}.` : "Jupiter was busy; try again in a moment.";
       continue;
     }
@@ -277,6 +284,7 @@ async function buildLeg(
     }
     const built = await deps.jupiterInstructions(quote, input.signer.toBase58());
     if (built.kind !== "ok") {
+      if (built.kind !== "specific-error") jupiterBusy = true;
       lastReason = built.kind === "specific-error" ? `Jupiter could not build the swap: ${built.message}.` : "Jupiter was busy; try again in a moment.";
       continue;
     }
@@ -328,7 +336,7 @@ async function buildLeg(
       route: routeLabelsOf(quote),
     };
   }
-  throw new Error(lastReason || "This swap could not be built.");
+  throw new Error(jupiterBusy ? "Jupiter's route service was busy (rate limited), so this swap could not be priced. Try again in a minute." : lastReason || "This swap could not be built.");
 }
 
 /**

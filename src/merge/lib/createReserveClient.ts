@@ -652,7 +652,7 @@ export async function fetchPriorityFeeMicroLamports(connection: Connection): Pro
 export const PRIORITY_FEE_IX_RESERVED_BYTES = 64;
 
 export { seedComputeUnitLimit } from "./seedBudget";
-import { seedComputeUnitLimit } from "./seedBudget";
+import { seedComputeUnitLimit, APP_MAX_RESERVE_ASSETS } from "./seedBudget";
 
 /**
  * The maximum assets one Reserve may hold -- the product standard as of
@@ -686,10 +686,10 @@ export function seedAccountLockEstimate(assetCount: number, feeRecipientCount: n
 
 /**
  * The most assets a NEW Reserve can launch with. The program allows 12
- * (MAX_ASSETS_PER_RESERVE, still the limit for rebalances), but a 12-asset
- * seed never fits one transaction.
+ * (MAX_ASSETS_PER_RESERVE), but a 12-asset seed never fits one transaction.
  */
-export const MAX_ASSETS_PER_NEW_RESERVE = 10;
+export const MAX_ASSETS_PER_NEW_RESERVE = APP_MAX_RESERVE_ASSETS;
+export { APP_MAX_RESERVE_ASSETS };
 
 /**
  * The smallest seed a launch accepts. The seed mints at least one whole

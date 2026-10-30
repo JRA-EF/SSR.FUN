@@ -8437,3 +8437,34 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0274
+
+```json
+{
+  "id": "DEC-0274",
+  "date": "2026-10-30",
+  "title": "Campaign 2 open items: owner decisions before launch (no more program upgrades)",
+  "status": "confirmed",
+  "decision": "Owner (Joao) ruled on the nine items left open after DEC-0273. Standing constraint: NO further program upgrades before launch; every fix is app/keeper-side or deferred. (1) Reserves with a Raydium pool can't close (100 locked LP units keep supply > 0): accepted, no action. (2) Pool launch pays the 0.15% Reserve Token transfer fee twice (treasury -> approved pool payer, then pool payer -> Raydium vault): accepted for now; the launch fee description must show the total cost including both fee hops; LOGGED TO FIX LATER (post-launch, needs Raydium to accept the treasury's tokens directly or a program-side route). (3) close_reserve leaves rtMint + TVL accrual + fee settlement (~0.004 SOL): accepted, no action. (4) Collect pays the creator 38% of displayed pool earnings while the UI says 40%: make the UI match what the deployed program pays. (5) Keeper can't flush the fee vault of a wound-down Reserve (#70): owner asked for the money at stake; answer recorded in evidence; decision pending. (6) Reserves are limited to 10 assets going forward (create and add-asset); #69 (12 assets) stays stuck. (7) Trade-tax activation check on pools #67, #71, #86, #87: assistant checks after epoch 1073 (~03:24 UTC 2026-10-31). (8) Reserve name/symbol lengths are limited to what Metaplex, DEXes, Jupiter and wallets accept, so nothing breaks downstream of creation. (9) Rebalance on a Jupiter 429 must say the route service is busy, not 'route too large'.",
+  "context": "2026-10-30 Mainnet campaign 2 (Collaboration Alignment/2026-10-30-joao-mainnet-test-campaign-2.md) and DEC-0273 open-items list.",
+  "rationale": "Launch is close and the owner froze the program; remaining items are either cosmetic, cheap (rent dust, 0.15% once per pool) or fixable in the app.",
+  "alternativesConsidered": [
+    "Program upgrade to route pool funding without the intermediate hop -- deferred: program frozen until after launch.",
+    "Change the collect split on-chain to pay 40% -- rejected: program frozen; the UI follows the chain instead."
+  ],
+  "impact": "Follow-up work on branch fix/campaign2-followups: launch fee total (2), collect percentage (4), 10-asset cap on add-asset (6), name/symbol limits (8), rebalance 429 text (9). Deferred: double transfer fee on pool launch (2).",
+  "affectedAreas": [
+    "src/merge/components/LiveLiquidityActions.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/lib/createReserveClient.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "(2) #87 launch: 1,008,711 raw debited from the treasury, ~1,513 withheld on the hop to the pool payer, ~1,512 withheld into the Raydium vault, 1,005,686 reached the pool (lib/mainnet/atomicPool.ts:19-40).",
+    "(5) #70 (…XQu3) on 2026-10-30: fee vault holds 1 raw Reserve Token unit (0.000001 RT, about $0.000001); the asset vaults hold dust. What the stuck share blocks is the rent: 0.0398 SOL (~$3.77 at $94.7), of which ~0.034 SOL would come back on close (rtMint/TVL/fee-settlement stay).",
+    "(7) Epoch 1072 at 16:37 UTC 2026-10-30, 180,869 slots left at 4.66 slots/s -> epoch 1073 at ~03:24 UTC 2026-10-31."
+  ]
+}
+```

@@ -70,7 +70,7 @@ import { reseedProposal } from "@/lib/rebalanceProposal";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
 import { addableAssetsForRebalance, type AddableAsset } from "@/lib/rebalanceAddableAssets";
 import { issuerBadgeText, issuerBadgeTitle, ISSUER_FILTER_OPTIONS, type IssuerFilter } from "@/lib/issuerLabels";
-import { MAX_ASSETS_PER_RESERVE } from "@/lib/createReserveClient";
+import { APP_MAX_RESERVE_ASSETS } from "@/lib/createReserveClient";
 import { LIQUIDITY_ENABLED } from "@/lib/liquidityFeature";
 import { requestActionFeedback } from "@/lib/feedback";
 
@@ -2444,7 +2444,7 @@ export function ManageDTR() {
                           {(() => {
                             // The on-chain program caps a Reserve's assets; refusing here, before
                             // anything is proposed, is what keeps Submit Rebalance from failing late.
-                            const atAssetLimit = proposedAssetRows.length >= MAX_ASSETS_PER_RESERVE;
+                            const atAssetLimit = proposedAssetRows.length >= APP_MAX_RESERVE_ASSETS;
                             const { assets: addable, emptyState } = addableAssetsForRebalance(
                               offeredAddableAssets,
                               proposedAssetRows.map((r) => r.mint),
@@ -2454,7 +2454,7 @@ export function ManageDTR() {
                             if (atAssetLimit) {
                               return (
                                 <div className="p-4 text-center text-sm text-muted-foreground">
-                                  This Reserve holds the maximum of {MAX_ASSETS_PER_RESERVE} assets. Remove one to add a different asset.
+                                  This Reserve holds the maximum of {APP_MAX_RESERVE_ASSETS} assets. Remove one to add a different asset.
                                 </div>
                               );
                             }
