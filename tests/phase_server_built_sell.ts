@@ -190,6 +190,22 @@ describe("buildSell.ts -- full build (fakes for RPC/program reads/Jupiter; real 
     expect(r2.transactions.map((t) => t.mint)).to.deep.equal([w.legs[2].mint.toBase58()]);
   });
 
+  it("2026-10-30 #77: the retry of a leg after a redeem-all (supply now 0) sells what the wallet holds instead of refusing", async () => {
+    const w = world(4, { supplyRaw: 0n, walletRtRaw: 0n });
+    w.legs[2].walletRaw = 1_240_000n; // the USDT leg that didn't land
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    const r = await buildSellTransactions(makeDeps(w, spies), input(w, { redeemDone: true, legsOnly: [w.legs[2].mint.toBase58()] }));
+    expect(r.transactions.map((t) => t.kind)).to.deep.equal(["swap"]);
+    expect(spies.quotes).to.deep.equal([`${w.legs[2].mint.toBase58()}>${USDC}:1240000`]);
+    // A fresh sale against a Reserve with no supply is still refused.
+    try {
+      await buildSellTransactions(makeDeps(w, spies), input(w));
+      expect.fail("expected a 422");
+    } catch (e) {
+      expect((e as { status?: number }).status).to.equal(422);
+    }
+  });
+
   it("DEC-0229: a Token-2022 Reserve Token is read under its own program -- the wallet's Token-2022 ATA balance, the supply from the mint, and the program reported for the builders", async () => {
     const w = world(2, { reserveTokenProgram: TOKEN_2022_PROGRAM_ID, walletRtRaw: 1_234_567n });
     const deps = makeDeps(w, { quotes: [], builds: [], instructionBuilds: [] });

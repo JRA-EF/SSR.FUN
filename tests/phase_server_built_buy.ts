@@ -265,6 +265,22 @@ describe("buildBuy.ts -- full build (fakes for RPC/program reads/Jupiter; real b
     expect(r.transactions[r.transactions.length - 1].kind).to.equal("mint");
   });
 
+  it("2026-10-29: a wound-down Reserve's mint is refused before any Jupiter quote", async () => {
+    const w = world(3);
+    const spies = { quotes: [] as string[], builds: [] as string[], instructionBuilds: [] as string[] };
+    const deps = makeDeps(w, spies);
+    const fetchReserve = (deps.program as any).account.reserve.fetchNullable;
+    (deps.program as any).account.reserve.fetchNullable = async (...a: unknown[]) => ({ ...(await fetchReserve(...a)), status: { windDown: {} } });
+    try {
+      await buildBuyTransactions(deps, baseInput(w));
+      expect.fail("expected a 422");
+    } catch (e) {
+      expect((e as { status?: number }).status).to.equal(422);
+      expect((e as Error).message).to.match(/winding down/);
+    }
+    expect(spies.quotes).to.have.length(0);
+  });
+
   it("2026-10-29: a registered table that was deactivated or closed is ignored -- the build makes a new one (registering it replaces the stale row)", async () => {
     const { AddressLookupTableAccount } = await import("@solana/web3.js");
     for (const registered of ["deactivated", "closed"] as const) {

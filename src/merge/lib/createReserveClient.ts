@@ -691,6 +691,13 @@ export function seedAccountLockEstimate(assetCount: number, feeRecipientCount: n
  */
 export const MAX_ASSETS_PER_NEW_RESERVE = 10;
 
+/**
+ * The smallest seed a launch accepts. The seed mints at least one whole
+ * Reserve Token, so below $1 the Reserve starts with a NAV under $1
+ * (2026-10-30: a $0.0005 seed launched #76 at NAV $0.001).
+ */
+export const MIN_SEED_TOTAL_USD = 1;
+
 /** Can a launch with this many assets and fee recipients (Primary included) be seeded in one transaction? */
 export function launchFitsSeed(assetCount: number, feeRecipientCount: number): boolean {
   return assetCount <= MAX_ASSETS_PER_NEW_RESERVE && seedAccountLockEstimate(assetCount, feeRecipientCount) <= SEED_MAX_ACCOUNT_LOCKS;
@@ -1044,7 +1051,13 @@ export async function requestSeedBuild(
   body: { reserve: string; manager: string; assetMints: string[]; seedAmountsRaw: string[]; initialReserveTokens: string; lookupTable: string | null },
   fetchImpl: typeof fetch = fetch,
 ): Promise<BuildSeedResponse> {
-  const res = await fetchImpl("/api/mainnet/build-seed", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
+  // A 404 right after create-and-register is the RPC not seeing the new
+  // Reserve yet (2026-10-29 run 1): retry a few times before giving up.
+  let res = await fetchImpl("/api/mainnet/build-seed", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
+  for (let attempt = 0; res.status === 404 && attempt < 4; attempt++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    res = await fetchImpl("/api/mainnet/build-seed", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
+  }
   const json = (await res.json().catch(() => null)) as (BuildSeedResponse & { error?: string }) | null;
   if (!res.ok || !json || (json.status !== "ready" && json.status !== "needsLookupTable")) {
     throw new Error((json && typeof json.error === "string" && json.error) || `Could not prepare the seed transaction (HTTP ${res.status}).`);
@@ -1797,6 +1810,9 @@ export async function createReserveOnChain(params: {
   const { connection, wallet } = params;
   if (!wallet.publicKey) throw new Error("Connect a wallet first.");
   validateCreateReserveAssets(params.assets);
+  if (!(params.seedTotalUsd >= MIN_SEED_TOTAL_USD)) {
+    throw new Error(`The initial seed must be at least $${MIN_SEED_TOTAL_USD}, so the Reserve starts at a NAV of $1.`);
+  }
   const feeRecipientCount = params.feeRecipients && params.feeRecipients.length > 1 ? params.feeRecipients.length : 1;
   if (!launchFitsSeed(params.assets.length, feeRecipientCount)) {
     throw new Error(

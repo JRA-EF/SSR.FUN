@@ -96,6 +96,7 @@ export function CreatePoolForm({dtr,state,nav,busy,onPrepare,refresh}:{dtr:DTR;s
   {mint.mintRaw>0n&&<LiquidityMintStep dtr={dtr} state={state} plan={mint} disabled={busy} onMinted={m=>void refresh().then(()=>submit(m))}/>}
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
   <Button className="w-full" size="lg" disabled={busy||effective<=0||mint.mintRaw>0n} onClick={()=>submit()}><Droplets className="w-4 h-4 mr-2"/>{busy?'Preparing review…':'Review pool launch on Raydium'}</Button>
+  <p className="text-xs text-muted-foreground">Launching also costs about 0.19 SOL that does not come back: Raydium's 0.15 SOL pool-creation fee plus rent for the pool's accounts. Your liquidity itself stays yours and can be withdrawn when unlocked.</p>
   <p className="text-xs text-muted-foreground">Reviewing simulates the transaction first. Nothing moves until the required wallets sign.</p>
  </div>;
 }

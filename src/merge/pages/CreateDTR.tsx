@@ -29,6 +29,7 @@ import {
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
   MAX_ASSETS_PER_NEW_RESERVE,
+  MIN_SEED_TOTAL_USD,
   launchFitsSeed,
   rawToUiAmount,
   uploadReserveMetadata,
@@ -2291,6 +2292,9 @@ export function CreateDTR({
                       onChange={(e) => setInitialSeedUsdc(e.target.value)}
                     />
                   </div>
+                  {initialSeedUsdc && parseFloat(initialSeedUsdc) > 0 && parseFloat(initialSeedUsdc) < MIN_SEED_TOTAL_USD ? (
+                    <p className="text-xs text-destructive">The initial seed must be at least ${MIN_SEED_TOTAL_USD}.</p>
+                  ) : null}
                   {isRealDeployment && !IS_MAINNET ? (
                     <p className="text-xs text-muted-foreground flex justify-between">
                       <span>
@@ -2496,7 +2500,7 @@ export function CreateDTR({
               </Button>
               <Button
                 onClick={handleNext}
-                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || feeRecipientTotalPct > 100}
+                disabled={!initialSeedUsdc || !(parseFloat(initialSeedUsdc) >= MIN_SEED_TOTAL_USD) || feeRecipientTotalPct > 100}
                 className="font-bold gap-2"
               >
                 Review <ChevronRight className="w-4 h-4" />

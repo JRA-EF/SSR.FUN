@@ -8370,7 +8370,7 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   "id": "DEC-0272",
   "date": "2026-10-30",
   "title": "Campaign hardening: stale lookup tables ignored, launches capped at what a seed fits, seed checked before the Reserve is created",
-  "status": "Built and tested on branch fix/campaign-hardening; not deployed.",
+  "status": "Verified on Mainnet by the 2026-10-30 campaign (12 Reserves); shipped to ssr.fun with DEC-0273 on 2026-10-30.",
   "decision": "(1) The server only uses a Reserve's registered trading table while it exists and is active (loadUsableReserveAlt in lib/mainnet/buildCommon.ts); otherwise Buy/Sell build a new table and registering it replaces the stale reserve_alts row. The registry refuses a deactivated table and the keeper skips one. (2) A new Reserve launches with at most 10 assets (MAX_ASSETS_PER_NEW_RESERVE), fewer with many fee recipients: seedAccountLockEstimate = 20 + 4 per asset + 1 per recipient must stay within Solana's 64 account locks. MAX_ASSETS_PER_RESERVE stays 12 for rebalances. The server refuses an over-limit seed with a plain 422 instead of asking for a lookup table that can't help. (3) After the swaps and before create-and-register, the Create flow checks the seed minimum and calls POST /api/mainnet/build-seed with preflight: true (every asset priced, USDC for the fee, exact account count of the real seed transaction). A price API failure is now a retryable 503 ('price service is busy') instead of 'no current price'.",
   "context": "2026-10-29 Mainnet test campaign: a cleanup deactivated 9 shared reserve_alts tables, and planAlt used a registered table without checking it, so every trade on those Reserves would have failed; a 12-asset seed touched ~70 accounts and Reserve #69 is stuck in assetsInitializing; #68 (seed under minimum) and #72 (price API rate-limited, reported as 'no current price') were created and then failed at the seed.",
   "rationale": "Each failure now happens before anything is spent, with a message that names the real cause. Measured lock counts (tests): 20 fixed, 4 per non-USDC asset, 1 per recipient with a USDC account, 2 without; a USDC asset shares 2 accounts, so the estimate is exact or up to 3 high.",
@@ -8397,6 +8397,43 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
     "tests/phase_usdc_mint_fee.ts: 12-asset seed refused at 64 locks, price failure 503, preflight refusals (unpriced, 503, USDC, 12 assets), estimate vs real seed for 1/6/8/10 assets, launch limits.",
     "tests/phase_server_built_buy.ts: deactivated and closed registered tables both lead to alt-create + altToRegister.",
     "Full offline suite 1,786 passing with the 5 known baseline failures (same 5 on origin/main); tsc -b clean."
+  ]
+}
+```
+
+## DEC-0273
+
+```json
+{
+  "id": "DEC-0273",
+  "date": "2026-10-30",
+  "title": "Campaign 2 fixes: redeem-all leg retry, $1 minimum seed, wound-down mint refused early, seed 404 retry, clearer liquidity texts",
+  "status": "Shipped to ssr.fun 2026-10-30 together with DEC-0272.",
+  "decision": "(1) build-sell: a legs-only rebuild after a redeem that burned the last supply sells what the wallet holds instead of refusing with 'no Reserve Token supply'. (2) A launch needs a seed of at least $1 (MIN_SEED_TOTAL_USD, client + Create page). (3) build-buy refuses a mint on a Reserve that is not active (wind-down or initialising) before any Jupiter quote. (4) requestSeedBuild retries a 404 up to 4 times, 1.5 s apart (RPC read-after-write gap right after create-and-register). (5) Withdrawing more LP than the treasury holds names both amounts instead of 'Only unlocked treasury liquidity can be withdrawn'. (6) The pool launch form states the ~0.19 SOL Raydium creation fee + rent up front, not only in the advanced section.",
+  "context": "2026-10-30 Mainnet campaign (12 Reserves #76-#87, 2 unlocked pools, paid Jupiter key): a redeem-all on #77 confirmed but its USDT leg did not land and the retry was refused, so the user saw an error and kept unswapped USDT; a $0.0005 seed launched #76 at NAV $0.001; the 2026-10-29 campaign's open items (wound-down mint quoted first, seed 404, misleading LP error) were still open; the creator was surprised by the 0.19 SOL launch cost.",
+  "rationale": "Each fix removes an error that appeared after funds had moved or that named the wrong cause. The 0.19 SOL is Raydium's (0.15 SOL fee + pool account rent) and cannot be avoided on CPMM; it must be visible before the creator commits.",
+  "alternativesConsidered": [
+    "Recompute the redeem entitlement for a retry from the pre-redeem state -- rejected: after a full redeem the wallet balance is the exact amount to sell.",
+    "Round sub-$1 seeds up to $1 silently -- rejected: the creator would pay more than they typed."
+  ],
+  "impact": "No program change. Seeds under $1 are refused. Open items not addressed here: Reserves with a pool can't close (Raydium's locked minimum), pool launch charges the 0.15% transfer fee twice, close_reserve leaves the token mint + TVL/fee settlement accounts (~0.004 SOL), collect paid the creator 38.0% vs 40% expected on both pools (to verify), keeper fee-vault flush.",
+  "affectedAreas": [
+    "lib/mainnet/buildSell.ts",
+    "lib/mainnet/buildBuy.ts",
+    "lib/mainnet/liquidityLifecycle.ts",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/components/LiveLiquidityActions.tsx",
+    "tests/phase_server_built_sell.ts",
+    "tests/phase_server_built_buy.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Collaboration Alignment/2026-10-30-joao-mainnet-test-campaign-2.md",
+    "tests/phase_server_built_sell.ts: legs-only retry with supply 0 sells the held amount; a fresh sale with supply 0 is still refused.",
+    "tests/phase_server_built_buy.ts: wound-down Reserve refused with no Jupiter quote.",
+    "Full offline suite 1,788 passing with the same 5 baseline failures; tsc -b clean."
   ]
 }
 ```

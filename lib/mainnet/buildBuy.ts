@@ -178,6 +178,11 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
     })(),
   ]);
   const { orderedAssets, reserveTokenMint, reserveTokenProgram, mintAuthority, protocolConfig, supplyRaw, heldByMint, walletUsdcRaw, walletReserveTokenRaw, walletSolLamports, reserveAlt } = read;
+  // Only an active Reserve mints; refuse before quoting (2026-10-29: a wound-down Reserve's mint went to Jupiter first).
+  const status = read.reserveAccount.status as Record<string, unknown> | undefined;
+  if (status && !("active" in status)) {
+    throw new BuildError(422, status.windDown !== undefined ? "This Reserve is winding down and no longer mints. Holders can still redeem." : "This Reserve isn't active yet, so it can't mint. Nothing was submitted.");
+  }
   // Prices for mints only discovered by the read (caller passed none).
   const priceMap =
     prices ?? (await deps.fetchPrices(orderedAssets.map((a) => a.mint).filter((m) => m !== MAINNET_USDC_MINT)).catch(() => new Map<string, { usdPrice: number | null | undefined }>()));
