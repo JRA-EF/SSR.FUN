@@ -109,7 +109,7 @@ import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { resolveRpcUrl } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { lookupReserveAlt } from "./build-buy";
-import { readReserveAndWallet, compileV0, fitsV0, CORE_TX_COMPUTE_UNIT_LIMIT, MAINNET_TREASURY_VAULT } from "../../lib/mainnet/buildCommon";
+import { readReserveAndWallet, loadUsableReserveAlt, compileV0, fitsV0, CORE_TX_COMPUTE_UNIT_LIMIT, MAINNET_TREASURY_VAULT } from "../../lib/mainnet/buildCommon";
 import { DEFAULT_SLIPPAGE_BPS, MAINNET_USDC_MINT as USDC_MINT_STR, MAX_PRICE_IMPACT_PCT, buildJupiterSwapInstructionsWithRetry, fetchJupiterQuoteWithRetry, isPriceImpactAcceptable } from "../../lib/mainnet/jupiter";
 import { deserializeJupiterInstruction, fetchLookupTables, isComputeBudgetInstruction, SINGLE_TX_MICRO_LAMPORTS_PER_CU } from "../../src/merge/lib/singleTxBuy";
 import { sendAndConfirmWithRebroadcast } from "../../src/merge/lib/rpcResilience";
@@ -555,7 +555,7 @@ async function runKeeper(req: ApiRequest, res: ApiResponse) {
         const programFor = (mint: PublicKey) => programOfMint.get(mint.toBase58()) ?? TOKEN_PROGRAM_ID;
         const stagingAtaOf = (mint: PublicKey) => assetAta(mint, settlementAuthority, programFor(mint), true);
         const usdcStaging = stagingAtaOf(MAINNET_USDC_MINT);
-        const reserveTables = read.reserveAlt ? await fetchLookupTables(connection, [read.reserveAlt]) : [];
+        const reserveTables = read.reserveAltTable ? [read.reserveAltTable] : [];
         const createStagingIxs = [
           ...legs.map((l) => createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, stagingAtaOf(new PublicKey(l.mint)), settlementAuthority, new PublicKey(l.mint), resolveLegTokenProgram(l))),
           createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, usdcStaging, settlementAuthority, MAINNET_USDC_MINT),
@@ -782,7 +782,7 @@ async function runKeeper(req: ApiRequest, res: ApiResponse) {
       send: (label: string, ixs: TransactionInstruction[], tables: AddressLookupTableAccount[]) => sendV0(connection, keeper!, label, ixs, tables),
       budget: budgetIxs,
       fits: (ixs: TransactionInstruction[], tables: AddressLookupTableAccount[]) => fitsV0(keeper!.publicKey, ixs, tables),
-      reserveTables: async (reserve: PublicKey) => { const alt = await lookupReserveAlt(reserve.toBase58()).catch(() => null); return alt ? fetchLookupTables(connection, [alt]) : []; },
+      reserveTables: async (reserve: PublicKey) => { const table = await loadUsableReserveAlt(connection, await lookupReserveAlt(reserve.toBase58()).catch(() => null)); return table ? [table] : []; },
       jupiterTables: (addresses: string[]) => fetchLookupTables(connection, addresses),
       jupiterInstructions: (built: any) => [...built.setupInstructions.map(deserializeJupiterInstruction).filter((ix: TransactionInstruction) => !isComputeBudgetInstruction(ix)), deserializeJupiterInstruction(built.swapInstruction)],
       prices: fetchJupiterPrices,

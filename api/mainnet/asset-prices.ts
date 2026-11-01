@@ -121,7 +121,7 @@ async function requestJupiterPrices(mints: string[], headers: Record<string, str
  * (401) -- any other failure (network error, 5xx, malformed body) still
  * yields "unavailable" for real, never fabricated.
  */
-export async function fetchJupiterPrices(mints: string[]): Promise<Map<string, RawJupiterPrice>> {
+export async function fetchJupiterPrices(mints: string[], opts: { throwOnFailure?: boolean } = {}): Promise<Map<string, RawJupiterPrice>> {
   const out = new Map<string, RawJupiterPrice>();
   if (mints.length === 0) return out;
   const apiKey = process.env.JUPITER_API_KEY;
@@ -129,7 +129,11 @@ export async function fetchJupiterPrices(mints: string[]): Promise<Map<string, R
   if (!result.ok && (!apiKey || result.unauthorized)) {
     result = await requestJupiterPrices(mints, {});
   }
-  if (!result.ok || !result.body) return out;
+  if (!result.ok || !result.body) {
+    // A seed must tell "the price service is busy" (retry) apart from "this asset has no price".
+    if (opts.throwOnFailure) throw new Error("Jupiter's price API did not answer (rate limited or unavailable).");
+    return out;
+  }
   const body = result.body;
   for (const mint of mints) {
     const entry = body[mint];

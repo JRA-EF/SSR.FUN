@@ -8362,3 +8362,109 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0272
+
+```json
+{
+  "id": "DEC-0272",
+  "date": "2026-10-30",
+  "title": "Campaign hardening: stale lookup tables ignored, launches capped at what a seed fits, seed checked before the Reserve is created",
+  "status": "Verified on Mainnet by the 2026-10-30 campaign (12 Reserves); shipped to ssr.fun with DEC-0273 on 2026-10-30.",
+  "decision": "(1) The server only uses a Reserve's registered trading table while it exists and is active (loadUsableReserveAlt in lib/mainnet/buildCommon.ts); otherwise Buy/Sell build a new table and registering it replaces the stale reserve_alts row. The registry refuses a deactivated table and the keeper skips one. (2) A new Reserve launches with at most 10 assets (MAX_ASSETS_PER_NEW_RESERVE), fewer with many fee recipients: seedAccountLockEstimate = 20 + 4 per asset + 1 per recipient must stay within Solana's 64 account locks. MAX_ASSETS_PER_RESERVE stays 12 for rebalances. The server refuses an over-limit seed with a plain 422 instead of asking for a lookup table that can't help. (3) After the swaps and before create-and-register, the Create flow checks the seed minimum and calls POST /api/mainnet/build-seed with preflight: true (every asset priced, USDC for the fee, exact account count of the real seed transaction). A price API failure is now a retryable 503 ('price service is busy') instead of 'no current price'.",
+  "context": "2026-10-29 Mainnet test campaign: a cleanup deactivated 9 shared reserve_alts tables, and planAlt used a registered table without checking it, so every trade on those Reserves would have failed; a 12-asset seed touched ~70 accounts and Reserve #69 is stuck in assetsInitializing; #68 (seed under minimum) and #72 (price API rate-limited, reported as 'no current price') were created and then failed at the seed.",
+  "rationale": "Each failure now happens before anything is spent, with a message that names the real cause. Measured lock counts (tests): 20 fixed, 4 per non-USDC asset, 1 per recipient with a USDC account, 2 without; a USDC asset shares 2 accounts, so the estimate is exact or up to 3 high.",
+  "alternativesConsidered": [
+    "Split the seed over several transactions -- rejected for now: seed_reserve_usdc_fee is one instruction that takes every asset; splitting needs a program change.",
+    "Delete the stale reserve_alts row server-side -- unnecessary: the new table's registration upserts over it."
+  ],
+  "impact": "Creators can no longer pick 11-12 assets at launch; existing Reserves are unchanged. A launch that would fail at the seed now stops after the swaps with nothing created (swapped assets stay in the wallet and count toward the next attempt). If fee recipients have no USDC account yet, the preflight's exact count can refuse a basket the UI estimate allowed (up to 1 extra account per recipient).",
+  "affectedAreas": [
+    "lib/mainnet/buildCommon.ts",
+    "lib/mainnet/buildSeed.ts",
+    "api/mainnet/build-seed.ts",
+    "api/mainnet/asset-prices.ts",
+    "api/mainnet/reserve-alt.ts",
+    "api/mainnet/fee-settlement-cron.ts",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "tests/phase_usdc_mint_fee.ts",
+    "tests/phase_server_built_buy.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_usdc_mint_fee.ts: 12-asset seed refused at 64 locks, price failure 503, preflight refusals (unpriced, 503, USDC, 12 assets), estimate vs real seed for 1/6/8/10 assets, launch limits.",
+    "tests/phase_server_built_buy.ts: deactivated and closed registered tables both lead to alt-create + altToRegister.",
+    "Full offline suite 1,786 passing with the 5 known baseline failures (same 5 on origin/main); tsc -b clean."
+  ]
+}
+```
+
+## DEC-0273
+
+```json
+{
+  "id": "DEC-0273",
+  "date": "2026-10-30",
+  "title": "Campaign 2 fixes: redeem-all leg retry, $1 minimum seed, wound-down mint refused early, seed 404 retry, clearer liquidity texts",
+  "status": "Shipped to ssr.fun 2026-10-30 together with DEC-0272.",
+  "decision": "(1) build-sell: a legs-only rebuild after a redeem that burned the last supply sells what the wallet holds instead of refusing with 'no Reserve Token supply'. (2) A launch needs a seed of at least $1 (MIN_SEED_TOTAL_USD, client + Create page). (3) build-buy refuses a mint on a Reserve that is not active (wind-down or initialising) before any Jupiter quote. (4) requestSeedBuild retries a 404 up to 4 times, 1.5 s apart (RPC read-after-write gap right after create-and-register). (5) Withdrawing more LP than the treasury holds names both amounts instead of 'Only unlocked treasury liquidity can be withdrawn'. (6) The pool launch form states the ~0.19 SOL Raydium creation fee + rent up front, not only in the advanced section.",
+  "context": "2026-10-30 Mainnet campaign (12 Reserves #76-#87, 2 unlocked pools, paid Jupiter key): a redeem-all on #77 confirmed but its USDT leg did not land and the retry was refused, so the user saw an error and kept unswapped USDT; a $0.0005 seed launched #76 at NAV $0.001; the 2026-10-29 campaign's open items (wound-down mint quoted first, seed 404, misleading LP error) were still open; the creator was surprised by the 0.19 SOL launch cost.",
+  "rationale": "Each fix removes an error that appeared after funds had moved or that named the wrong cause. The 0.19 SOL is Raydium's (0.15 SOL fee + pool account rent) and cannot be avoided on CPMM; it must be visible before the creator commits.",
+  "alternativesConsidered": [
+    "Recompute the redeem entitlement for a retry from the pre-redeem state -- rejected: after a full redeem the wallet balance is the exact amount to sell.",
+    "Round sub-$1 seeds up to $1 silently -- rejected: the creator would pay more than they typed."
+  ],
+  "impact": "No program change. Seeds under $1 are refused. Open items not addressed here: Reserves with a pool can't close (Raydium's locked minimum), pool launch charges the 0.15% transfer fee twice, close_reserve leaves the token mint + TVL/fee settlement accounts (~0.004 SOL), collect paid the creator 38.0% vs 40% expected on both pools (to verify), keeper fee-vault flush.",
+  "affectedAreas": [
+    "lib/mainnet/buildSell.ts",
+    "lib/mainnet/buildBuy.ts",
+    "lib/mainnet/liquidityLifecycle.ts",
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/components/LiveLiquidityActions.tsx",
+    "tests/phase_server_built_sell.ts",
+    "tests/phase_server_built_buy.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Collaboration Alignment/2026-10-30-joao-mainnet-test-campaign-2.md",
+    "tests/phase_server_built_sell.ts: legs-only retry with supply 0 sells the held amount; a fresh sale with supply 0 is still refused.",
+    "tests/phase_server_built_buy.ts: wound-down Reserve refused with no Jupiter quote.",
+    "Full offline suite 1,788 passing with the same 5 baseline failures; tsc -b clean."
+  ]
+}
+```
+
+## DEC-0274
+
+```json
+{
+  "id": "DEC-0274",
+  "date": "2026-10-30",
+  "title": "Campaign 2 open items: owner decisions before launch (no more program upgrades)",
+  "status": "confirmed",
+  "decision": "Owner (Joao) ruled on the nine items left open after DEC-0273. Standing constraint: NO further program upgrades before launch; every fix is app/keeper-side or deferred. (1) Reserves with a Raydium pool can't close (100 locked LP units keep supply > 0): accepted, no action. (2) Pool launch pays the 0.15% Reserve Token transfer fee twice (treasury -> approved pool payer, then pool payer -> Raydium vault): accepted for now; the launch fee description must show the total cost including both fee hops; LOGGED TO FIX LATER (post-launch, needs Raydium to accept the treasury's tokens directly or a program-side route). (3) close_reserve leaves rtMint + TVL accrual + fee settlement (~0.004 SOL): accepted, no action. (4) Collect pays the creator 38% of displayed pool earnings while the UI says 40%: make the UI match what the deployed program pays. (5) Keeper can't flush the fee vault of a wound-down Reserve (#70): owner asked for the money at stake; answer recorded in evidence; decision pending. (6) Reserves are limited to 10 assets going forward (create and add-asset); #69 (12 assets) stays stuck. (7) Trade-tax activation check on pools #67, #71, #86, #87: assistant checks after epoch 1073 (~03:24 UTC 2026-10-31). (8) Reserve name/symbol lengths are limited to what Metaplex, DEXes, Jupiter and wallets accept, so nothing breaks downstream of creation. (9) Rebalance on a Jupiter 429 must say the route service is busy, not 'route too large'.",
+  "context": "2026-10-30 Mainnet campaign 2 (Collaboration Alignment/2026-10-30-joao-mainnet-test-campaign-2.md) and DEC-0273 open-items list.",
+  "rationale": "Launch is close and the owner froze the program; remaining items are either cosmetic, cheap (rent dust, 0.15% once per pool) or fixable in the app.",
+  "alternativesConsidered": [
+    "Program upgrade to route pool funding without the intermediate hop -- deferred: program frozen until after launch.",
+    "Change the collect split on-chain to pay 40% -- rejected: program frozen; the UI follows the chain instead."
+  ],
+  "impact": "Follow-up work on branch fix/campaign2-followups: launch fee total (2), collect percentage (4), 10-asset cap on add-asset (6), name/symbol limits (8), rebalance 429 text (9). Deferred: double transfer fee on pool launch (2).",
+  "affectedAreas": [
+    "src/merge/components/LiveLiquidityActions.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/lib/createReserveClient.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "(2) #87 launch: 1,008,711 raw debited from the treasury, ~1,513 withheld on the hop to the pool payer, ~1,512 withheld into the Raydium vault, 1,005,686 reached the pool (lib/mainnet/atomicPool.ts:19-40).",
+    "(5) #70 (…XQu3) on 2026-10-30: fee vault holds 1 raw Reserve Token unit (0.000001 RT, about $0.000001); the asset vaults hold dust. What the stuck share blocks is the rent: 0.0398 SOL (~$3.77 at $94.7), of which ~0.034 SOL would come back on close (rtMint/TVL/fee-settlement stay).",
+    "(7) Epoch 1072 at 16:37 UTC 2026-10-30, 180,869 slots left at 4.66 slots/s -> epoch 1073 at ~03:24 UTC 2026-10-31."
+  ]
+}
+```

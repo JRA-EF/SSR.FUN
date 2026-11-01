@@ -93,7 +93,7 @@ export async function prepareLiquidityLifecycle(deps:CompoundReadDeps & {executi
   watch.push({address:s.ata(LIQUIDITY_USDC),minimum:s.usdcBalance-input.maximumUsdcRaw!,program:TOKEN_PROGRAM_ID},{address:s.ata(s.mint,TOKEN_2022_PROGRAM_ID),minimum:s.reserveBalance-input.maximumReserveRaw!,program:TOKEN_2022_PROGRAM_ID},{address:s.ata(s.lp),minimum:s.lpBalance+(locked?0n:a.lp),program:TOKEN_PROGRAM_ID});
   review={lpAddedRaw:a.lp.toString(),estimatedUsdcRaw:a.usdc.toString(),estimatedReserveRaw:a.reserve.toString(),maximumUsdcRaw:input.maximumUsdcRaw!.toString(),maximumReserveRaw:input.maximumReserveRaw!.toString(),lock:input.lock};
  }else if(input.action==='withdraw'){
-  check((s.status&2)===0,'Pool withdrawals are paused');const lp=input.lpAmountRaw??0n;check(lp<=s.lpBalance,'Only unlocked treasury liquidity can be withdrawn');const a=withdrawAmounts(s,lp,input.slippageBps);
+  check((s.status&2)===0,'Pool withdrawals are paused');const lp=input.lpAmountRaw??0n;check(lp<=s.lpBalance,`The treasury holds ${s.lpBalance} withdrawable LP units; ${lp} were requested. Locked liquidity can be withdrawn only after it unlocks.`);const a=withdrawAmounts(s,lp,input.slippageBps);
   setup(LIQUIDITY_USDC);setup(s.mint,TOKEN_2022_PROGRAM_ID);const usdc0=accounts.mint0.equals(LIQUIDITY_USDC);
   instructions.push(buildCpmmWithdraw(accounts,s.treasury,lp,usdc0?a.minimumUsdc:a.minimumReserve,usdc0?a.minimumReserve:a.minimumUsdc));
   watch.push({address:s.ata(LIQUIDITY_USDC),minimum:s.usdcBalance+a.minimumUsdc,program:TOKEN_PROGRAM_ID},{address:s.ata(s.mint,TOKEN_2022_PROGRAM_ID),minimum:s.reserveBalance+a.minimumReserve,program:TOKEN_2022_PROGRAM_ID});

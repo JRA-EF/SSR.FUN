@@ -1,7 +1,7 @@
 import {prepareCreateLiquidity,isLiquidityTermsV2Live,isLiquiditySplitLive,isTradeTaxLive,LAUNCH_PRICE_MAX_AGE_SLOTS} from '../../lib/mainnet/createLiquidity';
 import {fetchLaunchPrices} from '../../lib/mainnet/launchPrices';
 import {fetchJupiterQuoteWithRetry} from '../../lib/mainnet/jupiter';
-import {SSR_POOL_PAYER} from '../../src/merge/lib/liquidity/raydiumCpmm';
+import {SSR_POOL_PAYER,netCreatorEarnings} from '../../src/merge/lib/liquidity/raydiumCpmm';
 import {loadPoolPayer,coSignPoolPayer,PoolPayerUnavailable} from '../../lib/mainnet/poolPayer';
 import {LIQUIDITY_EXECUTION_ENABLED} from '../../lib/mainnet/liquidityRelease';
 import {fetchJupiterPrices} from './asset-prices';
@@ -46,7 +46,7 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
    // Each lock holds its LP in an escrow owned by the tranche PDA; permanent locks have moved theirs into Raydium's lock.
    const escrows=tranches.map(t=>getAssociatedTokenAddressSync(s.lp,new PublicKey(t.address),true,TOKEN_PROGRAM_ID)),escrowInfos=escrows.length?await connection.getMultipleAccountsInfo(escrows,'confirmed'):[];
    const lockedTranches=tranches.map((t,i)=>{const info=escrowInfos[i];if(!info)return {...t,lpRaw:'0'};const acc=unpackAccount(escrows[i],info,TOKEN_PROGRAM_ID);if(!acc.mint.equals(s.lp))throw new Error('Invalid liquidity escrow');return {...t,lpRaw:acc.amount.toString()};});
-   result={tranches:lockedTranches,reserve:s.reserve,pool:s.pool,mint:s.mint,creator:s.creator,treasury:s.treasury,hasPool:!!s.registered,paused:s.paused,reserveDecimals:s.rt.decimals,lpDecimals:s.lpDecimals,usdcBalanceRaw:s.usdcBalance,reserveBalanceRaw:s.reserveBalance,lpBalanceRaw:s.lpBalance,nativeEarningsUsdcRaw:s.registered?.accruedUsdc??0n,stagedEarningsUsdcRaw:s.staged,poolUsdcRaw:s.usdc,poolReserveRaw:s.tokens,lpSupplyRaw:s.lpSupply,slot:s.slot,executionEnabled:LIQUIDITY_EXECUTION_ENABLED,
+   result={tranches:lockedTranches,reserve:s.reserve,pool:s.pool,mint:s.mint,creator:s.creator,treasury:s.treasury,hasPool:!!s.registered,paused:s.paused,reserveDecimals:s.rt.decimals,lpDecimals:s.lpDecimals,usdcBalanceRaw:s.usdcBalance,reserveBalanceRaw:s.reserveBalance,lpBalanceRaw:s.lpBalance,nativeEarningsUsdcRaw:netCreatorEarnings(s.registered?.accruedUsdc??0n,s.retention),creatorShareRate:s.retention.toString(),stagedEarningsUsdcRaw:s.staged,poolUsdcRaw:s.usdc,poolReserveRaw:s.tokens,lpSupplyRaw:s.lpSupply,slot:s.slot,executionEnabled:LIQUIDITY_EXECUTION_ENABLED,
     // DEC-0251: the pool's permanent fee terms (v1 = created before liquidity terms v2).
     termsVersion:s.terms?2:s.registered?1:null,buyTaxBps:s.router?.buyTaxBps??null,sellTaxBps:s.router?.sellTaxBps??null,holderShareBps:s.terms?.holderShareBps??0,basketFeedUsdcRaw:s.feedBalance,basketFedUsdcRaw:s.terms?.totalFed??0n,
     // DEC-0255: the split (0 = all to backing) and what it has locked in the pool.

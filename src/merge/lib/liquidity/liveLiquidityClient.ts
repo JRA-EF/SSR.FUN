@@ -16,6 +16,8 @@ export interface LiveLiquidityState{
  reserveDecimals:number;lpDecimals:number;
  usdcBalanceRaw:string;reserveBalanceRaw:string;lpBalanceRaw:string;
  nativeEarningsUsdcRaw:string;stagedEarningsUsdcRaw:string;
+ /** Raydium's share of creator fees, millionths (DEC-0274: earnings are shown after it). */
+ creatorShareRate?:string;
  poolUsdcRaw:string;poolReserveRaw:string;lpSupplyRaw:string;
  tranches:LiveTranche[];
  /** DEC-0251: the pool's permanent fee terms; 1 = created before liquidity terms v2, null = no pool. */
@@ -100,7 +102,8 @@ export const LOCK_TERM_DAYS:Record<Exclude<LockTerm,'unlocked'|'permanent'>,numb
 
 export interface LiquiditySummary{
  poolUsdc:number;poolTokens:number;tvlUsd:number;marketPrice:number|null;premiumPct:number|null;
- earningsUsdc:number;
+ /** Creator earnings after Raydium's share of creator fees (what collect distributes). */
+ earningsUsdc:number;raydiumSharePct:number;
  unlockedLp:bigint;timedLockedLp:bigint;activeTimed:LiveTranche[];expiredTimed:LiveTranche[];permanentCount:number;
  /** Share of the creator's withdrawable-or-timed position that is time-locked (0-100). Permanent locks are counted separately. */
  lockedPct:number;nextUnlockMs:number|null;
@@ -126,7 +129,7 @@ export function summarizeLiquidity(s:LiveLiquidityState,navPerToken:number,nowMs
  return {
   poolUsdc,poolTokens,tvlUsd:marketPrice===null?0:poolUsdc*2,marketPrice,
   premiumPct:marketPrice!==null&&navPerToken>0?((marketPrice-navPerToken)/navPerToken)*100:null,
-  earningsUsdc:rawToNumber(BigInt(s.nativeEarningsUsdcRaw)+BigInt(s.stagedEarningsUsdcRaw),6),
+  earningsUsdc:rawToNumber(BigInt(s.nativeEarningsUsdcRaw)+BigInt(s.stagedEarningsUsdcRaw),6),raydiumSharePct:s.creatorShareRate?Number(s.creatorShareRate)/10_000:0,
   unlockedLp,timedLockedLp,activeTimed,expiredTimed,permanentCount:live.filter(t=>t.permanent).length,
   lockedPct:lockable>0n?Number(timedLockedLp*10_000n/lockable)/100:0,
   nextUnlockMs:activeTimed.length?Math.min(...activeTimed.map(t=>Number(t.unlockTs)*1000)):null,

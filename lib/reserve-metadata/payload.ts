@@ -5,6 +5,7 @@
 // database connection -- mirrors lib/reserve-activity/cursorLogic.ts's
 // precedent of splitting pure logic out from the DB-touching indexer.ts.
 import { createHash } from "node:crypto";
+import { reserveNameProblem } from "../../src/merge/lib/reserveNameRules";
 import { findProfaneReserveField, PROFANITY_MESSAGE } from "../../packages/sdk/src/profanity";
 
 export interface ReserveMetadataPayload {
@@ -111,6 +112,10 @@ export function validateReserveMetadataPayload(body: unknown): ReserveMetadataPa
   const ticker = typeof p.ticker === "string" ? p.ticker.trim() : "";
   if (!name) throw new Error("Metadata payload is missing a name.");
   if (!ticker) throw new Error("Metadata payload is missing a ticker.");
+  const nameProblem = reserveNameProblem(name);
+  if (nameProblem) throw new Error(nameProblem);
+  // Metaplex symbol limit (the Create form allows up to 6 letters).
+  if (new TextEncoder().encode(ticker).length > 10 || /\s/.test(ticker)) throw new Error("The ticker must be at most 10 characters with no spaces.");
 
   const payload: ReserveMetadataPayload = {
     name,

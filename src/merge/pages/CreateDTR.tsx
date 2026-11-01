@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
+import { reserveNameProblem, RESERVE_NAME_MAX_BYTES } from "@/lib/reserveNameRules";
 import { DEVNET_FIXTURES, SOL_TEST_PRICE_USD, DEVUSDC, WRAPPED_SOL_MINT, fetchReserveOnChain, fetchTokenBalanceRaw, computeEffectiveFeeSplit, PROTOCOL_MIN_MINT_FEE_BPS, PROTOCOL_MIN_ANNUAL_TVL_FEE_BPS, validateMetadataUri, describeOnChainError, registerDynamicSupportedAssetMints, fitTokenMetadataName, fitTokenMetadataSymbol, containsProfanity, PROFANITY_MESSAGE, type RecipientInput } from "@ssr/sdk";
 import { fetchAssetPricesUsd, fetchMidPriceUsd } from "@/lib/assetPricing";
 import { useMainnetAssetCatalogue } from "@/hooks/useMainnetAssetCatalogue";
@@ -28,7 +29,9 @@ import {
   isWalletRejectionError,
   classifyCreateReserveError,
   isFeeDestinationCollisionError,
-  MAX_ASSETS_PER_RESERVE,
+  MAX_ASSETS_PER_NEW_RESERVE,
+  MIN_SEED_TOTAL_USD,
+  launchFitsSeed,
   rawToUiAmount,
   uploadReserveMetadata,
   estimateNetSeedReserveTokens,
@@ -421,6 +424,9 @@ export function CreateDTR({
   const tickerProfane = containsProfanity(ticker);
   const descriptionProfane = containsProfanity(description);
   const identityProfane = nameProfane || tickerProfane || descriptionProfane;
+  // DEC-0274: the on-chain token name (what DEXes, Jupiter and wallets show) holds 32 bytes; refuse a longer name instead of cutting it.
+  const nameTooLong = reserveNameProblem(name) !== null;
+  const identityBlocked = identityProfane || nameTooLong;
   // Optional creator YouTube links -- saved onto the Reserve after deploy and
   // shown in the Reserve page's "From the Creator" video panel.
   const [youtubeChannel, setYoutubeChannel] = useState("");
@@ -682,7 +688,7 @@ export function CreateDTR({
   // (see uploadReserveMetadata), so a debounced re-upload of unchanged
   // content is a safe no-op, never a duplicate.
   useEffect(() => {
-    if (!realDeploymentCandidate || !name.trim() || !ticker.trim() || identityProfane || socialLinksInvalid) {
+    if (!realDeploymentCandidate || !name.trim() || !ticker.trim() || identityBlocked || socialLinksInvalid) {
       setMetadataUri(null);
       setMetadataUriError(null);
       setMetadataUploading(false);
@@ -734,7 +740,7 @@ export function CreateDTR({
       cancelled = true;
       clearTimeout(debounceHandle);
     };
-  }, [realDeploymentCandidate, name, ticker, description, category, profileImageDataUrl, identityProfane, socialLinksInvalid, youtubeChannelUrl, youtubeFeaturedUrl, xUrl, telegramUrl]);
+  }, [realDeploymentCandidate, name, ticker, description, category, profileImageDataUrl, identityBlocked, socialLinksInvalid, youtubeChannelUrl, youtubeFeaturedUrl, xUrl, telegramUrl]);
 
   // Recovers from a page reload (or a return visit, hours or days later --
   // see PendingReserveDeploy's no-expiry note) that happened mid-deployment:
@@ -1091,19 +1097,20 @@ export function CreateDTR({
   const handleNext = () => setStep((s) => Math.min(4, s + 1));
   const handleBack = () => setStep((s) => Math.max(1, s - 1));
 
+  // The seed must fit one Solana transaction (64 accounts): at most
+  // MAX_ASSETS_PER_NEW_RESERVE assets, fewer with many fee recipients.
+  // Refused here, before anything is submitted (2026-10-29: a 12-asset
+  // Reserve was created and could never be seeded).
+  const recipientCountForSeed = feeRecipients.length + 1;
+  const atAssetLimit = !launchFitsSeed(assets.length + 1, recipientCountForSeed);
+
   const addAsset = (symbol: string, assetName: string) => {
-    // Mirrors the deployed program's own per-Reserve asset limit (see
-    // MAX_ASSETS_PER_RESERVE) -- refusing here, before anything is
-    // submitted, is what keeps an over-limit basket from starting a
-    // deployment the program would reject partway through registration.
-    if (assets.length >= MAX_ASSETS_PER_RESERVE) return;
+    if (atAssetLimit) return;
     if (!assets.some(a => a.symbol === symbol)) {
       setAssets([...assets, { symbol, name: assetName, weight: 0.1 }]);
       setRemovedAssets((prev) => prev.filter((r) => r.symbol !== symbol));
     }
   };
-  const atAssetLimit = assets.length >= MAX_ASSETS_PER_RESERVE;
-
   const removeAsset = (symbol: string) => {
     setAssets(assets.filter(a => a.symbol !== symbol));
   };
@@ -1222,6 +1229,10 @@ export function CreateDTR({
     }
     if (feeRecipients.length + 1 >= 10) {
       setFeeRecipientAddError("Maximum of 10 recipients reached, including the Primary Fee Destination.");
+      return;
+    }
+    if (!launchFitsSeed(assets.length, feeRecipients.length + 2)) {
+      setFeeRecipientAddError(`With ${assets.length} assets, this Reserve can't take another fee recipient: the launch must fit one Solana transaction. Remove an asset to add one.`);
       return;
     }
     if (feeRecipients.some((r) => r.address === address)) {
@@ -1836,9 +1847,9 @@ export function CreateDTR({
                     placeholder="e.g. Solana Blue Chips" 
                     value={name} 
                     onChange={(e) => setName(e.target.value)} 
-                    aria-invalid={nameProfane}
+                    aria-invalid={nameProfane || nameTooLong}
                   />
-                  {nameProfane && <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p>}
+                  {nameProfane ? <p className="text-xs text-destructive">{PROFANITY_MESSAGE}</p> : nameTooLong ? <p className="text-xs text-destructive">{reserveNameProblem(name)}</p> : <p className="text-xs text-muted-foreground">Up to {RESERVE_NAME_MAX_BYTES} characters (emoji and accents count double), the most DEXes and wallets show.</p>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ticker">Ticker</Label>
@@ -1974,7 +1985,7 @@ export function CreateDTR({
               </div>
             </CardContent>
             <CardFooter className="justify-end border-t border-border/40 pt-6">
-              <Button onClick={handleNext} disabled={!name || !ticker || identityProfane || socialLinksInvalid} className="font-bold gap-2">
+              <Button onClick={handleNext} disabled={!name || !ticker || identityBlocked || socialLinksInvalid} className="font-bold gap-2">
                 Next <ChevronRight className="w-4 h-4" />
               </Button>
             </CardFooter>
@@ -2072,7 +2083,9 @@ export function CreateDTR({
                       ))}
                       {atAssetLimit && (
                         <div className="p-3 text-center text-sm text-muted-foreground">
-                          This Reserve holds the maximum of {MAX_ASSETS_PER_RESERVE} assets. Remove one to add a different asset.
+                          {assets.length >= MAX_ASSETS_PER_NEW_RESERVE
+                            ? `A new Reserve can launch with at most ${MAX_ASSETS_PER_NEW_RESERVE} assets. Remove one to add a different asset.`
+                            : `With ${recipientCountForSeed} fee recipients, this Reserve can launch with at most ${assets.length} assets (the launch must fit one Solana transaction). Remove an asset or a fee recipient to add another.`}
                         </div>
                       )}
                       {(() => {
@@ -2286,6 +2299,9 @@ export function CreateDTR({
                       onChange={(e) => setInitialSeedUsdc(e.target.value)}
                     />
                   </div>
+                  {initialSeedUsdc && parseFloat(initialSeedUsdc) > 0 && parseFloat(initialSeedUsdc) < MIN_SEED_TOTAL_USD ? (
+                    <p className="text-xs text-destructive">The initial seed must be at least ${MIN_SEED_TOTAL_USD}.</p>
+                  ) : null}
                   {isRealDeployment && !IS_MAINNET ? (
                     <p className="text-xs text-muted-foreground flex justify-between">
                       <span>
@@ -2491,7 +2507,7 @@ export function CreateDTR({
               </Button>
               <Button
                 onClick={handleNext}
-                disabled={!initialSeedUsdc || parseFloat(initialSeedUsdc) <= 0 || feeRecipientTotalPct > 100}
+                disabled={!initialSeedUsdc || !(parseFloat(initialSeedUsdc) >= MIN_SEED_TOTAL_USD) || feeRecipientTotalPct > 100}
                 className="font-bold gap-2"
               >
                 Review <ChevronRight className="w-4 h-4" />
@@ -2977,7 +2993,7 @@ export function CreateDTR({
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={isSubmitting || launchChecking || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri || identityProfane}
+                disabled={isSubmitting || launchChecking || !isRealDeployment || (!costEstimate && !costEstimateError) || metadataUploading || !metadataUri || identityBlocked}
                 title={
                   !isRealDeployment
                     ? `Every selected asset must be a supported real ${CLUSTER_LABEL} asset.`

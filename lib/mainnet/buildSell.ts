@@ -126,21 +126,27 @@ export async function buildSellTransactions(deps: BuildSellDeps, input: BuildSel
   if (!redeemDone && walletReserveTokenRaw < input.reserveTokensToRedeem) {
     throw new BuildError(422, `This wallet holds ${walletReserveTokenRaw.toString()} raw Reserve Tokens but the sale needs ${input.reserveTokensToRedeem.toString()} raw. Nothing was submitted.`);
   }
-  if (supplyRaw <= 0n) throw new BuildError(422, "This Reserve has no Reserve Token supply to redeem against.");
+  if (supplyRaw <= 0n && !redeemDone) throw new BuildError(422, "This Reserve has no Reserve Token supply to redeem against.");
 
   // The redeem prelude (ATA creates + redeem) and the exact entitlements.
-  const { instructions: redeemPrelude, entitlementsRaw } = await buildDirectMultiAssetRedeemInstructions({
-    program,
-    reserve: input.reserve,
-    reserveTokenMint,
-    reserveTokenProgram,
-    vaultAuthority,
-    user: wallet,
-    assets: orderedAssets,
-    reserveTokenSupplyRaw: supplyRaw.toString(),
-    redemptionFeeBps: BigInt(read.reserveAccount.feeConfig.redemptionFeeBps),
-    reserveTokensToRedeem: input.reserveTokensToRedeem,
-  });
+  // A retry after a redeem that burned the LAST supply (redeem-all, 2026-10-30
+  // #77) has nothing to compute entitlements against: it sells what the wallet
+  // holds, and builds no redeem.
+  const { instructions: redeemPrelude, entitlementsRaw } =
+    supplyRaw <= 0n
+      ? { instructions: [] as TransactionInstruction[], entitlementsRaw: orderedAssets.map((a) => heldByMint.get(a.mint) ?? 0n) }
+      : await buildDirectMultiAssetRedeemInstructions({
+          program,
+          reserve: input.reserve,
+          reserveTokenMint,
+          reserveTokenProgram,
+          vaultAuthority,
+          user: wallet,
+          assets: orderedAssets,
+          reserveTokenSupplyRaw: supplyRaw.toString(),
+          redemptionFeeBps: BigInt(read.reserveAccount.feeConfig.redemptionFeeBps),
+          reserveTokensToRedeem: input.reserveTokensToRedeem,
+        });
   const redeemIx = redeemPrelude[redeemPrelude.length - 1];
   const ataIxs = redeemPrelude.slice(0, -1);
   const usdcAtaCreate = createAssociatedTokenAccountIdempotentInstruction(wallet, getAssociatedTokenAddressSync(usdcMint, wallet), wallet, usdcMint);

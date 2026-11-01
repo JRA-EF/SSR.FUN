@@ -131,7 +131,7 @@ describe("ROOT-CAUSE REGRESSION -- the exact old vs. new metadataUri constructio
 
   it("even a long, real-world-plausible name/description/category still fits comfortably under the limit with the new construction (the id is a fixed 16-hex-char length regardless of content size)", () => {
     const long = {
-      name: "The Long-Term Diversified Multi-Asset Strategic Solana Ecosystem Reserve Fund",
+      name: "Long-Term Strategic Solana Fund",
       ticker: "LONGFUND",
       description:
         "This Reserve holds a carefully curated, actively managed basket of leading Solana ecosystem tokens, rebalanced on a regular schedule to track sector growth while managing concentration risk across the underlying assets.",

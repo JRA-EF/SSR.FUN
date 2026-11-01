@@ -16,7 +16,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import type { DashboardRequest, DashboardResponse } from '../../lib/dashboard/http.js'
 import { parseCookie, SESSION_COOKIE_NAME, verifySessionCookie } from '../../lib/dashboard/session.js'
 import { parseAction } from '../../lib/command-center/model.js'
-import { addWatch, collectCommandCenter, dismissWatch, NODE_IDS, saveFacts } from '../../lib/command-center/probes.js'
+import { addWatch, collectCommandCenter, dismissWatch, NODE_IDS, reviewAlert, saveFacts, setFeedbackStatus } from '../../lib/command-center/probes.js'
 
 const PRODUCTION_ORIGIN = 'https://ssr.fun'
 const CACHE_MS = 60_000
@@ -95,6 +95,8 @@ export default async function handler(req: DashboardRequest & { url?: string }, 
     try {
       if (a.kind === 'facts') await saveFacts(a.node, a.facts)
       else if (a.kind === 'watch-add') await addWatch(a.text)
+      else if (a.kind === 'feedback-status') await setFeedbackStatus(a.row, a.at, a.status)
+      else if (a.kind === 'alert-review') await reviewAlert(a.key, a.outcome)
       else await dismissWatch(a.key)
     } catch (e) {
       res.status(502).json({ error: `Could not save: ${e instanceof Error ? e.message : String(e)}` })

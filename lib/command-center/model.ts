@@ -10,7 +10,9 @@ export type Tone = 'ok' | 'warn' | 'down' | 'unknown'
 export interface Metric { label: string; value: string; tone?: Tone }
 
 /** A titled list in the drawer (open feedback, unreviewed alerts, unpushed commits, wallet tokens). */
-export interface ListItem { primary: string; secondary?: string; tone?: Tone; url?: string }
+export interface ListItem { primary: string; secondary?: string; tone?: Tone; url?: string; resolve?: ResolveTarget }
+/** What a Resolve button on a list item marks: a feedback Sheet row (row number + its Received cell) or a kind of ops alert (hashed fingerprint). */
+export type ResolveTarget = { kind: 'feedback'; row: number; at: string } | { kind: 'alert'; key: string }
 export interface DrawerList { title: string; items: ListItem[]; empty?: string; note?: string }
 export interface Link { label: string; url: string }
 
@@ -177,6 +179,15 @@ export type CcAction =
   | { kind: 'watch-add'; text: string }
   /** key = a WatchItem id: 'team:<n>' or 'dec:<DEC>:<hash>'. Live problems cannot be dismissed; they clear when fixed. */
   | { kind: 'watch-dismiss'; key: string }
+  | { kind: 'feedback-status'; row: number; at: string; status: FeedbackStatus }
+  | { kind: 'alert-review'; key: string; outcome: AlertOutcome }
+
+/** Status choices the Resolve buttons write to the feedback Sheet (a subset of Code.gs STATUS_CHOICES). */
+export const FEEDBACK_STATUSES = ['Resolved', "Won't fix", 'Duplicate'] as const
+export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number]
+/** Outcomes scripts/review_ops_alerts.mjs records; the page offers the same ones. */
+export const ALERT_OUTCOMES = ['fixed', 'false_positive', 'user_error', 'not_fixed'] as const
+export type AlertOutcome = (typeof ALERT_OUTCOMES)[number]
 
 export function parseAction(body: unknown, nodeIds: readonly string[]): { ok: true; action: CcAction } | { ok: false; error: string } {
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>
@@ -190,6 +201,20 @@ export function parseAction(body: unknown, nodeIds: readonly string[]): { ok: tr
     const key = typeof b.key === 'string' ? b.key : ''
     if (!/^(team:\d+|dec:DEC-\d{4}:[0-9a-f]{10})$/.test(key)) return { ok: false, error: 'This item clears by itself once it is fixed.' }
     return { ok: true, action: { kind: 'watch-dismiss', key } }
+  }
+  if (b.action === 'feedback-status') {
+    const row = Number(b.row), at = typeof b.at === 'string' ? b.at : ''
+    const status = FEEDBACK_STATUSES.find((s) => s === b.status)
+    if (!Number.isInteger(row) || row < 2 || !at || Number.isNaN(Date.parse(at))) return { ok: false, error: 'This feedback row could not be identified. Refresh and try again.' }
+    if (!status) return { ok: false, error: 'Unknown status.' }
+    return { ok: true, action: { kind: 'feedback-status', row, at, status } }
+  }
+  if (b.action === 'alert-review') {
+    const key = typeof b.key === 'string' ? b.key : ''
+    const outcome = ALERT_OUTCOMES.find((o) => o === b.outcome)
+    if (!/^[0-9a-f]{20}$/.test(key)) return { ok: false, error: 'This alert could not be identified. Refresh and try again.' }
+    if (!outcome) return { ok: false, error: 'Unknown outcome.' }
+    return { ok: true, action: { kind: 'alert-review', key, outcome } }
   }
   const parsed = parseFactsEdit(body, nodeIds)
   return parsed.ok ? { ok: true, action: { kind: 'facts', node: parsed.node, facts: parsed.facts } } : parsed
