@@ -8541,3 +8541,34 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+
+## DEC-0278
+
+```json
+{
+  "id": "DEC-0278",
+  "date": "2026-11-02",
+  "title": "Self-serve BETA claim switched off; wave 1 goes to the earlier form sign-ups first",
+  "status": "confirmed",
+  "decision": "The public /beta claim (DEC-0276) is turned off in production (SSR_BETA_CLAIM_ENABLED=false) and kept as a feature flag. The Coming Soon page shows only \"I have a BETA key, let me in\"; its \"Get your BETA key\" button is hidden unless /api/site/claim reports open, and its pill reads \"Private BETA\" (it reads \"BETA is live\" again when the flag is on). With the flag off, /beta says wave 1 has gone out and wave 2 is coming. Wave 1 keys go first to the people who signed up through the earlier ssr.fun beta form.",
+  "context": "Creator, 2026-11-02, a few hours after DEC-0276 shipped: a list of contacts who submitted the earlier ssr.fun beta form was received; serve them first, announce on X that wave 1 has gone out and to watch for wave 2, and keep the self-serve claim as an off feature flag. No key had been claimed through /beta when it was switched off (beta_key_claims empty).",
+  "rationale": "Earlier sign-ups get priority. A runtime check against the existing claim endpoint lets one env change (plus redeploy) bring the button back without code changes.",
+  "alternativesConsidered": [
+    "Remove the /beta code -- rejected: the Creator wants it kept for a later wave.",
+    "Remove SSR_BETA_ISSUE_SECRET -- rejected: not needed to stop new claims, and it would block re-enabling."
+  ],
+  "impact": "New self-serve claims are refused (503) and the page shows the wave 2 message. Issued-key login still works (none issued). Re-enable: set SSR_BETA_CLAIM_ENABLED=true on ssr-fun Production and redeploy.",
+  "affectedAreas": [
+    "public/coming-soon.html",
+    "beta.html",
+    "Vercel env SSR_BETA_CLAIM_ENABLED (Production)"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "beta_key_claims had 0 rows at switch-off (2026-11-02).",
+    "tests/phase_beta_claim.mjs + tests/phase_beta_gate.mjs: 29 passing; tsc -b clean."
+  ]
+}
+```

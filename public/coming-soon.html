@@ -393,12 +393,13 @@
         <span class="l1">One token.</span>
         <span class="l2">Infinite possibilities.</span>
       </h1>
-      <div class="soon" role="status"><span class="dot"></span>BETA is live</div>
+      <div class="soon" role="status"><span class="dot"></span><span id="soon-text">Private BETA</span></div>
       <p class="blurb">
         SSR.fun is where anyone can create, launch, and trade decentralized tokenized
         reserves — baskets of Solana assets backed by transparent, on-chain holdings.
       </p>
-      <div class="beta">
+      <!-- DEC-0278: self-serve claim button, hidden unless /api/site/claim reports open (SSR_BETA_CLAIM_ENABLED=true). -->
+      <div class="beta" id="beta-claim-cta" hidden>
         <p class="beta-label">Be one of the first creators</p>
         <a class="beta-cta" href="/beta">Get your BETA key</a>
         <p class="beta-note">Free. Takes a few seconds with your X handle.</p>
@@ -432,6 +433,17 @@
     <span>Decentralized Tokenized Reserves · Solana</span>
   </footer>
   <script>
+    // DEC-0278: show the self-serve claim button only while claiming is switched on.
+    fetch('/api/site/claim', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !j.open) return;
+        var cta = document.getElementById('beta-claim-cta');
+        var soon = document.getElementById('soon-text');
+        if (cta) cta.hidden = false;
+        if (soon) soon.textContent = 'BETA is live';
+      })
+      .catch(function () {});
     (function () {
       var form = document.getElementById('beta-key-form');
       var input = document.getElementById('beta-key-input');

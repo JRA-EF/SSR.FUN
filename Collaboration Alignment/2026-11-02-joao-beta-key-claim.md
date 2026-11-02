@@ -33,3 +33,5 @@ A public page at `ssr.fun/beta` (the link for the X announcement). A visitor giv
 - `tsc -b` clean. `tests/phase_beta_claim.mjs` and `tests/phase_beta_gate.mjs`: 29 passing. Offline suite: 1,796 passing, the 5 known baseline failures.
 - Local end-to-end run of the claim and login handlers against Neon: new claim 201; same handle in other case returns the same key; bad handle 400; a typed key (lowercase, spaces) logs in; a tampered key 401. Test rows deleted.
 - Headless Edge screenshots of `/beta` (desktop, 520px) and Coming Soon.
+
+- **Follow-up 2026-11-02 (DEC-0278):** self-serve claiming switched off (`SSR_BETA_CLAIM_ENABLED=false`, Production) and kept as a feature flag; the Coming Soon claim button now shows only while the flag is on. Wave 1 keys go to the earlier ssr.fun beta form sign-ups first. 0 keys had been claimed.
