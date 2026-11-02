@@ -100,10 +100,29 @@ export async function markSheetSynced(handleLower: string): Promise<void> {
   await getSql()`UPDATE beta_key_claims SET sheet_synced = true WHERE handle_lower = ${handleLower}`
 }
 
-export async function recordRedemption(betaKey: string): Promise<void> {
+/** Counts a sign-in with this key; true on its FIRST sign-in (so the caller can mark it Used in the Sheet). */
+export async function recordRedemption(betaKey: string): Promise<boolean> {
   await ensureSchema()
-  await getSql()`
+  const rows = (await getSql()`
     UPDATE beta_key_claims
     SET first_redeemed_at = COALESCE(first_redeemed_at, now()), last_redeemed_at = now(), redeem_count = redeem_count + 1
-    WHERE beta_key = ${betaKey}`
+    WHERE beta_key = ${betaKey}
+    RETURNING redeem_count`) as { redeem_count: number }[]
+  return rows[0]?.redeem_count === 1
+}
+
+/** Marks the key Used (with today's date) in the team's key inventory Sheet. Best effort. */
+export async function markUsedInSheet(betaKey: string): Promise<void> {
+  const webhook = process.env.FEEDBACK_SHEET_WEBHOOK_URL
+  const secret = process.env.FEEDBACK_SHEET_SECRET
+  if (!webhook || !secret) return
+  const r = await fetch(webhook, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret, action: 'beta-used', key: betaKey, at: new Date().toISOString() }),
+    redirect: 'follow',
+    signal: AbortSignal.timeout(8_000),
+  })
+  const j = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null
+  if (!r.ok || !j?.ok) throw new Error(`sheet beta-used failed: ${r.status} ${j?.error ?? ''}`)
 }

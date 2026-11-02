@@ -11,7 +11,8 @@
 // self-reported (Creator decision, 2026-11-02).
 //
 // Each claim is stored in Neon (beta_key_claims, the source of truth) and
-// copied to the "Beta keys" tab of the team's feedback Sheet through the same
+// copied as a new row of the team's key inventory Sheet ("SSR.fun BETA Access
+// Keys (master)", with X handle and Email columns) through the same
 // Apps Script web app as api/feedback/experience.ts. A failed Sheet write
 // never withholds the key; the row stays sheet_synced = false and is copied
 // later (when that handle asks again, or as catch-up after a later claim).

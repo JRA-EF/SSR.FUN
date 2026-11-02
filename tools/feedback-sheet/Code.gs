@@ -92,28 +92,87 @@ function setStatus(rows, status) {
   return { ok: true, done: done, skipped: skipped };
 }
 
-// DEC-0276: one row per public BETA key claim (api/site/claim.ts), on its own
-// tab so the feedback tab (always the FIRST sheet, which stats() reads) is untouched.
-var BETA_TAB = 'Beta keys';
-var BETA_HEADERS = ['Claimed (UTC)', 'X handle', 'Email', 'BETA key', 'Site', 'Browser'];
+// DEC-0276: public BETA key claims (api/site/claim.ts) go into the team's
+// existing key inventory, "SSR.fun BETA Access Keys (master)" (first tab), one
+// row per key in its own column layout. Columns are found by their row-1
+// header, so reordering them in the Sheet is safe; "X handle" and "Email" are
+// added in the first empty header cells if missing. When a key is first used
+// (api/site/login.ts), beta-used fills in Used / First used on for its row.
+var KEYS_SHEET_ID = '1MJJFXeE66JmHrHHM8eaWCYfZmEhxTzQxJgL8iISZ6jQ'; // SSR.fun BETA Access Keys (master)
+var KEYS_EXTRA_HEADERS = ['X handle', 'Email'];
+
+function keysSheet() {
+  var sheet = SpreadsheetApp.openById(KEYS_SHEET_ID).getSheets()[0];
+  var width = Math.max(sheet.getLastColumn(), 1);
+  var head = sheet.getRange(1, 1, 1, width).getValues()[0].map(function (h) { return String(h).trim(); });
+  for (var i = 0; i < KEYS_EXTRA_HEADERS.length; i++) {
+    if (head.indexOf(KEYS_EXTRA_HEADERS[i]) !== -1) continue;
+    var free = head.indexOf('');
+    if (free === -1) { free = head.length; head.push(''); }
+    head[free] = KEYS_EXTRA_HEADERS[i];
+    sheet.getRange(1, free + 1).setValue(KEYS_EXTRA_HEADERS[i]).setFontWeight('bold');
+  }
+  var col = {};
+  for (var c = 0; c < head.length; c++) if (head[c]) col[head[c]] = c;
+  return { sheet: sheet, col: col, width: head.length };
+}
 
 function betaClaim(body) {
   if (!body.handle || !body.key) return { ok: false, error: 'bad beta claim' };
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    var book = SpreadsheetApp.openById(SHEET_ID);
-    var sheet = book.getSheetByName(BETA_TAB) || book.insertSheet(BETA_TAB, book.getSheets().length);
-    var head = sheet.getRange(1, 1, 1, BETA_HEADERS.length);
-    if (head.getValues()[0].join('|') !== BETA_HEADERS.join('|')) {
-      head.setValues([BETA_HEADERS]).setFontWeight('bold');
-      sheet.setFrozenRows(1);
+    var k = keysSheet(), sheet = k.sheet, col = k.col;
+    // One row per key: a retried copy never duplicates.
+    if (col['Key'] !== undefined && sheet.getLastRow() > 1) {
+      var keys = sheet.getRange(2, col['Key'] + 1, sheet.getLastRow() - 1, 1).getValues();
+      for (var r = 0; r < keys.length; r++) if (String(keys[r][0]).trim() === body.key) return { ok: true, duplicate: true };
     }
-    sheet.appendRow([safe(body.claimedAt), safe(body.handle), safe(body.email), safe(body.key), safe(body.site), safe(body.userAgent)]);
+    var nums = col['#'] !== undefined && sheet.getLastRow() > 1 ? sheet.getRange(2, col['#'] + 1, sheet.getLastRow() - 1, 1).getValues() : [];
+    var next = 1;
+    for (var n = 0; n < nums.length; n++) { var v = Number(nums[n][0]); if (v >= next) next = v + 1; }
+    var row = [];
+    for (var i = 0; i < k.width; i++) row.push('');
+    function put(name, value) { if (col[name] !== undefined) row[col[name]] = value; }
+    put('#', next);
+    put('Key', body.key);
+    put('Type', 'BETA');
+    put('Session length', '30 days');
+    put('Batch', 'Self-serve ssr.fun/beta (DEC-0276)');
+    put('Active in Vercel', 'Yes');
+    put('Issued to', safe(body.handle));
+    put('Issued on', safe(String(body.claimedAt || '').slice(0, 10)));
+    put('Used', 'No');
+    put('X handle', safe(body.handle));
+    put('Email', safe(body.email));
+    sheet.appendRow(row);
   } finally {
     lock.releaseLock();
   }
   return { ok: true };
+}
+
+function betaUsed(body) {
+  if (!body.key) return { ok: false, error: 'bad beta used' };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var k = keysSheet(), sheet = k.sheet, col = k.col;
+    if (col['Key'] === undefined || sheet.getLastRow() < 2) return { ok: true, found: false };
+    var keys = sheet.getRange(2, col['Key'] + 1, sheet.getLastRow() - 1, 1).getValues();
+    for (var r = 0; r < keys.length; r++) {
+      if (String(keys[r][0]).trim() !== body.key) continue;
+      if (col['Used'] !== undefined) sheet.getRange(r + 2, col['Used'] + 1).setValue('Yes');
+      if (col['First used on'] !== undefined) {
+        var cell = sheet.getRange(r + 2, col['First used on'] + 1);
+        if (!cell.getValue()) cell.setValue(safe(String(body.at || '').slice(0, 10)));
+      }
+      return { ok: true, found: true };
+    }
+    return { ok: true, found: false };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function doPost(e) {
@@ -131,6 +190,7 @@ function doPost(e) {
   if (body.action === 'stats') return reply(stats());
   if (body.action === 'set-status') return reply(setStatus(body.rows, body.status));
   if (body.action === 'beta-claim') return reply(betaClaim(body));
+  if (body.action === 'beta-used') return reply(betaUsed(body));
 
   var rating = Number(body.rating);
   if (!(rating >= 1 && rating <= 5)) return reply({ ok: false, error: 'bad rating' });

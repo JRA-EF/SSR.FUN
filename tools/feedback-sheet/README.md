@@ -25,7 +25,7 @@ With `npx @google/clasp@2.4.2` logged in as the owner (Apps Script API switched 
 - `{action: "stats"}` returns the counts the command center shows; each open row carries its Sheet `row` (v6, 2026-10-30) so the command center's Resolve buttons can call `set-status`.
 - `{action: "set-status", status, rows: [{row, at}]}` sets the Status column. `status` must be one of the dropdown choices, and a row is written only when its Received cell still equals `at`. Live as version 5, 2026-10-27; the 5 setup and test rows were marked Test with it.
 
-- `{action: "beta-claim", claimedAt, handle, email, key, site, userAgent}` (DEC-0276) appends one row to the `Beta keys` tab (created on first use, after the feedback tab so `stats()` still reads the first sheet). Sent by `api/site/claim.ts`.
+- `{action: "beta-claim", claimedAt, handle, email, key, site, userAgent}` (DEC-0276) appends one row to the key inventory Sheet `SSR.fun BETA Access Keys (master)` (`1MJJFXeE66JmHrHHM8eaWCYfZmEhxTzQxJgL8iISZ6jQ`, first tab; columns matched by header, `X handle` and `Email` added if missing; a key already listed is not added twice). `{action: "beta-used", key, at}` sets Used / First used on for that key (sent by `api/site/login.ts` on a key's first sign-in).
 
 ## Manual alternative (no clasp, from the Sheet)
 

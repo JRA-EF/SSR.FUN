@@ -16,13 +16,13 @@ A public page at `ssr.fun/beta` (the link for the X announcement). A visitor giv
 - `api/site/claim.ts` (new): GET `{open}`; POST claim. BotID, rate limits (5 per 10 min per IP in memory, 10 per day per IP, 2,000 per hour site-wide) and an optional cap.
 - `lib/site/betaClaims.ts` and `lib/site/claimPure.ts` (new): Neon table `beta_key_claims` (created on demand; already created in the shared DB) and the input rules.
 - `beta.html` and `src/beta/main.ts` (new Vite entry), `vite.config.ts`, `vercel.json` (`/beta` rewrite), `public/coming-soon.html`.
-- `tools/feedback-sheet/Code.gs` and README: `beta-claim` action, which writes to a "Beta keys" tab.
+- `tools/feedback-sheet/Code.gs` and README: `beta-claim` adds a row to the key inventory Sheet "SSR.fun BETA Access Keys (master)" (X handle and Email columns added); `beta-used` marks Used / First used on at a key's first sign-in.
 - `tests/phase_beta_claim.mjs` (new).
 
 ## Repositories / environments adjusted
 - Neon: table `beta_key_claims` created (empty).
-- Vercel env, still TO DO, `ssr-fun` Production only: `SSR_BETA_ISSUE_SECRET` (random), `SSR_BETA_CLAIM_ENABLED=true`, optionally `SSR_BETA_CLAIM_CAP`. Never on staging; without the secret the page shows "not open yet".
-- Apps Script: the updated `Code.gs` is NOT pushed yet (clasp login expired). Until it is, claims stay in Neon with `sheet_synced=false`; after the push, each new claim copies up to 3 missed rows.
+- Vercel env, `ssr-fun` Production only (set 2026-11-02): `SSR_BETA_ISSUE_SECRET` (random, Sensitive), `SSR_BETA_CLAIM_ENABLED=true`. Optional, not set: `SSR_BETA_CLAIM_CAP`, `SSR_REVOKED_BETA_KEYS`. Never on staging; without the secret the page shows "not open yet".
+- Apps Script `SSR.FUN feedback webhook`: pushed and redeployed under the same deployment id (clasp, 2026-11-02). Claims land in "SSR.fun BETA Access Keys (master)". A failed copy stays `sheet_synced=false` in Neon and is caught up (3 at a time) by later claims.
 
 ## Effect on others — READ THIS
 - Rotating or removing `SSR_BETA_ISSUE_SECRET` revokes every issued key and session at once. `SSR_REVOKED_BETA_KEYS` (comma list) refuses single keys at login.

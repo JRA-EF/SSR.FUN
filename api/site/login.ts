@@ -21,7 +21,7 @@ import {
   SITE_SESSION_COOKIE_NAME,
   siteSessionSecret,
 } from '../../lib/site/session.js'
-import { recordRedemption } from '../../lib/site/betaClaims.js'
+import { markUsedInSheet, recordRedemption } from '../../lib/site/betaClaims.js'
 
 export { SITE_SESSION_COOKIE_NAME }
 
@@ -135,6 +135,11 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
   const cookieValue = await createSiteSessionCookieValue(secret, redeemed, ttlMs)
   res.setHeader('Set-Cookie', buildSiteSetCookie(cookieValue, { maxAgeSeconds: ttlMs / 1000, secure: isSecureEnvironment() }))
   // Bookkeeping only (first/last redemption on the claim row); never blocks entry.
-  if (issuedKey) await recordRedemption(issuedKey).catch(e => console.error('[site/login] redemption not recorded:', e instanceof Error ? e.message : e))
+  if (issuedKey) {
+    const key = issuedKey
+    await recordRedemption(key)
+      .then(first => (first ? markUsedInSheet(key) : undefined))
+      .catch(e => console.error('[site/login] redemption not recorded:', e instanceof Error ? e.message : e))
+  }
   res.status(200).json({ ok: true })
 }
