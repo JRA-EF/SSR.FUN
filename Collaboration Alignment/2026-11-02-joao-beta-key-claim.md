@@ -3,7 +3,7 @@
 - **Date:** 2026-11-02
 - **Author:** Joao via Claude (Opus 5.5)
 - **Branch / commits:** `feat/beta-key-claim` (off `main` @ `80fc4c8`)
-- **Deployed to:** none yet
+- **Deployed to:** production `dpl_B6mbt2xpmhhCFvG2eXr887ZEFDmN` (`main` @ `545d457`, 2026-11-02 11:51 UTC)
 - **Decision log:** DEC-0276
 
 ## What shipped
