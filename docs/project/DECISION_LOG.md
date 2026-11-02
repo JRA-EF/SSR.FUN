@@ -8468,3 +8468,32 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0275
+
+```json
+{
+  "id": "DEC-0275",
+  "date": "2026-11-02",
+  "title": "Keeper flushes the fee vault of a winding-down Reserve so it can close",
+  "status": "confirmed",
+  "decision": "The fee keeper redeems every fee-vault share of a Reserve in windDown status on its next run, ignoring the DEC-0270 dust minimum (vaultDecision(..., windingDown=true) returns 'move' for any share > 0, priced or not). Wound-down Reserves no longer accrue (isAccrualWorthSending skips non-active), so no new share appears afterwards and the manager can close the Reserve once holders have redeemed. Keeper-only change, no program upgrade (DEC-0274 freeze): redeem_fee_vault_shares has no status or minimum check.",
+  "context": "DEC-0274 item (5), owner go on 2026-11-02 before open beta. #70 (…XQu3) held 1 raw fee share forever because the dust rule never moved it; close_reserve requires supply 0.",
+  "rationale": "A wound-down Reserve's leftover fee shares are worth fractions of a cent but block ~0.034 SOL of rent per Reserve from ever coming back, for every Reserve that charged a TVL fee. One redeem transaction (~$0.002) unlocks the close.",
+  "alternativesConsidered": [
+    "Program-side close that burns the fee vault -- rejected: program frozen (DEC-0274).",
+    "Leave it -- rejected by owner: every fee-charging Reserve would be unclosable."
+  ],
+  "impact": "Dry run on Mainnet 2026-11-02: 3 wound-down Reserves switch to a flush (#70 Gt5x…XQu3, #86 J5Zs…5bo, DjPY…rbeS); all others unchanged (42 still waiting as dust). Redeemed leg tokens stay in staging as dust under the existing rules.",
+  "affectedAreas": [
+    "lib/mainnet/keeperDust.ts",
+    "api/mainnet/fee-settlement-cron.ts",
+    "tests/phase_keeper_dust_watchdog.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "docs/project/DECISION_LOG.md DEC-0274 evidence (5): #70 fee vault = 1 raw share, rent 0.0398 SOL."
+  ]
+}
+```

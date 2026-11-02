@@ -403,7 +403,8 @@ async function runKeeper(req: ApiRequest, res: ApiResponse) {
     const decimalsOf = new Map((r?.assets ?? []).map((a) => [a.assetMint, a.decimals]));
     const vaultShares = BigInt(c.feeSettlement.protocolSharesInVault) + BigInt(c.feeSettlement.managerSharesInVault);
     const nav = r ? navPerReserveTokenUsd(r.assets, r.reserveTokenSupplyRaw, (m) => prices.get(m)) : null;
-    const vault: DustDecision = vaultDecision(vaultShares, nav, utcHour);
+    // DEC-0275: a winding-down Reserve flushes its fee vault so it can close.
+    const vault: DustDecision = vaultDecision(vaultShares, nav, utcHour, r?.status === "windDown");
     // Staging lists USDC once per leg that is USDC plus the appended USDC staging account (same account): count it once.
     const usdcStaged = c.staged.find((s) => s.mint === USDC_MINT_STR);
     const usdc = usdcStaged && stagedUsdcWorthDistributing(BigInt(usdcStaged.amount)) ? "move" : "dust";

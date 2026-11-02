@@ -66,9 +66,15 @@ export function navPerReserveTokenUsd(
   return total / (Number(supply) / 10 ** RESERVE_TOKEN_DECIMALS);
 }
 
-/** Whether the fee vault's shares are worth redeeming into staging this run. */
-export function vaultDecision(sharesRaw: bigint, navUsd: number | null, utcHour: number): DustDecision {
+/**
+ * Whether the fee vault's shares are worth redeeming into staging this run.
+ * DEC-0275: a winding-down Reserve redeems every share at once, dust or not.
+ * It no longer accrues, so nothing builds up, and any share left in the fee
+ * vault keeps the supply above 0 and blocks close_reserve forever.
+ */
+export function vaultDecision(sharesRaw: bigint, navUsd: number | null, utcHour: number, windingDown = false): DustDecision {
   if (sharesRaw <= 0n) return "dust";
+  if (windingDown) return "move";
   if (navUsd === null || !Number.isFinite(navUsd)) return utcHour === KEEPER_UNPRICED_RETRY_UTC_HOUR ? "move" : "unpriced-wait";
   return usdValue(sharesRaw, RESERVE_TOKEN_DECIMALS, navUsd) >= KEEPER_MIN_REDEEM_USD ? "move" : "dust";
 }

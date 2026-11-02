@@ -51,6 +51,11 @@ describe("DEC-0270 keeper dust rules", () => {
     expect(vaultDecision(14_761n, 1, NOT_RETRY_HOUR)).to.equal("dust");
     expect(vaultDecision(50_000n, 1, NOT_RETRY_HOUR)).to.equal("move");
     expect(vaultDecision(50_000n, null, NOT_RETRY_HOUR)).to.equal("unpriced-wait");
+    // DEC-0275: a winding-down Reserve flushes every share, even 1 raw unit with no price.
+    expect(vaultDecision(1n, 1, NOT_RETRY_HOUR, true)).to.equal("move");
+    expect(vaultDecision(1n, null, NOT_RETRY_HOUR, true)).to.equal("move");
+    expect(vaultDecision(0n, 1, NOT_RETRY_HOUR, true)).to.equal("dust");
+    expect(src("api/mainnet/fee-settlement-cron.ts")).to.include('vaultDecision(vaultShares, nav, utcHour, r?.status === "windDown")');
   });
 });
 
