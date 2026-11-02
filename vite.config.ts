@@ -58,6 +58,8 @@ export default defineConfig({
         internalSetKeeper: path.resolve(import.meta.dirname, './internal-set-keeper.html'),
         // Public feedback form (BotID-protected submit) -- see src/feedback/main.ts.
         feedback: path.resolve(import.meta.dirname, './feedback.html'),
+        // Public BETA key claim page (BotID-protected claim) -- see src/beta/main.ts (DEC-0276).
+        beta: path.resolve(import.meta.dirname, './beta.html'),
       },
     },
   },

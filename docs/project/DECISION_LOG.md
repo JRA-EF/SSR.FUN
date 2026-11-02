@@ -8497,3 +8497,47 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0276
+
+```json
+{
+  "id": "DEC-0276",
+  "date": "2026-11-02",
+  "title": "Self-serve BETA keys: public claim page at /beta, keys verified by their own signature",
+  "status": "confirmed",
+  "decision": "Anyone can claim a BETA key at ssr.fun/beta: X handle (required, self-reported) and email (optional), an invisible Vercel BotID human check, one key per handle (case-insensitive; asking again returns the same key). Keys are ISSUED keys, SSR-XXXX-XXXX-XXXX-XXXX in Crockford base32: 40 random bits + a 40-bit HMAC under SSR_BETA_ISSUE_SECRET, so /api/site/login verifies them with no database read, and every issued-key session is tagged with one anchor derived from that secret, so the middleware needs no database either. Claims are stored in Neon (beta_key_claims, source of truth, plus first/last redemption) and copied to a \"Beta keys\" tab of the team feedback Sheet through the existing Apps Script. The Coming Soon page swaps its Kit email sign-up for a \"Get your BETA key\" button. Env: SSR_BETA_CLAIM_ENABLED=true and SSR_BETA_ISSUE_SECRET on ssr-fun Production only; optional SSR_BETA_CLAIM_CAP, SSR_REVOKED_BETA_KEYS.",
+  "context": "Creator, 2026-11-02: announce open BETA on X with a link where people confirm they are human, give an X handle (email optional), get a key on screen, and the team gets a Sheet of contacts. The key unlocks ssr.fun through the existing DEC-0187 gate. Self-reported handles accepted.",
+  "rationale": "The env-list keys (SSR_BETA_KEYS) need a redeploy per key and cannot scale to a public drop. Signed keys keep the gate stateless (the middleware runs on every request; no new hot-path reads) while Neon gives a race-free one-key-per-handle record. BotID and the Neon rate-limit table are already in use for the public feedback form.",
+  "alternativesConsidered": [
+    "Separate Vercel project or subdomain -- rejected: a link on ssr.fun itself is more trusted and reuses the gate, BotID and Sheet pipeline.",
+    "Sheet as the only store -- rejected: no uniqueness, races under a burst.",
+    "Cloudflare Turnstile -- not needed: Vercel BotID is already wired for /feedback.",
+    "Sign in with X -- rejected for now: self-reported handles are fine for BETA (Creator).",
+    "Remove the gate entirely -- the planned last step after the BETA, not this change."
+  ],
+  "impact": "Public routes /beta, /beta.html, /api/site/claim. Rotating or removing SSR_BETA_ISSUE_SECRET revokes every issued key and session at once; SSR_REVOKED_BETA_KEYS refuses single keys at login (an open session runs to its 30-day expiry). Anyone who types a handle that already has a key gets that key (self-reported handles). Limits: 5 per 10 min per IP (memory), 10 per day per IP, 2,000 per hour site-wide. Staging (no secret) shows the page as not open.",
+  "affectedAreas": [
+    "lib/site/session.ts",
+    "lib/site/claimPure.ts",
+    "lib/site/betaClaims.ts",
+    "api/site/claim.ts",
+    "api/site/login.ts",
+    "middleware.ts",
+    "beta.html",
+    "src/beta/main.ts",
+    "public/coming-soon.html",
+    "vite.config.ts",
+    "vercel.json",
+    "tools/feedback-sheet/Code.gs",
+    "tests/phase_beta_claim.mjs"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_beta_claim.mjs: 9 passing; tests/phase_beta_gate.mjs unchanged and passing.",
+    "Local end-to-end run of api/site/claim.ts + api/site/login.ts against Neon 2026-11-02: claim 201, same handle in other case 200 with the same key and email filled in, bad handle 400, typed key (lowercase, spaces) logs in and counts a redemption, tampered key 401; test rows deleted.",
+    "Offline suite: 1,796 passing, the 5 known baseline failures."
+  ]
+}
+```

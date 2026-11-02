@@ -13,11 +13,15 @@ import {
   buildSiteSetCookie,
   configuredAccessKeys,
   createSiteSessionCookieValue,
+  issuedKeySecret,
+  issuedSessionAnchor,
   matchBetaKey,
+  verifyIssuedKey,
   sessionTtlForKey,
   SITE_SESSION_COOKIE_NAME,
   siteSessionSecret,
 } from '../../lib/site/session.js'
+import { recordRedemption } from '../../lib/site/betaClaims.js'
 
 export { SITE_SESSION_COOKIE_NAME }
 
@@ -75,7 +79,8 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
 
   const secret = siteSessionSecret()
   const keys = configuredAccessKeys()
-  if (!secret || keys.length === 0) {
+  const issueSecret = issuedKeySecret()
+  if (!secret || (keys.length === 0 && !issueSecret)) {
     res.status(500).json({ error: 'Beta access is not configured.' })
     return
   }
@@ -95,7 +100,15 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
   const body = parseBody(req)
   const raw = typeof body.key === 'string' ? body.key : typeof body.password === 'string' ? body.password : ''
   const submitted = raw.trim()
-  const redeemed = submitted ? matchBetaKey(submitted, keys) : null
+  // DEC-0276: a key from the public claim page (/beta) is not in any env list;
+  // it proves itself by its MAC, and its session is tagged with the shared
+  // issued-key anchor so the middleware can verify it without a database.
+  let redeemed = submitted ? matchBetaKey(submitted, keys) : null
+  let issuedKey: string | null = null
+  if (!redeemed && submitted && issueSecret) {
+    issuedKey = await verifyIssuedKey(submitted)
+    if (issuedKey) redeemed = issuedSessionAnchor(issueSecret)
+  }
 
   if (!redeemed) {
     if (limitEnabled) {
@@ -121,5 +134,7 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
   const ttlMs = sessionTtlForKey(redeemed)
   const cookieValue = await createSiteSessionCookieValue(secret, redeemed, ttlMs)
   res.setHeader('Set-Cookie', buildSiteSetCookie(cookieValue, { maxAgeSeconds: ttlMs / 1000, secure: isSecureEnvironment() }))
+  // Bookkeeping only (first/last redemption on the claim row); never blocks entry.
+  if (issuedKey) await recordRedemption(issuedKey).catch(e => console.error('[site/login] redemption not recorded:', e instanceof Error ? e.message : e))
   res.status(200).json({ ok: true })
 }

@@ -36,7 +36,7 @@
 
 import { next, rewrite } from '@vercel/functions'
 import { verifySessionCookie, parseCookie, SESSION_COOKIE_NAME } from './lib/dashboard/session.js'
-import { configuredAccessKeys, siteGateMode, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
+import { sessionVerificationKeys, siteGateMode, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
 
 // SITE_SESSION_COOKIE_NAME is imported from lib/site/session.ts (runtime-
 // agnostic, Web Crypto only), which api/site/login.ts imports too -- one
@@ -104,6 +104,11 @@ const PUBLIC_PATHS = new Set([
   '/feedback',
   '/feedback.html',
   '/api/feedback/submit',
+  // DEC-0276: the public BETA key claim page and its endpoint (BotID +
+  // rate-limited, see api/site/claim.ts). Issues keys; reveals nothing gated.
+  '/beta',
+  '/beta.html',
+  '/api/site/claim',
 ])
 
 // Reserve metadata and picture READS. A Reserve's on-chain metadata_uri
@@ -402,7 +407,7 @@ export default async function middleware(request: Request): Promise<Response> {
   // set. Re-enable by removing the env var or setting it back to 'true'.
   if (process.env.SSR_SITE_GATE_ENABLED !== 'false') {
     const siteSessionValue = parseCookie(cookieHeader, SITE_SESSION_COOKIE_NAME)
-    const siteAuthenticated = await verifySiteSessionCookie(siteSessionValue, siteSessionSecret(), configuredAccessKeys())
+    const siteAuthenticated = await verifySiteSessionCookie(siteSessionValue, siteSessionSecret(), sessionVerificationKeys())
 
     if (!siteAuthenticated) {
       return isApiPath ? unauthorizedJson() : siteGateResponse(request)

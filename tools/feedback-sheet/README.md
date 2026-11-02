@@ -25,6 +25,8 @@ With `npx @google/clasp@2.4.2` logged in as the owner (Apps Script API switched 
 - `{action: "stats"}` returns the counts the command center shows; each open row carries its Sheet `row` (v6, 2026-10-30) so the command center's Resolve buttons can call `set-status`.
 - `{action: "set-status", status, rows: [{row, at}]}` sets the Status column. `status` must be one of the dropdown choices, and a row is written only when its Received cell still equals `at`. Live as version 5, 2026-10-27; the 5 setup and test rows were marked Test with it.
 
+- `{action: "beta-claim", claimedAt, handle, email, key, site, userAgent}` (DEC-0276) appends one row to the `Beta keys` tab (created on first use, after the feedback tab so `stats()` still reads the first sheet). Sent by `api/site/claim.ts`.
+
 ## Manual alternative (no clasp, from the Sheet)
 
 1. Open the Sheet, then **Extensions -> Apps Script**. Replace the editor's contents with `Code.gs` and save.

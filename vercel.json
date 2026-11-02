@@ -107,6 +107,10 @@
       "destination": "/feedback.html"
     },
     {
+      "source": "/beta",
+      "destination": "/beta.html"
+    },
+    {
       "source": "/internal/set-keeper",
       "destination": "/internal-set-keeper.html"
     },

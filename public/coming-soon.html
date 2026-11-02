@@ -201,6 +201,26 @@
     .beta-row button:hover { transform: translateY(-1px); filter: brightness(1.15); }
     .beta-row button:active { transform: translateY(0); }
 
+    /* DEC-0276: the claim call to action (replaces the old email sign-up) */
+    .beta-cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #fff;
+      text-decoration: none;
+      padding: 16px 34px;
+      border-radius: 999px;
+      background: var(--navy);
+      box-shadow: 0 10px 26px rgba(25, 18, 102, 0.28);
+      transition: transform 0.15s, filter 0.2s;
+    }
+
+    .beta-cta:hover { transform: translateY(-1px); filter: brightness(1.15); }
+
     .beta-note {
       margin-top: 12px;
       font-size: 10px;
@@ -373,19 +393,16 @@
         <span class="l1">One token.</span>
         <span class="l2">Infinite possibilities.</span>
       </h1>
-      <div class="soon" role="status"><span class="dot"></span>Coming Soon</div>
+      <div class="soon" role="status"><span class="dot"></span>BETA is live</div>
       <p class="blurb">
         SSR.fun is where anyone can create, launch, and trade decentralized tokenized
         reserves — baskets of Solana assets backed by transparent, on-chain holdings.
       </p>
-      <form class="beta" action="https://app.kit.com/forms/9878615/subscriptions" method="post">
-        <p class="beta-label">Become a beta tester &amp; one of the first creators</p>
-        <div class="beta-row">
-          <input type="email" name="email_address" placeholder="you@email.com" required autocomplete="email" aria-label="Email address" />
-          <button type="submit">Join the beta</button>
-        </div>
-        <p class="beta-note">Early access. No spam — confirm by email.</p>
-      </form>
+      <div class="beta">
+        <p class="beta-label">Be one of the first creators</p>
+        <a class="beta-cta" href="/beta">Get your BETA key</a>
+        <p class="beta-note">Free. Takes a few seconds with your X handle.</p>
+      </div>
       <div class="beta-key">
         <p class="beta-label">I have a BETA key, let me in</p>
         <form class="beta-key-form" id="beta-key-form" novalidate>

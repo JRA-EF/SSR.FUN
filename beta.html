@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SSR.FUN BETA</title>
+  <meta name="description" content="Get your SSR.FUN BETA key: create, launch and mint decentralized tokenized reserves on Solana." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://ssr.fun/beta" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://ssr.fun/beta" />
+  <meta property="og:title" content="SSR.FUN BETA is open" />
+  <meta property="og:description" content="Claim your BETA key and be one of the first to launch a Reserve on Solana." />
+  <meta property="og:image" content="https://ssr.fun/coming-soon-eagle.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="SSR.FUN BETA is open" />
+  <meta name="twitter:description" content="Claim your BETA key and be one of the first to launch a Reserve on Solana." />
+  <meta name="twitter:image" content="https://ssr.fun/coming-soon-eagle.jpg" />
+  <link rel="icon" type="image/png" href="/favicon-seal.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-seal.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lexend+Giga:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0e0b2e; --ink-2: #343863; --ink-3: #6a6f93; --navy: #191266;
+      --blue-1: #2f3480; --blue-2: #5561bb; --blue-3: #8fa0e8;
+      --lav: #e6e8fa; --lav-line: #d7daf2; --bg: #f4f4fa; --card: #ffffff;
+      --err: #b3283d;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      font-family: 'Lexend Giga', system-ui, sans-serif;
+      background:
+        radial-gradient(900px 600px at 85% 12%, rgba(143, 160, 232, 0.22), transparent 60%),
+        radial-gradient(700px 500px at 8% 90%, rgba(85, 97, 187, 0.14), transparent 60%),
+        linear-gradient(180deg, #f7f7fc 0%, var(--bg) 55%, #ededf6 100%);
+      color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden;
+    }
+    header { display: flex; align-items: center; gap: 14px; padding: 26px clamp(16px, 5vw, 56px); }
+    header a { display: flex; align-items: center; gap: 14px; text-decoration: none; }
+    .seal { width: 42px; height: 42px; border-radius: 50%; }
+    .wordmark { font-weight: 800; font-size: 19px; letter-spacing: 0.06em; color: var(--navy); }
+    .wordmark span { color: var(--blue-3); }
+    main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 12px 16px 40px; }
+    .card {
+      width: 100%; max-width: 520px; background: rgba(255, 255, 255, 0.9);
+      border: 1px solid var(--lav-line); border-radius: 24px; padding: clamp(24px, 5vw, 40px);
+      box-shadow: 0 30px 80px rgba(25, 18, 102, 0.14);
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 10px; background: var(--navy); color: #fff;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.28em; text-transform: uppercase;
+      padding: 10px 18px 10px 14px; border-radius: 999px;
+    }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #8fe8b0; animation: pulse 2.2s ease-out infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(143,232,176,.55); } 70% { box-shadow: 0 0 0 10px rgba(143,232,176,0); } 100% { box-shadow: 0 0 0 0 rgba(143,232,176,0); } }
+    h1 { margin-top: 22px; font-weight: 800; text-transform: uppercase; font-size: clamp(20px, 4.4vw, 28px); line-height: 1.25; letter-spacing: 0.05em; }
+    h1 .grad { background: linear-gradient(90deg, var(--blue-1), var(--blue-2) 55%, var(--blue-3)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lede { margin-top: 16px; font-weight: 300; font-size: 12px; line-height: 1.9; color: var(--ink-2); letter-spacing: 0.02em; }
+    label { display: block; margin-top: 22px; margin-bottom: 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--navy); }
+    label .opt { color: var(--ink-3); font-weight: 400; letter-spacing: 0.12em; }
+    .field { position: relative; }
+    .field .at { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); color: var(--ink-3); font-size: 13px; pointer-events: none; }
+    input {
+      width: 100%; font-family: inherit; font-size: 13px; font-weight: 300; color: var(--ink);
+      padding: 14px 18px; border: 1.5px solid var(--lav-line); border-radius: 999px; background: #fff; outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    #handle { padding-left: 36px; }
+    input::placeholder { color: var(--ink-3); }
+    input:focus { border-color: var(--blue-2); box-shadow: 0 0 0 4px rgba(85, 97, 187, 0.16); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 24px;
+      font-family: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+      color: #fff; padding: 16px 24px; border: 0; border-radius: 999px; cursor: pointer; background: var(--navy);
+      box-shadow: 0 10px 26px rgba(25, 18, 102, 0.28); transition: transform .15s, filter .2s; text-decoration: none;
+    }
+    .btn:hover { transform: translateY(-1px); filter: brightness(1.15); }
+    .btn:disabled { opacity: .6; cursor: wait; transform: none; filter: none; }
+    .btn.ghost { background: transparent; color: var(--navy); border: 1.5px solid var(--lav-line); box-shadow: none; margin-top: 12px; }
+    .note { margin-top: 14px; font-size: 10px; font-weight: 300; line-height: 1.7; letter-spacing: 0.04em; color: var(--ink-3); }
+    .status { margin-top: 14px; min-height: 16px; font-size: 11px; letter-spacing: 0.03em; color: var(--ink-3); }
+    .status.err { color: var(--err); }
+    .key-box {
+      margin-top: 24px; display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 20px;
+      border: 1.5px dashed var(--blue-2); border-radius: 18px; background: var(--lav);
+    }
+    .key-box code { flex: 1; min-width: 0; font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: clamp(14px, 4.2vw, 19px); font-weight: 600; letter-spacing: 0.06em; color: var(--navy); overflow-wrap: anywhere; }
+    .copy { flex: none; font-family: inherit; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; padding: 10px 14px; border: 0; border-radius: 12px; background: var(--navy); color: #fff; cursor: pointer; }
+    .hidden { display: none; }
+    footer { padding: 18px 16px 28px; text-align: center; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+    footer a { color: inherit; }
+    @media (prefers-reduced-motion: reduce) { .pill .dot { animation: none; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/" aria-label="SSR.FUN home">
+      <img class="seal" src="/ssr-seal.png" alt="" />
+      <div class="wordmark">SSR<span>.FUN</span></div>
+    </a>
+  </header>
+
+  <main>
+    <section class="card">
+      <!-- Step 1: claim -->
+      <div id="claim-view">
+        <div class="pill" role="status"><span class="dot"></span>BETA is open</div>
+        <h1>Get your <span class="grad">BETA key</span></h1>
+        <p class="lede">Be one of the first to create, launch and mint Reserves on SSR.fun. Tell us your X handle and we'll give you a key right away.</p>
+        <form id="claim-form" novalidate>
+          <label for="handle">X handle</label>
+          <div class="field">
+            <span class="at" aria-hidden="true">@</span>
+            <input id="handle" name="handle" type="text" placeholder="yourhandle" maxlength="60" autocomplete="username" autocapitalize="off" spellcheck="false" required />
+          </div>
+          <label for="email">Email <span class="opt">(optional)</span></label>
+          <input id="email" name="email" type="email" placeholder="you@email.com" maxlength="254" autocomplete="email" />
+          <button class="btn" id="claim-btn" type="submit">Get my BETA key</button>
+          <p class="status" id="claim-status" role="status" aria-live="polite"></p>
+          <p class="note">One key per X handle. We use your handle and email only to contact you about the beta. A quick, invisible check confirms you're human.</p>
+        </form>
+      </div>
+
+      <!-- Step 2: the key -->
+      <div id="key-view" class="hidden">
+        <div class="pill" role="status"><span class="dot"></span>You're in</div>
+        <h1 id="key-title">Your <span class="grad">BETA key</span></h1>
+        <p class="lede" id="key-lede">Save this key. You'll need it to sign in on another browser or device.</p>
+        <div class="key-box">
+          <code id="key-value"></code>
+          <button class="copy" id="copy-btn" type="button">Copy</button>
+        </div>
+        <button class="btn" id="enter-btn" type="button">Enter SSR.fun</button>
+        <a class="btn ghost" id="share-btn" href="#" target="_blank" rel="noopener">Share on X</a>
+        <p class="status" id="enter-status" role="status" aria-live="polite"></p>
+      </div>
+
+      <!-- Claiming switched off -->
+      <div id="closed-view" class="hidden">
+        <div class="pill" role="status"><span class="dot"></span>Coming soon</div>
+        <h1>BETA keys are <span class="grad">not open yet</span></h1>
+        <p class="lede">Follow SSR.fun on X for the next drop. Already have a key? Enter it on the home page.</p>
+        <a class="btn" href="/">I have a BETA key</a>
+      </div>
+    </section>
+  </main>
+
+  <footer><span>© 2026 SSR.FUN</span> · <a href="/docs">Docs</a></footer>
+  <script type="module" src="/src/beta/main.ts"></script>
+</body>
+</html>

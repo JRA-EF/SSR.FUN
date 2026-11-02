@@ -92,6 +92,30 @@ function setStatus(rows, status) {
   return { ok: true, done: done, skipped: skipped };
 }
 
+// DEC-0276: one row per public BETA key claim (api/site/claim.ts), on its own
+// tab so the feedback tab (always the FIRST sheet, which stats() reads) is untouched.
+var BETA_TAB = 'Beta keys';
+var BETA_HEADERS = ['Claimed (UTC)', 'X handle', 'Email', 'BETA key', 'Site', 'Browser'];
+
+function betaClaim(body) {
+  if (!body.handle || !body.key) return { ok: false, error: 'bad beta claim' };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var book = SpreadsheetApp.openById(SHEET_ID);
+    var sheet = book.getSheetByName(BETA_TAB) || book.insertSheet(BETA_TAB, book.getSheets().length);
+    var head = sheet.getRange(1, 1, 1, BETA_HEADERS.length);
+    if (head.getValues()[0].join('|') !== BETA_HEADERS.join('|')) {
+      head.setValues([BETA_HEADERS]).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    }
+    sheet.appendRow([safe(body.claimedAt), safe(body.handle), safe(body.email), safe(body.key), safe(body.site), safe(body.userAgent)]);
+  } finally {
+    lock.releaseLock();
+  }
+  return { ok: true };
+}
+
 function doPost(e) {
   var body;
   try {
@@ -106,6 +130,7 @@ function doPost(e) {
   if (!secret || body.secret !== secret) return reply({ ok: false, error: 'unauthorized' });
   if (body.action === 'stats') return reply(stats());
   if (body.action === 'set-status') return reply(setStatus(body.rows, body.status));
+  if (body.action === 'beta-claim') return reply(betaClaim(body));
 
   var rating = Number(body.rating);
   if (!(rating >= 1 && rating <= 5)) return reply({ ok: false, error: 'bad rating' });

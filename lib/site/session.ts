@@ -150,6 +150,102 @@ export async function verifySiteSessionCookie(value: string | undefined, secret:
   return false
 }
 
+// ---------------------------------------------------------------------------
+// Self-serve ISSUED keys (DEC-0276). The public claim page (/beta,
+// api/site/claim.ts) hands every visitor their own key without touching the
+// env lists above. An issued key carries its own proof:
+//   SSR-XXXX-XXXX-XXXX-XXXX  (Crockford base32)
+//   first 8 chars  = 40 random bits
+//   last 8 chars   = first 40 bits of HMAC-SHA256(SSR_BETA_ISSUE_SECRET, body)
+// so login verifies it with no database read, and the middleware never needs
+// one either: a session opened with ANY issued key is tagged with one shared
+// anchor derived from the secret (issuedSessionAnchor). Consequences:
+//   - removing/rotating SSR_BETA_ISSUE_SECRET revokes every issued key AND
+//     every session opened with one (the kill switch);
+//   - SSR_REVOKED_BETA_KEYS (comma list) refuses individual keys at login;
+//     a session already open with that key runs to its 30-day expiry.
+// Guessing a valid key means guessing a 40-bit MAC against the login
+// endpoint's lockout (10 attempts per 10 minutes per IP).
+// ---------------------------------------------------------------------------
+
+export interface IssuedKeyEnv extends AccessKeyEnv {
+  SSR_BETA_ISSUE_SECRET?: string
+  SSR_REVOKED_BETA_KEYS?: string
+}
+
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+export function issuedKeySecret(env: IssuedKeyEnv = process.env): string {
+  return (env.SSR_BETA_ISSUE_SECRET ?? '').trim()
+}
+
+/** 5 bytes -> 8 Crockford base32 chars. */
+function base32Of40Bits(bytes: Uint8Array): string {
+  let bits = 0n
+  for (let i = 0; i < 5; i++) bits = (bits << 8n) | BigInt(bytes[i])
+  let out = ''
+  for (let i = 7; i >= 0; i--) out += CROCKFORD[Number((bits >> BigInt(i * 5)) & 31n)]
+  return out
+}
+
+async function issuedKeyMac(secret: string, body: string): Promise<string> {
+  const cryptoKey = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const signature = new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(`ssr-issued-beta-key:${body}`)))
+  return base32Of40Bits(signature)
+}
+
+function formatIssuedKey(chars16: string): string {
+  return `SSR-${chars16.slice(0, 4)}-${chars16.slice(4, 8)}-${chars16.slice(8, 12)}-${chars16.slice(12, 16)}`
+}
+
+/** A fresh issued key, e.g. SSR-7K2F-Q9XM-3HDA-W0RT. */
+export async function generateIssuedKey(secret: string): Promise<string> {
+  if (!secret) throw new Error('SSR_BETA_ISSUE_SECRET is not configured.')
+  const random = crypto.getRandomValues(new Uint8Array(5))
+  const body = base32Of40Bits(random)
+  return formatIssuedKey(body + (await issuedKeyMac(secret, body)))
+}
+
+/**
+ * Canonical form of something a person typed or pasted, or null if it cannot
+ * be an issued key. Forgiving the way Crockford base32 is meant to be: case,
+ * spaces and dashes are ignored, O reads as 0, I and L read as 1.
+ */
+export function normalizeIssuedKey(input: string): string | null {
+  const compact = input.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+  if (compact.length !== 19 || !compact.startsWith('SSR')) return null
+  const chars = compact.slice(3).replace(/O/g, '0').replace(/[IL]/g, '1')
+  for (const c of chars) if (!CROCKFORD.includes(c)) return null
+  return formatIssuedKey(chars)
+}
+
+/** The canonical issued key `submitted` names if its MAC checks out and it is not revoked; otherwise null. */
+export async function verifyIssuedKey(submitted: string, env: IssuedKeyEnv = process.env): Promise<string | null> {
+  const secret = issuedKeySecret(env)
+  if (!secret) return null
+  const key = normalizeIssuedKey(submitted)
+  if (!key) return null
+  const chars = key.replace(/^SSR-/, '').replace(/-/g, '')
+  const expected = await issuedKeyMac(secret, chars.slice(0, 8))
+  if (!timingSafeEqual(chars.slice(8), expected)) return null
+  const revoked = splitKeyList(env.SSR_REVOKED_BETA_KEYS).map(k => normalizeIssuedKey(k))
+  if (revoked.includes(key)) return null
+  return key
+}
+
+/** The "key" every issued-key session is tagged with. Never accepted at login; only ever passed to verifySiteSessionCookie. */
+export function issuedSessionAnchor(secret: string): string {
+  return `ssr-issued-beta-session:${secret}`
+}
+
+/** What the middleware verifies session cookies against: every configured key, plus the issued-key anchor when issuing is configured. */
+export function sessionVerificationKeys(env: IssuedKeyEnv = process.env): string[] {
+  const keys = configuredAccessKeys(env)
+  const secret = issuedKeySecret(env)
+  if (secret) keys.push(issuedSessionAnchor(secret))
+  return keys
+}
+
 export function buildSiteSetCookie(value: string, opts: { maxAgeSeconds: number; secure: boolean }): string {
   const attrs = [`${SITE_SESSION_COOKIE_NAME}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${opts.maxAgeSeconds}`]
   if (opts.secure) attrs.push('Secure')
