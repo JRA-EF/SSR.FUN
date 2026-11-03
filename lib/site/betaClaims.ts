@@ -126,3 +126,37 @@ export async function markUsedInSheet(betaKey: string): Promise<void> {
   const j = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null
   if (!r.ok || !j?.ok) throw new Error(`sheet beta-used failed: ${r.status} ${j?.error ?? ''}`)
 }
+
+// --- Sign-ins with env-list keys (SSR_BETA_KEYS / SSR_TEAM_KEYS / SSR_SITE_PASSWORD) ---
+// Wave 1 keys are handed out from the env list, not issued by /beta, so they
+// have no beta_key_claims row. This table counts their sign-ins by a short
+// hash tag (betaKeyTag), never the key itself, so the team can see which keys
+// are in use; the key's own row in the Sheet is marked Used on first sign-in.
+
+let keyUseSchemaReady = false
+
+export type ListedKeyKind = 'beta' | 'team' | 'password'
+
+async function ensureKeyUseSchema(): Promise<void> {
+  if (keyUseSchemaReady) return
+  await getSql()`
+    CREATE TABLE IF NOT EXISTS site_key_redemptions (
+      key_tag            text PRIMARY KEY,
+      kind               text NOT NULL,
+      first_redeemed_at  timestamptz NOT NULL DEFAULT now(),
+      last_redeemed_at   timestamptz NOT NULL DEFAULT now(),
+      redeem_count       integer NOT NULL DEFAULT 1
+    )`
+  keyUseSchemaReady = true
+}
+
+/** Counts a sign-in with an env-list key (by its tag); true on its FIRST recorded sign-in. */
+export async function recordListedKeyRedemption(keyTag: string, kind: ListedKeyKind): Promise<boolean> {
+  await ensureKeyUseSchema()
+  const rows = (await getSql()`
+    INSERT INTO site_key_redemptions (key_tag, kind) VALUES (${keyTag}, ${kind})
+    ON CONFLICT (key_tag) DO UPDATE
+    SET last_redeemed_at = now(), redeem_count = site_key_redemptions.redeem_count + 1, kind = EXCLUDED.kind
+    RETURNING redeem_count`) as { redeem_count: number }[]
+  return rows[0]?.redeem_count === 1
+}

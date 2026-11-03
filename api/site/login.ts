@@ -10,8 +10,10 @@
 import type { DashboardRequest, DashboardResponse } from '../../lib/dashboard/http.js'
 import { isSecureEnvironment } from '../../lib/dashboard/session.js'
 import {
+  betaKeyTag,
   buildSiteSetCookie,
   configuredAccessKeys,
+  configuredTeamKeys,
   createSiteSessionCookieValue,
   issuedKeySecret,
   issuedSessionAnchor,
@@ -20,8 +22,9 @@ import {
   sessionTtlForKey,
   SITE_SESSION_COOKIE_NAME,
   siteSessionSecret,
+  timingSafeEqual,
 } from '../../lib/site/session.js'
-import { markUsedInSheet, recordRedemption } from '../../lib/site/betaClaims.js'
+import { markUsedInSheet, recordListedKeyRedemption, recordRedemption, type ListedKeyKind } from '../../lib/site/betaClaims.js'
 
 export { SITE_SESSION_COOKIE_NAME }
 
@@ -140,6 +143,18 @@ export default async function handler(req: DashboardRequest, res: DashboardRespo
     await recordRedemption(key)
       .then(first => (first ? markUsedInSheet(key) : undefined))
       .catch(e => console.error('[site/login] redemption not recorded:', e instanceof Error ? e.message : e))
+  } else {
+    // Env-list key (wave 1 BETA, TEAM or the site password): count its sign-ins
+    // by tag, and mark a BETA key Used in the key Sheet on its first sign-in.
+    const key = redeemed
+    const sitePassword = (process.env.SSR_SITE_PASSWORD ?? '').trim()
+    const kind: ListedKeyKind = sitePassword && timingSafeEqual(key, sitePassword)
+      ? 'password'
+      : configuredTeamKeys().some(k => timingSafeEqual(key, k)) ? 'team' : 'beta'
+    await betaKeyTag(key)
+      .then(tag => recordListedKeyRedemption(tag, kind))
+      .then(first => (first && kind === 'beta' ? markUsedInSheet(key) : undefined))
+      .catch(e => console.error('[site/login] key use not recorded:', e instanceof Error ? e.message : e))
   }
   res.status(200).json({ ok: true })
 }
