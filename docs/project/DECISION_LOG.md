@@ -8695,3 +8695,29 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0283",
+  "date": "2026-11-03",
+  "title": "Pool launch measures SSR's payer cost with a refund the creator's wallet can actually pay; the SOL error names the wallet balance, not the cap",
+  "status": "implemented; production deploy recorded in PROJECT_STATUS.md",
+  "decision": "lib/mainnet/createLiquidity.ts prepareCreateLiquidity: the first (measuring) simulation used to refund the full SOL cost cap minus margin from the creator, so any wallet holding less than the cap (default 0.30 SOL) failed with 'not have enough SOL' and was told to raise the cap to 0.25 SOL or more -- even with a 0.30 cap, and even when the wallet held the ~0.19 SOL a launch really costs. Now the refund is min(cap, balance - CREATOR_SOL_RESERVE_LAMPORTS 0.05 SOL) - margin (measuringRefundLamports) and the measured cost is payerCost + refund + margin (identical to before when the refund is the full cap). poolLaunchSolMessage says the wallet's balance and how much SOL to add when it holds under ~0.21 SOL, mentions the cap only when the cap is below 0.25 SOL.",
+  "context": "2026-11-03 19:01-19:03 UTC, wallet 9ui2...GiVn (Reserve SAIR, launched minutes earlier) tried to launch its pool with 0.079 SOL and the default 0.30 SOL cap: the lookup table landed, the pool step expired in the wallet, the retry was refused with the contradictory cap message.",
+  "rationale": "The message must name the real shortfall; and a wallet that can pay the real cost must not be refused because the measuring step borrowed more than the wallet holds.",
+  "alternativesConsidered": [
+    "Lowering the default cap -- rejected: it would only move the threshold, and the cap is the user's own protection."
+  ],
+  "impact": "Server pool-launch preparation only. No program or env change. Not live-validated with a real launch yet: the next pool launch from a wallet between 0.2 and 0.3 SOL is the proof.",
+  "affectedAreas": [
+    "lib/mainnet/createLiquidity.ts",
+    "tests/phase_pool_launch_sol.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_pool_launch_sol.ts + phase_liquidity_split.ts + phase_campaign2_followups.ts 22 passing",
+    "ops alert app/launch 2026-11-03T19:03Z: 'needs more SOL than your 0.30 SOL cost limit allows ... Raise ... to 0.25 SOL or more'"
+  ]
+}
+```

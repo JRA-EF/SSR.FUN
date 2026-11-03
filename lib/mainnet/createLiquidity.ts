@@ -70,6 +70,23 @@ export async function isTradeTaxLive(connection:Pick<Connection,'simulateTransac
  const {value}=await connection.simulateTransaction(tx,{sigVerify:false,replaceRecentBlockhash:true});
  return !/"Custom":101\b/.test(JSON.stringify(value.err??null));
 }
+/** DEC-0283: the creator's own fees and rent kept aside when measuring SSR's pool-payer cost. */
+export const CREATOR_SOL_RESERVE_LAMPORTS=50_000_000n;
+/** About what a pool launch costs the creator: Raydium's 0.15 SOL creation fee plus account rent. */
+export const POOL_LAUNCH_SOL_LAMPORTS=200_000_000n;
+/** Pure: the refund the measuring simulation uses -- the cap, or less when the wallet cannot spare it. */
+export function measuringRefundLamports(capLamports:bigint,creatorLamports:bigint):bigint{
+ const spare=creatorLamports>CREATOR_SOL_RESERVE_LAMPORTS?creatorLamports-CREATOR_SOL_RESERVE_LAMPORTS:0n;
+ const r=(capLamports<spare?capLamports:spare)-POOL_PAYER_REFUND_MARGIN_LAMPORTS;
+ return r>0n?r:0n;
+}
+/** Pure: why a pool launch could not pay its SOL -- the wallet's balance or the cost cap, whichever is short. */
+export function poolLaunchSolMessage(capLamports:bigint,creatorLamports:bigint):string{
+ const sol=(l:bigint)=>(Number(l)/1e9).toFixed(3);
+ if(creatorLamports<POOL_LAUNCH_SOL_LAMPORTS+CREATOR_SOL_RESERVE_LAMPORTS/5n)return `Launching this pool costs about 0.19 SOL (Raydium charges 0.15 SOL to create a pool, plus account rent), and your wallet holds ${sol(creatorLamports)} SOL. Add at least ${sol(POOL_LAUNCH_SOL_LAMPORTS+CREATOR_SOL_RESERVE_LAMPORTS/5n-creatorLamports)} SOL and try again. Nothing was submitted.`;
+ if(capLamports<250_000_000n)return `Launching this pool needs more SOL than your ${sol(capLamports)} SOL cost limit allows: Raydium charges 0.15 SOL to create a pool, plus about 0.04 SOL of account rent. Raise the maximum network and setup cost to 0.25 SOL or more. Nothing was submitted.`;
+ return `Launching this pool needs more SOL than your wallet can spare (it holds ${sol(creatorLamports)} SOL; a launch costs about 0.19 SOL plus network fees). Add a little SOL and try again. Nothing was submitted.`;
+}
 export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionEnabled:boolean;prices:(mints:string[])=>Promise<Map<string,Price>>},p:{reserve:PublicKey;actor:PublicKey;usdcRaw:bigint;maximumSolRaw:bigint;buyTaxBps:number;sellTaxBps:number;holderShareBps:number;poolShareBps?:number;lock:TrancheChoice;lookupTables?:PublicKey[]}){
  // Preparation (reads, pricing, two simulations) gets its own deadline; the 45 s signing window starts when it ends.
  const now=deps.now??Date.now,expiresAtMs=now()+30000,s=await readLiquidityState(deps,p.reserve);
@@ -100,11 +117,14 @@ export async function prepareCreateLiquidity(deps:CompoundReadDeps & {executionE
  const payerCost=(r:Awaited<ReturnType<typeof simulate>>)=>BigInt(r.solCostsByWallet?.find(c=>c.wallet===SSR_POOL_PAYER.toBase58())?.lamports??'0');
  check(p.maximumSolRaw>POOL_PAYER_REFUND_MARGIN_LAMPORTS,'Choose a higher SOL cost cap');
  const capSol=(Number(p.maximumSolRaw)/1e9).toFixed(2);
- const first=await simulate(p.maximumSolRaw-POOL_PAYER_REFUND_MARGIN_LAMPORTS).catch((e:unknown)=>{
-  // The refund is capped by the creator's SOL limit, so a low cap starves Raydium's 0.15 SOL creation fee.
-  if(e instanceof Error&&/not have enough SOL/.test(e.message))throw new Error(`Launching this pool needs more SOL than your ${capSol} SOL cost limit allows: Raydium charges 0.15 SOL to create a pool, plus about 0.04 SOL of account rent. Raise the maximum network and setup cost to 0.25 SOL or more (or add SOL to your wallet). Nothing was submitted.`);
+ // DEC-0283: the measuring refund can never exceed what the creator's wallet can spare; a wallet holding less
+ // than the cap used to fail here and was told to raise the cap (live 2026-11-03: 0.079 SOL, cap 0.30).
+ const creatorLamports=BigInt(await deps.connection.getBalance(s.creator,'confirmed'));
+ const firstRefund=measuringRefundLamports(p.maximumSolRaw,creatorLamports);
+ const first=await simulate(firstRefund).catch((e:unknown)=>{
+  if(e instanceof Error&&/not have enough SOL/.test(e.message))throw new Error(poolLaunchSolMessage(p.maximumSolRaw,creatorLamports));
   throw e;});
- const measured=payerCost(first)+p.maximumSolRaw;
+ const measured=payerCost(first)+firstRefund+POOL_PAYER_REFUND_MARGIN_LAMPORTS;
  check(measured>0n&&measured<=p.maximumSolRaw,'Pool launch SOL cost exceeds your cap');
  const prepared=await simulate(measured);
  const payerNetCostLamports=payerCost(prepared);
