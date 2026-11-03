@@ -3,6 +3,7 @@ import { DocTabs } from '../components/DocTabs'
 import { Addr, Callout, Facts } from '../components/primitives'
 import { DocLink, docHref } from '../router'
 import {
+  MIN_TRADE_TAX_BPS,
   RESERVE_DISCRIMINATOR_B58,
   RESERVE_METADATA_URI_OFFSET,
   RESERVE_MINT_OFFSET,
@@ -17,6 +18,7 @@ import {
   RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS,
 } from '../../merge/lib/calculations'
 
+const TRADE_TAX_RANGE = `${formatBpsAsPct(MIN_TRADE_TAX_BPS)} to 2%`
 const TRANSFER_FEE = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_BPS)
 const TRANSFER_FEE_MAX = formatBpsAsPct(RESERVE_TOKEN_TRANSFER_FEE_MAX_BPS)
 
@@ -199,8 +201,8 @@ function OnChain() {
           [
             'Name, symbol, picture',
             <>
-              Held in the Reserve’s metadata record, which the Reserve account links to on-chain. Managers edit it on
-              SSR.fun. See{' '}
+              Published by the program in the mint’s Metaplex Token Metadata account, which wallets and explorers read, and
+              held in full in the Reserve’s metadata record, which the Reserve account links to on-chain. See{' '}
               <DocLink key="l" to={docHref('reserve-tokens-on-dexes', 'lookup')}>Identify a Reserve Token</DocLink>.
             </>,
           ],
@@ -249,6 +251,29 @@ function TransferFee() {
           ],
         ]}
       />
+      <h3>Reserve Tokens with a trade tax</h3>
+      <p>
+        When a Manager launches a pool for their Reserve Token on SSR.fun, they can add a trade tax of {TRADE_TAX_RANGE}.
+        It is added to the token's transfer fee, so the token then charges {TRANSFER_FEE} plus the tax on every
+        transfer, on any venue: Jupiter routes, direct pool swaps, bots, and sends between wallets. Minting and
+        redeeming still pay neither.
+      </p>
+      <Facts
+        rows={[
+          ['Set', 'Once, in the pool launch transaction, by the Reserve’s Manager. It can never be changed or removed afterwards.'],
+          ['Takes effect', 'About two epochs after the pool launches, as with any Token-2022 rate change.'],
+          [
+            'Split',
+            `The ${TRANSFER_FEE} protocol part and 20% of the tax go to the SSR Protocol. The other 80% of the tax goes to the creator treasury, less any holder share chosen at launch.`,
+          ],
+          ['Holder share', 'Burned. Supply falls while the vaults stay the same, so the backing behind every remaining Reserve Token rises.'],
+          ['Paid in', 'Reserve Tokens, collected from the withheld fees by a permissionless instruction the protocol’s keeper runs regularly.'],
+        ]}
+      />
+      <p>
+        Because a trade tax is part of the transfer fee, a token with one reports a rate above {TRANSFER_FEE_MAX} in its
+        TransferFeeConfig extension. The code below returns the full rate either way.
+      </p>
       <h3>Earlier Reserves</h3>
       <p>
         Reserves launched before the transfer fee use classic SPL Token mints. Those Reserve Tokens have no transfer
@@ -343,13 +368,14 @@ function ForIntegrators() {
               <Addr key="t" value={SPL_TOKEN_PROGRAM} label="SPL Token program address" />).
             </>,
           ],
-          ['Transfer fee', `${TRANSFER_FEE} on every transfer of a Token-2022 Reserve Token, paid to the SSR Protocol. None on classic SPL Token Reserve Tokens. Never charged on minting or redeeming on SSR.fun.`],
+          ['Transfer fee', `${TRANSFER_FEE} on every transfer of a Token-2022 Reserve Token, paid to the SSR Protocol, plus the trade tax (${TRADE_TAX_RANGE}) on tokens whose Manager set one at pool launch. None on classic SPL Token Reserve Tokens. Never charged on minting or redeeming on SSR.fun. Always read the current rate from the mint.`],
+          ['Token metadata', 'A Metaplex Token Metadata account for the mint, created by the program, carries the name, symbol, and a link to the metadata record.'],
           ['Decimals', String(RESERVE_TOKEN_DECIMALS)],
           ['Mint address', <>Program-derived: <code key="m">["reserve_token_mint", reserve]</code> under the program above.</>],
           ['Mint authority', <>Program-derived: <code key="a">["mint_authority", reserve]</code>. Only the program can sign for it.</>],
           ['Freeze authority', 'None.'],
           ['Backing', 'Reserve assets held in program-controlled vaults, one per asset, redeemable pro rata by any holder on SSR.fun.'],
-          ['Supply', 'Uncapped. Minted on deposit at value per token, burned on redemption, plus a bounded fee accrual.'],
+          ['Supply', 'Uncapped. Minted on deposit at value per token, burned on redemption, plus a bounded fee accrual. The holder share of a trade tax is burned.'],
         ]}
       />
       <h3>Recognising a Reserve Token</h3>

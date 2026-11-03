@@ -21,3 +21,11 @@ export const RESERVE_METADATA_URI_OFFSET = 167
 
 export const RESERVE_TOKEN_DECIMALS = 6
 export const MAX_METADATA_URI_LEN = 200
+
+/**
+ * Fee terms of pools launched through SSR.fun: the Raydium CPMM config every
+ * SSR pool uses (25 bps trading fee) and the trade-tax limits enforced by
+ * programs/ssr_protocol/src/instructions/trade_tax.rs (15-200 bps).
+ */
+export const POOL_TRADE_FEE_BPS = 25
+export const MIN_TRADE_TAX_BPS = 15
