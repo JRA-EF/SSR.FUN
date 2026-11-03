@@ -12,6 +12,9 @@
 //  3. Only Reserves whose creator signed a campaign entry are ranked: the
 //     signature proves the X handle belongs to the Reserve's on-chain manager
 //     wallet. Team wallets are excluded (SSR_CAMPAIGN_EXCLUDE_WALLETS).
+//  4. Only NEW Reserves count (owner, 2026-11-03): created at or after the
+//     campaign start by a non-team wallet. Trader volume also only counts
+//     trades on those Reserves.
 
 export interface CampaignConfig {
   /** Unix seconds; null until the owner sets SSR_CAMPAIGN_START. */
@@ -21,8 +24,11 @@ export interface CampaignConfig {
   excludedWallets: Set<string>
 }
 
-/** The protocol wallet (…4Rw8) is always excluded; more team wallets come from env. */
-const ALWAYS_EXCLUDED = ['CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8']
+/** Team wallets, always excluded (owner, 2026-11-03): the protocol wallet …4Rw8 and …WZen. More can come from env. */
+const ALWAYS_EXCLUDED = [
+  'CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8',
+  '6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen',
+]
 
 function parseTs(raw: string | undefined): number | null {
   if (!raw || !raw.trim()) return null
@@ -115,6 +121,13 @@ export function pnlPct(points: NavPointLike[], closeMs: number | null): number |
   const first = capped[0].nav
   const last = capped[capped.length - 1].nav
   return ((last / first) - 1) * 100
+}
+
+/** A Reserve takes part when a non-team wallet created it at or after the start (before dates are set: any non-team Reserve). */
+export function isEligibleReserve(createdTs: number | null, manager: string, cfg: CampaignConfig): boolean {
+  if (cfg.excludedWallets.has(manager)) return false
+  if (cfg.startTs === null) return true
+  return createdTs !== null && createdTs >= cfg.startTs
 }
 
 /** Rank by value, highest first; ties go to the earlier entry. */

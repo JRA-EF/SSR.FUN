@@ -76,3 +76,11 @@ export async function upsertEntry(e: Omit<CampaignEntry, 'enteredAt'>): Promise<
 }
 
 export { getSql as getCampaignSql }
+
+/** When this Reserve was created (unix s): its reserveCreated event, else its earliest indexed activity; null if not indexed yet. */
+export async function createdTsOf(reserve: string): Promise<number | null> {
+  const rows = (await getSql()`
+    SELECT COALESCE(min(ts) FILTER (WHERE kind = 'reserveCreated'), min(ts))::bigint AS created
+    FROM reserve_activity_log WHERE cluster = 'mainnet-beta' AND reserve = ${reserve}`) as { created: string | null }[]
+  return rows[0]?.created ? Number(rows[0].created) : null
+}

@@ -4,8 +4,16 @@
 // public GET is cheap. Freshness comes from api/mainnet/campaign-refresh-cron.ts.
 import { readReserveSnapshot } from '../reserve-warm-cache/db'
 import { computeEntryNavUsd, type NavInputReserve, type NavPoint } from '../reserve-nav-history/navMath'
-import { campaignConfig, campaignPhase, pnlPct, rank, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
+import { campaignConfig, campaignPhase, isEligibleReserve, pnlPct, rank, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
 import { getCampaignSql, listEntries } from './db'
+
+/** Creation time (unix s) of every Reserve: its reserveCreated event, else its earliest indexed activity. */
+export async function reserveCreatedTs(cluster: string): Promise<Map<string, number>> {
+  const rows = (await getCampaignSql()`
+    SELECT reserve, COALESCE(min(ts) FILTER (WHERE kind = 'reserveCreated'), min(ts))::bigint AS created
+    FROM reserve_activity_log WHERE cluster = ${cluster} GROUP BY reserve`) as { reserve: string; created: string }[]
+  return new Map(rows.map(r => [r.reserve, Number(r.created)]))
+}
 
 const CLUSTER = 'mainnet-beta'
 const MINT_REDEEM_KINDS = ['reserveTokensMinted', 'reserveTokensRedeemed']
@@ -57,14 +65,15 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
   const phase = campaignPhase(cfg, Math.floor(nowMs / 1000))
   const sql = getCampaignSql()
 
-  const [entriesAll, snapRow] = await Promise.all([listEntries(), readReserveSnapshot(CLUSTER)])
+  const [entriesAll, snapRow, createdBy] = await Promise.all([listEntries(), readReserveSnapshot(CLUSTER), reserveCreatedTs(CLUSTER)])
   const snap = (snapRow?.snapshot ?? {}) as { reserves?: SnapshotReserve[]; metadataByReserve?: Record<string, { name?: string; ticker?: string; imageUrl?: string }> }
   const byReserve = new Map((snap.reserves ?? []).map(r => [r.reserve, r]))
 
-  // An entry only counts while its signer is still the Reserve's on-chain manager and is not a team wallet.
+  // New, non-team Reserves only (created at/after the start). An entry counts while its signer is still the manager.
+  const eligible = new Set((snap.reserves ?? []).filter(r => isEligibleReserve(createdBy.get(r.reserve) ?? null, r.manager, cfg)).map(r => r.reserve))
   const entries = entriesAll.filter(e => {
     const r = byReserve.get(e.reserve)
-    return r && r.manager === e.wallet && !cfg.excludedWallets.has(e.wallet)
+    return r && r.manager === e.wallet && eligible.has(e.reserve)
   })
   const reserves = entries.map(e => e.reserve)
   const managerByReserve = new Map(entries.map(e => [e.reserve, e.wallet]))
@@ -88,17 +97,18 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
     volume = volumeByReserve(rows, managerByReserve)
   }
 
-  // --- Traders: every wallet's mints + redeems + pool swaps across ALL SSR Reserves in the window ---
+  // --- Traders: every wallet's mints + redeems + pool swaps on the campaign's new Reserves in the window ---
   let traders: TraderRow[] = []
-  if (cfg.startTs !== null && cfg.endTs !== null) {
+  const eligibleList = [...eligible]
+  if (cfg.startTs !== null && cfg.endTs !== null && eligibleList.length) {
     const rows = (await sql`
       SELECT wallet, sum(usd)::float8 AS usd, count(*)::int AS n FROM (
         SELECT actor AS wallet, amount_usd::float8 AS usd FROM reserve_activity_log
-        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND actor IS NOT NULL
+        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND actor IS NOT NULL AND reserve = ANY(${eligibleList})
           AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs} AND amount_usd IS NOT NULL
         UNION ALL
         SELECT trader AS wallet, usdc_raw::float8 / 1e6 AS usd FROM dex_pool_swaps
-        WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
+        WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND reserve = ANY(${eligibleList}) AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
       ) t GROUP BY wallet ORDER BY usd DESC LIMIT 60`) as { wallet: string; usd: number; n: number }[]
     traders = rows
       .filter(r => !cfg.excludedWallets.has(r.wallet) && r.usd > 0)

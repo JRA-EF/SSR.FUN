@@ -14,7 +14,7 @@ import { PublicKey } from "@solana/web3.js";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { readReserveSnapshot } from "../../lib/reserve-warm-cache/db";
 import { campaignConfig, campaignPhase, entriesOpen, entryMessage, ENTRY_MAX_AGE_MS, normalizeHandle } from "../../lib/campaign/rules";
-import { findEntry, upsertEntry } from "../../lib/campaign/db";
+import { createdTsOf, findEntry, upsertEntry } from "../../lib/campaign/db";
 
 function parseBody(req: ApiRequest): Record<string, unknown> {
   const b = (req as { body?: unknown }).body;
@@ -77,6 +77,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse & { setH
     const manager = await managerOf(reserve);
     if (!manager) { res.status(404).json({ error: "This Reserve isn't indexed yet. Please try again in about 10 minutes." }); return; }
     if (manager !== wallet) { res.status(403).json({ error: "Only the wallet that created this Reserve can enter it." }); return; }
+    // Only NEW Reserves (created at/after the start). Not indexed yet = brand new, accepted; the leaderboard re-checks.
+    if (cfg.startTs !== null) {
+      const created = await createdTsOf(reserve);
+      if (created !== null && created < cfg.startTs) { res.status(403).json({ error: "Only Reserves created during the campaign can enter. Create a new Reserve to take part." }); return; }
+    }
 
     const message = entryMessage({ reserve, wallet, handle, issuedAt });
     if (!verifyWalletSignature(wallet, message, signature)) { res.status(401).json({ error: "The wallet signature didn't match. Please sign again." }); return; }

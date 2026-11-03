@@ -4,7 +4,7 @@
 import { expect } from "chai";
 import { Keypair } from "@solana/web3.js";
 import { createPrivateKey, sign } from "node:crypto";
-import { campaignConfig, campaignPhase, entryMessage, normalizeHandle, pnlPct, rank, volumeByReserve } from "../lib/campaign/rules";
+import { campaignConfig, campaignPhase, entryMessage, isEligibleReserve, normalizeHandle, pnlPct, rank, volumeByReserve } from "../lib/campaign/rules";
 import { verifyWalletSignature } from "../api/mainnet/campaign-entry";
 
 function signAs(kp: Keypair, message: string): string {
@@ -22,6 +22,15 @@ describe("Beta Campaign (DEC-0279)", () => {
     expect(campaignPhase(cfg, cfg.startTs!)).to.equal("live");
     expect(campaignPhase(cfg, cfg.endTs! + 1)).to.equal("closed");
     expect(campaignPhase(campaignConfig({}), 0)).to.equal("unscheduled");
+  });
+
+  it("counts only new Reserves by non-team wallets", () => {
+    const cfg = campaignConfig({ SSR_CAMPAIGN_START: "2026-11-05T00:00:00Z", SSR_CAMPAIGN_END: "2026-11-19T00:00:00Z" });
+    expect(isEligibleReserve(cfg.startTs!, "SomeCreator", cfg)).to.equal(true);
+    expect(isEligibleReserve(cfg.startTs! - 1, "SomeCreator", cfg)).to.equal(false);
+    expect(isEligibleReserve(null, "SomeCreator", cfg)).to.equal(false);
+    expect(isEligibleReserve(cfg.startTs! + 10, "6BjTPAWGjUYjL2Hrvz7iVmzWv8yKHNDqUAif5DEPWZen", cfg)).to.equal(false);
+    expect(isEligibleReserve(cfg.startTs! + 10, "CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8", cfg)).to.equal(false);
   });
 
   it("normalizes X handles", () => {
