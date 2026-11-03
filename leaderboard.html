@@ -55,8 +55,14 @@
     .grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
     @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .wide { grid-column: 1 / -1; } }
     .card { background: rgba(255, 255, 255, 0.92); border: 1px solid var(--lav-line); border-radius: 22px; padding: clamp(18px, 3vw, 26px); box-shadow: 0 20px 60px rgba(25, 18, 102, 0.10); min-width: 0; }
-    .card h2 { font-size: 13px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--navy); display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
-    .prize { font-size: 11px; font-weight: 700; color: var(--blue-2); letter-spacing: .08em; }
+    .card h2 { font-size: 13px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--navy); display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .prize {
+      display: inline-flex; align-items: center; font-size: clamp(20px, 3.4vw, 26px); font-weight: 800; letter-spacing: .02em;
+      color: #fff; padding: 8px 18px; border-radius: 999px;
+      background: linear-gradient(90deg, var(--navy), var(--blue-2) 70%, var(--blue-3));
+      box-shadow: 0 10px 24px rgba(25, 18, 102, 0.25);
+    }
+    .prize.note { font-size: 10px; font-weight: 700; letter-spacing: .14em; padding: 7px 12px; color: var(--blue-1); background: var(--lav); box-shadow: none; }
     .sub { margin-top: 6px; font-size: 10px; font-weight: 300; line-height: 1.7; color: var(--ink-3); }
     .leader { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--lav); font-size: 11px; line-height: 1.6; color: var(--ink-2); }
     .leader b { color: var(--navy); }
@@ -83,6 +89,8 @@
     footer { padding: 18px 16px 28px; text-align: center; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
     footer a { color: inherit; }
     .table-wrap { overflow-x: auto; }
+    .cta .short { display: none; }
+    @media (max-width: 520px) { .cta .long { display: none; } .cta .short { display: inline; } .wordmark { font-size: 16px; } }
     .disclaimer { margin: 10px auto 0; max-width: 720px; text-align: center; font-size: 10px; font-weight: 300; line-height: 1.7; color: var(--ink-3); }
   </style>
 </head>
@@ -92,7 +100,7 @@
       <img class="seal" src="/ssr-seal.png" alt="" />
       <div class="wordmark">SSR<span>.FUN</span></div>
     </a>
-    <a class="cta" href="https://x.com/strategicsuperr" target="_blank" rel="noopener">Follow @strategicsuperr</a>
+    <a class="cta" href="https://x.com/strategicsuperr" target="_blank" rel="noopener"><span class="long">Follow @strategicsuperr</span><span class="short">Follow on X</span></a>
   </header>
 
   <main>
@@ -124,7 +132,7 @@
       </section>
 
       <section class="card">
-        <h2>Top Traders <span class="prize">Volume track</span></h2>
+        <h2>Top Traders <span class="prize note">Counts for Volume</span></h2>
         <p class="sub">Wallets by mint, redeem and pool trading volume on the campaign's new Reserves. The Volume prize goes to whichever is bigger: the top Reserve or the top trader.</p>
         <div class="table-wrap"><table>
           <thead><tr><th>#</th><th>Wallet</th><th class="num">Trades</th><th class="num">Volume</th></tr></thead>
