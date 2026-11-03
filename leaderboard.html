@@ -62,6 +62,7 @@
       background: linear-gradient(90deg, var(--navy), var(--blue-2) 70%, var(--blue-3));
       box-shadow: 0 10px 24px rgba(25, 18, 102, 0.25);
     }
+    .prize-label { font-size: 0.5em; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; margin-right: 8px; opacity: .85; }
     .prize.note { font-size: 10px; font-weight: 700; letter-spacing: .14em; padding: 7px 12px; color: var(--blue-1); background: var(--lav); box-shadow: none; }
     .sub { margin-top: 6px; font-size: 10px; font-weight: 300; line-height: 1.7; color: var(--ink-3); }
     .leader { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--lav); font-size: 11px; line-height: 1.6; color: var(--ink-2); }
@@ -113,7 +114,7 @@
 
     <div class="grid">
       <section class="card">
-        <h2>Highest Volume <span class="prize">$150</span></h2>
+        <h2>Highest Volume <span class="prize"><span class="prize-label">Prize:</span>$150</span></h2>
         <p class="sub">Reserves by mint, redeem and pool trading volume during the campaign. The creator's own trades don't count.</p>
         <div class="leader" id="volume-leader" hidden></div>
         <div class="table-wrap"><table>
@@ -123,7 +124,7 @@
       </section>
 
       <section class="card">
-        <h2>Highest PnL <span class="prize">$100</span></h2>
+        <h2>Highest PnL <span class="prize"><span class="prize-label">Prize:</span>$100</span></h2>
         <p class="sub">Reserve Token price change since launch. Frozen at campaign close.</p>
         <div class="table-wrap"><table>
           <thead><tr><th>#</th><th>Reserve</th><th>Creator</th><th class="num">PnL</th></tr></thead>
@@ -141,7 +142,7 @@
       </section>
 
       <section class="card">
-        <h2>Best Beta Contributor <span class="prize">$50</span></h2>
+        <h2>Best Beta Contributor <span class="prize"><span class="prize-label">Prize:</span>$50</span></h2>
         <p class="sub">Picked by the SSR team for actionable feedback, reproducible bug reports and the quality of investment theses. Use the feedback button on SSR.FUN.</p>
         <h2 style="margin-top:22px">How to enter</h2>
         <ol class="rules">
