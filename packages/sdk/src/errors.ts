@@ -116,7 +116,14 @@ export function describeOnChainError(err: unknown): string {
   }
   const splToken = decodeSplTokenError(code);
   if (splToken) {
-    return `${raw} -- most likely SPL Token error ${code} (${splToken.name}: ${splToken.msg}) raised by a token operation INSIDE the failing instruction (an inner CPI -- e.g. one of the mint's deposit transfers), not by ssr_protocol's own logic. Codes this small exist in several native programs, so confirm against the transaction's own logs on Explorer ("Program log: Error: ..." names the real cause). Confirmed live 2026-08-26: a mint failing Custom(1) was exactly an inner token transfer with insufficient funds.`;
+    // DEC-0282 (2026-11-03): System Program error 1 is "insufficient lamports" -- a wallet
+    // without enough SOL to pay a new account's rent (a launch's vault creation) fails with
+    // the very same Custom(1).
+    const solHint =
+      code === 1
+        ? ` If your wallet's SOL balance is low, this is the System Program refusing to pay a new account's rent (Explorer logs show "insufficient lamports"): add about 0.02 SOL and try again.`
+        : "";
+    return `${raw} -- most likely SPL Token error ${code} (${splToken.name}: ${splToken.msg}) raised by a token operation INSIDE the failing instruction (an inner CPI -- e.g. one of the mint's deposit transfers), not by ssr_protocol's own logic. Codes this small exist in several native programs, so confirm against the transaction's own logs on Explorer ("Program log: Error: ..." names the real cause). Confirmed live 2026-08-26: a mint failing Custom(1) was exactly an inner token transfer with insufficient funds.${solHint}`;
   }
   return `${raw} -- program error code ${code} is not defined anywhere in the deployed SSR Protocol IDL (its custom-error range is ${ssrProtocolErrorCodeRange()}) or in Anchor's own framework error table. This is not a genuine ssr_protocol error -- check whether another program in the same transaction produced it, or whether the deployed program binary has drifted from this IDL.`;
 }

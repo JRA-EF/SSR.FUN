@@ -120,6 +120,9 @@ const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
 };
 
 /** How many wallet approvals createReserveOnChain will request for this asset selection -- see createReserveClient.ts's signature-count note. */
+/** DEC-0282: below this a Resume cannot pay even one Reserve asset's account rent (~0.0035 SOL), so it is refused before anything is signed. */
+const RESUME_MIN_SOL_LAMPORTS = 5_000_000;
+
 /** Rough fallback ONLY for the brief window before the real costEstimate (which has the authoritative numTransactions, including any Jupiter swaps and the real registration-batch count -- see createReserveClient.ts's estimateCreateReserveCost) has loaded -- see its call site, which prefers costEstimate.numTransactions once available. Mirrors estimateCreateReserveCost's own conservative per-batch asset count so this brief-window number doesn't undercount for a large asset selection. */
 function expectedApprovalCount(assets: { symbol: string }[]): number {
   const needsSolWrap = assets.some((a) => a.symbol === "SOL");
@@ -802,6 +805,14 @@ export function CreateDTR({
 
   const handleResumeDeployment = async () => {
     if (!resumePending || submittingRef.current || !walletCtx.publicKey) return;
+    // DEC-0282: the remaining steps create vault accounts whose rent the wallet
+    // pays; with almost no SOL every Resume fails on-chain and burns a fee.
+    const solLamports = await connection.getBalance(walletCtx.publicKey, "confirmed").catch(() => null);
+    if (solLamports !== null && solLamports < RESUME_MIN_SOL_LAMPORTS) {
+      const msg = `Your wallet holds ${(solLamports / 1e9).toFixed(4)} SOL, which is not enough to pay the rent for the Reserve's remaining accounts. Add about 0.02 SOL to this wallet, then press Resume. Your Reserve and the assets bought for it are safe; nothing was submitted.`;
+      toast({ variant: "destructive", title: "Add SOL to finish the launch", description: msg });
+      return;
+    }
     submittingRef.current = true;
     setIsSubmitting(true);
     setResumeError(null);
@@ -1336,6 +1347,21 @@ export function CreateDTR({
         description: "Nothing was created. You're back on the basket step: remove or replace the flagged asset, bring the total to 100%, and launch again. Everything else you entered is kept.",
       });
       return;
+    }
+    // DEC-0282: never start a launch the wallet cannot pay the SOL for. A wallet
+    // short on SOL used to swap its USDC, create the Reserve, and then fail every
+    // vault creation on rent (live 2026-11-03), leaving a half-created Reserve.
+    if (costEstimate) {
+      const solLamports = await connection.getBalance(walletCtx.publicKey, "confirmed").then(BigInt).catch(() => null);
+      if (solLamports !== null && solLamports < costEstimate.totalLamports) {
+        const fmt = (l: bigint) => (Number(l) / 1e9).toFixed(4);
+        toast({
+          variant: "destructive",
+          title: "Not enough SOL for this launch",
+          description: `This launch needs up to ${fmt(costEstimate.totalLamports)} SOL for account rent and network fees, and this wallet holds ${fmt(solLamports)} SOL. Add at least ${fmt(costEstimate.totalLamports - solLamports)} SOL and launch again. Nothing was created.`,
+        });
+        return;
+      }
     }
     // DEC-0249: the 20-minute price lock starts with the first attempt and
     // covers every retry inside it (a relaunch after removing an asset, a

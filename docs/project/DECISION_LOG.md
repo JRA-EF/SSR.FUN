@@ -8669,3 +8669,29 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0282",
+  "date": "2026-11-03",
+  "title": "Launch refuses to start without the SOL it needs; Resume refuses below 0.005 SOL; Custom(1) explains the SOL-rent case",
+  "status": "implemented; production deploy recorded in PROJECT_STATUS.md",
+  "decision": "(1) CreateDTR.tsx handleSubmitReal: before anything is signed, the wallet's SOL balance is read and compared with estimateCreateReserveCost's worst-case totalLamports (rent + SOL seed + network fees); short means a toast with the exact SOL to add, and nothing is created. (2) handleResumeDeployment: below RESUME_MIN_SOL_LAMPORTS (0.005 SOL, more than one asset's account rent) Resume tells the user to add about 0.02 SOL and submits nothing. (3) packages/sdk errors.ts: a Custom(1) now also says it may be the System Program refusing a new account's rent ('insufficient lamports') and to add SOL.",
+  "context": "2026-11-03 18:38-18:44 UTC, wallet 9ui2...GiVn: the user swapped most of their SOL into USDC, launched; the seed swaps and CreateReserve landed, then every InitializeReserveAsset failed ('Transfer: insufficient lamports 68137, need 1488440'), leaving a half-created Reserve and the bought assets in the wallet; repeated Resume clicks each failed the same way and cost a network fee. The app described it as SPL Token InsufficientFunds. The launch's SOL cost estimate was only displayed, never enforced.",
+  "rationale": "A launch that cannot finish must not start; a Resume that cannot pay rent must not burn fees.",
+  "alternativesConsidered": [
+    "Paying vault rent from the protocol -- rejected: changes the program and lets anyone drain protocol SOL by launching."
+  ],
+  "impact": "Frontend + SDK error text only. No program, API or env change.",
+  "affectedAreas": [
+    "src/merge/pages/CreateDTR.tsx",
+    "packages/sdk/src/errors.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Tx 4NmyGCdbB4zPrXH9j8nhXs8PbxCtSBHbd4mTVBzmsS3js7AkndQLbu5mGdshTLXroFptxoVwhdEo9o6FRgfGbTCi logs: 'Transfer: insufficient lamports 68137, need 1488440'",
+    "tsc -p tsconfig.app.json clean; tests/phase_single_tx_buy.ts 15 passing; vite build clean"
+  ]
+}
+```
