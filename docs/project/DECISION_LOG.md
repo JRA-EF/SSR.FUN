@@ -8604,3 +8604,36 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0280
+
+```json
+{
+  "id": "DEC-0280",
+  "date": "2026-11-03",
+  "title": "Public /docs describe the current protocol: USDC mint fee and 0.5% floor, fee-vault USDC settlement, launch rules, real rebalancing, SSR pool launch and fee terms, trade tax, new PDAs",
+  "status": "implemented; production deploy recorded in PROJECT_STATUS.md",
+  "decision": "The four public documents under src/docs/content were last revised 17 September 2026 and predated DEC-0238 onwards. They now describe, from the program source and the live UI: (1) Getting started: mint fee paid in USDC on top of the deposit; redemption open in every state; native SOL in wallets with wrapped SOL only in vaults (DEC-0244); launch rules (10 assets, exact 100%, $1 seed, route check, 20-minute price lock, token metadata at launch); Manager rebalancing through vault-lent Jupiter swaps (DEC-0250); liquidity from Manage Reserve; wind-down and close. (2) Protocol reference: nine further PDAs (manager_fee_recipients, fee_settlement, fee_vault_authority, tvl_accrual, transfer_fee_authority, liquidity_revenue, liquidity_terms, liquidity_split, trade_tax); fee ranges with the 0.5% protocol floor on mint and ongoing fees (DEC-0269) and a split table; redemption and ongoing fees settled to protocol and Manager in USDC through the fee vault; a secondary-market fee table. (3) Reserve Tokens on DEXes: the trade tax as part of the token's transfer fee, its 20/80 split and burned holder share (DEC-0257/0268), the Metaplex metadata account, integrator facts. (4) Adding liquidity: new 'Launch on SSR.fun' and 'Pool fees and terms' tabs (Reserve Token/USDC Raydium CPMM pool, creator treasury, launch costs, locks, collect/withdraw, SSR 20% of creator earnings after Raydium's 5%, optional holder share to backing or locked pool liquidity, DEC-0251/0255) and updated risks. Fee rates in docs come from constants (RESERVE_TOKEN_TRANSFER_FEE_BPS, new POOL_TRADE_FEE_BPS and MIN_TRADE_TAX_BPS in addresses.ts) as tests/phase_terminology_and_tax_hold.ts requires. CLAUDE.md's fee lines were corrected to DEC-0269 (0% mint/TVL fee charged at 0.5%) and DEC-0257 marked live.",
+  "context": "The user asked to make sure ssr.fun/docs matches the current protocol mechanics. The docs still said the redemption fee stays in the Reserve for holders, the ongoing fee is issued to Manager and protocol, had no liquidity launch, trade tax, rebalance or fee floor, and listed only the original PDAs.",
+  "rationale": "Public docs describe how things work (see feedback: describe, never confess); every number was checked against programs/ssr_protocol (constants.rs, fee_math.rs, liquidity_terms.rs, trade_tax.rs) and the live liquidity UI (LiquidityFeeTerms.tsx, LiveLiquiditySection.tsx).",
+  "alternativesConsidered": [
+    "A separate 'Liquidity' document -- rejected: the existing 'Adding liquidity' document already owns the topic, so new tabs keep links stable."
+  ],
+  "impact": "Docs-only plus CLAUDE.md; no program, API or env change. New doc tab ids: add-liquidity?tab=on-ssr and ?tab=terms.",
+  "affectedAreas": [
+    "src/docs/content/GettingStarted.tsx",
+    "src/docs/content/ProtocolReference.tsx",
+    "src/docs/content/ReserveTokensOnDexes.tsx",
+    "src/docs/content/AddLiquidity.tsx",
+    "src/docs/content/addresses.ts",
+    "src/docs/content/index.tsx",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_terminology_and_tax_hold.ts 27 passing; tsc -p tsconfig.app.json clean; vite build clean",
+    "Headless Chrome render of every changed tab on a local dev server"
+  ]
+}
+```
