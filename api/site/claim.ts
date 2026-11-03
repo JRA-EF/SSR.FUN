@@ -1,7 +1,7 @@
 // /api/site/claim -- PUBLIC self-serve BETA key claim (DEC-0276), posted by
 // the /beta page (beta.html, src/beta/main.ts).
 //
-//   GET  -> { open: boolean }   whether claiming is switched on here
+//   GET  -> { open: boolean, full: boolean }   claiming switched on here / cap reached
 //   POST { handle, email? } -> { ok, key, handle, alreadyClaimed }
 //
 // One key per X handle (case-insensitive): asking again for the same handle
@@ -101,7 +101,14 @@ async function copyToSheet(row: ClaimRow, site: string, userAgent: string): Prom
 
 export default async function handler(req: Req, res: Res) {
   res.setHeader('Cache-Control', 'no-store')
-  if (req.method === 'GET') { res.status(200).json({ open: claimingOpen() }); return }
+  if (req.method === 'GET') {
+    const open = claimingOpen()
+    const cap = claimCap()
+    let full = false
+    if (open && cap !== null) { try { full = (await countClaims()) >= cap } catch { /* unknown: let the POST decide */ } }
+    res.status(200).json({ open, full })
+    return
+  }
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed.' }); return }
   if (!claimingOpen()) { res.status(503).json({ error: 'BETA keys aren’t being handed out right now. Check back soon.' }); return }
 
@@ -141,7 +148,7 @@ export default async function handler(req: Req, res: Res) {
     } else {
       const cap = claimCap()
       if (cap !== null && (await countClaims()) >= cap) {
-        res.status(410).json({ error: 'All BETA keys for this round have been claimed. Follow us on X for the next drop.' })
+        res.status(410).json({ error: "We've reached our limit for wave 2. Keep an eye out for future updates from our official X @strategicsuperr.", full: true })
         return
       }
       const result = await insertClaim({ ...input, betaKey: await generateIssuedKey(issuedKeySecret()), site, userAgent })

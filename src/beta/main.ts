@@ -14,6 +14,7 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const claimView = $("claim-view");
 const keyView = $("key-view");
 const closedView = $("closed-view");
+const fullView = $("full-view");
 const form = $<HTMLFormElement>("claim-form");
 const handleInput = $<HTMLInputElement>("handle");
 const emailInput = $<HTMLInputElement>("email");
@@ -34,7 +35,7 @@ function setStatus(el: HTMLElement, text: string, isError = false) {
 }
 
 function show(view: HTMLElement) {
-  for (const v of [claimView, keyView, closedView]) v.classList.toggle("hidden", v !== view);
+  for (const v of [claimView, keyView, closedView, fullView]) v.classList.toggle("hidden", v !== view);
 }
 
 function showKey(key: string, alreadyClaimed: boolean) {
@@ -49,7 +50,7 @@ function showKey(key: string, alreadyClaimed: boolean) {
 // Is claiming switched on for this deployment? (Off everywhere but ssr.fun.)
 fetch("/api/site/claim", { credentials: "same-origin" })
   .then((r) => r.json())
-  .then((j: { open?: boolean }) => { if (!j.open) show(closedView); })
+  .then((j: { open?: boolean; full?: boolean }) => { if (!j.open) show(closedView); else if (j.full) show(fullView); })
   .catch(() => { /* leave the form up; the POST reports any problem */ });
 
 form.addEventListener("submit", async (e) => {
@@ -67,6 +68,7 @@ form.addEventListener("submit", async (e) => {
     });
     const j = (await r.json().catch(() => null)) as { ok?: boolean; key?: string; alreadyClaimed?: boolean; error?: string } | null;
     if (r.ok && j?.key) { showKey(j.key, !!j.alreadyClaimed); return; }
+    if (r.status === 410) { show(fullView); return; }
     setStatus(claimStatus, j?.error || "Something went wrong. Please try again.", true);
   } catch {
     setStatus(claimStatus, "Network error. Please try again.", true);
