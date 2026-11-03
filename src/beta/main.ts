@@ -25,8 +25,8 @@ const enterBtn = $<HTMLButtonElement>("enter-btn");
 const enterStatus = $("enter-status");
 const shareBtn = $<HTMLAnchorElement>("share-btn");
 
-// TODO(Creator): add SSR.fun's X @handle here once confirmed.
-const SHARE_TEXT = "I just got my SSR.fun BETA key. Launch a Reserve on Solana with me 👇";
+// SSR.fun's X handle: @strategicsuperr (Creator, 2026-11-03).
+const SHARE_TEXT = "I just got my @strategicsuperr SSR.fun BETA key. Launch a Reserve on Solana with me 👇";
 
 function setStatus(el: HTMLElement, text: string, isError = false) {
   el.textContent = text;
