@@ -60,6 +60,8 @@ export default defineConfig({
         feedback: path.resolve(import.meta.dirname, './feedback.html'),
         // Public BETA key claim page (BotID-protected claim) -- see src/beta/main.ts (DEC-0276).
         beta: path.resolve(import.meta.dirname, './beta.html'),
+        // Public Beta Campaign leaderboard (read-only, no wallet code) -- see src/leaderboard/main.ts (DEC-0279).
+        leaderboard: path.resolve(import.meta.dirname, './leaderboard.html'),
       },
     },
   },

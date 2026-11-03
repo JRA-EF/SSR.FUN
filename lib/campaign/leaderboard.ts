@@ -1,0 +1,190 @@
+// Beta Campaign leaderboard (DEC-0279): ranks the signed-up Reserves by
+// volume and by PnL %. Reads only this project's Postgres (warm-cache snapshot,
+// activity log, DEX swaps, NAV history, entry prices) -- never RPC -- so the
+// public GET is cheap. Freshness comes from api/mainnet/campaign-refresh-cron.ts.
+import { readReserveSnapshot } from '../reserve-warm-cache/db'
+import { computeEntryNavUsd, type NavInputReserve, type NavPoint } from '../reserve-nav-history/navMath'
+import { campaignConfig, campaignPhase, pnlPct, rank, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
+import { getCampaignSql, listEntries } from './db'
+
+const CLUSTER = 'mainnet-beta'
+const MINT_REDEEM_KINDS = ['reserveTokensMinted', 'reserveTokensRedeemed']
+
+interface SnapshotReserve extends NavInputReserve {
+  reserveId: string
+  manager: string
+  reserveTokenMint: string
+  status: string
+}
+
+export interface LeaderboardRow {
+  rank: number
+  reserve: string
+  reserveId: string
+  mint: string
+  name: string
+  ticker: string
+  imageUrl: string | null
+  handle: string
+  wallet: string
+  status: string
+  value: number
+  enteredAt: string
+}
+
+export interface TraderRow {
+  rank: number
+  wallet: string
+  value: number
+  trades: number
+}
+
+export interface Leaderboard {
+  phase: CampaignPhase
+  startTs: number | null
+  endTs: number | null
+  entries: number
+  volume: LeaderboardRow[]
+  pnl: LeaderboardRow[]
+  /** Highest Volume is the greater of the top Reserve's volume and the top trader's volume (owner, 2026-11-03). */
+  traders: TraderRow[]
+  volumeLeader: { kind: 'reserve' | 'trader'; id: string; value: number } | null
+  generatedAt: string
+}
+
+export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboard> {
+  const cfg = campaignConfig()
+  const phase = campaignPhase(cfg, Math.floor(nowMs / 1000))
+  const sql = getCampaignSql()
+
+  const [entriesAll, snapRow] = await Promise.all([listEntries(), readReserveSnapshot(CLUSTER)])
+  const snap = (snapRow?.snapshot ?? {}) as { reserves?: SnapshotReserve[]; metadataByReserve?: Record<string, { name?: string; ticker?: string; imageUrl?: string }> }
+  const byReserve = new Map((snap.reserves ?? []).map(r => [r.reserve, r]))
+
+  // An entry only counts while its signer is still the Reserve's on-chain manager and is not a team wallet.
+  const entries = entriesAll.filter(e => {
+    const r = byReserve.get(e.reserve)
+    return r && r.manager === e.wallet && !cfg.excludedWallets.has(e.wallet)
+  })
+  const reserves = entries.map(e => e.reserve)
+  const managerByReserve = new Map(entries.map(e => [e.reserve, e.wallet]))
+
+  // --- Volume (only once the window is known) ---
+  let volume = new Map<string, number>()
+  if (reserves.length && cfg.startTs !== null && cfg.endTs !== null) {
+    const [app, dex] = await Promise.all([
+      sql`
+        SELECT reserve, actor, amount_usd FROM reserve_activity_log
+        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND reserve = ANY(${reserves})
+          AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs} AND amount_usd IS NOT NULL`,
+      sql`
+        SELECT reserve, trader, usdc_raw FROM dex_pool_swaps
+        WHERE cluster = ${CLUSTER} AND reserve = ANY(${reserves}) AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}`,
+    ]) as [{ reserve: string; actor: string | null; amount_usd: number }[], { reserve: string; trader: string | null; usdc_raw: string }[]]
+    const rows: TradeRow[] = [
+      ...app.map(r => ({ reserve: r.reserve, actor: r.actor, usd: Number(r.amount_usd) })),
+      ...dex.map(r => ({ reserve: r.reserve, actor: r.trader, usd: Number(r.usdc_raw) / 1e6 })),
+    ]
+    volume = volumeByReserve(rows, managerByReserve)
+  }
+
+  // --- Traders: every wallet's mints + redeems + pool swaps across ALL SSR Reserves in the window ---
+  let traders: TraderRow[] = []
+  if (cfg.startTs !== null && cfg.endTs !== null) {
+    const rows = (await sql`
+      SELECT wallet, sum(usd)::float8 AS usd, count(*)::int AS n FROM (
+        SELECT actor AS wallet, amount_usd::float8 AS usd FROM reserve_activity_log
+        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND actor IS NOT NULL
+          AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs} AND amount_usd IS NOT NULL
+        UNION ALL
+        SELECT trader AS wallet, usdc_raw::float8 / 1e6 AS usd FROM dex_pool_swaps
+        WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
+      ) t GROUP BY wallet ORDER BY usd DESC LIMIT 60`) as { wallet: string; usd: number; n: number }[]
+    traders = rows
+      .filter(r => !cfg.excludedWallets.has(r.wallet) && r.usd > 0)
+      .slice(0, 25)
+      .map((r, i) => ({ rank: i + 1, wallet: r.wallet, value: Number(r.usd), trades: r.n }))
+  }
+
+  // --- PnL: launch anchor (entry prices) or first recorded NAV, to the last NAV at/before close ---
+  const pnl = new Map<string, number>()
+  if (reserves.length) {
+    const closeMs = phase === 'closed' && cfg.endTs !== null ? cfg.endTs * 1000 : null
+    const closeIso = new Date(closeMs ?? nowMs).toISOString()
+    const [firsts, lasts, entryRows] = await Promise.all([
+      sql`
+        SELECT DISTINCT ON (reserve) reserve, t, nav_usd FROM reserve_nav_history
+        WHERE cluster = ${CLUSTER} AND reserve = ANY(${reserves}) ORDER BY reserve, t ASC`,
+      sql`
+        SELECT DISTINCT ON (reserve) reserve, t, nav_usd FROM reserve_nav_history
+        WHERE cluster = ${CLUSTER} AND reserve = ANY(${reserves}) AND t <= ${closeIso} ORDER BY reserve, t DESC`,
+      sql`SELECT reserve, mint, entry_price_usd, captured_at FROM reserve_asset_entry_price WHERE reserve = ANY(${reserves})`,
+    ]) as [{ reserve: string; t: string; nav_usd: number }[], { reserve: string; t: string; nav_usd: number }[], { reserve: string; mint: string; entry_price_usd: number; captured_at: string }[]]
+
+    const entryPrices = new Map<string, { prices: Record<string, number>; capturedAt: number }>()
+    for (const r of entryRows) {
+      const at = new Date(r.captured_at).getTime()
+      const cur = entryPrices.get(r.reserve) ?? { prices: {}, capturedAt: at }
+      cur.prices[r.mint] = Number(r.entry_price_usd)
+      if (at < cur.capturedAt) cur.capturedAt = at
+      entryPrices.set(r.reserve, cur)
+    }
+    const firstBy = new Map(firsts.map(r => [r.reserve, { t: new Date(r.t).getTime(), nav: Number(r.nav_usd) }]))
+    const lastBy = new Map(lasts.map(r => [r.reserve, { t: new Date(r.t).getTime(), nav: Number(r.nav_usd) }]))
+    for (const reserve of reserves) {
+      const points: NavPoint[] = []
+      const snapR = byReserve.get(reserve)
+      const entry = entryPrices.get(reserve)
+      const first = firstBy.get(reserve)
+      // Same launch anchor as the app's All-Time Performance (api/mainnet/reserve-nav-history.ts).
+      if (snapR && entry) {
+        const nav = computeEntryNavUsd(snapR, entry.prices)
+        if (nav !== null && nav > 0 && (!first || entry.capturedAt < first.t)) points.push({ t: entry.capturedAt, nav })
+      }
+      if (first) points.push(first)
+      const last = lastBy.get(reserve)
+      if (last && (!first || last.t > first.t)) points.push(last)
+      const value = pnlPct(points, closeMs)
+      if (value !== null) pnl.set(reserve, value)
+    }
+  }
+
+  const row = (reserve: string, value: number | null) => {
+    const e = entries.find(x => x.reserve === reserve)!
+    const r = byReserve.get(reserve)!
+    const meta = snap.metadataByReserve?.[String(r.reserveId)] ?? {}
+    return {
+      reserve,
+      reserveId: String(r.reserveId),
+      mint: r.reserveTokenMint,
+      name: meta.name ?? `Reserve #${r.reserveId}`,
+      ticker: meta.ticker ?? '',
+      imageUrl: meta.imageUrl ?? null,
+      handle: e.handle,
+      wallet: e.wallet,
+      status: r.status,
+      value,
+      enteredAt: e.enteredAt,
+    }
+  }
+
+  const volumeRows = rank(reserves.map(r => row(r, volume.get(r) ?? 0))) as LeaderboardRow[]
+  const topReserve = volumeRows.find(r => r.value > 0)
+  const topTrader = traders[0]
+  const volumeLeader = !topReserve && !topTrader ? null
+    : !topTrader || (topReserve && topReserve.value >= topTrader.value)
+      ? { kind: 'reserve' as const, id: topReserve!.reserve, value: topReserve!.value }
+      : { kind: 'trader' as const, id: topTrader.wallet, value: topTrader.value }
+
+  return {
+    phase,
+    startTs: cfg.startTs,
+    endTs: cfg.endTs,
+    entries: entries.length,
+    volume: volumeRows,
+    pnl: rank(reserves.map(r => row(r, pnl.get(r) ?? null))) as LeaderboardRow[],
+    traders,
+    volumeLeader,
+    generatedAt: new Date(nowMs).toISOString(),
+  }
+}

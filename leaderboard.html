@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SSR.FUN Leaderboard</title>
+  <meta name="description" content="SSR.FUN Beta Campaign leaderboard: build a Reserve and compete for $300 across Highest Volume, Highest PnL and Best Beta Contributor." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://ssr.fun/leaderboard" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://ssr.fun/leaderboard" />
+  <meta property="og:title" content="SSR.FUN Beta Campaign leaderboard" />
+  <meta property="og:description" content="Build a Reserve on SSR.FUN and compete for $300 in prizes." />
+  <meta property="og:image" content="https://ssr.fun/coming-soon-eagle.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="SSR.FUN Beta Campaign leaderboard" />
+  <meta name="twitter:description" content="Build a Reserve on SSR.FUN and compete for $300 in prizes." />
+  <meta name="twitter:image" content="https://ssr.fun/coming-soon-eagle.jpg" />
+  <link rel="icon" type="image/png" href="/favicon-seal.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-seal.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lexend+Giga:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0e0b2e; --ink-2: #343863; --ink-3: #6a6f93; --navy: #191266;
+      --blue-1: #2f3480; --blue-2: #5561bb; --blue-3: #8fa0e8;
+      --lav: #e6e8fa; --lav-line: #d7daf2; --bg: #f4f4fa; --card: #ffffff;
+      --up: #1d7a4d; --down: #b3283d;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Lexend Giga', system-ui, sans-serif;
+      background:
+        radial-gradient(900px 600px at 85% 12%, rgba(143, 160, 232, 0.22), transparent 60%),
+        radial-gradient(700px 500px at 8% 90%, rgba(85, 97, 187, 0.14), transparent 60%),
+        linear-gradient(180deg, #f7f7fc 0%, var(--bg) 55%, #ededf6 100%);
+      color: var(--ink); min-height: 100vh; overflow-x: hidden;
+    }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 26px clamp(16px, 5vw, 56px); }
+    header a.home { display: flex; align-items: center; gap: 14px; text-decoration: none; }
+    .seal { width: 42px; height: 42px; border-radius: 50%; }
+    .wordmark { font-weight: 800; font-size: 19px; letter-spacing: 0.06em; color: var(--navy); }
+    .wordmark span { color: var(--blue-3); }
+    .cta { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #fff; background: var(--navy); padding: 12px 18px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
+    main { max-width: 1040px; margin: 0 auto; padding: 8px 16px 40px; }
+    .hero { text-align: center; padding: 12px 0 28px; }
+    .pill { display: inline-flex; align-items: center; gap: 10px; background: var(--navy); color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.24em; text-transform: uppercase; padding: 10px 18px 10px 14px; border-radius: 999px; }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #8fe8b0; }
+    .pill.off .dot { background: var(--blue-3); }
+    h1 { margin-top: 18px; font-weight: 800; text-transform: uppercase; font-size: clamp(22px, 5vw, 36px); letter-spacing: 0.05em; }
+    h1 .grad { background: linear-gradient(90deg, var(--blue-1), var(--blue-2) 55%, var(--blue-3)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lede { margin: 14px auto 0; max-width: 620px; font-weight: 300; font-size: 12px; line-height: 1.9; color: var(--ink-2); }
+    .when { margin-top: 12px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--navy); }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .wide { grid-column: 1 / -1; } }
+    .card { background: rgba(255, 255, 255, 0.92); border: 1px solid var(--lav-line); border-radius: 22px; padding: clamp(18px, 3vw, 26px); box-shadow: 0 20px 60px rgba(25, 18, 102, 0.10); min-width: 0; }
+    .card h2 { font-size: 13px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--navy); display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    .prize { font-size: 11px; font-weight: 700; color: var(--blue-2); letter-spacing: .08em; }
+    .sub { margin-top: 6px; font-size: 10px; font-weight: 300; line-height: 1.7; color: var(--ink-3); }
+    .leader { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--lav); font-size: 11px; line-height: 1.6; color: var(--ink-2); }
+    .leader b { color: var(--navy); }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 11px; }
+    th { text-align: left; font-size: 9px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); padding: 8px 6px; border-bottom: 1px solid var(--lav-line); }
+    td { padding: 10px 6px; border-bottom: 1px solid var(--lav); vertical-align: middle; }
+    tr:last-child td { border-bottom: 0; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    td.rank { width: 28px; font-weight: 800; color: var(--blue-2); }
+    .res { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .res img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: none; background: var(--lav); }
+    .res a { color: var(--ink); text-decoration: none; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .res a:hover { text-decoration: underline; }
+    .tick { font-size: 9px; color: var(--ink-3); letter-spacing: .08em; }
+    .handle { color: var(--blue-1); text-decoration: none; }
+    .handle:hover { text-decoration: underline; }
+    .mono { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: 11px; }
+    .up { color: var(--up); font-weight: 700; }
+    .down { color: var(--down); font-weight: 700; }
+    .empty { padding: 18px 4px 6px; font-size: 11px; color: var(--ink-3); line-height: 1.7; }
+    ol.rules { margin: 10px 0 0 18px; font-size: 11px; line-height: 1.9; color: var(--ink-2); font-weight: 300; }
+    ol.rules b { font-weight: 600; color: var(--navy); }
+    .updated { margin-top: 18px; text-align: center; font-size: 10px; color: var(--ink-3); letter-spacing: .06em; }
+    footer { padding: 18px 16px 28px; text-align: center; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+    footer a { color: inherit; }
+    .table-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="home" href="/" aria-label="SSR.FUN home">
+      <img class="seal" src="/ssr-seal.png" alt="" />
+      <div class="wordmark">SSR<span>.FUN</span></div>
+    </a>
+    <a class="cta" href="/">Build a Reserve</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="pill" id="phase-pill" role="status"><span class="dot"></span><span id="phase-text">Beta Campaign</span></div>
+      <h1>Beta Campaign <span class="grad">leaderboard</span></h1>
+      <p class="lede">Build a Reserve on SSR.FUN, share your thesis on X and compete for $300 across three prize tracks.</p>
+      <p class="when" id="when"></p>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Highest Volume <span class="prize">$150</span></h2>
+        <p class="sub">Reserves by mint, redeem and pool trading volume during the campaign. The creator's own trades don't count.</p>
+        <div class="leader" id="volume-leader" hidden></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Reserve</th><th>Creator</th><th class="num">Volume</th></tr></thead>
+          <tbody id="volume-body"></tbody>
+        </table></div>
+      </section>
+
+      <section class="card">
+        <h2>Highest PnL <span class="prize">$100</span></h2>
+        <p class="sub">Reserve Token price change since launch. Frozen at campaign close.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Reserve</th><th>Creator</th><th class="num">PnL</th></tr></thead>
+          <tbody id="pnl-body"></tbody>
+        </table></div>
+      </section>
+
+      <section class="card">
+        <h2>Top Traders <span class="prize">Volume track</span></h2>
+        <p class="sub">Wallets by mint, redeem and pool trading volume across every SSR.FUN Reserve. The Volume prize goes to whichever is bigger: the top Reserve or the top trader.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Wallet</th><th class="num">Trades</th><th class="num">Volume</th></tr></thead>
+          <tbody id="trader-body"></tbody>
+        </table></div>
+      </section>
+
+      <section class="card">
+        <h2>Best Beta Contributor <span class="prize">$50</span></h2>
+        <p class="sub">Picked by the SSR team for actionable feedback, reproducible bug reports and the quality of investment theses. Use the feedback button on SSR.FUN.</p>
+        <h2 style="margin-top:22px">How to enter</h2>
+        <ol class="rules">
+          <li><b>Create a Reserve</b> on SSR.FUN.</li>
+          <li>On your Reserve's page, <b>sign the campaign entry</b> with the wallet that created it and your X handle. Only entered Reserves are ranked.</li>
+          <li><b>Follow SSR.FUN on X</b> and post your thesis with a link to your Reserve.</li>
+          <li><b>Send feedback</b> with the button at the bottom right of SSR.FUN.</li>
+          <li><b>Submit on Superteam Earn.</b> Prizes are paid to the wallet that created the Reserve (or, for traders, the wallet that traded).</li>
+        </ol>
+      </section>
+    </div>
+    <p class="updated" id="updated"></p>
+  </main>
+
+  <footer><span>© 2026 SSR.FUN</span> · <a href="/docs">Docs</a></footer>
+  <script type="module" src="/src/leaderboard/main.ts"></script>
+</body>
+</html>

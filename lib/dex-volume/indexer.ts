@@ -101,8 +101,8 @@ export async function syncPoolSwaps(connection: Connection, pool: DexPool, deadl
         const swap = usdc && token ? classifyPoolSwap(usdc[0], usdc[1], token[0], token[1]) : null;
         if (!swap) continue;
         await sql`
-          insert into dex_pool_swaps (pool, signature, cluster, reserve, ts, side, usdc_raw, token_raw)
-          values (${pool.pool}, ${signature}, ${cluster}, ${pool.reserve}, ${tx.blockTime}, ${swap.side}, ${swap.usdcRaw.toString()}, ${swap.tokenRaw.toString()})
+          insert into dex_pool_swaps (pool, signature, cluster, reserve, ts, side, usdc_raw, token_raw, trader)
+          values (${pool.pool}, ${signature}, ${cluster}, ${pool.reserve}, ${tx.blockTime}, ${swap.side}, ${swap.usdcRaw.toString()}, ${swap.tokenRaw.toString()}, ${tx.accountKeys[0] ?? null})
           on conflict (pool, signature) do nothing
         `;
         swaps++;

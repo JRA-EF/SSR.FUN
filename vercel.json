@@ -76,6 +76,10 @@
     {
       "path": "/api/mainnet/keeper-watchdog",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/mainnet/campaign-refresh-cron",
+      "schedule": "5,35 * * * *"
     }
   ],
   "headers": [
@@ -109,6 +113,10 @@
     {
       "source": "/beta",
       "destination": "/beta.html"
+    },
+    {
+      "source": "/leaderboard",
+      "destination": "/leaderboard.html"
     },
     {
       "source": "/internal/set-keeper",

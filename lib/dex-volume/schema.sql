@@ -39,3 +39,7 @@ create table if not exists dex_pool_swaps (
 
 create index if not exists dex_pool_swaps_reserve_idx on dex_pool_swaps (reserve);
 create index if not exists dex_pool_swaps_ts_idx on dex_pool_swaps (ts);
+
+-- DEC-0279: the swap's fee payer (account key 0 = the wallet that traded), for
+-- the Beta Campaign's per-trader volume and to leave out a creator's own swaps.
+alter table dex_pool_swaps add column if not exists trader text;

@@ -57,6 +57,7 @@ const CRON_PATHS = new Set([
   '/api/mainnet/warm-cache-cron',
   '/api/mainnet/fee-settlement-cron',
   '/api/mainnet/keeper-watchdog',
+  '/api/mainnet/campaign-refresh-cron',
   // Agent-feedback daemon endpoints: machine-to-machine, authenticated by
   // their own FEEDBACK_DAEMON_SECRET bearer inside the handler (no browser,
   // no session cookie) -- gating them here returned 401 before the handler
@@ -109,6 +110,11 @@ const PUBLIC_PATHS = new Set([
   '/beta',
   '/beta.html',
   '/api/site/claim',
+  // DEC-0279: the public Beta Campaign leaderboard and its read-only data
+  // (Reserve names, creator X handles they chose to publish, volumes, PnL).
+  '/leaderboard',
+  '/leaderboard.html',
+  '/api/mainnet/campaign-leaderboard',
 ])
 
 // Reserve metadata and picture READS. A Reserve's on-chain metadata_uri

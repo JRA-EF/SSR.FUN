@@ -8572,3 +8572,35 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0279
+
+```json
+{
+  "id": "DEC-0279",
+  "date": "2026-11-03",
+  "title": "Beta Campaign leaderboard at ssr.fun/leaderboard, with wallet-signed creator entries",
+  "status": "confirmed",
+  "decision": "A public page /leaderboard (outside the BETA gate, own bundle, no wallet code) ranks the Superteam Earn Beta Campaign: Highest Volume ($150), Highest PnL ($100) and a Top Traders table; Best Beta Contributor ($50) is judged by the team. Only Reserves whose creator signed a campaign entry are ranked: on the Reserve page the manager wallet signs a plain message with its X handle (no transaction); api/mainnet/campaign-entry.ts checks the ed25519 signature, that the signer is the Reserve's on-chain manager (warm-cache snapshot), freshness (10 min) and that it is not a team wallet, and stores message + signature in campaign_entries so anyone can re-verify. Volume = mints + redeems (reserve_activity_log) + Raydium pool swaps (dex_pool_swaps, new trader column = fee payer) inside the window, excluding the creator wallet's own trades. The Volume prize goes to the greater of the top Reserve's volume and the top trader's volume across all Reserves. PnL % = NAV at close vs the launch anchor (same as All-Time Performance), any Reserve, no minimum. Window and team exclusions are env: SSR_CAMPAIGN_START, SSR_CAMPAIGN_END (ISO), SSR_CAMPAIGN_EXCLUDE_WALLETS (protocol wallet always excluded). api/mainnet/campaign-refresh-cron.ts tops up activity and pool swaps every 30 min while the campaign runs (no-op outside it).",
+  "context": "Creator, 2026-11-03: Superteam Earn bounty 'Build a Reserve', $300 over three tracks; asked for a leaderboard and a way to verify who the Reserve creators are for awarding. Owner choices: volume excludes creator self-trades; PnL any Reserve, no minimum; public page; team wallets excluded; Volume track later amended to 'Reserve volume or top trader volume, whichever is greater'.",
+  "rationale": "The on-chain manager wallet is the only proof of who created a Reserve; a wallet signature binds it to an X handle at zero cost and cannot be forged. Requiring entry also keeps team and pre-campaign test Reserves off the board without guessing which wallets are internal. Paying prizes only to the creator (or trading) wallet closes the loop with the Earn submission.",
+  "alternativesConsidered": [
+    "Rank every Reserve and match creators by hand from Earn submissions -- rejected: team/test Reserves would crowd the board and handles would be unverifiable.",
+    "X handle in Reserve metadata -- rejected: set at creation, not provable, and existing Reserves have none."
+  ],
+  "impact": "New public routes /leaderboard and GET /api/mainnet/campaign-leaderboard; new gated route /api/mainnet/campaign-entry; new cron every 30 min (skips unless the campaign is running); new tables campaign_entries (on demand) and dex_pool_swaps.trader (migrated 2026-11-03). Swaps indexed before this change have no trader and count toward Reserve volume only. Reserves with unpriced assets (no NAV) are not ranked on PnL.",
+  "affectedAreas": [
+    "leaderboard.html, src/leaderboard/main.ts",
+    "src/merge/components/CampaignEntryCard.tsx, src/merge/pages/DTRDetail.tsx",
+    "lib/campaign/*, api/mainnet/campaign-*.ts",
+    "lib/dex-volume/indexer.ts, lib/dex-volume/schema.sql",
+    "middleware.ts, vercel.json, vite.config.ts, tsconfig.node.json"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_campaign.ts: 6 passing; npm run build clean.",
+    "Live checks against the prod DB with temporary entries (removed): non-creator 403, forged signature 401, team wallet 403, expired 400; leaderboard returned names, PnL (-5.41% / -18.88%) and the volume leader."
+  ]
+}
+```

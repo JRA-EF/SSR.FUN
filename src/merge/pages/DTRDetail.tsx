@@ -76,6 +76,7 @@ import { ReserveSocialLinks } from "@/components/ReserveSocialLinks";
 import { truncateWallet, type PnlCardData, type PnlCardTopAsset } from "@/lib/pnlCard";
 
 import { Button } from "@/components/ui/button";
+import { CampaignEntryCard } from "@/components/CampaignEntryCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -2137,6 +2138,11 @@ export function DTRDetail() {
 
       {LIQUIDITY_ENABLED && dtr.managerAddress === wallet.address && !liquidityIntroDismissed && (
         <LiquidityLaunchNudge dtr={dtr} onDismiss={() => setLiquidityIntroDismissed(true)} />
+      )}
+
+      {/* DEC-0279: Beta Campaign entry, for this Reserve's creator only. */}
+      {IS_MAINNET && dtr.onChain?.reserve && !!wallet.address && dtr.managerAddress === wallet.address && (
+        <CampaignEntryCard reserve={dtr.onChain.reserve} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
