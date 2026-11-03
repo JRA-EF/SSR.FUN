@@ -18,6 +18,7 @@ import {
   hypotheticalLookupTable,
   selectSwapActions,
   shouldAttemptSingle,
+  resizedBudgetForQuote,
   type BuildBuyDeps,
 } from "../lib/mainnet/buildBuy";
 import type { BuyFundingAction } from "../src/merge/lib/multiAssetBuyPlan";
@@ -464,4 +465,21 @@ describe("buildBuy.ts -- full build (fakes for RPC/program reads/Jupiter; real b
     }
   });
 
+});
+
+describe("resizedBudgetForQuote (DEC-0281: a thin route quoting under the leg deficit)", () => {
+  it("leaves a quote that already covers the deficit plus 1% alone", () => {
+    expect(resizedBudgetForQuote(1_000_000n, 1_010_000n, 1_000_000n)).to.equal(null);
+    expect(resizedBudgetForQuote(1_000_000n, 2_000_000n, 1_000_000n)).to.equal(null);
+  });
+  it("scales the budget so the quote would cover the deficit plus 1% (the live 0.55% shortfall case)", () => {
+    // live: 111886142400 delivered of 112505846105 required
+    const budget = resizedBudgetForQuote(5_000_000n, 111_886_142_400n, 112_505_846_105n)!;
+    expect(budget > 5_000_000n).to.equal(true);
+    const scaledOut = (111_886_142_400n * budget) / 5_000_000n;
+    expect(scaledOut >= 112_505_846_105n + 1_125_058_462n - 1n).to.equal(true);
+  });
+  it("never divides by an empty quote", () => {
+    expect(resizedBudgetForQuote(1_000_000n, 0n, 5n)).to.equal(null);
+  });
 });

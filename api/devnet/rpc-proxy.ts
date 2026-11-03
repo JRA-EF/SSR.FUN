@@ -68,6 +68,12 @@ export const ALLOWED_METHODS = new Set([
   // sync since createReserveClient.ts's Address-Lookup-Table fallback is
   // shared between clusters, even though the reported failure was Mainnet-only.
   "getSlot",
+  // Added 2026-11-03 (DEC-0281): the /recover page (incompleteTransactions.ts)
+  // lists the wallet's token balances and reads its swap transactions, and
+  // the mint flow reads a confirmed swap's delivered amount on resume
+  // (multiAssetBuyClient.ts). Both were rejected here, so /recover never loaded.
+  "getTokenAccountsByOwner",
+  "getTransaction",
 ]);
 
 const MAX_BATCH_SIZE = 20;

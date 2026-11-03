@@ -156,6 +156,20 @@ export function selectSwapActions(actions: BuyFundingAction[], legsOnly: string[
   return swaps;
 }
 
+/** Headroom a swap quote must clear over the leg's deficit before it is used as-is (DEC-0281). */
+export const QUOTE_OUT_MARGIN_BPS = 100n;
+
+/**
+ * Pure: the larger USDC budget that makes a quote's expected output cover the
+ * leg's deficit plus QUOTE_OUT_MARGIN_BPS (scaled linearly from this quote),
+ * or null when the quote already covers it.
+ */
+export function resizedBudgetForQuote(budgetRaw: bigint, quoteOutRaw: bigint, deficitRaw: bigint): bigint | null {
+  const target = deficitRaw + (deficitRaw * QUOTE_OUT_MARGIN_BPS + 9_999n) / 10_000n;
+  if (quoteOutRaw <= 0n || quoteOutRaw >= target) return null;
+  return (budgetRaw * target + quoteOutRaw - 1n) / quoteOutRaw;
+}
+
 /** Pure: applies the client's persisted per-purchase acquisitions to the fresh plan inputs (never the wallet's unrelated holdings -- countableAcquiredRaw caps at what is still held). */
 export function applyClientAcquired(legs: BuyLegInput[], acquiredRawByMint: Record<string, bigint>): BuyLegInput[] {
   return legs.map((l) => ({ ...l, purchaseAcquiredRaw: acquiredRawByMint[l.mint] ?? 0n }));
@@ -249,6 +263,30 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
         throw new BuildError(422, `The swap for ${action.mint} has a price impact of ${Number(r.value.priceImpactPct).toFixed(1)}% -- too high to execute automatically; its on-chain liquidity is too thin right now.`, { mint: action.mint });
       }
       return { action, quote: r.value };
+    }),
+  );
+  // Budgets are sized from the price feed; a thin route can quote less than
+  // the leg needs (2026-11-03: a pump.fun asset came in 0.55% short, DEC-0281).
+  // Re-quote such a leg once with a proportionally larger budget, paid from
+  // the wallet's spare USDC only; if that is not possible the original quote
+  // stands and the client tops the leg up after the swap.
+  let spareUsdcRaw = walletUsdcRaw > feasibility.requiredUsdcRaw ? walletUsdcRaw - feasibility.requiredUsdcRaw : 0n;
+  const resizes: { idx: number; budget: bigint }[] = [];
+  quotes.forEach(({ action, quote }, idx) => {
+    const budget = resizedBudgetForQuote(action.usdcBudgetRaw, BigInt(quote.outAmount), action.deficitRaw);
+    if (budget === null || budget - action.usdcBudgetRaw > spareUsdcRaw) return;
+    spareUsdcRaw -= budget - action.usdcBudgetRaw;
+    resizes.push({ idx, budget });
+  });
+  await Promise.all(
+    resizes.map(async ({ idx, budget }) => {
+      const { action } = quotes[idx];
+      const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: budget, slippageBps: input.slippageBps, apiKey: deps.jupiterApiKey };
+      let r = await deps.jupiterQuote({ ...base, maxAccounts: attemptSingle ? SINGLE_TX_SWAP_MAX_ACCOUNTS : null });
+      if (r.kind !== "ok" && attemptSingle) r = await deps.jupiterQuote({ ...base, maxAccounts: null });
+      if (r.kind !== "ok" || !isPriceImpactAcceptable(r.value)) return;
+      action.usdcBudgetRaw = budget;
+      quotes[idx] = { action, quote: r.value };
     }),
   );
   timings.quotesMs = Date.now() - tQuote;

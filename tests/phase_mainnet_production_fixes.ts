@@ -876,6 +876,8 @@ describe("createReserveClient.ts's real Connection method usage stays inside bot
     sendRawTransaction: "sendTransaction",
     getAddressLookupTable: "getAccountInfo",
     getMultipleAccountsInfo: "getMultipleAccounts",
+    getParsedTransaction: "getTransaction",
+    getParsedTokenAccountsByOwner: "getTokenAccountsByOwner",
   };
 
   function extractConnectionMethodCalls(sourcePath: string): string[] {
@@ -898,6 +900,18 @@ describe("createReserveClient.ts's real Connection method usage stays inside bot
       expect(DEVNET_RPC_PROXY_ALLOWED_METHODS.has(method), `DevNet rpc-proxy missing "${method}"`).to.equal(true);
     }
   });
+
+  // DEC-0281 (2026-11-03): /recover failed live with "Method not permitted via this proxy".
+  for (const file of ["src/merge/lib/incompleteTransactions.ts", "src/merge/lib/multiAssetBuyClient.ts", "src/merge/lib/walletReserveBalances.ts"]) {
+    it(`every Connection method ${file} actually calls is present in BOTH allowlists`, () => {
+      const methods = extractConnectionMethodCalls(file);
+      expect(methods.length).to.be.greaterThan(0);
+      for (const method of methods) {
+        expect(MAINNET_RPC_PROXY_ALLOWED_METHODS.has(method), `Mainnet rpc-proxy missing "${method}"`).to.equal(true);
+        expect(DEVNET_RPC_PROXY_ALLOWED_METHODS.has(method), `DevNet rpc-proxy missing "${method}"`).to.equal(true);
+      }
+    });
+  }
 
   it("every Connection method rpcResilience.ts actually calls is present in BOTH allowlists too", () => {
     const methods = extractConnectionMethodCalls("src/merge/lib/rpcResilience.ts");

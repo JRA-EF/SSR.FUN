@@ -525,13 +525,37 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     // Every leg must now be genuinely covered by THIS purchase's own
     // acquisitions, re-read after every funding transaction.
     currentStage = "verifying every Reserve asset was acquired before the final mint";
-    const freshHeld = await readLegBalances();
-    for (let i = 0; i < params.assets.length; i++) {
-      const mint = params.assets[i].mint;
-      const countable = mint === MAINNET_USDC_MINT ? freshHeld[i] : countableAcquiredRaw({ walletHeldRaw: freshHeld[i], purchaseAcquiredRaw: acquiredRawOf(mint) });
-      if (countable < (requiredAmountsRaw[i] ?? 0n)) {
-        throw new Error(`Reserve asset ${mint} is still short after funding: this mint has acquired ${countable.toString()} raw of the ${requiredAmountsRaw[i].toString()} raw required. Nothing further was submitted -- retrying funds only this remaining shortfall.`);
-      }
+    const shortLegs = async () => {
+      const freshHeld = await readLegBalances();
+      return params.assets
+        .map((a, i) => ({ mint: a.mint, required: requiredAmountsRaw[i] ?? 0n, countable: a.mint === MAINNET_USDC_MINT ? freshHeld[i] : countableAcquiredRaw({ walletHeldRaw: freshHeld[i], purchaseAcquiredRaw: acquiredRawOf(a.mint) }) }))
+        .filter((l) => l.countable < l.required);
+    };
+    let short = await shortLegs();
+    // A swap can deliver a little less than the price feed implied (thin
+    // routes, price movement between quote and landing). Top those legs up
+    // once, automatically: the server sizes the new swap from what this
+    // purchase still lacks (2026-11-03, DEC-0281).
+    const topUpMints = short.map((l) => l.mint).filter((m) => m !== MAINNET_USDC_MINT);
+    if (short.length > 0 && topUpMints.length === short.length) {
+      log("leg(s) short after funding -- topping up the remainder", { legs: short.map((l) => ({ mint: l.mint, countableRaw: l.countable.toString(), requiredRaw: l.required.toString() })) });
+      currentStage = "topping up the Reserve asset(s) that came in slightly short";
+      for (const m of topUpMints) advanceLeg(m, "not_started");
+      params.onProgress?.({ phase: "building" });
+      const topUp = await requestBuyBuild(buildRequest({ legsOnly: topUpMints }));
+      const topUpSigned = await signMany(topUp.transactions.map(decode));
+      for (const l of topUp.plan.legs) heldBefore.set(l.mint, BigInt(l.walletHeldRaw));
+      jobs = toJobs(topUp, topUpSigned);
+      outcomes = await submitSwaps(jobs);
+      const { retryable, fatal } = partitionSwapOutcomes(jobs, outcomes);
+      if (fatal !== null) throw fatal;
+      if (retryable.length > 0) throw (outcomes.find((o): o is PromiseRejectedResult => o.status === "rejected")!.reason as Error);
+      currentStage = "verifying every Reserve asset was acquired before the final mint";
+      short = await shortLegs();
+    }
+    if (short.length > 0) {
+      const l = short[0];
+      throw new Error(`Reserve asset ${l.mint} is still short after funding: this mint has acquired ${l.countable.toString()} raw of the ${l.required.toString()} raw required. Nothing further was submitted -- retrying funds only this remaining shortfall.`);
     }
 
     // DOUBLE-MINT GUARD, part 2: immediately before submitting.

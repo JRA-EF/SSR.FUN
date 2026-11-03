@@ -52,6 +52,12 @@ export const ALLOWED_METHODS = new Set([
   // by tests/phase_mainnet_production_fixes.ts's self-auditing regression
   // guard before it ever shipped.
   "getSlot",
+  // Added 2026-11-03 (DEC-0281): the /recover page (incompleteTransactions.ts)
+  // lists the wallet's token balances and reads its swap transactions, and
+  // the mint flow reads a confirmed swap's delivered amount on resume
+  // (multiAssetBuyClient.ts). Both were rejected here, so /recover never loaded.
+  "getTokenAccountsByOwner",
+  "getTransaction",
 ]);
 
 const MAX_BATCH_SIZE = 20;

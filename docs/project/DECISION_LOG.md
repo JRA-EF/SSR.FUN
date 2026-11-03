@@ -8637,3 +8637,35 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+```json
+{
+  "id": "DEC-0281",
+  "date": "2026-11-03",
+  "title": "Mint shortfall after funding is topped up automatically; swap quotes are re-sized to cover the leg; /recover and swap reconciliation unblocked in the RPC proxy",
+  "status": "implemented; production deploy recorded in PROJECT_STATUS.md",
+  "decision": "(1) lib/mainnet/buildBuy.ts: after quoting, a leg whose Jupiter quote outAmount is below its deficit plus 1% (QUOTE_OUT_MARGIN_BPS) is re-quoted once with a linearly scaled USDC budget (resizedBudgetForQuote), paid only from the wallet's spare USDC beyond the feasibility requirement; if unaffordable, failed or too much price impact, the original quote stands. (2) src/merge/lib/multiAssetBuyClient.ts: if any non-USDC leg is still short after the swaps land, the flow rebuilds legsOnly for those legs (the server sizes from what the purchase still lacks), asks for one more approval, submits, re-verifies, and only then throws the old 'still short after funding' error. (3) api/mainnet and api/devnet rpc-proxy allow getTokenAccountsByOwner and getTransaction: /recover (incompleteTransactions.ts readWalletHoldings, ownerDeltasFromSignature) and the mint resume reconciliation (getParsedTransaction) were rejected with 'Method not permitted via this proxy'. The self-auditing allowlist test now also scans incompleteTransactions.ts, multiAssetBuyClient.ts and walletReserveBalances.ts.",
+  "context": "A user's mint on 2026-11-03 stopped with 'Reserve asset Bpd...pump is still short after funding: acquired 111886142400 raw of 112505846105 raw required' (0.55% short; classic SPL mint, no transfer fee): swap budgets are sized from the price feed plus 2% and a thin pump.fun route delivered less. The /recover page they were sent to then failed with 'failed to get token accounts owned by account ...: Method not permitted via this proxy.'",
+  "rationale": "Fix the cause at build time (quote-aware sizing) and keep a bounded automatic recovery at run time, so a small shortfall never strands swapped assets in the wallet. The two proxy methods are user-triggered reads (recover page, resume), not hot-path polling.",
+  "alternativesConsidered": [
+    "Raising BUY_SWAP_BUFFER_FRACTION for every leg -- rejected: overspends on every liquid leg to cover rare thin routes.",
+    "ExactOut quotes -- rejected: not supported on many pump.fun/AMM routes Jupiter uses."
+  ],
+  "impact": "Mint flow (server build + client), both rpc-proxies. No program or env change.",
+  "affectedAreas": [
+    "lib/mainnet/buildBuy.ts",
+    "src/merge/lib/multiAssetBuyClient.ts",
+    "api/mainnet/rpc-proxy.ts",
+    "api/devnet/rpc-proxy.ts",
+    "tests/phase_server_built_buy.ts",
+    "tests/phase_mainnet_production_fixes.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_server_built_buy.ts + tests/phase_mainnet_production_fixes.ts 116 passing",
+    "tsc -p tsconfig.app.json clean",
+    "Mint BpdHpqznEgYPXZNrJVRZvBhdWoafYLVVuLxTQo34pump read on Mainnet: owner Tokenkeg (classic SPL), 6 decimals"
+  ]
+}
+```
