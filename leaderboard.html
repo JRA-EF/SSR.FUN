@@ -83,6 +83,7 @@
     footer { padding: 18px 16px 28px; text-align: center; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
     footer a { color: inherit; }
     .table-wrap { overflow-x: auto; }
+    .disclaimer { margin-top: 18px; box-shadow: none; background: rgba(255, 255, 255, 0.7); }
   </style>
 </head>
 <body>
@@ -145,9 +146,20 @@
       </section>
     </div>
     <p class="updated" id="updated"></p>
+
+    <section class="card disclaimer" aria-labelledby="disclaimer-title">
+      <h2 id="disclaimer-title">Disclaimer</h2>
+      <ol class="rules">
+        <li><b>A place on this leaderboard is not a qualification.</b> Prizes go only to entries that meet every requirement of the bounty. Read the full rules on the Superteam Earn listing.</li>
+        <li><b>No manipulation.</b> Wash trading, self-dealing, multiple wallets acting together, or any other attempt to inflate volume or PnL will not be accepted.</li>
+        <li><b>The SSR team's decision is final.</b> The team may review, adjust, disqualify, drop or slash any entry, result or prize at its sole discretion, at any time and without notice.</li>
+        <li>Figures shown are estimates from on-chain data and may be delayed or corrected. Nothing here is financial advice.</li>
+      </ol>
+      <p class="sub" style="margin-top:12px">All rights reserved by the SSR team.</p>
+    </section>
   </main>
 
-  <footer><span>© 2026 SSR.FUN</span> · <a href="/docs">Docs</a> · <a href="https://x.com/strategicsuperr" target="_blank" rel="noopener">X</a></footer>
+  <footer><span>© 2026 SSR.FUN. All rights reserved.</span> · <a href="/docs">Docs</a> · <a href="https://x.com/strategicsuperr" target="_blank" rel="noopener">X</a></footer>
   <script type="module" src="/src/leaderboard/main.ts"></script>
 </body>
 </html>
