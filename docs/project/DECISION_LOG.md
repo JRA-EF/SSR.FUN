@@ -8721,3 +8721,34 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0284
+
+```json
+{
+  "id": "DEC-0284",
+  "date": "2026-11-04",
+  "title": "Beta Campaign: traders sign up with a wallet signature; creators' trades on their own Reserve never count",
+  "status": "confirmed",
+  "decision": "Traders register at ssr.fun/#/campaign: the wallet they trade with signs a message with their X handle (no transaction), stored in Neon campaign_traders (wallet PK, handle, message, signature) via POST /api/mainnet/campaign-entry {kind:'trader'}. Only signed-up traders are ranked in Top Traders and can lead the Volume track; the leaderboard shows their handle. Trades by a Reserve's own creator on that Reserve are excluded from trader volume as well as Reserve volume. On Earn, the submission's X profile must match the signed handle (creators and traders alike).",
+  "context": "Owner, 2026-11-04, reviewing the Earn bounty text: Earn pays the winner's Earn-profile wallet, so a trader-wallet address in a submission proved nothing and anyone could claim the top trader. Also, a creator could trade their own Reserve and win Volume through the trader path, bypassing DEC-0279's creator exclusion.",
+  "rationale": "Same proof as DEC-0279 creator entries: an ed25519 signature binds wallet to X handle at zero cost and anyone can re-check it.",
+  "alternativesConsidered": [
+    "Ask for a transaction ID or screenshot on Earn -- rejected: public data, proves nothing.",
+    "Pay the trading wallet directly -- rejected: Earn pays its own profile wallet, and unqualified owners could still be paid."
+  ],
+  "impact": "New table campaign_traders (created on demand); new app route #/campaign; leaderboard JSON gains traders[].handle and traderEntries. Bounty text should say: sign up (creators on the Reserve page, traders at ssr.fun/#/campaign) and submit on Earn with the same X profile.",
+  "affectedAreas": [
+    "lib/campaign/rules.ts, lib/campaign/db.ts, lib/campaign/leaderboard.ts",
+    "api/mainnet/campaign-entry.ts",
+    "src/merge/pages/CampaignTrader.tsx, src/App.tsx",
+    "leaderboard.html, src/leaderboard/main.ts",
+    "tests/phase_campaign.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_campaign.ts 9 passing"
+  ]
+}
+```

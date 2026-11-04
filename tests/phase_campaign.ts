@@ -4,7 +4,7 @@
 import { expect } from "chai";
 import { Keypair } from "@solana/web3.js";
 import { createPrivateKey, sign } from "node:crypto";
-import { campaignConfig, campaignPhase, entryMessage, isEligibleReserve, normalizeHandle, pnlPct, rank, volumeByReserve } from "../lib/campaign/rules";
+import { campaignConfig, campaignPhase, entryMessage, isEligibleReserve, normalizeHandle, pnlPct, rank, traderEntryMessage, traderVolume, volumeByReserve } from "../lib/campaign/rules";
 import { verifyWalletSignature } from "../api/mainnet/campaign-entry";
 
 function signAs(kp: Keypair, message: string): string {
@@ -75,5 +75,24 @@ describe("Beta Campaign (DEC-0279)", () => {
     expect(verifyWalletSignature(kp.publicKey.toBase58(), msg.replace("@abc", "@xyz"), sig)).to.equal(false);
     expect(verifyWalletSignature(other.publicKey.toBase58(), msg, sig)).to.equal(false);
     expect(verifyWalletSignature(kp.publicKey.toBase58(), msg, "bad")).to.equal(false);
+  });
+
+  it("ranks only signed-up traders and leaves out a creator's trades on their own Reserve", () => {
+    const rows = [
+      { wallet: "M", reserve: "A", usd: 500, trades: 5 }, // creator of A trading A: dropped
+      { wallet: "M", reserve: "B", usd: 30, trades: 1 },  // creator of A trading B: counts
+      { wallet: "T", reserve: "A", usd: 40, trades: 2 },
+      { wallet: "U", reserve: "A", usd: 999, trades: 9 }, // not signed up
+      { wallet: "CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8", reserve: "A", usd: 999, trades: 1 },
+    ];
+    const out = traderVolume(rows, new Map([["A", "M"], ["B", "N"]]), campaignConfig({}).excludedWallets, new Set(["M", "T", "CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8"]));
+    expect(out).to.deep.equal([{ wallet: "T", usd: 40, trades: 2 }, { wallet: "M", usd: 30, trades: 1 }]);
+  });
+
+  it("verifies a trader's signed sign-up", () => {
+    const kp = Keypair.generate();
+    const msg = traderEntryMessage({ wallet: kp.publicKey.toBase58(), handle: "trader1", issuedAt: "2026-11-05T00:00:00.000Z" });
+    expect(verifyWalletSignature(kp.publicKey.toBase58(), msg, signAs(kp, msg))).to.equal(true);
+    expect(verifyWalletSignature(kp.publicKey.toBase58(), msg.replace("@trader1", "@other"), signAs(kp, msg))).to.equal(false);
   });
 });

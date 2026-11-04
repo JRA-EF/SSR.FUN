@@ -17,6 +17,7 @@ import { ManageDTR } from './merge/pages/ManageDTR'
 import { DTRDetail } from './merge/pages/DTRDetail'
 import { CreateReserve } from './merge/pages/CreateReserve'
 import { Feedback } from './merge/pages/Feedback'
+import { CampaignTrader } from './merge/pages/CampaignTrader'
 import { FeedbackLauncher } from './merge/components/feedback/FeedbackLauncher'
 import { FEEDBACK_ENABLED } from './merge/lib/feedback'
 import { rhAddressFromId } from './merge/lib/evmReserveId'
@@ -105,6 +106,13 @@ function Routes() {
     return (
       <MergeLayout>
         <IncompleteTransactions />
+      </MergeLayout>
+    )
+  }
+  if (matchPath('/campaign', path)) {
+    return (
+      <MergeLayout>
+        <CampaignTrader />
       </MergeLayout>
     )
   }

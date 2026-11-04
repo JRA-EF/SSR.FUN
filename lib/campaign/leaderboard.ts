@@ -4,8 +4,8 @@
 // public GET is cheap. Freshness comes from api/mainnet/campaign-refresh-cron.ts.
 import { readReserveSnapshot } from '../reserve-warm-cache/db'
 import { computeEntryNavUsd, type NavInputReserve, type NavPoint } from '../reserve-nav-history/navMath'
-import { campaignConfig, campaignPhase, isEligibleReserve, pnlPct, rank, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
-import { getCampaignSql, listEntries } from './db'
+import { campaignConfig, campaignPhase, isEligibleReserve, pnlPct, rank, traderVolume, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
+import { getCampaignSql, listEntries, listTraders } from './db'
 
 /** Creation time (unix s) of every Reserve: its reserveCreated event, else its earliest indexed activity. */
 export async function reserveCreatedTs(cluster: string): Promise<Map<string, number>> {
@@ -43,6 +43,7 @@ export interface LeaderboardRow {
 export interface TraderRow {
   rank: number
   wallet: string
+  handle: string
   value: number
   trades: number
 }
@@ -52,6 +53,8 @@ export interface Leaderboard {
   startTs: number | null
   endTs: number | null
   entries: number
+  /** Traders who signed up (only they are ranked). */
+  traderEntries: number
   volume: LeaderboardRow[]
   pnl: LeaderboardRow[]
   /** Highest Volume is the greater of the top Reserve's volume and the top trader's volume (owner, 2026-11-03). */
@@ -65,7 +68,8 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
   const phase = campaignPhase(cfg, Math.floor(nowMs / 1000))
   const sql = getCampaignSql()
 
-  const [entriesAll, snapRow, createdBy] = await Promise.all([listEntries(), readReserveSnapshot(CLUSTER), reserveCreatedTs(CLUSTER)])
+  const [entriesAll, snapRow, createdBy, traderEntries] = await Promise.all([listEntries(), readReserveSnapshot(CLUSTER), reserveCreatedTs(CLUSTER), listTraders()])
+  const handleByTrader = new Map(traderEntries.filter(t => !cfg.excludedWallets.has(t.wallet)).map(t => [t.wallet, t.handle]))
   const snap = (snapRow?.snapshot ?? {}) as { reserves?: SnapshotReserve[]; metadataByReserve?: Record<string, { name?: string; ticker?: string; imageUrl?: string }> }
   const byReserve = new Map((snap.reserves ?? []).map(r => [r.reserve, r]))
 
@@ -97,23 +101,24 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
     volume = volumeByReserve(rows, managerByReserve)
   }
 
-  // --- Traders: every wallet's mints + redeems + pool swaps on the campaign's new Reserves in the window ---
+  // --- Traders: signed-up wallets' mints + redeems + pool swaps on the campaign's new Reserves in the window.
+  // A creator's trades on their own Reserve don't count here either (owner, 2026-11-04).
   let traders: TraderRow[] = []
   const eligibleList = [...eligible]
-  if (cfg.startTs !== null && cfg.endTs !== null && eligibleList.length) {
+  if (cfg.startTs !== null && cfg.endTs !== null && eligibleList.length && handleByTrader.size) {
     const rows = (await sql`
-      SELECT wallet, sum(usd)::float8 AS usd, count(*)::int AS n FROM (
-        SELECT actor AS wallet, amount_usd::float8 AS usd FROM reserve_activity_log
+      SELECT wallet, reserve, sum(usd)::float8 AS usd, count(*)::int AS n FROM (
+        SELECT actor AS wallet, reserve, amount_usd::float8 AS usd FROM reserve_activity_log
         WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND actor IS NOT NULL AND reserve = ANY(${eligibleList})
           AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs} AND amount_usd IS NOT NULL
         UNION ALL
-        SELECT trader AS wallet, usdc_raw::float8 / 1e6 AS usd FROM dex_pool_swaps
+        SELECT trader AS wallet, reserve, usdc_raw::float8 / 1e6 AS usd FROM dex_pool_swaps
         WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND reserve = ANY(${eligibleList}) AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
-      ) t GROUP BY wallet ORDER BY usd DESC LIMIT 60`) as { wallet: string; usd: number; n: number }[]
-    traders = rows
-      .filter(r => !cfg.excludedWallets.has(r.wallet) && r.usd > 0)
+      ) t WHERE wallet = ANY(${[...handleByTrader.keys()]}) GROUP BY wallet, reserve`) as { wallet: string; reserve: string; usd: number; n: number }[]
+    const managerOfEligible = new Map((snap.reserves ?? []).filter(r => eligible.has(r.reserve)).map(r => [r.reserve, r.manager]))
+    traders = traderVolume(rows.map(r => ({ wallet: r.wallet, reserve: r.reserve, usd: Number(r.usd), trades: r.n })), managerOfEligible, cfg.excludedWallets, new Set(handleByTrader.keys()))
       .slice(0, 25)
-      .map((r, i) => ({ rank: i + 1, wallet: r.wallet, value: Number(r.usd), trades: r.n }))
+      .map((r, i) => ({ rank: i + 1, wallet: r.wallet, handle: handleByTrader.get(r.wallet)!, value: r.usd, trades: r.trades }))
   }
 
   // --- PnL: launch anchor (entry prices) or first recorded NAV, to the last NAV at/before close ---
@@ -191,6 +196,7 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
     startTs: cfg.startTs,
     endTs: cfg.endTs,
     entries: entries.length,
+    traderEntries: handleByTrader.size,
     volume: volumeRows,
     pnl: rank(reserves.map(r => row(r, pnl.get(r) ?? null))) as LeaderboardRow[],
     traders,

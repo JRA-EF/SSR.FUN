@@ -6,10 +6,10 @@ interface Row {
   rank: number; reserve: string; reserveId: string; mint: string; name: string; ticker: string
   imageUrl: string | null; handle: string; wallet: string; status: string; value: number
 }
-interface Trader { rank: number; wallet: string; value: number; trades: number }
+interface Trader { rank: number; wallet: string; handle: string; value: number; trades: number }
 interface Board {
   phase: 'unscheduled' | 'upcoming' | 'live' | 'closed'
-  startTs: number | null; endTs: number | null; entries: number
+  startTs: number | null; endTs: number | null; entries: number; traderEntries: number
   volume: Row[]; pnl: Row[]; traders: Trader[]
   volumeLeader: { kind: 'reserve' | 'trader'; id: string; value: number } | null
   generatedAt: string
@@ -63,8 +63,9 @@ function render(b: Board) {
   }))
 
   const tb = $('trader-body')
-  if (!b.traders.length) emptyRow(tb, 4, b.phase === 'live' || b.phase === 'closed' ? 'No trades yet.' : 'Trading volume counts from the campaign start.')
+  if (!b.traders.length) emptyRow(tb, 5, b.phase === 'live' || b.phase === 'closed' ? 'No signed-up trader has traded yet.' : 'Trading volume counts from the campaign start.')
   else tb.replaceChildren(...b.traders.map(t => el('tr', {}, el('td', { class: 'rank' }, String(t.rank)),
+    el('td', {}, handleLink(t.handle)),
     el('td', {}, el('a', { class: 'handle mono', href: `https://solscan.io/account/${t.wallet}`, target: '_blank', rel: 'noopener', title: t.wallet }, short(t.wallet))),
     el('td', { class: 'num' }, String(t.trades)), el('td', { class: 'num' }, usd.format(t.value)))))
 
@@ -75,11 +76,12 @@ function render(b: Board) {
       const r = b.volume.find(x => x.reserve === b.volumeLeader!.id)
       leader.replaceChildren('Leading the Volume track: ', el('b', {}, r ? r.name : 'a Reserve'), r ? ' by ' : '', r ? handleLink(r.handle) : '', ` with ${usd.format(b.volumeLeader.value)}.`)
     } else {
-      leader.replaceChildren('Leading the Volume track: trader ', el('b', {}, short(b.volumeLeader.id)), ` with ${usd.format(b.volumeLeader.value)}.`)
+      const t = b.traders.find(x => x.wallet === b.volumeLeader!.id)
+      leader.replaceChildren('Leading the Volume track: trader ', t ? handleLink(t.handle) : el('b', {}, short(b.volumeLeader.id)), ` with ${usd.format(b.volumeLeader.value)}.`)
     }
   } else leader.hidden = true
 
-  $('updated').textContent = `${b.entries} Reserve${b.entries === 1 ? '' : 's'} entered · Updated ${new Date(b.generatedAt).toLocaleTimeString()} · Volumes refresh every 30 minutes`
+  $('updated').textContent = `${b.entries} Reserve${b.entries === 1 ? '' : 's'} and ${b.traderEntries ?? 0} trader${b.traderEntries === 1 ? '' : 's'} entered · Updated ${new Date(b.generatedAt).toLocaleTimeString()} · Volumes refresh every 30 minutes`
 }
 
 async function load() {

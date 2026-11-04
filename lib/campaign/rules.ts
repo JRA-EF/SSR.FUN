@@ -137,3 +137,47 @@ export function rank<T extends { value: number | null; enteredAt: string }>(rows
     .sort((a, b) => (b.value! - a.value!) || a.enteredAt.localeCompare(b.enteredAt))
     .map((r, i) => ({ ...r, rank: i + 1 }))
 }
+
+// --- Traders (owner, 2026-11-04) -------------------------------------------
+// Traders register like creators: the wallet signs a message with the X
+// handle, so the leaderboard can show who a wallet belongs to and Earn can
+// match the submission's X profile. Only registered traders are ranked.
+
+/** The exact text a trader's wallet signs. */
+export function traderEntryMessage(p: { wallet: string; handle: string; issuedAt: string }): string {
+  return [
+    'SSR.FUN Beta Campaign trader entry',
+    '',
+    'I trade with this wallet and I am entering the campaign.',
+    `Wallet: ${p.wallet}`,
+    `X: @${p.handle}`,
+    `Issued: ${p.issuedAt}`,
+  ].join('\n')
+}
+
+export interface WalletTradeRow { wallet: string; reserve: string; usd: number; trades: number }
+
+/**
+ * Trader volume per wallet. Leaves out a creator's trades on their own Reserve
+ * (that volume can't win through the trader path either), team wallets, and,
+ * when `registered` is given, every wallet that hasn't signed up.
+ */
+export function traderVolume(
+  rows: WalletTradeRow[],
+  managerByReserve: Map<string, string>,
+  excluded: Set<string>,
+  registered: Set<string> | null,
+): { wallet: string; usd: number; trades: number }[] {
+  const out = new Map<string, { usd: number; trades: number }>()
+  for (const r of rows) {
+    if (!r.wallet || excluded.has(r.wallet)) continue
+    if (registered && !registered.has(r.wallet)) continue
+    if (managerByReserve.get(r.reserve) === r.wallet) continue
+    if (!Number.isFinite(r.usd) || r.usd <= 0) continue
+    const cur = out.get(r.wallet) ?? { usd: 0, trades: 0 }
+    cur.usd += r.usd
+    cur.trades += r.trades
+    out.set(r.wallet, cur)
+  }
+  return [...out].map(([wallet, v]) => ({ wallet, ...v })).sort((a, b) => b.usd - a.usd)
+}

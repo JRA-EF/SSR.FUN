@@ -4,6 +4,10 @@
 //   GET  ?reserve=<address>  -> { open, phase, entry: { handle, wallet, enteredAt } | null }
 //   POST { reserve, wallet, handle, issuedAt, signature (base64) } -> { ok, entry }
 //
+// Traders (owner, 2026-11-04) sign up the same way, without a Reserve:
+//   GET  ?wallet=<address>   -> { open, phase, entry }
+//   POST { kind: "trader", wallet, handle, issuedAt, signature } -> { ok, entry }
+//
 // The creator's wallet signs lib/campaign/rules.ts's entryMessage. We accept it
 // only when the signature is valid ed25519 over that exact text, the wallet is
 // the Reserve's on-chain manager (warm-cache snapshot), the message is fresh,
@@ -13,8 +17,8 @@ import { createPublicKey, verify } from "node:crypto";
 import { PublicKey } from "@solana/web3.js";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { readReserveSnapshot } from "../../lib/reserve-warm-cache/db";
-import { campaignConfig, campaignPhase, entriesOpen, entryMessage, ENTRY_MAX_AGE_MS, normalizeHandle } from "../../lib/campaign/rules";
-import { createdTsOf, findEntry, upsertEntry } from "../../lib/campaign/db";
+import { campaignConfig, campaignPhase, entriesOpen, entryMessage, ENTRY_MAX_AGE_MS, normalizeHandle, traderEntryMessage } from "../../lib/campaign/rules";
+import { createdTsOf, findEntry, findTrader, upsertEntry, upsertTrader } from "../../lib/campaign/db";
 
 function parseBody(req: ApiRequest): Record<string, unknown> {
   const b = (req as { body?: unknown }).body;
@@ -55,6 +59,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse & { setH
 
   try {
     if (req.method === "GET") {
+      const traderWallet = req.query?.wallet;
+      if (traderWallet !== undefined) {
+        if (!validAddress(traderWallet)) { res.status(400).json({ error: "Missing or invalid wallet." }); return; }
+        const t = await findTrader(traderWallet);
+        res.status(200).json({ open, phase, endTs: cfg.endTs, entry: t ? { handle: t.handle, wallet: t.wallet, enteredAt: t.enteredAt } : null });
+        return;
+      }
       const reserve = req.query?.reserve;
       if (!validAddress(reserve)) { res.status(400).json({ error: "Missing or invalid reserve." }); return; }
       const entry = await findEntry(reserve);
@@ -67,6 +78,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse & { setH
     const body = parseBody(req);
     const { reserve, wallet, issuedAt, signature } = body;
     const handle = normalizeHandle(body.handle);
+
+    if (body.kind === "trader") {
+      if (!validAddress(wallet)) { res.status(400).json({ error: "Missing or invalid wallet." }); return; }
+      if (!handle) { res.status(400).json({ error: "Enter a valid X handle (letters, numbers and _ only, up to 15)." }); return; }
+      if (typeof issuedAt !== "string" || typeof signature !== "string") { res.status(400).json({ error: "Missing signature." }); return; }
+      const ms = Date.parse(issuedAt);
+      if (!Number.isFinite(ms) || Math.abs(now - ms) > ENTRY_MAX_AGE_MS) { res.status(400).json({ error: "That signature has expired. Please sign again." }); return; }
+      if (cfg.excludedWallets.has(wallet)) { res.status(403).json({ error: "Team wallets can't enter the campaign." }); return; }
+      const message = traderEntryMessage({ wallet, handle, issuedAt });
+      if (!verifyWalletSignature(wallet, message, signature)) { res.status(401).json({ error: "The wallet signature didn't match. Please sign again." }); return; }
+      const t = await upsertTrader({ wallet, handle, message, signature });
+      res.status(200).json({ ok: true, phase, entry: { handle: t.handle, wallet: t.wallet, enteredAt: t.enteredAt } });
+      return;
+    }
     if (!validAddress(reserve) || !validAddress(wallet)) { res.status(400).json({ error: "Missing or invalid reserve or wallet." }); return; }
     if (!handle) { res.status(400).json({ error: "Enter a valid X handle (letters, numbers and _ only, up to 15)." }); return; }
     if (typeof issuedAt !== "string" || typeof signature !== "string") { res.status(400).json({ error: "Missing signature." }); return; }
