@@ -4,7 +4,7 @@
 //   GET  ?reserve=<address>  -> { open, phase, entry: { handle, wallet, enteredAt } | null }
 //   POST { reserve, wallet, handle, issuedAt, signature (base64) } -> { ok, entry }
 //
-// Traders (owner, 2026-11-04) sign up the same way, without a Reserve:
+// One sign-up per wallet (owner, 2026-11-04) covers trades AND every Reserve the wallet creates:
 //   GET  ?wallet=<address>   -> { open, phase, entry }
 //   POST { kind: "trader", wallet, handle, issuedAt, signature } -> { ok, entry }
 //
@@ -17,7 +17,7 @@ import { createPublicKey, verify } from "node:crypto";
 import { PublicKey } from "@solana/web3.js";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { readReserveSnapshot } from "../../lib/reserve-warm-cache/db";
-import { campaignConfig, campaignPhase, entriesOpen, entryMessage, ENTRY_MAX_AGE_MS, normalizeHandle, traderEntryMessage } from "../../lib/campaign/rules";
+import { campaignConfig, campaignPhase, entriesOpen, entryMessage, ENTRY_MAX_AGE_MS, normalizeHandle, signupMessage } from "../../lib/campaign/rules";
 import { createdTsOf, findEntry, findTrader, upsertEntry, upsertTrader } from "../../lib/campaign/db";
 
 function parseBody(req: ApiRequest): Record<string, unknown> {
@@ -86,7 +86,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse & { setH
       const ms = Date.parse(issuedAt);
       if (!Number.isFinite(ms) || Math.abs(now - ms) > ENTRY_MAX_AGE_MS) { res.status(400).json({ error: "That signature has expired. Please sign again." }); return; }
       if (cfg.excludedWallets.has(wallet)) { res.status(403).json({ error: "Team wallets can't enter the campaign." }); return; }
-      const message = traderEntryMessage({ wallet, handle, issuedAt });
+      const message = signupMessage({ wallet, handle, issuedAt });
       if (!verifyWalletSignature(wallet, message, signature)) { res.status(401).json({ error: "The wallet signature didn't match. Please sign again." }); return; }
       const t = await upsertTrader({ wallet, handle, message, signature });
       res.status(200).json({ ok: true, phase, entry: { handle: t.handle, wallet: t.wallet, enteredAt: t.enteredAt } });

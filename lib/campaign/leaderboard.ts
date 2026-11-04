@@ -53,7 +53,7 @@ export interface Leaderboard {
   startTs: number | null
   endTs: number | null
   entries: number
-  /** Traders who signed up (only they are ranked). */
+  /** Wallets that signed up (creators and traders; only they are ranked). */
   traderEntries: number
   volume: LeaderboardRow[]
   pnl: LeaderboardRow[]
@@ -69,16 +69,20 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
   const sql = getCampaignSql()
 
   const [entriesAll, snapRow, createdBy, traderEntries] = await Promise.all([listEntries(), readReserveSnapshot(CLUSTER), reserveCreatedTs(CLUSTER), listTraders()])
-  const handleByTrader = new Map(traderEntries.filter(t => !cfg.excludedWallets.has(t.wallet)).map(t => [t.wallet, t.handle]))
+  // One sign-up per wallet (owner, 2026-11-04). Older per-Reserve entries also count as a sign-up for their wallet.
+  const signups = new Map<string, { handle: string; enteredAt: string }>()
+  for (const e of entriesAll) if (!signups.has(e.wallet)) signups.set(e.wallet, { handle: e.handle, enteredAt: e.enteredAt })
+  for (const t of traderEntries) signups.set(t.wallet, { handle: t.handle, enteredAt: t.enteredAt })
+  for (const w of cfg.excludedWallets) signups.delete(w)
+  const handleByTrader = new Map([...signups].map(([w, v]) => [w, v.handle]))
   const snap = (snapRow?.snapshot ?? {}) as { reserves?: SnapshotReserve[]; metadataByReserve?: Record<string, { name?: string; ticker?: string; imageUrl?: string }> }
   const byReserve = new Map((snap.reserves ?? []).map(r => [r.reserve, r]))
 
-  // New, non-team Reserves only (created at/after the start). An entry counts while its signer is still the manager.
+  // New, non-team Reserves only (created at/after the start). A Reserve is entered when its creator (on-chain manager) has signed up.
   const eligible = new Set((snap.reserves ?? []).filter(r => isEligibleReserve(createdBy.get(r.reserve) ?? null, r.manager, cfg)).map(r => r.reserve))
-  const entries = entriesAll.filter(e => {
-    const r = byReserve.get(e.reserve)
-    return r && r.manager === e.wallet && eligible.has(e.reserve)
-  })
+  const entries = (snap.reserves ?? [])
+    .filter(r => eligible.has(r.reserve) && signups.has(r.manager))
+    .map(r => ({ reserve: r.reserve, wallet: r.manager, handle: signups.get(r.manager)!.handle, enteredAt: signups.get(r.manager)!.enteredAt }))
   const reserves = entries.map(e => e.reserve)
   const managerByReserve = new Map(entries.map(e => [e.reserve, e.wallet]))
 

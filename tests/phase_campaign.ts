@@ -4,7 +4,7 @@
 import { expect } from "chai";
 import { Keypair } from "@solana/web3.js";
 import { createPrivateKey, sign } from "node:crypto";
-import { campaignConfig, campaignPhase, entryMessage, isEligibleReserve, normalizeHandle, pnlPct, rank, traderEntryMessage, traderVolume, volumeByReserve } from "../lib/campaign/rules";
+import { campaignConfig, campaignPhase, entryMessage, isEligibleReserve, normalizeHandle, pnlPct, rank, signupMessage, traderVolume, volumeByReserve } from "../lib/campaign/rules";
 import { verifyWalletSignature } from "../api/mainnet/campaign-entry";
 
 function signAs(kp: Keypair, message: string): string {
@@ -91,7 +91,7 @@ describe("Beta Campaign (DEC-0279)", () => {
 
   it("verifies a trader's signed sign-up", () => {
     const kp = Keypair.generate();
-    const msg = traderEntryMessage({ wallet: kp.publicKey.toBase58(), handle: "trader1", issuedAt: "2026-11-05T00:00:00.000Z" });
+    const msg = signupMessage({ wallet: kp.publicKey.toBase58(), handle: "trader1", issuedAt: "2026-11-05T00:00:00.000Z" });
     expect(verifyWalletSignature(kp.publicKey.toBase58(), msg, signAs(kp, msg))).to.equal(true);
     expect(verifyWalletSignature(kp.publicKey.toBase58(), msg.replace("@trader1", "@other"), signAs(kp, msg))).to.equal(false);
   });

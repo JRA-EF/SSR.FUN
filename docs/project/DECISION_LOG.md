@@ -8752,3 +8752,32 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0285
+
+```json
+{
+  "id": "DEC-0285",
+  "date": "2026-11-04",
+  "title": "Beta Campaign: one sign-up per wallet covers trading and every Reserve it creates",
+  "status": "confirmed",
+  "decision": "A wallet signs up once (ssr.fun/#/campaign, or the card on its Reserve's page; same form). The leaderboard enters every eligible new Reserve whose on-chain manager has signed up, and ranks that wallet's trades. No per-Reserve entry any more; older campaign_entries rows still count as a sign-up for their wallet. Signed message is now 'SSR.FUN Beta Campaign sign-up'.",
+  "context": "Owner, 2026-11-04: 'lets record once for all actions please. what good would it be to do more than once?' DEC-0284 had creators sign per Reserve and separately as traders.",
+  "rationale": "The on-chain manager already proves who created a Reserve; the signature only needs to bind wallet to X handle, which is per wallet.",
+  "alternativesConsidered": [
+    "Keep per-Reserve entries and treat them as trader sign-ups -- rejected: still one signature per Reserve for creators."
+  ],
+  "impact": "No schema change (campaign_traders is the sign-up table). Refines DEC-0279 and DEC-0284.",
+  "affectedAreas": [
+    "lib/campaign/rules.ts, lib/campaign/leaderboard.ts, api/mainnet/campaign-entry.ts",
+    "src/merge/components/CampaignSignupForm.tsx, CampaignEntryCard.tsx, src/merge/pages/CampaignTrader.tsx",
+    "leaderboard.html, src/leaderboard/main.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_campaign.ts 9 passing",
+    "prod-data check 2026-11-04: one temporary sign-up for …7ERa entered both #90 and #91 (row removed)"
+  ]
+}
+```

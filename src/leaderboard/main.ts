@@ -50,7 +50,7 @@ function render(b: Board) {
   text.textContent = { unscheduled: 'Starting soon', upcoming: 'Starting soon', live: 'Live now', closed: 'Campaign closed' }[b.phase]
   $('when').textContent = b.startTs && b.endTs ? `${fmtDate(b.startTs)} – ${fmtDate(b.endTs)}` : 'Dates coming soon'
 
-  const noEntries = 'No Reserves entered yet. Create one and sign the campaign entry on its page.'
+  const noEntries = 'No Reserves entered yet. Sign up once at ssr.fun/#/campaign, then create a Reserve.'
   const vb = $('volume-body')
   if (!b.volume.length) emptyRow(vb, 4, noEntries)
   else vb.replaceChildren(...b.volume.map(r => el('tr', {}, el('td', { class: 'rank' }, String(r.rank)), el('td', {}, reserveCell(r)), el('td', {}, handleLink(r.handle)), el('td', { class: 'num' }, usd.format(r.value)))))
@@ -81,7 +81,7 @@ function render(b: Board) {
     }
   } else leader.hidden = true
 
-  $('updated').textContent = `${b.entries} Reserve${b.entries === 1 ? '' : 's'} and ${b.traderEntries ?? 0} trader${b.traderEntries === 1 ? '' : 's'} entered · Updated ${new Date(b.generatedAt).toLocaleTimeString()} · Volumes refresh every 30 minutes`
+  $('updated').textContent = `${b.traderEntries ?? 0} wallet${b.traderEntries === 1 ? '' : 's'} signed up · ${b.entries} Reserve${b.entries === 1 ? '' : 's'} entered · Updated ${new Date(b.generatedAt).toLocaleTimeString()} · Volumes refresh every 30 minutes`
 }
 
 async function load() {

@@ -138,17 +138,18 @@ export function rank<T extends { value: number | null; enteredAt: string }>(rows
     .map((r, i) => ({ ...r, rank: i + 1 }))
 }
 
-// --- Traders (owner, 2026-11-04) -------------------------------------------
-// Traders register like creators: the wallet signs a message with the X
-// handle, so the leaderboard can show who a wallet belongs to and Earn can
-// match the submission's X profile. Only registered traders are ranked.
+// --- One sign-up per wallet (owner, 2026-11-04) ----------------------------
+// A wallet signs a message with its X handle once. That covers everything:
+// its trades count, and every new Reserve it creates is entered automatically
+// (the on-chain manager proves who created it). Earn matches the submission's
+// X profile to the signed handle. Only signed-up wallets are ranked.
 
-/** The exact text a trader's wallet signs. */
-export function traderEntryMessage(p: { wallet: string; handle: string; issuedAt: string }): string {
+/** The exact text a wallet signs to sign up. */
+export function signupMessage(p: { wallet: string; handle: string; issuedAt: string }): string {
   return [
-    'SSR.FUN Beta Campaign trader entry',
+    'SSR.FUN Beta Campaign sign-up',
     '',
-    'I trade with this wallet and I am entering the campaign.',
+    'I use this wallet on SSR.FUN and I am entering the campaign with it.',
     `Wallet: ${p.wallet}`,
     `X: @${p.handle}`,
     `Issued: ${p.issuedAt}`,
