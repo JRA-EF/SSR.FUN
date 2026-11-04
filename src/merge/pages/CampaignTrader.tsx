@@ -9,7 +9,7 @@ export function CampaignTrader() {
         <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Beta Campaign · $300 in prizes</div>
         <h1 className="text-3xl font-merge-display font-bold">Sign up for the campaign</h1>
         <p className="text-muted-foreground">
-          Connect the wallet you use on SSR.FUN, add your X handle and sign once. That's all: your trades on campaign Reserves count,
+          Connect the wallet you use on SSR.FUN, add your X handle and sign once. That's all: your trades on any Reserve count,
           and every new Reserve you create with this wallet is entered automatically. Signing is free (no transaction).
           Use the same X profile when you submit on Superteam Earn.
         </p>

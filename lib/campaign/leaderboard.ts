@@ -105,22 +105,21 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
     volume = volumeByReserve(rows, managerByReserve)
   }
 
-  // --- Traders: signed-up wallets' mints + redeems + pool swaps on the campaign's new Reserves in the window.
-  // A creator's trades on their own Reserve don't count here either (owner, 2026-11-04).
+  // --- Traders: signed-up wallets' mints + redeems + pool swaps on ANY Reserve in the window (owner, 2026-11-04).
+  // A creator's trades on their own Reserve don't count here either.
   let traders: TraderRow[] = []
-  const eligibleList = [...eligible]
-  if (cfg.startTs !== null && cfg.endTs !== null && eligibleList.length && handleByTrader.size) {
+  if (cfg.startTs !== null && cfg.endTs !== null && handleByTrader.size) {
     const rows = (await sql`
       SELECT wallet, reserve, sum(usd)::float8 AS usd, count(*)::int AS n FROM (
         SELECT actor AS wallet, reserve, amount_usd::float8 AS usd FROM reserve_activity_log
-        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND actor IS NOT NULL AND reserve = ANY(${eligibleList})
+        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND actor IS NOT NULL
           AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs} AND amount_usd IS NOT NULL
         UNION ALL
         SELECT trader AS wallet, reserve, usdc_raw::float8 / 1e6 AS usd FROM dex_pool_swaps
-        WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND reserve = ANY(${eligibleList}) AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
+        WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
       ) t WHERE wallet = ANY(${[...handleByTrader.keys()]}) GROUP BY wallet, reserve`) as { wallet: string; reserve: string; usd: number; n: number }[]
-    const managerOfEligible = new Map((snap.reserves ?? []).filter(r => eligible.has(r.reserve)).map(r => [r.reserve, r.manager]))
-    traders = traderVolume(rows.map(r => ({ wallet: r.wallet, reserve: r.reserve, usd: Number(r.usd), trades: r.n })), managerOfEligible, cfg.excludedWallets, new Set(handleByTrader.keys()))
+    const managerOfAny = new Map((snap.reserves ?? []).map(r => [r.reserve, r.manager]))
+    traders = traderVolume(rows.map(r => ({ wallet: r.wallet, reserve: r.reserve, usd: Number(r.usd), trades: r.n })), managerOfAny, cfg.excludedWallets, new Set(handleByTrader.keys()))
       .slice(0, 25)
       .map((r, i) => ({ rank: i + 1, wallet: r.wallet, handle: handleByTrader.get(r.wallet)!, value: r.usd, trades: r.trades }))
   }

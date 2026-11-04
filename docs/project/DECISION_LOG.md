@@ -8781,3 +8781,32 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0286
+
+```json
+{
+  "id": "DEC-0286",
+  "date": "2026-11-04",
+  "title": "Beta Campaign: trader volume counts trades on any Reserve",
+  "status": "confirmed",
+  "decision": "Top Traders (and the trader side of the Volume prize) counts a signed-up wallet's mints, redeems and pool swaps on ANY SSR.FUN Reserve inside the campaign window, not only on new campaign Reserves. A creator's trades on their own Reserve still never count. Reserve rankings (Volume, PnL) stay new-Reserves-only.",
+  "context": "Owner, 2026-11-04: 'it should be all trades also'; chose 'All Reserves' when asked. Refines DEC-0279's new-Reserves-only rule for the trader path.",
+  "rationale": "The bounty says 'the trader with the highest cumulative trading volume across SSR.FUN'.",
+  "alternativesConsidered": [
+    "Only new Reserves (DEC-0279) -- rejected by owner.",
+    "All but team Reserves -- not chosen."
+  ],
+  "impact": "lib/campaign/leaderboard.ts trader query has no Reserve filter; leaderboard and sign-up copy updated.",
+  "affectedAreas": [
+    "lib/campaign/leaderboard.ts",
+    "leaderboard.html",
+    "src/merge/pages/CampaignTrader.tsx"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_campaign.ts 9 passing"
+  ]
+}
+```

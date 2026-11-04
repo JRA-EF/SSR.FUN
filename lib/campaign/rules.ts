@@ -13,8 +13,8 @@
 //     signature proves the X handle belongs to the Reserve's on-chain manager
 //     wallet. Team wallets are excluded (SSR_CAMPAIGN_EXCLUDE_WALLETS).
 //  4. Only NEW Reserves count (owner, 2026-11-03): created at or after the
-//     campaign start by a non-team wallet. Trader volume also only counts
-//     trades on those Reserves.
+//     campaign start by a non-team wallet. (Trader volume counts trades on
+//     ANY Reserve since 2026-11-04, DEC-0286.)
 
 export interface CampaignConfig {
   /** Unix seconds; null until the owner sets SSR_CAMPAIGN_START. */
