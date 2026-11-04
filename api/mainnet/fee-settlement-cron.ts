@@ -810,6 +810,8 @@ async function runKeeper(req: ApiRequest, res: ApiResponse) {
   // logged), and the heartbeat the watchdog checks. Neither can fail the run.
   const summary = `accruals ${accruals.filter((a) => a.signature).length}/${accrueDue.length} (skipped ${accrualsSkippedForBudget.length}), settled ${results.length}/${candidates.length} (dust ${dustSkipped.length}, budget ${skippedForBudget.length}), failures ${failures.length}, ${Math.round((Date.now() - startedAt) / 1000)}s`;
   console.info(`[keeper] ${summary}`);
+  // Transient failures are not alerted (DEC-0262), so this line is the only record of what failed.
+  for (const f of failures) console.warn(`[keeper] failure ${f.step} ${f.reserve ?? "-"}: ${String(f.message).slice(0, 300)}`);
   await Promise.race([
     Promise.resolve().then(() => writeKeeperHeartbeat(getSql(), siteLabel(), summary)).catch(() => undefined),
     new Promise((resolve) => setTimeout(resolve, 3_000)),
