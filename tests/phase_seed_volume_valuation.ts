@@ -34,3 +34,23 @@ describe('All-Time Volume counts the creation seed (2026-10-23)',()=>{
   expect(readFileSync('lib/reserve-activity/volumeUsd.ts','utf8')).to.match(/update reserve_activity_log set amount_usd[\s\S]*and amount_usd is null/);
  });
 });
+
+describe('Rebalancing is volume (DEC-0287)',()=>{
+ it('decodes a rebalance swap as rebalanceVolume valued at the sold leg',()=>{
+  const {summarizeActivityEvent,valueActivityEventUsd}=require('../packages/sdk/src/activityLog');
+  const data={reserve:new PublicKey(USDC),mintSell:new PublicKey(WSOL),mintBuy:new PublicKey(USDC),amountIn:'2000000000',amountOut:'300000000',minOut:'1',executedBy:new PublicKey(WSOL),ts:1};
+  const s=summarizeActivityEvent('rebalanceSwapExecuted',data);
+  expect(s.amountKind).eq('rebalanceVolume');
+  expect(s.amountRaw).eq('2000000000');
+  expect(s.actor).eq(WSOL);
+  const usd=valueActivityEventUsd('rebalanceSwapExecuted',data,{pricing:{[WSOL]:{decimals:9,priceUsd:150}},navUsdPerRtRawUnit:null});
+  expect(usd.amountUsd).closeTo(300,1e-9);
+  expect(volumeEventLegs('rebalanceSwapExecuted',data)).deep.eq({mints:[WSOL],amounts:['2000000000']});
+  expect(VOLUME_EVENT_KINDS).to.include('rebalanceSwapExecuted');
+ });
+ it('counts rebalance volume in all-time, 24h and campaign volume',()=>{
+  expect(readFileSync('lib/reserve-activity/kpis.ts','utf8').match(/'mintVolume', 'redeemVolume', 'rebalanceVolume'/g)?.length).eq(2);
+  expect(readFileSync('packages/sdk/src/readOnly.ts','utf8')).to.include('event.name === "rebalanceSwapExecuted"');
+  expect(readFileSync('lib/campaign/leaderboard.ts','utf8')).to.match(/MINT_REDEEM_KINDS = \[[^\]]*'rebalanceSwapExecuted'/);
+ });
+});

@@ -321,7 +321,7 @@ export async function fetchAllTimeTradeVolumeUsd(clusters: ActivityCluster[]): P
       union all
       select amount_kind_2 as k, amount_usd_2 as u from reserve_activity_log where amount_kind_2 is not null and cluster = any(${clusters})
     )
-    select coalesce(sum(u) filter (where k in ('mintVolume', 'redeemVolume')), 0)::float8 as volume_usd
+    select coalesce(sum(u) filter (where k in ('mintVolume', 'redeemVolume', 'rebalanceVolume')), 0)::float8 as volume_usd
     from amounts
   `;
   return (row as { volume_usd: number } | undefined)?.volume_usd ?? 0;
@@ -343,7 +343,7 @@ export async function fetchAllTimeTradeVolumeUsdByReserve(clusters: ActivityClus
       union all
       select reserve, amount_kind_2 as k, amount_usd_2 as u from reserve_activity_log where amount_kind_2 is not null and cluster = any(${clusters})
     )
-    select reserve, coalesce(sum(u) filter (where k in ('mintVolume', 'redeemVolume')), 0)::float8 as volume_usd
+    select reserve, coalesce(sum(u) filter (where k in ('mintVolume', 'redeemVolume', 'rebalanceVolume')), 0)::float8 as volume_usd
     from amounts
     group by reserve
   `) as { reserve: string; volume_usd: number }[];

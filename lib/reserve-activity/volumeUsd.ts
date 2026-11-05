@@ -26,8 +26,8 @@ type ReserveActivityProgram = Parameters<typeof fetchReserveActivityLog>[1];
 
 export type FetchPricesUsd = (mints: string[]) => Promise<Map<string, { usdPrice?: number | null; decimals?: number | null }>>;
 
-/** The activity kinds that count toward All-Time Volume (amount_kind mintVolume / redeemVolume). */
-export const VOLUME_EVENT_KINDS = ["reserveTokensMinted", "reserveTokensRedeemed", "reserveSeeded"] as const;
+/** The activity kinds that count toward All-Time Volume (amount_kind mintVolume / redeemVolume / rebalanceVolume, DEC-0287). */
+export const VOLUME_EVENT_KINDS = ["reserveTokensMinted", "reserveTokensRedeemed", "reserveSeeded", "rebalanceSwapExecuted", "rebalanceLegExecuted"] as const;
 
 export interface AssetLegs {
   mints: string[];
@@ -38,6 +38,9 @@ const pkStr = (v: unknown): string => (v && typeof (v as { toBase58?: () => stri
 
 /** Pure: the asset legs a volume event carries (the same fields valueActivityEventUsd reads), or null for any other event. */
 export function volumeEventLegs(name: string, data: Record<string, unknown>): AssetLegs | null {
+  if (name === "rebalanceSwapExecuted" || name === "rebalanceLegExecuted") {
+    return data.mintSell === undefined ? null : { mints: [pkStr(data.mintSell)], amounts: [String(data.amountIn ?? 0)] };
+  }
   const amounts = name === "reserveTokensMinted" ? data.assetAmountsIn : name === "reserveTokensRedeemed" ? data.assetAmountsOut : name === "reserveSeeded" ? data.assetAmounts : undefined;
   if (!Array.isArray(data.assetMints) || !Array.isArray(amounts)) return null;
   return { mints: (data.assetMints as unknown[]).map(pkStr), amounts: (amounts as unknown[]).map((a) => String(a ?? 0)) };

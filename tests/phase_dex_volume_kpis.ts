@@ -39,7 +39,7 @@ describe('DEC-0254: DEX volume and pool-aware market cap',()=>{
   const stats=readFileSync('api/mainnet/landing-stats.ts','utf8');
   expect(stats).contain('dexVolumeAllTimeUsd, pools');expect(stats).not.contain('volumeAllTimeUsd + ');
   const kpis=readFileSync('lib/reserve-activity/kpis.ts','utf8');
-  expect(kpis).contain('totalDexVolumeUsd,');expect(kpis).contain("k in ('mintVolume', 'redeemVolume')");
+  expect(kpis).contain('totalDexVolumeUsd,');expect(kpis).contain("k in ('mintVolume', 'redeemVolume', 'rebalanceVolume')");
   const cron=JSON.parse(readFileSync('vercel.json','utf8')).crons.find((c:{path:string})=>c.path==='/api/kpis/dex-volume-cron');
   expect(cron?.schedule).eq('30 3 * * *');
   const home=readFileSync('src/pages/Home.tsx','utf8');

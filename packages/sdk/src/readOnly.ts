@@ -549,6 +549,10 @@ export async function fetchReserve24hVolumeUsd(
             data.assetAmountsOut.map((a) => a.toString()),
             pricing,
           );
+        } else if (event.name === "rebalanceSwapExecuted" || event.name === "rebalanceLegExecuted") {
+          // DEC-0287: rebalancing is volume -- the value of the asset sold.
+          const data = event.data as { mintSell: PublicKey; amountIn: { toString(): string } };
+          volume += valueAssetLegsUsd([data.mintSell.toBase58()], [data.amountIn.toString()], pricing);
         }
       }
     }

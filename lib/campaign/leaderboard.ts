@@ -16,7 +16,8 @@ export async function reserveCreatedTs(cluster: string): Promise<Map<string, num
 }
 
 const CLUSTER = 'mainnet-beta'
-const MINT_REDEEM_KINDS = ['reserveTokensMinted', 'reserveTokensRedeemed']
+// Mints, redeems and rebalance swaps (rebalancing is volume, DEC-0287).
+const MINT_REDEEM_KINDS = ['reserveTokensMinted', 'reserveTokensRedeemed', 'rebalanceSwapExecuted', 'rebalanceLegExecuted']
 
 interface SnapshotReserve extends NavInputReserve {
   reserveId: string
@@ -106,7 +107,7 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
   }
 
   // --- Traders: signed-up wallets' mints + redeems + pool swaps on ANY Reserve in the window (owner, 2026-11-04).
-  // A creator's trades on their own Reserve don't count here either.
+  // A creator's trades on their own Reserve count too (DEC-0287).
   let traders: TraderRow[] = []
   if (cfg.startTs !== null && cfg.endTs !== null && handleByTrader.size) {
     const rows = (await sql`
@@ -118,8 +119,7 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
         SELECT trader AS wallet, reserve, usdc_raw::float8 / 1e6 AS usd FROM dex_pool_swaps
         WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
       ) t WHERE wallet = ANY(${[...handleByTrader.keys()]}) GROUP BY wallet, reserve`) as { wallet: string; reserve: string; usd: number; n: number }[]
-    const managerOfAny = new Map((snap.reserves ?? []).map(r => [r.reserve, r.manager]))
-    traders = traderVolume(rows.map(r => ({ wallet: r.wallet, reserve: r.reserve, usd: Number(r.usd), trades: r.n })), managerOfAny, cfg.excludedWallets, new Set(handleByTrader.keys()))
+    traders = traderVolume(rows.map(r => ({ wallet: r.wallet, reserve: r.reserve, usd: Number(r.usd), trades: r.n })), cfg.excludedWallets, new Set(handleByTrader.keys()))
       .slice(0, 25)
       .map((r, i) => ({ rank: i + 1, wallet: r.wallet, handle: handleByTrader.get(r.wallet)!, value: r.usd, trades: r.trades }))
   }

@@ -8810,3 +8810,37 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0287
+
+```json
+{
+  "id": "DEC-0287",
+  "date": "2026-11-05",
+  "title": "Creator's own trades count; rebalancing is volume",
+  "status": "confirmed",
+  "decision": "1. Beta Campaign: a creator's mints, redeems, rebalances and pool swaps on their own Reserve now count toward that Reserve's volume and toward their trader volume (reverses the DEC-0279/0284 exclusion). 2. Rebalance swaps (RebalanceSwapExecuted, DEC-0250; also RebalanceLegExecuted) are volume everywhere: indexed as amount_kind 'rebalanceVolume' valued at the sold leg's USD price, and summed into All-Time Volume (hero + per-Reserve), the 24h volume walk and campaign volume. Raw rebalance amounts are the sold asset's base units, so only their USD value is ever added to mint/redeem volume.",
+  "context": "Owner, 2026-11-05: 'these count towards volume' (own trades) and 'rebalancing should count too. also for volume in the hero main kpis etc. rebalancing is volume'. The activity indexer had never decoded RebalanceSwapExecuted, so no rebalance was in any volume figure.",
+  "rationale": "Owner decision. Wash-trading risk is covered by the listing's fair-play clause (team may disqualify manipulation); every mint, redeem and swap still pays fees.",
+  "alternativesConsidered": [
+    "Keep excluding own trades (DEC-0284) -- rejected by owner."
+  ],
+  "impact": "packages/sdk activity decoder + 24h walk, lib/reserve-activity volume kinds/heal/kpis, campaign rules + leaderboard query/copy. Past rebalances backfilled once with scripts/backfill-rebalance-volume.mts (6 events on 3 Reserves since 2026-10-18), valued by the hourly heal.",
+  "affectedAreas": [
+    "packages/sdk/src/activityLog.ts",
+    "packages/sdk/src/readOnly.ts",
+    "lib/reserve-activity/volumeUsd.ts",
+    "lib/reserve-activity/kpis.ts",
+    "lib/campaign/rules.ts",
+    "lib/campaign/leaderboard.ts",
+    "leaderboard.html",
+    "src/merge/pages/CampaignTrader.tsx",
+    "scripts/backfill-rebalance-volume.mts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_campaign.ts 9 passing; tests/phase_seed_volume_valuation.ts 6 passing; full phase suite 1817 passing, 6 failing (same 6 fail on clean main 9ccadd1)"
+  ]
+}
+```

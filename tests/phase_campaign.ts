@@ -40,14 +40,14 @@ describe("Beta Campaign (DEC-0279)", () => {
     expect(normalizeHandle("waytoolonghandle123")).to.equal(null);
   });
 
-  it("leaves the creator's own trades out of Reserve volume", () => {
+  it("counts the creator's own trades in Reserve volume (DEC-0287)", () => {
     const v = volumeByReserve([
       { reserve: "A", actor: "M", usd: 50 },
       { reserve: "A", actor: "X", usd: 20 },
       { reserve: "A", actor: null, usd: 5 },
       { reserve: "B", actor: "X", usd: 99 },
     ], new Map([["A", "M"]]));
-    expect([...v]).to.deep.equal([["A", 25]]);
+    expect([...v]).to.deep.equal([["A", 75]]);
   });
 
   it("measures PnL from launch to the last NAV at or before close", () => {
@@ -77,16 +77,16 @@ describe("Beta Campaign (DEC-0279)", () => {
     expect(verifyWalletSignature(kp.publicKey.toBase58(), msg, "bad")).to.equal(false);
   });
 
-  it("ranks only signed-up traders and leaves out a creator's trades on their own Reserve", () => {
+  it("ranks only signed-up traders, counting a creator's trades on their own Reserve (DEC-0287)", () => {
     const rows = [
-      { wallet: "M", reserve: "A", usd: 500, trades: 5 }, // creator of A trading A: dropped
+      { wallet: "M", reserve: "A", usd: 500, trades: 5 }, // creator of A trading A: counts
       { wallet: "M", reserve: "B", usd: 30, trades: 1 },  // creator of A trading B: counts
       { wallet: "T", reserve: "A", usd: 40, trades: 2 },
       { wallet: "U", reserve: "A", usd: 999, trades: 9 }, // not signed up
       { wallet: "CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8", reserve: "A", usd: 999, trades: 1 },
     ];
-    const out = traderVolume(rows, new Map([["A", "M"], ["B", "N"]]), campaignConfig({}).excludedWallets, new Set(["M", "T", "CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8"]));
-    expect(out).to.deep.equal([{ wallet: "T", usd: 40, trades: 2 }, { wallet: "M", usd: 30, trades: 1 }]);
+    const out = traderVolume(rows, campaignConfig({}).excludedWallets, new Set(["M", "T", "CgHFxD4XHZzmSGEomnMXipGo75ejqhVd5aNY4GHg4Rw8"]));
+    expect(out).to.deep.equal([{ wallet: "M", usd: 530, trades: 6 }, { wallet: "T", usd: 40, trades: 2 }]);
   });
 
   it("verifies a trader's signed sign-up", () => {

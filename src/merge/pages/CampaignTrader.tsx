@@ -13,7 +13,7 @@ export function CampaignTrader() {
           and every new Reserve you create with this wallet is entered automatically. Signing is free (no transaction).
           Use the same X profile when you submit on Superteam Earn.
         </p>
-        <p className="text-sm text-muted-foreground">Trades on your own Reserve don't count toward volume.</p>
+        <p className="text-sm text-muted-foreground">Trades on your own Reserve count toward volume too.</p>
       </div>
       <div className="rounded-xl border border-card-border bg-card p-5">
         <CampaignSignupForm />

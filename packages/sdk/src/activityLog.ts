@@ -25,8 +25,13 @@ import { withRateLimitRetryGeneric, valueAssetLegsUsd, type AssetPricing } from 
  * Token units, so they are separate kinds: a raw sum over "protocolFee"
  * must never mix the two units. Their USD value is exact (USDC = $1) and
  * kpis.ts folds it into the same fee-revenue USD totals.
+ *
+ * "rebalanceVolume" (DEC-0287, owner 2026-11-05: "rebalancing is volume") is
+ * a rebalance swap's sold leg. Its amountRaw is in the SOLD ASSET's base
+ * units (not Reserve Token units), so only its USD value is ever summed
+ * with mint/redeem volume.
  */
-export type ActivityAmountKind = "mintVolume" | "redeemVolume" | "protocolFee" | "managerFee" | "managerFeeClaimed" | "protocolFeeUsdc" | "managerFeeUsdc";
+export type ActivityAmountKind = "mintVolume" | "redeemVolume" | "rebalanceVolume" | "protocolFee" | "managerFee" | "managerFeeClaimed" | "protocolFeeUsdc" | "managerFeeUsdc";
 
 /** The amount kinds whose raw amounts are USDC base units (6 decimals) rather than Reserve Token units (DEC-0238). */
 export const USDC_DENOMINATED_AMOUNT_KINDS: readonly ActivityAmountKind[] = ["protocolFeeUsdc", "managerFeeUsdc"];
@@ -170,6 +175,10 @@ export function valueActivityEventUsd(name: string, data: Record<string, unknown
       return { amountUsd: legs(data.assetMints, data.assetAmountsOut) };
     case "reserveSeeded":
       return { amountUsd: legs(data.assetMints, data.assetAmounts) };
+    case "rebalanceSwapExecuted":
+    case "rebalanceLegExecuted":
+      // DEC-0287: a rebalance's volume is the value of the asset it sold.
+      return { amountUsd: legs([data.mintSell], [data.amountIn]) };
     case "protocolMintFeeTransferred":
     case "protocolFeeCollected":
     case "managerFeeShareCollected":
@@ -324,7 +333,20 @@ export function summarizeActivityEvent(
     case "rebalanceRecorded":
       return { actor: pk(data.executedBy), summary: `Rebalance recorded${data.note ? `: ${String(data.note)}` : ""}` };
     case "rebalanceLegExecuted":
-      return { actor: pk(data.executedBy), summary: `Rebalance leg executed: ${pk(data.mintSell)} -> ${pk(data.mintBuy)} (${String(data.amountIn)} in, ${String(data.amountOut)} out)` };
+      return {
+        actor: pk(data.executedBy),
+        summary: `Rebalance leg executed: ${pk(data.mintSell)} -> ${pk(data.mintBuy)} (${String(data.amountIn)} in, ${String(data.amountOut)} out)`,
+        amountRaw: String(data.amountIn ?? 0),
+        amountKind: "rebalanceVolume",
+      };
+    case "rebalanceSwapExecuted":
+      // DEC-0250 flash-swap rebalance; counts as volume (DEC-0287).
+      return {
+        actor: pk(data.executedBy),
+        summary: `Rebalance swap: ${pk(data.mintSell)} -> ${pk(data.mintBuy)} (${String(data.amountIn)} in, ${String(data.amountOut)} out)`,
+        amountRaw: String(data.amountIn ?? 0),
+        amountKind: "rebalanceVolume",
+      };
     case "metadataUpdated":
       return { actor: pk(data.updatedBy), summary: "Metadata updated" };
     case "reserveManagerTransferred":

@@ -6,7 +6,8 @@
 //
 // Owner decisions (2026-11-03):
 //  1. Volume = in-app mints + redeems + Raydium pool swaps inside the campaign
-//     window, EXCLUDING the creator wallet's own trades (no self wash-trading).
+//     window. A creator's own trades count too (owner, 2026-11-05, DEC-0287;
+//     reverses the 2026-11-03 exclusion), and so do rebalance swaps.
 //  2. PnL % = Reserve Token NAV at campaign close vs its launch NAV (the same
 //     launch anchor as "All-Time Performance"). Any Reserve, no size minimum.
 //  3. Only Reserves whose creator signed a campaign entry are ranked: the
@@ -89,18 +90,17 @@ export const ENTRY_MAX_AGE_MS = 10 * 60_000
 
 export interface TradeRow {
   reserve: string
-  /** Wallet that traded; null when unknown (counted, since it cannot be shown to be the creator). */
+  /** Wallet that traded; null when unknown. */
   actor: string | null
   usd: number
 }
 
-/** Sums volume per Reserve, skipping every trade made by that Reserve's creator wallet. */
+/** Sums volume per entered Reserve; the creator's own trades count (DEC-0287). */
 export function volumeByReserve(rows: TradeRow[], managerByReserve: Map<string, string>): Map<string, number> {
   const out = new Map<string, number>()
   for (const r of rows) {
     const manager = managerByReserve.get(r.reserve)
     if (!manager) continue
-    if (r.actor && r.actor === manager) continue
     if (!Number.isFinite(r.usd) || r.usd <= 0) continue
     out.set(r.reserve, (out.get(r.reserve) ?? 0) + r.usd)
   }
@@ -159,13 +159,12 @@ export function signupMessage(p: { wallet: string; handle: string; issuedAt: str
 export interface WalletTradeRow { wallet: string; reserve: string; usd: number; trades: number }
 
 /**
- * Trader volume per wallet. Leaves out a creator's trades on their own Reserve
- * (that volume can't win through the trader path either), team wallets, and,
- * when `registered` is given, every wallet that hasn't signed up.
+ * Trader volume per wallet, on any Reserve, including a creator's trades on
+ * their own Reserve (DEC-0287). Leaves out team wallets and, when
+ * `registered` is given, every wallet that hasn't signed up.
  */
 export function traderVolume(
   rows: WalletTradeRow[],
-  managerByReserve: Map<string, string>,
   excluded: Set<string>,
   registered: Set<string> | null,
 ): { wallet: string; usd: number; trades: number }[] {
@@ -173,7 +172,6 @@ export function traderVolume(
   for (const r of rows) {
     if (!r.wallet || excluded.has(r.wallet)) continue
     if (registered && !registered.has(r.wallet)) continue
-    if (managerByReserve.get(r.reserve) === r.wallet) continue
     if (!Number.isFinite(r.usd) || r.usd <= 0) continue
     const cur = out.get(r.wallet) ?? { usd: 0, trades: 0 }
     cur.usd += r.usd
