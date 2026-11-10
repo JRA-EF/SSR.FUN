@@ -55,7 +55,8 @@
     .grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
     @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .wide { grid-column: 1 / -1; } }
     .card { background: rgba(255, 255, 255, 0.92); border: 1px solid var(--lav-line); border-radius: 22px; padding: clamp(18px, 3vw, 26px); box-shadow: 0 20px 60px rgba(25, 18, 102, 0.10); min-width: 0; }
-    .card h2 { font-size: 13px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--navy); display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .card h2 { font-size: 13px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--navy); display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: nowrap; }
+    .card h2 .prize { flex-shrink: 0; white-space: nowrap; }
     .prize {
       display: inline-flex; align-items: center; font-size: clamp(20px, 3.4vw, 26px); font-weight: 800; letter-spacing: .02em;
       color: #fff; padding: 8px 18px; border-radius: 999px;
