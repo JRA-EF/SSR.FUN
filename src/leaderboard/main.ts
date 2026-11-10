@@ -62,8 +62,9 @@ function render(b: Board) {
     return el('tr', {}, el('td', { class: 'rank' }, String(r.rank)), el('td', {}, reserveCell(r)), el('td', {}, handleLink(r.handle)), pct)
   }))
 
-  const tb = $('trader-body')
-  if (!b.traders.length) emptyRow(tb, 5, b.phase === 'live' || b.phase === 'closed' ? 'No signed-up trader has traded yet.' : 'Trading volume counts from the campaign start.')
+  const tb = document.getElementById('trader-body')
+  if (!tb) { /* Top Traders card removed; the trader leader still shows in the Volume card */ }
+  else if (!b.traders.length) emptyRow(tb, 5, b.phase === 'live' || b.phase === 'closed' ? 'No signed-up trader has traded yet.' : 'Trading volume counts from the campaign start.')
   else tb.replaceChildren(...b.traders.map(t => el('tr', {}, el('td', { class: 'rank' }, String(t.rank)),
     el('td', {}, handleLink(t.handle)),
     el('td', {}, el('a', { class: 'handle mono', href: `https://solscan.io/account/${t.wallet}`, target: '_blank', rel: 'noopener', title: t.wallet }, short(t.wallet))),
