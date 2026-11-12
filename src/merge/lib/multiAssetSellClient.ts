@@ -157,6 +157,26 @@ export interface BuildSellRequest {
   redeemDone?: boolean;
 }
 
+/**
+ * DEC-0290: the owner's USDC change across this sale's own confirmed
+ * transactions, read from their pre/post token balances. Used when the
+ * balance-vs-baseline check finds no gain: the baseline is the balance when
+ * the sale FIRST started, so any USDC moved between that attempt and a resume
+ * hid a real payout (staging TESTR 2026-11-07: +199,163 raw paid, reported as
+ * "not increased"). Unreadable transactions count as 0.
+ */
+export async function usdcDeltaFromSignatures(connection: Pick<Connection, "getTransaction">, signatures: string[], owner: string, usdcMint: string): Promise<bigint> {
+  let delta = 0n;
+  for (const sig of new Set(signatures)) {
+    const tx = await connection.getTransaction(sig, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }).catch(() => null);
+    if (!tx?.meta || tx.meta.err) continue;
+    const sum = (rows: typeof tx.meta.preTokenBalances) =>
+      (rows ?? []).filter((b) => b.owner === owner && b.mint === usdcMint).reduce((s, b) => s + BigInt(b.uiTokenAmount.amount), 0n);
+    delta += sum(tx.meta.postTokenBalances) - sum(tx.meta.preTokenBalances);
+  }
+  return delta;
+}
+
 export async function requestSellBuild(body: BuildSellRequest, fetchImpl: typeof fetch = fetch): Promise<BuildSellResponse> {
   const res = await fetchImpl("/api/mainnet/build-sell", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
   const json = (await res.json().catch(() => null)) as (BuildSellResponse & { error?: string }) | null;
@@ -228,7 +248,12 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
 
   const verifyDelivery = async (signature: string): Promise<MultiAssetSellResult> => {
     const usdcAfter = await fetchOwnedBalanceRawSettled(params.connection, usdcMint, owner, baselineUsdcRaw);
-    const gained = usdcAfter > baselineUsdcRaw ? usdcAfter - baselineUsdcRaw : 0n;
+    let gained = usdcAfter > baselineUsdcRaw ? usdcAfter - baselineUsdcRaw : 0n;
+    if (gained <= 0n) {
+      const sigs = [signature, pending!.redeemSignature, ...Object.values(pending!.legSwaps).map((l) => l.signature)].filter((s): s is string => !!s);
+      const measured = await usdcDeltaFromSignatures(params.connection, sigs, ownerBase58, MAINNET_USDC_MINT);
+      if (measured > 0n) gained = measured;
+    }
     log("post-sale verification", { usdcBefore: baselineUsdcRaw.toString(), usdcAfter: usdcAfter.toString(), gainedRaw: gained.toString() });
     if (gained <= 0n) {
       throw new Error(`The redemption confirmed but your USDC balance has not increased yet (still ${usdcAfter.toString()} raw). Signature: ${signature}. Check the signature on Explorer before retrying.`);

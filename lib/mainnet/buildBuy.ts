@@ -36,9 +36,10 @@
 //   transactions first, waits for activation, registers the table, and only
 //   then broadcasts the rest.
 import { AddressLookupTableAccount, ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
-import { buildMintWithUsdcFeeInstructions, computeMintRequirements, describeOnChainError } from "@ssr/sdk";
+import { buildMintWithUsdcFeeInstructions, computeMintRequirements } from "@ssr/sdk";
 import { coSignFee, missingFeeDestinationAtaInstructions, quoteUsdcMintFee, resolveUsdcFeeRouting } from "./usdcMintFee";
 import { loadFeeLookupTable } from "./feeLookupTable";
+import { describeSimulationFailure } from "./simulationError";
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
 import { assembleSingleBuyInstructions, buildUnwrapSolInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
 import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
@@ -378,7 +379,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
       // does not exist yet (it would fail on the missing table, not the purchase).
       const sim = await deps.simulate(tx).catch(() => null);
       if (sim && sim.err) {
-        throw new BuildError(422, `${describeOnChainError(new Error(`Transaction failed on-chain (${JSON.stringify(sim.err)}).`))} This was caught by a read-only simulation BEFORE anything was signed or submitted -- nothing moved and no fee was paid.`, { logs: sim.logs ?? [] });
+        throw new BuildError(422, `${describeSimulationFailure(tx, sim.err)} This was caught by a read-only simulation BEFORE anything was signed or submitted -- nothing moved and no fee was paid.`, { logs: sim.logs ?? [] });
       }
     }
     transactions.push({ kind: "single", ...toBase64(coSignFee(tx, feeQuoteSigner)), lastValidBlockHeight });

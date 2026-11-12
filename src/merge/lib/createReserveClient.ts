@@ -400,6 +400,8 @@ const SPL_TOKEN_ACCOUNT_BYTES = 165;
 const FEE_SETTLEMENT_ACCOUNT_BYTES = 76;
 /** Rough per-transaction network fee estimate (base fee only, no priority fee) -- actual cost may vary slightly. */
 const ESTIMATED_TX_FEE_LAMPORTS = 5_000n;
+/** DEC-0290: what a Reserve Token's Metaplex metadata account holds once created (rent plus Metaplex's create fee). Measured on Mainnet: 13,733,800 lamports for the 607-byte account of #93 (2026-11-12); rounded up for a longer name or URI. */
+export const TOKEN_METADATA_ACCOUNT_LAMPORTS = 14_500_000n;
 /** A Jupiter swap transaction typically carries a priority fee Jupiter itself recommends (observed ~0.0001 SOL) on top of the base fee -- a plain instruction's 5,000-lamport estimate above would understate it. Used only for the worst-case "this asset might need a swap" count below; never charged for an asset the wallet already holds enough of. */
 const ESTIMATED_JUPITER_SWAP_FEE_LAMPORTS = 110_000n;
 
@@ -418,6 +420,8 @@ export interface CreateReserveCostEstimate {
   feeSettlementRentLamports: bigint;
   /** DEC-0173: rent for the Reserve's fee-vault Reserve Token ATA, created by the seed, paid by the creator. */
   feeVaultAtaRentLamports: bigint;
+  /** DEC-0290: the Reserve Token's Metaplex metadata account (rent plus Metaplex's create fee), paid by the creator during launch. */
+  tokenMetadataLamports: bigint;
   /** Real SOL the creator must provide for any wrapped-SOL leg(s) of the initial seed -- 0 if no SOL/wSOL asset is selected. */
   solSeedFundingLamports: bigint;
   /** Sum of all account-creation rent above (does NOT include SOL seed funding or network fees). */
@@ -536,8 +540,14 @@ export async function estimateCreateReserveCost(
   // Wrapping SOL needs its own ATA + rent, paid by the creator, on top of the amount wrapped.
   const wsolAtaRent = wrapAssets.length > 0 ? BigInt(vaultRent) : 0n;
 
+  // DEC-0290: launch also creates the Reserve Token's Metaplex metadata account.
+  // It was missing here, so the DEC-0282 SOL check let a wallet start a launch
+  // that then failed at that step (live 2026-11-12, #93 KING: needed 0.0137 SOL,
+  // had 0.0117).
+  const tokenMetadataLamports = TOKEN_METADATA_ACCOUNT_LAMPORTS;
+
   const totalRentLamports =
-    BigInt(reserveRent) + BigInt(mintRent) + reserveAssetRentLamports + vaultRentLamports + managerReserveTokenAtaRentLamports + feeSettlementRentLamports + feeVaultAtaRentLamports + wsolAtaRent;
+    BigInt(reserveRent) + BigInt(mintRent) + reserveAssetRentLamports + vaultRentLamports + managerReserveTokenAtaRentLamports + feeSettlementRentLamports + feeVaultAtaRentLamports + wsolAtaRent + tokenMetadataLamports;
 
   // Worst case: every non-USDC/non-wrapped-SOL asset needs its own Jupiter
   // swap transaction to fund (see fundSeedAssetsIdempotent) -- the real
@@ -567,6 +577,7 @@ export async function estimateCreateReserveCost(
     managerReserveTokenAtaRentLamports,
     feeSettlementRentLamports,
     feeVaultAtaRentLamports,
+    tokenMetadataLamports,
     solSeedFundingLamports,
     totalRentLamports,
     jupiterSwapCount,

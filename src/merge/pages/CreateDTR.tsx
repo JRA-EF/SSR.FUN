@@ -809,7 +809,7 @@ export function CreateDTR({
     // pays; with almost no SOL every Resume fails on-chain and burns a fee.
     const solLamports = await connection.getBalance(walletCtx.publicKey, "confirmed").catch(() => null);
     if (solLamports !== null && solLamports < RESUME_MIN_SOL_LAMPORTS) {
-      const msg = `Your wallet holds ${(solLamports / 1e9).toFixed(4)} SOL, which is not enough to pay the rent for the Reserve's remaining accounts. Add about 0.02 SOL to this wallet, then press Resume. Your Reserve and the assets bought for it are safe; nothing was submitted.`;
+      const msg = `Your wallet holds ${(solLamports / 1e9).toFixed(4)} SOL, which is not enough to pay the rent for the Reserve's remaining accounts. Add about 0.02 SOL to this wallet, then press Resume. Your Reserve and its reserve assets are safe; nothing was submitted.`;
       toast({ variant: "destructive", title: "Add SOL to finish the launch", description: msg });
       return;
     }

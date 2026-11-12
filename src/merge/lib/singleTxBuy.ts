@@ -184,13 +184,25 @@ export function assembleSingleBuyInstructions(params: {
   return ixs;
 }
 
-/** Fetches and deduplicates the address lookup tables the swap routes compress their account lists with -- required to compile the v0 message. A listed table that can't be found on-chain is a hard error (compiling without it would silently produce a bigger, possibly invalid message). */
+/**
+ * Fetches and deduplicates the address lookup tables the swap routes compress
+ * their account lists with. DEC-0290: a table Jupiter lists that no longer
+ * exists on-chain (closed: AF1C4K..., 5xvt4K... on 2026-11-06/07) is skipped,
+ * not fatal. Without it the same accounts are written into the message in full,
+ * which is still a valid transaction, only larger; the callers' wire-size and
+ * account-lock checks still decide whether it fits. Throwing here blocked every
+ * redemption on that route with "try again" while retrying could never help.
+ * A failed RPC read still throws (that IS transient).
+ */
 export async function fetchLookupTables(connection: Connection, addresses: string[]): Promise<AddressLookupTableAccount[]> {
   const unique = [...new Set(addresses)];
   const tables: AddressLookupTableAccount[] = [];
   for (const address of unique) {
     const res = await connection.getAddressLookupTable(new PublicKey(address));
-    if (!res.value) throw new Error(`Address lookup table ${address} for a swap route could not be loaded -- try again.`);
+    if (!res.value) {
+      console.warn(`[lookup-tables] swap route table ${address} does not exist on-chain; compiling without it`);
+      continue;
+    }
     tables.push(res.value);
   }
   return tables;
