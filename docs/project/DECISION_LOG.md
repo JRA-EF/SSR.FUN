@@ -8844,3 +8844,32 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0288
+
+```json
+{
+  "id": "DEC-0288",
+  "date": "2026-11-12",
+  "title": "Share links open the Reserve page instead of Reserve Not Found",
+  "status": "confirmed",
+  "decision": "1. The /r/<address> share page forwards to #/dtr/mainnet-beta-<reserveId>, the id the app keys Reserves by. 2. The router reads a bare numeric id (/dtr/93, /dtr/93/manage) as <SOLANA_CLUSTER>-<id>, so links and cached share pages already in the wild keep working.",
+  "context": "Creator, 2026-11-12: clicking KingintheNorth Reserve (#93) from ssr.fun/leaderboard showed 'Verifying on Mainnet...' then 'Reserve Not Found'. Since DEC-0200 (2026-09-11) the share page linked #/dtr/<id>, but buildDtrFromDiscoveredReserve ids are <cluster>-<id>, so every /r/ link (leaderboard, X posts) missed the store and fell to the terminal state. The share-page test pinned the wrong form.",
+  "rationale": "Fixing the link alone would leave already-posted links and cached share HTML broken; accepting the bare id in the router covers both at no RPC cost.",
+  "alternativesConsidered": [
+    "Change only the share page -- leaves existing links broken.",
+    "Re-key the store by bare id -- touches every page and DevNet ids."
+  ],
+  "impact": "All Reserve links on the leaderboard and every shared /r/ link open the Reserve page again.",
+  "affectedAreas": [
+    "lib/share/resolveReserve.ts",
+    "src/App.tsx",
+    "tests/phase_share_page.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_share_page.ts 13 passing; tsc -b clean; vite build clean"
+  ]
+}
+```
