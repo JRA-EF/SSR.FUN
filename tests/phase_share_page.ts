@@ -69,7 +69,7 @@ describe("share page data", () => {
     const d = buildSharePageData(ORIGIN, snapshot.reserves![0], snapshot.metadataByReserve!["24"]);
     expect(d.title).to.equal("Strategic Solana Reserve (SOLSSR)");
     expect(d.canonicalUrl).to.equal(`${ORIGIN}/r/${POOL}`);
-    expect(d.appUrl).to.equal(`${ORIGIN}/#/dtr/24`);
+    expect(d.appUrl).to.equal(`${ORIGIN}/#/dtr/mainnet-beta-24`);
     expect(d.mint).to.equal(MINT);
     expect(d.imageUrl).to.contain("reserve-image");
   });
@@ -108,8 +108,8 @@ describe("share page HTML", () => {
   });
 
   it("sends a human onward into the hash app, so an existing deep link still lands where it pointed", () => {
-    expect(html).to.contain(`url=${ORIGIN}/#/dtr/24`);
-    expect(html).to.contain(`window.location.replace("${ORIGIN}/#/dtr/24")`);
+    expect(html).to.contain(`url=${ORIGIN}/#/dtr/mainnet-beta-24`);
+    expect(html).to.contain(`window.location.replace("${ORIGIN}/#/dtr/mainnet-beta-24")`);
   });
 
   it("falls back to a summary card when the Reserve has no picture", () => {

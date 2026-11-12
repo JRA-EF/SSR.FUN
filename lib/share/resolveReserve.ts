@@ -102,7 +102,8 @@ export function buildSharePageData(
     description,
     imageUrl: metadata?.imageUrl && /^https:\/\//i.test(metadata.imageUrl) ? metadata.imageUrl : null,
     canonicalUrl: `${origin}/r/${reserve.reserve}`,
-    appUrl: `${origin}/#/dtr/${reserve.reserveId}`,
+    // The app keys Reserves as `<cluster>-<reserveId>`; share pages are Mainnet only.
+    appUrl: `${origin}/#/dtr/mainnet-beta-${reserve.reserveId}`,
     mint: reserve.reserveTokenMint,
     pool: reserve.reserve,
   };

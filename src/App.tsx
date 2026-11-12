@@ -22,6 +22,7 @@ import { FeedbackLauncher } from './merge/components/feedback/FeedbackLauncher'
 import { FEEDBACK_ENABLED } from './merge/lib/feedback'
 import { rhAddressFromId } from './merge/lib/evmReserveId'
 import { EVM_ENABLED } from './merge/lib/evmFeature'
+import { SOLANA_CLUSTER } from './merge/lib/solana-config'
 // Robinhood Chain reserve pages pull in viem, which the Solana app never
 // needs. Lazy so it lands in its own chunk instead of the main bundle.
 const RobinhoodReserveDetail = lazy(() =>
@@ -32,6 +33,15 @@ import { Terms } from './pages/legal/Terms'
 import { Disclosures } from './pages/legal/Disclosures'
 import { Privacy } from './pages/legal/Privacy'
 
+// A bare numeric Reserve id (`/dtr/93`) is the on-chain reserveId without the
+// cluster prefix the store keys Reserves by (`mainnet-beta-93`). Share pages
+// (/r/<address>) linked that bare form, so leaderboard and shared links fell
+// through to "Reserve Not Found". Read it as this build's cluster.
+function withClusterPrefix(params: Record<string, string> | null): Record<string, string> | null {
+  if (!params || !/^\d+$/.test(params.dtrId ?? '')) return params
+  return { ...params, dtrId: `${SOLANA_CLUSTER}-${params.dtrId}` }
+}
+
 function Routes() {
   const path = usePath()
 
@@ -39,7 +49,7 @@ function Routes() {
   if (matchPath('/legal/disclosures', path)) return <Disclosures />
   if (matchPath('/legal/privacy', path)) return <Privacy />
 
-  const dtrManage = matchPath('/dtr/:dtrId/manage', path)
+  const dtrManage = withClusterPrefix(matchPath('/dtr/:dtrId/manage', path))
   if (dtrManage) {
     return (
       <MergeLayout>
@@ -50,7 +60,7 @@ function Routes() {
     )
   }
 
-  const dtr = matchPath('/dtr/:dtrId', path)
+  const dtr = withClusterPrefix(matchPath('/dtr/:dtrId', path))
   // With the EVM surface off, a /dtr/rh-<address> link is not a route this
   // build serves; it falls through to the Solana branch, which 404s it.
   const rhAddress = EVM_ENABLED && dtr ? rhAddressFromId(dtr.dtrId) : null
