@@ -51,6 +51,7 @@ describe('Rebalancing is volume (DEC-0287)',()=>{
  it('counts rebalance volume in all-time, 24h and campaign volume',()=>{
   expect(readFileSync('lib/reserve-activity/kpis.ts','utf8').match(/'mintVolume', 'redeemVolume', 'rebalanceVolume'/g)?.length).eq(2);
   expect(readFileSync('packages/sdk/src/readOnly.ts','utf8')).to.include('event.name === "rebalanceSwapExecuted"');
-  expect(readFileSync('lib/campaign/leaderboard.ts','utf8')).to.match(/MINT_REDEEM_KINDS = \[[^\]]*'rebalanceSwapExecuted'/);
+  expect(readFileSync('lib/campaign/rules.ts','utf8')).to.match(/CAMPAIGN_VOLUME_KINDS = \[[^\]]*'rebalanceSwapExecuted'/);
+  expect(readFileSync('lib/campaign/leaderboard.ts','utf8')).to.include('kind = ANY(${VOLUME_KINDS})');
  });
 });

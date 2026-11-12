@@ -7,7 +7,9 @@
 // Owner decisions (2026-11-03):
 //  1. Volume = in-app mints + redeems + Raydium pool swaps inside the campaign
 //     window. A creator's own trades count too (owner, 2026-11-05, DEC-0287;
-//     reverses the 2026-11-03 exclusion), and so do rebalance swaps.
+//     reverses the 2026-11-03 exclusion), and so do rebalance swaps. A
+//     Reserve's launch seed is a mint and counts too, credited to its creator
+//     (owner, 2026-11-12, DEC-0289).
 //  2. PnL % = Reserve Token NAV at campaign close vs its launch NAV (the same
 //     launch anchor as "All-Time Performance"). Any Reserve, no size minimum.
 //  3. Only Reserves whose creator signed a campaign entry are ranked: the
@@ -87,6 +89,14 @@ export function entryMessage(p: { reserve: string; wallet: string; handle: strin
 export const ENTRY_MAX_AGE_MS = 10 * 60_000
 
 // --- Ranking ----------------------------------------------------------------
+
+/**
+ * Activity-log kinds that count as campaign volume: mints, redeems, launch
+ * seeds (DEC-0289) and rebalance swaps (DEC-0287). Same list as all-time
+ * volume (VOLUME_EVENT_KINDS in lib/reserve-activity/volumeUsd.ts, guarded by
+ * tests/phase_campaign.ts).
+ */
+export const CAMPAIGN_VOLUME_KINDS = ['reserveTokensMinted', 'reserveTokensRedeemed', 'reserveSeeded', 'rebalanceSwapExecuted', 'rebalanceLegExecuted'] as const
 
 export interface TradeRow {
   reserve: string

@@ -4,8 +4,9 @@
 import { expect } from "chai";
 import { Keypair } from "@solana/web3.js";
 import { createPrivateKey, sign } from "node:crypto";
-import { campaignConfig, campaignPhase, entryMessage, isEligibleReserve, normalizeHandle, pnlPct, rank, signupMessage, traderVolume, volumeByReserve } from "../lib/campaign/rules";
+import { CAMPAIGN_VOLUME_KINDS, campaignConfig, campaignPhase, entryMessage, isEligibleReserve, normalizeHandle, pnlPct, rank, signupMessage, traderVolume, volumeByReserve } from "../lib/campaign/rules";
 import { verifyWalletSignature } from "../api/mainnet/campaign-entry";
+import { VOLUME_EVENT_KINDS } from "../lib/reserve-activity/volumeUsd";
 
 function signAs(kp: Keypair, message: string): string {
   const der = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.from(kp.secretKey.slice(0, 32))]);
@@ -13,6 +14,11 @@ function signAs(kp: Keypair, message: string): string {
 }
 
 describe("Beta Campaign (DEC-0279)", () => {
+  it("campaign volume counts the same kinds as all-time volume, launch seeds included (DEC-0289)", () => {
+    expect([...CAMPAIGN_VOLUME_KINDS].sort()).to.deep.equal([...VOLUME_EVENT_KINDS].sort());
+    expect(CAMPAIGN_VOLUME_KINDS).to.include("reserveSeeded");
+  });
+
   it("reads the window and always excludes the protocol wallet", () => {
     const cfg = campaignConfig({ SSR_CAMPAIGN_START: "2026-11-05T00:00:00Z", SSR_CAMPAIGN_END: "2026-11-19T23:59:59Z", SSR_CAMPAIGN_EXCLUDE_WALLETS: "AAA, BBB" });
     expect(cfg.startTs).to.equal(Date.parse("2026-11-05T00:00:00Z") / 1000);

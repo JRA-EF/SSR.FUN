@@ -8873,3 +8873,32 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0289
+
+```json
+{
+  "id": "DEC-0289",
+  "date": "2026-11-12",
+  "title": "Launch seeds count as campaign volume, credited to the creator",
+  "status": "confirmed",
+  "decision": "1. Campaign Reserve volume and trader volume count reserveSeeded alongside mints, redeems and rebalance swaps; the kind list (CAMPAIGN_VOLUME_KINDS in lib/campaign/rules.ts) equals all-time VOLUME_EVENT_KINDS. 2. Seed rows carry no actor, so trader volume credits the seed to the Reserve's reserveCreated actor (the creator). 3. Applies retroactively inside the window: the leaderboard is recomputed from the activity log on every read.",
+  "context": "Owner, 2026-11-12: 'launch are mints it needs to count'. After DEC-0287 the two campaign Reserves (#93 KING, #94 CORE) still showed $0 volume because their only in-window activity was the launch seed ($17 and $1), which all-time volume already counted but the campaign did not.",
+  "rationale": "A launch seed is the creator's first mint; all-time volume already treats it as mintVolume, so the campaign now matches.",
+  "alternativesConsidered": [
+    "Keep seeds out to stop seed-then-redeem farming -- owner chose to count them; redeems count as volume either way."
+  ],
+  "impact": "KING shows $17 and CORE $1 of campaign volume immediately; seeded creators who signed up appear as traders.",
+  "affectedAreas": [
+    "lib/campaign/rules.ts",
+    "lib/campaign/leaderboard.ts",
+    "tests/phase_campaign.ts",
+    "tests/phase_seed_volume_valuation.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "campaign, campaign2, dex volume, seed volume and share-page phase tests: 40 passing; tsc clean; trader query dry run on prod DB credits $17.00 to ...X7VdbQ and $1.00 to ...MnTHk"
+  ]
+}
+```

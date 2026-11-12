@@ -4,7 +4,7 @@
 // public GET is cheap. Freshness comes from api/mainnet/campaign-refresh-cron.ts.
 import { readReserveSnapshot } from '../reserve-warm-cache/db'
 import { computeEntryNavUsd, type NavInputReserve, type NavPoint } from '../reserve-nav-history/navMath'
-import { campaignConfig, campaignPhase, isEligibleReserve, pnlPct, rank, traderVolume, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
+import { CAMPAIGN_VOLUME_KINDS, campaignConfig, campaignPhase, isEligibleReserve, pnlPct, rank, traderVolume, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
 import { getCampaignSql, listEntries, listTraders } from './db'
 
 /** Creation time (unix s) of every Reserve: its reserveCreated event, else its earliest indexed activity. */
@@ -16,8 +16,8 @@ export async function reserveCreatedTs(cluster: string): Promise<Map<string, num
 }
 
 const CLUSTER = 'mainnet-beta'
-// Mints, redeems and rebalance swaps (rebalancing is volume, DEC-0287).
-const MINT_REDEEM_KINDS = ['reserveTokensMinted', 'reserveTokensRedeemed', 'rebalanceSwapExecuted', 'rebalanceLegExecuted']
+// Mints, redeems, launch seeds (DEC-0289) and rebalance swaps (DEC-0287).
+const VOLUME_KINDS = [...CAMPAIGN_VOLUME_KINDS]
 
 interface SnapshotReserve extends NavInputReserve {
   reserveId: string
@@ -93,7 +93,7 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
     const [app, dex] = await Promise.all([
       sql`
         SELECT reserve, actor, amount_usd FROM reserve_activity_log
-        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND reserve = ANY(${reserves})
+        WHERE cluster = ${CLUSTER} AND kind = ANY(${VOLUME_KINDS}) AND reserve = ANY(${reserves})
           AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs} AND amount_usd IS NOT NULL`,
       sql`
         SELECT reserve, trader, usdc_raw FROM dex_pool_swaps
@@ -112,9 +112,14 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
   if (cfg.startTs !== null && cfg.endTs !== null && handleByTrader.size) {
     const rows = (await sql`
       SELECT wallet, reserve, sum(usd)::float8 AS usd, count(*)::int AS n FROM (
-        SELECT actor AS wallet, reserve, amount_usd::float8 AS usd FROM reserve_activity_log
-        WHERE cluster = ${CLUSTER} AND kind = ANY(${MINT_REDEEM_KINDS}) AND actor IS NOT NULL
-          AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs} AND amount_usd IS NOT NULL
+        -- reserveSeeded rows carry no actor: the seed is the creator's mint (DEC-0289).
+        SELECT COALESCE(l.actor, c.actor) AS wallet, l.reserve, l.amount_usd::float8 AS usd FROM reserve_activity_log l
+        LEFT JOIN LATERAL (
+          SELECT actor FROM reserve_activity_log
+          WHERE cluster = l.cluster AND reserve = l.reserve AND kind = 'reserveCreated' AND actor IS NOT NULL LIMIT 1
+        ) c ON l.kind = 'reserveSeeded'
+        WHERE l.cluster = ${CLUSTER} AND l.kind = ANY(${VOLUME_KINDS}) AND COALESCE(l.actor, c.actor) IS NOT NULL
+          AND l.ts >= ${cfg.startTs} AND l.ts <= ${cfg.endTs} AND l.amount_usd IS NOT NULL
         UNION ALL
         SELECT trader AS wallet, reserve, usdc_raw::float8 / 1e6 AS usd FROM dex_pool_swaps
         WHERE cluster = ${CLUSTER} AND trader IS NOT NULL AND ts >= ${cfg.startTs} AND ts <= ${cfg.endTs}
