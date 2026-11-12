@@ -118,8 +118,8 @@ export default async function handler(req: Req, res: Res) {
       if (status !== undefined && !isBoardStatus(status)) { res.status(400).json({ error: `status must be one of: ${BOARD_STATUSES.join(', ')}.` }); return }
       if (priority !== undefined && !isPriority(priority)) { res.status(400).json({ error: `priority must be one of: ${PRIORITIES.join(', ')}.` }); return }
       if (status === undefined && priority === undefined && !note) { res.status(400).json({ error: 'Nothing to change: send a status, a priority, or a note.' }); return }
-      if (status !== undefined && !canSetStatus(caller, status)) { res.status(403).json({ error: 'Only a person can mark an item live.' }); return }
-      const item = await updateBoardItem(id, { status, priority }, actor, note)
+      if (status !== undefined && !canSetStatus(caller, status as (typeof BOARD_STATUSES)[number])) { res.status(403).json({ error: 'Only a person can mark an item live.' }); return }
+      const item = await updateBoardItem(id, { status: status as (typeof BOARD_STATUSES)[number] | undefined, priority: priority as (typeof PRIORITIES)[number] | undefined }, actor, note)
       if (!item) { res.status(404).json({ error: 'Not found.' }); return }
       res.status(200).json({ ok: true, item })
       return

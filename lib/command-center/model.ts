@@ -217,7 +217,9 @@ export function parseAction(body: unknown, nodeIds: readonly string[]): { ok: tr
     return { ok: true, action: { kind: 'alert-review', key, outcome } }
   }
   const parsed = parseFactsEdit(body, nodeIds)
-  return parsed.ok ? { ok: true, action: { kind: 'facts', node: parsed.node, facts: parsed.facts } } : parsed
+  // `=== false` and an explicit error object: Vercel's build typecheck does not narrow `parsed.ok ? ... : parsed`.
+  if (parsed.ok === false) return { ok: false, error: parsed.error }
+  return { ok: true, action: { kind: 'facts', node: parsed.node, facts: parsed.facts } }
 }
 
 /** Values a person types in the feedback Sheet's Status column that close a row; anything else, or empty, is open. */

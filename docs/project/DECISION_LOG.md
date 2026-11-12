@@ -8902,3 +8902,39 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0290
+
+```json
+{
+  "id": "DEC-0290",
+  "date": "2026-11-12",
+  "title": "Error watcher review fixes: launch SOL estimate, redemption payout check, closed swap tables, Jupiter error naming",
+  "status": "confirmed",
+  "decision": "1. The launch cost estimate (and so DEC-0282's SOL check) includes the Reserve Token's Metaplex metadata account (14,500,000 lamports: rent plus Metaplex's create fee; measured 13,733,800 on #93). 2. A USDC redemption whose balance-vs-saved-baseline check finds no gain reads the payout from its own confirmed transactions before reporting failure. 3. A Jupiter route lookup table that no longer exists on-chain is skipped instead of failing the build; the builders' size checks still decide fit. 4. A failed pre-sign simulation names the failing program: a Jupiter failure (6001 = slippage) is explained as a swap failure, never decoded as an SsrError with the same number. Also: the DEC-0282 Resume copy no longer says 'bought', and two non-fatal Vercel build type errors (lib/command-center/model.ts, api/feedback/board.ts) are fixed.",
+  "context": "Creator, 2026-11-12: 'check watcher and fix anything that needs fixing'. Seven unreviewed alerts: #93 KING launch failed at metadata (needed 0.0137 SOL, had 0.0117, recovered on Resume); staging TESTR redemption paid +199,163 raw USDC but reported 'not increased'; 3 redemptions blocked by closed Jupiter tables AF1C4K.../5xvt4K...; an SSRES redemption simulation reported SsrError::ZeroValue although the server rejects zero amounts (instruction 6 = a Jupiter swap); two user errors already explained in the app (pool launch short on SOL; redeem with 0 tokens).",
+  "rationale": "Each fix removes a false or avoidable failure without loosening a safety check: estimates only grow, a payout is only accepted when on-chain balances show it, and size/lock checks are unchanged.",
+  "alternativesConsidered": [
+    "Read metadata rent from the RPC per launch -- no gain over a measured constant and one more call.",
+    "Expire saved sale baselines by age -- still wrong whenever USDC moves between attempts."
+  ],
+  "impact": "Fewer half-finished launches and false redemption errors; clearer simulation messages. No program, env or API contract change.",
+  "affectedAreas": [
+    "src/merge/lib/createReserveClient.ts",
+    "src/merge/lib/multiAssetSellClient.ts",
+    "src/merge/lib/singleTxBuy.ts",
+    "lib/mainnet/simulationError.ts",
+    "lib/mainnet/buildSell.ts",
+    "lib/mainnet/buildBuy.ts",
+    "src/merge/pages/CreateDTR.tsx",
+    "lib/command-center/model.ts",
+    "api/feedback/board.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_watcher_fixes_2026_11_12.ts 6 passing; full phase suite 1825 passing, 5 failing (the long-standing chart/CSS/IDL-pinning five; the DEC-0228 terminology failure is fixed)",
+    "on-chain: tx ubviHq6Q... 'Transfer: insufficient lamports 11722566, need 13733800'; tx 4pt55sn1... owner USDC 5,849,606 -> 6,048,769"
+  ]
+}
+```
