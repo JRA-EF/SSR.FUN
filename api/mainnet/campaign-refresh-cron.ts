@@ -9,7 +9,7 @@
 import { Connection } from "@solana/web3.js";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
 import { redactRpcSecrets } from "../devnet/_lib/rpc";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, mainnetConnection } from "./_lib/rpc";
 import { backfillAllReserveActivity } from "../../lib/reserve-activity/backfillAll";
 import { buildClusterTargets } from "../../lib/reserve-activity/clusters";
 import { sweepDexVolume } from "../../lib/dex-volume/indexer";
@@ -41,7 +41,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     out.activityError = redactRpcSecrets(e instanceof Error ? e.message : String(e));
   }
   try {
-    out.dex = await sweepDexVolume(new Connection(resolveRpcUrl(), "confirmed"), 15_000);
+    out.dex = await sweepDexVolume(mainnetConnection(), 15_000);
   } catch (e) {
     out.dexError = redactRpcSecrets(e instanceof Error ? e.message : String(e));
   }

@@ -13,7 +13,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { buildReadOnlyProgram } from "@ssr/sdk";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { type ApiRequest, type ApiResponse, parseJsonBody } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
+import { resolveRpcUrl, redactRpcSecrets, mainnetConnection } from "./_lib/rpc";
 import { fetchJupiterPrices } from "./asset-prices";
 import { getSql } from "../../lib/reserve-metadata/db";
 import {
@@ -115,7 +115,7 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
     return;
   }
 
-  const connection = new Connection(resolveRpcUrl(), "confirmed");
+  const connection = mainnetConnection();
   const program = buildReadOnlyProgram(connection) as any;
   try {
     const result = await buildBuyTransactions(

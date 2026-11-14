@@ -34,7 +34,7 @@ import {
   type AssetPricing,
 } from "@ssr/sdk";
 import { fetchJupiterPrices } from "./asset-prices";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, mainnetConnection } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { fetchAllTimeTradeVolumeUsd, fetchAllTimeTradeVolumeUsdByReserve } from "../../lib/reserve-activity/kpis";
 import { fetchDexVolumeUsd, readPoolBalances, type PoolBalances } from "../../lib/dex-volume/read";
@@ -130,7 +130,7 @@ async function loadKnownAssetMints(): Promise<string[]> {
 }
 
 async function computeLandingStats(): Promise<LandingStats> {
-  const connection = new Connection(RPC_URL, "confirmed");
+  const connection = mainnetConnection();
   const program = buildReadOnlyProgram(connection);
 
   // Candidate mints: the chain's own ReserveAsset enumeration is the

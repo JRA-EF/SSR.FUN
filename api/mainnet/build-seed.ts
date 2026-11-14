@@ -10,7 +10,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { buildReadOnlyProgram } from "@ssr/sdk";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { type ApiRequest, type ApiResponse, parseJsonBody } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
+import { resolveRpcUrl, redactRpcSecrets, mainnetConnection } from "./_lib/rpc";
 import { fetchJupiterPrices } from "./asset-prices";
 import { BASE58_RE, U64_MAX } from "../../lib/mainnet/jupiter";
 import { BuildError, serializeBuildResult } from "../../lib/mainnet/buildCommon";
@@ -94,7 +94,7 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
 }
 
 function seedDeps(): BuildSeedDeps {
-  const connection = new Connection(resolveRpcUrl(), "confirmed");
+  const connection = mainnetConnection();
   return {
     connection,
     program: buildReadOnlyProgram(connection) as any,

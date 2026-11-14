@@ -41,7 +41,7 @@ import {
 } from "@ssr/sdk";
 import { fetchJupiterPrices } from "./asset-prices";
 import { displayAssetIdentity } from "../../packages/sdk/src/zapPricing";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, mainnetConnection } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { getSql as getMetadataSql } from "../../lib/reserve-metadata/db";
 import { writeReserveSnapshot } from "../../lib/reserve-warm-cache/db";
@@ -225,7 +225,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const connection = new Connection(RPC_URL, "confirmed");
+    const connection = mainnetConnection();
     // Candidate mints (the heavy gPA enumeration + Ledger read) are stable
     // within a minute -- computed ONCE per invocation and reused across the
     // self-warming refreshes; only discover + price passes repeat every ~15s.

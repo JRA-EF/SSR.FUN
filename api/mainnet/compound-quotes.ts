@@ -3,7 +3,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { buildReadOnlyProgram } from '@ssr/sdk';
 import { type ApiRequest, type ApiResponse, parseJsonBody } from '../devnet/_lib/apiTypes';
 import { checkRateWindow } from '../devnet/_lib/rateLimit';
-import { resolveRpcUrl, redactRpcSecrets } from './_lib/rpc';
+import { resolveRpcUrl, redactRpcSecrets, mainnetConnection } from './_lib/rpc';
 import { fetchJupiterPrices } from './asset-prices';
 import { readCompoundSnapshot, compareLiveCompound } from '../../lib/mainnet/compoundQuotes';
 import { serializeBuildResult } from '../../lib/mainnet/buildCommon';
@@ -30,7 +30,7 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
   }
   let input;
   try{input=parseCompoundQuoteRequest(parseJsonBody(req));}catch(e){res.status(400).json({error:e instanceof Error?e.message:'Invalid quote request'});return;}
-  const connection=new Connection(resolveRpcUrl(),'confirmed');
+  const connection=mainnetConnection();
   try {
     const snapshot=await readCompoundSnapshot({connection,program:buildReadOnlyProgram(connection) as any,programId:PROGRAM_ID},input);
     const mints=snapshot.assets.map(a=>a.mint).filter(m=>m!==LIQUIDITY_USDC.toBase58());

@@ -22,7 +22,7 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getSql } from "../../lib/reserve-metadata/db";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, mainnetConnection } from "./_lib/rpc";
 
 interface ApiRequest {
   method?: string;
@@ -101,7 +101,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       // On-chain verification before storing: the address must be a REAL
       // lookup table whose content includes this Reserve's own pubkey --
       // junk can never enter the registry.
-      const connection = new Connection(resolveRpcUrl(), "confirmed");
+      const connection = mainnetConnection();
       const table = await connection.getAddressLookupTable(new PublicKey(alt));
       if (!table.value) {
         res.status(422).json({ error: "That address is not an existing address lookup table on Mainnet." });

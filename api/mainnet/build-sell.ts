@@ -10,7 +10,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { buildReadOnlyProgram } from "@ssr/sdk";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { type ApiRequest, type ApiResponse, parseJsonBody } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
+import { resolveRpcUrl, redactRpcSecrets, mainnetConnection } from "./_lib/rpc";
 import { lookupReserveAlt } from "./build-buy";
 import { BASE58_RE, DEFAULT_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS, U64_MAX, buildJupiterSwapInstructionsWithRetry, buildJupiterSwapTransactionWithRetry, fetchJupiterQuoteWithRetry } from "../../lib/mainnet/jupiter";
 import { BuildError, serializeBuildResult } from "../../lib/mainnet/buildCommon";
@@ -81,7 +81,7 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
     return;
   }
 
-  const connection = new Connection(resolveRpcUrl(), "confirmed");
+  const connection = mainnetConnection();
   const program = buildReadOnlyProgram(connection) as any;
   try {
     const result = await buildSellTransactions(

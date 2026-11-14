@@ -6,7 +6,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { buildReadOnlyProgram } from "@ssr/sdk";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { type ApiRequest, type ApiResponse, parseJsonBody } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
+import { resolveRpcUrl, redactRpcSecrets, mainnetConnection } from "./_lib/rpc";
 import { fetchJupiterPrices } from "./asset-prices";
 import { BASE58_RE, buildJupiterSwapInstructionsWithRetry, fetchJupiterQuoteWithRetry } from "../../lib/mainnet/jupiter";
 import { BuildError, serializeBuildResult } from "../../lib/mainnet/buildCommon";
@@ -40,7 +40,7 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
   res.setHeader?.("Cache-Control", "no-store");
   // GET: is the real rebalance available on the deployed program yet?
   if (req.method === "GET") {
-    const connection = new Connection(resolveRpcUrl(), "confirmed");
+    const connection = mainnetConnection();
     try {
       const live = await isRebalanceSwapLive(
         async (tx) => ({ err: (await connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true })).value.err }),
@@ -73,7 +73,7 @@ export default async function handler(req: ApiRequest, res: ApiResponseWithHeade
     return;
   }
   const apiKey = process.env.JUPITER_API_KEY ?? "";
-  const connection = new Connection(resolveRpcUrl(), "confirmed");
+  const connection = mainnetConnection();
   const program = buildReadOnlyProgram(connection) as any;
   try {
     const result = await buildRebalanceTransactions(

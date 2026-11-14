@@ -5,7 +5,7 @@ import {Connection,PublicKey} from '@solana/web3.js';
 import {buildReadOnlyProgram,assertCompoundApproval} from '@ssr/sdk';
 import {type ApiRequest,type ApiResponse,parseJsonBody} from '../devnet/_lib/apiTypes';
 import {checkRateWindow} from '../devnet/_lib/rateLimit';
-import {resolveRpcUrl,redactRpcSecrets} from './_lib/rpc';
+import {resolveRpcUrl,redactRpcSecrets, mainnetConnection } from './_lib/rpc';
 import {parseCompoundQuoteRequest} from './compound-quotes';
 import {decodeLiveCompoundResponse} from '../../src/merge/lib/liquidity/compoundQuoteClient';
 import {prepareCompound,type CompoundPlanInput} from '../../lib/mainnet/prepareCompound';
@@ -38,7 +38,7 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
   let input;
   try{input=parsePrepareCompound(parseJsonBody(req));}catch(e){res.status(400).json({error:e instanceof Error?e.message:'Invalid request'});return;}
   try{
-    const connection=new Connection(resolveRpcUrl(),'confirmed');
+    const connection=mainnetConnection();
     const prepared=await prepareCompound({connection,program:buildReadOnlyProgram(connection) as any,
       programId:new PublicKey('8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9'),jupiterApiKey:process.env.JUPITER_API_KEY,
       // Deliberately not env-toggleable before the program/runtime release gate.

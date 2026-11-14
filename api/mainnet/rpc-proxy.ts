@@ -5,7 +5,7 @@
 // see that file's header for the full rationale, unchanged here. Kept as a
 // fully separate module so a Mainnet request can never be misrouted to the
 // DevNet endpoint or vice versa.
-import { resolveRpcUrl, FALLBACK_RPC_URL } from "./_lib/rpc";
+import { resolveRpcUrl, FALLBACK_RPC_URL, isRefusedStatus } from "./_lib/rpc";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { checkDurableRateWindow } from "../../lib/rate-limit/durableRateWindow";
 import { getSql } from "../../lib/rate-limit/db";
@@ -270,7 +270,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
     const fetched = await coalesce(key, async () => {
       let up = await postJsonRpc(primaryUrl, singleReq);
-      if (up === null) up = await postJsonRpc(FALLBACK_RPC_URL, singleReq);
+      if (up === null || isRefusedStatus(up.status)) up = await postJsonRpc(FALLBACK_RPC_URL, singleReq);
       return up;
     });
     if (fetched === null) {
@@ -291,7 +291,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const forwardPayload = isBatch ? toForward : toForward[0];
   let upstream = toForward.length > 0 ? await postJsonRpc(primaryUrl, forwardPayload) : { status: 200, body: [] };
 
-  if (upstream === null && !containsSend) {
+  // A refused key (401/403/429) never ran the request, so even a send is safe
+  // to repeat on the fallback; a network failure may have, so sends aren't.
+  if ((upstream === null && !containsSend) || (upstream !== null && isRefusedStatus(upstream.status))) {
     upstream = await postJsonRpc(FALLBACK_RPC_URL, forwardPayload);
   }
 

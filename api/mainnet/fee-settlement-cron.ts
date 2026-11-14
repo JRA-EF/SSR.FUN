@@ -106,7 +106,7 @@ import {
   MAX_TRADE_TAX_HARVEST_SOURCES,
 } from "@ssr/sdk";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, mainnetConnection } from "./_lib/rpc";
 import { getSql } from "../../lib/ledger/db";
 import { lookupReserveAlt } from "./build-buy";
 import { readReserveAndWallet, loadUsableReserveAlt, compileV0, fitsV0, CORE_TX_COMPUTE_UNIT_LIMIT, MAINNET_TREASURY_VAULT } from "../../lib/mainnet/buildCommon";
@@ -292,7 +292,7 @@ async function runKeeper(req: ApiRequest, res: ApiResponse) {
 
   const startedAt = Date.now();
   const deadline = startedAt + BUDGET_MS;
-  const connection = new Connection(RPC_URL, "confirmed");
+  const connection = mainnetConnection();
 
   let keeper: Keypair | null = null;
   let keeperEnvError: string | null = null;

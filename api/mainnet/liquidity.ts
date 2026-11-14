@@ -11,7 +11,7 @@ import {buildReadOnlyProgram,findLiquidityTranche,findTradeTax,decodeTradeTax} f
 import {getAssociatedTokenAddressSync,unpackAccount,TOKEN_PROGRAM_ID} from '@solana/spl-token';
 import {type ApiRequest,type ApiResponse,parseJsonBody} from '../devnet/_lib/apiTypes';
 import {checkRateWindow} from '../devnet/_lib/rateLimit';
-import {resolveRpcUrl,redactRpcSecrets} from './_lib/rpc';
+import {resolveRpcUrl,redactRpcSecrets, mainnetConnection } from './_lib/rpc';
 import {prepareLiquidityLifecycle,readLiquidityState,type LifecycleInput,type TrancheChoice} from '../../lib/mainnet/liquidityLifecycle';
 const actions=['create','add','withdraw','collect','lock','extend','unlock','permanent'];
 const locks=['unlocked','1-month','3-month','6-month','12-month','permanent'];
@@ -38,7 +38,7 @@ export default async function handler(req:ApiRequest,res:ApiResponse & {setHeade
  let body:any,input:ReturnType<typeof parseLifecycleRequest>|undefined,reserve:PublicKey;
  try{body=parseJsonBody(req);if(body?.action==='read')reserve=new PublicKey(body.reserve);else {input=parseLifecycleRequest(body);reserve=input.reserve;}}catch(e){res.status(400).json({error:e instanceof Error?e.message:'Invalid request'});return;}
  try{
-  const connection=new Connection(resolveRpcUrl(),'confirmed'),deps={connection,program:buildReadOnlyProgram(connection) as any,programId:new PublicKey('8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9'),executionEnabled:LIQUIDITY_EXECUTION_ENABLED};
+  const connection=mainnetConnection(),deps={connection,program:buildReadOnlyProgram(connection) as any,programId:new PublicKey('8hTW7fHwn8t8hcgTVeyAhHMiCTHGUP3783NWUTBBFwH9'),executionEnabled:LIQUIDITY_EXECUTION_ENABLED};
   let result:any;
   if(!input){const s=await readLiquidityState(deps,reserve);
    const rows=await connection.getProgramAccounts(deps.programId,{commitment:'confirmed',filters:[{dataSize:187},{memcmp:{offset:8,bytes:reserve.toBase58()}}]});

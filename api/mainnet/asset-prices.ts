@@ -25,7 +25,7 @@
 // stop validating.
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { type ApiRequest, type ApiResponse, parseJsonBody } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, mainnetConnection } from "./_lib/rpc";
 import { Connection } from "@solana/web3.js";
 import {
   MAINNET_PYTH_FEED_IDS,
@@ -180,7 +180,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       fetchJupiterPrices(stale.map((a) => a.mint)).catch(() => new Map<string, RawJupiterPrice>()),
       (async () => {
         try {
-          return await new Connection(resolveRpcUrl(), "confirmed").getSlot();
+          return await mainnetConnection().getSlot();
         } catch {
           return 0; // Fail closed on block-recency checks below (currentSlot === 0 skips that check rather than rejecting every Jupiter quote on an RPC hiccup) -- staleness/confidence checks on Pyth are unaffected either way.
         }

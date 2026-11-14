@@ -25,7 +25,7 @@
 // looks up pairs it discovered on-chain.
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { parseJsonBody } from "../devnet/_lib/apiTypes";
-import { resolveRpcUrl } from "./_lib/rpc";
+import { resolveRpcUrl, mainnetConnection } from "./_lib/rpc";
 import { Connection } from "@solana/web3.js";
 import { fetchPythPrices, fetchJupiterPrices } from "./asset-prices";
 import { validateEntryPricePairs, type EntryPricePair } from "../../lib/reserve-entry-price/payload";
@@ -115,7 +115,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       fetchJupiterPrices(mints).catch(() => new Map<string, RawJupiterPrice>()),
       (async () => {
         try {
-          return await new Connection(resolveRpcUrl(), "confirmed").getSlot();
+          return await mainnetConnection().getSlot();
         } catch {
           return 0; // Same fail-open block-recency behavior as asset-prices.ts.
         }
