@@ -33,6 +33,7 @@
 import { Connection } from "@solana/web3.js";
 import { enumerateReserveAssetMintsOnChain } from "@ssr/sdk";
 import { getSql } from "../../lib/ledger/db";
+import { failoverFetch } from "../mainnet/_lib/rpc";
 
 interface ApiRequest {
   method?: string;
@@ -68,7 +69,7 @@ async function loadOnChainMints(): Promise<string[]> {
   // both sources failing must surface as the endpoint's 503, not as "no
   // mints exist" (which would silently blank every non-USDC Reserve).
   if (!rpcUrl) throw new Error("No Mainnet RPC URL is configured for on-chain mint enumeration.");
-  return enumerateReserveAssetMintsOnChain(new Connection(rpcUrl, "confirmed"));
+  return enumerateReserveAssetMintsOnChain(new Connection(rpcUrl, { commitment: "confirmed", fetch: failoverFetch(rpcUrl) as any }));
 }
 
 async function loadKnownMints(): Promise<{ mints: string[]; updatedAt: number }> {

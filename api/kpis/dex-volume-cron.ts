@@ -8,10 +8,9 @@
 // Same cron-security pattern as kpis-backfill-cron.ts: a scheduled call
 // carries `Authorization: Bearer $CRON_SECRET`; `?dryRun=true` skips the
 // check for manual runs (there is no destructive mode to skip).
-import { Connection } from "@solana/web3.js";
 import { type ApiRequest, type ApiResponse } from "../devnet/_lib/apiTypes.js";
 import { redactRpcSecrets } from "../devnet/_lib/rpc.js";
-import { resolveRpcUrl } from "../mainnet/_lib/rpc.js";
+import { mainnetConnection } from "../mainnet/_lib/rpc.js";
 import { sweepDexVolume } from "../../lib/dex-volume/indexer.js";
 
 function getHeader(req: ApiRequest, name: string): string | undefined {
@@ -37,7 +36,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
   try {
-    const result = await sweepDexVolume(new Connection(resolveRpcUrl(), "confirmed"), 50_000);
+    const result = await sweepDexVolume(mainnetConnection(), 50_000);
     res.status(200).json(result);
   } catch (e) {
     res.status(503).json({ error: redactRpcSecrets(e instanceof Error ? e.message : "DEX volume sweep failed.") });

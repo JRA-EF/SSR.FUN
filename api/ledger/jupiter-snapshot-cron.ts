@@ -11,8 +11,7 @@
 // to unblock this.
 import { runWeeklyJupiterSnapshot } from "../../lib/ledger/jupiterCatalogue";
 import { markIncompatibleMints } from "../../lib/ledger/markIncompatibleMints";
-import { Connection } from "@solana/web3.js";
-import { resolveRpcUrl } from "../mainnet/_lib/rpc";
+import { mainnetConnection } from "../mainnet/_lib/rpc";
 
 interface ApiRequest {
   method?: string;
@@ -60,7 +59,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     // rather than failing the whole cron.
     let extensions: unknown = null;
     try {
-      extensions = await markIncompatibleMints(new Connection(resolveRpcUrl(), "confirmed"));
+      extensions = await markIncompatibleMints(mainnetConnection());
     } catch (e) {
       extensions = { error: e instanceof Error ? e.message : "extension scan failed" };
     }

@@ -140,6 +140,11 @@ async function postJsonRpc(url: string, payload: unknown): Promise<{ status: num
       });
       const body = await res.json().catch(() => null);
       if (body !== null) result = { status: res.status, body };
+      // 2026-11-14: Helius refuses with a plain-text "Forbidden", not JSON.
+      // Keep the status so the caller sees a refusal (safe to repeat on the
+      // fallback, sends included) instead of an unreachable endpoint, which
+      // blocks sends and surfaced as "Mainnet RPC endpoint unreachable".
+      else if (isRefusedStatus(res.status)) result = { status: res.status, body: null };
       const ra = Number(res.headers.get("retry-after"));
       if (Number.isFinite(ra) && ra > 0) retryAfterMs = Math.min(ra * 1000, UPSTREAM_MAX_RETRY_AFTER_MS);
     } catch {
@@ -147,6 +152,8 @@ async function postJsonRpc(url: string, payload: unknown): Promise<{ status: num
     }
     const transient = result === null || result.status === 429 || result.status >= 500;
     if (!transient || attempt >= UPSTREAM_RETRY_DELAYS_MS.length) return result;
+    // A refused key won't change its answer within a second; go to the fallback now.
+    if (result !== null && result.body === null) return result;
     await new Promise((r) => setTimeout(r, retryAfterMs ?? UPSTREAM_RETRY_DELAYS_MS[attempt]));
   }
 }
@@ -271,7 +278,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const fetched = await coalesce(key, async () => {
       let up = await postJsonRpc(primaryUrl, singleReq);
       if (up === null || isRefusedStatus(up.status)) up = await postJsonRpc(FALLBACK_RPC_URL, singleReq);
-      return up;
+      return up !== null && up.body === null ? null : up;
     });
     if (fetched === null) {
       res.status(502).json({
@@ -296,6 +303,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if ((upstream === null && !containsSend) || (upstream !== null && isRefusedStatus(upstream.status))) {
     upstream = await postJsonRpc(FALLBACK_RPC_URL, forwardPayload);
   }
+  if (upstream !== null && upstream.body === null) upstream = null;
 
   if (upstream === null) {
     res.status(502).json(

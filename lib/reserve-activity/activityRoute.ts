@@ -42,6 +42,8 @@ export interface ActivityRouteResponse {
 export interface ActivityRouteConfig {
   cluster: ActivityCluster;
   rpcUrl: string;
+  /** Optional: build the connection (Mainnet passes its failover connection). */
+  connect?: () => Connection;
   /** Strips RPC secrets from an error message before it reaches a response body. */
   redact: (message: string) => string;
   /** Per-IP throttle hook (api/devnet/_lib/rateLimit.ts); returns false when the caller should get a 429. */
@@ -107,7 +109,7 @@ export async function handleReserveActivityRequest(req: ActivityRouteRequest, re
 
   let syncError: string | null;
   try {
-    const connection = new Connection(config.rpcUrl, "confirmed");
+    const connection = config.connect ? config.connect() : new Connection(config.rpcUrl, "confirmed");
     const program = buildReadOnlyProgram(connection);
     const result = await syncReserveActivity(connection, program, reservePk, config.cluster);
     syncError = result.syncError ? config.redact(result.syncError) : null;

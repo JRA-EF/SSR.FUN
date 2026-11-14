@@ -6,7 +6,7 @@
 // sweep (api/kpis/kpis-backfill-cron.ts) indexes -- never the DevNet
 // chain. Also carries the per-recipient USDC fee-payout totals the Fee
 // Configuration panel shows (`?scope=fees` for just those).
-import { resolveRpcUrl, redactRpcSecrets } from "./_lib/rpc";
+import { resolveRpcUrl, redactRpcSecrets, mainnetConnection } from "./_lib/rpc";
 import { checkRateWindow } from "../devnet/_lib/rateLimit";
 import { fetchJupiterPrices } from "./asset-prices";
 import { handleReserveActivityRequest, type ActivityRouteRequest, type ActivityRouteResponse } from "../../lib/reserve-activity/activityRoute";
@@ -17,6 +17,7 @@ export default async function handler(req: ActivityRouteRequest, res: ActivityRo
   await handleReserveActivityRequest(req, res, {
     cluster: "mainnet-beta",
     rpcUrl: RPC_URL,
+    connect: () => mainnetConnection(),
     redact: redactRpcSecrets,
     allowRequest: (ip) => checkRateWindow(`mainnet-reserve-activity:${ip}`, 1_000, 5),
     fetchPricesUsd: fetchJupiterPrices,
