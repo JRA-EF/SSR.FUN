@@ -107,10 +107,6 @@
       "destination": "/api/mainnet/share?address=:address"
     },
     {
-      "source": "/feedback",
-      "destination": "/feedback.html"
-    },
-    {
       "source": "/beta",
       "destination": "/beta.html"
     },
@@ -167,6 +163,16 @@
     {
       "source": "/evm",
       "destination": "/#/evm",
+      "permanent": false
+    },
+    {
+      "source": "/feedback",
+      "destination": "/#/feedback",
+      "permanent": false
+    },
+    {
+      "source": "/feedback.html",
+      "destination": "/#/feedback",
       "permanent": false
     }
   ]
