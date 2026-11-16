@@ -8963,6 +8963,7 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   "supersededBy": null,
   "evidence": [
     "main @ 01b6ffa, production dpl_CRAF6KAuAXmxdR6CQyxffsUfiDPt (rollback dpl_pwDMtR6tWeaFpWMwbupT6qHXPjTX).",
+    "Correction, 2026-11-16: the rollback target is dpl_6tD4jfeLZbzGPuZYaUSfiK2dTfh3 (main @ 82f94b3), the deployment that served ssr.fun until this one. dpl_pwDMtR6t was never aliased to ssr.fun (the hourly keeper ran on dpl_6tD4jfeL through 14:15 UTC).",
     "SELECT count(*) FROM beta_key_claims = 31 before the change (first 2026-11-03, last 2026-11-15).",
     "GET https://ssr.fun/api/site/claim: {open:true, full:true} before, {open:true, full:false} after.",
     "tests/phase_beta_claim.mjs + phase_beta_gate.mjs 29 passing; offline suite 1835 passing, 5 known failures; npm run build clean."
