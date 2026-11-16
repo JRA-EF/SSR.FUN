@@ -8938,3 +8938,34 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0291
+
+```json
+{
+  "id": "DEC-0291",
+  "date": "2026-11-16",
+  "title": "BETA wave 2: self-serve claiming reopened with a cap of 30 more keys; the claim button hides when the cap is reached",
+  "status": "confirmed",
+  "decision": "1. Self-serve BETA key claiming at ssr.fun/beta is open for exactly 30 more people: SSR_BETA_CLAIM_CAP is set to 61 on ssr-fun Production (31 rows in beta_key_claims on 2026-11-16, plus 30) and SSR_BETA_CLAIM_ENABLED stays true. 2. public/coming-soon.html shows the 'Get your BETA key' button only while GET /api/site/claim reports open AND not full, so the button disappears by itself when the 61st row is written. 3. SSR_BETA_ISSUE_SECRET is untouched. Never on staging.",
+  "context": "Boss, 2026-11-16, from a brief prepared on Joao's side. DEC-0278 switched claiming off on 2026-11-02, but the flag was back on by 2026-11-03 (first claim) and 31 keys were claimed up to 2026-11-15. On 2026-11-16 the live endpoint answered open:true, full:true: a cap had been reached, yet the landing page still showed the button because it checked only 'open', sending visitors to a form that refused them.",
+  "rationale": "The cap counts total rows, so count plus 30 is the only value that admits exactly 30 new handles. Hiding the button on 'full' needs no further deploy or env change when the wave is used up.",
+  "alternativesConsidered": [
+    "Leave the button visible and rely on the /beta 'limit reached' message -- a dead end on the public landing page.",
+    "Remove the cap and switch the flag off by hand after 30 claims -- needs someone watching and a redeploy."
+  ],
+  "impact": "30 more self-serve keys. Existing issued keys, SSR_BETA_KEYS and SSR_TEAM_KEYS sessions are unchanged. A handle that already has a key still gets that key back at the cap. To open a further wave: raise SSR_BETA_CLAIM_CAP and redeploy.",
+  "affectedAreas": [
+    "public/coming-soon.html",
+    "Vercel env ssr-fun Production: SSR_BETA_CLAIM_CAP, SSR_BETA_CLAIM_ENABLED"
+  ],
+  "supersedes": "DEC-0278",
+  "supersededBy": null,
+  "evidence": [
+    "main @ 01b6ffa, production dpl_CRAF6KAuAXmxdR6CQyxffsUfiDPt (rollback dpl_pwDMtR6tWeaFpWMwbupT6qHXPjTX).",
+    "SELECT count(*) FROM beta_key_claims = 31 before the change (first 2026-11-03, last 2026-11-15).",
+    "GET https://ssr.fun/api/site/claim: {open:true, full:true} before, {open:true, full:false} after.",
+    "tests/phase_beta_claim.mjs + phase_beta_gate.mjs 29 passing; offline suite 1835 passing, 5 known failures; npm run build clean."
+  ]
+}
+```
