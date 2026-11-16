@@ -437,7 +437,7 @@
     fetch('/api/site/claim', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        if (!j || !j.open) return;
+        if (!j || !j.open || j.full) return;
         var cta = document.getElementById('beta-claim-cta');
         var soon = document.getElementById('soon-text');
         if (cta) cta.hidden = false;
