@@ -24,3 +24,5 @@ The hourly fee keeper's basket-feed step asked for the block time of the slot it
 ## Verification
 - New tests 4 passing; offline suite 1839 passing, the 5 known failures (`-t 1000000`); `tsc -b`, oxlint and `npm run build` clean.
 - Not yet observed in production (not deployed).
+
+- **Follow-up 2026-11-16 (same author): deployed.** Production `dpl_3kV2SEFja7EXZszHziDUscwnX9gv` (`main` @ `24f3560`, 15:49 UTC); rollback `dpl_CRAF6KAuAXmxdR6CQyxffsUfiDPt`. The 16:15 UTC keeper run reported `settled 3/53, failures 0`. 4 of the previous 25 runs were also clean, so watch the count over the next day before calling it confirmed.
