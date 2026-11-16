@@ -113,6 +113,24 @@ async function readFeedAssets(deps: BasketFeedDeps, reserve: PublicKey): Promise
   return decoded.map((a: any, i: number) => ({ mint: mints[i].toBase58(), targetWeightBps: Number(a.targetWeightBps), tokenProgram: (infos[i]?.owner ?? TOKEN_PROGRAM_ID).toBase58() }));
 }
 
+
+/**
+ * Chain time for the release maths. The newest confirmed slot's block is often
+ * not served yet ("Block not available", 0-3 Reserves an hour through
+ * 2026-11-16), and a skipped slot has none, so step back to an older slot: at
+ * most ~26 s earlier, which only releases marginally less this run. The wall
+ * clock stays the last resort, as it was for a null answer.
+ */
+export async function recentBlockTime(connection: Pick<Connection, "getBlockTime">, slot: number): Promise<number> {
+  for (const back of [0, 4, 16, 64]) {
+    try {
+      const t = await connection.getBlockTime(slot - back);
+      if (t !== null) return t;
+    } catch { /* not served yet or skipped: try an older slot */ }
+  }
+  return Math.floor(Date.now() / 1000);
+}
+
 export async function runBasketFeedForPool(deps: BasketFeedDeps, terms: ReturnType<typeof decodeLiquidityTerms>): Promise<BasketFeedResult> {
   const { connection, keeper, programId } = deps;
   const reserve = terms.reserve;
@@ -144,7 +162,7 @@ export async function runBasketFeedForPool(deps: BasketFeedDeps, terms: ReturnTy
   const fresh = decodeLiquidityTerms(termsInfo.data);
   if (!fresh.revenue.equals(revenue) || !fresh.reserve.equals(reserve)) throw new Error("Liquidity terms registration changed");
   const slot = await connection.getSlot("confirmed");
-  const now = BigInt((await connection.getBlockTime(slot)) ?? Math.floor(Date.now() / 1000));
+  const now = BigInt(await recentBlockTime(connection, slot));
   let released = releasedBasketFeed(fresh, now, unpackAccount(feed, feedInfo).amount).unlocked;
   result.releasedUsdcRaw = released.toString();
   if (released < FEED_MIN_USDC_RAW) return result;
