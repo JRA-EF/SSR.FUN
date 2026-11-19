@@ -201,6 +201,16 @@ export const DEFAULT_BUY_FEE_LAMPORTS = 8_000_000n; // 0.008 SOL
  * Fee/rent SOL is assessed separately from purchase capital and is never
  * spent INTO the purchase.
  */
+/**
+ * USDC raw amount as dollars-and-cents text. Held balances round down and
+ * required/missing amounts round up, so a real shortfall never reads
+ * "0.00 USDC short" (ops alert 2026-11-18: held 2.90, needed ~2.90, 0.00 short).
+ */
+export function usdcCentsText(raw: bigint, dir: "up" | "down"): string {
+  const cents = dir === "up" ? (raw + 9_999n) / 10_000n : raw / 10_000n;
+  return `${cents / 100n}.${(cents % 100n).toString().padStart(2, "0")}`;
+}
+
 export function assessBuyFeasibility(params: BuyFeasibilityParams): BuyFeasibility {
   // The SOL requirement is fees/rent PLUS any recovered-wSOL re-wrap the
   // plan performs (wrap-recovered-sol) -- the latter is not fee SOL, it is
@@ -213,7 +223,7 @@ export function assessBuyFeasibility(params: BuyFeasibilityParams): BuyFeasibili
   const reasons: string[] = [];
   if (missingUsdcRaw > 0n) {
     reasons.push(
-      `this wallet holds ${(Number(params.walletUsdcRaw) / 1e6).toFixed(2)} USDC but this mint needs ~${(Number(requiredUsdcRaw) / 1e6).toFixed(2)} USDC -- ${(Number(missingUsdcRaw) / 1e6).toFixed(2)} USDC short`,
+      `this wallet holds ${usdcCentsText(params.walletUsdcRaw, "down")} USDC but this mint needs ~${usdcCentsText(requiredUsdcRaw, "up")} USDC -- ${usdcCentsText(missingUsdcRaw, "up")} USDC short`,
     );
   }
   if (missingSolLamports > 0n) {

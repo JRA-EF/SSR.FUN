@@ -251,7 +251,7 @@ export function assessLaunchFeasibility(params: LaunchFeasibilityParams): Launch
   const missingUsdcUi = Math.max(0, requiredUsdcUi - heldUsdcUi);
   if (missingUsdcUi > 0) {
     reasons.push(
-      `this wallet holds ${heldUsdcUi.toFixed(2)} USDC but the launch needs about ${requiredUsdcUi.toFixed(2)} USDC including a ${(buffer * 100).toFixed(0)}% swap fee and slippage buffer${mintFeeUsd > 0 ? ` and the ${mintFeeUsd.toFixed(2)} USDC mint fee` : ""}, so it is ${missingUsdcUi.toFixed(2)} USDC short`,
+      `this wallet holds ${(Math.floor(heldUsdcUi * 100 + 1e-9) / 100).toFixed(2)} USDC but the launch needs about ${(Math.ceil(requiredUsdcUi * 100 - 1e-9) / 100).toFixed(2)} USDC including a ${(buffer * 100).toFixed(0)}% swap fee and slippage buffer${mintFeeUsd > 0 ? ` and the ${mintFeeUsd.toFixed(2)} USDC mint fee` : ""}, so it is ${(Math.ceil(missingUsdcUi * 100 - 1e-9) / 100).toFixed(2)} USDC short`,
     );
   }
 
