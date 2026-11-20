@@ -148,7 +148,7 @@ export default async function handler(req: Req, res: Res) {
     } else {
       const cap = claimCap()
       if (cap !== null && (await countClaims()) >= cap) {
-        res.status(410).json({ error: "We've reached our limit for wave 2. Keep an eye out for future updates from our official X @strategicsuperr.", full: true })
+        res.status(410).json({ error: "We've reached our limit for this wave. Keep an eye out for future updates from our official X @strategicsuperr.", full: true })
         return
       }
       const result = await insertClaim({ ...input, betaKey: await generateIssuedKey(issuedKeySecret()), site, userAgent })

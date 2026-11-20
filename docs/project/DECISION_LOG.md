@@ -8970,3 +8970,31 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0292
+
+```json
+{
+  "id": "DEC-0292",
+  "date": "2026-11-20",
+  "title": "BETA wave 3: self-serve claiming reopened for 30 more keys (cap 91); the 'limit reached' message no longer names a wave",
+  "status": "confirmed",
+  "decision": "1. SSR_BETA_CLAIM_CAP raised from 61 to 91 on ssr-fun Production (61 rows in beta_key_claims on 2026-11-20, plus 30, the same size as wave 2); SSR_BETA_CLAIM_ENABLED stays true. 2. api/site/claim.ts: the cap-reached 410 message says 'this wave' instead of 'wave 2', so later waves need only the cap change.",
+  "context": "Joao, 2026-11-20: 'wave 3 is open, no? if not open'. Wave 2 (DEC-0291) filled on 2026-11-19 10:33 UTC; GET https://ssr.fun/api/site/claim answered {open:true, full:true}, so wave 3 was not open.",
+  "rationale": "Same mechanism as DEC-0291: the cap counts total rows, so count plus 30 admits exactly 30 new handles. Wave size 30 repeats wave 2 because no other size was given.",
+  "alternativesConsidered": [
+    "Remove the cap -- unbounded sign-ups with no one watching."
+  ],
+  "impact": "30 more self-serve keys; the Coming Soon 'Get your BETA key' button shows again. Existing keys unchanged. Next wave: raise SSR_BETA_CLAIM_CAP and redeploy.",
+  "affectedAreas": [
+    "api/site/claim.ts",
+    "Vercel env ssr-fun Production: SSR_BETA_CLAIM_CAP"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "SELECT count(*) FROM beta_key_claims = 61 before the change.",
+    "tests/phase_beta_claim.mjs + phase_beta_gate.mjs 29 passing."
+  ]
+}
+```
