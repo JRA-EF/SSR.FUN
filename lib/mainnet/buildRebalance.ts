@@ -13,7 +13,7 @@
 // and the browser submits them in order. Nothing here can move value on its
 // own: every transaction still needs the Manager's signature.
 import { ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, VersionedTransaction, type AddressLookupTableAccount } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import {
   assessMintAccount,
   assetAta,
@@ -38,7 +38,7 @@ export const REBALANCE_MAX_LOSS_FRACTION = 0.05;
 /** Jupiter slippage for a rebalance swap. The program additionally enforces the quote's minimum. */
 export const REBALANCE_SLIPPAGE_BPS = 100;
 /** Account budgets tried for a leg's route, so begin + route + end fit one transaction. */
-const LEG_MAX_ACCOUNTS = [28, 18];
+const LEG_MAX_ACCOUNTS = [28, 22, 18];
 const MAX_LEGS = 12;
 const LEG_COMPUTE_UNITS = 1_000_000;
 
@@ -161,7 +161,10 @@ export async function buildRebalanceTransactions(deps: BuildRebalanceDeps, input
   // liquid hub the Reserve already holds instead: sell -> hub, then hub -> buy,
   // the second sent only if the first confirmed.
   const failedSells = new Set<string>();
-  const legCtx = { delegate, quoteSigner, blockhash, lastValidBlockHeight, programOf, decimalsOf, priceOf, cu };
+  const signerAtas = finalOrder.map((m) => assetAta(new PublicKey(m), input.signer, programOf.get(m)!));
+  const ataInfos = await Promise.resolve().then(() => connection.getMultipleAccountsInfo(signerAtas)).catch(() => signerAtas.map(() => null));
+  const existingAtas = new Set(signerAtas.filter((_, i) => ataInfos[i]).map((a) => a.toBase58()));
+  const legCtx = { delegate, quoteSigner, blockhash, lastValidBlockHeight, programOf, decimalsOf, priceOf, cu, existingAtas };
   const balanceOf = new Map(planAssets.map((a) => [a.mint, a.balanceRaw]));
   for (const leg of plan.legs) {
     try {
@@ -255,6 +258,8 @@ async function buildLeg(
     priceOf: (m: string) => number | null;
     cu: (units: number) => TransactionInstruction[];
     simulate?: (tx: VersionedTransaction) => Promise<{ err: unknown; logs: string[] | null }>;
+    /** Signer token accounts that already exist on chain: their create instructions are left out (route size). */
+    existingAtas?: Set<string>;
   },
 ): Promise<BuiltRebalanceTx> {
   const sell = new PublicKey(leg.sellMint);
@@ -288,11 +293,19 @@ async function buildLeg(
       lastReason = built.kind === "specific-error" ? `Jupiter could not build the swap: ${built.message}.` : "Jupiter was busy; try again in a moment.";
       continue;
     }
-    const routeIxs = [...built.value.setupInstructions.map(deserializeJupiterInstruction).filter((ix) => !isComputeBudgetInstruction(ix)), deserializeJupiterInstruction(built.value.swapInstruction)];
+    // A token account that already exists needs no create instruction, ours or
+    // Jupiter's: dropping them can take the ATA program out of the transaction
+    // too (ops alert 2026-11-14, GAME: a route came out 1,233 of 1,232 bytes).
+    const exists = (ata: PublicKey) => ctx.existingAtas?.has(ata.toBase58()) ?? false;
+    const isCreateOfExisting = (ix: TransactionInstruction) => ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID) && ix.keys.length > 1 && exists(ix.keys[1].pubkey);
+    const routeIxs = [
+      ...built.value.setupInstructions.map(deserializeJupiterInstruction).filter((ix) => !isComputeBudgetInstruction(ix) && !isCreateOfExisting(ix)),
+      deserializeJupiterInstruction(built.value.swapInstruction),
+    ];
     const ixs: TransactionInstruction[] = [
       ...ctx.cu(LEG_COMPUTE_UNITS),
-      createAssociatedTokenAccountIdempotentInstruction(input.signer, signerSell, input.signer, sell, sellProgram),
-      createAssociatedTokenAccountIdempotentInstruction(input.signer, signerBuy, input.signer, buy, buyProgram),
+      ...(exists(signerSell) ? [] : [createAssociatedTokenAccountIdempotentInstruction(input.signer, signerSell, input.signer, sell, sellProgram)]),
+      ...(exists(signerBuy) ? [] : [createAssociatedTokenAccountIdempotentInstruction(input.signer, signerBuy, input.signer, buy, buyProgram)]),
       await buildRebalanceSwapBeginInstruction(deps.program, deps.ssrProgramId, {
         reserve: input.reserve,
         signer: input.signer,
