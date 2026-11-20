@@ -29,6 +29,7 @@ import { fetchOwnedBalanceRawSettled } from "./createReserveClient";
 import { AmbiguousConfirmationError, resolveSubmittedSignature, sendAndConfirmWithRebroadcast, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
 import { waitForLookupTable, type BuiltTransaction } from "./multiAssetBuyClient";
+import { isAltSetupKind, landAltSetupThenRebuild } from "./reserveAltSetupFirst";
 import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 
 const log = (msg: string, extra?: Record<string, unknown>) => {
@@ -41,6 +42,7 @@ export type MultiAssetSellProgressEvent =
   | { phase: "single-transaction" }
   /** The sale could not fit one transaction: the wallet is about to show `total` transactions at once, `swaps` of them asset-to-USDC sales (DEC-0226). */
   | { phase: "signing-batch"; swaps: number; total: number; setup: number }
+  | { phase: "enabling-one-approval-trading" }
   | { phase: "redeeming" }
   | { phase: "swapping"; mint: string; index: number; total: number }
   /** A signed transaction is on the wire and being confirmed (re-broadcast until it lands) -- the wallet prompt is over. */
@@ -387,6 +389,23 @@ export async function executeMultiAssetSellMainnet(params: ExecuteMultiAssetSell
   for (let attempt = 0; ; attempt++) {
     params.onProgress?.({ phase: "building" });
     build = await requestSellBuild(buildRequest());
+    // DEC-0293: a first redemption's table setup gets its own small approval and
+    // lands before the redemption is built (Phantom refused the combined batch:
+    // SAIR #92, "security verification failed", Close only).
+    if (build.transactions.some((t) => isAltSetupKind(t.kind))) {
+      params.onProgress?.({ phase: "enabling-one-approval-trading" });
+      build = await landAltSetupThenRebuild(build, () => requestSellBuild(buildRequest()), {
+        connection: params.connection,
+        reserve: reserveBase58,
+        signMany,
+        submitAndConfirm: async (tx, lastValidBlockHeight, what) => {
+          const { signature, outcome } = await submit(tx, lastValidBlockHeight, what);
+          throwOutcome(outcome, signature, "The lookup-table setup", "");
+        },
+        log,
+      });
+      params.onProgress?.({ phase: "building" });
+    }
     log("server build", { mode: build.mode, transactions: build.transactions.map((t) => ({ kind: t.kind, mint: t.mint, bytes: t.bytes })), timings: build.timings, quotedUsdcOutRaw: build.plan.quotedUsdcOutRaw });
 
     if (build.mode === "single") params.onProgress?.({ phase: "single-transaction" });

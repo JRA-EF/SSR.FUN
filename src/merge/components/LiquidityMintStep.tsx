@@ -27,7 +27,7 @@ const progressText=(e:MultiAssetBuyProgressEvent,ticker:string)=>{
  switch(e.phase){
   case 'building':return 'Preparing the mint…';
   case 'single-transaction':return `One approval: your USDC is swapped into the reserve assets and ${ticker} is minted.`;
-  case 'enabling-one-approval-trading':return 'One-time setup for this Reserve first (a small separate approval).';
+  case 'enabling-one-approval-trading':return 'One-time setup for this Reserve first (one or two small separate approvals).';
   case 'signing-batch':return `Your wallet will show ${e.total} transactions to approve together: ${e.swaps} swap USDC into the reserve assets, then one mints ${ticker}.`;
   case 'swapping':return `Swapping USDC into reserve asset ${e.index+1} of ${e.total}…`;
   case 'minting':return `Minting ${ticker}…`;

@@ -43,6 +43,7 @@ import { assertAllSignedBy, assertSignerReady } from "./assertSigner";
 import { shouldSubmitMint, buildBuyStateReport, countableAcquiredRaw, computeOwnerTokenDeltaRaw, type BuyStateReport, type TokenBalanceEntry } from "./multiAssetBuyPlan";
 import { AmbiguousConfirmationError, resolveSubmittedSignature, sendAndConfirmWithRebroadcast, withRateLimitRetry, type ConfirmationOutcome } from "./rpcResilience";
 import { registerReserveAlt } from "./reserveAltClient";
+import { isAltSetupKind, landAltSetupThenRebuild, waitForLookupTable } from "./reserveAltSetupFirst";
 import { recordMintDust } from "./recoveryRecords";
 
 /** Same threshold createReserveClient.ts's seed funding uses -- routine slippage below this is never reported as a shortfall worth warning about. */
@@ -391,7 +392,25 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       acquiredRawByMint: acquiredRawByMint(),
       ...extra,
     });
-    const build = await requestBuyBuild(buildRequest());
+    let build = await requestBuyBuild(buildRequest());
+    // DEC-0293: a first mint's table setup gets its own small approval and lands
+    // before the mint is built, so the main prompt never references a table
+    // that does not exist yet (Phantom refused such batches outright).
+    if (build.transactions.some((t) => isAltSetupKind(t.kind))) {
+      currentStage = "a one-time setup for this Reserve";
+      params.onProgress?.({ phase: "enabling-one-approval-trading" });
+      build = await landAltSetupThenRebuild(build, () => requestBuyBuild(buildRequest()), {
+        connection: params.connection,
+        reserve: reserveBase58,
+        signMany,
+        submitAndConfirm: async (tx, lastValidBlockHeight, what) => {
+          const { signature, outcome } = await submit(tx, lastValidBlockHeight, what);
+          throwOutcome(outcome, signature, "The lookup-table setup", "");
+        },
+        log,
+      });
+      params.onProgress?.({ phase: "building" });
+    }
     requiredAmountsRaw = build.plan.requiredAmountsRaw.map((r) => BigInt(r));
     pending.expectedNetReserveTokensRaw = build.plan.expectedNetReserveTokensRaw;
     savePendingBuy(pending);
@@ -639,15 +658,4 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   }
 }
 
-/** A lookup table only becomes referenceable once the chain has advanced past the slot of its last extension -- bounded wait for it to be fully readable and active. */
-export async function waitForLookupTable(connection: Connection, table: PublicKey, timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const res = await connection.getAddressLookupTable(table).catch(() => null);
-    if (res?.value?.isActive()) {
-      const slotNow = await connection.getSlot("confirmed").catch(() => 0);
-      if (slotNow > res.value.state.lastExtendedSlot) return;
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-}
+export { waitForLookupTable };

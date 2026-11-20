@@ -8998,3 +8998,36 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0293
+
+```json
+{
+  "id": "DEC-0293",
+  "date": "2026-11-20",
+  "title": "A Reserve's one-time lookup-table setup is signed in its own approvals and confirmed before the mint or redemption is built",
+  "status": "confirmed",
+  "decision": "1. Mint (multiAssetBuyClient) and redemption (multiAssetSellClient): when the server build carries alt-create / alt-extend, each setup transaction is signed in its own wallet approval and confirmed, the client waits for the table, registers it (3 tries), and asks the server for a fresh build, which no longer carries setup; only then is the main batch signed. Shared helper src/merge/lib/reserveAltSetupFirst.ts. 2. Between create and extend the client waits until the table account is readable (an RPC node that has not seen it refuses the extend: InvalidAccountOwner). 3. SAIR #92 (FhJH..MrVT) got its table from the protocol wallet: 7F1i..cizP, 31 addresses, authority ..4Rw8, registered in reserve_alts.",
+  "context": "SAIR #92 creator (..GiVn), 2026-11-20 support message: could not mint, and after wind down could not redeem 89.93 SAIR (whole supply). The 7-transaction redemption (2 table setup + redeem + 4 swaps) made Phantom answer 'security verification failed -- server error' with only Close: Phantom checks every transaction of a sign-all prompt, and transactions 2-7 load a table that does not exist yet. Closing the prompt is a user cancel, so no ops alert was raised.",
+  "rationale": "Only the setup depends on nothing; once it has landed every transaction in the main prompt can be checked by the wallet. Same pattern as the existing createAndRegisterReserveAlt path.",
+  "alternativesConsidered": [
+    "Protocol wallet creates every Reserve's table at launch -- costs ~0.007 SOL per Reserve from ..4Rw8 and needs a server key path; kept as the manual unblock only.",
+    "Keep one prompt and tell users to ignore the warning -- Phantom offered no way to continue."
+  ],
+  "impact": "First mint or redemption on a Reserve without a table now takes one or two small extra approvals before the main one. SAIR's redemption is 5 transactions (redeem + 4 swaps); the redeem simulates clean from the creator's wallet.",
+  "affectedAreas": [
+    "src/merge/lib/reserveAltSetupFirst.ts",
+    "src/merge/lib/multiAssetBuyClient.ts",
+    "src/merge/lib/multiAssetSellClient.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/components/LiquidityMintStep.tsx"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Table create 3P5v..f8SB6, extend wsPA..itNCov (2026-11-20).",
+    "Read-only redemption build for ..GiVn after: mode batch, redeem + 4 swaps, no setup; redeem simulation err null.",
+    "tests/phase_alt_setup_first.ts 3 passing; buy/sell/mint/redeem suites 248 passing, 1 known IDL pin failure."
+  ]
+}
+```
