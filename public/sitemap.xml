@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Public pages only (everything else is behind the beta gate). Keep the /docs entries in step with src/docs/content/index.tsx. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://ssr.fun/</loc></url>
+  <url><loc>https://ssr.fun/leaderboard</loc></url>
+  <url><loc>https://ssr.fun/docs</loc></url>
+  <url><loc>https://ssr.fun/docs/getting-started</loc></url>
+  <url><loc>https://ssr.fun/docs/reserve-tokens-on-dexes</loc></url>
+  <url><loc>https://ssr.fun/docs/add-liquidity</loc></url>
+  <url><loc>https://ssr.fun/docs/protocol-reference</loc></url>
+</urlset>

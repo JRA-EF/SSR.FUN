@@ -45,18 +45,31 @@ export interface LandingStatsState {
 }
 
 const STALE_AFTER_MS = 90_000;
+/** A first load slower than this resolves to "unavailable" (cards show "Unavailable", not an endless "Loading…") and retries in the background. */
+const FIRST_LOAD_TIMEOUT_MS = 20_000;
+const RETRY_DELAYS_MS = [15_000, 45_000, 120_000];
 
 export function useLandingStats(): LandingStatsState {
   const [state, setState] = useState<{ status: LandingStatsStatus; data: LandingStatsData | null }>({ status: "loading", data: null });
   const [stale, setStale] = useState(false);
   const cancelledRef = useRef(false);
+  const hasDataRef = useRef(false);
 
-  const fetchOnce = useCallback((force?: boolean) => {
+  const fetchOnce = useCallback((force?: boolean, attempt = 0) => {
     setStale(false);
     const base = IS_MAINNET ? "/api/mainnet/landing-stats" : "/api/devnet/landing-stats";
+    // The very first load gets a deadline: the server can take a long time on
+    // a cold start, and "Loading…" must not sit on every card indefinitely.
+    // The request itself keeps going; whichever lands first wins.
+    const timer = !hasDataRef.current
+      ? setTimeout(() => {
+          if (!cancelledRef.current && !hasDataRef.current) setState((prev) => (prev.data ? prev : { status: "unavailable", data: null }));
+        }, FIRST_LOAD_TIMEOUT_MS)
+      : null;
     fetch(force ? `${base}?force=1` : base)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error("request failed"))))
       .then((data: LandingStatsData) => {
+        hasDataRef.current = true;
         if (!cancelledRef.current) setState({ status: "ready", data });
       })
       .catch(() => {
@@ -64,6 +77,16 @@ export function useLandingStats(): LandingStatsState {
         // already-displayed real data with "unavailable" -- only the very
         // first load has no fallback to keep showing.
         if (!cancelledRef.current) setState((prev) => (prev.data ? prev : { status: "unavailable", data: null }));
+        // No data yet: try again a few times in the background.
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (!hasDataRef.current && delay !== undefined) {
+          setTimeout(() => {
+            if (!cancelledRef.current && !hasDataRef.current) fetchOnce(false, attempt + 1);
+          }, delay);
+        }
+      })
+      .finally(() => {
+        if (timer) clearTimeout(timer);
       });
   }, []);
 

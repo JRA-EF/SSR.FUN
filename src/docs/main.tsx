@@ -11,7 +11,15 @@ import { DocsApp } from './DocsApp'
 
 // Same first-paint theme rule as the main app (src/main.tsx): light unless
 // the visitor chose dark, shared through the same localStorage key.
-if (localStorage.getItem('ssrfun-theme') !== 'dark') {
+// Guarded: a browser with storage blocked throws here, which used to stop the
+// whole docs app from rendering (a blank page).
+let savedTheme: string | null = null
+try {
+  savedTheme = localStorage.getItem('ssrfun-theme')
+} catch {
+  savedTheme = null
+}
+if (savedTheme !== 'dark') {
   document.documentElement.dataset.theme = 'light'
 }
 

@@ -1,3 +1,7 @@
 User-agent: *
 Allow: /$
+Allow: /docs
+Allow: /leaderboard
 Disallow: /
+
+Sitemap: https://ssr.fun/sitemap.xml

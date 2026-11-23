@@ -123,7 +123,27 @@ async function requestJupiterPrices(mints: string[], headers: Record<string, str
  */
 export async function fetchJupiterPrices(mints: string[], opts: { throwOnFailure?: boolean } = {}): Promise<Map<string, RawJupiterPrice>> {
   const out = new Map<string, RawJupiterPrice>();
-  if (mints.length === 0) return out;
+  const unique = [...new Set(mints)];
+  if (unique.length === 0) return out;
+  // Jupiter Price V3 answers at most JUPITER_PRICE_MAX_IDS ids per request and
+  // silently drops the rest (2026-11-23: the warm-cache pass sent 60 mints, 10
+  // came back unpriced, so Reserves holding them -- e.g. #93 JTO, #95 -- never
+  // got a NAV point and had no campaign PnL). Split into batches.
+  if (unique.length > JUPITER_PRICE_MAX_IDS) {
+    const chunks: string[][] = [];
+    for (let i = 0; i < unique.length; i += JUPITER_PRICE_MAX_IDS) chunks.push(unique.slice(i, i + JUPITER_PRICE_MAX_IDS));
+    const parts = await Promise.all(chunks.map((c) => fetchJupiterPriceBatch(c, opts)));
+    for (const part of parts) for (const [k, v] of part) out.set(k, v);
+    return out;
+  }
+  return fetchJupiterPriceBatch(unique, opts);
+}
+
+/** Jupiter Price V3's per-request id limit (extra ids are dropped without an error). */
+export const JUPITER_PRICE_MAX_IDS = 50;
+
+async function fetchJupiterPriceBatch(mints: string[], opts: { throwOnFailure?: boolean }): Promise<Map<string, RawJupiterPrice>> {
+  const out = new Map<string, RawJupiterPrice>();
   const apiKey = process.env.JUPITER_API_KEY;
   let result = apiKey ? await requestJupiterPrices(mints, { "x-api-key": apiKey }) : { ok: false, unauthorized: false, body: null as Record<string, unknown> | null };
   if (!result.ok && (!apiKey || result.unauthorized)) {

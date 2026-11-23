@@ -97,7 +97,11 @@ export function ReserveCard({
         </div>
         <div className="fcard-price">
           <div className="num" style={{ fontWeight: 600, fontSize: 15 }}>{priceFormatted}</div>
-          <div className={`num ${up ? 'up' : 'down'}`} style={{ fontSize: 12 }}>{changeFormatted}</div>
+          {/* Labelled "24h" so it isn't read as the all-time figure on the Reserve page or the campaign PnL. */}
+          <div className={`num ${up ? 'up' : 'down'}`} style={{ fontSize: 12 }} title="Token Price change over the last 24 hours">
+            {changeFormatted}
+            {changeFormatted !== '—' && <span style={{ color: 'var(--text-3)', fontWeight: 400, marginLeft: 4 }}>24h</span>}
+          </div>
         </div>
       </div>
 

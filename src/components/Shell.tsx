@@ -9,6 +9,7 @@ import { ReserveSearch } from './ReserveSearch'
 import { IS_MAINNET } from '@/lib/solana-config'
 import { EvmWalletChip } from './EvmWalletChip'
 import { EVM_ENABLED } from '@/lib/evmFeature'
+import { FEEDBACK_ENABLED, feedbackHref } from '@/lib/feedback'
 
 const CLUSTER_LABEL = IS_MAINNET ? 'Mainnet' : 'DevNet'
 
@@ -68,6 +69,11 @@ export function Shell({ children }: { children: ReactNode }) {
     setWalletPanelOpen(false)
   }, [path])
 
+  // Beta feedback (2026-11-23): the corner launcher can be dismissed, so the
+  // header always offers the same in-app feedback page (#/feedback).
+  const onFeedbackPage = path.split('?')[0] === '/feedback'
+  const feedbackTo = feedbackHref({ trigger: 'button', from: onFeedbackPage ? '/' : path })
+
   return (
     <>
       <a
@@ -111,8 +117,19 @@ export function Shell({ children }: { children: ReactNode }) {
             {/* Public Documentation site: a real path (docs.html via the
                 /docs rewrite), not a hash route, so it is a plain anchor. */}
             <a href="/docs" className="nav-link">Docs</a>
+            {FEEDBACK_ENABLED && (
+              <Link to={feedbackTo} className={`nav-link${onFeedbackPage ? ' active' : ''}`}>Feedback</Link>
+            )}
           </nav>
           <ReserveSearch />
+          {/* Phones hide .nav-links, so Feedback gets a small icon button there. */}
+          {FEEDBACK_ENABLED && (
+            <Link to={feedbackTo} className="theme-btn nav-feedback-btn" ariaLabel="Send feedback">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </Link>
+          )}
           <ThemeToggle />
           {/* Robinhood Chain wallet, beside the Solana one: both chains are
               first-class, so both connect from the shell. Hidden while the
@@ -176,6 +193,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Link to="/#how" className="faint">How it works</Link>
                 <a href="/docs" className="faint">Documentation</a>
+                {FEEDBACK_ENABLED && <Link to={feedbackTo} className="faint">Send feedback</Link>}
                 <Link to="/legal/terms" className="faint">Terms</Link>
                 <Link to="/legal/disclosures" className="faint">Disclosures</Link>
                 <Link to="/legal/privacy" className="faint">Privacy</Link>

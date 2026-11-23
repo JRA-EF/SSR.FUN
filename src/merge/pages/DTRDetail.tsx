@@ -2229,6 +2229,7 @@ export function DTRDetail() {
                           title="All-time change in Token Price since launch"
                         >
                           {allTimeChangePct === null ? "—" : `${allTimeChangePct >= 0 ? "+" : ""}${allTimeChangePct.toFixed(2)}%`}
+                          {allTimeChangePct !== null && <span className="ml-1 text-muted-foreground">since launch</span>}
                         </span>
                       )}
                     </div>

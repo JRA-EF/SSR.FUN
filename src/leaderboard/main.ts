@@ -11,6 +11,8 @@ interface Board {
   phase: 'unscheduled' | 'upcoming' | 'live' | 'closed'
   startTs: number | null; endTs: number | null; entries: number; traderEntries: number
   volume: Row[]; pnl: Row[]; traders: Trader[]
+  /** Entered Reserves without a PnL figure yet (older API responses omit it). */
+  pnlUnavailable?: (Omit<Row, 'rank' | 'value'> & { reason: string })[]
   volumeLeader: { kind: 'reserve' | 'trader'; id: string; value: number } | null
   generatedAt: string
 }
@@ -56,11 +58,16 @@ function render(b: Board) {
   else vb.replaceChildren(...b.volume.map(r => el('tr', {}, el('td', { class: 'rank' }, String(r.rank)), el('td', {}, reserveCell(r)), el('td', {}, handleLink(r.handle)), el('td', { class: 'num' }, usd.format(r.value)))))
 
   const pb = $('pnl-body')
-  if (!b.pnl.length) emptyRow(pb, 4, noEntries)
+  const unavailable = b.pnlUnavailable ?? []
+  if (!b.pnl.length && !unavailable.length) emptyRow(pb, 4, noEntries)
   else pb.replaceChildren(...b.pnl.map(r => {
     const pct = el('td', { class: `num ${r.value >= 0 ? 'up' : 'down'}` }, `${r.value >= 0 ? '+' : ''}${r.value.toFixed(2)}%`)
     return el('tr', {}, el('td', { class: 'rank' }, String(r.rank)), el('td', {}, reserveCell(r)), el('td', {}, handleLink(r.handle)), pct)
-  }))
+  }), ...unavailable.map(r => el('tr', {}, el('td', { class: 'rank' }, '–'), el('td', {}, reserveCell({ ...r, rank: 0, value: 0 })), el('td', {}, handleLink(r.handle)),
+    el('td', { class: 'num na', title: r.reason }, 'n/a'))))
+  const notes = $('pnl-notes')
+  notes.hidden = !unavailable.length
+  notes.replaceChildren(...unavailable.map(r => el('li', {}, el('b', {}, r.name), `: ${r.reason}`)))
 
   const tb = document.getElementById('trader-body')
   if (!tb) { /* Top Traders card removed; the trader leader still shows in the Volume card */ }

@@ -101,6 +101,8 @@ const PUBLIC_PATHS = new Set([
   '/apple-touch-seal.png',
   '/favicon.svg',
   '/robots.txt',
+  // Lists only the public pages below (/, /leaderboard, /docs); gated, it served the Coming Soon HTML.
+  '/sitemap.xml',
   // Public feedback form (BotID + rate-limited submit, see api/feedback/submit.ts).
   '/feedback',
   '/feedback.html',

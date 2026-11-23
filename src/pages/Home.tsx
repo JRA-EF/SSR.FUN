@@ -108,7 +108,8 @@ export function Home() {
                 <div className="k">Total Reserve Market Cap</div>
                 <div className="v">{fmtUsd(totalMarketCap)}</div>
               </div>
-              <div className="kpi-card">
+              {/* Owner, 2026-11-23: all-time volume deliberately also counts Reserves no longer listed on Discover, so it can exceed the sum of the cards. */}
+              <div className="kpi-card" title="Every mint, redemption and SSR pool swap since launch, including Reserves that have since closed or are no longer listed on Discover.">
                 <div className="k">All-Time Volume</div>
                 <div className="v">
                   {landingStats.status === 'loading' && '…'}
@@ -119,6 +120,7 @@ export function Home() {
                       : fmtUsd(allTimeVolume)
                   )}
                 </div>
+                <div className="kpi-note">Includes Reserves that have since closed</div>
               </div>
               <div className="kpi-card">
                 <div className="k">Active Reserves</div>
