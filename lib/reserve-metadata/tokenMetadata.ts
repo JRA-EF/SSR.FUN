@@ -45,7 +45,11 @@ export function rewriteAppImageUrl(imageUrl: string, origin: string | null | und
   if (!origin) return imageUrl;
   try {
     const u = new URL(imageUrl);
-    if (!APP_HOSTS.has(u.hostname.toLowerCase())) return imageUrl;
+    const host = u.hostname.toLowerCase();
+    // Any *.vercel.app deployment host on this app's own picture/metadata path counts too
+    // (old preview hosts 302 to a login page) -- same rule as the SDK's isAppServedUrl.
+    const appPath = /^\/api\/(mainnet|devnet|robinhood)\/reserve-(metadata|image)\/?$/i.test(u.pathname);
+    if (!APP_HOSTS.has(host) && !(host.endsWith(".vercel.app") && appPath)) return imageUrl;
     return `${origin.replace(/[/]+$/, "")}${u.pathname}${u.search}`;
   } catch {
     return imageUrl;

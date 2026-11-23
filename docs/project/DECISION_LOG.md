@@ -9066,3 +9066,53 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0295
+
+```json
+{
+  "id": "DEC-0295",
+  "date": "2026-11-23",
+  "title": "Beta-feedback data/display fixes: Jupiter price batching, campaign PnL n/a rows, Discover small-Reserve filter, labelled change periods, public sitemap",
+  "status": "confirmed",
+  "decision": "1. fetchJupiterPrices (api/mainnet/asset-prices.ts) splits requests into batches of 50 ids (Jupiter Price V3 drops the rest without an error). 2. The campaign leaderboard API returns pnlUnavailable (entered Reserves with no PnL yet, with a plain-language reason); /leaderboard lists them as n/a with notes, uses a fixed table layout (no in-card horizontal scroll). While the campaign runs, a Reserve with no recorded NAV is valued now from the snapshot. 3. Discover hides Reserves with under one Reserve Token in circulation (empty ones included, DEC-0246) or a priced TVL under $1 behind a 'Show small/inactive Reserves' toggle; an unpriced Reserve is never hidden for its TVL; Reserve pages and links are unchanged. 4. Change figures are labelled: Discover card '24h', Reserve page header 'since launch', leaderboard PnL 'since launch'. 5. Homepage All-Time Volume keeps its number and says it includes closed Reserves (owner: expected). 6. Metadata/picture URLs on any *.vercel.app host with this app's own /api/{mainnet,devnet,robinhood}/reserve-{metadata,image} path are fetched from the current origin. 7. /sitemap.xml is a real XML sitemap of the public pages, outside the beta gate; robots.txt allows /docs and /leaderboard and names the sitemap. 8. docs.html carries a readable index before JavaScript runs. 9. Header (desktop link, phone icon) and footer link to the in-app feedback page. 10. landing-stats is edge-cached (s-maxage=60, swr=600) and the client gives up on a first load after 20 s (shows Unavailable, retries in the background).",
+  "context": "Beta tester feedback 2026-11-23: #93 KING and #95 GAME missing from the PnL ranking; volume clipped in the leaderboard card; homepage volume larger than the sum of Discover cards; Discover cards stuck on 'Loading…'; 24h figures disagreeing; junk test Reserves on Discover; CORS errors from #91's old preview metadata host; /docs unreadable to tools; sitemap.xml serving HTML; feedback hard to find. Root cause of the PnL gap: the warm-cache pass sent 60 mints to Jupiter in one request and got 50 back, so JTO (#93) and ApZu..pbKg (#95) had no price, computeNavUsd returned null and reserve_nav_history never got a row for those Reserves.",
+  "rationale": "Fix the shared price fetch once so every caller (warm cache, landing stats, entry prices, compound quotes) benefits; keep the leaderboard honest by listing what can't be computed instead of dropping it.",
+  "alternativesConsidered": [
+    "Compute PnL from the entry anchor alone -- one point is not a change.",
+    "Hide small Reserves outright -- conflicts with DEC-0246 (empty Reserves stay discoverable), so a toggle instead.",
+    "Re-add the Top Traders table -- removed on purpose in d303239; the trader leader stays in the Volume card."
+  ],
+  "impact": "After deploy, the next warm-cache pass prices every asset and starts NAV history for #93/#95; their PnL appears once a point is recorded (immediately via the live snapshot fallback). Discover shows fewer cards by default.",
+  "affectedAreas": [
+    "api/mainnet/asset-prices.ts",
+    "api/mainnet/landing-stats.ts",
+    "lib/campaign/leaderboard.ts",
+    "lib/campaign/rules.ts",
+    "leaderboard.html",
+    "src/leaderboard/main.ts",
+    "src/merge/pages/Discover.tsx",
+    "src/merge/lib/directoryEntry.ts",
+    "src/merge/MergeLayout.tsx",
+    "src/merge/hooks/useLandingStats.ts",
+    "src/components/ReserveCard.tsx",
+    "src/components/Shell.tsx",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/pages/Home.tsx",
+    "packages/sdk/src/discovery.ts",
+    "lib/reserve-metadata/tokenMetadata.ts",
+    "docs.html",
+    "src/docs/main.tsx",
+    "public/sitemap.xml",
+    "public/robots.txt",
+    "middleware.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Prod snapshot 2026-11-23: 61 distinct asset mints (60 sent to Jupiter), 51 priced incl. USDC; the 10 unpriced all price when requested alone.",
+    "reserve_nav_history: no rows for FFPx..7VdbQ... (#93) or B2Es..JZr (#95); entry prices exist for both.",
+    "tests/phase_data_display.ts 12 passing; full ts suite 1855 passing, 5 failing (same 5 fail on origin/main)."
+  ]
+}
+```

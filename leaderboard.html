@@ -68,15 +68,18 @@
     .sub { margin-top: 6px; font-size: 10px; font-weight: 300; line-height: 1.7; color: var(--ink-3); }
     .leader { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--lav); font-size: 11px; line-height: 1.6; color: var(--ink-2); }
     .leader b { color: var(--navy); }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 11px; }
+    /* Fixed layout: long Reserve names and handles truncate instead of pushing the Volume/PnL column past the card edge. */
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 11px; table-layout: fixed; }
+    col.c-rank { width: 30px; } col.c-num { width: 96px; } col.c-creator { width: 30%; }
     th { text-align: left; font-size: 9px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); padding: 8px 6px; border-bottom: 1px solid var(--lav-line); }
-    td { padding: 10px 6px; border-bottom: 1px solid var(--lav); vertical-align: middle; }
+    td { padding: 10px 6px; border-bottom: 1px solid var(--lav); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     tr:last-child td { border-bottom: 0; }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    td.rank { width: 28px; font-weight: 800; color: var(--blue-2); }
+    td.rank { font-weight: 800; color: var(--blue-2); }
     .res { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .res > div { min-width: 0; overflow: hidden; }
     .res img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: none; background: var(--lav); }
-    .res a { color: var(--ink); text-decoration: none; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .res a { display: block; color: var(--ink); text-decoration: none; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .res a:hover { text-decoration: underline; }
     .tick { font-size: 9px; color: var(--ink-3); letter-spacing: .08em; }
     .handle { color: var(--blue-1); text-decoration: none; }
@@ -90,7 +93,15 @@
     .updated { margin-top: 18px; text-align: center; font-size: 10px; color: var(--ink-3); letter-spacing: .06em; }
     footer { padding: 18px 16px 28px; text-align: center; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
     footer a { color: inherit; }
-    .table-wrap { overflow-x: auto; }
+    .table-wrap { min-width: 0; }
+    td.na { color: var(--ink-3); font-weight: 600; }
+    .na-notes { margin: 8px 0 0 18px; font-size: 10px; line-height: 1.7; color: var(--ink-3); font-weight: 300; }
+    .na-notes b { font-weight: 600; color: var(--ink-2); }
+    @media (max-width: 520px) {
+      col.c-num { width: 76px; } col.c-creator { width: 28%; } col.c-rank { width: 24px; }
+      th, td { padding-left: 4px; padding-right: 4px; }
+      .res { gap: 6px; } .res img { width: 22px; height: 22px; }
+    }
     .cta .short { display: none; }
     @media (max-width: 520px) { .cta .long { display: none; } .cta .short { display: inline; } .wordmark { font-size: 16px; } }
     .disclaimer { margin: 10px auto 0; max-width: 720px; text-align: center; font-size: 10px; font-weight: 300; line-height: 1.7; color: var(--ink-3); }
@@ -119,6 +130,7 @@
         <p class="sub">Reserves by mint, redeem, rebalance and pool trading volume during the campaign, the creator's own trades included. Signed-up traders compete too: the prize goes to the top Reserve or the top trader, whichever is bigger. <a class="handle" href="/#/campaign">Sign up</a></p>
         <div class="leader" id="volume-leader" hidden></div>
         <div class="table-wrap"><table>
+          <colgroup><col class="c-rank" /><col /><col class="c-creator" /><col class="c-num" /></colgroup>
           <thead><tr><th>#</th><th>Reserve</th><th>Creator</th><th class="num">Volume</th></tr></thead>
           <tbody id="volume-body"></tbody>
         </table></div>
@@ -126,11 +138,13 @@
 
       <section class="card">
         <h2>Highest PnL <span class="prize"><span class="prize-label">Prize:</span>$100</span></h2>
-        <p class="sub">Reserve Token price change since launch. Frozen at campaign close.</p>
+        <p class="sub">Reserve Token price change since launch (not the 24h change shown on Discover). Frozen at campaign close.</p>
         <div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>Reserve</th><th>Creator</th><th class="num">PnL</th></tr></thead>
+          <colgroup><col class="c-rank" /><col /><col class="c-creator" /><col class="c-num" /></colgroup>
+          <thead><tr><th>#</th><th>Reserve</th><th>Creator</th><th class="num" title="Reserve Token price change since launch">PnL</th></tr></thead>
           <tbody id="pnl-body"></tbody>
         </table></div>
+        <ol class="na-notes" id="pnl-notes" hidden></ol>
       </section>
 
       <section class="card">

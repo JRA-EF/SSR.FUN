@@ -77,6 +77,9 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
   // cache the Home page and DTRDetail read (see hooks/useLandingStats.ts).
   const landingStats = useLandingStats();
   const [sortBy, setSortBy] = useState<SortKey>("aumDesc");
+  // Small/inactive Reserves (test baskets, empty or under-$1 TVL) are hidden by
+  // default; see directoryEntry.ts's isSmallOrInactiveReserve.
+  const [showSmall, setShowSmall] = useState(false);
 
   // Filter options: the full canonical list (so every structured category is
   // always choosable, even with zero matching Reserves yet) plus any
@@ -103,7 +106,7 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
   }, [dtrs, robinhood.reserves, landingStats.status, landingStats.data, liquidityPreviews]);
 
   const q = searchFilter.toLowerCase();
-  const filtered = entries.filter(
+  const matching = entries.filter(
     (e) =>
       (chainFilter === "all" || e.chain === chainFilter) &&
       (categoryFilter === "all" || e.category === categoryFilter) &&
@@ -112,6 +115,8 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
         (e.category ?? "").toLowerCase().includes(q) ||
         (e.chain === "robinhood" && "robinhood".includes(q))),
   );
+  const hiddenSmallCount = showSmall ? 0 : matching.filter((e) => e.smallOrInactive).length;
+  const filtered = showSmall ? matching : matching.filter((e) => !e.smallOrInactive);
 
   const visible = sortEntries(filtered, sortBy);
 
@@ -209,6 +214,25 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">Checking Robinhood Chain for live Reserves…</div>
       )}
 
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground -mt-4">
+        <span>
+          {hiddenSmallCount > 0
+            ? `${hiddenSmallCount} small or inactive Reserve${hiddenSmallCount === 1 ? "" : "s"} hidden (under $1 held or no tokens in circulation).`
+            : showSmall
+              ? "Showing every Reserve, including small and inactive ones."
+              : ""}
+        </span>
+        <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="accent-[hsl(var(--primary))]"
+            checked={showSmall}
+            onChange={(e) => setShowSmall(e.target.checked)}
+          />
+          Show small/inactive Reserves
+        </label>
+      </div>
+
       <div className="fcards">
         {visible.map((e) => (
           <ReserveCard
@@ -230,7 +254,11 @@ export function Discover({ initialChain = "all" }: { initialChain?: ChainFilter 
                 </EmptyMedia>
                 <EmptyTitle>No reserves match your filter</EmptyTitle>
                 <EmptyDescription>
-                  {isFiltered ? "Try a different search term or category." : "No reserves are available yet."}
+                  {isFiltered
+                    ? "Try a different search term or category."
+                    : hiddenSmallCount > 0
+                      ? "Only small or inactive Reserves exist right now. Tick \"Show small/inactive Reserves\" to see them."
+                      : "No reserves are available yet."}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>

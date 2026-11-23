@@ -7,7 +7,7 @@
 import type { ReserveCardProps } from "../../components/ReserveCard";
 import type { ReserveSnapshot } from "./evmReserve";
 import type { DTR } from "./types";
-import { buildReserveCardProps, type ReserveCardStats } from "./reserveCardProps";
+import { buildReserveCardProps, isNearlyEmptyReserve, type ReserveCardStats } from "./reserveCardProps";
 import type { LiquidityPoolPreview } from "./liquidityPreview";
 import { normalizeReserveCategory } from "./types";
 import { formatUsdc } from "./calculations";
@@ -27,6 +27,8 @@ export interface DirectoryEntry {
   change24h: number;
   /** Route into the shared /dtr/:id reserve page. */
   href: string;
+  /** Hidden from Discover by default (see isSmallOrInactiveReserve); shown with "Show small/inactive Reserves". */
+  smallOrInactive: boolean;
   card: Omit<ReserveCardProps, "renderCta">;
 }
 
@@ -42,6 +44,7 @@ export function solanaEntry(dtr: DTR, isMainnet: boolean, stats: ReserveCardStat
     price: dtr.tokenPrice,
     change24h: dtr.change24h,
     href: `/dtr/${dtr.id}`,
+    smallOrInactive: isSmallOrInactiveReserve(dtr),
     card: buildReserveCardProps(dtr, isMainnet, stats, pool),
   };
 }
@@ -72,6 +75,7 @@ export function robinhoodEntry(r: ReserveSnapshot): DirectoryEntry {
     price: price ?? 0,
     change24h: 0,
     href: `/dtr/${rhReserveId(r.address)}`,
+    smallOrInactive: aum !== null && aum < SMALL_RESERVE_TVL_USD,
     card: {
       name: r.name,
       ticker: r.symbol,
@@ -93,6 +97,25 @@ export function robinhoodEntry(r: ReserveSnapshot): DirectoryEntry {
       ],
     },
   };
+}
+
+/** Below this TVL (USD) a live Reserve counts as "small" and Discover hides it by default. */
+export const SMALL_RESERVE_TVL_USD = 1;
+
+/**
+ * Discover's default filter (beta feedback, 2026-11-23): hides test/junk
+ * Reserves -- under one Reserve Token in circulation (empty Reserves included,
+ * DEC-0246) or a priced TVL under $1 -- behind the "Show small/inactive
+ * Reserves" toggle. A Reserve whose price is unavailable is never hidden for
+ * its TVL (its $0 AUM is "unknown", not "small"); simulated fixtures are never
+ * hidden. The Reserve page and direct links are unaffected.
+ */
+export function isSmallOrInactiveReserve(dtr: Pick<DTR, "aum" | "onChain">): boolean {
+  const oc = dtr.onChain;
+  if (!oc) return false;
+  if (isNearlyEmptyReserve(oc)) return true;
+  if (oc.priceSource === "unavailable" || oc.priceSource === "none") return false;
+  return Number.isFinite(dtr.aum) && dtr.aum < SMALL_RESERVE_TVL_USD;
 }
 
 /** Featured = the largest live reserves, across every chain. */

@@ -3,8 +3,8 @@
 // activity log, DEX swaps, NAV history, entry prices) -- never RPC -- so the
 // public GET is cheap. Freshness comes from api/mainnet/campaign-refresh-cron.ts.
 import { readReserveSnapshot } from '../reserve-warm-cache/db'
-import { computeEntryNavUsd, type NavInputReserve, type NavPoint } from '../reserve-nav-history/navMath'
-import { CAMPAIGN_VOLUME_KINDS, campaignConfig, campaignPhase, isEligibleReserve, pnlPct, rank, traderVolume, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
+import { computeEntryNavUsd, computeNavUsd, type NavInputReserve, type NavPoint } from '../reserve-nav-history/navMath'
+import { CAMPAIGN_VOLUME_KINDS, campaignConfig, campaignPhase, isEligibleReserve, pnlPct, pnlUnavailableReason, rank, traderVolume, volumeByReserve, type CampaignPhase, type TradeRow } from './rules'
 import { getCampaignSql, listEntries, listTraders } from './db'
 
 /** Creation time (unix s) of every Reserve: its reserveCreated event, else its earliest indexed activity. */
@@ -58,6 +58,8 @@ export interface Leaderboard {
   traderEntries: number
   volume: LeaderboardRow[]
   pnl: LeaderboardRow[]
+  /** Entered Reserves whose PnL can't be computed yet, with a plain-language reason (shown as "n/a" under the PnL table). */
+  pnlUnavailable: (Omit<LeaderboardRow, 'rank' | 'value'> & { reason: string })[]
   /** Highest Volume is the greater of the top Reserve's volume and the top trader's volume (owner, 2026-11-03). */
   traders: TraderRow[]
   volumeLeader: { kind: 'reserve' | 'trader'; id: string; value: number } | null
@@ -76,7 +78,7 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
   for (const t of traderEntries) signups.set(t.wallet, { handle: t.handle, enteredAt: t.enteredAt })
   for (const w of cfg.excludedWallets) signups.delete(w)
   const handleByTrader = new Map([...signups].map(([w, v]) => [w, v.handle]))
-  const snap = (snapRow?.snapshot ?? {}) as { reserves?: SnapshotReserve[]; metadataByReserve?: Record<string, { name?: string; ticker?: string; imageUrl?: string }> }
+  const snap = (snapRow?.snapshot ?? {}) as { reserves?: SnapshotReserve[]; priceByMint?: Record<string, number>; metadataByReserve?: Record<string, { name?: string; ticker?: string; imageUrl?: string }> }
   const byReserve = new Map((snap.reserves ?? []).map(r => [r.reserve, r]))
 
   // New, non-team Reserves only (created at/after the start). A Reserve is entered when its creator (on-chain manager) has signed up.
@@ -131,6 +133,7 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
 
   // --- PnL: launch anchor (entry prices) or first recorded NAV, to the last NAV at/before close ---
   const pnl = new Map<string, number>()
+  const pnlReason = new Map<string, string>()
   if (reserves.length) {
     const closeMs = phase === 'closed' && cfg.endTs !== null ? cfg.endTs * 1000 : null
     const closeIso = new Date(closeMs ?? nowMs).toISOString()
@@ -167,8 +170,18 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
       if (first) points.push(first)
       const last = lastBy.get(reserve)
       if (last && (!first || last.t > first.t)) points.push(last)
+      // No recorded NAV yet (e.g. an asset was unpriced): while the campaign runs,
+      // value the Reserve now from the live snapshot so its row still shows a figure.
+      const snapNav = snapR && closeMs === null ? computeNavUsd(snapR, snap.priceByMint ?? {}) : null
+      if (!last && snapNav !== null) points.push({ t: Math.max(nowMs, ...points.map(p => p.t + 1)), nav: snapNav })
       const value = pnlPct(points, closeMs)
       if (value !== null) pnl.set(reserve, value)
+      else pnlReason.set(reserve, pnlUnavailableReason({
+        supplyRaw: snapR?.reserveTokenSupplyRaw ?? '0',
+        hasLaunchAnchor: !!entry,
+        hasHistory: !!first,
+        livePriced: snapNav !== null,
+      }))
     }
   }
 
@@ -207,6 +220,10 @@ export async function computeLeaderboard(nowMs = Date.now()): Promise<Leaderboar
     traderEntries: handleByTrader.size,
     volume: volumeRows,
     pnl: rank(reserves.map(r => row(r, pnl.get(r) ?? null))) as LeaderboardRow[],
+    pnlUnavailable: reserves.filter(r => !pnl.has(r)).map(r => {
+      const { value: _value, ...rest } = row(r, null)
+      return { ...rest, reason: pnlReason.get(r) ?? 'Not enough price history yet.' }
+    }),
     traders,
     volumeLeader,
     generatedAt: new Date(nowMs).toISOString(),

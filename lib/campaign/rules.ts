@@ -190,3 +190,11 @@ export function traderVolume(
   }
   return [...out].map(([wallet, v]) => ({ wallet, ...v })).sort((a, b) => b.usd - a.usd)
 }
+
+/** Why an entered Reserve has no PnL figure yet (plain language, shown as "n/a" under the PnL table). */
+export function pnlUnavailableReason(p: { supplyRaw: string; hasLaunchAnchor: boolean; hasHistory: boolean; livePriced: boolean }): string {
+  if (!(Number(p.supplyRaw) > 0)) return 'No Reserve Tokens in circulation, so there is no token price.'
+  if (!p.hasHistory && !p.livePriced) return "One of its reserve assets has no live USD price yet, so its token price can't be valued."
+  if (!p.hasLaunchAnchor && !p.hasHistory) return 'Its launch price has not been recorded yet.'
+  return 'Not enough price history yet. It appears once a second price point is recorded.'
+}

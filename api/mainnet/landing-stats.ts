@@ -262,7 +262,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
+  // Edge-cache plain reads (2026-11-23): the in-memory cache above is
+  // per-instance, so every cold instance made its visitor wait for a full
+  // RPC walk over every Reserve and Discover's cards sat on "Loading…".
+  // The BETA gate (middleware.ts) still runs before the CDN cache.
+  const edgeCache = "public, s-maxage=60, stale-while-revalidate=600";
   if (!forceFresh && cached && Date.now() - cached.computedAt < CACHE_TTL_MS) {
+    res.setHeader?.("Cache-Control", edgeCache);
     res.status(200).json(cached);
     return;
   }
@@ -270,6 +276,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     const stats = await computeLandingStats();
     cached = stats;
+    res.setHeader?.("Cache-Control", forceFresh ? "no-store" : edgeCache);
     res.status(200).json(stats);
   } catch (e) {
     // Sanitized -- never echoes a raw RPC/driver exception (which can

@@ -8,7 +8,11 @@ import "./merge.css";
  *  merge.css), a shared Radix TooltipProvider, and mounts the toast viewport once. */
 export function MergeLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="merge-scope min-h-[100dvh]">
+    // overflow-x-clip: full-bleed hero art uses w-screen (100vw), which on
+    // desktops with a classic scrollbar is wider than the page and produced a
+    // horizontal scrollbar on Discover and the other merge pages. clip (not
+    // hidden) keeps position: sticky working.
+    <div className="merge-scope min-h-[100dvh] overflow-x-clip">
       <TooltipProvider>
         <IncompleteTransactionsBanner />
         {children}

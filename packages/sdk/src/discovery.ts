@@ -542,11 +542,25 @@ export function parseReserveMetadataUri(metadataUri: string): ParsedReserveMetad
  *  (the site gate cookie applies, and no CORS -- live 2026-09-08: ssr.fun
  *  fetching strategic-super-reserve.fun was blocked for every Reserve). */
 const APP_HOSTS = new Set(["strategic-super-reserve.fun", "www.strategic-super-reserve.fun", "ssr.fun", "www.ssr.fun"]);
+/** This app's own metadata/picture endpoints. */
+const APP_METADATA_PATH_RE = /^\/api\/(mainnet|devnet|robinhood)\/reserve-(metadata|image)\/?$/i;
+/**
+ * True when a URL is served by this app: one of APP_HOSTS, or ANY
+ * *.vercel.app deployment host on one of this app's own metadata/picture
+ * paths. Reserves #0 and #91 store an old preview host
+ * (ssr-mnfjzp7pd-ssr14.vercel.app/api/mainnet/reserve-metadata?id=...) that
+ * 302s to a login page, which the browser reports as a CORS error.
+ */
+export function isAppServedUrl(u: URL): boolean {
+  const host = u.hostname.toLowerCase();
+  if (APP_HOSTS.has(host)) return true;
+  return host.endsWith(".vercel.app") && APP_METADATA_PATH_RE.test(u.pathname);
+}
 export function rewriteAppMetadataUriToCurrentOrigin(metadataUri: string): string {
   if (typeof window === "undefined" || !window.location?.origin) return metadataUri;
   try {
     const u = new URL(metadataUri);
-    if (!APP_HOSTS.has(u.hostname.toLowerCase())) return metadataUri;
+    if (!isAppServedUrl(u)) return metadataUri;
     return `${window.location.origin}${u.pathname}${u.search}`;
   } catch {
     return metadataUri;
