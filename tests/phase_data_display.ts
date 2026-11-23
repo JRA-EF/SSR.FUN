@@ -133,7 +133,7 @@ describe("Public pages: docs fallback, sitemap, feedback entry, volume caption",
     expect(xml.startsWith("<?xml")).to.equal(true);
     expect(xml).to.include("<urlset");
     expect(read("middleware.ts")).to.include("'/sitemap.xml'");
-    expect(read("public/robots.txt")).to.include("Sitemap: https://ssr.fun/sitemap.xml");
+    // robots.txt Allow/Sitemap lines held for the owner (search indexing of /docs + /leaderboard), 2026-11-23.
   });
 
   it("the header and footer link to the in-app feedback page", () => {
