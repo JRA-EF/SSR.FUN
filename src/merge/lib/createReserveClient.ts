@@ -119,6 +119,7 @@ export {
   isFeeDestinationCollisionError,
   rawToUiAmount,
   scaleUsdcBudgetForDeficit,
+  RESUME_MIN_SOL_LAMPORTS,
   type CreateReserveErrorClass,
   type DeploymentResumePoint,
   type ReserveOnChainStatus,

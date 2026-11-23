@@ -11,6 +11,7 @@ import { useAppStore, isManagerOrDelegate } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { MergeParamsContext } from "@/lib/wouter-shim";
 import { ManageDTR } from "./ManageDTR";
+import { UnfinishedLaunches } from "@/components/UnfinishedLaunches";
 
 function ManageGateHero() {
   return (
@@ -58,6 +59,9 @@ export function Manage() {
 
   if (managed.length === 0) {
     return (
+      <>
+      {/* DEC-0296: unfinished launches are not "managed Reserves" yet (never seeded), so they show here too. */}
+      <UnfinishedLaunches />
       <div className="container mx-auto px-4 py-24 text-center relative">
         <ManageGateHero />
         <div className="max-w-md mx-auto space-y-6">
@@ -72,11 +76,13 @@ export function Manage() {
           <Link href="/create" className="btn btn-primary btn-lg">Launch a Reserve</Link>
         </div>
       </div>
+      </>
     );
   }
 
   return (
     <>
+      <UnfinishedLaunches />
       {managed.length > 1 && (
         <div className="container mx-auto px-4 max-w-6xl pt-8 flex flex-wrap gap-2">
           {managed.map((d) => (

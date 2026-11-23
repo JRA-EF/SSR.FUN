@@ -193,6 +193,9 @@ export function scaleUsdcBudgetForDeficit(usdcBudgetRaw: bigint, deficitRaw: big
   return scaled > 0n ? scaled : 1n;
 }
 
+/** DEC-0282: below this a Resume cannot pay even one Reserve asset's account rent (~0.0035 SOL), so it is refused before anything is signed. Shared by the Launch page's Resume panel and Manage Reserve's "Finish launch" (DEC-0296). */
+export const RESUME_MIN_SOL_LAMPORTS = 5_000_000;
+
 /** A persisted deployment marker older than this is treated as abandoned rather than held onto forever -- the reconciliation check against real on-chain state (never this staleness window alone) is still what actually decides whether a Reserve exists. */
 export const PENDING_DEPLOY_STALE_MS = 10 * 60 * 1000;
 

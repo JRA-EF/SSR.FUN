@@ -39,6 +39,7 @@ import {
   CreateReserveStepError,
   SeedAssetFundingError,
   LAUNCH_PRICE_LOCK_MS,
+  RESUME_MIN_SOL_LAMPORTS,
   type AssetFundingProgressEvent,
   type CreateReserveStep,
   type CreateReserveResult,
@@ -52,6 +53,7 @@ import { allocationGateMessage, apportionBps, withoutEmptyAssets, assignRemainde
 import { blockedAssets, checkLaunchRoutes, isLaunchCheckFresh, launchCheckFingerprint, markLaunchFailure, type LaunchCheck, type LaunchCheckAsset, type RemovedLaunchAsset } from "@/lib/launchPreflight";
 import { clearCreateDraft, readCreateDraft, saveCreateDraft, type LaunchSession } from "@/lib/createDraft";
 import { LaunchCheckPanel } from "@/components/LaunchCheckPanel";
+import { UnfinishedLaunchesBanner } from "@/components/UnfinishedLaunches";
 import type { PersistedAssetFunding } from "@/lib/launchFunding";
 import { fileToProfileImageDataUrl, uploadReserveImage } from "@/lib/reserveImageClient";
 import { solscanUrl, SSR_PROGRAM_ID, SOLANA_CLUSTER, IS_MAINNET, MAINNET_USDC_MINT, TOKEN_METADATA_LIVE } from "@/lib/solana-config";
@@ -120,8 +122,6 @@ const CREATE_STEP_LABELS: Record<CreateReserveStep, string> = {
 };
 
 /** How many wallet approvals createReserveOnChain will request for this asset selection -- see createReserveClient.ts's signature-count note. */
-/** DEC-0282: below this a Resume cannot pay even one Reserve asset's account rent (~0.0035 SOL), so it is refused before anything is signed. */
-const RESUME_MIN_SOL_LAMPORTS = 5_000_000;
 
 /** Rough fallback ONLY for the brief window before the real costEstimate (which has the authoritative numTransactions, including any Jupiter swaps and the real registration-batch count -- see createReserveClient.ts's estimateCreateReserveCost) has loaded -- see its call site, which prefers costEstimate.numTransactions once available. Mirrors estimateCreateReserveCost's own conservative per-batch asset count so this brief-window number doesn't undercount for a large asset selection. */
 function expectedApprovalCount(assets: { symbol: string }[]): number {
@@ -1813,6 +1813,8 @@ export function CreateDTR({
 
   return (
     <LaunchShell subtitle={`Launch a new Reserve on SSR.FUN, live on Solana ${CLUSTER_LABEL}.`} step={step}>
+      {/* DEC-0296: finished-or-not is on-chain; point to Manage when this browser has no Resume record. */}
+      {step === 1 && <UnfinishedLaunchesBanner />}
       <Card className="border-border/60 shadow-lg">
         {step === 1 && (
           <>

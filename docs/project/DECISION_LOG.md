@@ -9116,3 +9116,46 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0296
+
+```json
+{
+  "id": "DEC-0296",
+  "date": "2026-11-23",
+  "title": "Unfinished Reserve launches are found on-chain and can be finished or cancelled (hidden) from Manage Reserve on any device",
+  "status": "confirmed",
+  "decision": "1. Discovery from the chain: api/mainnet/unfinished-launches.ts (GET ?wallet=) runs packages/sdk's discoverUnfinishedLaunchesByScan -- one getProgramAccounts memcmp on Reserve.manager (offset 17 = discriminator 8 + schema_version 1 + reserve_id 8), keeping status created/assetsInitializing, then one memcmp per match on ReserveAsset.reserve (offset 8) for the registered mints, weights, decimals and token programs. Server-side because the browser rpc-proxy does not allow getProgramAccounts. Name/ticker come from the Reserve's metadataUri; without it the card says 'Reserve #N'. 2. Manage Reserve shows a card per unfinished launch above the normal list (also when the wallet manages no live Reserve): what happened, the basket with target %, what finishing does and costs (the creator's USDC amount, the Reserve's effective mint fee in USDC, ~0.02 SOL for rent/fees), a seed input with the Launch page's $1 floor, 'Finish launch', and 'Cancel this launch'. 3. Finish re-reads the Reserve (fetchReserveOnChain), refuses anything determineDeploymentResumePoint would not resume plus no-assets / unreadable assets / more than APP_MAX_RESERVE_ASSETS (Reserve #69, 12 assets), runs the DEC-0282 SOL check (RESUME_MIN_SOL_LAMPORTS, now shared from createReserveResume.ts), the DEC-0249 route check (checkLaunchRoutes) and the launch USDC feasibility check (assessLaunchFeasibility, counting assets already in the wallet) before spending anything, then builds the same PendingReserveDeploy the Launch page persists (registration order, seed shares from target weights, keeps this browser's funding progress and price-lock start for the same Reserve), saves it with savePendingReserveDeploy and calls the unchanged resumeReserveDeploymentOnChain with the Launch page's Mainnet options (Jupiter swaps, SOL price, usdcMintFee, progress callbacks). Success links to the Reserve page. 4. Cancel is app-level only: close_reserve needs WindDown, which needs Active, so an unseeded Reserve cannot be closed without a program upgrade. The manager signs a plain-text message (lib/launch-cancel/rules.ts); the server verifies ed25519 over that exact text, freshness (10 min), and re-reads the Reserve (manager == signer; cancel also needs created/assetsInitializing), then stores a row in launch_cancellations (created lazily, CREATE TABLE IF NOT EXISTS). Cancelled launches are hidden behind 'Show cancelled launches (n)', where 'Undo cancel' (also signed, deletes the row) and Finish stay available. The confirm text says nothing changes on-chain, the Reserve holds no tokens, its rent stays locked for now, and assets a failed attempt swapped for are in the wallet (link to /recover). 5. The Launch page shows a pointer to Reserve Manager when this browser has no Resume record but the chain has unfinished launches.",
+  "context": "20 Reserves sit on Mainnet in assetsInitializing, 4 of them non-team (#43, #44, #45 by ..Gpbp, #52 by ..ys8w, created 2026-10-15/20). The only way to finish one was the Launch page's Resume button, which needs the localStorage record ssr_pending_reserve_deploy_v1: one launch per browser, replaced by the next launch, lost on another device or after clearing site data. The program already allows finishing (initialize_reserve_asset in Created/AssetsInitializing, seed_reserve(_usdc_fee) in AssetsInitializing), so this is app-only. Owner addition the same day: a cancel option next to Finish, persisted server-side across devices.",
+  "rationale": "Everything a Resume needs except the seed amount is on-chain, so the chain is the record and the creator picks the amount again. Reusing resumeReserveDeploymentOnChain and the Launch page's guards keeps one finishing path with the safety work it already has (idempotent funding, status re-reads, swap reconciliation).",
+  "alternativesConsidered": [
+    "Allow getProgramAccounts through the browser rpc-proxy -- widens a public proxy's method allowlist for one feature.",
+    "Enumerate every Reserve id in the browser and probe candidate asset mints -- many reads per visit for a list that is usually empty.",
+    "Close the Reserve on cancel -- impossible without a program upgrade (DEC-0274: no program upgrades before launch).",
+    "Keep cancel in localStorage -- would not follow the creator to another device."
+  ],
+  "impact": "Creators can finish or hide a stuck launch from any device. Read-only Mainnet check 2026-11-23 (seed $10): #45 ready (USDC leg + held assets; first tx = SOL wrap, simulates OK; the server's own seed build simulates OK with current holdings). #44 ready (first tx = 0.24 USDC swap, all 3 swaps and the SOL wrap simulate OK; its seed needs a lookup table first, which the resume flow creates). #43 would be refused before spending: its BVdX..ondo asset has no Jupiter route. #52 would be refused before spending: wallet ..ys8w holds 0.0024 SOL and 0 USDC, and XsDm..HNXT is 'not tradable' on Jupiter. #69 is refused (12 assets).",
+  "affectedAreas": [
+    "packages/sdk/src/unfinishedLaunches.ts",
+    "packages/sdk/src/index.ts",
+    "api/mainnet/unfinished-launches.ts",
+    "lib/launch-cancel/rules.ts",
+    "lib/launch-cancel/db.ts",
+    "src/merge/lib/onChainLaunchResume.ts",
+    "src/merge/components/UnfinishedLaunches.tsx",
+    "src/merge/pages/Manage.tsx",
+    "src/merge/pages/CreateDTR.tsx",
+    "src/merge/lib/createReserveResume.ts",
+    "src/merge/lib/createReserveClient.ts",
+    "tsconfig.node.json",
+    "tests/phase_onchain_launch_resume.ts"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "Mainnet scan 2026-11-23: 20 Reserves in assetsInitializing, every one with asset_count equal to the ReserveAsset accounts found; none in created.",
+    "Read-only simulations (sigVerify false, replaceRecentBlockhash) against Mainnet for #43/#44/#45/#52; nothing sent.",
+    "tests/phase_onchain_launch_resume.ts 18 passing; full ts suite 1899 passing, 5 failing (the same 5 fail on origin/main: phase_chart_range_selector, phase_mainnet_buy_mint_shape); npx tsc -b 0 errors; npx vite build OK."
+  ]
+}
+```
