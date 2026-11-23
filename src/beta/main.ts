@@ -5,10 +5,33 @@
 // api/site/claim.ts verifies with checkBotId(). No puzzle is ever shown.
 //
 // After a claim, "Enter SSR.fun" redeems the key through the same
-// /api/site/login endpoint the Coming Soon page uses, then opens the app.
+// /api/site/login endpoint the Coming Soon page uses, then opens the page the
+// visitor was headed to when the gate stopped them (?next=, lib/site/gateNext.ts).
 import { initBotId } from "botid/client/core";
+import { GATE_NEXT_STORAGE_KEY, isCampaignDestination, safeNextPath } from "../../lib/site/gateNext";
 
 initBotId({ protect: [{ path: "/api/site/claim", method: "POST" }] });
+
+// Where the visitor was headed when the gate stopped them (e.g. /#/campaign):
+// ?next= from the Coming Soon page, else what it left in sessionStorage.
+function readNext(): string | null {
+  const fromQuery = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+  if (fromQuery) return fromQuery;
+  try {
+    return safeNextPath(sessionStorage.getItem(GATE_NEXT_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+const nextPath = readNext();
+// "I have a BETA key" links: the gate at the destination itself takes the key.
+if (nextPath) {
+  for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>("a[data-key-entry]"))) a.href = nextPath;
+}
+if (isCampaignDestination(nextPath)) {
+  const lede = document.getElementById("claim-lede");
+  if (lede) lede.textContent = "You're joining the SSR.FUN Beta Campaign. Get your free BETA key with your X handle, then sign up for the campaign right after.";
+}
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const claimView = $("claim-view");
@@ -102,7 +125,11 @@ enterBtn.addEventListener("click", async () => {
       credentials: "same-origin",
       body: JSON.stringify({ key: keyValue.textContent }),
     });
-    if (r.ok) { window.location.href = "/"; return; }
+    if (r.ok) {
+      try { sessionStorage.removeItem(GATE_NEXT_STORAGE_KEY); } catch { /* storage unavailable */ }
+      window.location.href = nextPath ?? "/";
+      return;
+    }
     const j = (await r.json().catch(() => null)) as { error?: string } | null;
     setStatus(enterStatus, j?.error || "We couldn't sign you in. Copy your key and enter it on the home page.", true);
   } catch {

@@ -400,8 +400,8 @@
       </p>
       <!-- DEC-0278: self-serve claim button, hidden unless /api/site/claim reports open (SSR_BETA_CLAIM_ENABLED=true). -->
       <div class="beta" id="beta-claim-cta" hidden>
-        <p class="beta-label">Be one of the first creators</p>
-        <a class="beta-cta" href="/beta">Get your BETA key</a>
+        <p class="beta-label" id="beta-claim-label">Be one of the first creators</p>
+        <a class="beta-cta" id="beta-claim-link" href="/beta">Get your BETA key</a>
         <p class="beta-note">Free. Takes a few seconds with your X handle.</p>
       </div>
       <div class="beta-key">
@@ -433,11 +433,56 @@
     <span>Decentralized Tokenized Reserves · Solana</span>
   </footer>
   <script>
+    // This page is served (by rewrite) at whatever URL the visitor asked for,
+    // e.g. /#/campaign or /#/dtr/mainnet-beta-93 from a share link. The hash
+    // never reaches the server, so remember the destination here and hand it
+    // to /beta as ?next=; the claim page sends the visitor there after
+    // signing in. Mirrors safeNextPath / isCampaignDestination in
+    // lib/site/gateNext.ts -- keep the two in step.
+    var GATE_NEXT_KEY = 'ssr_gate_next';
+    function safeNextPath(raw) {
+      if (typeof raw !== 'string') return null;
+      var next = raw.trim();
+      if (!next || next.length > 512) return null;
+      if (next[0] !== '/' || next[1] === '/' || next[1] === '\\') return null;
+      if (/[\u0000-\u001f\u007f\\]/.test(next)) return null;
+      var path = next.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+      if (path === '/beta' || path === '/beta.html' || path === '/coming-soon.html') return null;
+      return next;
+    }
+    function isCampaignDestination(next) {
+      if (!next) return false;
+      var hashAt = next.indexOf('#');
+      var hash = hashAt >= 0 ? next.slice(hashAt) : '';
+      var path = next.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+      return path === '/campaign' || /^#\/campaign(?:[/?]|$)/.test(hash);
+    }
+    var here = location.pathname + location.search + location.hash;
+    var gateNext = here === '/' || here === '/#' || here === '/#/' ? null : safeNextPath(here);
+    try {
+      if (gateNext) sessionStorage.setItem(GATE_NEXT_KEY, gateNext);
+      else sessionStorage.removeItem(GATE_NEXT_KEY);
+    } catch (e) { /* storage unavailable: ?next= below still carries it */ }
+    var gateCampaign = isCampaignDestination(gateNext);
+    (function () {
+      var link = document.getElementById('beta-claim-link');
+      if (link && gateNext) link.href = '/beta?next=' + encodeURIComponent(gateNext);
+      // Beta Campaign deep link (#/campaign, the Superteam Earn bounty and the
+      // leaderboard's Sign up): say what they're joining and always offer a key.
+      if (!gateCampaign) return;
+      var cta = document.getElementById('beta-claim-cta');
+      var label = document.getElementById('beta-claim-label');
+      var soon = document.getElementById('soon-text');
+      if (label) label.textContent = 'You’re joining the SSR.FUN Beta Campaign. Get a BETA key to sign up.';
+      if (link) link.textContent = 'Get a BETA key to join';
+      if (soon) soon.textContent = 'Beta Campaign';
+      if (cta) cta.hidden = false;
+    })();
     // DEC-0278: show the self-serve claim button only while claiming is switched on.
     fetch('/api/site/claim', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        if (!j || !j.open || j.full) return;
+        if (gateCampaign || !j || !j.open || j.full) return;
         var cta = document.getElementById('beta-claim-cta');
         var soon = document.getElementById('soon-text');
         if (cta) cta.hidden = false;
@@ -468,6 +513,8 @@
         }).then(function (res) {
           if (res.ok) {
             setStatus('Welcome to the beta. Opening SSR.fun\u2026', 'ok');
+            // Reloading this same URL (hash included) lands on the destination.
+            try { sessionStorage.removeItem(GATE_NEXT_KEY); } catch (err) { /* storage unavailable */ }
             window.location.reload();
             return;
           }
