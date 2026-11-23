@@ -9031,3 +9031,38 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0294
+
+```json
+{
+  "id": "DEC-0294",
+  "date": "2026-11-23",
+  "title": "Many-asset mints send each swap leg while its blockhash is young; small legs get a bounded higher Jupiter slippage",
+  "status": "confirmed",
+  "decision": "1. A wallet without signAllTransactions no longer signs a batch mint up front: each swap leg is signed and sent at once (legs are independent), and the mint is signed after every swap landed. 2. Every swap round (first, auto-retry, top-up), for any wallet, goes through src/merge/lib/mintLegSequencer.ts: before signing a leg at least 75 block heights must remain, after signing at least 20; otherwise the legs not yet sent are rebuilt with a fresh blockhash (legsOnly) and signed again, after the legs in flight have settled so their output is recorded first. At most 4 such rebuilds per round, then legs are sent as they are and the existing expired-leg retry applies. 3. The single-transaction mint gets one fresh rebuild when its blockhash is too old after signing or it expired unlanded; the batch mint is signed fresh or rebuilt when it is too old after its own approval. 4. lib/mainnet/buildBuy.ts quotes swap legs of at most $1 at 5% slippage and at most $5 at 3% (never below the caller's value, never above MAX_SLIPPAGE_BPS); the mint's deposit caps keep the caller's slippage.",
+  "context": "Beta report 2026-11-17, Reserve #26 (10 assets): with a wallet that approves one transaction at a time (5-10 s each), signing 10 swaps + the mint took 1-2 minutes before anything was sent, the later legs expired and nothing minted. Two small legs also failed with Jupiter 6001 (slippage) at the fixed 2%. A wallet that simulates before signing flagged the pre-signed mint as failing (6014) because the swaps had not delivered yet.",
+  "rationale": "A blockhash lives ~150 blocks (60-90 s); signing all legs before sending any spends that life in the wallet. Sending each leg as it is signed and rebuilding only unsent legs reuses the existing legsOnly build, acquiredRawByMint accounting and pending-purchase recovery, so no confirmed swap is ever repeated. On tiny legs fixed route costs and rounding are a large share of the trade; the tiers keep the extra exposure to about 5 cents per leg, and a leg that delivers less is topped up before minting (DEC-0281), never minted short.",
+  "alternativesConsidered": [
+    "Durable nonces per leg -- needs a nonce account per wallet (rent, setup approval) and server support; out of proportion.",
+    "Split sign-all batches into two prompts so the mint is signed after the swaps -- removes the cosmetic 6014 warning for sign-all wallets but adds a prompt for everyone; not done.",
+    "Raise slippage for every leg -- widens exposure on large legs for no benefit."
+  ],
+  "impact": "One-at-a-time wallets: same number of approvals, swaps land as they are approved, mint approved last (its simulation now passes). Sign-all wallets: unchanged unless the prompt was left open too long, then one more prompt for fresh legs instead of a failed mint. Small legs: fewer 6001 failures, possibly a top-up approval when a leg fills near the wider limit.",
+  "affectedAreas": [
+    "src/merge/lib/mintLegSequencer.ts",
+    "src/merge/lib/multiAssetBuyClient.ts",
+    "lib/mainnet/buildBuy.ts",
+    "src/merge/lib/walletPromptCopy.ts",
+    "src/merge/pages/DTRDetail.tsx",
+    "src/merge/components/LiquidityMintStep.tsx"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "tests/phase_many_asset_mint_sequencing.ts 21 passing (incl. a 10-leg, 25-blocks-per-approval simulation: no leg sent with fewer than 20 blocks left).",
+    "Buy/mint suites: no new failures (known IDL pin failure and timing-flaky jupiter-swap retry tests fail identically on origin/main); npx tsc -b clean.",
+    "Not yet verified on Mainnet with a real wallet."
+  ]
+}
+```

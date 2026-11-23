@@ -16,11 +16,20 @@
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 /** `setup`: one-time trading-table transactions prepended to the batch (DEC-0171), named so the count the wallet shows adds up. */
-export function describeBatchBuyWalletPrompt(p: { swaps: number; total: number; ticker: string; setup?: number }): string {
+export function describeBatchBuyWalletPrompt(p: { swaps: number; total: number; ticker: string; setup?: number; oneAtATime?: boolean }): string {
   const swaps = Math.max(0, Math.floor(p.swaps));
   const setup = Math.max(0, Math.floor(p.setup ?? 0));
   const total = Math.max(swaps + setup + 1, Math.floor(p.total));
   const ticker = p.ticker.trim() || "Reserve Token";
+  if (p.oneAtATime && swaps > 0) {
+    // DEC-0294: a wallet that cannot approve several transactions together.
+    return (
+      `Your wallet will ask you to approve ${total} ${plural(total, "transaction", "transactions")}, one after another: ` +
+      `${swaps} ${plural(swaps, "swap", "swaps")} of your USDC into the Reserve's assets, each sent as soon as you approve it, then the deposit that mints your ${ticker} once every swap has landed. ` +
+      `The swaps read as USDC out and assets in -- those assets only pass through your wallet on their way into the Reserve. ` +
+      `When everything lands you hold ${ticker}, not the assets.`
+    );
+  }
   const setupPart = setup > 0 ? `a one-time setup for this Reserve (${setup} ${plural(setup, "transaction", "transactions")}), ` : "";
   const swapPart = swaps > 0 ? `${swaps} ${plural(swaps, "swap", "swaps")} of your USDC into the Reserve's assets, then ` : "";
   return (
