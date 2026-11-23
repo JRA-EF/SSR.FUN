@@ -28,7 +28,7 @@ const progressText=(e:MultiAssetBuyProgressEvent,ticker:string)=>{
   case 'building':return 'Preparing the mint…';
   case 'single-transaction':return `One approval: your USDC is swapped into the reserve assets and ${ticker} is minted.`;
   case 'enabling-one-approval-trading':return 'One-time setup for this Reserve first (one or two small separate approvals).';
-  case 'signing-batch':return `Your wallet will show ${e.total} transactions to approve together: ${e.swaps} swap USDC into the reserve assets, then one mints ${ticker}.`;
+  case 'signing-batch':return e.oneAtATime?`Your wallet will ask for ${e.total} approvals, one after another: ${e.swaps} swap USDC into the reserve assets (each sent as soon as you approve it), then one mints ${ticker}.`:`Your wallet will show ${e.total} transactions to approve together: ${e.swaps} swap USDC into the reserve assets, then one mints ${ticker}.`;
   case 'swapping':return `Swapping USDC into reserve asset ${e.index+1} of ${e.total}…`;
   case 'minting':return `Minting ${ticker}…`;
   case 'confirming':return 'Waiting for Solana to confirm…';

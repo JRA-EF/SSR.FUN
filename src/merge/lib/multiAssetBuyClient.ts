@@ -11,7 +11,11 @@
 // every Jupiter quote and build, the mint, all in parallel on the server),
 // asks the wallet to sign EVERY returned transaction in ONE prompt
 // (signAllTransactions), and submits them in order: table setup (if any),
-// swaps in parallel, then the mint -- each re-broadcast until it lands. The
+// swaps in parallel, then the mint -- each re-broadcast until it lands. A
+// wallet without signAllTransactions signs each swap in turn and each is
+// sent as soon as it is signed; the mint is signed after the swaps landed
+// (DEC-0294, mintLegSequencer.ts). A leg whose blockhash got too old while
+// the wallet prompt was open is rebuilt with a fresh one, never sent dead. The
 // server signs nothing; every transaction is signed here by the buyer's
 // own wallet.
 //
@@ -45,6 +49,7 @@ import { AmbiguousConfirmationError, resolveSubmittedSignature, sendAndConfirmWi
 import { registerReserveAlt } from "./reserveAltClient";
 import { isAltSetupKind, landAltSetupThenRebuild, waitForLookupTable } from "./reserveAltSetupFirst";
 import { recordMintDust } from "./recoveryRecords";
+import { isBlockhashStale, LEG_SEND_MARGIN_BLOCKS, signAndSendLegs } from "./mintLegSequencer";
 
 /** Same threshold createReserveClient.ts's seed funding uses -- routine slippage below this is never reported as a shortfall worth warning about. */
 const SHORTFALL_WARN_PCT = 0.05;
@@ -69,8 +74,8 @@ export type MultiAssetBuyProgressEvent =
   | { phase: "single-transaction" }
   /** One-time setup (DEC-0171): this Reserve has no trading lookup table yet -- its create/extend transactions go first. */
   | { phase: "enabling-one-approval-trading" }
-  /** The purchase could not fit one transaction: the wallet is about to show `total` transactions to approve at once, `swaps` of them USDC-to-asset swaps (DEC-0226 -- the UI explains what the per-transaction previews mean). */
-  | { phase: "signing-batch"; swaps: number; total: number; setup: number }
+  /** The purchase could not fit one transaction: the wallet is about to show `total` transactions to approve at once, `swaps` of them USDC-to-asset swaps (DEC-0226 -- the UI explains what the per-transaction previews mean). `oneAtATime` (DEC-0294): the wallet cannot sign them together, so it asks for each one in turn -- every swap is sent as soon as it is approved and the mint comes last. */
+  | { phase: "signing-batch"; swaps: number; total: number; setup: number; oneAtATime?: boolean }
   | { phase: "swapping"; mint: string; index: number; total: number }
   | { phase: "minting" }
   /** A signed transaction is on the wire and being confirmed (re-broadcast until it lands) -- the wallet prompt is over. */
@@ -345,7 +350,8 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
   };
 
   // Signing: ONE prompt for everything when the wallet supports it; a wallet
-  // without signAllTransactions signs each transaction right before it is sent.
+  // without signAllTransactions signs each transaction right before it is
+  // sent (the batch flow below asks for one leg at a time, DEC-0294).
   const canSignAll = typeof params.wallet.signAllTransactions === "function";
   const signMany = async (txs: VersionedTransaction[]): Promise<VersionedTransaction[]> => {
     if (txs.length === 0) return [];
@@ -427,9 +433,17 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     const legIndexOf = (mint: string) => params.assets.findIndex((a) => a.mint === mint);
     const heldBefore = new Map(build.plan.legs.map((l) => [l.mint, BigInt(l.walletHeldRaw)]));
 
+    const blockHeightNow = () => withRateLimitRetry(() => params.connection.getBlockHeight("confirmed"), 3, 500).catch(() => 0);
+
     // ---------------------------------------------------------------------
-    // ONE wallet prompt for every transaction.
+    // ONE wallet prompt for every transaction -- when the wallet can sign
+    // them all at once. A wallet that signs one at a time (DEC-0294) does not
+    // sign anything up front: each swap leg is signed and sent on its own
+    // below, and the mint is signed last, once every swap has landed, so no
+    // signature sits waiting while its blockhash runs out.
     // ---------------------------------------------------------------------
+    const hasLegacyAltSetup = build.transactions.some((t) => isAltSetupKind(t.kind));
+    const signUpFront = build.mode === "single" || canSignAll || hasLegacyAltSetup;
     if (build.mode === "single") params.onProgress?.({ phase: "single-transaction" });
     else
       params.onProgress?.({
@@ -437,10 +451,11 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
         swaps: build.transactions.filter((t) => t.kind === "swap").length,
         setup: build.transactions.filter((t) => t.kind === "alt-create" || t.kind === "alt-extend").length,
         total: build.transactions.length,
+        oneAtATime: !signUpFront,
       });
-    currentStage = build.mode === "single" ? "the single combined mint transaction (swap, deposit, and mint in one atomic step)" : "signing every transaction of this mint";
-    const signed = await signMany(build.transactions.map(decode));
-    const signedOf = (i: number) => signed[i];
+    currentStage = build.mode === "single" ? "the single combined mint transaction (swap, deposit, and mint in one atomic step)" : signUpFront ? "signing every transaction of this mint" : "signing and sending the Reserve asset swaps one at a time";
+    const signed: VersionedTransaction[] | null = signUpFront ? await signMany(build.transactions.map(decode)) : null;
+    const signedOf = (i: number) => signed![i];
 
     // ---------------------------------------------------------------------
     // Table setup first (if the server prepended it): sequential, confirmed,
@@ -467,21 +482,47 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     const singleIdx = build.transactions.findIndex((t) => t.kind === "single");
     if (build.mode === "single" && singleIdx >= 0) {
       currentStage = "the single combined mint transaction (swap, deposit, and mint in one atomic step)";
-      const t = build.transactions[singleIdx];
-      const { signature, outcome } = await submit(signedOf(singleIdx), t.lastValidBlockHeight, "your mint transaction", (sig) => {
-        pending!.lastMintSignature = sig;
-        pending!.lastMintLastValidBlockHeight = t.lastValidBlockHeight;
-        savePendingBuy(pending!);
-      });
-      throwOutcome(outcome, signature, "The mint transaction", " The mint was ONE atomic transaction, so nothing was swapped, deposited, or minted -- only the network fee was spent.");
-      return await verifyDelivery(signature, rtBalanceNow);
+      let t = build.transactions[singleIdx];
+      let singleSigned = signedOf(singleIdx);
+      // DEC-0294: one fresh rebuild when the approval took so long that the
+      // blockhash is (nearly) gone -- before sending, or after it expired
+      // unlanded. The transaction is atomic, so an expired one moved nothing.
+      let singleRebuilt = false;
+      const rebuildSingle = async (why: string): Promise<boolean> => {
+        if (singleRebuilt) return false;
+        singleRebuilt = true;
+        log("single mint transaction blockhash too old -- rebuilding once with a fresh blockhash", { why });
+        params.onProgress?.({ phase: "building" });
+        const rebuild = await requestBuyBuild(buildRequest());
+        const idx = rebuild.transactions.findIndex((x) => x.kind === "single");
+        if (rebuild.mode !== "single" || idx < 0 || rebuild.transactions.length !== 1) return false;
+        params.onProgress?.({ phase: "single-transaction" });
+        t = rebuild.transactions[idx];
+        [singleSigned] = await signMany([decode(t)]);
+        return true;
+      };
+      if (isBlockhashStale(t.lastValidBlockHeight, await blockHeightNow(), LEG_SEND_MARGIN_BLOCKS)) await rebuildSingle("after signing");
+      for (;;) {
+        const lvbh = t.lastValidBlockHeight;
+        const { signature, outcome } = await submit(singleSigned, lvbh, "your mint transaction", (sig) => {
+          pending!.lastMintSignature = sig;
+          pending!.lastMintLastValidBlockHeight = lvbh;
+          savePendingBuy(pending!);
+        });
+        if (outcome.status === "expired" && (await rebuildSingle("expired unlanded"))) continue;
+        throwOutcome(outcome, signature, "The mint transaction", " The mint was ONE atomic transaction, so nothing was swapped, deposited, or minted -- only the network fee was spent.");
+        return await verifyDelivery(signature, rtBalanceNow);
+      }
     }
 
     // ---------------------------------------------------------------------
     // Mode "batch": swaps in parallel (staggered, re-broadcast, measured),
     // one automatic rebuild+re-sign for legs that provably did not land.
+    // DEC-0294: every round goes through signAndSendLegs, which sends each
+    // leg as soon as it is signed and rebuilds (fresh blockhash) the legs not
+    // yet sent whenever their blockhash is too old to sign or send.
     // ---------------------------------------------------------------------
-    type SwapJob = { tx: BuiltTransaction; signed: VersionedTransaction; mint: string; legIndex: number; preSwapRaw: bigint };
+    type SwapJob = { tx: BuiltTransaction; presigned?: VersionedTransaction; mint: string; legIndex: number; preSwapRaw: bigint; lastValidBlockHeight: number };
     const reconcileSwappedLeg = async (job: SwapJob) => {
       advanceLeg(job.mint, "confirmed");
       const newBalance = await fetchOwnedBalanceRawSettled(params.connection, new PublicKey(job.mint), owner, job.preSwapRaw);
@@ -492,31 +533,48 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       const shortfallPct = computeSwapShortfallPct(requiredAmountsRaw[job.legIndex] ?? 0n, newAcquired);
       if (shortfallPct > SHORTFALL_WARN_PCT) params.onSwapShortfall?.({ mint: job.mint, targetRaw: requiredAmountsRaw[job.legIndex] ?? 0n, actualRaw: newAcquired, shortfallPct });
     };
-    const submitSwaps = (jobs: SwapJob[]) =>
-      Promise.allSettled(
-        jobs.map(async (job, s) => {
-          params.onProgress?.({ phase: "swapping", mint: job.mint, index: s, total: jobs.length });
-          if (s > 0) await new Promise((r) => setTimeout(r, 150 * s)); // stagger broadcasts
-          advanceLeg(job.mint, "quoted", { targetRaw: (requiredAmountsRaw[job.legIndex] ?? 0n).toString() });
-          advanceLeg(job.mint, "awaiting_signature");
-          const { signature, outcome } = await submit(job.signed, job.tx.lastValidBlockHeight, `the swap for ${job.mint.slice(0, 4)}...${job.mint.slice(-4)}`, (sig) => advanceLeg(job.mint, "submitted", { lastSignature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight }));
-          // A swap leg is a Jupiter-only transaction: its custom codes are Jupiter's or a DEX's, never ssr_protocol's
-          // (Jupiter 6001 = slippage was reported as SsrError::ZeroValue, 2026-10-26, DEC-0267).
-          if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
-          if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
-          if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
-          await reconcileSwappedLeg(job);
-        }),
-      );
-    const toJobs = (b: BuildBuyResponse, signedTxs: VersionedTransaction[]): SwapJob[] =>
+    const sendSwap = async (job: SwapJob, signedTx: VersionedTransaction, s: number, total: number) => {
+      params.onProgress?.({ phase: "swapping", mint: job.mint, index: s, total });
+      // Stagger broadcasts signed together; legs signed one at a time are already spaced by their approvals.
+      if (canSignAll && s > 0) await new Promise((r) => setTimeout(r, 150 * Math.min(s, 10)));
+      advanceLeg(job.mint, "quoted", { targetRaw: (requiredAmountsRaw[job.legIndex] ?? 0n).toString() });
+      advanceLeg(job.mint, "awaiting_signature");
+      const { signature, outcome } = await submit(signedTx, job.tx.lastValidBlockHeight, `the swap for ${job.mint.slice(0, 4)}...${job.mint.slice(-4)}`, (sig) => advanceLeg(job.mint, "submitted", { lastSignature: sig, lastValidBlockHeight: job.tx.lastValidBlockHeight }));
+      // A swap leg is a Jupiter-only transaction: its custom codes are Jupiter's or a DEX's, never ssr_protocol's
+      // (Jupiter 6001 = slippage was reported as SsrError::ZeroValue, 2026-10-26, DEC-0267).
+      if (outcome.status === "failed") throw new JupiterSwapNotLandedError("failed", signature, `${describeJupiterSwapError(outcome.error)} Signature: ${signature}.`);
+      if (outcome.status === "expired") throw new JupiterSwapNotLandedError("expired", signature, `Jupiter swap expired before it could be confirmed (blockhash no longer valid) -- nothing should have moved. Signature: ${signature}.`);
+      if (outcome.status !== "confirmed") throw new AmbiguousConfirmationError(signature, "Mainnet");
+      await reconcileSwappedLeg(job);
+    };
+    const toJobs = (b: BuildBuyResponse, signedTxs: VersionedTransaction[] | null): SwapJob[] =>
       b.transactions
         .map((tx, i) => ({ tx, i }))
         .filter(({ tx }) => tx.kind === "swap" && tx.mint)
-        .map(({ tx, i }) => ({ tx, signed: signedTxs[i], mint: tx.mint!, legIndex: legIndexOf(tx.mint!), preSwapRaw: heldBefore.get(tx.mint!) ?? 0n }));
+        .map(({ tx, i }) => ({ tx, presigned: signedTxs?.[i], mint: tx.mint!, legIndex: legIndexOf(tx.mint!), preSwapRaw: heldBefore.get(tx.mint!) ?? 0n, lastValidBlockHeight: tx.lastValidBlockHeight }));
+    /** Fresh-blockhash rebuild of just these legs (no mint), unsigned. */
+    const rebuildLegs = async (mints: string[]): Promise<SwapJob[]> => {
+      params.onProgress?.({ phase: "building" });
+      const rebuild = await requestBuyBuild(buildRequest({ legsOnly: mints }));
+      for (const l of rebuild.plan.legs) heldBefore.set(l.mint, BigInt(l.walletHeldRaw));
+      return toJobs(rebuild, null);
+    };
+    /** One round: sign + send every job (each as soon as it is signed when the wallet signs one at a time), settled outcomes in send order. */
+    const runSwapRound = async (roundJobs: SwapJob[]): Promise<{ jobs: SwapJob[]; outcomes: PromiseSettledResult<void>[] }> => {
+      const total = roundJobs.length;
+      const round = await signAndSendLegs<SwapJob, VersionedTransaction>(roundJobs, {
+        signAllAtOnce: canSignAll,
+        blockHeight: blockHeightNow,
+        sign: (legs) => signMany(legs.map((l) => decode(l.tx))),
+        send: (job, signedTx, s) => sendSwap(job, signedTx, s, total),
+        rebuild: rebuildLegs,
+        log,
+      });
+      return { jobs: round.legs, outcomes: round.outcomes };
+    };
 
-    let jobs = toJobs(build, signed);
-    currentStage = "submitting all of the Reserve's asset swaps";
-    let outcomes = await submitSwaps(jobs);
+    currentStage = canSignAll ? "submitting all of the Reserve's asset swaps" : "signing and sending the Reserve asset swaps one at a time";
+    let { jobs, outcomes } = await runSwapRound(toJobs(build, signed));
     for (let attempt = 0; attempt < SWAP_AUTO_RETRY_LIMIT; attempt++) {
       const { retryable, fatal } = partitionSwapOutcomes(jobs, outcomes);
       if (fatal !== null) throw fatal;
@@ -524,13 +582,9 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       log("swap leg(s) did not land -- rebuilding just those legs and re-signing once", { attempt: attempt + 1, mints: retryable.map((j) => j.mint) });
       currentStage = "rebuilding the Reserve asset swap(s) that did not land, for one more approval";
       for (const j of retryable) advanceLeg(j.mint, "not_started");
-      params.onProgress?.({ phase: "building" });
-      const rebuild = await requestBuyBuild(buildRequest({ legsOnly: retryable.map((j) => j.mint) }));
-      const resigned = await signMany(rebuild.transactions.map(decode));
-      for (const l of rebuild.plan.legs) heldBefore.set(l.mint, BigInt(l.walletHeldRaw));
-      jobs = toJobs(rebuild, resigned);
+      const rebuilt = await rebuildLegs(retryable.map((j) => j.mint));
       currentStage = "submitting the rebuilt Reserve asset swap(s)";
-      outcomes = await submitSwaps(jobs);
+      ({ jobs, outcomes } = await runSwapRound(rebuilt));
     }
     {
       const { retryable, fatal } = partitionSwapOutcomes(jobs, outcomes);
@@ -560,12 +614,7 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       log("leg(s) short after funding -- topping up the remainder", { legs: short.map((l) => ({ mint: l.mint, countableRaw: l.countable.toString(), requiredRaw: l.required.toString() })) });
       currentStage = "topping up the Reserve asset(s) that came in slightly short";
       for (const m of topUpMints) advanceLeg(m, "not_started");
-      params.onProgress?.({ phase: "building" });
-      const topUp = await requestBuyBuild(buildRequest({ legsOnly: topUpMints }));
-      const topUpSigned = await signMany(topUp.transactions.map(decode));
-      for (const l of topUp.plan.legs) heldBefore.set(l.mint, BigInt(l.walletHeldRaw));
-      jobs = toJobs(topUp, topUpSigned);
-      outcomes = await submitSwaps(jobs);
+      ({ jobs, outcomes } = await runSwapRound(await rebuildLegs(topUpMints)));
       const { retryable, fatal } = partitionSwapOutcomes(jobs, outcomes);
       if (fatal !== null) throw fatal;
       if (retryable.length > 0) throw (outcomes.find((o): o is PromiseRejectedResult => o.status === "rejected")!.reason as Error);
@@ -586,14 +635,16 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
     }
 
     // ---------------------------------------------------------------------
-    // The mint: pre-signed in the one prompt; rebuilt (mint-only) and
-    // re-signed only if its blockhash is about to expire or expired.
+    // The mint: pre-signed in the one prompt (sign-all wallets) or signed
+    // now, after every swap landed (one-at-a-time wallets, DEC-0294 -- a
+    // wallet that simulates before signing then sees the assets it deposits).
+    // Rebuilt (mint-only) and re-signed if its blockhash is about to expire.
     // ---------------------------------------------------------------------
     currentStage = "the final mint that deposits the acquired assets and delivers your Reserve Tokens";
     params.onProgress?.({ phase: "minting" });
-    let mintIdx = build.transactions.findIndex((t) => t.kind === "mint");
+    const mintIdx = build.transactions.findIndex((t) => t.kind === "mint");
     let mintTx = mintIdx >= 0 ? build.transactions[mintIdx] : null;
-    let mintSigned = mintIdx >= 0 ? signedOf(mintIdx) : null;
+    let mintSigned = mintIdx >= 0 && signed ? signedOf(mintIdx) : null;
     const rebuildMint = async () => {
       params.onProgress?.({ phase: "building" });
       const rebuild = await requestBuyBuild(buildRequest({ mintOnly: true }));
@@ -601,13 +652,18 @@ export async function executeMultiAssetBuyMainnet(params: ExecuteMultiAssetBuyPa
       if (idx < 0) throw new Error("The server did not return a mint transaction on rebuild.");
       mintTx = rebuild.transactions[idx];
       [mintSigned] = await signMany([decode(mintTx)]);
-      mintIdx = idx;
     };
-    if (!mintTx || !mintSigned) await rebuildMint();
-    const heightNow = await withRateLimitRetry(() => params.connection.getBlockHeight("confirmed"), 3, 500).catch(() => 0);
-    if (mintTx && heightNow > 0 && heightNow > mintTx.lastValidBlockHeight - MINT_BLOCKHASH_MARGIN) {
-      log("mint blockhash near expiry after the swaps -- rebuilding the mint with a fresh blockhash", { heightNow, lastValidBlockHeight: mintTx.lastValidBlockHeight });
+    if (!mintTx) await rebuildMint();
+    const heightNow = await blockHeightNow();
+    if (isBlockhashStale(mintTx!.lastValidBlockHeight, heightNow, MINT_BLOCKHASH_MARGIN)) {
+      log("mint blockhash near expiry after the swaps -- rebuilding the mint with a fresh blockhash", { heightNow, lastValidBlockHeight: mintTx!.lastValidBlockHeight });
       await rebuildMint();
+    } else if (!mintSigned) {
+      [mintSigned] = await signMany([decode(mintTx!)]);
+      if (isBlockhashStale(mintTx!.lastValidBlockHeight, await blockHeightNow(), LEG_SEND_MARGIN_BLOCKS)) {
+        log("mint approval took too long for its blockhash -- rebuilding the mint with a fresh blockhash");
+        await rebuildMint();
+      }
     }
     let signature = "";
     for (let attempt = 0; ; attempt++) {

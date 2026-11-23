@@ -42,7 +42,7 @@ import { loadFeeLookupTable } from "./feeLookupTable";
 import { describeSimulationFailure } from "./simulationError";
 import { assessBuyFeasibility, planBuyFunding, type BuyFeasibility, type BuyFundingAction, type BuyFundingPlan, type BuyLegInput } from "../../src/merge/lib/multiAssetBuyPlan";
 import { assembleSingleBuyInstructions, buildUnwrapSolInstructions, buildWrapRecoveredSolInstructions, countAccountLocks, fetchLookupTables, SINGLE_TX_MICRO_LAMPORTS_PER_CU, SINGLE_TX_SWAP_MAX_ACCOUNTS, SOLANA_MAX_TX_ACCOUNT_LOCKS } from "../../src/merge/lib/singleTxBuy";
-import { MAINNET_USDC_MINT, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
+import { MAINNET_USDC_MINT, MAX_SLIPPAGE_BPS, isPriceImpactAcceptable, type JupiterCallResult, type JupiterQuote, type JupiterSwapInstructionsPayload, type JupiterSwapTransactionPayload } from "./jupiter";
 import {
   BuildError,
   CORE_TX_COMPUTE_UNIT_LIMIT,
@@ -171,6 +171,38 @@ export function resizedBudgetForQuote(budgetRaw: bigint, quoteOutRaw: bigint, de
   return (budgetRaw * target + quoteOutRaw - 1n) / quoteOutRaw;
 }
 
+/**
+ * Swap-leg slippage tiers (DEC-0294). A many-asset mint splits a small USDC
+ * amount over many assets, so legs of a few cents to a few dollars are
+ * normal (Reserve #26: 10 assets). On such legs the caller's fixed 2% failed
+ * with Jupiter 6001 (slippage exceeded) twice in a row: a route's fixed
+ * per-hop costs, integer rounding of a few-unit output and ordinary price
+ * movement between quote and landing are a much larger fraction of a tiny
+ * trade. A failed leg costs an approval and can stop the whole mint.
+ *
+ * The numbers bound the EXTRA exposure over a 2% baseline to about 5 cents
+ * per leg at each tier's upper edge: <= $1 at 5% (3 points x $1 = $0.03,
+ * and 5% is MAX_SLIPPAGE_BPS, the hard ceiling), <= $5 at 3% (1 point x $5 =
+ * $0.05). Legs above $5 keep the caller's slippage unchanged, and a caller
+ * asking for more than a tier already gets their own value (never lowered).
+ *
+ * Only the Jupiter swap's minimum output changes. The mint transaction keeps
+ * the caller's slippage for its per-asset deposit caps (maxAssetAmounts), and
+ * a leg that delivers less than the Reserve needs is never minted short: the
+ * client re-reads balances and tops the leg up (DEC-0281) before the mint.
+ */
+export const SMALL_LEG_SLIPPAGE_TIERS: readonly { maxUsdcRaw: bigint; slippageBps: number }[] = [
+  { maxUsdcRaw: 1_000_000n, slippageBps: 500 },
+  { maxUsdcRaw: 5_000_000n, slippageBps: 300 },
+];
+
+/** Pure: the Jupiter slippage for one swap leg of `usdcBudgetRaw` (6-decimal USDC), never below `baseBps` and never above MAX_SLIPPAGE_BPS. */
+export function legSlippageBps(usdcBudgetRaw: bigint, baseBps: number): number {
+  const tier = SMALL_LEG_SLIPPAGE_TIERS.find((t) => usdcBudgetRaw <= t.maxUsdcRaw);
+  const wanted = tier ? Math.max(baseBps, tier.slippageBps) : baseBps;
+  return Math.min(wanted, Math.max(baseBps, MAX_SLIPPAGE_BPS));
+}
+
 /** Pure: applies the client's persisted per-purchase acquisitions to the fresh plan inputs (never the wallet's unrelated holdings -- countableAcquiredRaw caps at what is still held). */
 export function applyClientAcquired(legs: BuyLegInput[], acquiredRawByMint: Record<string, bigint>): BuyLegInput[] {
   return legs.map((l) => ({ ...l, purchaseAcquiredRaw: acquiredRawByMint[l.mint] ?? 0n }));
@@ -256,7 +288,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   const tQuote = Date.now();
   const quotes = await Promise.all(
     swapActions.map(async (action) => {
-      const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: action.usdcBudgetRaw, slippageBps: input.slippageBps, apiKey: deps.jupiterApiKey };
+      const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: action.usdcBudgetRaw, slippageBps: legSlippageBps(action.usdcBudgetRaw, input.slippageBps), apiKey: deps.jupiterApiKey };
       let r = await deps.jupiterQuote({ ...base, maxAccounts: attemptSingle ? SINGLE_TX_SWAP_MAX_ACCOUNTS : null });
       if (r.kind !== "ok" && attemptSingle) r = await deps.jupiterQuote({ ...base, maxAccounts: null });
       if (r.kind !== "ok") throw jupiterFailure("quote", action.mint, r, { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amountRaw: action.usdcBudgetRaw });
@@ -282,7 +314,7 @@ export async function buildBuyTransactions(deps: BuildBuyDeps, input: BuildBuyIn
   await Promise.all(
     resizes.map(async ({ idx, budget }) => {
       const { action } = quotes[idx];
-      const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: budget, slippageBps: input.slippageBps, apiKey: deps.jupiterApiKey };
+      const base = { inputMint: MAINNET_USDC_MINT, outputMint: action.mint, amount: budget, slippageBps: legSlippageBps(budget, input.slippageBps), apiKey: deps.jupiterApiKey };
       let r = await deps.jupiterQuote({ ...base, maxAccounts: attemptSingle ? SINGLE_TX_SWAP_MAX_ACCOUNTS : null });
       if (r.kind !== "ok" && attemptSingle) r = await deps.jupiterQuote({ ...base, maxAccounts: null });
       if (r.kind !== "ok" || !isPriceImpactAcceptable(r.value)) return;

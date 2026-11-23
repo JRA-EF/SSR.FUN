@@ -1605,7 +1605,7 @@ export function DTRDetail() {
             // The wallet is about to preview each transaction on its own
             // (swaps as USDC-out/asset-in, the mint unpreviewable) -- say what
             // that means before the prompt opens (DEC-0226).
-            setMultiAssetBuyStep(describeBatchBuyWalletPrompt({ swaps: e.swaps, total: e.total, setup: e.setup, ticker: dtr.ticker }));
+            setMultiAssetBuyStep(describeBatchBuyWalletPrompt({ swaps: e.swaps, total: e.total, setup: e.setup, oneAtATime: e.oneAtATime, ticker: dtr.ticker }));
             setBuyPhase("awaiting-wallet");
           } else if (e.phase === "swapping") {
             setMultiAssetBuyStep(`Swapping your USDC into Reserve asset ${e.index + 1} of ${e.total}...`);
