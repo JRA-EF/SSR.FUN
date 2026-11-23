@@ -27,8 +27,9 @@ import { executeDirectMint, executeDirectRedeem } from "@/lib/directClient";
 import { executeMultiAssetBuyMainnet, usdToReserveTokensRequested, MultiAssetBuyError } from "@/lib/multiAssetBuyClient";
 import { executeMultiAssetSellMainnet, readPendingSell } from "@/lib/multiAssetSellClient";
 import { describeBatchBuyWalletPrompt, describeBatchSellWalletPrompt } from "@/lib/walletPromptCopy";
-import { explorerUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
-import { transactionConfirmedToast } from "@/components/TransactionConfirmation";
+import { explorerUrl, solscanUrl, IS_MAINNET, SSR_PROGRAM_ID, MAINNET_TREASURY_VAULT, MAINNET_USDC_MINT } from "@/lib/solana-config";
+import { transactionConfirmedToast, CopySignatureButton } from "@/components/TransactionConfirmation";
+import { DEFAULT_BUY_FEE_LAMPORTS, maxMintUsdForUsdcBalance, mintUsdcPerDollar } from "@/lib/multiAssetBuyPlan";
 import { LiquidityLaunchNudge, ReserveLiquidityBadges } from "@/components/LiquidityModule";
 import {
   AmbiguousConfirmationError,
@@ -193,6 +194,21 @@ function AssetMiniChart({ seed, endPrice, synthetic }: { seed: string; endPrice:
         />
       </AreaChart>
     </ResponsiveContainer>
+  );
+}
+
+/** Persistent success line under the Mint/Redeem button: the confirmed transaction as a Solscan link (the toast alone disappears). */
+function ConfirmedTxLink({ headline, signature }: { headline: string; signature: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs" role="status">
+      <span className="min-w-0">
+        <span className="font-medium text-foreground">{headline}</span>{" "}
+        <a href={solscanUrl("tx", signature)} target="_blank" rel="noreferrer" className="underline text-muted-foreground hover:text-foreground">
+          View transaction on Solscan
+        </a>
+      </span>
+      <CopySignatureButton signature={signature} size="xs" />
+    </div>
   );
 }
 
@@ -689,6 +705,10 @@ export function DTRDetail() {
   // pre-render window a fast double-click can slip through.
   const buySubmittingRef = useRef(false);
   const [buyPendingSignature, setBuyPendingSignature] = useState<string | null>(null);
+  // The last confirmed mint/redemption signature, shown as a Solscan link in
+  // the panel while its phase stays "confirmed" (the toast alone disappears).
+  const [buyConfirmedSignature, setBuyConfirmedSignature] = useState<string | null>(null);
+  const [sellConfirmedSignature, setSellConfirmedSignature] = useState<string | null>(null);
   const buyPreSettlementRawRef = useRef<bigint>(0n);
   // Fine-grained step label for a multi-asset Buy (multiAssetBuyClient.ts's
   // executeMultiAssetBuyMainnet spans several separately-confirmed
@@ -1304,6 +1324,7 @@ export function DTRDetail() {
         const spentRaw = buyPreSettlementRawRef.current - BigInt(freshRaw);
         const spentUsdc = Number(spentRaw > 0n ? spentRaw : 0n) / 10 ** buyAsset.decimals;
         setSettlementBalanceRaw(BigInt(freshRaw));
+        setBuyConfirmedSignature(signature);
         setBuyPhase("confirmed");
         setBuyPendingSignature(null);
         // Record the trade BEFORE the chain refresh (DEC-0225): the recorder
@@ -1391,6 +1412,7 @@ export function DTRDetail() {
         devUsdcAmountRaw,
         onProgress: (e) => setBuyPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
       });
+      setBuyConfirmedSignature(signature);
       setBuyPhase("confirmed");
       const spentUsdc = Number(devUsdcAmountRaw) / 10 ** SETTLEMENT_DECIMALS;
       // Trade first, chain refresh second -- see DEC-0225.
@@ -1491,6 +1513,7 @@ export function DTRDetail() {
         amountIn: usdcAmountRaw,
         onProgress: (e) => setBuyPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
       });
+      setBuyConfirmedSignature(signature);
       setBuyPhase("confirmed");
       const spentUsdc = Number(usdcAmountRaw) / 10 ** buyAsset.decimals;
       // Trade first, chain refresh second -- see DEC-0225.
@@ -1624,6 +1647,7 @@ export function DTRDetail() {
         },
       });
       setMultiAssetBuyStep(null);
+      setBuyConfirmedSignature(signature || null);
       setBuyPhase("confirmed");
       // Trade first, chain refresh second -- see DEC-0225. This is the path
       // that produced the 2026-10-05 "holds 9,846,424 raw but the sale needs
@@ -1718,6 +1742,7 @@ export function DTRDetail() {
         // inconclusive, which is why this reconciliation path ran at all).
         const redeemedRaw = sellPreRtRawRef.current - BigInt(freshRaw);
         const redeemedTokens = Number(redeemedRaw > 0n ? redeemedRaw : 0n) / 1_000_000;
+        setSellConfirmedSignature(signature);
         setSellPhase("confirmed");
         setSellPendingSignature(null);
         await refreshRealReserveNow();
@@ -1767,6 +1792,7 @@ export function DTRDetail() {
         reserveTokensToRedeem,
         onProgress: (e) => setSellPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
       });
+      setSellConfirmedSignature(signature);
       setSellPhase("confirmed");
       await refreshRealReserveNow();
       recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
@@ -1866,6 +1892,7 @@ export function DTRDetail() {
           reserveTokensToRedeem,
           onProgress: (e) => setSellPhase(e.phase === "awaiting-wallet" ? "awaiting-wallet" : "confirming"),
         });
+        setSellConfirmedSignature(signature);
         setSellPhase("confirmed");
         await refreshRealReserveNow();
         recordConfirmedTrade(dtr.id, "sell", numSellAmount, numSellAmount * (dtr.nav || 1));
@@ -1910,15 +1937,17 @@ export function DTRDetail() {
           },
         });
         setMultiAssetSellStep(null);
+        setSellConfirmedSignature(result.signature || null);
         setSellPhase("confirmed");
         await refreshRealReserveNow();
         const usdcReceived = Number(result.usdcReceivedRaw) / 1e6;
         recordConfirmedTrade(dtr.id, "sell", numSellAmount, usdcReceived);
         setSellAmount("");
-        toast({
-          title: "Redeem confirmed",
-          description: `You received ${usdcReceived.toFixed(2)} USDC (verified from your wallet's real balance). Signature: ${result.signature}`,
-        });
+        toast(
+          result.signature
+            ? transactionConfirmedToast(result.signature, `Redeem confirmed: you received ${usdcReceived.toFixed(2)} USDC`)
+            : { title: "Redeem confirmed", description: `You received ${usdcReceived.toFixed(2)} USDC (verified from your wallet's real balance).` },
+        );
       }
     } catch (e) {
       if (e instanceof AmbiguousConfirmationError) {
@@ -2007,10 +2036,50 @@ export function DTRDetail() {
   // offering the full balance as "Max" would leave nothing to pay the fee
   // with and the transaction would fail outright.
   const SOL_FEE_RESERVE = 0.01;
-  // DEC-0238: on Mainnet the USDC mint fee comes on top of the amount, so "Max" leaves room for it.
-  const buyFeeFactor = IS_MAINNET && isOnChain ? 1 + mintFeeEffectivePct / 100 : 1;
-  const buyAvailable = isOnChain ? buyAvailableFromDevUsdcBalance(isBuyAssetWrappedSol ? settlementBalanceHuman - SOL_FEE_RESERVE : settlementBalanceHuman) / buyFeeFactor : 0;
-  const buyInsufficientBalance = isOnChain && numBuyAmount * buyFeeFactor > settlementBalanceHuman;
+  // DEC-0238: on Mainnet the USDC mint fee comes on top of the amount, and the
+  // server-built mint also needs a 2% buffer on every swapped leg
+  // (assessBuyFeasibility's requiredUsdcRaw) -- so "Max" leaves room for both,
+  // plus a small safety margin, and the panel refuses an amount the server
+  // would reject as "short" (beta report 2026-11: "holds 2.90 USDC but needs ~2.90").
+  const mintUsdcValueShare = (() => {
+    const oc = dtr.onChain;
+    if (!IS_MAINNET || !oc?.assetPricesUsd) return 0;
+    let total = 0;
+    let usdc = 0;
+    for (const a of oc.assets) {
+      const price = a.mint === MAINNET_USDC_MINT ? 1 : oc.assetPricesUsd[a.mint];
+      if (!(price > 0)) return 0; // unpriced leg: assume every dollar is swapped (conservative)
+      const value = (Number(oc.vaultBalancesRaw[a.mint] ?? "0") / 10 ** a.decimals) * price;
+      total += value;
+      if (a.mint === MAINNET_USDC_MINT) usdc += value;
+    }
+    return total > 0 ? usdc / total : 0;
+  })();
+  const buyFeeFactor =
+    IS_MAINNET && isOnChain
+      ? mintUsdcPerDollar({ effectiveMintFeeBps: Math.round(mintFeeEffectivePct * 100), usdcValueShare: mintUsdcValueShare })
+      : 1;
+  const buyAvailable = !isOnChain
+    ? 0
+    : IS_MAINNET
+      ? maxMintUsdForUsdcBalance(settlementBalanceHuman, buyFeeFactor)
+      : buyAvailableFromDevUsdcBalance(isBuyAssetWrappedSol ? settlementBalanceHuman - SOL_FEE_RESERVE : settlementBalanceHuman) / buyFeeFactor;
+  const buyRequiredUsdc = numBuyAmount * buyFeeFactor;
+  const buyInsufficientBalance = isOnChain && buyRequiredUsdc > settlementBalanceHuman;
+  // Server refuses a Mainnet mint below this native SOL (fees + account rent).
+  const MINT_MIN_SOL = Number(DEFAULT_BUY_FEE_LAMPORTS) / 1e9;
+  const mintSolShort =
+    IS_MAINNET && isOnChain && wallet.connected && settlementBalanceStatus === "ready" && wallet.sol < MINT_MIN_SOL;
+  // Mainnet: minting is sized from live prices; with any held asset unpriced
+  // the server cannot build a fair mint, so the panel says why up front.
+  const unpricedAssetSymbol =
+    dtr.onChain?.unpricedAssetMints && dtr.onChain.unpricedAssetMints.length > 0
+      ? dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? null
+      : null;
+  const mintPriceUnavailable = pricingUnavailable && !showZeroPrice && !isEmpty;
+  const mintPriceUnavailableReason = mintPriceUnavailable
+    ? `Minting is paused: this Reserve's price can't be computed right now because ${unpricedAssetSymbol ?? "one of its assets"} has no verified price. Without it a fair mint amount can't be worked out.`
+    : null;
   // True when EVERY one of this Reserve's registered assets is the
   // settlement asset itself -- the only composition where Buy/Sell involve
   // no swap-authority conversion at all: mint_reserve_tokens_in_kind's own
@@ -2080,7 +2149,8 @@ export function DTRDetail() {
 
   const setBuyPct = (pct: number) => {
     if (wallet.connected && settlementBalanceStatus === "ready") {
-      setBuyAmount((buyAvailable * pct).toString());
+      // Mainnet amounts are USDC: floor to cents so the field never shows float noise or rounds above the cap.
+      setBuyAmount(IS_MAINNET && isOnChain ? (Math.floor(buyAvailable * pct * 100) / 100).toString() : (buyAvailable * pct).toString());
       setBuyPctSelected(pct);
     }
   };
@@ -2240,7 +2310,7 @@ export function DTRDetail() {
                     )}
                     {pricingUnavailable && !showZeroPrice && dtr.onChain?.unpricedAssetMints && dtr.onChain.unpricedAssetMints.length > 0 && (
                       <p className="text-[11px] text-muted-foreground/70 mt-1">
-                        No verified Pyth or Jupiter price for {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "this Reserve's asset"} right now.
+                        This Reserve's price can't be computed because {dtr.onChain.assets.find((a) => a.mint === dtr.onChain!.unpricedAssetMints![0])?.symbol ?? "one of its assets"} has no verified Pyth or Jupiter price right now.
                       </p>
                     )}
                   </div>
@@ -2282,11 +2352,13 @@ export function DTRDetail() {
                 </div>
               </CardHeader>
               <CardContent className="p-0 sm:p-6 sm:pt-0 h-[350px] w-full relative">
-                {lineSeries.unavailable ? (
+                {lineSeries.unavailable || (pricingUnavailable && !showZeroPrice && !designDemo) ? (
+                  // No valid current price: never draw a placeholder line (it
+                  // read as a flat $1.00 history on unpriced Reserves).
                   <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6">
-                    <p className="text-sm font-semibold text-muted-foreground">Price unavailable</p>
+                    <p className="text-sm font-semibold text-muted-foreground">Price history unavailable</p>
                     <p className="text-xs text-muted-foreground/80 max-w-xs">
-                      This Reserve's current NAV could not be read. Its price chart will appear once a valid NAV is available.
+                      This Reserve's current price can't be computed right now. Its price chart will appear once every asset it holds has a verified price.
                     </p>
                   </div>
                 ) : (
@@ -2975,10 +3047,28 @@ export function DTRDetail() {
                               : `${dtr.feeConfig.mintFeePct.toFixed(2)}%`}
                           </span>
                         </div>
+                        {IS_MAINNET && dtr.onChain && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              Ongoing fee
+                              <InfoTip label="More information about the ongoing fee">
+                                {"A yearly fee on the Reserve's value, accrued continuously while you hold its Reserve Tokens. It is not charged from your wallet."}
+                              </InfoTip>
+                            </span>
+                            <span className="font-merge-mono">
+                              {`${(Number(dtr.onChain.effectiveTvlFeeTotalBps ?? Math.round(dtr.feeConfig.tvlFeePct * 100)) / 100).toFixed(2)}% / year`}
+                            </span>
+                          </div>
+                        )}
                         {IS_MAINNET && dtr.onChain && numBuyAmount > 0 && (
                           <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Total USDC (amount + mint fee)</span>
-                            <span className="font-merge-mono">~${(numBuyAmount * (1 + mintFeeEffectivePct / 100)).toFixed(2)}</span>
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              USDC needed
+                              <InfoTip label="More information about the USDC needed">
+                                {"Your amount plus the mint fee, plus 2% headroom on each swap into the Reserve's assets to cover price movement. Your wallet must hold this much USDC for the mint to start."}
+                              </InfoTip>
+                            </span>
+                            <span className="font-merge-mono">~${(Math.ceil(buyRequiredUsdc * 100) / 100).toFixed(2)}</span>
                           </div>
                         )}
                         <div className="pt-3 border-t border-border/50 flex justify-between font-semibold">
@@ -3069,6 +3159,39 @@ export function DTRDetail() {
                       </div>
                     )}
 
+                    {/* Up-front reasons a Mainnet mint can't start, shown before
+                        pressing Mint instead of as a server refusal afterwards. */}
+                    {mintPriceUnavailableReason ? (
+                      <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-muted-foreground" role="status">
+                        {mintPriceUnavailableReason}
+                      </p>
+                    ) : (
+                      IS_MAINNET &&
+                      isUsdcFundedBuyMainnetReserve &&
+                      wallet.connected &&
+                      settlementBalanceStatus === "ready" &&
+                      !buyProcessing && (
+                        <>
+                          {(settlementBalanceHuman < 0.01 || buyInsufficientBalance) && (
+                            <p className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground" role="status">
+                              {settlementBalanceHuman < 0.01
+                                ? "Minting is paid in USDC, and this wallet holds none. "
+                                : `This mint needs ~${(Math.ceil(buyRequiredUsdc * 100) / 100).toFixed(2)} USDC including the mint fee and swap headroom; this wallet holds ${(Math.floor(settlementBalanceHuman * 100) / 100).toFixed(2)} USDC. Use Max for the largest amount that fits, or add USDC. `}
+                              <a href="https://jup.ag/swap/SOL-USDC" target="_blank" rel="noreferrer" className="underline font-medium text-foreground">
+                                Swap SOL to USDC on Jupiter
+                              </a>
+                              {settlementBalanceHuman < 0.01 ? " to get some, keeping a little SOL for network fees." : "."}
+                            </p>
+                          )}
+                          {mintSolShort && (
+                            <p className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground" role="status">
+                              {`Minting also needs about ${MINT_MIN_SOL} SOL in this wallet for network fees and account rent; it holds ${wallet.sol.toFixed(4)} SOL. Add SOL before minting.`}
+                            </p>
+                          )}
+                        </>
+                      )
+                    )}
+
                     <Button
                       className="w-full h-12 text-lg font-bold rounded-full shadow-lg shadow-action/20"
                       // Disconnected is NOT a disabled state: the CTA reads
@@ -3080,9 +3203,11 @@ export function DTRDetail() {
                         (buyProcessing ||
                           numBuyAmount <= 0 ||
                           buyInsufficientBalance ||
+                          mintPriceUnavailable ||
                           (isOnChain && !isSettlementBuySupported) ||
                           (isOnChain && estReserveTokensOut === null))
                       }
+                      title={mintPriceUnavailableReason ?? undefined}
                     >
                       {txPhaseShortLabel(buyPhase) ? (
                         // The button shows only a SHORT phase word -- it is a
@@ -3100,6 +3225,8 @@ export function DTRDetail() {
                         "Connect Wallet to Mint"
                       ) : isOnChain && !isSettlementBuySupported ? (
                         "Minting Not Yet Supported"
+                      ) : mintPriceUnavailable ? (
+                        "Price Unavailable"
                       ) : isOnChain && numBuyAmount > 0 && estReserveTokensOut === null ? (
                         "Quote Unavailable"
                       ) : buyInsufficientBalance ? (
@@ -3123,6 +3250,9 @@ export function DTRDetail() {
                             : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
                         </p>
                       )
+                    )}
+                    {buyPhase === "confirmed" && buyConfirmedSignature && (
+                      <ConfirmedTxLink headline="Your mint went through." signature={buyConfirmedSignature} />
                     )}
                   </TabsContent>
 
@@ -3333,6 +3463,9 @@ export function DTRDetail() {
                             : "Submits a real Solana DevNet transaction, signed by your wallet -- no Mainnet value."}
                         </p>
                       )
+                    )}
+                    {sellPhase === "confirmed" && sellConfirmedSignature && (
+                      <ConfirmedTxLink headline="Your redemption went through." signature={sellConfirmedSignature} />
                     )}
                   </TabsContent>
                 </CardContent>

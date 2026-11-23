@@ -192,6 +192,30 @@ export interface BuyFeasibility {
 /** Conservative fee/rent floor for a multi-transaction buy: a few signatures with priority fees plus up to a couple of fresh ATAs. */
 export const DEFAULT_BUY_FEE_LAMPORTS = 8_000_000n; // 0.008 SOL
 
+/** Extra headroom the mint panel's Max leaves below the server's USDC requirement (price movement between page load and the build). */
+export const MINT_MAX_SAFETY_FRACTION = 0.005;
+
+/**
+ * USDC the server-built mint requires per $1 of mint amount, mirroring
+ * assessBuyFeasibility's requiredUsdcRaw: the non-USDC share of the deposit
+ * is swapped with BUY_SWAP_BUFFER_FRACTION headroom, a USDC leg is deposited
+ * as-is, and the effective mint fee (DEC-0238/0269) comes on top.
+ * `usdcValueShare` is the fraction of the Reserve's value held as USDC
+ * (0 when unknown -- the conservative case).
+ */
+export function mintUsdcPerDollar(params: { effectiveMintFeeBps: number; usdcValueShare: number }): number {
+  const share = Number.isFinite(params.usdcValueShare) ? Math.min(1, Math.max(0, params.usdcValueShare)) : 0;
+  const feeBps = Number.isFinite(params.effectiveMintFeeBps) ? Math.max(0, params.effectiveMintFeeBps) : 0;
+  return (1 - share) * (1 + BUY_SWAP_BUFFER_FRACTION) + share + feeBps / 10_000;
+}
+
+/** Largest mint amount (USD, floored to cents) a USDC balance covers once the fee, swap buffer and MINT_MAX_SAFETY_FRACTION are left aside. */
+export function maxMintUsdForUsdcBalance(usdcBalance: number, usdcPerDollar: number): number {
+  if (!(usdcBalance > 0) || !(usdcPerDollar > 0)) return 0;
+  const cents = Math.floor(((usdcBalance / usdcPerDollar) * (1 - MINT_MAX_SAFETY_FRACTION)) * 100);
+  return Math.max(0, cents) / 100;
+}
+
 /**
  * The whole-purchase feasibility gate, run BEFORE any transaction is
  * constructed or any signature requested: the wallet must hold the full

@@ -1,5 +1,5 @@
 // The corner Feedback button (dismissable for a week) and the "How did we do?"
-// prompt that appears mid-screen after a confirmed core action. Picking a star
+// card that appears in a corner (non-blocking) after a confirmed core action. Picking a star
 // in the prompt opens the #/feedback page with that rating filled in.
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -87,39 +87,41 @@ function FeedbackLauncherInner() {
       )}
 
       {promptAction && !onFeedbackPage && (
-        <div className="merge-scope fixed inset-0 z-[90]" style={{ position: "fixed", background: "none" }}>
-          <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setPromptAction(null)} aria-hidden="true" />
-          <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="feedback-prompt-title"
-              className="pointer-events-auto relative w-full max-w-sm rounded-2xl border border-card-border bg-card text-card-foreground shadow-lg px-6 pt-6 pb-5 text-center"
+        // Non-blocking (beta report 2026-11): a small card in the corner, no
+        // backdrop, so the page -- including the confirmation toast and its
+        // Solscan link -- stays usable. Escape, the X or "Not now" dismiss it.
+        <div
+          className="merge-scope fixed left-4 right-4 bottom-20 sm:right-auto sm:bottom-6 sm:w-[320px] z-[90]"
+          style={{ position: "fixed", background: "none" }}
+        >
+          <div
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="feedback-prompt-title"
+            className="relative w-full rounded-2xl border border-card-border bg-card text-card-foreground shadow-lg px-4 pt-4 pb-3"
+          >
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={() => setPromptAction(null)}
+              className="absolute top-2 right-2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
             >
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => setPromptAction(null)}
-                className="absolute top-3 right-3 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
-              >
-                <X className="w-4 h-4" />
-              </button>
-              <p className="text-xs text-muted-foreground">{FEEDBACK_ACTION_LABELS[promptAction]}</p>
-              <h2 id="feedback-prompt-title" className="mt-1 text-xl font-merge-display font-semibold tracking-tight">
-                How did we do?
-              </h2>
-              <div className="mt-4">
-                <StarRating
-                  size="lg"
-                  value={0}
-                  onChange={(rating) => {
-                    const action = promptAction;
-                    setPromptAction(null);
-                    navigate(feedbackHref({ rating, action, trigger: "prompt", from }));
-                  }}
-                />
-              </div>
-              <Button variant="ghost" size="sm" className="mt-2 text-muted-foreground" onClick={() => setPromptAction(null)}>
+              <X className="w-4 h-4" />
+            </button>
+            <p className="text-xs text-muted-foreground pr-6">{FEEDBACK_ACTION_LABELS[promptAction]}</p>
+            <h2 id="feedback-prompt-title" className="mt-0.5 text-base font-merge-display font-semibold tracking-tight">
+              How did we do?
+            </h2>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <StarRating
+                value={0}
+                onChange={(rating) => {
+                  const action = promptAction;
+                  setPromptAction(null);
+                  navigate(feedbackHref({ rating, action, trigger: "prompt", from }));
+                }}
+              />
+              <Button variant="outline" size="sm" onClick={() => setPromptAction(null)}>
                 Not now
               </Button>
             </div>

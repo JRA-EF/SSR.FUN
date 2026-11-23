@@ -298,7 +298,13 @@ describe("toWalletFacingMetadata -- what a wallet or explorer actually reads", (
     const out = toWalletFacingMetadata(stored);
     expect(out.ticker).to.equal("SOLSSR");
     expect(out.imageUrl).to.equal(stored.imageUrl);
-    expect(out.sellTaxPct).to.equal(1);
+  });
+
+  it("never serves the legacy buyTaxPct/sellTaxPct (a trade tax exists only as the mint's on-chain transfer fee)", () => {
+    const out = toWalletFacingMetadata(stored);
+    expect(out).to.not.have.property("buyTaxPct");
+    expect(out).to.not.have.property("sellTaxPct");
+    expect(stored.sellTaxPct).to.equal(1); // the stored payload keeps it, so its id is unchanged
   });
 
   it("omits `image` entirely when the Reserve has no picture -- never an empty string a wallet would try to load", () => {
