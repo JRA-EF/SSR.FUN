@@ -72,8 +72,14 @@ export interface WalletFacingMetadata extends ReserveMetadataPayload {
 }
 
 export function toWalletFacingMetadata(payload: ReserveMetadataPayload): WalletFacingMetadata {
+  // The LEGACY buyTaxPct/sellTaxPct (DEC-0229) are dropped from what is served:
+  // they were never charged, and a classic SPL Reserve Token (Reserve #24
+  // advertised "sellTaxPct": 1) cannot charge one at all. A trade tax exists
+  // only as the mint's own Token-2022 transfer fee (DEC-0257), read from chain.
+  // The stored bytes, and therefore the content-addressed id, are untouched.
+  const { buyTaxPct: _legacyBuyTax, sellTaxPct: _legacySellTax, ...rest } = payload;
   return {
-    ...payload,
+    ...rest,
     symbol: payload.ticker,
     ...(payload.imageUrl ? { image: payload.imageUrl } : {}),
   };
