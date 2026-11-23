@@ -8,7 +8,10 @@
 //    every page URL is rewritten to the public Coming Soon page
 //    (public/coming-soon.html), which carries the "I have a BETA key" entry;
 //    redeeming a key sets the cookie and reloads the ORIGINAL URL, so deep
-//    links shared with beta users land where they pointed. /api/* paths get a
+//    links shared with beta users land where they pointed. A visitor who
+//    claims a key at /beta instead is sent back there too: the Coming Soon
+//    page hands the original path + hash on as /beta?next= (and
+//    sessionStorage), lib/site/gateNext.ts. /api/* paths get a
 //    JSON 401 instead. Applies to every route EXCEPT the login endpoint
 //    itself, the Coming Soon page's own static files (PUBLIC_PATHS), and the
 //    CRON_SECRET-authenticated cron paths below
@@ -37,6 +40,7 @@
 import { next, rewrite } from '@vercel/functions'
 import { verifySessionCookie, parseCookie, SESSION_COOKIE_NAME } from './lib/dashboard/session.js'
 import { sessionVerificationKeys, siteGateMode, siteSessionSecret, SITE_SESSION_COOKIE_NAME, verifySiteSessionCookie } from './lib/site/session.js'
+import { gatePathRedirect } from './lib/site/gateNext.js'
 
 // SITE_SESSION_COOKIE_NAME is imported from lib/site/session.ts (runtime-
 // agnostic, Web Crypto only), which api/site/login.ts imports too -- one
@@ -382,6 +386,14 @@ const INTERNAL_PAGE_PATHS = new Set([
 export default async function middleware(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const isApiPath = url.pathname.startsWith('/api/')
+
+  // /beta/ and /leaderboard/ (trailing slash) and the bare /campaign path,
+  // before either gate: the slash forms missed PUBLIC_PATHS and served Coming
+  // Soon, and /campaign is a hash route in the app (lib/site/gateNext.ts).
+  const pathRedirect = gatePathRedirect(url.pathname, url.search)
+  if (pathRedirect) {
+    return new Response(null, { status: 307, headers: { location: pathRedirect, 'cache-control': 'no-store' } })
+  }
 
   // Cron trigger requests, the site-login endpoint itself, and the Coming
   // Soon page's own files are never gated -- see the header comment above.

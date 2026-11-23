@@ -162,3 +162,61 @@ describe("Closed-beta gate -- page mode (SSR_SITE_GATE_MODE, DEC-0189)", () => {
     expect(siteGateMode({ SSR_SITE_GATE_MODE: " Password " })).to.equal("password");
   });
 });
+
+// Gate deep links (lib/site/gateNext.ts): the destination a gated visitor
+// keeps through the Coming Soon page, /beta and the key sign-in.
+import { gatePathRedirect, isCampaignDestination, safeNextPath } from "../lib/site/gateNext.ts";
+import { readFileSync } from "node:fs";
+
+// public/coming-soon.html carries an inline copy of the two client helpers;
+// load it so both copies run the same cases.
+function inlineComingSoonHelpers() {
+  const html = readFileSync(new URL("../public/coming-soon.html", import.meta.url), "utf8");
+  const pick = (name) => {
+    const start = html.indexOf(`function ${name}(`);
+    expect(start, `coming-soon.html defines ${name}`).to.be.greaterThan(-1);
+    const end = html.indexOf("\n    }\n", start);
+    return html.slice(start, end + 6);
+  };
+  // eslint-disable-next-line no-new-func
+  return new Function(`${pick("safeNextPath")}\n${pick("isCampaignDestination")}\nreturn { safeNextPath, isCampaignDestination };`)();
+}
+
+describe("Closed-beta gate -- deep-link destination (gateNext)", () => {
+  const impls = [
+    ["lib/site/gateNext.ts", { safeNextPath, isCampaignDestination }],
+    ["public/coming-soon.html inline copy", inlineComingSoonHelpers()],
+  ];
+  for (const [name, h] of impls) {
+    it(`${name}: keeps same-site paths with their hash and query`, () => {
+      expect(h.safeNextPath("/#/campaign")).to.equal("/#/campaign");
+      expect(h.safeNextPath("/#/dtr/mainnet-beta-93")).to.equal("/#/dtr/mainnet-beta-93");
+      expect(h.safeNextPath("/#/legal/terms")).to.equal("/#/legal/terms");
+      expect(h.safeNextPath("/leaderboard?x=1")).to.equal("/leaderboard?x=1");
+    });
+    it(`${name}: rejects off-site, malformed and looping destinations`, () => {
+      for (const bad of [null, undefined, "", "campaign", "https://evil.example/", "//evil.example/x", "/\\evil.example", "/a\nb", "javascript:alert(1)", "/beta", "/beta/", "/beta?next=/", "/beta.html", "/coming-soon.html", "/" + "a".repeat(600)]) {
+        expect(h.safeNextPath(bad), String(bad)).to.equal(null);
+      }
+    });
+    it(`${name}: recognises the Beta Campaign destination only`, () => {
+      expect(h.isCampaignDestination("/#/campaign")).to.equal(true);
+      expect(h.isCampaignDestination("/#/campaign?ref=earn")).to.equal(true);
+      expect(h.isCampaignDestination("/campaign")).to.equal(true);
+      expect(h.isCampaignDestination("/campaign/")).to.equal(true);
+      expect(h.isCampaignDestination("/#/campaigns")).to.equal(false);
+      expect(h.isCampaignDestination("/#/dtr/mainnet-beta-93")).to.equal(false);
+      expect(h.isCampaignDestination("/leaderboard")).to.equal(false);
+      expect(h.isCampaignDestination(null)).to.equal(false);
+    });
+  }
+
+  it("redirects /beta/ and /leaderboard/ to the bare path and /campaign to the hash route, keeping the query", () => {
+    expect(gatePathRedirect("/beta/")).to.equal("/beta");
+    expect(gatePathRedirect("/beta/", "?next=%2F%23%2Fcampaign")).to.equal("/beta?next=%2F%23%2Fcampaign");
+    expect(gatePathRedirect("/leaderboard/")).to.equal("/leaderboard");
+    expect(gatePathRedirect("/campaign")).to.equal("/#/campaign");
+    expect(gatePathRedirect("/campaign/", "?ref=earn")).to.equal("/?ref=earn#/campaign");
+    for (const p of ["/", "/beta", "/leaderboard", "/r/abc", "/campaigns", "/api/site/login"]) expect(gatePathRedirect(p), p).to.equal(null);
+  });
+});
