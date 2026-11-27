@@ -70,24 +70,12 @@ function render(b: Board) {
   notes.replaceChildren(...unavailable.map(r => el('li', {}, el('b', {}, r.name), `: ${r.reason}`)))
 
   const tb = document.getElementById('trader-body')
-  if (!tb) { /* Top Traders card removed; the trader leader still shows in the Volume card */ }
+  if (!tb) { /* Top Traders card removed; the Volume table is the ranking */ }
   else if (!b.traders.length) emptyRow(tb, 5, b.phase === 'live' || b.phase === 'closed' ? 'No signed-up trader has traded yet.' : 'Trading volume counts from the campaign start.')
   else tb.replaceChildren(...b.traders.map(t => el('tr', {}, el('td', { class: 'rank' }, String(t.rank)),
     el('td', {}, handleLink(t.handle)),
     el('td', {}, el('a', { class: 'handle mono', href: `https://solscan.io/account/${t.wallet}`, target: '_blank', rel: 'noopener', title: t.wallet }, short(t.wallet))),
     el('td', { class: 'num' }, String(t.trades)), el('td', { class: 'num' }, usd.format(t.value)))))
-
-  const leader = $('volume-leader')
-  if (b.volumeLeader) {
-    leader.hidden = false
-    if (b.volumeLeader.kind === 'reserve') {
-      const r = b.volume.find(x => x.reserve === b.volumeLeader!.id)
-      leader.replaceChildren('Leading the Volume track: ', el('b', {}, r ? r.name : 'a Reserve'), r ? ' by ' : '', r ? handleLink(r.handle) : '', ` with ${usd.format(b.volumeLeader.value)}.`)
-    } else {
-      const t = b.traders.find(x => x.wallet === b.volumeLeader!.id)
-      leader.replaceChildren('Leading the Volume track: trader ', t ? handleLink(t.handle) : el('b', {}, short(b.volumeLeader.id)), ` with ${usd.format(b.volumeLeader.value)}.`)
-    }
-  } else leader.hidden = true
 
   $('updated').textContent = `${b.traderEntries ?? 0} wallet${b.traderEntries === 1 ? '' : 's'} signed up · ${b.entries} Reserve${b.entries === 1 ? '' : 's'} entered · Updated ${new Date(b.generatedAt).toLocaleTimeString()} · Volumes refresh every 30 minutes`
 }
