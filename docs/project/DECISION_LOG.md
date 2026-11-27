@@ -9159,3 +9159,30 @@ Implementation remains on `feature/raydium-permissioned-cpmm`; no deployment, si
   ]
 }
 ```
+
+## DEC-0297
+
+```json
+{
+  "id": "DEC-0297",
+  "date": "2026-11-27",
+  "title": "BETA wave 4: self-serve claiming reopened for 40 more keys (cap 131)",
+  "status": "confirmed",
+  "decision": "SSR_BETA_CLAIM_CAP raised from 91 to 131 on ssr-fun Production (91 rows in beta_key_claims, plus 40); SSR_BETA_CLAIM_ENABLED stays true. Env-only change: the live build dpl_FZvD9Gg9 (main 56dd5de) was redeployed as dpl_8a5vV7oJ.",
+  "context": "Joao, 2026-11-27: 'release wave 4 more 40 keys pls'. Wave 3 (DEC-0292) filled on 2026-11-26 23:28 UTC; GET https://ssr.fun/api/site/claim answered {open:true, full:true}.",
+  "rationale": "Same mechanism as DEC-0291/0292: the cap counts total rows, so count plus 40 admits exactly 40 new handles. The 'limit reached' text already says 'this wave', so no code change.",
+  "alternativesConsidered": [
+    "Remove the cap -- unbounded sign-ups with no one watching."
+  ],
+  "impact": "40 more self-serve keys; existing keys unchanged. Rollback: dpl_FZvD9Gg9 (cap 91).",
+  "affectedAreas": [
+    "Vercel env ssr-fun Production: SSR_BETA_CLAIM_CAP"
+  ],
+  "supersedes": null,
+  "supersededBy": null,
+  "evidence": [
+    "beta_key_claims count = 91 before the change.",
+    "GET https://ssr.fun/api/site/claim after redeploy: {open:true, full:false}."
+  ]
+}
+```
